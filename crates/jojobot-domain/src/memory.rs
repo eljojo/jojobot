@@ -126,6 +126,25 @@ impl FactStatus {
     }
 }
 
+/// Validate a subject id before it is written anywhere. Entity ids are
+/// **structured** (`kind:slug`), never free text, so a safe charset is enough to
+/// keep an adversarial subject out of the markdown: no newline (forge a row or a
+/// `###` header), no `|` (forge a cell), no backtick (forge a fence), no space.
+/// Anything outside `[a-z0-9:_-]` — or empty, or absurdly long — is rejected.
+/// This is the primary defence; escaping-on-write is the belt-and-suspenders.
+pub fn validate_subject(subject: &EntityId) -> Result<(), MemoryError> {
+    let s = subject.as_str();
+    let ok = !s.is_empty()
+        && s.len() <= 128
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b':' | b'_' | b'-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(MemoryError::InvalidSubject(s.to_string()))
+    }
+}
+
 /// Normalize a fact's content to the form that survives a table round-trip.
 ///
 /// A markdown table cell cannot preserve leading/trailing whitespace, so edge
@@ -191,6 +210,10 @@ pub enum MemoryError {
     /// The claim is malformed for storage (empty, or spans multiple lines).
     #[error("invalid fact: {0}")]
     InvalidFact(String),
+    /// The subject id is not a well-formed entity id (see [`validate_subject`]).
+    /// Treated as adversarial: it never reaches the store.
+    #[error("invalid subject '{0}': entity ids must match [a-z0-9:_-]")]
+    InvalidSubject(String),
     /// The underlying store (Outline, or its network/parse layer) failed.
     #[error("store error: {0}")]
     Store(String),
@@ -239,6 +262,19 @@ mod tests {
     fn person_id_prefixes_a_bare_handle_but_respects_a_typed_one() {
         assert_eq!(EntityId::person("jose").as_str(), "person:jose");
         assert_eq!(EntityId::person("person:jose").as_str(), "person:jose");
+    }
+
+    #[test]
+    fn validate_subject_accepts_ids_and_rejects_adversarial_ones() {
+        assert!(validate_subject(&EntityId::person("jose")).is_ok());
+        assert!(validate_subject(&EntityId("project:jojobot-server".into())).is_ok());
+        // Injection vectors: newline, pipe, header, fence, space, uppercase, empty.
+        for bad in ["person:a|b", "a\nb", "### forged", "a`b", "a b", "Person:Jose", ""] {
+            assert!(
+                validate_subject(&EntityId(bad.into())).is_err(),
+                "must reject {bad:?}"
+            );
+        }
     }
 
     #[test]

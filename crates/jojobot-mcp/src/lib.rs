@@ -152,6 +152,7 @@ fn parse_date(raw: Option<&str>) -> Result<jiff::civil::Date, McpError> {
 fn memory_error(e: MemoryError) -> McpError {
     match e {
         MemoryError::InvalidFact(msg) => McpError::invalid_params(msg, None),
+        MemoryError::InvalidSubject(msg) => McpError::invalid_params(msg, None),
         MemoryError::NotConfigured(msg) => {
             McpError::internal_error(format!("memory not configured: {msg}"), None)
         }

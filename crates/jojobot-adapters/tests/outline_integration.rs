@@ -61,6 +61,37 @@ async fn find_collection(http: &reqwest::Client, c: &Creds, name: &str) -> Optio
     }
 }
 
+/// The sorted document ids in a collection — a fingerprint to prove it's
+/// untouched. Empty if the collection doesn't exist.
+async fn doc_id_fingerprint(http: &reqwest::Client, c: &Creds, name: &str) -> Vec<String> {
+    let Some(id) = find_collection(http, c, name).await else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    let mut offset = 0u64;
+    loop {
+        let page: serde_json::Value = http
+            .post(format!("{}/api/documents.list", c.url))
+            .bearer_auth(&c.token)
+            .json(&serde_json::json!({ "collectionId": id, "offset": offset, "limit": 100 }))
+            .send()
+            .await
+            .expect("documents.list")
+            .json()
+            .await
+            .expect("documents.list body");
+        let items = page["data"].as_array().cloned().unwrap_or_default();
+        let n = items.len();
+        ids.extend(items.iter().filter_map(|d| d["id"].as_str().map(str::to_string)));
+        if n < 100 {
+            break;
+        }
+        offset += 100;
+    }
+    ids.sort();
+    ids
+}
+
 /// Delete the test collection (and every doc in it), if it exists.
 async fn drop_test_collection(http: &reqwest::Client, c: &Creds) {
     if let Some(id) = find_collection(http, c, TEST_COLLECTION).await {
@@ -87,6 +118,9 @@ async fn real_outline_satisfies_the_contract() {
     // Clean slate, in case a prior run aborted before teardown.
     drop_test_collection(&http, &c).await;
 
+    // Fingerprint the real `jojobot` collection: the test must not touch it.
+    let jojobot_before = doc_id_fingerprint(&http, &c, "jojobot").await;
+
     let store = OutlineStore::with_collection(
         http.clone(),
         OutlineConfig {
@@ -104,5 +138,12 @@ async fn real_outline_satisfies_the_contract() {
     };
 
     drop_test_collection(&http, &c).await;
+
+    let jojobot_after = doc_id_fingerprint(&http, &c, "jojobot").await;
+    assert_eq!(
+        jojobot_before, jojobot_after,
+        "the real `jojobot` collection must be untouched by the test"
+    );
+
     outcome.expect("the contract must hold against real Outline");
 }

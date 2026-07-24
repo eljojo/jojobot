@@ -2,215 +2,48 @@
 //!
 //! jojobot IS a schema layer over markdown docs: Outline is the typed document
 //! store, and this adapter reads and writes the `### ⚙ facts` table at the
-//! bottom of a per-entity doc. Facts live next to the prose they're about — the
-//! user reads the prose; jojobot reads the table.
+//! bottom of a per-entity doc (the codec lives in [`codec`]).
 //!
 //! **Convention over configuration.** The adapter is never handed an Outline id.
-//! Its only config is credentials (base URL + token). It discovers its own
-//! collection *by name* (a software constant, default `jojobot`), creating it if
-//! absent, and within it resolves each entity's doc by a deterministic title,
-//! creating a seeded doc on first capture. Everything — collection, docs,
-//! mapping — lives in Outline and is discovered/created at runtime; nothing
-//! authoritative lives in jojobot's process.
+//! Its only config is credentials. It discovers its own collection *by name*
+//! (a software constant, default `jojobot`) and by an ownership marker so it
+//! never adopts a user's same-named collection; it resolves each entity's doc by
+//! the doc's durable embedded `id:` marker — not the user-renamable title; and a
+//! concurrent double-create self-heals to one canonical (the oldest) rather than
+//! forking. Everything is discovered/created at runtime; nothing authoritative
+//! lives in jojobot's process.
 //!
-//! The row codec (parse/render) is pure and lives at the top of this file so it
-//! is unit-tested with no network. Everything below it is the HTTP shell.
+//! The HTTP surface is behind the [`api::OutlineApi`] port, so all of that logic
+//! runs under fast tests against an in-memory double.
+
+mod api;
+mod codec;
 
 use std::fmt;
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use jiff::civil::Date;
-use serde_json::json;
 
 use jojobot_domain::memory::{
-    EntityId, Fact, FactId, FactStatus, Memory, MemoryError, NewFact, Provenance, normalize_content,
+    EntityId, Fact, Memory, MemoryError, NewFact, normalize_content, validate_subject,
 };
 
-// --- fact-table format ------------------------------------------------------
+use api::{CollectionRec, DocRec, HttpOutline, OutlineApi, Unconfigured};
+use codec::{next_fact_id, parse_facts_table, parse_id_marker, render_fact_row, seeded_doc, with_fact_appended};
 
-/// The header that marks the machine-readable fact table at the bottom of a doc.
-const FACTS_HEADER: &str = "### ⚙ facts";
-/// The table's column header row.
-const TABLE_HEADER: &str = "| id | subject | content | provenance | status | date |";
-/// The markdown table separator under the header.
-const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- |";
+/// Outline's page cap for list endpoints. The store pages until a short page, so
+/// a match past the first page is never missed (a stop-at-100 bug forks docs).
+const PAGE: u64 = 100;
 
-/// Escape a value for a markdown table cell — the one character a cell can't
-/// carry raw is the column delimiter.
-fn escape_cell(s: &str) -> String {
-    s.replace('|', "\\|")
-}
-
-/// Split a markdown table row into trimmed, unescaped cells, honouring `\|` as a
-/// literal pipe inside a cell.
-fn split_cells(row: &str) -> Vec<String> {
-    let row = row.trim();
-    let inner = row.strip_prefix('|').unwrap_or(row);
-    let inner = inner.strip_suffix('|').unwrap_or(inner);
-
-    let mut cells = Vec::new();
-    let mut cur = String::new();
-    let mut chars = inner.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' if chars.peek() == Some(&'|') => {
-                cur.push('|');
-                chars.next();
-            }
-            '|' => {
-                cells.push(cur.trim().to_string());
-                cur.clear();
-            }
-            _ => cur.push(c),
-        }
-    }
-    cells.push(cur.trim().to_string());
-    cells
-}
-
-/// Render one fact as a table row. Provenance and status are their **own**
-/// columns — never folded into content — so a claim can end in any glyph without
-/// being misread.
-fn render_fact_row(f: &Fact) -> String {
-    format!(
-        "| {} | {} | {} | {} | {} | {} |",
-        f.id,
-        f.subject,
-        escape_cell(&f.content),
-        f.provenance.as_token(),
-        f.status.as_token(),
-        f.date
-    )
-}
-
-/// Parse a single table row into a [`Fact`], or `None` if it's the header, the
-/// separator, or not a well-formed fact row.
-fn parse_fact_row(row: &str) -> Option<Fact> {
-    let cells = split_cells(row);
-    // id, subject, content, provenance, status, date.
-    if cells.len() < 6 {
-        return None;
-    }
-    let id = cells[0].trim();
-    if id.is_empty() || id.eq_ignore_ascii_case("id") {
-        return None; // empty or the header row
-    }
-    if id.chars().all(|c| c == '-') {
-        return None; // the `--- | ---` separator row
-    }
-
-    let subject = cells[1].trim();
-    if subject.is_empty() {
-        return None;
-    }
-
-    let content = cells[2].trim();
-    if content.is_empty() {
-        return None;
-    }
-
-    let provenance = Provenance::from_token(&cells[3]);
-
-    // Status is Active-only this slice; the cell is not load-bearing yet.
-    let status = FactStatus::Active;
-
-    let date: Date = cells[5].trim().parse().ok()?;
-
-    Some(Fact {
-        id: FactId(id.to_string()),
-        subject: EntityId(subject.to_string()),
-        content: content.to_string(),
-        provenance,
-        status,
-        date,
-    })
-}
-
-/// Locate the fact table's line range within a doc: the half-open span of lines
-/// that start with `|` under the `### ⚙ facts` header. `None` if no header.
-fn facts_region(lines: &[&str]) -> Option<(usize, usize)> {
-    let header = lines.iter().position(|l| l.trim() == FACTS_HEADER)?;
-    let mut i = header + 1;
-    while i < lines.len() && lines[i].trim().is_empty() {
-        i += 1;
-    }
-    let start = i;
-    while i < lines.len() && lines[i].trim_start().starts_with('|') {
-        i += 1;
-    }
-    Some((start, i))
-}
-
-/// Every fact in a doc, in document order.
-fn parse_facts_table(doc: &str) -> Vec<Fact> {
-    let lines: Vec<&str> = doc.lines().collect();
-    let Some((start, end)) = facts_region(&lines) else {
-        return Vec::new();
-    };
-    lines[start..end]
-        .iter()
-        .filter_map(|l| parse_fact_row(l))
-        .collect()
-}
-
-/// Return `doc` with `row` appended to the fact table. Creates the section (and
-/// its header/separator) if the doc doesn't have one yet.
-fn with_fact_appended(doc: &str, row: &str) -> String {
-    let lines: Vec<&str> = doc.lines().collect();
-    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 6);
-
-    match facts_region(&lines) {
-        Some((start, end)) => {
-            out.extend(lines[..end].iter().map(|s| s.to_string()));
-            if start == end {
-                // Header present but no table drawn yet.
-                out.push(TABLE_HEADER.to_string());
-                out.push(TABLE_SEP.to_string());
-            }
-            out.push(row.to_string());
-            out.extend(lines[end..].iter().map(|s| s.to_string()));
-        }
-        None => {
-            out.extend(lines.iter().map(|s| s.to_string()));
-            if !out.is_empty() {
-                out.push(String::new());
-            }
-            out.push(FACTS_HEADER.to_string());
-            out.push(String::new());
-            out.push(TABLE_HEADER.to_string());
-            out.push(TABLE_SEP.to_string());
-            out.push(row.to_string());
-        }
-    }
-    out.join("\n")
-}
-
-/// The next light/local id for a doc: `f{max+1}` over existing `fN` ids.
-fn next_fact_id(existing: &[Fact]) -> FactId {
-    let max = existing
-        .iter()
-        .filter_map(|f| f.id.as_str().strip_prefix('f')?.parse::<u64>().ok())
-        .max()
-        .unwrap_or(0);
-    FactId(format!("f{}", max + 1))
-}
-
-/// The markdown a freshly-created entity doc is seeded with: a note for the
-/// human, the entity's id marker, and an empty fact table for jojobot to append
-/// to.
-fn seeded_doc(subject: &EntityId) -> String {
-    format!(
-        "_Managed by jojobot. Facts about this entity are in the table at the bottom._\n\n\
-         ```yaml\nid: {subject}\nkind: person\n```\n\n\
-         {FACTS_HEADER}\n\n{TABLE_HEADER}\n{TABLE_SEP}\n"
-    )
-}
+/// The marker jojobot stamps into a collection's description on create and
+/// checks on match, so it only ever adopts a collection it created — never a
+/// user's own same-named one.
+const OWNER_TAG: &str = "[jojobot:owned]";
 
 // --- secret -----------------------------------------------------------------
 
 /// An API token that never prints itself. `Debug` redacts, so the token can't
-/// leak through a `#[derive(Debug)]` on a config that holds it, a `dbg!`, or a
-/// `tracing` field.
+/// leak through a `#[derive(Debug)]`, a `dbg!`, or a `tracing` field.
 #[derive(Clone)]
 pub struct Secret(String);
 
@@ -233,7 +66,7 @@ impl fmt::Debug for Secret {
     }
 }
 
-// --- the store --------------------------------------------------------------
+// --- config -----------------------------------------------------------------
 
 /// The store's only configuration: **credentials**. No collection id, no doc id
 /// — those are discovered by convention. `Debug` is safe: the token redacts.
@@ -245,15 +78,14 @@ pub struct OutlineConfig {
     pub token: Secret,
 }
 
+// --- the store --------------------------------------------------------------
+
 /// The real Memory adapter, fronting an Outline collection it manages by name.
-/// Stateless: it holds a client, credentials, and the collection *name*, never
-/// an id or a fact. Constructed unconfigured when the operator hasn't wired
-/// credentials yet — then the verbs refuse with [`MemoryError::NotConfigured`]
-/// rather than lie.
+/// Stateless: it holds an API client and the collection *name*, never an id or a
+/// fact.
 #[derive(Clone)]
 pub struct OutlineStore {
-    http: reqwest::Client,
-    config: Option<OutlineConfig>,
+    api: Arc<dyn OutlineApi>,
     collection: String,
 }
 
@@ -275,184 +107,139 @@ impl OutlineStore {
         config: OutlineConfig,
         collection: impl Into<String>,
     ) -> Self {
-        Self {
-            http,
-            config: Some(config),
-            collection: collection.into(),
-        }
+        let api = Arc::new(HttpOutline::new(http, config.base_url, config.token));
+        Self::from_api(api, collection)
     }
 
     /// A store with no credentials yet — every verb returns
     /// [`MemoryError::NotConfigured`]. Lets the server boot (and keep serving
     /// `ping`) before Outline is wired, without shipping a toy store.
-    pub fn unconfigured(http: reqwest::Client) -> Self {
+    pub fn unconfigured() -> Self {
+        Self::from_api(Arc::new(Unconfigured), Self::DEFAULT_COLLECTION)
+    }
+
+    fn from_api(api: Arc<dyn OutlineApi>, collection: impl Into<String>) -> Self {
         Self {
-            http,
-            config: None,
-            collection: Self::DEFAULT_COLLECTION.to_string(),
+            api,
+            collection: collection.into(),
         }
     }
 
-    fn cfg(&self) -> Result<&OutlineConfig, MemoryError> {
-        self.config.as_ref().ok_or_else(|| {
-            MemoryError::NotConfigured("set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN".into())
-        })
+    /// The description jojobot stamps on a collection it creates.
+    fn owner_description(&self) -> String {
+        format!("Managed by jojobot — do not edit by hand. {OWNER_TAG}")
     }
 
-    /// POST a JSON body to an Outline API endpoint and return the parsed JSON.
-    /// Central place for auth + error mapping — no `unwrap` on any path.
-    async fn api(
-        &self,
-        cfg: &OutlineConfig,
-        endpoint: &str,
-        body: serde_json::Value,
-    ) -> Result<serde_json::Value, MemoryError> {
-        let resp = self
-            .http
-            .post(format!("{}/api/{endpoint}", cfg.base_url))
-            .bearer_auth(cfg.token.expose())
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| MemoryError::Store(format!("{endpoint} request: {e}")))?;
-        if !resp.status().is_success() {
-            return Err(MemoryError::Store(format!(
-                "{endpoint} returned {}",
-                resp.status()
-            )));
-        }
-        resp.json()
-            .await
-            .map_err(|e| MemoryError::Store(format!("{endpoint} body: {e}")))
-    }
-
-    /// Discover jojobot's collection by name, creating it if absent. Returns its
-    /// id (used only in-flight; never persisted in jojobot).
-    async fn resolve_collection_id(&self, cfg: &OutlineConfig) -> Result<String, MemoryError> {
-        let mut offset = 0u64;
+    /// Every collection that is both named ours AND carries the ownership tag —
+    /// paged in full.
+    async fn owned_collections(&self) -> Result<Vec<CollectionRec>, MemoryError> {
+        let mut owned = Vec::new();
+        let mut offset = 0;
         loop {
-            let page = self
-                .api(cfg, "collections.list", json!({ "offset": offset, "limit": 100 }))
-                .await?;
-            let items = page["data"]
-                .as_array()
-                .ok_or_else(|| MemoryError::Store("collections.list: no data array".into()))?;
-            for c in items {
-                if c["name"].as_str() == Some(self.collection.as_str()) {
-                    return c["id"]
-                        .as_str()
-                        .map(str::to_string)
-                        .ok_or_else(|| MemoryError::Store("collection has no id".into()));
-                }
-            }
-            if items.len() < 100 {
+            let page = self.api.list_collections(offset, PAGE).await?;
+            let count = page.len() as u64;
+            owned.extend(
+                page.into_iter()
+                    .filter(|c| c.name == self.collection && c.description.contains(OWNER_TAG)),
+            );
+            if count < PAGE {
                 break;
             }
-            offset += 100;
+            offset += PAGE;
         }
-
-        let created = self
-            .api(cfg, "collections.create", json!({ "name": self.collection }))
-            .await?;
-        created["data"]["id"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| MemoryError::Store("collections.create: no id".into()))
+        Ok(owned)
     }
 
-    /// Resolve an entity's doc within jojobot's collection by its deterministic
-    /// title (the entity id). Creates a seeded doc when `create` is set and none
-    /// exists. `Ok(None)` means "no doc and not asked to create one".
+    /// The id of jojobot's collection, creating it if absent. After a create it
+    /// re-lists and picks the canonical (oldest) owned collection, so a
+    /// concurrent double-create converges to one rather than forking.
+    async fn resolve_collection(&self) -> Result<String, MemoryError> {
+        if let Some(c) = pick_oldest(self.owned_collections().await?, |c| &c.created_at, |c| &c.id) {
+            return Ok(c.id);
+        }
+        self.api
+            .create_collection(&self.collection, &self.owner_description())
+            .await?;
+        pick_oldest(self.owned_collections().await?, |c| &c.created_at, |c| &c.id)
+            .map(|c| c.id)
+            .ok_or_else(|| MemoryError::Store("collection missing after create".into()))
+    }
+
+    /// Every doc in the collection whose embedded `id:` marker is `subject` —
+    /// paged in full. Resolution keys on the marker, never the title, so a
+    /// renamed doc is never orphaned.
+    async fn entity_docs(
+        &self,
+        collection_id: &str,
+        subject: &EntityId,
+    ) -> Result<Vec<DocRec>, MemoryError> {
+        let mut matches = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = self.api.list_documents(collection_id, offset, PAGE).await?;
+            let count = page.len() as u64;
+            matches.extend(
+                page.into_iter()
+                    .filter(|d| parse_id_marker(&d.text).as_deref() == Some(subject.as_str())),
+            );
+            if count < PAGE {
+                break;
+            }
+            offset += PAGE;
+        }
+        Ok(matches)
+    }
+
+    /// Resolve an entity's doc by marker, creating a seeded one when `create` is
+    /// set and none exists. After a create it re-lists and picks the canonical
+    /// (oldest), self-healing a concurrent double-create. `Ok(None)` means "no
+    /// doc and not asked to create one".
     async fn resolve_entity_doc(
         &self,
-        cfg: &OutlineConfig,
         subject: &EntityId,
         create: bool,
-    ) -> Result<Option<String>, MemoryError> {
-        let collection_id = self.resolve_collection_id(cfg).await?;
-        let title = subject.as_str();
+    ) -> Result<Option<DocRec>, MemoryError> {
+        let collection_id = self.resolve_collection().await?;
 
-        let mut offset = 0u64;
-        loop {
-            let page = self
-                .api(
-                    cfg,
-                    "documents.list",
-                    json!({ "collectionId": collection_id, "offset": offset, "limit": 100 }),
-                )
-                .await?;
-            let items = page["data"]
-                .as_array()
-                .ok_or_else(|| MemoryError::Store("documents.list: no data array".into()))?;
-            for d in items {
-                if d["title"].as_str() == Some(title) {
-                    return Ok(Some(
-                        d["id"]
-                            .as_str()
-                            .map(str::to_string)
-                            .ok_or_else(|| MemoryError::Store("document has no id".into()))?,
-                    ));
-                }
-            }
-            if items.len() < 100 {
-                break;
-            }
-            offset += 100;
+        if let Some(d) = pick_oldest(
+            self.entity_docs(&collection_id, subject).await?,
+            |d| &d.created_at,
+            |d| &d.id,
+        ) {
+            return Ok(Some(d));
         }
-
         if !create {
             return Ok(None);
         }
 
-        let created = self
-            .api(
-                cfg,
-                "documents.create",
-                json!({
-                    "collectionId": collection_id,
-                    "title": title,
-                    "text": seeded_doc(subject),
-                    "publish": true,
-                }),
-            )
+        self.api
+            .create_document(&collection_id, subject.as_str(), &seeded_doc(subject))
             .await?;
-        created["data"]["id"]
-            .as_str()
-            .map(str::to_string)
-            .map(Some)
-            .ok_or_else(|| MemoryError::Store("documents.create: no id".into()))
+        pick_oldest(
+            self.entity_docs(&collection_id, subject).await?,
+            |d| &d.created_at,
+            |d| &d.id,
+        )
+        .map(Some)
+        .ok_or_else(|| MemoryError::Store("entity doc missing after create".into()))
     }
+}
 
-    /// Fetch a doc's markdown text via `documents.info`.
-    async fn fetch_doc_text(
-        &self,
-        cfg: &OutlineConfig,
-        doc_id: &str,
-    ) -> Result<String, MemoryError> {
-        let body = self.api(cfg, "documents.info", json!({ "id": doc_id })).await?;
-        body["data"]["text"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| MemoryError::Store("documents.info: no data.text".into()))
-    }
-
-    /// Overwrite a doc's markdown text via `documents.update`.
-    async fn put_doc_text(
-        &self,
-        cfg: &OutlineConfig,
-        doc_id: &str,
-        text: &str,
-    ) -> Result<(), MemoryError> {
-        self.api(cfg, "documents.update", json!({ "id": doc_id, "text": text }))
-            .await
-            .map(|_| ())
-    }
+/// The deterministic canonical winner: oldest by `created_at`, ties broken by
+/// `id`. Both are stable across list calls, so every session agrees.
+fn pick_oldest<T>(
+    mut items: Vec<T>,
+    created_at: impl Fn(&T) -> &String,
+    id: impl Fn(&T) -> &String,
+) -> Option<T> {
+    items.sort_by(|a, b| created_at(a).cmp(created_at(b)).then_with(|| id(a).cmp(id(b))));
+    items.into_iter().next()
 }
 
 #[async_trait]
 impl Memory for OutlineStore {
     async fn capture(&self, fact: NewFact) -> Result<Fact, MemoryError> {
-        let cfg = self.cfg()?;
+        validate_subject(&fact.subject)?;
         let content = normalize_content(&fact.content);
         if content.is_empty() {
             return Err(MemoryError::InvalidFact("content is empty".into()));
@@ -463,16 +250,15 @@ impl Memory for OutlineStore {
             ));
         }
 
-        let doc_id = self
-            .resolve_entity_doc(cfg, &fact.subject, true)
+        let doc = self
+            .resolve_entity_doc(&fact.subject, true)
             .await?
             .ok_or_else(|| MemoryError::Store("entity doc was not created".into()))?;
 
         // Read-modify-write. Outline has no atomic append, so two captures
         // racing on the same doc could collide an id or lose a row — acceptable
         // for a single-session assistant; noted for a later revision guard.
-        let text = self.fetch_doc_text(cfg, &doc_id).await?;
-        let existing = parse_facts_table(&text);
+        let existing = parse_facts_table(&doc.text);
         let stored = Fact {
             id: next_fact_id(&existing),
             subject: fact.subject,
@@ -481,117 +267,349 @@ impl Memory for OutlineStore {
             status: fact.status,
             date: fact.date,
         };
-        let updated = with_fact_appended(&text, &render_fact_row(&stored));
-        self.put_doc_text(cfg, &doc_id, &updated).await?;
+        let updated = with_fact_appended(&doc.text, &render_fact_row(&stored));
+        self.api.update_document(&doc.id, &updated).await?;
         Ok(stored)
     }
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        let cfg = self.cfg()?;
-        match self.resolve_entity_doc(cfg, subject, false).await? {
+        match self.resolve_entity_doc(subject, false).await? {
             None => Ok(Vec::new()),
-            Some(doc_id) => {
-                let text = self.fetch_doc_text(cfg, &doc_id).await?;
-                Ok(parse_facts_table(&text)
-                    .into_iter()
-                    .filter(|f| &f.subject == subject)
-                    .collect())
-            }
+            Some(doc) => Ok(parse_facts_table(&doc.text)
+                .into_iter()
+                .filter(|f| &f.subject == subject)
+                .collect()),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use jiff::civil::date;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    fn fact(id: &str, subject: &str, content: &str, prov: Provenance, d: Date) -> Fact {
-        Fact {
-            id: FactId(id.into()),
-            subject: EntityId(subject.into()),
-            content: content.into(),
-            provenance: prov,
-            status: FactStatus::Active,
-            date: d,
+    use jiff::civil::date;
+    use jojobot_domain::memory::testing::contract;
+
+    use super::*;
+
+    /// In-memory [`OutlineApi`] double. Ids/`created_at` are a monotonic counter
+    /// (zero-padded so lexicographic = chronological) — no clock, deterministic.
+    #[derive(Default)]
+    struct FakeOutline {
+        seq: AtomicU64,
+        collections: Mutex<Vec<CollectionRec>>,
+        // (collection_id, doc)
+        documents: Mutex<Vec<(String, DocRec)>>,
+    }
+
+    impl FakeOutline {
+        fn new() -> Arc<Self> {
+            Arc::new(Self::default())
+        }
+
+        fn stamp(&self) -> String {
+            format!("{:020}", self.seq.fetch_add(1, Ordering::SeqCst))
+        }
+
+        /// Pre-seed a collection; returns its id.
+        fn seed_collection(&self, name: &str, description: &str) -> String {
+            let s = self.stamp();
+            let id = format!("col-{s}");
+            self.collections.lock().unwrap().push(CollectionRec {
+                id: id.clone(),
+                name: name.into(),
+                description: description.into(),
+                created_at: s,
+            });
+            id
+        }
+
+        /// Pre-seed a document; returns its id.
+        fn seed_document(&self, collection_id: &str, title: &str, text: &str) -> String {
+            let s = self.stamp();
+            let id = format!("doc-{s}");
+            self.documents.lock().unwrap().push((
+                collection_id.into(),
+                DocRec {
+                    id: id.clone(),
+                    title: title.into(),
+                    text: text.into(),
+                    created_at: s,
+                },
+            ));
+            id
+        }
+
+        fn rename_document(&self, id: &str, new_title: &str) {
+            let mut docs = self.documents.lock().unwrap();
+            let d = docs.iter_mut().find(|(_, d)| d.id == id).expect("doc exists");
+            d.1.title = new_title.into();
+        }
+
+        fn collections_named(&self, name: &str) -> Vec<CollectionRec> {
+            self.collections
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|c| c.name == name)
+                .cloned()
+                .collect()
+        }
+
+        fn owned_named(&self, name: &str) -> usize {
+            self.collections_named(name)
+                .iter()
+                .filter(|c| c.description.contains(OWNER_TAG))
+                .count()
+        }
+
+        fn docs_in(&self, collection_id: &str) -> Vec<DocRec> {
+            self.documents
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(cid, _)| cid == collection_id)
+                .map(|(_, d)| d.clone())
+                .collect()
         }
     }
 
-    #[test]
-    fn renders_the_exact_pinned_row() {
-        // Pin the literal wire format — a symmetric round-trip alone can't catch
-        // a schema drift both sides share.
-        let f = fact("f1", "person:jose", "drinks oat milk", Provenance::Inference, date(2026, 7, 24));
-        assert_eq!(
-            render_fact_row(&f),
-            "| f1 | person:jose | drinks oat milk | inference | active | 2026-07-24 |"
+    #[async_trait]
+    impl OutlineApi for FakeOutline {
+        async fn list_collections(
+            &self,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<CollectionRec>, MemoryError> {
+            let all = self.collections.lock().unwrap();
+            Ok(all
+                .iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .cloned()
+                .collect())
+        }
+
+        async fn create_collection(
+            &self,
+            name: &str,
+            description: &str,
+        ) -> Result<CollectionRec, MemoryError> {
+            let id = self.seed_collection(name, description);
+            Ok(self
+                .collections
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|c| c.id == id)
+                .cloned()
+                .unwrap())
+        }
+
+        async fn list_documents(
+            &self,
+            collection_id: &str,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<DocRec>, MemoryError> {
+            let all = self.documents.lock().unwrap();
+            Ok(all
+                .iter()
+                .filter(|(cid, _)| cid == collection_id)
+                .map(|(_, d)| d.clone())
+                .skip(offset as usize)
+                .take(limit as usize)
+                .collect())
+        }
+
+        async fn create_document(
+            &self,
+            collection_id: &str,
+            title: &str,
+            text: &str,
+        ) -> Result<DocRec, MemoryError> {
+            let id = self.seed_document(collection_id, title, text);
+            Ok(self
+                .documents
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(_, d)| d.id == id)
+                .map(|(_, d)| d.clone())
+                .unwrap())
+        }
+
+        async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            let mut docs = self.documents.lock().unwrap();
+            match docs.iter_mut().find(|(_, d)| d.id == id) {
+                Some((_, d)) => {
+                    d.text = text.into();
+                    Ok(())
+                }
+                None => Err(MemoryError::Store(format!("update_document: no doc {id}"))),
+            }
+        }
+    }
+
+    const COLL: &str = "jojobot-test";
+
+    fn store(fake: Arc<FakeOutline>) -> OutlineStore {
+        OutlineStore::from_api(fake, COLL)
+    }
+
+    fn owned_desc() -> String {
+        format!("Managed by jojobot. {OWNER_TAG}")
+    }
+
+    /// The whole real store logic (provisioning + codec) against a fake
+    /// transport — the fast/CI coverage that used to exist only in the gated
+    /// integration test.
+    #[tokio::test]
+    async fn outline_store_satisfies_the_contract() {
+        contract::run_all(&store(FakeOutline::new())).await;
+    }
+
+    #[tokio::test]
+    async fn creates_an_owned_collection_when_absent() {
+        let fake = FakeOutline::new();
+        store(fake.clone())
+            .capture(NewFact::about(EntityId::person("jose"), "x", date(2026, 7, 24)))
+            .await
+            .unwrap();
+        assert_eq!(fake.owned_named(COLL), 1, "exactly one owned collection");
+    }
+
+    #[tokio::test]
+    async fn never_adopts_a_users_unowned_same_named_collection() {
+        let fake = FakeOutline::new();
+        // A user's own collection that happens to share the name — no owner tag.
+        let user_coll = fake.seed_collection(COLL, "my personal notes");
+
+        store(fake.clone())
+            .capture(NewFact::about(EntityId::person("jose"), "x", date(2026, 7, 24)))
+            .await
+            .unwrap();
+
+        assert_eq!(fake.owned_named(COLL), 1, "jojobot made its own owned collection");
+        assert!(
+            fake.docs_in(&user_coll).is_empty(),
+            "the user's collection must be left untouched"
         );
     }
 
-    #[test]
-    fn both_provenances_round_trip_via_their_own_column() {
-        // The regression guard for the collision: content ending in ❓ must NOT
-        // be read as inference — provenance rides its own column.
-        let testi = fact("f1", "person:jose", "born in Chile", Provenance::Testimony, date(2026, 1, 1));
-        let infer = fact("f2", "person:jose", "prefers mornings ❓", Provenance::Inference, date(2026, 1, 2));
-        assert_eq!(parse_fact_row(&render_fact_row(&testi)).unwrap(), testi);
-        assert_eq!(parse_fact_row(&render_fact_row(&infer)).unwrap(), infer);
+    #[tokio::test]
+    async fn reconciles_duplicate_owned_collections_to_the_oldest() {
+        let fake = FakeOutline::new();
+        let older = fake.seed_collection(COLL, &owned_desc());
+        let _newer = fake.seed_collection(COLL, &owned_desc());
+
+        store(fake.clone())
+            .capture(NewFact::about(EntityId::person("jose"), "x", date(2026, 7, 24)))
+            .await
+            .unwrap();
+
+        assert_eq!(fake.owned_named(COLL), 2, "no third collection created");
+        assert_eq!(fake.docs_in(&older).len(), 1, "the fact went to the oldest");
     }
 
-    #[test]
-    fn content_with_a_pipe_is_escaped_and_round_trips() {
-        let f = fact("f1", "person:jose", "reads a|b|c notation", Provenance::Testimony, date(2026, 7, 24));
-        let row = render_fact_row(&f);
-        assert!(row.contains("a\\|b\\|c"), "pipes must be escaped in the row: {row}");
-        assert_eq!(parse_fact_row(&row).unwrap(), f);
+    #[tokio::test]
+    async fn pages_beyond_100_collections_before_concluding_absent() {
+        let fake = FakeOutline::new();
+        for i in 0..120 {
+            fake.seed_collection(&format!("other-{i}"), "unrelated");
+        }
+        // The one owned match sits past the first page.
+        let owned = fake.seed_collection(COLL, &owned_desc());
+
+        store(fake.clone())
+            .capture(NewFact::about(EntityId::person("jose"), "x", date(2026, 7, 24)))
+            .await
+            .unwrap();
+
+        assert_eq!(fake.owned_named(COLL), 1, "must find the paged-past match, not fork");
+        assert_eq!(fake.docs_in(&owned).len(), 1);
     }
 
-    #[test]
-    fn header_and_separator_are_not_facts() {
-        assert!(parse_fact_row(TABLE_HEADER).is_none());
-        assert!(parse_fact_row(TABLE_SEP).is_none());
+    #[tokio::test]
+    async fn resolves_a_doc_by_marker_despite_an_unrelated_title() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let text = with_fact_appended(
+            &seeded_doc(&EntityId::person("jose")),
+            &render_fact_row(&Fact {
+                id: jojobot_domain::memory::FactId("f1".into()),
+                subject: EntityId::person("jose"),
+                content: "plays go".into(),
+                provenance: jojobot_domain::memory::Provenance::Testimony,
+                status: Default::default(),
+                date: date(2026, 7, 1),
+            }),
+        );
+        fake.seed_document(&coll, "Totally Unrelated Title", &text);
+
+        let facts = store(fake).recall(&EntityId::person("jose")).await.unwrap();
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].content, "plays go");
     }
 
-    #[test]
-    fn next_id_increments_over_existing() {
-        let existing = vec![
-            fact("f1", "person:jose", "a", Provenance::Testimony, date(2026, 1, 1)),
-            fact("f3", "person:jose", "b", Provenance::Testimony, date(2026, 1, 1)),
-        ];
-        assert_eq!(next_fact_id(&existing), FactId("f4".into()));
-        assert_eq!(next_fact_id(&[]), FactId("f1".into()));
+    #[tokio::test]
+    async fn a_renamed_title_does_not_orphan_or_duplicate_the_doc() {
+        let fake = FakeOutline::new();
+        let jose = EntityId::person("jose");
+
+        // First capture creates the doc.
+        store(fake.clone())
+            .capture(NewFact::about(jose.clone(), "plays go", date(2026, 7, 1)))
+            .await
+            .unwrap();
+        let coll = fake.collections_named(COLL)[0].id.clone();
+        let doc_id = fake.docs_in(&coll)[0].id.clone();
+
+        // The user renames the doc's title — the marker is untouched.
+        fake.rename_document(&doc_id, "José 🎉 (my buddy)");
+
+        // Second capture must land in the SAME doc, found by marker.
+        store(fake.clone())
+            .capture(NewFact::about(jose.clone(), "learning Rust", date(2026, 7, 2)))
+            .await
+            .unwrap();
+
+        assert_eq!(fake.docs_in(&coll).len(), 1, "no duplicate doc spawned on rename");
+        let facts = store(fake).recall(&jose).await.unwrap();
+        assert_eq!(facts.len(), 2, "both facts live in the one doc");
     }
 
-    #[test]
-    fn append_into_existing_table_then_parse_finds_it() {
-        let doc = "# About\n\nSome prose.\n\n### ⚙ facts\n\n| id | subject | content | provenance | status | date |\n| --- | --- | --- | --- | --- | --- |\n| f1 | person:jose | plays go | testimony | active | 2026-07-01 |\n";
-        let f = fact("f2", "person:jose", "learning Rust", Provenance::Inference, date(2026, 7, 2));
-        let updated = with_fact_appended(doc, &render_fact_row(&f));
-        let parsed = parse_facts_table(&updated);
-        assert_eq!(parsed.len(), 2);
-        assert_eq!(parsed[1], f);
-        assert!(updated.contains("Some prose."), "prose above the table is untouched");
+    #[tokio::test]
+    async fn reconciles_duplicate_docs_to_the_oldest_canonical() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let marker = &seeded_doc(&EntityId::person("jose"));
+        let older = with_fact_appended(marker, "| f1 | person:jose | older fact | testimony | active | 2026-07-01 |");
+        let newer = with_fact_appended(marker, "| f1 | person:jose | newer fact | testimony | active | 2026-07-02 |");
+        fake.seed_document(&coll, "a", &older);
+        fake.seed_document(&coll, "b", &newer);
+
+        let facts = store(fake).recall(&EntityId::person("jose")).await.unwrap();
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].content, "older fact", "the oldest doc is canonical");
     }
 
-    #[test]
-    fn seeded_doc_has_an_empty_but_parseable_table() {
-        let doc = seeded_doc(&EntityId::person("jose"));
-        assert!(doc.contains("id: person:jose"));
-        assert!(parse_facts_table(&doc).is_empty());
-        // And a capture-shaped append lands correctly in the seed.
-        let f = fact("f1", "person:jose", "first fact", Provenance::Testimony, date(2026, 7, 24));
-        let updated = with_fact_appended(&doc, &render_fact_row(&f));
-        assert_eq!(parse_facts_table(&updated), vec![f]);
-    }
+    #[tokio::test]
+    async fn pages_beyond_100_docs_before_concluding_absent() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        for i in 0..120 {
+            fake.seed_document(&coll, &format!("other-{i}"), &seeded_doc(&EntityId::person(format!("other-{i}"))));
+        }
+        let target = with_fact_appended(
+            &seeded_doc(&EntityId::person("jose")),
+            "| f1 | person:jose | found me | testimony | active | 2026-07-01 |",
+        );
+        fake.seed_document(&coll, "jose doc", &target);
 
-    #[test]
-    fn secret_debug_redacts_the_token() {
-        let cfg = OutlineConfig {
-            base_url: "https://wiki.example".into(),
-            token: Secret::new("super-secret-token"),
-        };
-        let shown = format!("{cfg:?}");
-        assert!(!shown.contains("super-secret-token"), "token leaked: {shown}");
-        assert!(shown.contains("***"));
+        let facts = store(fake).recall(&EntityId::person("jose")).await.unwrap();
+        assert_eq!(facts.len(), 1, "must find the paged-past doc");
+        assert_eq!(facts[0].content, "found me");
     }
 }

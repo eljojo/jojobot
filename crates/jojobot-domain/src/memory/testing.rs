@@ -13,7 +13,7 @@
 
 use std::sync::Mutex;
 
-use super::{EntityId, Fact, FactId, Memory, MemoryError, NewFact, normalize_content};
+use super::{EntityId, Fact, FactId, Memory, MemoryError, NewFact, normalize_content, validate_subject};
 
 /// An in-memory [`Memory`] adapter for tests. Holds facts in a `Vec` behind a
 /// `Mutex`; mints ids `f1`, `f2`, … in capture order. A fresh instance starts
@@ -33,8 +33,9 @@ impl InMemoryMemory {
 #[async_trait::async_trait]
 impl Memory for InMemoryMemory {
     async fn capture(&self, fact: NewFact) -> Result<Fact, MemoryError> {
-        // Mirror the real adapter's normalization so the fake can't drift: edge
-        // whitespace doesn't survive a table cell, so it isn't significant.
+        // Same guards the real adapter applies, so the fake can't drift.
+        validate_subject(&fact.subject)?;
+        // Edge whitespace doesn't survive a table cell, so it isn't significant.
         let content = normalize_content(&fact.content);
         if content.is_empty() {
             return Err(MemoryError::InvalidFact("content is empty".into()));
@@ -230,6 +231,41 @@ pub mod contract {
         );
     }
 
+    /// An adversarial subject id — one carrying a pipe, a newline, a markdown
+    /// header, or a fence — is rejected at capture, never written. This is the
+    /// injection guard: a forged subject must not be able to fabricate a fact
+    /// row, a table, or a header in someone's doc.
+    pub async fn malicious_subjects_are_rejected<M: Memory>(store: &M) {
+        for bad in [
+            "person:a|b",
+            "person:a\nb",
+            "person:a\n### forged",
+            "person:a`b`",
+            "person:a b",
+        ] {
+            let err = store
+                .capture(NewFact::about(
+                    EntityId(bad.into()),
+                    "should never be stored",
+                    date(2026, 7, 24),
+                ))
+                .await
+                .expect_err("a malicious subject must be rejected");
+            assert!(
+                matches!(err, MemoryError::InvalidSubject(_)),
+                "expected InvalidSubject for {bad:?}, got {err:?}"
+            );
+        }
+    }
+
+    /// Recalling a subject that has no doc yet returns empty — not an error, and
+    /// without creating anything.
+    pub async fn recall_unknown_subject_is_empty<M: Memory>(store: &M) {
+        let never = EntityId::person("contract-never-captured");
+        let facts = store.recall(&never).await.expect("recall should succeed");
+        assert!(facts.is_empty(), "unknown subject must recall empty: {facts:?}");
+    }
+
     /// Run the whole contract against one store.
     pub async fn run_all<M: Memory>(store: &M) {
         capture_reads_back(store).await;
@@ -239,5 +275,7 @@ pub mod contract {
         edge_whitespace_is_normalized(store).await;
         multiple_facts_all_recallable(store).await;
         subjects_are_isolated(store).await;
+        malicious_subjects_are_rejected(store).await;
+        recall_unknown_subject_is_empty(store).await;
     }
 }

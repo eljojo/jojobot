@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
                 "MEMORY DISABLED — set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN to enable \
                  capture/recall. Serving ping only; memory verbs return a NotConfigured error."
             );
-            Arc::new(OutlineStore::unconfigured(http.clone()))
+            Arc::new(OutlineStore::unconfigured())
         }
     };
 

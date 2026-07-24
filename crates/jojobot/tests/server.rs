@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 /// The Memory port for the transport/auth tests, which never call the memory
 /// verbs — the real adapter, left unconfigured (no network). No toy store.
 fn test_memory() -> std::sync::Arc<dyn jojobot_domain::memory::Memory> {
-    std::sync::Arc::new(OutlineStore::unconfigured(reqwest::Client::new()))
+    std::sync::Arc::new(OutlineStore::unconfigured())
 }
 
 /// Bind an ephemeral port, build the app from `make_state`, and serve it on a
