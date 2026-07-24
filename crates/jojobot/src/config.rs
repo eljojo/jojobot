@@ -125,9 +125,35 @@ pub fn origin_of(url: &str) -> String {
     format!("{scheme}://{authority}")
 }
 
+/// The authority (`host` or `host:port`) of a URL — scheme and path stripped.
+/// Used to allow the public `Host` header through the transport's DNS-rebinding
+/// guard. Returns `None` when the input has no recognizable scheme/authority.
+pub fn authority_of(url: &str) -> Option<String> {
+    let (_scheme, rest) = url.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    if authority.is_empty() {
+        None
+    } else {
+        Some(authority.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Config, RawEnv, origin_of};
+    use super::{Config, RawEnv, authority_of, origin_of};
+
+    #[test]
+    fn authority_strips_scheme_and_path() {
+        assert_eq!(
+            authority_of("https://jojobot.net/mcp").as_deref(),
+            Some("jojobot.net")
+        );
+        assert_eq!(
+            authority_of("http://127.0.0.1:8080/mcp").as_deref(),
+            Some("127.0.0.1:8080")
+        );
+        assert_eq!(authority_of("not-a-url"), None);
+    }
 
     fn raw(bind: &str, issuer: Option<&str>, allow_no_auth: bool) -> RawEnv {
         RawEnv {

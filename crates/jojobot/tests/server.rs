@@ -139,6 +139,53 @@ async fn mcp_is_open_when_auth_disabled() {
     ct.cancel();
 }
 
+/// Auth-off state whose resource is a *public* URL, so the transport's Host
+/// allowlist must accept that hostname rather than only loopback.
+fn public_no_auth_state(_addr: SocketAddr) -> AppState {
+    AppState {
+        resource: "https://jojobot.example/mcp".to_string(),
+        issuer: None,
+        validator: None,
+        metadata_url: "https://jojobot.example/.well-known/oauth-protected-resource".to_string(),
+    }
+}
+
+#[tokio::test]
+async fn mcp_accepts_public_host_but_still_guards_dns_rebinding() {
+    // Behind a tunnel the inbound Host is our public hostname. The transport
+    // must accept the host derived from the resource, while still rejecting a
+    // stray/spoofed Host — the DNS-rebinding guard stays on. A disallowed Host
+    // yields 403; anything else means the request got past the guard.
+    let (addr, ct) = spawn_server(public_no_auth_state).await;
+    let client = reqwest::Client::new();
+
+    let allowed = client
+        .post(format!("http://{addr}/mcp"))
+        .header("host", "jojobot.example")
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(
+        allowed.status(),
+        403,
+        "the resource's own host must not be rejected as DNS rebinding"
+    );
+
+    let spoofed = client
+        .post(format!("http://{addr}/mcp"))
+        .header("host", "evil.example")
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(spoofed.status(), 403, "an unknown Host must still be forbidden");
+
+    ct.cancel();
+}
+
 #[tokio::test]
 async fn ping_tool_round_trips_end_to_end() {
     use rmcp::ServiceExt;

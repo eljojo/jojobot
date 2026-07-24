@@ -34,10 +34,19 @@ pub struct AppState {
 /// health and protected-resource-metadata endpoints. `ct` cancels the MCP
 /// session manager on shutdown.
 pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
+    // The transport guards against DNS rebinding by only accepting loopback
+    // `Host` headers by default. Behind a TLS-terminating tunnel the inbound
+    // Host is our public hostname, so add the resource's authority to the
+    // allowlist. Loopback stays for local health probes.
+    let mut server_config = StreamableHttpServerConfig::default().with_cancellation_token(ct);
+    if let Some(authority) = crate::config::authority_of(&state.resource) {
+        server_config.allowed_hosts.push(authority);
+    }
+
     let mcp = StreamableHttpService::new(
         || Ok(Jojobot::new()),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default().with_cancellation_token(ct),
+        server_config,
     );
 
     // The MCP transport is guarded; the metadata + health endpoints are public.
