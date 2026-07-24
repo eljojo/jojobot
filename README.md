@@ -83,12 +83,15 @@ All configuration is environment-driven.
 | --- | --- | --- |
 | `JOJOBOT_BIND` | Listen address | `127.0.0.1:8080` |
 | `JOJOBOT_RESOURCE` | This server's resource identifier (RFC 9728) | derived from bind |
-| `JOJOBOT_ISSUER` | OIDC issuer URL — **set this to enable auth** | unset (auth off) |
+| `JOJOBOT_ISSUER` | OIDC issuer URL — **set this to enable auth** | unset |
 | `JOJOBOT_AUDIENCE` | Required token audience (RFC 8707) | the resource id |
 | `JOJOBOT_JWKS_URI` | Explicit JWKS URI | discovered from issuer |
+| `JOJOBOT_ALLOW_NO_AUTH` | Set to `1` to run **without auth** (dev only) | unset |
 
-With `JOJOBOT_ISSUER` unset the server runs **without authentication** and logs
-a loud warning — intended only for local development.
+The server **fails closed**: with `JOJOBOT_ISSUER` unset it refuses to start
+unless `JOJOBOT_ALLOW_NO_AUTH=1` is set explicitly, and even then it refuses a
+non-loopback bind. This turns a dropped-secret misconfiguration into a startup
+error rather than a silently unauthenticated `/mcp`.
 
 ## Auth model
 

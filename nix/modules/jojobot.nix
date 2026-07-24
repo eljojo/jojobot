@@ -61,6 +61,16 @@ in
       description = "Explicit JWKS URI. Discovered from the issuer when null.";
     };
 
+    allowNoAuth = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Explicitly permit running without authentication (development only).
+        Required when `issuer` is null — otherwise the service fails closed and
+        refuses to start. Even when true, a non-loopback bind is refused.
+      '';
+    };
+
     logLevel = mkOption {
       type = types.str;
       default = "info";
@@ -109,7 +119,8 @@ in
       // optionalAttrs (cfg.issuer != null) { JOJOBOT_ISSUER = cfg.issuer; }
       // optionalAttrs (cfg.audience != null) { JOJOBOT_AUDIENCE = cfg.audience; }
       // optionalAttrs (cfg.resource != null) { JOJOBOT_RESOURCE = cfg.resource; }
-      // optionalAttrs (cfg.jwksUri != null) { JOJOBOT_JWKS_URI = cfg.jwksUri; };
+      // optionalAttrs (cfg.jwksUri != null) { JOJOBOT_JWKS_URI = cfg.jwksUri; }
+      // optionalAttrs cfg.allowNoAuth { JOJOBOT_ALLOW_NO_AUTH = "1"; };
 
       serviceConfig = {
         Type = "simple";

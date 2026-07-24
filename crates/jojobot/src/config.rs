@@ -36,34 +36,80 @@ impl Config {
     /// - `JOJOBOT_AUDIENCE` — required audience (default: the resource id).
     /// - `JOJOBOT_JWKS_URI` — optional JWKS override.
     pub fn from_env() -> anyhow::Result<Self> {
-        let bind_str =
-            std::env::var("JOJOBOT_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
-        let bind: SocketAddr = bind_str
-            .parse()
-            .map_err(|e| anyhow::anyhow!("JOJOBOT_BIND ({bind_str:?}) is not a valid address: {e}"))?;
+        Self::build(RawEnv::from_env())
+    }
 
-        let resource = std::env::var("JOJOBOT_RESOURCE")
-            .unwrap_or_else(|_| format!("http://{bind}/mcp"));
+    /// Validate and assemble configuration from already-read env values. Pure —
+    /// no environment access — so the fail-closed rules are unit-testable.
+    fn build(raw: RawEnv) -> anyhow::Result<Self> {
+        let bind: SocketAddr = raw.bind.parse().map_err(|e| {
+            anyhow::anyhow!("JOJOBOT_BIND ({:?}) is not a valid address: {e}", raw.bind)
+        })?;
 
-        let auth = match std::env::var("JOJOBOT_ISSUER") {
-            Ok(issuer) if !issuer.is_empty() => {
-                let audience =
-                    std::env::var("JOJOBOT_AUDIENCE").unwrap_or_else(|_| resource.clone());
-                let jwks_uri = std::env::var("JOJOBOT_JWKS_URI").ok().filter(|s| !s.is_empty());
-                Some(AuthConfig {
-                    issuer,
-                    audience,
-                    jwks_uri,
-                })
+        let resource = raw
+            .resource
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("http://{bind}/mcp"));
+
+        let auth = raw
+            .issuer
+            .filter(|s| !s.is_empty())
+            .map(|issuer| AuthConfig {
+                issuer,
+                audience: raw
+                    .audience
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| resource.clone()),
+                jwks_uri: raw.jwks_uri.filter(|s| !s.is_empty()),
+            });
+
+        // Fail closed: never infer "auth disabled" from a missing issuer alone.
+        if auth.is_none() {
+            if !raw.allow_no_auth {
+                anyhow::bail!(
+                    "refusing to start without authentication: set JOJOBOT_ISSUER, or set \
+                     JOJOBOT_ALLOW_NO_AUTH=1 to run open on localhost for development"
+                );
             }
-            _ => None,
-        };
+            if !bind.ip().is_loopback() {
+                anyhow::bail!(
+                    "refusing to serve unauthenticated on non-loopback address {bind}: bind to \
+                     localhost, or set JOJOBOT_ISSUER to enable authentication"
+                );
+            }
+        }
 
         Ok(Config {
             bind,
             resource,
             auth,
         })
+    }
+}
+
+/// Raw environment values, read once. Kept separate from [`Config::build`] so
+/// the validation logic can be tested without mutating process env.
+struct RawEnv {
+    bind: String,
+    resource: Option<String>,
+    issuer: Option<String>,
+    audience: Option<String>,
+    jwks_uri: Option<String>,
+    allow_no_auth: bool,
+}
+
+impl RawEnv {
+    fn from_env() -> Self {
+        RawEnv {
+            bind: std::env::var("JOJOBOT_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string()),
+            resource: std::env::var("JOJOBOT_RESOURCE").ok(),
+            issuer: std::env::var("JOJOBOT_ISSUER").ok(),
+            audience: std::env::var("JOJOBOT_AUDIENCE").ok(),
+            jwks_uri: std::env::var("JOJOBOT_JWKS_URI").ok(),
+            allow_no_auth: std::env::var("JOJOBOT_ALLOW_NO_AUTH")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
+        }
     }
 }
 
@@ -81,7 +127,43 @@ pub fn origin_of(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::origin_of;
+    use super::{Config, RawEnv, origin_of};
+
+    fn raw(bind: &str, issuer: Option<&str>, allow_no_auth: bool) -> RawEnv {
+        RawEnv {
+            bind: bind.to_string(),
+            resource: None,
+            issuer: issuer.map(str::to_string),
+            audience: None,
+            jwks_uri: None,
+            allow_no_auth,
+        }
+    }
+
+    #[test]
+    fn refuses_no_auth_without_explicit_optin() {
+        // Missing issuer and no JOJOBOT_ALLOW_NO_AUTH must fail closed.
+        assert!(Config::build(raw("127.0.0.1:8080", None, false)).is_err());
+    }
+
+    #[test]
+    fn allows_no_auth_on_loopback_with_optin() {
+        let cfg = Config::build(raw("127.0.0.1:8080", None, true)).expect("loopback dev mode");
+        assert!(cfg.auth.is_none());
+    }
+
+    #[test]
+    fn refuses_no_auth_on_public_bind_even_with_optin() {
+        // The opt-in permits open dev on localhost, never on a public interface.
+        assert!(Config::build(raw("0.0.0.0:8080", None, true)).is_err());
+    }
+
+    #[test]
+    fn allows_public_bind_when_auth_enabled() {
+        let cfg = Config::build(raw("0.0.0.0:8080", Some("https://issuer.example"), false))
+            .expect("auth protects the public bind");
+        assert!(cfg.auth.is_some());
+    }
 
     #[test]
     fn origin_strips_path() {

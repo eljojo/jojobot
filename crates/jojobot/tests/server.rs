@@ -105,6 +105,27 @@ async fn mcp_rejects_unauthenticated_when_auth_enabled() {
 }
 
 #[tokio::test]
+async fn mcp_guard_covers_path_and_method_variants() {
+    // The bearer guard must cover every path under /mcp and every method — no
+    // bypass via trailing slash, sub-path, traversal, encoded slash, or //.
+    let (addr, ct) = spawn_server(auth_state).await;
+    let client = reqwest::Client::new();
+    let paths = ["/mcp", "/mcp/", "/mcp/anything", "/mcp/../mcp", "/mcp%2f", "//mcp"];
+    let methods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
+    for p in paths {
+        for m in methods {
+            let resp = client
+                .request(m.parse().unwrap(), format!("http://{addr}{p}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 401, "{m} {p} must require auth");
+        }
+    }
+    ct.cancel();
+}
+
+#[tokio::test]
 async fn mcp_is_open_when_auth_disabled() {
     let (addr, ct) = spawn_server(no_auth_state).await;
     // A bare POST is not a valid MCP request, but with auth off it must never be

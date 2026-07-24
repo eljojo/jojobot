@@ -100,26 +100,12 @@ impl Validator {
             .json()
             .await?;
 
-        let mut keys = HashMap::new();
-        for jwk in jwks.keys {
-            if jwk.kty != "RSA" {
-                continue;
-            }
-            if let (Some(kid), Some(n), Some(e)) = (jwk.kid, jwk.n, jwk.e) {
-                let key = DecodingKey::from_rsa_components(&n, &e)
-                    .map_err(|err| anyhow::anyhow!("bad RSA key {kid} in JWKS: {err}"))?;
-                keys.insert(kid, key);
-            }
-        }
+        let keys = keyset_from_jwks(jwks.keys)?;
         if keys.is_empty() {
-            anyhow::bail!("no usable RSA keys in JWKS at {jwks_uri}");
+            anyhow::bail!("no usable RSA signing keys in JWKS at {jwks_uri}");
         }
 
-        Ok(Self::from_keys(
-            cfg.issuer.clone(),
-            cfg.audience.clone(),
-            keys,
-        ))
+        Ok(Self::from_keys(cfg.issuer.clone(), cfg.audience.clone(), keys))
     }
 
     /// Validate a raw JWT string. Returns the claims on success.
@@ -141,6 +127,8 @@ impl Validator {
         validation.set_issuer(&[&self.issuer]);
         validation.set_audience(&[&self.audience]);
         validation.validate_exp = true;
+        // Enforced only when the claim is present, so nbf stays optional.
+        validation.validate_nbf = true;
         validation.set_required_spec_claims(&["exp", "aud", "iss", "sub"]);
 
         let data = decode::<Claims>(token, key, &validation)
@@ -158,6 +146,27 @@ pub fn bearer_from_header(value: Option<&str>) -> Result<&str, AuthError> {
         .map(str::trim)
         .filter(|t| !t.is_empty())
         .ok_or(AuthError::MissingToken)
+}
+
+/// Build the `kid -> decoding key` map from a JWKS document. RSA keys only.
+fn keyset_from_jwks(jwks: Vec<Jwk>) -> anyhow::Result<HashMap<String, DecodingKey>> {
+    let mut keys = HashMap::new();
+    for jwk in jwks {
+        if jwk.kty != "RSA" {
+            continue;
+        }
+        // Signing keys only — a key published for encryption must never verify a
+        // signature (RFC 7517 §4.3). Absent `use` is treated as usable.
+        if jwk.use_.as_deref().is_some_and(|u| u != "sig") {
+            continue;
+        }
+        if let (Some(kid), Some(n), Some(e)) = (jwk.kid, jwk.n, jwk.e) {
+            let key = DecodingKey::from_rsa_components(&n, &e)
+                .map_err(|err| anyhow::anyhow!("bad RSA key {kid} in JWKS: {err}"))?;
+            keys.insert(kid, key);
+        }
+    }
+    Ok(keys)
 }
 
 // --- JWKS / discovery wire types (private; ACL for the issuer's JSON) ---
@@ -181,6 +190,10 @@ struct Jwk {
     n: Option<String>,
     #[serde(default)]
     e: Option<String>,
+    /// Intended key use: "sig" or "enc". A key marked for encryption must not be
+    /// trusted for signature verification.
+    #[serde(rename = "use", default)]
+    use_: Option<String>,
 }
 
 #[cfg(test)]
@@ -205,11 +218,15 @@ mod tests {
         iss: String,
         aud: String,
         exp: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        nbf: Option<u64>,
     }
 
     struct KeyPair {
         enc: EncodingKey,
         decoding: DecodingKey,
+        n: String,
+        e: String,
     }
 
     /// Generate an RSA keypair and expose it both as a jsonwebtoken signing key
@@ -228,7 +245,17 @@ mod tests {
         let e = b64.encode(pub_key.e().to_bytes_be());
         let decoding = DecodingKey::from_rsa_components(&n, &e).unwrap();
 
-        KeyPair { enc, decoding }
+        KeyPair { enc, decoding, n, e }
+    }
+
+    fn jwk_for(kp: &KeyPair, kid: &str, use_: Option<&str>) -> Jwk {
+        Jwk {
+            kty: "RSA".to_string(),
+            kid: Some(kid.to_string()),
+            n: Some(kp.n.clone()),
+            e: Some(kp.e.clone()),
+            use_: use_.map(str::to_string),
+        }
     }
 
     fn now() -> u64 {
@@ -256,7 +283,33 @@ mod tests {
             iss: ISS.to_string(),
             aud: AUD.to_string(),
             exp: now() + 3600,
+            nbf: None,
         }
+    }
+
+    #[test]
+    fn rejects_not_yet_valid_nbf() {
+        let kp = gen_keypair();
+        let mut c = good_claims();
+        c.nbf = Some(now() + 1800); // activates in 30 min
+        let token = sign(&kp.enc, KID, &c);
+        assert!(validator(kp.decoding).validate(&token).is_err());
+    }
+
+    #[test]
+    fn keyset_excludes_non_signing_keys() {
+        let sig = gen_keypair();
+        let enc = gen_keypair();
+        let jwks = vec![
+            jwk_for(&sig, "sig-kid", Some("sig")),
+            jwk_for(&enc, "enc-kid", Some("enc")),
+        ];
+        let keys = keyset_from_jwks(jwks).expect("keyset builds");
+        assert!(keys.contains_key("sig-kid"), "the signing key must be usable");
+        assert!(
+            !keys.contains_key("enc-kid"),
+            "an encryption-use key must not be trusted for verification"
+        );
     }
 
     #[test]

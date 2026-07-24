@@ -23,6 +23,8 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let http = reqwest::Client::builder()
+        // Bound the JWKS/discovery fetch so a hung issuer can't stall startup.
+        .timeout(std::time::Duration::from_secs(10))
         .build()
         .context("building HTTP client")?;
 
