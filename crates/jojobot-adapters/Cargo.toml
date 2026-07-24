@@ -1,0 +1,12 @@
+[package]
+name = "jojobot-adapters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Anti-corruption layer: one adapter per fronted service. Every quirk
+# (timezones, bare-Z CalDAV dates, silently-ignored cross-project filters,
+# HTML-entity corruption) dies here, invisible to the domain. Skeleton for now.
+[dependencies]
+jojobot-domain.workspace = true

@@ -1,0 +1,7 @@
+/target
+/.cargo/target
+result
+result-*
+.direnv
+*.age
+.env

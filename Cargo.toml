@@ -1,0 +1,67 @@
+# jojobot — a personal-assistant server that fronts life-layer services and
+# exposes itself through one MCP. User-agnostic software: everything
+# instance-specific is data or runtime config, never code.
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+rust-version = "1.85"
+repository = "https://github.com/eljojo/jojobot"
+
+[workspace.dependencies]
+# --- async runtime + web ---
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+axum = "0.8"
+tower-http = { version = "0.7", features = ["trace"] }
+tokio-util = "0.7"
+
+# --- MCP SDK (isolated behind the jojobot-mcp adapter; the domain never imports it) ---
+# Pinned to the 3.0 beta by choice; rmcp ships breaking majors, so it stays
+# behind the adapter and the domain never imports it.
+rmcp = { version = "=3.0.0-beta.1", features = [
+    "server",
+    "macros",
+    "transport-streamable-http-server",
+    "schemars",
+] }
+schemars = "1"
+
+# --- serialization ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# --- time: civil/zoned split at the type level (the bare-Z bug becomes uncompilable) ---
+jiff = "0.2"
+
+# --- auth: the one security-critical module we own ---
+# jsonwebtoken 11 requires an explicit crypto provider; rust_crypto is pure Rust
+# (no aws-lc/cmake). Without this it compiles but panics verifying any signature.
+jsonwebtoken = { version = "11", default-features = false, features = [
+    "use_pem",
+    "rust_crypto",
+] }
+# native-tls (OpenSSL) — the reliably-cached path in nixpkgs. The only TLS
+# client here is the JWKS fetch to the issuer; the MCP transport terminates TLS
+# at the ingress, not in-process.
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "default-tls",
+] }
+
+# --- errors + logging ---
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# --- internal crates ---
+jojobot-domain = { path = "crates/jojobot-domain" }
+jojobot-adapters = { path = "crates/jojobot-adapters" }
+jojobot-mcp = { path = "crates/jojobot-mcp" }
+
+[profile.release]
+lto = "thin"

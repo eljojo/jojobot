@@ -1,0 +1,11 @@
+[package]
+name = "jojobot-domain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# The domain is pure: no I/O, no rmcp, no service clients. It owns the
+# ubiquitous language and the invariants. Adapters depend on it, never the
+# reverse.
+[dependencies]

@@ -1,0 +1,39 @@
+[package]
+name = "jojobot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+default-run = "jojobot"
+
+# The composition root: wires the MCP adapter onto an HTTP transport and owns
+# the resource-server auth. This is the only place rmcp's transport and the
+# auth layer meet. Nothing user-specific is compiled in — issuer, audience and
+# resource are all runtime configuration.
+[dependencies]
+jojobot-mcp.workspace = true
+rmcp.workspace = true
+tokio.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+tokio-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+jsonwebtoken.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+# rmcp client, for the end-to-end ping test. native-tls keeps the test build off
+# aws-lc/cmake, matching the server's TLS choice (the test server is plain HTTP).
+rmcp = { workspace = true, features = [
+    "client",
+    "transport-streamable-http-client-reqwest",
+    "reqwest-native-tls",
+] }
+rsa = { version = "0.9", features = ["pem"] }
+rand = "0.8"
+base64 = "0.22"
