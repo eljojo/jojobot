@@ -34,6 +34,10 @@ schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# --- async traits: the Memory port is async (its real adapter does I/O) and
+# dyn-dispatched (Arc<dyn Memory>); async-trait keeps it object-safe ---
+async-trait = "0.1"
+
 # --- time: civil/zoned split at the type level (the bare-Z bug becomes uncompilable) ---
 jiff = "0.2"
 

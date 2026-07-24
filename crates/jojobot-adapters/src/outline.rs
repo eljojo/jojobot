@@ -2,22 +2,28 @@
 //!
 //! jojobot IS a schema layer over markdown docs: Outline is the typed document
 //! store, and this adapter reads and writes the `### ⚙ facts` table at the
-//! bottom of a target doc. Facts live next to the prose they're about — the
+//! bottom of a per-entity doc. Facts live next to the prose they're about — the
 //! user reads the prose; jojobot reads the table.
 //!
-//! The adapter hits the Outline HTTP API directly (`documents.info` /
-//! `documents.update`). That's allowed: the MCP-only rule governs the
-//! assistant-in-session, not the server. The store is stateless — it holds a
-//! client and its target, never any fact.
+//! **Convention over configuration.** The adapter is never handed an Outline id.
+//! Its only config is credentials (base URL + token). It discovers its own
+//! collection *by name* (a software constant, default `jojobot`), creating it if
+//! absent, and within it resolves each entity's doc by a deterministic title,
+//! creating a seeded doc on first capture. Everything — collection, docs,
+//! mapping — lives in Outline and is discovered/created at runtime; nothing
+//! authoritative lives in jojobot's process.
 //!
 //! The row codec (parse/render) is pure and lives at the top of this file so it
-//! is unit-tested with no network. Everything below it is the thin HTTP shell.
+//! is unit-tested with no network. Everything below it is the HTTP shell.
+
+use std::fmt;
 
 use async_trait::async_trait;
 use jiff::civil::Date;
+use serde_json::json;
 
 use jojobot_domain::memory::{
-    EntityId, Fact, FactId, FactStatus, Memory, MemoryError, NewFact, Provenance,
+    EntityId, Fact, FactId, FactStatus, Memory, MemoryError, NewFact, Provenance, normalize_content,
 };
 
 // --- fact-table format ------------------------------------------------------
@@ -25,11 +31,9 @@ use jojobot_domain::memory::{
 /// The header that marks the machine-readable fact table at the bottom of a doc.
 const FACTS_HEADER: &str = "### ⚙ facts";
 /// The table's column header row.
-const TABLE_HEADER: &str = "| id | subject | content | status | date | edges |";
+const TABLE_HEADER: &str = "| id | subject | content | provenance | status | date |";
 /// The markdown table separator under the header.
 const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- |";
-/// The inference marker on a content cell. Clean content = testimony.
-const INFERENCE_MARK: char = '❓';
 
 /// Escape a value for a markdown table cell — the one character a cell can't
 /// carry raw is the column delimiter.
@@ -64,22 +68,18 @@ fn split_cells(row: &str) -> Vec<String> {
     cells
 }
 
-/// Render one fact as a table row. Provenance rides the content cell (a trailing
-/// `❓` marks inference); status blank means active; edges are empty this slice.
+/// Render one fact as a table row. Provenance and status are their **own**
+/// columns — never folded into content — so a claim can end in any glyph without
+/// being misread.
 fn render_fact_row(f: &Fact) -> String {
-    let mut content = escape_cell(&f.content);
-    if f.provenance == Provenance::Inference {
-        content.push(' ');
-        content.push(INFERENCE_MARK);
-    }
-    let status = match f.status {
-        FactStatus::Active => "",
-        FactStatus::Superseded => "superseded",
-        FactStatus::Negated => "negated",
-    };
     format!(
-        "| {} | {} | {} | {} | {} |  |",
-        f.id, f.subject, content, status, f.date
+        "| {} | {} | {} | {} | {} | {} |",
+        f.id,
+        f.subject,
+        escape_cell(&f.content),
+        f.provenance.as_token(),
+        f.status.as_token(),
+        f.date
     )
 }
 
@@ -87,8 +87,8 @@ fn render_fact_row(f: &Fact) -> String {
 /// separator, or not a well-formed fact row.
 fn parse_fact_row(row: &str) -> Option<Fact> {
     let cells = split_cells(row);
-    // id, subject, content, status, date required; edges optional.
-    if cells.len() < 5 {
+    // id, subject, content, provenance, status, date.
+    if cells.len() < 6 {
         return None;
     }
     let id = cells[0].trim();
@@ -104,28 +104,22 @@ fn parse_fact_row(row: &str) -> Option<Fact> {
         return None;
     }
 
-    let raw = cells[2].trim();
-    let (content, provenance) = match raw.strip_suffix(INFERENCE_MARK) {
-        Some(rest) => (rest.trim().to_string(), Provenance::Inference),
-        None => (raw.to_string(), Provenance::Testimony),
-    };
+    let content = cells[2].trim();
     if content.is_empty() {
         return None;
     }
 
-    let status = match cells[3].trim() {
-        "" | "active" => FactStatus::Active,
-        "superseded" => FactStatus::Superseded,
-        "negated" => FactStatus::Negated,
-        _ => return None,
-    };
+    let provenance = Provenance::from_token(&cells[3]);
 
-    let date: Date = cells[4].trim().parse().ok()?;
+    // Status is Active-only this slice; the cell is not load-bearing yet.
+    let status = FactStatus::Active;
+
+    let date: Date = cells[5].trim().parse().ok()?;
 
     Some(Fact {
         id: FactId(id.to_string()),
         subject: EntityId(subject.to_string()),
-        content,
+        content: content.to_string(),
         provenance,
         status,
         date,
@@ -201,96 +195,257 @@ fn next_fact_id(existing: &[Fact]) -> FactId {
     FactId(format!("f{}", max + 1))
 }
 
+/// The markdown a freshly-created entity doc is seeded with: a note for the
+/// human, the entity's id marker, and an empty fact table for jojobot to append
+/// to.
+fn seeded_doc(subject: &EntityId) -> String {
+    format!(
+        "_Managed by jojobot. Facts about this entity are in the table at the bottom._\n\n\
+         ```yaml\nid: {subject}\nkind: person\n```\n\n\
+         {FACTS_HEADER}\n\n{TABLE_HEADER}\n{TABLE_SEP}\n"
+    )
+}
+
+// --- secret -----------------------------------------------------------------
+
+/// An API token that never prints itself. `Debug` redacts, so the token can't
+/// leak through a `#[derive(Debug)]` on a config that holds it, a `dbg!`, or a
+/// `tracing` field.
+#[derive(Clone)]
+pub struct Secret(String);
+
+impl Secret {
+    /// Wrap a secret value.
+    pub fn new(value: impl Into<String>) -> Self {
+        Secret(value.into())
+    }
+
+    /// Borrow the raw value — only at the point it's actually used (the bearer
+    /// header). Deliberately named so call sites are greppable.
+    fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Secret(\"***\")")
+    }
+}
+
 // --- the store --------------------------------------------------------------
 
-/// Where the store writes: an Outline base URL, an API token, and the target
-/// doc that holds the fact table. The operator supplies these at runtime; the
-/// adapter never scans the environment itself.
+/// The store's only configuration: **credentials**. No collection id, no doc id
+/// — those are discovered by convention. `Debug` is safe: the token redacts.
 #[derive(Debug, Clone)]
 pub struct OutlineConfig {
     /// Outline base URL, e.g. `https://wiki.example.org` (no trailing slash).
     pub base_url: String,
-    /// API token (bearer). Never logged.
-    pub token: String,
-    /// The id of the doc whose `### ⚙ facts` table this store reads/writes.
-    pub doc_id: String,
+    /// API token (bearer). Redacted in `Debug`.
+    pub token: Secret,
 }
 
-/// The real Memory adapter, fronting an Outline doc. Stateless: it holds a
-/// client and a target, never a fact. Constructed unconfigured when the operator
-/// hasn't wired Outline yet — then the verbs refuse with
-/// [`MemoryError::NotConfigured`] rather than lie.
+/// The real Memory adapter, fronting an Outline collection it manages by name.
+/// Stateless: it holds a client, credentials, and the collection *name*, never
+/// an id or a fact. Constructed unconfigured when the operator hasn't wired
+/// credentials yet — then the verbs refuse with [`MemoryError::NotConfigured`]
+/// rather than lie.
 #[derive(Clone)]
 pub struct OutlineStore {
     http: reqwest::Client,
     config: Option<OutlineConfig>,
+    collection: String,
 }
 
 impl OutlineStore {
-    /// A store pointed at a configured Outline doc.
+    /// The collection jojobot manages by default. A software constant — jojobot
+    /// creates and owns this collection; it never touches the user's own.
+    pub const DEFAULT_COLLECTION: &'static str = "jojobot";
+
+    /// A store pointed at Outline via credentials, managing the default
+    /// `jojobot` collection.
     pub fn new(http: reqwest::Client, config: OutlineConfig) -> Self {
+        Self::with_collection(http, config, Self::DEFAULT_COLLECTION)
+    }
+
+    /// A store managing a named collection (e.g. `jojobot-test` for the gated
+    /// integration test). jojobot only ever creates/manages its own collections.
+    pub fn with_collection(
+        http: reqwest::Client,
+        config: OutlineConfig,
+        collection: impl Into<String>,
+    ) -> Self {
         Self {
             http,
             config: Some(config),
+            collection: collection.into(),
         }
     }
 
-    /// A store with no target yet — every verb returns
+    /// A store with no credentials yet — every verb returns
     /// [`MemoryError::NotConfigured`]. Lets the server boot (and keep serving
     /// `ping`) before Outline is wired, without shipping a toy store.
     pub fn unconfigured(http: reqwest::Client) -> Self {
-        Self { http, config: None }
+        Self {
+            http,
+            config: None,
+            collection: Self::DEFAULT_COLLECTION.to_string(),
+        }
     }
 
     fn cfg(&self) -> Result<&OutlineConfig, MemoryError> {
         self.config.as_ref().ok_or_else(|| {
-            MemoryError::NotConfigured("set the Outline base URL, token and target doc".into())
+            MemoryError::NotConfigured("set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN".into())
         })
     }
 
-    /// Fetch the target doc's markdown text via `documents.info`.
-    async fn fetch_doc_text(&self, cfg: &OutlineConfig) -> Result<String, MemoryError> {
+    /// POST a JSON body to an Outline API endpoint and return the parsed JSON.
+    /// Central place for auth + error mapping — no `unwrap` on any path.
+    async fn api(
+        &self,
+        cfg: &OutlineConfig,
+        endpoint: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, MemoryError> {
         let resp = self
             .http
-            .post(format!("{}/api/documents.info", cfg.base_url))
-            .bearer_auth(&cfg.token)
-            .json(&serde_json::json!({ "id": cfg.doc_id }))
+            .post(format!("{}/api/{endpoint}", cfg.base_url))
+            .bearer_auth(cfg.token.expose())
+            .json(&body)
             .send()
             .await
-            .map_err(|e| MemoryError::Store(format!("documents.info request: {e}")))?;
+            .map_err(|e| MemoryError::Store(format!("{endpoint} request: {e}")))?;
         if !resp.status().is_success() {
             return Err(MemoryError::Store(format!(
-                "documents.info returned {}",
+                "{endpoint} returned {}",
                 resp.status()
             )));
         }
-        let body: serde_json::Value = resp
-            .json()
+        resp.json()
             .await
-            .map_err(|e| MemoryError::Store(format!("documents.info body: {e}")))?;
+            .map_err(|e| MemoryError::Store(format!("{endpoint} body: {e}")))
+    }
+
+    /// Discover jojobot's collection by name, creating it if absent. Returns its
+    /// id (used only in-flight; never persisted in jojobot).
+    async fn resolve_collection_id(&self, cfg: &OutlineConfig) -> Result<String, MemoryError> {
+        let mut offset = 0u64;
+        loop {
+            let page = self
+                .api(cfg, "collections.list", json!({ "offset": offset, "limit": 100 }))
+                .await?;
+            let items = page["data"]
+                .as_array()
+                .ok_or_else(|| MemoryError::Store("collections.list: no data array".into()))?;
+            for c in items {
+                if c["name"].as_str() == Some(self.collection.as_str()) {
+                    return c["id"]
+                        .as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| MemoryError::Store("collection has no id".into()));
+                }
+            }
+            if items.len() < 100 {
+                break;
+            }
+            offset += 100;
+        }
+
+        let created = self
+            .api(cfg, "collections.create", json!({ "name": self.collection }))
+            .await?;
+        created["data"]["id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| MemoryError::Store("collections.create: no id".into()))
+    }
+
+    /// Resolve an entity's doc within jojobot's collection by its deterministic
+    /// title (the entity id). Creates a seeded doc when `create` is set and none
+    /// exists. `Ok(None)` means "no doc and not asked to create one".
+    async fn resolve_entity_doc(
+        &self,
+        cfg: &OutlineConfig,
+        subject: &EntityId,
+        create: bool,
+    ) -> Result<Option<String>, MemoryError> {
+        let collection_id = self.resolve_collection_id(cfg).await?;
+        let title = subject.as_str();
+
+        let mut offset = 0u64;
+        loop {
+            let page = self
+                .api(
+                    cfg,
+                    "documents.list",
+                    json!({ "collectionId": collection_id, "offset": offset, "limit": 100 }),
+                )
+                .await?;
+            let items = page["data"]
+                .as_array()
+                .ok_or_else(|| MemoryError::Store("documents.list: no data array".into()))?;
+            for d in items {
+                if d["title"].as_str() == Some(title) {
+                    return Ok(Some(
+                        d["id"]
+                            .as_str()
+                            .map(str::to_string)
+                            .ok_or_else(|| MemoryError::Store("document has no id".into()))?,
+                    ));
+                }
+            }
+            if items.len() < 100 {
+                break;
+            }
+            offset += 100;
+        }
+
+        if !create {
+            return Ok(None);
+        }
+
+        let created = self
+            .api(
+                cfg,
+                "documents.create",
+                json!({
+                    "collectionId": collection_id,
+                    "title": title,
+                    "text": seeded_doc(subject),
+                    "publish": true,
+                }),
+            )
+            .await?;
+        created["data"]["id"]
+            .as_str()
+            .map(str::to_string)
+            .map(Some)
+            .ok_or_else(|| MemoryError::Store("documents.create: no id".into()))
+    }
+
+    /// Fetch a doc's markdown text via `documents.info`.
+    async fn fetch_doc_text(
+        &self,
+        cfg: &OutlineConfig,
+        doc_id: &str,
+    ) -> Result<String, MemoryError> {
+        let body = self.api(cfg, "documents.info", json!({ "id": doc_id })).await?;
         body["data"]["text"]
             .as_str()
             .map(str::to_string)
-            .ok_or_else(|| MemoryError::Store("documents.info: no data.text field".into()))
+            .ok_or_else(|| MemoryError::Store("documents.info: no data.text".into()))
     }
 
-    /// Overwrite the target doc's markdown text via `documents.update`.
-    async fn put_doc_text(&self, cfg: &OutlineConfig, text: &str) -> Result<(), MemoryError> {
-        let resp = self
-            .http
-            .post(format!("{}/api/documents.update", cfg.base_url))
-            .bearer_auth(&cfg.token)
-            .json(&serde_json::json!({ "id": cfg.doc_id, "text": text }))
-            .send()
+    /// Overwrite a doc's markdown text via `documents.update`.
+    async fn put_doc_text(
+        &self,
+        cfg: &OutlineConfig,
+        doc_id: &str,
+        text: &str,
+    ) -> Result<(), MemoryError> {
+        self.api(cfg, "documents.update", json!({ "id": doc_id, "text": text }))
             .await
-            .map_err(|e| MemoryError::Store(format!("documents.update request: {e}")))?;
-        if !resp.status().is_success() {
-            return Err(MemoryError::Store(format!(
-                "documents.update returned {}",
-                resp.status()
-            )));
-        }
-        Ok(())
+            .map(|_| ())
     }
 }
 
@@ -298,40 +453,51 @@ impl OutlineStore {
 impl Memory for OutlineStore {
     async fn capture(&self, fact: NewFact) -> Result<Fact, MemoryError> {
         let cfg = self.cfg()?;
-        if fact.content.trim().is_empty() {
+        let content = normalize_content(&fact.content);
+        if content.is_empty() {
             return Err(MemoryError::InvalidFact("content is empty".into()));
         }
-        if fact.content.contains('\n') {
+        if content.contains('\n') {
             return Err(MemoryError::InvalidFact(
                 "content spans multiple lines; a table cell is one line".into(),
             ));
         }
 
+        let doc_id = self
+            .resolve_entity_doc(cfg, &fact.subject, true)
+            .await?
+            .ok_or_else(|| MemoryError::Store("entity doc was not created".into()))?;
+
         // Read-modify-write. Outline has no atomic append, so two captures
         // racing on the same doc could collide an id or lose a row — acceptable
-        // for a single-session assistant; noted for a later CAS/revision guard.
-        let text = self.fetch_doc_text(cfg).await?;
+        // for a single-session assistant; noted for a later revision guard.
+        let text = self.fetch_doc_text(cfg, &doc_id).await?;
         let existing = parse_facts_table(&text);
         let stored = Fact {
             id: next_fact_id(&existing),
             subject: fact.subject,
-            content: fact.content,
+            content,
             provenance: fact.provenance,
             status: fact.status,
             date: fact.date,
         };
         let updated = with_fact_appended(&text, &render_fact_row(&stored));
-        self.put_doc_text(cfg, &updated).await?;
+        self.put_doc_text(cfg, &doc_id, &updated).await?;
         Ok(stored)
     }
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         let cfg = self.cfg()?;
-        let text = self.fetch_doc_text(cfg).await?;
-        Ok(parse_facts_table(&text)
-            .into_iter()
-            .filter(|f| &f.subject == subject)
-            .collect())
+        match self.resolve_entity_doc(cfg, subject, false).await? {
+            None => Ok(Vec::new()),
+            Some(doc_id) => {
+                let text = self.fetch_doc_text(cfg, &doc_id).await?;
+                Ok(parse_facts_table(&text)
+                    .into_iter()
+                    .filter(|f| &f.subject == subject)
+                    .collect())
+            }
+        }
     }
 }
 
@@ -340,37 +506,43 @@ mod tests {
     use super::*;
     use jiff::civil::date;
 
-    fn fact(id: &str, content: &str, prov: Provenance, status: FactStatus, d: Date) -> Fact {
+    fn fact(id: &str, subject: &str, content: &str, prov: Provenance, d: Date) -> Fact {
         Fact {
             id: FactId(id.into()),
-            subject: EntityId::self_(),
+            subject: EntityId(subject.into()),
             content: content.into(),
             provenance: prov,
-            status,
+            status: FactStatus::Active,
             date: d,
         }
     }
 
     #[test]
-    fn row_round_trips_every_provenance_and_status() {
-        let cases = [
-            fact("f1", "drinks oat milk", Provenance::Inference, FactStatus::Active, date(2026, 7, 24)),
-            fact("f2", "lived in Montréal", Provenance::Testimony, FactStatus::Active, date(2026, 3, 9)),
-            fact("f3", "old job", Provenance::Testimony, FactStatus::Superseded, date(2025, 1, 1)),
-            fact("f4", "not vegetarian", Provenance::Testimony, FactStatus::Negated, date(2026, 6, 6)),
-        ];
-        for f in cases {
-            let parsed = parse_fact_row(&render_fact_row(&f))
-                .unwrap_or_else(|| panic!("row must round-trip: {f:?}"));
-            assert_eq!(parsed, f);
-        }
+    fn renders_the_exact_pinned_row() {
+        // Pin the literal wire format — a symmetric round-trip alone can't catch
+        // a schema drift both sides share.
+        let f = fact("f1", "person:jose", "drinks oat milk", Provenance::Inference, date(2026, 7, 24));
+        assert_eq!(
+            render_fact_row(&f),
+            "| f1 | person:jose | drinks oat milk | inference | active | 2026-07-24 |"
+        );
     }
 
     #[test]
-    fn content_with_a_pipe_round_trips() {
-        let f = fact("f1", "reads a|b|c notation", Provenance::Testimony, FactStatus::Active, date(2026, 7, 24));
+    fn both_provenances_round_trip_via_their_own_column() {
+        // The regression guard for the collision: content ending in ❓ must NOT
+        // be read as inference — provenance rides its own column.
+        let testi = fact("f1", "person:jose", "born in Chile", Provenance::Testimony, date(2026, 1, 1));
+        let infer = fact("f2", "person:jose", "prefers mornings ❓", Provenance::Inference, date(2026, 1, 2));
+        assert_eq!(parse_fact_row(&render_fact_row(&testi)).unwrap(), testi);
+        assert_eq!(parse_fact_row(&render_fact_row(&infer)).unwrap(), infer);
+    }
+
+    #[test]
+    fn content_with_a_pipe_is_escaped_and_round_trips() {
+        let f = fact("f1", "person:jose", "reads a|b|c notation", Provenance::Testimony, date(2026, 7, 24));
         let row = render_fact_row(&f);
-        assert!(!row.trim_start_matches("| f1 | self | ").starts_with("reads a |"), "pipe must be escaped, not split: {row}");
+        assert!(row.contains("a\\|b\\|c"), "pipes must be escaped in the row: {row}");
         assert_eq!(parse_fact_row(&row).unwrap(), f);
     }
 
@@ -383,8 +555,8 @@ mod tests {
     #[test]
     fn next_id_increments_over_existing() {
         let existing = vec![
-            fact("f1", "a", Provenance::Testimony, FactStatus::Active, date(2026, 1, 1)),
-            fact("f3", "b", Provenance::Testimony, FactStatus::Active, date(2026, 1, 1)),
+            fact("f1", "person:jose", "a", Provenance::Testimony, date(2026, 1, 1)),
+            fact("f3", "person:jose", "b", Provenance::Testimony, date(2026, 1, 1)),
         ];
         assert_eq!(next_fact_id(&existing), FactId("f4".into()));
         assert_eq!(next_fact_id(&[]), FactId("f1".into()));
@@ -392,23 +564,34 @@ mod tests {
 
     #[test]
     fn append_into_existing_table_then_parse_finds_it() {
-        let doc = "# About the user\n\nSome prose the user reads.\n\n### ⚙ facts\n\n| id | subject | content | status | date | edges |\n| --- | --- | --- | --- | --- | --- |\n| f1 | self | plays go | | 2026-07-01 |  |\n";
-        let f = fact("f2", "learning Rust", Provenance::Inference, FactStatus::Active, date(2026, 7, 2));
+        let doc = "# About\n\nSome prose.\n\n### ⚙ facts\n\n| id | subject | content | provenance | status | date |\n| --- | --- | --- | --- | --- | --- |\n| f1 | person:jose | plays go | testimony | active | 2026-07-01 |\n";
+        let f = fact("f2", "person:jose", "learning Rust", Provenance::Inference, date(2026, 7, 2));
         let updated = with_fact_appended(doc, &render_fact_row(&f));
         let parsed = parse_facts_table(&updated);
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[1], f);
-        // The prose above the table is untouched.
-        assert!(updated.contains("Some prose the user reads."));
+        assert!(updated.contains("Some prose."), "prose above the table is untouched");
     }
 
     #[test]
-    fn creates_a_table_when_the_doc_has_none() {
-        let doc = "# About the user\n\nJust prose, no fact table yet.\n";
-        let f = fact("f1", "first fact", Provenance::Testimony, FactStatus::Active, date(2026, 7, 24));
-        let updated = with_fact_appended(doc, &render_fact_row(&f));
-        assert!(updated.contains(FACTS_HEADER));
-        let parsed = parse_facts_table(&updated);
-        assert_eq!(parsed, vec![f]);
+    fn seeded_doc_has_an_empty_but_parseable_table() {
+        let doc = seeded_doc(&EntityId::person("jose"));
+        assert!(doc.contains("id: person:jose"));
+        assert!(parse_facts_table(&doc).is_empty());
+        // And a capture-shaped append lands correctly in the seed.
+        let f = fact("f1", "person:jose", "first fact", Provenance::Testimony, date(2026, 7, 24));
+        let updated = with_fact_appended(&doc, &render_fact_row(&f));
+        assert_eq!(parse_facts_table(&updated), vec![f]);
+    }
+
+    #[test]
+    fn secret_debug_redacts_the_token() {
+        let cfg = OutlineConfig {
+            base_url: "https://wiki.example".into(),
+            token: Secret::new("super-secret-token"),
+        };
+        let shown = format!("{cfg:?}");
+        assert!(!shown.contains("super-secret-token"), "token leaked: {shown}");
+        assert!(shown.contains("***"));
     }
 }

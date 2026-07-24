@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use jojobot_adapters::outline::{OutlineConfig, OutlineStore};
+use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
 use jojobot_domain::memory::Memory;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -52,18 +52,20 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // The Memory port. Always the real Outline adapter — no toy store ships.
-    // Unset config yields an unconfigured store: the server still boots and
-    // serves `ping`, but `capture`/`recall` refuse until Outline is wired.
+    // The Memory port. Always the real Outline adapter — no toy store ships. It
+    // discovers/creates its own `jojobot` collection by name; the only config is
+    // credentials. Unset credentials yield an unconfigured store: the server
+    // still boots and serves `ping`, but `capture`/`recall` refuse loudly until
+    // Outline is wired (see the fail-soft rationale in the handoff/report).
     let memory: Arc<dyn Memory> = match outline_from_env() {
         Some(cfg) => {
-            tracing::info!(base_url = %cfg.base_url, doc = %cfg.doc_id, "memory: Outline store wired");
+            tracing::info!(base_url = %cfg.base_url, "memory: Outline store wired");
             Arc::new(OutlineStore::new(http.clone(), cfg))
         }
         None => {
             tracing::warn!(
-                "MEMORY DISABLED — set JOJOBOT_OUTLINE_URL, JOJOBOT_OUTLINE_TOKEN and \
-                 JOJOBOT_SELF_DOC to enable capture/recall. Serving ping only."
+                "MEMORY DISABLED — set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN to enable \
+                 capture/recall. Serving ping only; memory verbs return a NotConfigured error."
             );
             Arc::new(OutlineStore::unconfigured(http.clone()))
         }
@@ -100,15 +102,15 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Read the Outline store's target from the environment. All three must be set;
-/// any missing → `None` (memory disabled). The adapter never reads env itself —
-/// the operator sets it here, at the composition root.
+/// Read the Outline store's **credentials** from the environment — the only
+/// config there is; the collection and docs are discovered by convention. Both
+/// must be set; either missing → `None` (memory disabled). The adapter never
+/// reads env itself — the operator sets it here, at the composition root.
 fn outline_from_env() -> Option<OutlineConfig> {
     let nonempty = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
     Some(OutlineConfig {
         base_url: nonempty("JOJOBOT_OUTLINE_URL")?,
-        token: nonempty("JOJOBOT_OUTLINE_TOKEN")?,
-        doc_id: nonempty("JOJOBOT_SELF_DOC")?,
+        token: Secret::new(nonempty("JOJOBOT_OUTLINE_TOKEN")?),
     })
 }
 

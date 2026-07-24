@@ -1,94 +1,108 @@
-//! Gated integration test: the shared Memory contract, run against a real
-//! Outline doc. This is the "prove the real adapter conforms" half of the
-//! contract strategy — the fast tier already ran the same spec against the fake.
+//! Gated integration test: the shared Memory contract, run against real
+//! Outline. This is the "prove the real adapter conforms" half of the contract
+//! strategy — the fast tier already ran the same spec against the fake.
 //!
-//! It is `#[ignore]` and env-gated, so default `cargo test` (and CI) never touch
-//! the network. Run it explicitly with the three variables set:
+//! It is `#[ignore]` and env-gated on **credentials only** (no ids — the whole
+//! point of the rework), so default `cargo test` and CI never touch the network:
 //!
 //! ```sh
 //! JOJOBOT_OUTLINE_URL=https://wiki.example.org \
 //! JOJOBOT_OUTLINE_TOKEN=... \
-//! JOJOBOT_TEST_DOC=<scratch-doc-id> \
 //!   cargo test -p jojobot-adapters --test outline_integration -- --ignored
 //! ```
 //!
-//! It writes ONLY to `JOJOBOT_TEST_DOC` (a scratch doc the operator points it
-//! at — never a real jojobot doc, and it creates no collections), and it
-//! restores that doc's original text afterward, so it self-cleans whatever it
-//! wrote. Missing any variable → it skips.
+//! Convention over configuration: the adapter discovers/creates a collection by
+//! name. This test points it at a dedicated **`jojobot-test`** collection, which
+//! it deletes (collection + all its docs) before and after the run — so it never
+//! touches the real `jojobot` collection or any About-José doc, and it leaves
+//! nothing behind. Missing either variable → it skips. It never scans for or
+//! hardcodes a token; the token comes from the env the operator sets.
 
-use jojobot_adapters::outline::{OutlineConfig, OutlineStore};
+use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
 use jojobot_domain::memory::testing::contract;
 
-struct Env {
+/// The collection this test owns end to end. NOT the real `jojobot` collection.
+const TEST_COLLECTION: &str = "jojobot-test";
+
+struct Creds {
     url: String,
     token: String,
-    doc: String,
 }
 
-fn env() -> Option<Env> {
-    Some(Env {
-        url: std::env::var("JOJOBOT_OUTLINE_URL").ok()?,
-        token: std::env::var("JOJOBOT_OUTLINE_TOKEN").ok()?,
-        doc: std::env::var("JOJOBOT_TEST_DOC").ok()?,
+fn creds() -> Option<Creds> {
+    Some(Creds {
+        url: std::env::var("JOJOBOT_OUTLINE_URL").ok().filter(|s| !s.is_empty())?,
+        token: std::env::var("JOJOBOT_OUTLINE_TOKEN").ok().filter(|s| !s.is_empty())?,
     })
 }
 
-async fn doc_text(http: &reqwest::Client, e: &Env) -> String {
-    let body: serde_json::Value = http
-        .post(format!("{}/api/documents.info", e.url))
-        .bearer_auth(&e.token)
-        .json(&serde_json::json!({ "id": e.doc }))
-        .send()
-        .await
-        .expect("documents.info")
-        .json()
-        .await
-        .expect("documents.info body");
-    body["data"]["text"]
-        .as_str()
-        .expect("data.text")
-        .to_string()
+/// Find a collection id by name, paging through `collections.list`.
+async fn find_collection(http: &reqwest::Client, c: &Creds, name: &str) -> Option<String> {
+    let mut offset = 0u64;
+    loop {
+        let page: serde_json::Value = http
+            .post(format!("{}/api/collections.list", c.url))
+            .bearer_auth(&c.token)
+            .json(&serde_json::json!({ "offset": offset, "limit": 100 }))
+            .send()
+            .await
+            .expect("collections.list")
+            .json()
+            .await
+            .expect("collections.list body");
+        let items = page["data"].as_array().cloned().unwrap_or_default();
+        if let Some(found) = items.iter().find(|c| c["name"].as_str() == Some(name)) {
+            return found["id"].as_str().map(str::to_string);
+        }
+        if items.len() < 100 {
+            return None;
+        }
+        offset += 100;
+    }
 }
 
-async fn set_doc_text(http: &reqwest::Client, e: &Env, text: &str) {
-    let resp = http
-        .post(format!("{}/api/documents.update", e.url))
-        .bearer_auth(&e.token)
-        .json(&serde_json::json!({ "id": e.doc, "text": text }))
-        .send()
-        .await
-        .expect("documents.update");
-    assert!(resp.status().is_success(), "restore failed: {}", resp.status());
+/// Delete the test collection (and every doc in it), if it exists.
+async fn drop_test_collection(http: &reqwest::Client, c: &Creds) {
+    if let Some(id) = find_collection(http, c, TEST_COLLECTION).await {
+        let resp = http
+            .post(format!("{}/api/collections.delete", c.url))
+            .bearer_auth(&c.token)
+            .json(&serde_json::json!({ "id": id }))
+            .send()
+            .await
+            .expect("collections.delete");
+        assert!(resp.status().is_success(), "teardown failed: {}", resp.status());
+    }
 }
 
 #[tokio::test]
-#[ignore = "hits real Outline; set JOJOBOT_OUTLINE_URL/TOKEN and JOJOBOT_TEST_DOC"]
+#[ignore = "hits real Outline; set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN"]
 async fn real_outline_satisfies_the_contract() {
-    let Some(e) = env() else {
-        eprintln!("skipping: set JOJOBOT_OUTLINE_URL, JOJOBOT_OUTLINE_TOKEN, JOJOBOT_TEST_DOC");
+    let Some(c) = creds() else {
+        eprintln!("skipping: set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN");
         return;
     };
 
     let http = reqwest::Client::new();
-    let original = doc_text(&http, &e).await;
+    // Clean slate, in case a prior run aborted before teardown.
+    drop_test_collection(&http, &c).await;
 
-    let store = OutlineStore::new(
+    let store = OutlineStore::with_collection(
         http.clone(),
         OutlineConfig {
-            base_url: e.url.clone(),
-            token: e.token.clone(),
-            doc_id: e.doc.clone(),
+            base_url: c.url.clone(),
+            token: Secret::new(c.token.clone()),
         },
+        TEST_COLLECTION,
     );
 
-    // Run the shared spec in a task so a panic is caught — the doc is restored
-    // to its original text either way, self-cleaning every row we wrote.
+    // Run the shared spec in a task so a panic is caught — the test collection
+    // is dropped either way, so nothing is left behind.
     let outcome = {
         let store = store.clone();
         tokio::spawn(async move { contract::run_all(&store).await }).await
     };
 
-    set_doc_text(&http, &e, &original).await;
+    drop_test_collection(&http, &c).await;
     outcome.expect("the contract must hold against real Outline");
 }
