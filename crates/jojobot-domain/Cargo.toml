@@ -9,3 +9,19 @@ rust-version.workspace = true
 # ubiquitous language and the invariants. Adapters depend on it, never the
 # reverse.
 [dependencies]
+# async-trait: the Memory port is I/O in its real adapter (Outline over HTTP),
+# so the port method is async. async-trait keeps it dyn-compatible (Arc<dyn
+# Memory>) — no wire types leak in; this is still pure vocabulary.
+async-trait = "0.1"
+serde = { workspace = true }
+jiff = { workspace = true, features = ["serde"] }
+thiserror = { workspace = true }
+
+# The in-memory fake and the shared contract spec live behind this feature so
+# they compile for tests (here and in downstream crates) but NEVER ship in a
+# production binary.
+[features]
+testing = []
+
+[dev-dependencies]
+tokio = { workspace = true }

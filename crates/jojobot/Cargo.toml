@@ -12,6 +12,8 @@ default-run = "jojobot"
 # resource are all runtime configuration.
 [dependencies]
 jojobot-mcp.workspace = true
+jojobot-domain.workspace = true
+jojobot-adapters.workspace = true
 rmcp.workspace = true
 tokio.workspace = true
 axum.workspace = true

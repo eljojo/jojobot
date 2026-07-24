@@ -7,6 +7,19 @@ rust-version.workspace = true
 
 # Anti-corruption layer: one adapter per fronted service. Every quirk
 # (timezones, bare-Z CalDAV dates, silently-ignored cross-project filters,
-# HTML-entity corruption) dies here, invisible to the domain. Skeleton for now.
+# HTML-entity corruption) dies here, invisible to the domain. The Outline store
+# is the first adapter — it hits the Outline API directly (the server is allowed
+# to; the MCP-only rule is for the assistant-in-session, not the server).
 [dependencies]
 jojobot-domain.workspace = true
+async-trait = "0.1"
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+jiff = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+# The shared contract + fake live behind the domain's `testing` feature; the
+# contract runs here against the real Outline adapter (gated integration test).
+jojobot-domain = { workspace = true, features = ["testing"] }

@@ -9,7 +9,14 @@ use std::sync::Arc;
 
 use jojobot::auth::Validator;
 use jojobot::{AppState, build_app};
+use jojobot_adapters::outline::OutlineStore;
 use tokio_util::sync::CancellationToken;
+
+/// The Memory port for the transport/auth tests, which never call the memory
+/// verbs — the real adapter, left unconfigured (no network). No toy store.
+fn test_memory() -> std::sync::Arc<dyn jojobot_domain::memory::Memory> {
+    std::sync::Arc::new(OutlineStore::unconfigured(reqwest::Client::new()))
+}
 
 /// Bind an ephemeral port, build the app from `make_state`, and serve it on a
 /// background task. Returns the bound address and a token that stops the server.
@@ -39,6 +46,7 @@ fn no_auth_state(addr: SocketAddr) -> AppState {
         issuer: None,
         validator: None,
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
+        memory: test_memory(),
     }
 }
 
@@ -55,6 +63,7 @@ fn auth_state(addr: SocketAddr) -> AppState {
             HashMap::new(),
         ))),
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
+        memory: test_memory(),
     }
 }
 
@@ -147,6 +156,7 @@ fn public_no_auth_state(_addr: SocketAddr) -> AppState {
         issuer: None,
         validator: None,
         metadata_url: "https://jojobot.example/.well-known/oauth-protected-resource".to_string(),
+        memory: test_memory(),
     }
 }
 

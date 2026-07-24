@@ -2,7 +2,11 @@
 //! it. All wiring lives in the library so the integration tests exercise the
 //! same router this binary does.
 
+use std::sync::Arc;
+
 use anyhow::Context;
+use jojobot_adapters::outline::{OutlineConfig, OutlineStore};
+use jojobot_domain::memory::Memory;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -48,6 +52,23 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // The Memory port. Always the real Outline adapter — no toy store ships.
+    // Unset config yields an unconfigured store: the server still boots and
+    // serves `ping`, but `capture`/`recall` refuse until Outline is wired.
+    let memory: Arc<dyn Memory> = match outline_from_env() {
+        Some(cfg) => {
+            tracing::info!(base_url = %cfg.base_url, doc = %cfg.doc_id, "memory: Outline store wired");
+            Arc::new(OutlineStore::new(http.clone(), cfg))
+        }
+        None => {
+            tracing::warn!(
+                "MEMORY DISABLED — set JOJOBOT_OUTLINE_URL, JOJOBOT_OUTLINE_TOKEN and \
+                 JOJOBOT_SELF_DOC to enable capture/recall. Serving ping only."
+            );
+            Arc::new(OutlineStore::unconfigured(http.clone()))
+        }
+    };
+
     let metadata_url = format!(
         "{}/.well-known/oauth-protected-resource",
         origin_of(&config.resource)
@@ -57,6 +78,7 @@ async fn main() -> anyhow::Result<()> {
         issuer,
         validator,
         metadata_url,
+        memory,
     };
 
     let ct = CancellationToken::new();
@@ -76,6 +98,18 @@ async fn main() -> anyhow::Result<()> {
         .context("server error")?;
 
     Ok(())
+}
+
+/// Read the Outline store's target from the environment. All three must be set;
+/// any missing → `None` (memory disabled). The adapter never reads env itself —
+/// the operator sets it here, at the composition root.
+fn outline_from_env() -> Option<OutlineConfig> {
+    let nonempty = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
+    Some(OutlineConfig {
+        base_url: nonempty("JOJOBOT_OUTLINE_URL")?,
+        token: nonempty("JOJOBOT_OUTLINE_TOKEN")?,
+        doc_id: nonempty("JOJOBOT_SELF_DOC")?,
+    })
 }
 
 fn init_tracing() {

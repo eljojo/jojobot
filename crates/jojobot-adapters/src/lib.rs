@@ -4,5 +4,7 @@
 //! crate exists to fix the seam so the domain never grows a dependency on a
 //! wire format.
 //!
-//! TODO: skeleton — no adapters implemented yet (Vikunja, Outline, CalDAV,
-//! Raindrop clients all pending).
+//! The Outline store — the Memory port's real adapter — is the first one
+//! landed. Vikunja, CalDAV, and Raindrop clients are still pending.
+
+pub mod outline;

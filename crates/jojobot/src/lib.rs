@@ -13,6 +13,7 @@ use rmcp::transport::streamable_http_server::{
 };
 use tokio_util::sync::CancellationToken;
 
+use jojobot_domain::memory::Memory;
 use jojobot_mcp::Jojobot;
 
 use crate::auth::Validator;
@@ -28,6 +29,9 @@ pub struct AppState {
     pub validator: Option<Arc<Validator>>,
     /// Absolute URL of the protected-resource metadata endpoint.
     pub metadata_url: String,
+    /// The Memory port backing the `capture`/`recall` tools. Always the real
+    /// Outline adapter (possibly unconfigured) — no toy store ships.
+    pub memory: Arc<dyn Memory>,
 }
 
 /// Build the full HTTP application: the guarded MCP transport plus the public
@@ -43,8 +47,9 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
         server_config.allowed_hosts.push(authority);
     }
 
+    let memory = state.memory.clone();
     let mcp = StreamableHttpService::new(
-        || Ok(Jojobot::new()),
+        move || Ok(Jojobot::new(memory.clone())),
         LocalSessionManager::default().into(),
         server_config,
     );
