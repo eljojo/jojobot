@@ -54,6 +54,27 @@ Or build the package directly:
 nix build              # produces ./result/bin/jojobot
 ```
 
+## Deploying
+
+The flake exposes an overlay and a NixOS module:
+
+```nix
+{
+  nixpkgs.overlays = [ inputs.jojobot.overlays.default ];
+  imports = [ inputs.jojobot.nixosModules.default ];
+
+  services.jojobot = {
+    enable = true;
+    issuer = "https://id.example.org";       # enables resource-server auth
+    resource = "https://jojobot.example.org/mcp";
+    # audience defaults to the resource id — set it if the issuer's `aud` differs
+  };
+}
+```
+
+The service binds localhost by default; front it with a TLS-terminating reverse
+proxy or tunnel. With `issuer` unset it runs open (development only).
+
 ## Configuration
 
 All configuration is environment-driven.

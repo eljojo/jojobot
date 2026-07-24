@@ -51,5 +51,13 @@
           # from a parent directory.
         };
       }
-    );
+    )
+    // {
+      # System-agnostic outputs, for consumers deploying jojobot.
+      overlays.default = final: prev: {
+        jojobot = self.packages.${prev.stdenv.hostPlatform.system}.default;
+      };
+      nixosModules.default = import ./nix/modules/jojobot.nix;
+      nixosModules.jojobot = import ./nix/modules/jojobot.nix;
+    };
 }
