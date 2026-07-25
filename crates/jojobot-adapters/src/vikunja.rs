@@ -41,10 +41,14 @@ use codec::{Envelope, parse_description, render_description};
 /// forks the project or hides half a mailbox.
 const PAGE: u64 = 50;
 
-/// The board endpoint paginates the cards **inside** each column, so it gets a
-/// wider page: a mailbox with a few hundred archived messages is ordinary, and a
-/// truncated read would silently under-report every count.
-const BOARD_PAGE: u64 = 250;
+/// The board endpoint paginates the cards **inside** each column, so it is
+/// paged too: `processed` is an archive that never drains, so a mailbox project
+/// outgrows one page as a matter of course.
+///
+/// **Never larger than [`PAGE`].** Vikunja clamps `per_page` server-side to its
+/// `maxitemsperpage` setting, and asking for more does not get more — it gets
+/// the cap, with nothing in the body to say the column was cut short.
+const BOARD_PAGE: u64 = PAGE;
 
 /// The marker jojobot stamps into the description of everything it creates —
 /// the project and every mailbox label — and checks on match, so it only ever
@@ -330,15 +334,22 @@ impl VikunjaStore {
             if batch.is_empty() {
                 break;
             }
-            let mut more = false;
+            // **Stop on an empty page, never on a short one.** The obvious test
+            // — "no column filled the page I asked for" — compares against the
+            // size *requested*, and Vikunja serves the size it decides: a
+            // requested page larger than the server's cap is never filled, so
+            // that test reads page one and calls it the board. Asking until
+            // every column has nothing left needs no agreement about page size
+            // at all.
+            let mut any = false;
             for bucket in batch {
-                more |= bucket.tasks.len() as u64 >= BOARD_PAGE;
+                any |= !bucket.tasks.is_empty();
                 match merged.iter_mut().find(|b| b.id == bucket.id) {
                     Some(existing) => existing.tasks.extend(bucket.tasks),
                     None => merged.push(bucket),
                 }
             }
-            if !more {
+            if !any {
                 break;
             }
             page += 1;
@@ -797,6 +808,22 @@ mod tests {
     /// jojobot's three: a card that lands here is a card the store must move.
     const DEFAULT_COLUMN: &str = "Backlog";
 
+    /// **Vikunja clamps `per_page` server-side** to its `maxitemsperpage`
+    /// setting — 50 by default — in the read-all handler every list route
+    /// shares, and the cap reaches the board endpoint as a limit on the cards
+    /// returned *per column*. Asking for more does not get more: it gets 50,
+    /// with nothing in the body to say there was more.
+    ///
+    /// The fake enforces it, because a fake that honoured the requested page
+    /// size is precisely what let a paging loop whose continuation test compared
+    /// against the **requested** size look correct.
+    const SERVER_PAGE_CAP: u64 = 50;
+
+    /// The page size the server will actually serve for a requested one.
+    fn served(per_page: u64) -> usize {
+        per_page.min(SERVER_PAGE_CAP) as usize
+    }
+
     impl FakeVikunja {
         /// Record a project id a call named — the write-scope evidence.
         fn named(&self, project: u64) {
@@ -986,8 +1013,8 @@ mod tests {
             let all = self.projects.lock().unwrap();
             Ok(all
                 .iter()
-                .skip(((page - 1) * per_page) as usize)
-                .take(per_page as usize)
+                .skip((page as usize - 1) * served(per_page))
+                .take(served(per_page))
                 .cloned()
                 .collect())
         }
@@ -1076,8 +1103,8 @@ mod tests {
                         .iter()
                         .filter(|t| placement.get(&t.id) == Some(&b.id))
                         .map(|t| self.rendered(t))
-                        .skip(((page - 1) * per_page) as usize)
-                        .take(per_page as usize)
+                        .skip((page as usize - 1) * served(per_page))
+                        .take(served(per_page))
                         .collect();
                     BoardBucket { id: b.id, title: b.title, tasks: in_bucket }
                 })
@@ -1160,8 +1187,8 @@ mod tests {
             let all = self.labels.lock().unwrap();
             Ok(all
                 .iter()
-                .skip(((page - 1) * per_page) as usize)
-                .take(per_page as usize)
+                .skip((page as usize - 1) * served(per_page))
+                .take(served(per_page))
                 .cloned()
                 .collect())
         }
@@ -1541,5 +1568,48 @@ mod tests {
         contract::create(&theirs, "inbox").await;
         assert_eq!(mine.list_mailboxes().await.expect("list ok").len(), 1);
         assert_eq!(theirs.list_mailboxes().await.expect("list ok").len(), 1);
+    }
+
+    /// **Vikunja clamps a page server-side.** `per_page` is capped at the
+    /// instance's `maxitemsperpage` (50 by default) by the shared read-all
+    /// handler, and the cap reaches the board endpoint as a limit on the cards
+    /// returned *per column*. A store that asks for more and treats "fewer than
+    /// I asked for" as "that was everything" reads the first page of each column
+    /// and calls it the board.
+    ///
+    /// That is silent, and it is unbounded: `processed` is an archive that never
+    /// drains, so every mailbox project reaches this. Past the cap, counts
+    /// under-report, messages stop being delivered, and — because read-back goes
+    /// through the same read — a post whose card lands past the cap is deleted
+    /// again by its own rollback.
+    #[tokio::test]
+    async fn the_board_is_read_whole_even_when_a_column_outruns_a_page() {
+        let fake = FakeVikunja::new();
+        let store = store_with_box(fake.clone(), "inbox").await;
+
+        // Comfortably past the server's cap, in one column.
+        let posted = SERVER_PAGE_CAP + 7;
+        for i in 0..posted {
+            contract::post(&store, "inbox", "alpha", &format!("message {i}"), i as i64).await;
+        }
+
+        let counts = contract::counts(&store, "inbox").await.expect("inbox exists");
+        assert_eq!(
+            counts.new, posted as usize,
+            "every card in the column must be counted, not just the first page"
+        );
+
+        let delivery = contract::read(&store, "inbox").await;
+        assert_eq!(
+            delivery.messages.len(),
+            posted as usize,
+            "every unprocessed message must be delivered, not just the first page"
+        );
+
+        // …and the read-back path agrees, so a message past the cap can still be
+        // retired rather than being unreachable forever.
+        let last = delivery.messages.last().expect("a message").message.id.clone();
+        let processed = store.mark_processed(&last, None).await.expect("mark_processed ok");
+        assert_eq!(processed.state, MessageState::Processed);
     }
 }
