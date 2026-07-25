@@ -448,7 +448,7 @@ impl FullTextIndex {
         }
         let mirror = self.entities.read().expect("entity mirror poisoned");
         let index: Vec<Entity> = mirror.iter().map(|(e, _)| e.clone()).collect();
-        let matches = guard::screen(&EntityId(text.to_string()), Some(text), &index);
+        let matches = guard::screen(&EntityId(text.to_string()), &[text], &index);
 
         matches
             .into_iter()

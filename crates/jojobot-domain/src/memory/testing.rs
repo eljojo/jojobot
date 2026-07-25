@@ -48,7 +48,7 @@ impl Memory for InMemoryMemory {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         validate_entity(&new.id, &new.name, &new.aliases, &new.source, new.crm.as_deref())?;
         if let Decision::Block(candidates) =
-            guard::decide(&new.id, Some(&new.name), &self.index(), new.create_new)
+            guard::decide(&new.id, &new.labels(), &self.index(), new.create_new)
         {
             return Ok(Guarded::Blocked {
                 attempted: new.id,
@@ -91,7 +91,7 @@ impl Memory for InMemoryMemory {
         let Some(entity) = entities.iter_mut().find(|e| &e.id == handle) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: handle.to_string(),
-                nearest: guard::screen(handle, None, &entities),
+                nearest: guard::screen(handle, &[], &entities),
             });
         };
         // A rename is an entity-touching write, so it faces the same gate.
@@ -192,7 +192,7 @@ impl Memory for InMemoryMemory {
         if !index.iter().any(|e| e.id == address.home) {
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
-                nearest: guard::screen(&address.home, None, &index),
+                nearest: guard::screen(&address.home, &[], &index),
             });
         }
 
@@ -1411,6 +1411,49 @@ pub mod contract {
         assert_eq!(read_entity(store, &id).await.aliases, vec!["Only This One"]);
     }
 
+    /// **The guard knows every name an entity answers to.** Someone filed under
+    /// one name and called another is one entity; a write arriving under the
+    /// nickname has to hit the same gate a write under the display name does, or
+    /// a second record gets created under the name the user actually says and
+    /// the facts split evenly between the two.
+    pub async fn add_entity_screens_every_name_an_entity_answers_to<M: Memory>(store: &M) {
+        let known = EntityId::person("contract-many-labelled");
+        add(
+            store,
+            NewEntity {
+                aliases: vec!["Contract Nickname Only".into()],
+                ..NewEntity::new(known.clone(), "Contract Many-Labelled", "user-named")
+            },
+        )
+        .await;
+
+        let under_the_alias = EntityId::person("contract-nickname-only");
+        let outcome = store
+            .add_entity(NewEntity::new(
+                under_the_alias.clone(),
+                "Contract Nickname Only",
+                "user-named",
+            ))
+            .await
+            .expect("the call itself succeeds; the guard answers in the result");
+        let Guarded::Blocked { candidates, .. } = outcome else {
+            panic!("a write under a name the entity already answers to must block");
+        };
+        assert!(
+            candidates.iter().any(|m| m.handle == known),
+            "the guard must name the entity that wears it: {candidates:?}"
+        );
+        assert!(
+            store
+                .list_entities(None)
+                .await
+                .expect("list")
+                .iter()
+                .all(|e| e.id != under_the_alias),
+            "a blocked add writes nothing"
+        );
+    }
+
     /// An entity write with a malformed field is refused outright — a name that
     /// could break out of its frontmatter line never reaches the store.
     pub async fn malformed_entity_fields_are_rejected<M: Memory>(store: &M) {
@@ -1741,6 +1784,7 @@ pub mod contract {
         update_entity_without_a_rename_is_not_screened(store).await;
         update_entity_unknown_handle_never_creates(store).await;
         add_entity_keeps_its_alternate_names(store).await;
+        add_entity_screens_every_name_an_entity_answers_to(store).await;
 
         capture_writes_an_edge_that_reads_back(store).await;
         every_edge_shape_reads_back(store).await;

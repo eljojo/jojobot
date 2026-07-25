@@ -274,6 +274,17 @@ impl NewEntity {
             create_new: false,
         }
     }
+
+    /// Every name this write claims — the same set [`Entity::labels`] reads off
+    /// a stored one, so the guard screens the incoming record exactly as it
+    /// screens the ones already there.
+    pub fn labels(&self) -> Vec<&str> {
+        std::iter::once(self.name.as_str())
+            .chain(self.aliases.iter().map(String::as_str))
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect()
+    }
 }
 
 /// A metadata edit to an existing entity. **The handle is not in here**: a

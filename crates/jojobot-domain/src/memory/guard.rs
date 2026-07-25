@@ -110,16 +110,31 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
-/// Every existing entity the incoming (`handle`, `name`) might already be, with
-/// the strongest reason each matched. Deterministic: same inputs, same order
-/// (reason first, then handle), so two sessions see the same report.
+/// Fold a set of labels to their comparison forms, dropping blanks. Both sides
+/// of every name comparison go through this, so "the same name" means one thing.
+fn folded(labels: &[&str]) -> Vec<String> {
+    labels
+        .iter()
+        .map(|l| normalize_name(l))
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// Every existing entity the incoming (`handle`, `labels`) might already be,
+/// with the strongest reason each matched. Deterministic: same inputs, same
+/// order (reason first, then handle), so two sessions see the same report.
 ///
-/// `name` is optional — a `capture` knows only a subject handle, and the slug
-/// comparisons still apply.
-pub fn screen(handle: &EntityId, name: Option<&str>, index: &[Entity]) -> Vec<EntityMatch> {
+/// `labels` is every name the incoming write claims — its display name and any
+/// alias — and it may be empty: a `capture` knows only a subject handle, and the
+/// slug comparisons still apply. Each is compared against every label the
+/// existing entity wears ([`Entity::labels`]), because a nickname the guard
+/// doesn't know is a second entity waiting to be created under the name the user
+/// actually says.
+pub fn screen(handle: &EntityId, labels: &[&str], index: &[Entity]) -> Vec<EntityMatch> {
     let incoming_slug = handle.slug();
-    let incoming_name = name.map(normalize_name).filter(|n| !n.is_empty());
-    let incoming_name_slug = incoming_name.as_deref().map(slugify);
+    let incoming_names = folded(labels);
+    let incoming_name_slugs: Vec<String> =
+        incoming_names.iter().map(|n| slugify(n)).collect();
 
     let mut matches: Vec<EntityMatch> = index
         .iter()
@@ -127,8 +142,8 @@ pub fn screen(handle: &EntityId, name: Option<&str>, index: &[Entity]) -> Vec<En
             reason_for(
                 handle,
                 incoming_slug,
-                incoming_name.as_deref(),
-                incoming_name_slug.as_deref(),
+                &incoming_names,
+                &incoming_name_slugs,
                 e,
             )
             .map(|reason| EntityMatch {
@@ -151,14 +166,13 @@ pub fn screen(handle: &EntityId, name: Option<&str>, index: &[Entity]) -> Vec<En
 /// Same reasons and same order as [`screen`], minus the two handle channels.
 /// That subtraction is the whole point: see [`decide_rename`].
 pub fn screen_name(kind: Option<EntityKind>, name: &str, index: &[Entity]) -> Vec<EntityMatch> {
-    let incoming = normalize_name(name);
-    let incoming = (!incoming.is_empty()).then_some(incoming);
-    let incoming_slug = incoming.as_deref().map(slugify);
+    let incoming = folded(&[name]);
+    let incoming_slugs: Vec<String> = incoming.iter().map(|n| slugify(n)).collect();
 
     let mut matches: Vec<EntityMatch> = index
         .iter()
         .filter_map(|e| {
-            name_reason(kind, incoming.as_deref(), incoming_slug.as_deref(), e).map(|reason| {
+            name_reason(kind, &incoming, &incoming_slugs, e).map(|reason| {
                 EntityMatch {
                     handle: e.id.clone(),
                     kind: e.kind,
@@ -177,21 +191,20 @@ pub fn screen_name(kind: Option<EntityKind>, name: &str, index: &[Entity]) -> Ve
 fn reason_for(
     handle: &EntityId,
     incoming_slug: &str,
-    incoming_name: Option<&str>,
-    incoming_name_slug: Option<&str>,
+    incoming_names: &[String],
+    incoming_name_slugs: &[String],
     existing: &Entity,
 ) -> Option<MatchReason> {
     if &existing.id == handle {
         return Some(MatchReason::ExactHandle);
     }
     let same_kind = handle.kind() == Some(existing.kind);
-    let existing_name = normalize_name(&existing.name);
-    let existing_name = (!existing_name.is_empty()).then_some(existing_name);
 
-    // The handle channel of a name collision: an existing entity's name spells
-    // out the incoming handle ("Alpha One" already there, `person:alpha-one`
-    // arriving) — the same collision wearing a different hat.
-    if existing_name.as_deref().is_some_and(|n| slugify(n) == incoming_slug) {
+    // The handle channel of a name collision: one of the existing entity's
+    // labels spells out the incoming handle ("Alpha One" already there,
+    // `person:alpha-one` arriving; or an alias "Cosme Fulanito" and `person:cosme-fulanito`) — the
+    // same collision wearing a different hat.
+    if folded(&existing.labels()).iter().any(|n| slugify(n) == incoming_slug) {
         return Some(if same_kind {
             MatchReason::SameName
         } else {
@@ -200,7 +213,7 @@ fn reason_for(
     }
 
     // The name channels, shared with `screen_name`.
-    let by_name = name_reason(handle.kind(), incoming_name, incoming_name_slug, existing);
+    let by_name = name_reason(handle.kind(), incoming_names, incoming_name_slugs, existing);
     if matches!(
         by_name,
         Some(MatchReason::SameName | MatchReason::SameNameOtherKind)
@@ -219,24 +232,25 @@ fn reason_for(
     by_name
 }
 
-/// The strongest reason an incoming **name** means an existing entity: the names
-/// agree once folded, the name spells out the existing handle, or the two names
-/// are within a typo. `incoming` is already normalized, `incoming_slug` is its
-/// slugified form.
+/// The strongest reason an incoming set of **names** means an existing entity:
+/// some incoming label and some existing label agree once folded, an incoming
+/// label spells out the existing handle, or two labels are within a typo.
+/// `incoming` is already normalized, `incoming_slugs` are their slugified forms.
+///
+/// **Every label on both sides.** An entity's aliases are names it answers to,
+/// not decoration: matching only the preferred one lets the name the user
+/// actually says walk straight past the guard.
 fn name_reason(
     kind: Option<EntityKind>,
-    incoming: Option<&str>,
-    incoming_slug: Option<&str>,
+    incoming: &[String],
+    incoming_slugs: &[String],
     existing: &Entity,
 ) -> Option<MatchReason> {
     let same_kind = kind == Some(existing.kind);
-    let existing_name = normalize_name(&existing.name);
-    let existing_name = (!existing_name.is_empty()).then_some(existing_name);
+    let existing_names = folded(&existing.labels());
 
-    let agree = match (incoming, existing_name.as_deref()) {
-        (Some(a), Some(b)) if a == b => true,
-        _ => incoming_slug.is_some_and(|s| s == existing.id.slug()),
-    };
+    let agree = incoming.iter().any(|a| existing_names.iter().any(|b| a == b))
+        || incoming_slugs.iter().any(|s| s == existing.id.slug());
     if agree {
         return Some(if same_kind {
             MatchReason::SameName
@@ -247,10 +261,10 @@ fn name_reason(
     if !same_kind {
         return None;
     }
-    match (incoming, existing_name.as_deref()) {
-        (Some(a), Some(b)) if edit_distance(a, b) <= NEAR => Some(MatchReason::NearName),
-        _ => None,
-    }
+    let near = incoming
+        .iter()
+        .any(|a| existing_names.iter().any(|b| edit_distance(a, b) <= NEAR));
+    near.then_some(MatchReason::NearName)
 }
 
 /// The guard's decision on a write that names an entity.
@@ -260,11 +274,11 @@ fn name_reason(
 /// cannot share a handle, so that case is re-slug-or-confirm, always.
 pub fn decide(
     handle: &EntityId,
-    name: Option<&str>,
+    labels: &[&str],
     index: &[Entity],
     create_new: bool,
 ) -> Decision {
-    let matches = screen(handle, name, index);
+    let matches = screen(handle, labels, index);
     let exact = matches.iter().any(|m| m.reason == MatchReason::ExactHandle);
     if matches.is_empty() || (create_new && !exact) {
         Decision::Proceed
@@ -291,7 +305,7 @@ pub fn decide_existing(handle: &EntityId, index: &[Entity]) -> Decision {
     if index.iter().any(|e| &e.id == handle) {
         return Decision::Proceed;
     }
-    Decision::Block(screen(handle, None, index))
+    Decision::Block(screen(handle, &[], index))
 }
 
 /// The guard's decision on a **rename**. A rename is an entity-touching write,
@@ -361,7 +375,7 @@ mod tests {
     }
 
     fn reasons(handle: &str, name: Option<&str>) -> Vec<MatchReason> {
-        screen(&EntityId(handle.into()), name, &index())
+        screen(&EntityId(handle.into()), &name.into_iter().collect::<Vec<_>>(), &index())
             .into_iter()
             .map(|m| m.reason)
             .collect()
@@ -377,7 +391,7 @@ mod tests {
         let taken = EntityId("person:alpha".into());
         for create_new in [false, true] {
             let Decision::Block(candidates) =
-                decide(&taken, Some("Alpha Two"), &index(), create_new)
+                decide(&taken, &["Alpha Two"], &index(), create_new)
             else {
                 panic!("a colliding handle must block (create_new={create_new})");
             };
@@ -392,12 +406,12 @@ mod tests {
     #[test]
     fn a_qualified_slug_is_flagged_by_name_and_create_new_clears_it() {
         let qualified = EntityId("person:alpha-two".into());
-        let Decision::Block(candidates) = decide(&qualified, Some("Alpha"), &index(), false) else {
+        let Decision::Block(candidates) = decide(&qualified, &["Alpha"], &index(), false) else {
             panic!("a same-name person must block");
         };
         assert_eq!(candidates[0].reason, MatchReason::SameName);
         assert_eq!(
-            decide(&qualified, Some("Alpha"), &index(), true),
+            decide(&qualified, &["Alpha"], &index(), true),
             Decision::Proceed,
             "an explicit create-new signal resolves a fuzzy match"
         );
@@ -455,10 +469,10 @@ mod tests {
     #[test]
     fn an_unrelated_entity_proceeds() {
         assert_eq!(
-            decide(&EntityId("person:zenith".into()), Some("Zenith"), &index(), false),
+            decide(&EntityId("person:zenith".into()), &["Zenith"], &index(), false),
             Decision::Proceed
         );
-        assert_eq!(decide(&EntityId("topic:widgets".into()), None, &[], false), Decision::Proceed);
+        assert_eq!(decide(&EntityId("topic:widgets".into()), &[], &[], false), Decision::Proceed);
     }
 
     /// Several candidates come back strongest-first, then by handle — a stable
@@ -469,7 +483,7 @@ mod tests {
         // `alpha` → `alpha-b` is two edits, so this one lands on the slug channel.
         idx.push(entity("person:alpha-b", "Unrelated", "user-named"));
         idx.push(entity("person:alpha-a", "Alpha", "user-named"));
-        let got: Vec<_> = screen(&EntityId("person:alpha".into()), Some("Alpha"), &idx)
+        let got: Vec<_> = screen(&EntityId("person:alpha".into()), &["Alpha"], &idx)
             .into_iter()
             .map(|m| (m.handle.0, m.reason))
             .collect();
@@ -490,18 +504,105 @@ mod tests {
     fn an_unnamed_entity_still_screens_by_slug() {
         let idx = vec![entity("person:alpha", "", "capture")];
         assert_eq!(
-            screen(&EntityId("person:alphaa".into()), None, &idx)[0].reason,
+            screen(&EntityId("person:alphaa".into()), &[], &idx)[0].reason,
             MatchReason::NearSlug,
             "with no name on either side, the slugs are all there is to go on"
         );
         assert_eq!(
-            screen(&EntityId("person:alphaa".into()), Some("Alpha"), &idx)[0].reason,
+            screen(&EntityId("person:alphaa".into()), &["Alpha"], &idx)[0].reason,
             MatchReason::SameName,
             "an incoming name that lands exactly on an existing handle is the stronger signal"
         );
         assert!(
-            screen(&EntityId("person:zenith".into()), Some(""), &idx).is_empty(),
+            screen(&EntityId("person:zenith".into()), &[""], &idx).is_empty(),
             "an empty name must not match an empty name"
+        );
+    }
+
+    // --- every label, not just the preferred one -----------------------------
+
+    fn also_known_as(id: &str, name: &str, aliases: &[&str]) -> Entity {
+        Entity {
+            aliases: aliases.iter().map(|a| a.to_string()).collect(),
+            ..entity(id, name, "user-named")
+        }
+    }
+
+    /// **The acceptance case.** Someone known as Homer Simpson and called Cosme Fulanito is one
+    /// person. A write arriving as "Cosme Fulanito" has to hit the guard, or the second
+    /// entity gets created under the name the user actually says — and from then
+    /// on half the facts live on each.
+    #[test]
+    fn a_write_under_an_alias_is_recognized_as_the_entity_that_wears_it() {
+        let idx = vec![also_known_as("person:homer-simpson", "Homer Simpson", &["Cosme Fulanito"])];
+
+        let Decision::Block(candidates) =
+            decide(&EntityId("person:cosme-fulanito".into()), &["Cosme Fulanito"], &idx, false)
+        else {
+            panic!("a name the entity already answers to must block");
+        };
+        assert_eq!(candidates[0].handle.as_str(), "person:homer-simpson");
+        assert_eq!(candidates[0].reason, MatchReason::SameName);
+
+        // The handle channel of the same collision: a slug that spells the alias.
+        assert_eq!(
+            screen(&EntityId("person:cosme-fulanito".into()), &[], &idx)[0].reason,
+            MatchReason::SameName,
+            "a handle spelling out an alias is the same collision in another hat"
+        );
+
+        // And a typo of an alias is a near miss, exactly as a typo of a name is.
+        assert_eq!(
+            screen(&EntityId("person:zzz".into()), &["Cosme Fulanit"], &idx)[0].reason,
+            MatchReason::NearName
+        );
+    }
+
+    /// The incoming side counts too: an entity arriving with an alias that
+    /// belongs to someone already here is the same collision read backwards.
+    #[test]
+    fn an_incoming_alias_collides_with_an_existing_name() {
+        let idx = vec![entity("person:homer-simpson", "Homer Simpson", "user-named")];
+        let Decision::Block(candidates) =
+            decide(&EntityId("person:barney-gumble".into()), &["Barney Gumble", "Homer Simpson"], &idx, false)
+        else {
+            panic!("an incoming alias that names someone here must block");
+        };
+        assert_eq!(candidates[0].handle.as_str(), "person:homer-simpson");
+        assert_eq!(candidates[0].reason, MatchReason::SameName);
+    }
+
+    /// A rename onto a name an entity already answers to is blocked — the alias
+    /// channel of the collision the rename gate exists for.
+    #[test]
+    fn a_rename_onto_an_existing_alias_is_blocked() {
+        let idx = vec![
+            also_known_as("person:homer-simpson", "Homer Simpson", &["Cosme Fulanito"]),
+            entity("person:zenith", "Zenith", "user-named"),
+        ];
+        let Decision::Block(candidates) =
+            decide_rename(&EntityId("person:zenith".into()), "Cosme Fulanito", "Zenith", &idx, false)
+        else {
+            panic!("renaming onto an alias must block");
+        };
+        assert_eq!(candidates[0].handle.as_str(), "person:homer-simpson");
+        assert_eq!(candidates[0].reason, MatchReason::SameName);
+    }
+
+    /// A handle a write only names is screened against every label too, so the
+    /// candidate list that comes back with a blocked capture can say "you may
+    /// mean Homer Simpson" when what was typed was Cosme Fulanito.
+    #[test]
+    fn a_must_exist_miss_suggests_by_alias() {
+        let idx = vec![also_known_as("person:homer-simpson", "Homer Simpson", &["Cosme Fulanito"])];
+        let Decision::Block(candidates) = decide_existing(&EntityId("person:cosme-fulanito".into()), &idx)
+        else {
+            panic!("an unknown handle blocks");
+        };
+        assert_eq!(
+            candidates[0].handle.as_str(),
+            "person:homer-simpson",
+            "the suggestion is the entity that wears that name: {candidates:?}"
         );
     }
 

@@ -311,7 +311,7 @@ impl Memory for OutlineStore {
 
         let index = self.entity_index(&collection_id).await?;
         if let Decision::Block(candidates) =
-            guard::decide(&new.id, Some(&new.name), &index, new.create_new)
+            guard::decide(&new.id, &new.labels(), &index, new.create_new)
         {
             return Ok(Guarded::Blocked {
                 attempted: new.id,
@@ -363,7 +363,7 @@ impl Memory for OutlineStore {
         let Some(doc) = self.entity_doc(&collection_id, handle).await? else {
             return Err(MemoryError::UnknownEntity {
                 attempted: handle.to_string(),
-                nearest: guard::screen(handle, None, &index),
+                nearest: guard::screen(handle, &[], &index),
             });
         };
         let mut entity = parse_entity(&doc.text)
@@ -523,7 +523,7 @@ impl Memory for OutlineStore {
             let index = self.entity_index(&collection_id).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
-                nearest: guard::screen(&address.home, None, &index),
+                nearest: guard::screen(&address.home, &[], &index),
             });
         };
         let facts = parse_facts_table(&doc.text);
