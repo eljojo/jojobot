@@ -227,6 +227,11 @@ pub struct EntityRef {
     pub kind: Option<EntityKind>,
     /// The display name, when the handle names an entity the index knows.
     pub name: Option<String>,
+    /// The other names it answers to. Empty is the ordinary case — and also
+    /// what an unresolved handle carries, because there are none to report,
+    /// not because they are unknown. That is why this is a list where `name` is
+    /// an option: absent and none-at-all are the same answer here.
+    pub aliases: Vec<String>,
 }
 
 impl EntityRef {
@@ -236,15 +241,21 @@ impl EntityRef {
             kind: id.kind(),
             id,
             name: None,
+            aliases: Vec::new(),
         }
     }
 
     /// A handle resolved against the entity it names.
+    ///
+    /// The aliases, **not** [`Entity::labels`]: labels lead with the display
+    /// name, which is already `name` here, and repeating it would make one
+    /// label read as two.
     pub fn resolved(entity: &Entity) -> Self {
         EntityRef {
             id: entity.id.clone(),
             kind: Some(entity.kind),
             name: Some(entity.name.clone()),
+            aliases: entity.aliases.clone(),
         }
     }
 }

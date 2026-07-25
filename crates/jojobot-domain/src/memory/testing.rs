@@ -1848,7 +1848,14 @@ pub mod contract {
     /// its grammar, but `person:contract-orient` says nothing about who that is.
     pub async fn search_fact_hits_name_their_subject_and_home<S: Memory + Search>(store: &S) {
         let subject = EntityId::person("contract-orient-subject");
-        add(store, NewEntity::new(subject.clone(), "Orienteering Otto", "user-named")).await;
+        add(
+            store,
+            NewEntity {
+                aliases: vec!["Contract Compass".into()],
+                ..NewEntity::new(subject.clone(), "Orienteering Otto", "user-named")
+            },
+        )
+        .await;
         capture(
             store,
             NewFact::about(subject.clone(), "reads a map for fun", date(2026, 7, 1)),
@@ -1873,11 +1880,20 @@ pub mod contract {
             Some("Orienteering Otto"),
             "a hit that names only the handle is the bare hit this exists to kill"
         );
+        // Every name it answers to, not only the preferred one: a search on the
+        // nickname otherwise returns a row labelled with a name the asker did
+        // not use and has no way to connect to the one they did.
+        assert_eq!(
+            fact_subject.aliases,
+            vec!["Contract Compass".to_string()],
+            "the nickname rides along with the hit that names them"
+        );
         // A single-subject capture homes the row on its own subject, so the two
         // agree here. What matters is that home is *resolved*, not that it
         // differs — a reader has to be able to tell when it does.
         assert_eq!(fact_home.id, subject);
         assert_eq!(fact_home.name.as_deref(), Some("Orienteering Otto"));
+        assert_eq!(fact_home.aliases, vec!["Contract Compass".to_string()]);
     }
 
     /// An entity hit arrives with **where it sits in the graph** — the edges its

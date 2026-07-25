@@ -305,9 +305,9 @@ impl Jojobot {
                        edges, so a doc that merely mentions X is not an answer. Every fact hit \
                        carries its whole row and its address, so you can edit what you find. \
                        No hit comes back bare: a fact also names who it is `about` and whose \
-                       page it is `home`d on (handle, type and name — a null name means that \
-                       handle resolves to no entity), and an entity or prose hit carries that \
-                       entity's names and the `edges` its facts draw. \
+                       page it is `home`d on (handle, type, name and alternateName — a null name \
+                       means that handle resolves to no entity), and an entity or prose hit \
+                       carries that entity's names and the `edges` its facts draw. \
                        No pagination — raise `limit` or ask a better question."
     )]
     async fn search(
@@ -517,7 +517,8 @@ fn fact_json(fact: &Fact) -> serde_json::Value {
 /// row and address, prose the doc to open and the text around the match.
 ///
 /// **And every hit arrives with its surroundings.** A fact adds `about` and
-/// `home` — its subject and its home doc's entity, resolved to a name — and an
+/// `home` — its subject and its home doc's entity, resolved to every name they
+/// answer to — and an
 /// entity or a prose doc adds `edges`, where it sits in the graph. The
 /// enrichment is strictly additive: `subject` is still the same handle string
 /// here as in `recall`, so one record has one spelling across every verb.
@@ -570,6 +571,10 @@ fn entity_ref_json(reference: &EntityRef) -> serde_json::Value {
         "id": reference.id.as_str(),
         "type": reference.kind.map(type_name),
         "name": reference.name,
+        // Same key an entity hit uses for the same idea — the asker who typed a
+        // nickname has to see it here, or the hit answers a question they did
+        // not ask under a name they do not recognize.
+        "alternateName": reference.aliases,
     })
 }
 
@@ -1279,6 +1284,12 @@ mod tests {
         assert_eq!(results[1]["about"]["name"], "Alpha");
         assert_eq!(results[1]["home"]["id"], "person:alpha");
         assert_eq!(results[1]["home"]["name"], "Alpha");
+        // …under the same key an entity hit uses, so one shape means one thing.
+        assert_eq!(
+            results[1]["about"]["alternateName"][0], "Al",
+            "a search on the nickname has to show the linkage on the hit itself"
+        );
+        assert_eq!(results[1]["home"]["alternateName"][0], "Al");
 
         assert_eq!(results[2]["hit"], "prose");
         assert_eq!(results[2]["doc"], "doc-1");
