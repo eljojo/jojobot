@@ -27,7 +27,7 @@ use async_trait::async_trait;
 use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, Memory, MemoryError,
     NewEntity, NewFact, apply_entity_patch, apply_fact_patch, normalize_content, normalize_details,
-    validate_content, validate_details, validate_entity, validate_subject,
+    validate_content, validate_details, validate_edge, validate_entity, validate_subject,
     guard::{self, Decision},
 };
 
@@ -397,12 +397,31 @@ impl Memory for OutlineStore {
         validate_subject(&fact.subject)?;
         validate_content(&fact.content)?;
         validate_details(fact.details.as_deref())?;
+        if let Some(edge) = &fact.edge {
+            validate_edge(edge)?;
+        }
         let collection_id = self.resolve_collection().await?;
+
+        let subject_doc = self.entity_doc(&collection_id, &fact.subject).await?;
+        // An edge's object names an entity too, so it faces the same gate — and
+        // it is screened BEFORE the subject's doc is provisioned, or a blocked
+        // edge would leave a fresh doc behind.
+        if let Some(edge) = &fact.edge {
+            let index = self.entity_index(&collection_id).await?;
+            if let Decision::Block(candidates) =
+                guard::decide_named(&edge.object, &index, fact.create_new)
+            {
+                return Ok(Guarded::Blocked {
+                    attempted: edge.object.clone(),
+                    candidates,
+                });
+            }
+        }
 
         // A subject with no doc yet is a new entity, so it passes the guard
         // before anything is written. One that resolves exactly is already
         // known — guarding it would make every second fact need confirming.
-        let doc = match self.entity_doc(&collection_id, &fact.subject).await? {
+        let doc = match subject_doc {
             Some(doc) => doc,
             None => {
                 let index = self.entity_index(&collection_id).await?;
@@ -455,6 +474,7 @@ impl Memory for OutlineStore {
             provenance: fact.provenance,
             status: fact.status,
             date: fact.date,
+            edge: fact.edge,
         };
         let updated = with_fact_appended(&doc.text, &render_fact_row(&stored));
         self.api.update_document(&doc.id, &updated).await?;
@@ -486,9 +506,24 @@ impl Memory for OutlineStore {
         &self,
         address: &FactAddress,
         patch: FactPatch,
-    ) -> Result<Fact, MemoryError> {
+    ) -> Result<Guarded<Fact>, MemoryError> {
         validate_subject(&address.home)?;
         let collection_id = self.resolve_collection().await?;
+
+        // An edit that attaches an edge names an entity, so it is screened before
+        // the row is rewritten — the guard is on every write path, not just create.
+        if let Some(edge) = &patch.edge {
+            validate_edge(edge)?;
+            let index = self.entity_index(&collection_id).await?;
+            if let Decision::Block(candidates) =
+                guard::decide_named(&edge.object, &index, patch.create_new)
+            {
+                return Ok(Guarded::Blocked {
+                    attempted: edge.object.clone(),
+                    candidates,
+                });
+            }
+        }
 
         let unknown = |nearest: Vec<String>| MemoryError::UnknownFact {
             attempted: address.to_string(),
@@ -524,7 +559,7 @@ impl Memory for OutlineStore {
                 "fact {address} read back changed: wrote {fact:?}, read {seen:?}"
             )));
         }
-        Ok(seen)
+        Ok(Guarded::Written(seen))
     }
 }
 
@@ -999,6 +1034,7 @@ mod tests {
                 provenance: jojobot_domain::memory::Provenance::Testimony,
                 status: Default::default(),
                 date: date(2026, 7, 1),
+                edge: None,
             }),
         );
         fake.seed_document(&coll, "Totally Unrelated Title", &text);

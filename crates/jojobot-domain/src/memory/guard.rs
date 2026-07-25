@@ -273,6 +273,19 @@ pub fn decide(
     }
 }
 
+/// The guard's decision on a handle a write **names but does not create** — a
+/// capture's subject, an edge's object.
+///
+/// A handle that resolves exactly is already known, and is waved through: it is
+/// the entity, not a candidate for it. Otherwise it faces [`decide`] on the slug
+/// channels (there is no name to screen — the caller gave a handle, not a label).
+pub fn decide_named(handle: &EntityId, index: &[Entity], create_new: bool) -> Decision {
+    if index.iter().any(|e| &e.id == handle) {
+        return Decision::Proceed;
+    }
+    decide(handle, None, index, create_new)
+}
+
 /// The guard's decision on a **rename**. A rename is an entity-touching write,
 /// so it faces a gate — without one the guard is trivially side-steppable:
 /// create under a throwaway name, then rename onto the collision. But it is
@@ -479,6 +492,32 @@ mod tests {
         assert!(
             screen(&EntityId("person:zenith".into()), Some(""), &idx).is_empty(),
             "an empty name must not match an empty name"
+        );
+    }
+
+    // --- a handle a write only names -----------------------------------------
+
+    /// A handle that already exists IS the entity, so naming it is never
+    /// suspicious — otherwise every second fact about someone, and every edge
+    /// pointing at a known place, would need confirming. A near miss still blocks.
+    #[test]
+    fn naming_an_existing_handle_proceeds_but_a_near_miss_blocks() {
+        let idx = index();
+        assert_eq!(
+            decide_named(&EntityId("person:alpha".into()), &idx, false),
+            Decision::Proceed,
+            "an exact handle is the entity, not a candidate for it"
+        );
+        let Decision::Block(candidates) =
+            decide_named(&EntityId("person:alphaa".into()), &idx, false)
+        else {
+            panic!("a near-miss handle must block");
+        };
+        assert_eq!(candidates[0].handle.as_str(), "person:alpha");
+        assert_eq!(
+            decide_named(&EntityId("person:alphaa".into()), &idx, true),
+            Decision::Proceed,
+            "the explicit signal clears a fuzzy match here too"
         );
     }
 

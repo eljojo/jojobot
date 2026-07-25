@@ -16,8 +16,8 @@ use std::sync::Mutex;
 use super::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, Guarded,
     Memory, MemoryError, NewEntity, NewFact, apply_entity_patch, apply_fact_patch,
-    normalize_content, normalize_details, validate_content, validate_details, validate_entity,
-    validate_subject,
+    normalize_content, normalize_details, validate_content, validate_details, validate_edge,
+    validate_entity, validate_subject,
     guard::{self, Decision},
 };
 
@@ -128,14 +128,27 @@ impl Memory for InMemoryMemory {
         validate_subject(&fact.subject)?;
         validate_content(&fact.content)?;
         validate_details(fact.details.as_deref())?;
+        if let Some(edge) = &fact.edge {
+            validate_edge(edge)?;
+        }
 
-        let known = self.index().iter().any(|e| e.id == fact.subject);
-        if !known
-            && let Decision::Block(candidates) =
-                guard::decide(&fact.subject, None, &self.index(), fact.create_new)
+        let index = self.index();
+        if let Decision::Block(candidates) =
+            guard::decide_named(&fact.subject, &index, fact.create_new)
         {
             return Ok(Guarded::Blocked {
                 attempted: fact.subject,
+                candidates,
+            });
+        }
+        // The object faces the same gate, BEFORE the subject's doc is
+        // provisioned: a blocked edge must leave nothing behind.
+        if let Some(edge) = &fact.edge
+            && let Decision::Block(candidates) =
+                guard::decide_named(&edge.object, &index, fact.create_new)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: edge.object.clone(),
                 candidates,
             });
         }
@@ -155,6 +168,7 @@ impl Memory for InMemoryMemory {
             provenance: fact.provenance,
             status: fact.status,
             date: fact.date,
+            edge: fact.edge,
         };
         facts.push(stored.clone());
         Ok(Guarded::Written(stored))
@@ -173,7 +187,21 @@ impl Memory for InMemoryMemory {
         &self,
         address: &FactAddress,
         patch: FactPatch,
-    ) -> Result<Fact, MemoryError> {
+    ) -> Result<Guarded<Fact>, MemoryError> {
+        // An edge's object names an entity, so an edit that attaches one is an
+        // entity-touching write and faces the guard — same check, same order:
+        // screened before anything is rewritten.
+        if let Some(edge) = &patch.edge {
+            validate_edge(edge)?;
+            if let Decision::Block(candidates) =
+                guard::decide_named(&edge.object, &self.index(), patch.create_new)
+            {
+                return Ok(Guarded::Blocked {
+                    attempted: edge.object.clone(),
+                    candidates,
+                });
+            }
+        }
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
         let nearest: Vec<String> = facts
             .iter()
@@ -190,7 +218,7 @@ impl Memory for InMemoryMemory {
             });
         };
         apply_fact_patch(fact, &patch)?;
-        Ok(fact.clone())
+        Ok(Guarded::Written(fact.clone()))
     }
 }
 
@@ -206,7 +234,7 @@ impl Memory for InMemoryMemory {
 /// and carries no user PII, not even in test data.
 pub mod contract {
     use super::*;
-    use crate::memory::{Boot, FactStatus, Provenance};
+    use crate::memory::{Boot, Edge, EdgeShape, FactStatus, Provenance};
     use jiff::civil::date;
 
     /// Capture a fact the guard is expected to wave through.
@@ -229,6 +257,16 @@ pub mod contract {
             .expect("add_entity should succeed")
             .written()
             .unwrap_or_else(|| panic!("the guard must not block {id}"))
+    }
+
+    /// Edit a fact the guard is expected to wave through.
+    async fn edit<M: Memory>(store: &M, address: &FactAddress, patch: FactPatch) -> Fact {
+        store
+            .update_fact(address, patch)
+            .await
+            .expect("update_fact should succeed")
+            .written()
+            .unwrap_or_else(|| panic!("the guard must not block the edit at {address}"))
     }
 
     /// Fetch the fact the store returned from `capture`, read back by id.
@@ -277,6 +315,7 @@ pub mod contract {
             provenance: Provenance::Testimony,
             status: FactStatus::Active,
             date: date(2026, 3, 9),
+            edge: None,
             create_new: false,
         };
         let captured = capture(store, new).await;
@@ -664,13 +703,12 @@ pub mod contract {
             address
         );
 
-        let updated = store
-            .update_fact(
-                &address,
-                FactPatch { content: Some("addressed and edited".into()), ..Default::default() },
-            )
-            .await
-            .expect("update via the returned address");
+        let updated = edit(
+            store,
+            &address,
+            FactPatch { content: Some("addressed and edited".into()), ..Default::default() },
+        )
+        .await;
         assert_eq!(updated.content, "addressed and edited");
     }
 
@@ -683,17 +721,16 @@ pub mod contract {
             NewFact::about(subject.clone(), "works at the old place", date(2026, 7, 1)),
         )
         .await;
-        store
-            .update_fact(
-                &captured.address(),
-                FactPatch {
-                    content: Some("works at the new place".into()),
-                    details: Some("changed jobs in July".into()),
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("update should succeed");
+        edit(
+            store,
+            &captured.address(),
+            FactPatch {
+                content: Some("works at the new place".into()),
+                details: Some("changed jobs in July".into()),
+                ..Default::default()
+            },
+        )
+        .await;
 
         let facts = store.recall(&subject).await.expect("recall");
         let seen = read_back(store, &subject, &captured.id).await;
@@ -719,17 +756,16 @@ pub mod contract {
             NewFact::about(subject.clone(), "a close contact of the user", date(2026, 7, 1)),
         )
         .await;
-        let negated = store
-            .update_fact(
-                &captured.address(),
-                FactPatch {
-                    content: Some("NOT a close friend — do not re-infer closeness".into()),
-                    status: Some(FactStatus::Negated),
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("negate should succeed");
+        let negated = edit(
+            store,
+            &captured.address(),
+            FactPatch {
+                content: Some("NOT a close friend — do not re-infer closeness".into()),
+                status: Some(FactStatus::Negated),
+                ..Default::default()
+            },
+        )
+        .await;
         assert_eq!(negated.id, captured.id, "a negated fact keeps its id");
 
         let seen = read_back(store, &subject, &captured.id).await;
@@ -765,17 +801,16 @@ pub mod contract {
             "a refused promotion must leave the fact untouched"
         );
 
-        let promoted = store
-            .update_fact(
-                &captured.address(),
-                FactPatch {
-                    provenance: Some(Provenance::Testimony),
-                    confirmed_by_user: true,
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("a confirmed promotion is allowed");
+        let promoted = edit(
+            store,
+            &captured.address(),
+            FactPatch {
+                provenance: Some(Provenance::Testimony),
+                confirmed_by_user: true,
+                ..Default::default()
+            },
+        )
+        .await;
         assert_eq!(promoted.provenance, Provenance::Testimony);
         assert_eq!(
             read_back(store, &subject, &captured.id).await.provenance,
@@ -794,13 +829,12 @@ pub mod contract {
             },
         )
         .await;
-        let demoted = store
-            .update_fact(
-                &captured.address(),
-                FactPatch { provenance: Some(Provenance::Inference), ..Default::default() },
-            )
-            .await
-            .expect("demotion should succeed");
+        let demoted = edit(
+            store,
+            &captured.address(),
+            FactPatch { provenance: Some(Provenance::Inference), ..Default::default() },
+        )
+        .await;
         assert_eq!(demoted.provenance, Provenance::Inference);
     }
 
@@ -829,6 +863,147 @@ pub mod contract {
         let facts = store.recall(&subject).await.expect("recall");
         assert_eq!(facts.len(), 1, "nothing was created: {facts:?}");
         assert_eq!(facts[0].content, "the only row here");
+    }
+
+    // --- structured edges at capture -----------------------------------------
+
+    /// An edge is written atomically with its fact and comes back on the read
+    /// path. This is what makes ask-across an edge walk instead of an AI reading
+    /// prose, so it is bound by the same read-back invariant as the row itself.
+    pub async fn capture_writes_an_edge_that_reads_back<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-edged");
+        let edge = Edge::new(EdgeShape::Location, EntityId::new(EntityKind::Place, "contract-far-country"));
+        let captured = capture(
+            store,
+            NewFact {
+                edge: Some(edge.clone()),
+                ..NewFact::about(subject.clone(), "spending the winter away", date(2026, 7, 1))
+            },
+        )
+        .await;
+        assert_eq!(captured.edge.as_ref(), Some(&edge));
+
+        let seen = read_back(store, &subject, &captured.id).await;
+        assert_eq!(seen, captured, "the edge must survive read-back byte-identical");
+        assert_eq!(seen.edge.map(|e| e.object), Some(edge.object));
+    }
+
+    /// Every shape survives the trip, each with an object of the kind it requires.
+    pub async fn every_edge_shape_reads_back<M: Memory>(store: &M) {
+        let shapes = [
+            (EdgeShape::Location, EntityKind::Place),
+            (EdgeShape::Membership, EntityKind::Org),
+            (EdgeShape::Attendance, EntityKind::Event),
+            (EdgeShape::About, EntityKind::Topic),
+        ];
+        for (shape, kind) in shapes {
+            let subject = EntityId::person(format!("contract-shape-{shape}"));
+            let object = EntityId::new(kind, format!("contract-object-{shape}"));
+            let captured = capture(
+                store,
+                NewFact {
+                    edge: Some(Edge::new(shape, object.clone())),
+                    ..NewFact::about(subject.clone(), format!("a {shape} claim"), date(2026, 7, 1))
+                },
+            )
+            .await;
+            let seen = read_back(store, &subject, &captured.id).await;
+            assert_eq!(
+                seen.edge,
+                Some(Edge::new(shape, object)),
+                "the {shape} edge must read back"
+            );
+        }
+    }
+
+    /// An object of the wrong kind for its shape is refused outright, and the
+    /// fact does not land either — the edge is part of the write, not a garnish.
+    pub async fn a_wrong_kind_edge_object_is_refused<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-miskinded");
+        let err = store
+            .capture(NewFact {
+                // A `location` must point at a place; this one points at a person.
+                edge: Some(Edge::new(EdgeShape::Location, EntityId::person("contract-alpha"))),
+                ..NewFact::about(subject.clone(), "should never be stored", date(2026, 7, 1))
+            })
+            .await
+            .expect_err("a wrong-kind edge object must be refused");
+        assert!(matches!(err, MemoryError::InvalidEdge(_)), "got {err:?}");
+        assert!(
+            store.recall(&subject).await.expect("recall").is_empty(),
+            "a refused edge must take its fact with it: nothing written"
+        );
+    }
+
+    /// The **object is screened by the write guard exactly as a subject is.** A
+    /// typo'd object is where ask-across quietly rots: the edge points at a node
+    /// nobody else references, so the walk comes back empty and nothing looks
+    /// wrong. It comes back as candidates instead, and nothing is written.
+    pub async fn an_edge_object_is_screened_by_the_guard<M: Memory>(store: &M) {
+        let object = EntityId::new(EntityKind::Place, "contract-riverbend");
+        add(store, NewEntity::new(object.clone(), "Riverbend", "user-named")).await;
+
+        let subject = EntityId::person("contract-edge-guarded");
+        let typo = EntityId::new(EntityKind::Place, "contract-riverbnd");
+        let outcome = store
+            .capture(NewFact {
+                edge: Some(Edge::new(EdgeShape::Location, typo.clone())),
+                ..NewFact::about(subject.clone(), "should not land yet", date(2026, 7, 1))
+            })
+            .await
+            .expect("the call itself succeeds; the guard answers in the result");
+        let Guarded::Blocked { attempted, candidates } = outcome else {
+            panic!("a near-miss edge object must be reported");
+        };
+        assert_eq!(attempted, typo, "the guard names the handle it stopped");
+        assert!(
+            candidates.iter().any(|m| m.handle == object),
+            "the guard must name the place it suspects: {candidates:?}"
+        );
+        assert!(
+            store.recall(&subject).await.expect("recall").is_empty(),
+            "a blocked edge object must write no fact"
+        );
+
+        // Confirming the existing object is the ordinary path out.
+        let landed = capture(
+            store,
+            NewFact {
+                edge: Some(Edge::new(EdgeShape::Location, object.clone())),
+                ..NewFact::about(subject.clone(), "now it lands", date(2026, 7, 1))
+            },
+        )
+        .await;
+        assert_eq!(landed.edge.map(|e| e.object), Some(object));
+    }
+
+    /// `update_fact` attaches an edge to a fact that didn't have one — the
+    /// day-to-day path for an edge realized after the fact was captured.
+    pub async fn update_fact_attaches_an_edge<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-edge-later");
+        let captured = capture(
+            store,
+            NewFact::about(subject.clone(), "was at the festival", date(2026, 7, 1)),
+        )
+        .await;
+        assert_eq!(captured.edge, None);
+
+        let edge = Edge::new(
+            EdgeShape::Attendance,
+            EntityId::new(EntityKind::Event, "contract-winter-fest"),
+        );
+        let updated = edit(
+            store,
+            &captured.address(),
+            FactPatch { edge: Some(edge.clone()), ..Default::default() },
+        )
+        .await;
+        assert_eq!(updated.edge.as_ref(), Some(&edge));
+        assert_eq!(
+            read_back(store, &subject, &captured.id).await.edge.as_ref(),
+            Some(&edge),
+            "the attached edge must be on the read path"
+        );
     }
 
     // --- the write guard, on the write path ----------------------------------
@@ -994,6 +1169,12 @@ pub mod contract {
         update_entity_does_not_re_screen_the_handle(store).await;
         update_entity_without_a_rename_is_not_screened(store).await;
         update_entity_unknown_handle_never_creates(store).await;
+
+        capture_writes_an_edge_that_reads_back(store).await;
+        every_edge_shape_reads_back(store).await;
+        a_wrong_kind_edge_object_is_refused(store).await;
+        an_edge_object_is_screened_by_the_guard(store).await;
+        update_fact_attaches_an_edge(store).await;
 
         facts_carry_a_usable_address(store).await;
         update_fact_edits_in_place(store).await;

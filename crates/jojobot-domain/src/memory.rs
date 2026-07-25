@@ -280,9 +280,16 @@ pub struct FactPatch {
     /// New provenance. Promoting inference → testimony additionally requires
     /// [`FactPatch::confirmed_by_user`].
     pub provenance: Option<Provenance>,
+    /// A typed edge to attach. `None` leaves any existing edge alone; this
+    /// milestone writes one edge per fact, so setting it replaces.
+    pub edge: Option<Edge>,
     /// The user's explicit confirmation, required to promote a claim to
     /// testimony. jojobot infers freely; it never blesses on its own.
     pub confirmed_by_user: bool,
+    /// Set only after the guard reported candidates for the edge's object and the
+    /// caller judged them different — the same signal [`NewFact::create_new`]
+    /// carries, on the update path.
+    pub create_new: bool,
 }
 
 /// The promotion gate: a claim may only become testimony on the user's explicit
@@ -335,6 +342,120 @@ impl Provenance {
             "testimony" => Provenance::Testimony,
             _ => Provenance::Inference,
         }
+    }
+}
+
+/// The shape of a fact's structured edge — a **closed** set of four, and the only
+/// shapes this milestone writes. The general edges vocabulary (`receiptOf`,
+/// `supersedes`, `derivedFrom`, …) arrives with the graph milestone.
+///
+/// These four exist because ask-across — "which friends are in Shelbyville?", "what's
+/// connected to Duff Fest?" — must never rest on an AI scanning prose. A fact that
+/// puts an entity somewhere, in something, at something, or about something
+/// produces a typed edge **at capture**, so a cross-entity question is an edge
+/// walk instead of fifty sequential reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EdgeShape {
+    /// The subject is somewhere. Object is a [`EntityKind::Place`].
+    Location,
+    /// The subject belongs to something. Object is an [`EntityKind::Org`].
+    Membership,
+    /// The subject was at something. Object is an [`EntityKind::Event`].
+    Attendance,
+    /// The subject is about something — the open shape: any kind of object.
+    About,
+}
+
+impl EdgeShape {
+    /// Every shape, in declaration order.
+    pub const ALL: [EdgeShape; 4] = [
+        EdgeShape::Location,
+        EdgeShape::Membership,
+        EdgeShape::Attendance,
+        EdgeShape::About,
+    ];
+
+    /// The **input and storage** token — what a caller passes and what the
+    /// table's `edges` cell holds.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            EdgeShape::Location => "location",
+            EdgeShape::Membership => "membership",
+            EdgeShape::Attendance => "attendance",
+            EdgeShape::About => "about",
+        }
+    }
+
+    /// The **response** name — schema.org's word for this edge. Names only: the
+    /// recognition benefit is the vocabulary, not the machinery.
+    pub fn as_name(self) -> &'static str {
+        match self {
+            EdgeShape::Location => "location",
+            EdgeShape::Membership => "memberOf",
+            EdgeShape::Attendance => "attendee",
+            EdgeShape::About => "about",
+        }
+    }
+
+    /// Parse a shape token. Strict, like [`EntityKind::from_token`]: an unknown
+    /// shape has no safe fallback — guessing one would file an edge the user
+    /// never drew.
+    pub fn from_token(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.as_token() == token.trim())
+    }
+
+    /// The kind this shape's object must be, or `None` where any kind will do.
+    /// A `location` pointing at a person is a mis-drawn edge, not a nuance.
+    pub fn object_kind(self) -> Option<EntityKind> {
+        match self {
+            EdgeShape::Location => Some(EntityKind::Place),
+            EdgeShape::Membership => Some(EntityKind::Org),
+            EdgeShape::Attendance => Some(EntityKind::Event),
+            EdgeShape::About => None,
+        }
+    }
+}
+
+impl std::fmt::Display for EdgeShape {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_token())
+    }
+}
+
+/// A fact's typed edge: one shape, one object entity. One edge per fact in this
+/// milestone — written atomically with the fact it belongs to, and covered by the
+/// same read-back invariant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Edge {
+    /// Which of the four shapes.
+    pub shape: EdgeShape,
+    /// The entity the edge points at. Validated and **screened by the write
+    /// guard** exactly as a subject is: a typo'd object gets candidates back, it
+    /// never becomes a silent new node.
+    pub object: EntityId,
+}
+
+impl Edge {
+    /// An edge from its two parts.
+    pub fn new(shape: EdgeShape, object: EntityId) -> Self {
+        Edge { shape, object }
+    }
+}
+
+/// Validate an edge before it is written: the object's id grammar, then the
+/// shape's kind rule. Both adapters call this, so neither can store an edge the
+/// other would refuse.
+pub fn validate_edge(edge: &Edge) -> Result<(), MemoryError> {
+    validate_subject(&edge.object)?;
+    match edge.shape.object_kind() {
+        Some(required) if edge.object.kind() != Some(required) => Err(MemoryError::InvalidEdge(
+            format!(
+                "a '{}' edge points at a {required}, got '{}'",
+                edge.shape, edge.object
+            ),
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -536,6 +657,9 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
         validate_content(content)?;
     }
     validate_details(patch.details.as_deref())?;
+    if let Some(edge) = &patch.edge {
+        validate_edge(edge)?;
+    }
 
     if let Some(content) = &patch.content {
         fact.content = normalize_content(content);
@@ -548,6 +672,9 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     }
     if let Some(provenance) = patch.provenance {
         fact.provenance = provenance;
+    }
+    if let Some(edge) = &patch.edge {
+        fact.edge = Some(edge.clone());
     }
     Ok(())
 }
@@ -613,6 +740,9 @@ pub struct NewFact {
     pub status: FactStatus,
     /// The fact's own freshness stamp, authoritative in the source.
     pub date: Date,
+    /// The typed edge this fact draws, if it draws one. Written atomically with
+    /// the fact: an edge is never a second, separately-failing write.
+    pub edge: Option<Edge>,
     /// Set only after the write guard reported candidates for a subject that
     /// doesn't exist yet, and the caller judged them different.
     pub create_new: bool,
@@ -629,6 +759,7 @@ impl NewFact {
             provenance: Provenance::default(),
             status: FactStatus::default(),
             date,
+            edge: None,
             create_new: false,
         }
     }
@@ -655,6 +786,9 @@ pub struct Fact {
     pub status: FactStatus,
     /// The fact's own freshness stamp.
     pub date: Date,
+    /// The typed edge this fact draws, if any. Read tolerantly: a cell the reader
+    /// can't parse costs the edge, never the fact.
+    pub edge: Option<Edge>,
 }
 
 impl Fact {
@@ -714,6 +848,10 @@ pub enum MemoryError {
     /// markdown that would break out of its frontmatter line).
     #[error("invalid entity: {0}")]
     InvalidEntity(String),
+    /// The edge doesn't hold: a shape without an object (or the reverse), or an
+    /// object of the wrong kind for its shape.
+    #[error("invalid edge: {0}")]
+    InvalidEdge(String),
     /// The addressed fact doesn't exist. Never auto-created, never guessed at —
     /// the nearest live addresses come back so the caller can retarget.
     #[error("no fact at '{attempted}'; addresses here: {}", nearest.join(", "))]
@@ -790,7 +928,8 @@ pub trait Memory: Send + Sync {
     /// Write a fact and return it with the id its home assigned, its content
     /// normalized. The returned fact must be visible — byte-identical — to a
     /// subsequent [`recall`](Memory::recall) of its subject. A subject that
-    /// doesn't resolve is screened by the write guard.
+    /// doesn't resolve is screened by the write guard, and so is an edge's
+    /// object: both name an entity, so both face the same gate.
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError>;
 
     /// Read back every fact whose subject is `subject`, in an unspecified order.
@@ -798,12 +937,14 @@ pub trait Memory: Send + Sync {
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError>;
 
     /// Edit one addressed fact in place (fix-the-source). An unknown address is
-    /// [`MemoryError::UnknownFact`], never a create.
+    /// [`MemoryError::UnknownFact`], never a create. A patch that attaches an
+    /// **edge** names an entity, so it faces the write guard and can come back
+    /// [`Guarded::Blocked`] — an edit is a write like any other.
     async fn update_fact(
         &self,
         address: &FactAddress,
         patch: FactPatch,
-    ) -> Result<Fact, MemoryError>;
+    ) -> Result<Guarded<Fact>, MemoryError>;
 }
 
 #[cfg(test)]
@@ -923,6 +1064,67 @@ mod tests {
         }
         assert_eq!(FactStatus::from_token(""), FactStatus::Active);
         assert_eq!(FactStatus::from_token("garbled"), FactStatus::Active);
+    }
+
+    /// Four shapes, no more — and each has two spellings on purpose: the token a
+    /// caller passes (and the table stores) and the schema.org name a response
+    /// renders. `membership`/`memberOf` and `attendance`/`attendee` are where
+    /// they diverge; input stays lowercase, always.
+    #[test]
+    fn the_four_edge_shapes_round_trip_and_the_set_is_closed() {
+        let all = [
+            (EdgeShape::Location, "location", "location"),
+            (EdgeShape::Membership, "membership", "memberOf"),
+            (EdgeShape::Attendance, "attendance", "attendee"),
+            (EdgeShape::About, "about", "about"),
+        ];
+        for (shape, token, name) in all {
+            assert_eq!(shape.as_token(), token);
+            assert_eq!(shape.as_name(), name);
+            assert_eq!(EdgeShape::from_token(token), Some(shape));
+        }
+        assert_eq!(EdgeShape::ALL.len(), 4, "four shapes in M2, no more");
+        // A response name is NOT an input token: the input grammar is unchanged.
+        for unknown in ["memberOf", "attendee", "knows", "Location", "", "locaton"] {
+            assert_eq!(EdgeShape::from_token(unknown), None, "{unknown:?} is not a shape token");
+        }
+    }
+
+    /// Each shape pins its object's kind — `about` is the one open shape. A
+    /// `location` pointing at a person is a mis-drawn edge, not a nuance, and it
+    /// is refused before anything is written.
+    #[test]
+    fn an_edge_object_must_be_the_kind_its_shape_requires() {
+        let ok = [
+            (EdgeShape::Location, "place:north-trail"),
+            (EdgeShape::Membership, "org:north-trail-club"),
+            (EdgeShape::Attendance, "event:winter-fest"),
+            (EdgeShape::About, "topic:widgets"),
+            (EdgeShape::About, "person:alpha"),
+        ];
+        for (shape, object) in ok {
+            assert!(
+                validate_edge(&Edge::new(shape, EntityId(object.into()))).is_ok(),
+                "{shape} must accept {object}"
+            );
+        }
+        let bad = [
+            (EdgeShape::Location, "person:alpha"),
+            (EdgeShape::Membership, "place:north-trail"),
+            (EdgeShape::Attendance, "project:atlas"),
+        ];
+        for (shape, object) in bad {
+            let err = validate_edge(&Edge::new(shape, EntityId(object.into())))
+                .expect_err("a wrong-kind object must be refused");
+            assert!(
+                matches!(err, MemoryError::InvalidEdge(_)),
+                "expected InvalidEdge for {shape}/{object}, got {err:?}"
+            );
+        }
+        // The object is an entity id first: the grammar is checked as a subject's is.
+        let err = validate_edge(&Edge::new(EdgeShape::About, EntityId("a|b".into())))
+            .expect_err("a malformed object must be refused");
+        assert!(matches!(err, MemoryError::InvalidSubject(_)), "got {err:?}");
     }
 
     /// A **bare `\r`** is refused exactly as `\n` is, in content and in details.

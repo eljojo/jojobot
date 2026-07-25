@@ -6,21 +6,42 @@
 use jiff::civil::Date;
 
 use jojobot_domain::memory::{
-    Boot, Entity, EntityId, Fact, FactId, FactStatus, Provenance, validate_subject,
+    Boot, Edge, EdgeShape, Entity, EntityId, Fact, FactId, FactStatus, Provenance, validate_subject,
 };
 
 /// The header that marks the machine-readable fact table at the bottom of a doc.
 pub(super) const FACTS_HEADER: &str = "### ⚙ facts";
 /// The table's column header row.
 pub(super) const TABLE_HEADER: &str =
-    "| id | subject | content | details | provenance | status | date |";
+    "| id | subject | content | details | provenance | status | date | edges |";
 /// The markdown table separator under the header.
-pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- |";
-/// Cell count of the current row format, and of the pre-`details` format that
-/// still exists on disk. A row is parsed by its width — the schema grew by a
-/// column, and rows written before that must keep reading (never hard-fail).
-const CELLS: usize = 7;
+pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | --- |";
+/// Cell counts of the row formats that exist on disk: the current one, the
+/// pre-`edges` one, and the pre-`details` one. A row is parsed by its width —
+/// the schema has grown twice, and rows written before each growth must keep
+/// reading. The column is added to a row on its next touch (lazy migration);
+/// there is no sweep.
+const CELLS: usize = 8;
+const CELLS_NO_EDGES: usize = 7;
 const CELLS_LEGACY: usize = 6;
+
+/// Render a fact's edge for its cell: `shape=object`, empty when there is none.
+/// `=` rather than `:`, because an object id already carries a colon.
+fn render_edge(edge: Option<&Edge>) -> String {
+    edge.map(|e| format!("{}={}", e.shape.as_token(), e.object))
+        .unwrap_or_default()
+}
+
+/// Parse an `edges` cell. Tolerant in one direction: anything that isn't a
+/// well-formed `shape=object` costs the **edge**, never the fact — a hand-typo in
+/// one cell must not take a claim off the page.
+fn parse_edge(cell: &str) -> Option<Edge> {
+    let (shape, object) = cell.trim().split_once('=')?;
+    let shape = EdgeShape::from_token(shape)?;
+    let object = EntityId(object.trim().to_string());
+    validate_subject(&object).ok()?;
+    Some(Edge::new(shape, object))
+}
 
 /// Escape a value for a markdown table cell — the one character a cell can't
 /// carry raw is the column delimiter.
@@ -61,14 +82,15 @@ fn split_cells(row: &str) -> Vec<String> {
 /// never folded into content.
 pub(super) fn render_fact_row(f: &Fact) -> String {
     format!(
-        "| {} | {} | {} | {} | {} | {} | {} |",
+        "| {} | {} | {} | {} | {} | {} | {} | {} |",
         f.id,
         escape_cell(&f.subject.to_string()),
         escape_cell(&f.content),
         escape_cell(f.details.as_deref().unwrap_or_default()),
         f.provenance.as_token(),
         f.status.as_token(),
-        f.date
+        f.date,
+        escape_cell(&render_edge(f.edge.as_ref())),
     )
 }
 
@@ -76,12 +98,13 @@ pub(super) fn render_fact_row(f: &Fact) -> String {
 /// separator, or not a well-formed fact row. `home` is the entity whose doc the
 /// row was read from — the other half of the fact's global address.
 ///
-/// Both row widths are accepted: the current seven-cell format and the six-cell
-/// one written before `details` existed. Anything else is not a fact row.
+/// Every row width that exists on disk is accepted: the current eight-cell
+/// format, the seven-cell one from before `edges`, and the six-cell one from
+/// before `details`. Anything else is not a fact row.
 pub(super) fn parse_fact_row(row: &str, home: &EntityId) -> Option<Fact> {
     let cells = split_cells(row);
     let legacy = match cells.len() {
-        CELLS => false,
+        CELLS | CELLS_NO_EDGES => false,
         CELLS_LEGACY => true,
         _ => return None,
     };
@@ -112,6 +135,9 @@ pub(super) fn parse_fact_row(row: &str, home: &EntityId) -> Option<Fact> {
     let provenance = Provenance::from_token(&cells[4 - shift]);
     let status = FactStatus::from_token(&cells[5 - shift]);
     let date: Date = cells[6 - shift].trim().parse().ok()?;
+    // The edges column is the newest, so it sits last: every earlier index is
+    // unchanged, and a row that predates it simply has no cell there.
+    let edge = cells.get(7).and_then(|c| parse_edge(c));
 
     Some(Fact {
         id: FactId(id.to_string()),
@@ -122,6 +148,7 @@ pub(super) fn parse_fact_row(row: &str, home: &EntityId) -> Option<Fact> {
         provenance,
         status,
         date,
+        edge,
     })
 }
 
@@ -207,7 +234,7 @@ pub(super) fn with_row_replaced(
 /// reader can't parse still holds its id and can never be handed out twice.
 fn row_id(row: &str) -> Option<String> {
     let cells = split_cells(row);
-    if !matches!(cells.len(), CELLS | CELLS_LEGACY) {
+    if !matches!(cells.len(), CELLS | CELLS_NO_EDGES | CELLS_LEGACY) {
         return None;
     }
     let id = cells[0].trim();
@@ -413,7 +440,7 @@ pub(super) fn seeded_doc(entity: &Entity) -> String {
 mod tests {
     use super::*;
     use jiff::civil::date;
-    use jojobot_domain::memory::{Boot, Entity, EntityKind};
+    use jojobot_domain::memory::{Boot, Edge, EdgeShape, Entity, EntityKind};
 
     fn fact(id: &str, subject: &str, content: &str, prov: Provenance, d: Date) -> Fact {
         Fact {
@@ -425,6 +452,7 @@ mod tests {
             provenance: prov,
             status: FactStatus::Active,
             date: d,
+            edge: None,
         }
     }
 
@@ -658,6 +686,97 @@ mod tests {
         assert_eq!(parsed.date, date(2026, 7, 1));
     }
 
+    // --- the edges column -----------------------------------------------------
+
+    /// Every shape and its object survive the row, in the `edges` cell.
+    #[test]
+    fn every_edge_shape_round_trips_in_its_own_cell() {
+        let objects = [
+            (EdgeShape::Location, "place:north-trail"),
+            (EdgeShape::Membership, "org:north-trail-club"),
+            (EdgeShape::Attendance, "event:winter-fest"),
+            (EdgeShape::About, "topic:widgets"),
+        ];
+        for (shape, object) in objects {
+            let f = Fact {
+                edge: Some(Edge::new(shape, EntityId(object.into()))),
+                ..fact("f1", "person:alpha", "a claim", Provenance::Inference, date(2026, 7, 1))
+            };
+            let parsed = parse_fact_row(&render_fact_row(&f), &EntityId::person("alpha")).unwrap();
+            assert_eq!(parsed, f, "the {shape} edge must survive the row");
+        }
+    }
+
+    /// The literal wire format, pinned — a symmetric round-trip alone can't catch
+    /// a schema drift both sides share. The edges cell is `shape=object`, and the
+    /// **storage** token is the lowercase one (`membership`, not `memberOf`):
+    /// schema.org names are a response vocabulary, not a storage format.
+    #[test]
+    fn renders_the_exact_pinned_row_with_an_edge() {
+        let f = Fact {
+            edge: Some(Edge::new(
+                EdgeShape::Membership,
+                EntityId("org:north-trail-club".into()),
+            )),
+            ..fact("f2", "person:alpha", "rides with the club", Provenance::Testimony, date(2026, 7, 24))
+        };
+        assert_eq!(
+            render_fact_row(&f),
+            "| f2 | person:alpha | rides with the club |  | testimony | active | 2026-07-24 | \
+             membership=org:north-trail-club |"
+        );
+    }
+
+    /// A row written before the edges column existed still parses — it just draws
+    /// no edge. Old docs are read fine and get the column on their next touch;
+    /// a schema addition never orphans the rows already on disk.
+    #[test]
+    fn a_row_without_the_edges_column_still_parses() {
+        let previous =
+            "| f1 | person:alpha | plays go | twice a week | testimony | active | 2026-07-01 |";
+        let parsed =
+            parse_fact_row(previous, &EntityId::person("alpha")).expect("the 7-cell row must parse");
+        assert_eq!(parsed.content, "plays go");
+        assert_eq!(parsed.details.as_deref(), Some("twice a week"));
+        assert_eq!(parsed.date, date(2026, 7, 1));
+        assert_eq!(parsed.edge, None, "no column, no edge");
+    }
+
+    /// An `edges` cell the reader can't make sense of costs the **edge**, never
+    /// the fact: the row still reads, so a hand-typo in one cell can't take a
+    /// claim off the page.
+    #[test]
+    fn a_garbled_edges_cell_costs_the_edge_not_the_fact() {
+        for cell in ["knows=person:beta", "location", "=place:x", "location=nope:x", "location="] {
+            let row = format!(
+                "| f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 | {cell} |"
+            );
+            let parsed = parse_fact_row(&row, &EntityId::person("alpha"))
+                .unwrap_or_else(|| panic!("the fact must still read with cell {cell:?}"));
+            assert_eq!(parsed.content, "plays go");
+            assert_eq!(parsed.edge, None, "an unreadable edge is dropped, not guessed: {cell:?}");
+        }
+    }
+
+    /// An appended row lands in a table that predates the column, and both read.
+    #[test]
+    fn append_into_a_pre_edges_table_then_parse_finds_both() {
+        let doc = format!(
+            "```yaml\nid: person:alpha\n```\n\n{FACTS_HEADER}\n\n\
+             | id | subject | content | details | provenance | status | date |\n\
+             | --- | --- | --- | --- | --- | --- | --- |\n\
+             | f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |\n"
+        );
+        let f2 = Fact {
+            edge: Some(Edge::new(EdgeShape::Location, EntityId("place:shelbyville".into()))),
+            ..fact("f2", "person:alpha", "spending the winter away", Provenance::Testimony, date(2026, 7, 2))
+        };
+        let parsed = parse_facts_table(&with_fact_appended(&doc, &render_fact_row(&f2)));
+        assert_eq!(parsed.len(), 2, "the pre-edges row and the new one both read");
+        assert_eq!(parsed[0].edge, None);
+        assert_eq!(parsed[1], f2);
+    }
+
     // --- the status column ----------------------------------------------------
 
     /// All three lifecycle states survive the row, so a negated fact reads back
@@ -796,7 +915,7 @@ mod tests {
         let f = fact("f1", "person:alpha", "keeps a paper notebook", Provenance::Inference, date(2026, 7, 24));
         assert_eq!(
             render_fact_row(&f),
-            "| f1 | person:alpha | keeps a paper notebook |  | inference | active | 2026-07-24 |"
+            "| f1 | person:alpha | keeps a paper notebook |  | inference | active | 2026-07-24 |  |"
         );
     }
 
@@ -903,6 +1022,7 @@ mod bare_cr {
             provenance: Provenance::Inference,
             status: FactStatus::Active,
             date: date(2026, 7, 25),
+            edge: None,
         };
         let mut doc = format!(
             "```yaml\nid: person:alpha\n```\n\n{FACTS_HEADER}\n\n{TABLE_HEADER}\n{TABLE_SEP}\n"

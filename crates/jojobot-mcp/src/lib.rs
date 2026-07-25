@@ -10,14 +10,21 @@
 //! own: the write guard and the promotion gate live in the domain, on the write
 //! path, where no caller can route around them.
 //!
-//! TODO: Memory M1 landed. `search`, structured edges, and the Attention verbs
-//! arrive here later, one bounded context at a time.
+//! **Responses speak schema.org's words, with none of its machinery** — a kind
+//! renders as `Person`/`CreativeWork`/`Organization`, an edge shape as
+//! `memberOf`/`attendee`. Names only: no `@context`, no CURIEs, no JSON-LD. The
+//! **input** grammar is untouched — ids and kind tokens stay lowercase
+//! `kind:slug`, and a capitalized kind on input is still rejected.
+//!
+//! TODO: Memory M1 landed; M2 adds structured edges at capture. The Attention
+//! verbs arrive here later, one bounded context at a time.
 
 use std::sync::Arc;
 
 use jojobot_domain::memory::{
-    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, FactStatus, Guarded,
-    Memory, MemoryError, NewEntity, NewFact, Provenance, guard::EntityMatch,
+    Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
+    FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance, guard::EntityMatch,
+    validate_edge,
 };
 use rmcp::{
     ErrorData as McpError, ServerHandler,
@@ -70,8 +77,17 @@ pub struct CaptureArgs {
     /// The fact's freshness date, `YYYY-MM-DD`. Defaults to today (UTC).
     #[serde(default)]
     pub date: Option<String>,
-    /// Set only after a previous call reported candidates for a subject that
-    /// doesn't exist yet, and you judged them different.
+    /// The shape of the edge this fact draws: `location` (object is a place) ·
+    /// `membership` (an org) · `attendance` (an event) · `about` (any kind).
+    /// Requires `object`; neither works alone.
+    #[serde(default)]
+    pub shape: Option<String>,
+    /// The entity the edge points at, as `kind:slug`. Screened by the write guard
+    /// exactly as `subject` is — a typo comes back as candidates, never a new node.
+    #[serde(default)]
+    pub object: Option<String>,
+    /// Set only after a previous call reported candidates for a subject or an
+    /// edge object that doesn't exist yet, and you judged them different.
     #[serde(default)]
     pub create_new: Option<bool>,
 }
@@ -115,6 +131,17 @@ pub struct UpdateFactArgs {
     /// when the user has actually confirmed the claim.
     #[serde(default)]
     pub confirmed_by_user: Option<bool>,
+    /// The shape of an edge to attach: `location` · `membership` · `attendance` ·
+    /// `about`. Requires `object`; neither works alone.
+    #[serde(default)]
+    pub shape: Option<String>,
+    /// The entity the edge points at, as `kind:slug`. Screened by the write guard.
+    #[serde(default)]
+    pub object: Option<String>,
+    /// Set only after a previous call reported candidates for the edge's object
+    /// and you judged them a different entity.
+    #[serde(default)]
+    pub create_new: Option<bool>,
 }
 
 /// Arguments to `update_entity`.
@@ -269,6 +296,7 @@ impl Jojobot {
         let subject = EntityId::person(&args.subject);
         let provenance = parse_provenance(args.provenance.as_deref())?;
         let date = parse_date(args.date.as_deref())?;
+        let edge = parse_edge(args.shape.as_deref(), args.object.as_deref())?;
 
         let new = NewFact {
             subject,
@@ -277,6 +305,7 @@ impl Jojobot {
             provenance,
             status: Default::default(),
             date,
+            edge,
             create_new: args.create_new.unwrap_or(false),
         };
         match self.memory.capture(new).await.map_err(memory_error)? {
@@ -324,30 +353,97 @@ impl Jojobot {
             status: args.status.as_deref().map(parse_status).transpose()?,
             provenance: args.provenance.as_deref().map(parse_one_provenance).transpose()?,
             confirmed_by_user: args.confirmed_by_user.unwrap_or(false),
+            edge: parse_edge(args.shape.as_deref(), args.object.as_deref())?,
+            create_new: args.create_new.unwrap_or(false),
         };
-        let fact = self
+        match self
             .memory
             .update_fact(&address, patch)
             .await
-            .map_err(memory_error)?;
-        json_result(&fact_json(&fact))
+            .map_err(memory_error)?
+        {
+            Guarded::Written(fact) => json_result(&fact_json(&fact)),
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => Ok(blocked_result(&attempted, &candidates, "update_fact")),
+        }
     }
 }
 
-/// A fact on the wire: its fields plus the **address** — the handle a caller
+/// A fact on the wire: the whole row plus the **address** — the handle a caller
 /// needs to edit it. Reads return it with every fact precisely so that update is
 /// usable without a second lookup.
+///
+/// Rendered by hand rather than derived, so `capture`, `recall`, `update_fact`
+/// and `search` cannot drift into three spellings of one record — and so the
+/// response vocabulary (schema.org names, § Vocabulary) lives in exactly one
+/// place. **Input grammar is unaffected:** ids and kind tokens stay lowercase
+/// `kind:slug` on the way in.
 fn fact_json(fact: &Fact) -> serde_json::Value {
-    let mut body = serde_json::to_value(fact).unwrap_or(serde_json::Value::Null);
-    if let Some(obj) = body.as_object_mut() {
-        obj.insert("address".into(), fact.address().to_string().into());
-    }
-    body
+    serde_json::json!({
+        "address": fact.address().to_string(),
+        "subject": fact.subject.as_str(),
+        "content": fact.content,
+        "details": fact.details,
+        "provenance": fact.provenance.as_token(),
+        "status": fact.status.as_token(),
+        "date": fact.date.to_string(),
+        "edge": fact.edge.as_ref().map(edge_json),
+    })
 }
 
-/// An entity on the wire.
+/// An edge on the wire. `type` carries schema.org's word for the shape —
+/// `memberOf`, `attendee` — where the input token is `membership`, `attendance`.
+fn edge_json(edge: &Edge) -> serde_json::Value {
+    serde_json::json!({
+        "type": edge.shape.as_name(),
+        "object": edge.object.as_str(),
+    })
+}
+
+/// An entity on the wire. `type` is the schema.org-flavored **name** for its
+/// kind (`Person`, `CreativeWork`, `Organization`); the lowercase kind token
+/// stays the input grammar and the handle's prefix.
 fn entity_json(entity: &Entity) -> serde_json::Value {
-    serde_json::to_value(entity).unwrap_or(serde_json::Value::Null)
+    serde_json::json!({
+        "id": entity.id.as_str(),
+        "type": type_name(entity.kind),
+        "name": entity.name,
+        "source": entity.source,
+        "crm": entity.crm,
+        "boot": entity.boot.as_token(),
+    })
+}
+
+/// One of the guard's candidates on the wire.
+fn candidate_json(candidate: &EntityMatch) -> serde_json::Value {
+    serde_json::json!({
+        "handle": candidate.handle.as_str(),
+        "type": type_name(candidate.kind),
+        "name": candidate.name,
+        "source": candidate.source,
+        "reason": candidate.reason,
+    })
+}
+
+/// The schema.org-flavored type name for an entity kind — **names only**, no
+/// `@context`, no CURIEs, no JSON-LD: the recognition benefit is the word, which
+/// models know from pretraining, not the machinery.
+///
+/// `Project` is jojobot's own personal-goal sense (trips, big rocks, builds),
+/// deliberately NOT schema.org's Organization-subtype meaning.
+fn type_name(kind: EntityKind) -> &'static str {
+    match kind {
+        EntityKind::Person => "Person",
+        EntityKind::Place => "Place",
+        EntityKind::Event => "Event",
+        EntityKind::Work => "CreativeWork",
+        EntityKind::Thing => "Product",
+        EntityKind::Org => "Organization",
+        EntityKind::Topic => "Topic",
+        EntityKind::Project => "Project",
+    }
 }
 
 /// The write guard's answer: **nothing was written**, and here is what jojobot
@@ -359,7 +455,7 @@ fn blocked_result(attempted: &EntityId, candidates: &[EntityMatch], verb: &str) 
         "status": "needs_confirmation",
         "attempted": attempted.as_str(),
         "wrote": false,
-        "candidates": candidates,
+        "candidates": candidates.iter().map(candidate_json).collect::<Vec<_>>(),
         "how_to_proceed": format!(
             "Nothing was written. Either use an existing handle above, or re-call {verb} with \
              create_new: true if this is genuinely a different entity. An exact handle \
@@ -398,6 +494,38 @@ fn entity_id(kind: &str, handle: &str) -> Result<EntityId, McpError> {
         Some((k, slug)) if EntityKind::from_token(k) == Some(kind) => Ok(EntityId::new(kind, slug)),
         Some((k, _)) => Err(McpError::invalid_params(
             format!("handle '{handle}' says kind '{k}' but kind is '{kind}'"),
+            None,
+        )),
+    }
+}
+
+/// Parse the `shape`/`object` pair into an edge. **Half an edge is an error, not
+/// a shrug:** a shape with no object has nothing to point at, and an object with
+/// no shape has no meaning — either way the caller meant an edge and did not get
+/// one, which is exactly the silence ask-across dies of.
+fn parse_edge(shape: Option<&str>, object: Option<&str>) -> Result<Option<Edge>, McpError> {
+    match (shape.map(str::trim).filter(|s| !s.is_empty()), object.map(str::trim).filter(|s| !s.is_empty())) {
+        (None, None) => Ok(None),
+        (Some(shape), Some(object)) => {
+            let shape = EdgeShape::from_token(shape).ok_or_else(|| {
+                let shapes: Vec<&str> = EdgeShape::ALL.iter().map(|s| s.as_token()).collect();
+                McpError::invalid_params(
+                    format!("shape must be one of {}, got '{shape}'", shapes.join(", ")),
+                    None,
+                )
+            })?;
+            let edge = Edge::new(shape, EntityId(object.to_string()));
+            // Grammar and the shape's kind rule, checked here so the caller hears
+            // it as a client error rather than a store failure.
+            validate_edge(&edge).map_err(memory_error)?;
+            Ok(Some(edge))
+        }
+        (Some(_), None) => Err(McpError::invalid_params(
+            "shape needs an object: an edge is a shape AND the entity it points at".to_string(),
+            None,
+        )),
+        (None, Some(_)) => Err(McpError::invalid_params(
+            "object needs a shape: one of location, membership, attendance, about".to_string(),
             None,
         )),
     }
@@ -464,6 +592,7 @@ fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::InvalidSubject(_)
         | MemoryError::InvalidAddress(_)
         | MemoryError::InvalidEntity(_)
+        | MemoryError::InvalidEdge(_)
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::UnconfirmedPromotion => McpError::invalid_params(e.to_string(), None),
@@ -486,11 +615,16 @@ impl ServerHandler for Jojobot {
                  **fact** about one (addressed `kind:slug#local-id`). Tools: `ping` \
                  (connectivity) · `add_entity` · `capture` (remember a fact) · `recall` (read \
                  facts, each with its address) · `update_fact` (edit in place; negating is a \
-                 status flip) · `update_entity` (metadata only) · `list_entities`. Two rules \
-                 to expect: a write that looks like an entity jojobot already knows comes \
-                 back with candidates and writes nothing until you confirm or pass \
-                 create_new; and promoting a claim from inference to testimony needs the \
-                 user's explicit confirmation. More domain verbs arrive later."
+                 status flip) · `update_entity` (metadata only) · `list_entities`. A fact may \
+                 also draw one typed **edge** — pass `shape` (location · membership · \
+                 attendance · about) with `object`, the entity it points at; that is what \
+                 makes cross-entity questions answerable. Two rules to expect: a write that \
+                 looks like an entity jojobot already knows (a subject, a name, or an edge's \
+                 object) comes back with candidates and writes nothing until you confirm or \
+                 pass create_new; and promoting a claim from inference to testimony needs the \
+                 user's explicit confirmation. Responses name types the schema.org way \
+                 (`Person`, `CreativeWork`, `memberOf`); input stays lowercase `kind:slug`. \
+                 More domain verbs arrive later."
                     .to_string(),
             )
     }
@@ -499,7 +633,6 @@ impl ServerHandler for Jojobot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jojobot_domain::memory::Fact;
     use jojobot_domain::memory::testing::InMemoryMemory;
 
     fn handler() -> Jojobot {
@@ -523,6 +656,22 @@ mod tests {
             details: None,
             provenance: None,
             date: None,
+            shape: None,
+            object: None,
+            create_new: None,
+        }
+    }
+
+    fn update_args(address: &str) -> UpdateFactArgs {
+        UpdateFactArgs {
+            address: address.into(),
+            content: None,
+            details: None,
+            status: None,
+            provenance: None,
+            confirmed_by_user: None,
+            shape: None,
+            object: None,
             create_new: None,
         }
     }
@@ -533,10 +682,18 @@ mod tests {
     }
 
     /// Capture through the handler, expecting the guard to wave it through.
-    async fn capture_ok(jojobot: &Jojobot, args: CaptureArgs) -> Fact {
+    async fn capture_ok(jojobot: &Jojobot, args: CaptureArgs) -> serde_json::Value {
         let result = jojobot.capture(Parameters(args)).await.expect("capture ok");
         assert_ne!(result.is_error, Some(true), "the guard blocked: {}", text_of(&result));
-        serde_json::from_str(&text_of(&result)).expect("a captured fact")
+        json_of(&result)
+    }
+
+    /// The `address` field of a rendered fact — every read carries one.
+    fn address_of(fact: &serde_json::Value) -> String {
+        fact["address"]
+            .as_str()
+            .expect("every fact on the wire carries its address")
+            .to_string()
     }
 
     fn add_args(kind: &str, handle: &str, name: &str) -> AddEntityArgs {
@@ -566,8 +723,8 @@ mod tests {
             .await
             .expect("add ok");
         let body = json_of(&added);
-        assert_eq!(body["id"], "project:atlas");
-        assert_eq!(body["kind"], "project");
+        assert_eq!(body["id"], "project:atlas", "the handle keeps its lowercase kind token");
+        assert_eq!(body["type"], "Project", "responses name the type, schema.org-flavored");
         assert_eq!(body["crm"], "card:874");
 
         let listed = jojobot
@@ -584,7 +741,7 @@ mod tests {
     async fn a_fact_can_be_about_any_kind() {
         let jojobot = handler();
         let captured = capture_ok(&jojobot, capture_args("place:north-trail", "swimmable in August")).await;
-        assert_eq!(captured.subject.as_str(), "place:north-trail");
+        assert_eq!(captured["subject"], "place:north-trail");
     }
 
     /// An unknown kind is a client error that names the closed set, rather than
@@ -760,7 +917,155 @@ mod tests {
             CaptureArgs { create_new: Some(true), ..capture_args("zenit", "now it lands") },
         )
         .await;
-        assert_eq!(forced.subject.as_str(), "person:zenit");
+        assert_eq!(forced["subject"], "person:zenit");
+    }
+
+    // --- structured edges at capture ------------------------------------------
+
+    /// `capture` draws a typed edge, and the edge comes back on every read of the
+    /// fact — rendered with schema.org's word for the shape (`memberOf`), while
+    /// the input token stays the lowercase `membership`.
+    #[tokio::test]
+    async fn capture_draws_an_edge_and_renders_its_schema_org_name() {
+        let jojobot = handler();
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("membership".into()),
+                object: Some("org:north-trail-club".into()),
+                ..capture_args("alpha", "rides with the club")
+            },
+        )
+        .await;
+        assert_eq!(captured["edge"]["type"], "memberOf");
+        assert_eq!(captured["edge"]["object"], "org:north-trail-club");
+
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs { subject: "alpha".into() }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(recalled["facts"][0]["edge"]["type"], "memberOf");
+    }
+
+    /// Half an edge is a client error: a shape with nothing to point at, or an
+    /// object with no shape, means the caller asked for an edge and would have
+    /// got silence.
+    #[tokio::test]
+    async fn half_an_edge_is_a_client_error() {
+        let jojobot = handler();
+        let halves = [
+            (Some("location"), None),
+            (None, Some("place:north-trail")),
+        ];
+        for (shape, object) in halves {
+            let err = jojobot
+                .capture(Parameters(CaptureArgs {
+                    shape: shape.map(str::to_string),
+                    object: object.map(str::to_string),
+                    ..capture_args("alpha", "half an edge")
+                }))
+                .await
+                .expect_err("half an edge must be refused");
+            assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "for {shape:?}/{object:?}");
+        }
+    }
+
+    /// The shape set is closed, and the response spellings are not input tokens —
+    /// the input grammar stays lowercase.
+    #[tokio::test]
+    async fn an_unknown_shape_is_a_client_error() {
+        let jojobot = handler();
+        for shape in ["knows", "memberOf", "Location", "attendee"] {
+            let err = jojobot
+                .capture(Parameters(CaptureArgs {
+                    shape: Some(shape.into()),
+                    object: Some("place:north-trail".into()),
+                    ..capture_args("alpha", "an unknown shape")
+                }))
+                .await
+                .expect_err("must reject shape {shape}");
+            assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "for {shape}");
+            assert!(
+                err.message.contains("location"),
+                "the error must name the closed set: {}",
+                err.message
+            );
+        }
+    }
+
+    /// A shape's object must be the kind it requires — a `location` pointing at a
+    /// person is a mis-drawn edge, and the caller hears about it.
+    #[tokio::test]
+    async fn a_wrong_kind_edge_object_is_a_client_error() {
+        let err = handler()
+            .capture(Parameters(CaptureArgs {
+                shape: Some("location".into()),
+                object: Some("person:beta".into()),
+                ..capture_args("alpha", "in the wrong kind of place")
+            }))
+            .await
+            .expect_err("a wrong-kind object must be refused");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(err.message.contains("place"), "must say what it wanted: {}", err.message);
+    }
+
+    /// A typo'd edge object comes back as the guard's candidates — the same
+    /// error-flagged response a blocked subject gets, and nothing is written.
+    #[tokio::test]
+    async fn a_blocked_edge_object_returns_candidates() {
+        let jojobot = handler();
+        jojobot
+            .add_entity(Parameters(add_args("place", "riverbend", "Riverbend")))
+            .await
+            .expect("add ok");
+
+        let blocked = jojobot
+            .capture(Parameters(CaptureArgs {
+                shape: Some("location".into()),
+                object: Some("place:riverbnd".into()),
+                ..capture_args("alpha", "should not land")
+            }))
+            .await
+            .expect("the call succeeds; the guard answers in the body");
+        assert_eq!(blocked.is_error, Some(true));
+        let body = json_of(&blocked);
+        assert_eq!(body["attempted"], "place:riverbnd");
+        assert_eq!(body["candidates"][0]["handle"], "place:riverbend");
+        assert_eq!(body["candidates"][0]["type"], "Place");
+
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs { subject: "alpha".into() }))
+                .await
+                .expect("recall ok"),
+        );
+        assert!(
+            recalled["facts"].as_array().unwrap().is_empty(),
+            "a blocked edge object must write no fact: {recalled}"
+        );
+    }
+
+    /// `update_fact` attaches an edge to a fact that didn't have one.
+    #[tokio::test]
+    async fn update_fact_attaches_an_edge() {
+        let jojobot = handler();
+        let captured = capture_ok(&jojobot, capture_args("alpha", "was at the festival")).await;
+        assert!(captured["edge"].is_null());
+
+        let updated = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    shape: Some("attendance".into()),
+                    object: Some("event:winter-fest".into()),
+                    ..update_args(&address_of(&captured))
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(updated["edge"]["type"], "attendee");
+        assert_eq!(updated["edge"]["object"], "event:winter-fest");
     }
 
     // --- addresses and update -------------------------------------------------
@@ -784,12 +1089,9 @@ mod tests {
         let updated = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
-                    address: address.into(),
                     content: Some("works at the new place".into()),
                     details: Some("changed jobs in July".into()),
-                    status: None,
-                    provenance: None,
-                    confirmed_by_user: None,
+                    ..update_args(address)
                 }))
                 .await
                 .expect("update ok"),
@@ -807,18 +1109,18 @@ mod tests {
         let updated = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
-                    address: captured.address().to_string(),
                     content: Some("NOT a close contact — do not re-infer".into()),
-                    details: None,
                     status: Some("negated".into()),
-                    provenance: None,
-                    confirmed_by_user: None,
+                    ..update_args(&address_of(&captured))
                 }))
                 .await
                 .expect("negate ok"),
         );
         assert_eq!(updated["status"], "negated");
-        assert_eq!(updated["id"], "f1", "a negated fact keeps its id");
+        assert_eq!(
+            updated["address"], "person:alpha#f1",
+            "a negated fact keeps its address"
+        );
     }
 
     /// Promotion to testimony needs the explicit confirmation flag.
@@ -827,12 +1129,9 @@ mod tests {
         let jojobot = handler();
         let captured = capture_ok(&jojobot, capture_args("alpha", "prefers mornings")).await;
         let promote = |confirmed: Option<bool>| UpdateFactArgs {
-            address: captured.address().to_string(),
-            content: None,
-            details: None,
-            status: None,
             provenance: Some("testimony".into()),
             confirmed_by_user: confirmed,
+            ..update_args(&address_of(&captured))
         };
 
         let err = jojobot
@@ -858,12 +1157,8 @@ mod tests {
         for address in ["not-an-address", "person:alpha#f99"] {
             let err = jojobot
                 .update_fact(Parameters(UpdateFactArgs {
-                    address: address.into(),
                     content: Some("nope".into()),
-                    details: None,
-                    status: None,
-                    provenance: None,
-                    confirmed_by_user: None,
+                    ..update_args(address)
                 }))
                 .await
                 .expect_err("must reject {address}");
@@ -885,12 +1180,8 @@ mod tests {
         let captured = capture_ok(&jojobot, capture_args("alpha", "a claim")).await;
         let err = jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                address: captured.address().to_string(),
-                content: None,
-                details: None,
                 status: Some("retired".into()),
-                provenance: None,
-                confirmed_by_user: None,
+                ..update_args(&address_of(&captured))
             }))
             .await
             .expect_err("must reject an unknown status");
@@ -902,25 +1193,22 @@ mod tests {
     #[tokio::test]
     async fn capture_then_recall_through_the_handler() {
         let jojobot = handler();
-        let captured: Fact = serde_json::from_str(&text_of(
-            &jojobot
-                .capture(Parameters(capture_args("alpha", "drinks oat milk")))
-                .await
-                .expect("capture ok"),
-        ))
-        .unwrap();
-        assert_eq!(captured.subject.as_str(), "person:alpha");
+        let captured = capture_ok(&jojobot, capture_args("alpha", "drinks oat milk")).await;
+        assert_eq!(captured["subject"], "person:alpha");
 
-        let recalled = jojobot
-            .recall(Parameters(RecallArgs { subject: "alpha".into() }))
-            .await
-            .expect("recall ok");
-        let body: serde_json::Value = serde_json::from_str(&text_of(&recalled)).unwrap();
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs { subject: "alpha".into() }))
+                .await
+                .expect("recall ok"),
+        );
         assert_eq!(body["subject"], "person:alpha");
-        let facts: Vec<Fact> = serde_json::from_value(body["facts"].clone()).unwrap();
+        let facts = body["facts"].as_array().expect("recall returns a list");
         assert!(
-            facts.iter().any(|f| f.id == captured.id && f.content == "drinks oat milk"),
-            "recall must return the captured fact: {facts:?}"
+            facts.iter().any(|f| {
+                f["address"] == captured["address"] && f["content"] == "drinks oat milk"
+            }),
+            "recall must return the captured fact: {body}"
         );
     }
 
@@ -928,14 +1216,8 @@ mod tests {
     #[tokio::test]
     async fn provenance_defaults_to_inference() {
         let jojobot = handler();
-        let captured: Fact = serde_json::from_str(&text_of(
-            &jojobot
-                .capture(Parameters(capture_args("alpha", "maybe a morning person")))
-                .await
-                .expect("capture ok"),
-        ))
-        .unwrap();
-        assert_eq!(captured.provenance, Provenance::Inference);
+        let captured = capture_ok(&jojobot, capture_args("alpha", "maybe a morning person")).await;
+        assert_eq!(captured["provenance"], "inference");
     }
 
     /// Omitting `date` defaults to today in UTC.
@@ -943,33 +1225,25 @@ mod tests {
     async fn date_defaults_to_today_utc() {
         let jojobot = handler();
         let today = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date();
-        let captured: Fact = serde_json::from_str(&text_of(
-            &jojobot
-                .capture(Parameters(capture_args("alpha", "dated today")))
-                .await
-                .expect("capture ok"),
-        ))
-        .unwrap();
-        assert_eq!(captured.date, today);
+        let captured = capture_ok(&jojobot, capture_args("alpha", "dated today")).await;
+        assert_eq!(captured["date"], today.to_string());
     }
 
     /// An explicit testimony provenance is honoured.
     #[tokio::test]
     async fn explicit_testimony_is_honoured() {
         let jojobot = handler();
-        let captured: Fact = serde_json::from_str(&text_of(
-            &jojobot
-                .capture(Parameters(CaptureArgs {
-                    provenance: Some("testimony".into()),
-                    date: Some("2026-01-01".into()),
-                    ..capture_args("alpha", "speaks two languages")
-                }))
-                .await
-                .expect("capture ok"),
-        ))
-        .unwrap();
-        assert_eq!(captured.provenance, Provenance::Testimony);
-        assert_eq!(captured.date, jiff::civil::date(2026, 1, 1));
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                date: Some("2026-01-01".into()),
+                ..capture_args("alpha", "speaks two languages")
+            },
+        )
+        .await;
+        assert_eq!(captured["provenance"], "testimony");
+        assert_eq!(captured["date"], "2026-01-01");
     }
 
     #[tokio::test]
