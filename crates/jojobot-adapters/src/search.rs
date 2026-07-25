@@ -227,12 +227,20 @@ impl FullTextIndex {
     fn write_doc(&self, writer: &IndexWriter, scan: &DocScan) -> Result<(), MemoryError> {
         let f = &self.fields;
         let owner_kind = scan.entity.as_ref().map(|e| e.kind);
+        // Every name the doc's entity answers to, indexed as one string: the
+        // nickname the user actually says has to find the thing, or the aliases
+        // are a field nobody can reach.
+        let owner_labels = scan
+            .entity
+            .as_ref()
+            .map(|e| e.labels().join(" "))
+            .unwrap_or_default();
 
         if let Some(entity) = &scan.entity {
             writer
                 .add_document(doc!(
                     f.class => CLASS_ENTITY,
-                    f.text => format!("{} {} {}", entity.id, entity.name, entity.kind),
+                    f.text => format!("{} {} {}", entity.id, owner_labels, entity.kind),
                     f.doc_id => scan.doc_id.clone(),
                     f.kind => entity.kind.as_token(),
                     f.payload => payload_json(&Payload::Entity {
@@ -244,13 +252,25 @@ impl FullTextIndex {
         }
 
         for fact in &scan.facts {
+            // A fact carries the names of the entity whose page it sits on, so
+            // asking by nickname reaches the claims and not only the entity
+            // record. Only the home doc's labels: a fact about someone else,
+            // written here, keeps their handle and not their nickname — the doc
+            // does not know it, and looking it up would mean a global pass on
+            // every write.
+            let subject_labels = if scan.entity.as_ref().is_some_and(|e| e.id == fact.subject) {
+                owner_labels.as_str()
+            } else {
+                ""
+            };
             let mut document = doc!(
                 f.class => CLASS_FACT,
                 f.text => format!(
-                    "{} {} {}",
+                    "{} {} {} {}",
                     fact.content,
                     fact.details.clone().unwrap_or_default(),
-                    fact.subject
+                    fact.subject,
+                    subject_labels
                 ),
                 f.doc_id => scan.doc_id.clone(),
                 f.subject => fact.subject.to_string(),
@@ -986,6 +1006,61 @@ mod tests {
         assert!(
             hits.iter().any(|h| matches!(h, Hit::Fact { .. })),
             "…and the facts are still in the same list: {hits:?}"
+        );
+    }
+
+    /// **A name the user actually says finds the thing.** An entity known as
+    /// Homer Simpson and called Cosme Fulanito has to answer to "Cosme Fulanito" — the entity itself, and
+    /// the facts on its page, which is what the question was really about.
+    ///
+    /// A fact carries the labels of the entity **whose page it sits on**. That
+    /// is what the doc knows at ingest; a fact about X written on Y's page keeps
+    /// X's handle and not X's nickname, because resolving that would mean a
+    /// global pass on every write.
+    #[tokio::test]
+    async fn a_query_on_an_alias_finds_the_entity_and_the_facts_on_its_page() {
+        let homer = Entity {
+            aliases: vec!["Cosme Fulanito".into()],
+            ..entity("person:homer-simpson", "Homer Simpson")
+        };
+        let index = index_of(vec![scan(
+            "doc-1",
+            Some(homer.clone()),
+            "",
+            vec![fact("person:homer-simpson", "f1", "plays the bass", date(2026, 1, 1))],
+        )]);
+
+        let hits = index.search(&SearchQuery::text("Cosme Fulanito")).expect("search ok");
+        assert!(
+            matches!(hits.first(), Some(Hit::Entity { entity, .. }) if entity.id == homer.id),
+            "the entity that wears the nickname leads: {hits:?}"
+        );
+        assert!(
+            hits.iter().any(|h| matches!(h, Hit::Fact { fact } if fact.content == "plays the bass")),
+            "…and the facts on its page come with it: {hits:?}"
+        );
+
+        // The display name still works, and the two are not different questions.
+        assert!(
+            index
+                .search(&SearchQuery::text("Homer Simpson"))
+                .expect("search ok")
+                .iter()
+                .any(|h| matches!(h, Hit::Fact { .. })),
+            "a label is a label, preferred or not"
+        );
+
+        // The alias has to be in the POSTINGS, not only in the pin. Pinning
+        // fires on a query that names the entity outright ("Cosme Fulanito"); a query
+        // that merely contains the nickname among other words can only be
+        // answered by the index, and that is the common case.
+        assert!(
+            index
+                .search(&SearchQuery::text("Cosme Fulanito person"))
+                .expect("search ok")
+                .iter()
+                .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == homer.id)),
+            "the entity record itself is indexed under every name it answers to"
         );
     }
 
