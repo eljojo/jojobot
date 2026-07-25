@@ -46,7 +46,7 @@ impl InMemoryMemory {
 #[async_trait::async_trait]
 impl Memory for InMemoryMemory {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
-        validate_entity(&new.id, &new.name, &new.source, new.crm.as_deref())?;
+        validate_entity(&new.id, &new.name, &new.aliases, &new.source, new.crm.as_deref())?;
         if let Decision::Block(candidates) =
             guard::decide(&new.id, Some(&new.name), &self.index(), new.create_new)
         {
@@ -59,6 +59,7 @@ impl Memory for InMemoryMemory {
             kind: new.id.kind().expect("a validated id has a kind"),
             id: new.id,
             name: new.name.trim().to_string(),
+            aliases: new.aliases.iter().map(|a| a.trim().to_string()).collect(),
             source: new.source.trim().to_string(),
             crm: new.crm.map(|c| c.trim().to_string()),
             boot: new.boot,
@@ -1357,6 +1358,59 @@ pub mod contract {
         assert_eq!(landed.edge.map(|e| e.object), Some(stranger));
     }
 
+    /// **An entity keeps the other names it answers to**, through the store and
+    /// back. A nickname that survives only in the caller's request is a nickname
+    /// the next session has never heard of.
+    pub async fn add_entity_keeps_its_alternate_names<M: Memory>(store: &M) {
+        let id = EntityId::person("contract-many-named");
+        let added = add(
+            store,
+            NewEntity {
+                aliases: vec!["Contract Nickname".into(), "C.M.N.".into()],
+                ..NewEntity::new(id.clone(), "Contract Many-Named", "user-named")
+            },
+        )
+        .await;
+        assert_eq!(added.aliases, vec!["Contract Nickname", "C.M.N."]);
+        assert_eq!(read_entity(store, &id).await, added, "…on the read path too");
+
+        // The set is replaced whole, and an omitted field is left alone.
+        let renamed = store
+            .update_entity(&id, EntityPatch { source: Some("crm-card".into()), ..Default::default() })
+            .await
+            .expect("update ok")
+            .written()
+            .expect("not blocked");
+        assert_eq!(renamed.aliases, added.aliases, "an omitted alias set is untouched");
+
+        let replaced = store
+            .update_entity(
+                &id,
+                EntityPatch { aliases: Some(vec!["Only This One".into()]), ..Default::default() },
+            )
+            .await
+            .expect("update ok")
+            .written()
+            .expect("not blocked");
+        assert_eq!(replaced.aliases, vec!["Only This One"]);
+        assert_eq!(
+            read_entity(store, &id).await.aliases,
+            vec!["Only This One"],
+            "the replacement is what the store holds, not an addendum beside it"
+        );
+
+        // And an alias carrying the separator is refused before anything moves.
+        let err = store
+            .update_entity(
+                &id,
+                EntityPatch { aliases: Some(vec!["one, two".into()]), ..Default::default() },
+            )
+            .await
+            .expect_err("an alias with a comma in it must be refused");
+        assert!(matches!(err, MemoryError::InvalidEntity(_)), "got {err:?}");
+        assert_eq!(read_entity(store, &id).await.aliases, vec!["Only This One"]);
+    }
+
     /// An entity write with a malformed field is refused outright — a name that
     /// could break out of its frontmatter line never reaches the store.
     pub async fn malformed_entity_fields_are_rejected<M: Memory>(store: &M) {
@@ -1686,6 +1740,7 @@ pub mod contract {
         update_entity_does_not_re_screen_the_handle(store).await;
         update_entity_without_a_rename_is_not_screened(store).await;
         update_entity_unknown_handle_never_creates(store).await;
+        add_entity_keeps_its_alternate_names(store).await;
 
         capture_writes_an_edge_that_reads_back(store).await;
         every_edge_shape_reads_back(store).await;

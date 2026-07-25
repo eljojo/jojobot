@@ -207,6 +207,13 @@ pub struct Entity {
     pub kind: EntityKind,
     /// Display name. Free text for humans; renamed freely, nothing moves.
     pub name: String,
+    /// The other names this entity answers to — the nickname, the short form,
+    /// the initials. SKOS's split: `name` is the preferred label, these are the
+    /// alternate ones, and **nothing distinguishes them but preference** — the
+    /// guard and search treat every label alike (see [`Entity::labels`]).
+    /// Absent in docs written before the field existed, which read as none.
+    #[serde(default)]
+    pub aliases: Vec<String>,
     /// Where this entity came from — **never invented**. An entity exists
     /// because the user named it or a real source produced it.
     pub source: String,
@@ -214,6 +221,22 @@ pub struct Entity {
     pub crm: Option<String>,
     /// Boot tier.
     pub boot: Boot,
+}
+
+impl Entity {
+    /// Every name this entity answers to: its display name first, then its
+    /// aliases, blanks dropped.
+    ///
+    /// **The one definition of "what is this thing called."** The write guard
+    /// screens against it and the search index ingests it, so a nickname cannot
+    /// be findable but unrecognized, or recognized but unfindable.
+    pub fn labels(&self) -> Vec<&str> {
+        std::iter::once(self.name.as_str())
+            .chain(self.aliases.iter().map(String::as_str))
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect()
+    }
 }
 
 /// An entity about to be created. `create_new` is the caller's explicit
@@ -224,6 +247,8 @@ pub struct NewEntity {
     pub id: EntityId,
     /// Display name.
     pub name: String,
+    /// The other names it answers to; empty is the ordinary case.
+    pub aliases: Vec<String>,
     /// Where it came from — required, and never invented by jojobot.
     pub source: String,
     /// Optional kanban token.
@@ -242,6 +267,7 @@ impl NewEntity {
         NewEntity {
             id,
             name: name.into(),
+            aliases: Vec::new(),
             source: source.into(),
             crm: None,
             boot: Boot::default(),
@@ -259,6 +285,10 @@ pub struct EntityPatch {
     /// otherwise the guard is trivially side-steppable: create under a
     /// throwaway name, then rename onto the collision.
     pub name: Option<String>,
+    /// The whole alias set, replaced. `None` leaves it alone; `Some(vec![])`
+    /// clears it — "it has none" is a thing a caller must be able to say, and a
+    /// field that only ever grows is one nobody can correct.
+    pub aliases: Option<Vec<String>>,
     /// New source.
     pub source: Option<String>,
     /// New kanban token.
@@ -589,6 +619,23 @@ pub fn validate_field(label: &str, value: &str) -> Result<(), MemoryError> {
     Ok(())
 }
 
+/// Validate an alias set. Each alias is a frontmatter label like `name` — one
+/// plain line, non-empty, no backtick — with one rule of its own: **no comma**.
+/// The block carries the whole set on a single comma-separated line, so an alias
+/// containing a comma would come back as two aliases, neither of them what
+/// anyone wrote.
+pub fn validate_aliases(aliases: &[String]) -> Result<(), MemoryError> {
+    for alias in aliases {
+        validate_field("alias", alias)?;
+        if alias.contains(',') {
+            return Err(MemoryError::InvalidEntity(format!(
+                "alias '{alias}' contains a comma, which separates aliases"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Validate the optional `crm` link. It points at a kanban token and has exactly
 /// one shape — `card:N` — so a typo can't quietly become a dangling pointer.
 pub fn validate_crm(crm: &str) -> Result<(), MemoryError> {
@@ -607,9 +654,16 @@ pub fn validate_crm(crm: &str) -> Result<(), MemoryError> {
 /// Validate everything an entity write carries: the handle's grammar, its
 /// required labels, and the `crm` pointer if present. Both adapters call this,
 /// so neither can accept a record the other would refuse.
-pub fn validate_entity(id: &EntityId, name: &str, source: &str, crm: Option<&str>) -> Result<(), MemoryError> {
+pub fn validate_entity(
+    id: &EntityId,
+    name: &str,
+    aliases: &[String],
+    source: &str,
+    crm: Option<&str>,
+) -> Result<(), MemoryError> {
     validate_subject(id)?;
     validate_field("name", name)?;
+    validate_aliases(aliases)?;
     validate_field("source", source)?;
     if let Some(crm) = crm {
         validate_crm(crm)?;
@@ -691,6 +745,9 @@ pub fn apply_entity_patch(entity: &mut Entity, patch: &EntityPatch) -> Result<()
     if let Some(name) = &patch.name {
         validate_field("name", name)?;
     }
+    if let Some(aliases) = &patch.aliases {
+        validate_aliases(aliases)?;
+    }
     if let Some(source) = &patch.source {
         validate_field("source", source)?;
     }
@@ -700,6 +757,9 @@ pub fn apply_entity_patch(entity: &mut Entity, patch: &EntityPatch) -> Result<()
 
     if let Some(name) = &patch.name {
         entity.name = name.trim().to_string();
+    }
+    if let Some(aliases) = &patch.aliases {
+        entity.aliases = aliases.iter().map(|a| a.trim().to_string()).collect();
     }
     if let Some(source) = &patch.source {
         entity.source = source.trim().to_string();
@@ -1215,6 +1275,97 @@ mod tests {
         }
         assert!(validate_content("hello world").is_ok());
         assert!(validate_details(Some("plain details")).is_ok());
+    }
+
+    /// **An entity answers to more than one name.** The display name is what it
+    /// is *called*; an alias is what someone actually says — the nickname, the
+    /// short form, the initials. Without them the guard cannot recognize a name
+    /// the user uses every day, and search cannot find it.
+    ///
+    /// An alias is a plain one-line label, exactly as `name` is, with one extra
+    /// rule: **no comma**, because the frontmatter carries the set on one
+    /// comma-separated line and an alias with a comma in it would silently
+    /// become two.
+    #[test]
+    fn an_alias_is_a_plain_label_and_never_carries_the_separator() {
+        assert!(validate_aliases(&["Cosme Fulanito".into(), "H.".into()]).is_ok());
+        assert!(validate_aliases(&[]).is_ok(), "no aliases is the ordinary case");
+        for bad in ["", "   ", "one, two", "two\nlines", "back`tick"] {
+            assert!(
+                validate_aliases(&[bad.into()]).is_err(),
+                "must refuse the alias {bad:?}"
+            );
+        }
+    }
+
+    /// Aliases patch like every other metadata field: `None` leaves them alone,
+    /// `Some` replaces the whole set — including `Some(vec![])`, which is how a
+    /// caller says "it has none", a thing they must be able to say.
+    #[test]
+    fn an_alias_set_is_replaced_whole_or_left_alone() {
+        let mut entity = Entity {
+            id: EntityId::person("alpha"),
+            kind: EntityKind::Person,
+            name: "Alpha".into(),
+            aliases: vec!["Al".into()],
+            source: "user-named".into(),
+            crm: None,
+            boot: Boot::OnDemand,
+        };
+
+        apply_entity_patch(&mut entity, &EntityPatch { source: Some("crm-card".into()), ..Default::default() })
+            .expect("patch ok");
+        assert_eq!(entity.aliases, vec!["Al".to_string()], "an omitted field is left alone");
+
+        apply_entity_patch(
+            &mut entity,
+            &EntityPatch { aliases: Some(vec!["  Al  ".into(), "Alph".into()]), ..Default::default() },
+        )
+        .expect("patch ok");
+        assert_eq!(
+            entity.aliases,
+            vec!["Al".to_string(), "Alph".to_string()],
+            "the set is replaced whole, and trimmed the way a name is"
+        );
+
+        apply_entity_patch(&mut entity, &EntityPatch { aliases: Some(Vec::new()), ..Default::default() })
+            .expect("patch ok");
+        assert!(entity.aliases.is_empty(), "an empty set is a set, not an omission");
+
+        assert!(
+            apply_entity_patch(
+                &mut entity,
+                &EntityPatch { aliases: Some(vec!["one, two".into()]), ..Default::default() }
+            )
+            .is_err(),
+            "a malformed alias is refused before anything is mutated"
+        );
+    }
+
+    /// The **labels** of an entity: its name and every alias, which is the set
+    /// the guard screens and search indexes. One definition, so "what is this
+    /// thing called" cannot come to mean two different things in two places.
+    #[test]
+    fn an_entitys_labels_are_its_name_and_its_aliases() {
+        let entity = |name: &str, aliases: Vec<String>| Entity {
+            id: EntityId::person("alpha"),
+            kind: EntityKind::Person,
+            name: name.into(),
+            aliases,
+            source: "user-named".into(),
+            crm: None,
+            boot: Boot::OnDemand,
+        };
+        assert_eq!(
+            entity("Alpha", vec!["Al".into(), "Alph".into()]).labels(),
+            vec!["Alpha", "Al", "Alph"],
+            "the display name leads; it is the one the entity is filed under"
+        );
+        assert_eq!(entity("Alpha", Vec::new()).labels(), vec!["Alpha"]);
+        assert!(
+            entity("", vec!["  ".into()]).labels().is_empty(),
+            "an entity with nothing written on it has no labels, not blank ones"
+        );
     }
 
     #[test]

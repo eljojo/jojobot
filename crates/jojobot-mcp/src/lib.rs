@@ -48,6 +48,11 @@ pub struct AddEntityArgs {
     pub handle: String,
     /// Display name, as a human would write it.
     pub name: String,
+    /// The other names this one answers to — nickname, short form, initials.
+    /// Screened and searched exactly as `name` is, so a nickname the user
+    /// actually says is both recognized and findable. No commas.
+    #[serde(default)]
+    pub aliases: Option<Vec<String>>,
     /// Where this entity came from — **never invented**: the user named it, or
     /// a real source produced it (e.g. `user-named`, `crm-card`, `calendar`).
     pub source: String,
@@ -198,6 +203,10 @@ pub struct UpdateEntityArgs {
     /// New display name.
     #[serde(default)]
     pub name: Option<String>,
+    /// The whole alias set, replaced. Omit to leave it alone; pass `[]` to clear
+    /// it. No commas.
+    #[serde(default)]
+    pub aliases: Option<Vec<String>>,
     /// New source.
     #[serde(default)]
     pub source: Option<String>,
@@ -267,6 +276,7 @@ impl Jojobot {
         let new = NewEntity {
             id,
             name: args.name,
+            aliases: args.aliases.unwrap_or_default(),
             source: args.source,
             crm: args.crm,
             boot: args
@@ -360,6 +370,7 @@ impl Jojobot {
         let handle = EntityId::person(&args.handle);
         let patch = EntityPatch {
             name: args.name,
+            aliases: args.aliases,
             source: args.source,
             crm: args.crm,
             create_new: args.create_new.unwrap_or(false),
@@ -544,6 +555,9 @@ fn entity_json(entity: &Entity) -> serde_json::Value {
         "id": entity.id.as_str(),
         "type": type_name(entity.kind),
         "name": entity.name,
+        // schema.org's word for the same idea, and SKOS's split: one preferred
+        // label, any number of alternate ones.
+        "alternateName": entity.aliases,
         "source": entity.source,
         "crm": entity.crm,
         "boot": entity.boot.as_token(),
@@ -951,6 +965,7 @@ mod tests {
                 kind: kind.as_token().into(),
                 handle: id.slug().into(),
                 name: id.slug().into(),
+                aliases: None,
                 source: "test-fixture".into(),
                 crm: None,
                 boot: None,
@@ -1002,6 +1017,7 @@ mod tests {
             kind: kind.into(),
             handle: handle.into(),
             name: name.into(),
+            aliases: None,
             source: "user-named".into(),
             crm: None,
             boot: None,
@@ -1136,6 +1152,7 @@ mod tests {
             id: EntityId::new(EntityKind::Work, "first-mix"),
             kind: EntityKind::Work,
             name: "First Mix".into(),
+            aliases: vec!["The First One".into()],
             source: "user-named".into(),
             crm: None,
             boot: Boot::OnDemand,
@@ -1287,6 +1304,7 @@ mod tests {
             .update_entity(Parameters(UpdateEntityArgs {
                 handle: "thing:red-bike".into(),
                 name: Some("Red Bike (the gravel one)".into()),
+                aliases: None,
                 source: None,
                 crm: Some("card:551".into()),
                 create_new: None,
@@ -1317,6 +1335,7 @@ mod tests {
         let rename = |create_new: Option<bool>| UpdateEntityArgs {
             handle: "person:zenith".into(),
             name: Some("Alpha".into()),
+            aliases: None,
             source: None,
             crm: None,
             create_new,
@@ -1355,6 +1374,64 @@ mod tests {
         assert_eq!(forced["name"], "Alpha");
     }
 
+    /// **Alternate names go in and come back**, under schema.org's word for
+    /// them. `update_entity` replaces the set whole — including with nothing,
+    /// because "it has none" is a thing a caller must be able to say.
+    #[tokio::test]
+    async fn an_entity_carries_its_alternate_names_through_the_handler() {
+        let jojobot = handler();
+        let added = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    aliases: Some(vec!["Cosme Fulanito".into(), "H.".into()]),
+                    ..add_args("person", "homer-simpson", "Homer Simpson")
+                }))
+                .await
+                .expect("add ok"),
+        );
+        assert_eq!(added["alternateName"][0], "Cosme Fulanito");
+        assert_eq!(added["alternateName"][1], "H.");
+
+        let patch = |aliases: Vec<String>| UpdateEntityArgs {
+            handle: "person:homer-simpson".into(),
+            name: None,
+            aliases: Some(aliases),
+            source: None,
+            crm: None,
+            create_new: None,
+        };
+
+        let replaced = json_of(
+            &jojobot
+                .update_entity(Parameters(patch(vec!["Cosme Fulanito".into()])))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(
+            replaced["alternateName"].as_array().expect("a list").len(),
+            1,
+            "the set is replaced, not appended to: {replaced}"
+        );
+
+        let cleared = json_of(
+            &jojobot
+                .update_entity(Parameters(patch(Vec::new())))
+                .await
+                .expect("update ok"),
+        );
+        assert!(cleared["alternateName"].as_array().expect("a list").is_empty());
+
+        // An alias carrying the separator is a client error, not a silent split.
+        let err = jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                aliases: Some(vec!["one, two".into()]),
+                ..add_args("person", "comma-carrier", "Comma Carrier")
+            }))
+            .await
+            .expect_err("a comma in an alias must be refused");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    }
+
     /// Updating an entity that isn't there is a client error naming near misses
     /// — it never creates one.
     #[tokio::test]
@@ -1368,6 +1445,7 @@ mod tests {
             .update_entity(Parameters(UpdateEntityArgs {
                 handle: "thing:red-bikee".into(),
                 name: Some("nope".into()),
+                aliases: None,
                 source: None,
                 crm: None,
                 create_new: None,

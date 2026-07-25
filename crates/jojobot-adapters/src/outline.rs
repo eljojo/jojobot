@@ -306,7 +306,7 @@ fn pick_oldest<T>(
 #[async_trait]
 impl Memory for OutlineStore {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
-        validate_entity(&new.id, &new.name, &new.source, new.crm.as_deref())?;
+        validate_entity(&new.id, &new.name, &new.aliases, &new.source, new.crm.as_deref())?;
         let collection_id = self.resolve_collection().await?;
 
         let index = self.entity_index(&collection_id).await?;
@@ -323,6 +323,7 @@ impl Memory for OutlineStore {
             kind: new.id.kind().expect("a validated id has a kind"),
             id: new.id,
             name: new.name.trim().to_string(),
+            aliases: new.aliases.iter().map(|a| a.trim().to_string()).collect(),
             source: new.source.trim().to_string(),
             crm: new.crm.map(|c| c.trim().to_string()),
             boot: new.boot,
@@ -789,6 +790,7 @@ mod tests {
             kind: EntityKind::Person,
             id,
             name: String::new(),
+            aliases: Vec::new(),
             source: "capture".into(),
             crm: None,
             boot: Default::default(),

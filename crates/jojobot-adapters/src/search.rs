@@ -827,6 +827,7 @@ mod tests {
             kind: id.kind().expect("a well-formed id has a kind"),
             id,
             name: name.into(),
+            aliases: Vec::new(),
             source: "user-named".into(),
             crm: None,
             boot: Boot::OnDemand,

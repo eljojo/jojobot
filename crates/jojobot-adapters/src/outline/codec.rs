@@ -454,22 +454,46 @@ pub(super) fn parse_entity(doc: &str) -> Option<Entity> {
         id,
         kind,
         name: parse_field(doc, "name").unwrap_or_default(),
+        aliases: parse_aliases(doc),
         source: parse_field(doc, "source").unwrap_or_default(),
         crm: parse_field(doc, "crm"),
         boot: parse_field(doc, "boot").map_or(Boot::default(), |b| Boot::from_token(&b)),
     })
 }
 
+/// The other names an entity answers to, off its `aliases:` line — one
+/// comma-separated list, blanks dropped.
+///
+/// **A doc written before the field existed has no line, and reads as none** —
+/// the same lazy migration `details` and `edges` got: nothing is swept, and the
+/// line appears the next time a write rewrites the block.
+fn parse_aliases(doc: &str) -> Vec<String> {
+    parse_field(doc, "aliases")
+        .into_iter()
+        .flat_map(|line| {
+            line.split(',')
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 /// The frontmatter block for an entity — lean and identical for all eight kinds.
-/// An absent `crm` writes no line at all, so the block says only what is true.
+/// An absent `crm` (or an empty alias set) writes no line at all, so the block
+/// says only what is true.
 fn frontmatter(e: &Entity) -> String {
     let mut out = format!(
-        "```yaml\nid: {}\nkind: {}\nname: {}\nsource: {}\n",
+        "```yaml\nid: {}\nkind: {}\nname: {}\n",
         e.id,
         e.kind,
         e.name,
-        e.source
     );
+    if !e.aliases.is_empty() {
+        out.push_str(&format!("aliases: {}\n", e.aliases.join(", ")));
+    }
+    out.push_str(&format!("source: {}\n", e.source));
     if let Some(crm) = &e.crm {
         out.push_str(&format!("crm: {crm}\n"));
     }
@@ -531,6 +555,7 @@ mod tests {
             id: EntityId::person("alpha"),
             kind: EntityKind::Person,
             name: "Alpha".into(),
+            aliases: Vec::new(),
             source: "crm-card".into(),
             crm: Some("card:554".into()),
             boot: Boot::OnDemand,
@@ -892,6 +917,48 @@ mod tests {
         assert!(
             touched.contains("| f1 | person:alpha | plays go ❓ |  | inference | active | 2026-07-01 |  |"),
             "the touched row carries every current column: {touched}"
+        );
+    }
+
+    /// **Alternate names round-trip, and a doc from before the field reads
+    /// fine.** The set rides one comma-separated line, so the entity's other
+    /// names are as legible in the wiki as its display name is.
+    ///
+    /// The lazy migration is the same one `details` and `edges` got: a doc with
+    /// no `aliases:` line reads as having none — never a hard-failed read, never
+    /// a sweep — and gains the line the next time a write rewrites its block. An
+    /// entity with no aliases writes no line at all, so the block still says only
+    /// what is true.
+    #[test]
+    fn alternate_names_round_trip_and_a_doc_without_them_still_reads() {
+        let named = Entity { aliases: vec!["Al".into(), "A. One".into()], ..alpha() };
+        let doc = seeded_doc(&named);
+        assert!(doc.contains("aliases: Al, A. One"), "one legible line: {doc}");
+        assert_eq!(parse_entity(&doc).expect("the doc is an entity"), named);
+
+        // A doc written before the field existed: no line, no aliases, no drama.
+        let legacy = "```yaml\nid: person:alpha\nkind: person\nname: Alpha\n\
+                      source: crm-card\ncrm: card:554\nboot: on-demand\n```\n";
+        let read = parse_entity(legacy).expect("a legacy doc still identifies its entity");
+        assert!(read.aliases.is_empty(), "an absent field is none, not a failure");
+        assert_eq!(read.name, "Alpha", "…and everything else reads as it always did");
+
+        // …and it gains the line on the next write that touches the block.
+        let touched = with_frontmatter_replaced(legacy, &Entity { aliases: vec!["Al".into()], ..read });
+        assert!(touched.contains("aliases: Al"), "gained on touch: {touched}");
+        assert_eq!(parse_aliases(&touched), vec!["Al".to_string()]);
+
+        // An entity with none writes no line — the block says only what is true.
+        assert!(
+            !seeded_doc(&alpha()).contains("aliases"),
+            "no aliases, no line: {}",
+            seeded_doc(&alpha())
+        );
+
+        // Blanks in the list are dropped rather than becoming empty names.
+        assert_eq!(
+            parse_aliases("```yaml\nid: person:alpha\naliases: Al, , Alph ,\n```"),
+            vec!["Al".to_string(), "Alph".to_string()]
         );
     }
 
