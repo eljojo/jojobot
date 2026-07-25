@@ -1011,6 +1011,12 @@ mod tests {
     #[tokio::test]
     async fn an_edit_leaves_one_indexed_copy_saying_the_new_thing() {
         let store = IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens");
+        store
+            .add_entity(NewEntity::new(EntityId::person("alpha"), "Alpha", "user-named"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
         let captured = store
             .capture(NewFact::about(
                 EntityId::person("alpha"),
@@ -1080,13 +1086,19 @@ mod tests {
     async fn rebuild_indexes_a_store_that_was_already_full() {
         let inner = Arc::new(InMemoryMemory::new());
         inner
+            .add_entity(NewEntity::new(EntityId::person("alpha"), "Alpha", "user-named"))
+            .await
+            .expect("add ok");
+        inner
             .capture(NewFact::about(
                 EntityId::person("alpha"),
                 "was here before the server started",
                 date(2026, 7, 1),
             ))
             .await
-            .expect("capture ok");
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
 
         let store = IndexedMemory::new(inner).expect("index opens");
         assert!(

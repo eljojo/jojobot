@@ -273,17 +273,25 @@ pub fn decide(
     }
 }
 
-/// The guard's decision on a handle a write **names but does not create** — a
-/// capture's subject, an edge's object.
+/// The guard's decision on a handle a write **names but must not create** — a
+/// capture's subject, an edge's object. This is an **existence gate**, not only
+/// a similarity one.
 ///
-/// A handle that resolves exactly is already known, and is waved through: it is
-/// the entity, not a candidate for it. Otherwise it faces [`decide`] on the slug
-/// channels (there is no name to screen — the caller gave a handle, not a label).
-pub fn decide_named(handle: &EntityId, index: &[Entity], create_new: bool) -> Decision {
+/// A handle that resolves exactly is already known and is waved through: it is
+/// the entity, not a candidate for it. Everything else blocks — a near miss with
+/// the candidates that explain it, an unrecognized handle with an empty list.
+///
+/// There is deliberately **no create-new escape**. A write that names an entity
+/// is not a write that may invent one: auto-provisioning on a novel handle
+/// turned every typo, and every plausible-looking id an AI produced, into a
+/// nameless entity nobody chose, sitting in the store forever. A genuinely new
+/// entity is two deliberate steps — `add_entity`, then the write — and the
+/// second one is what proves the first was meant.
+pub fn decide_existing(handle: &EntityId, index: &[Entity]) -> Decision {
     if index.iter().any(|e| &e.id == handle) {
         return Decision::Proceed;
     }
-    decide(handle, None, index, create_new)
+    Decision::Block(screen(handle, None, index))
 }
 
 /// The guard's decision on a **rename**. A rename is an entity-touching write,
@@ -497,28 +505,33 @@ mod tests {
 
     // --- a handle a write only names -----------------------------------------
 
-    /// A handle that already exists IS the entity, so naming it is never
-    /// suspicious — otherwise every second fact about someone, and every edge
-    /// pointing at a known place, would need confirming. A near miss still blocks.
+    /// A handle a write only NAMES must already exist. An exact handle IS the
+    /// entity, so naming it is never suspicious — otherwise every second fact
+    /// about someone, and every edge pointing at a known place, would need
+    /// confirming. Everything else blocks, near miss or not.
     #[test]
-    fn naming_an_existing_handle_proceeds_but_a_near_miss_blocks() {
+    fn a_named_handle_must_already_exist_and_a_near_miss_still_names_candidates() {
         let idx = index();
         assert_eq!(
-            decide_named(&EntityId("person:alpha".into()), &idx, false),
+            decide_existing(&EntityId("person:alpha".into()), &idx),
             Decision::Proceed,
             "an exact handle is the entity, not a candidate for it"
         );
-        let Decision::Block(candidates) =
-            decide_named(&EntityId("person:alphaa".into()), &idx, false)
+
+        let Decision::Block(candidates) = decide_existing(&EntityId("person:alphaa".into()), &idx)
         else {
             panic!("a near-miss handle must block");
         };
         assert_eq!(candidates[0].handle.as_str(), "person:alpha");
-        assert_eq!(
-            decide_named(&EntityId("person:alphaa".into()), &idx, true),
-            Decision::Proceed,
-            "the explicit signal clears a fuzzy match here too"
-        );
+
+        // **A handle nothing resembles blocks too**, with an empty list. There is
+        // no create-new escape here: this is a write that NAMES an entity, and
+        // an entity it cannot find is not one it may invent. "I don't know this
+        // one" is the answer; there is simply nothing to suggest alongside it.
+        let Decision::Block(none) = decide_existing(&EntityId("person:zenith".into()), &idx) else {
+            panic!("a handle that resolves to nothing must block, not proceed");
+        };
+        assert!(none.is_empty(), "nothing to suggest, and nothing invented: {none:?}");
     }
 
     // --- renames go through the same gate ------------------------------------

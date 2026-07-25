@@ -41,22 +41,6 @@ impl InMemoryMemory {
         self.entities.lock().expect("fake mutex poisoned").clone()
     }
 
-    /// Provision an entity the way a `capture` on an unknown subject does:
-    /// existence sourced as `capture`, no name until someone names it.
-    fn provision(&self, id: &EntityId) {
-        let mut entities = self.entities.lock().expect("fake mutex poisoned");
-        if entities.iter().any(|e| &e.id == id) {
-            return;
-        }
-        entities.push(Entity {
-            kind: id.kind().expect("a validated id has a kind"),
-            id: id.clone(),
-            name: String::new(),
-            source: "capture".into(),
-            crm: None,
-            boot: Default::default(),
-        });
-    }
 }
 
 #[async_trait::async_trait]
@@ -132,27 +116,23 @@ impl Memory for InMemoryMemory {
             validate_edge(edge)?;
         }
 
+        // Every entity this write names must already exist — the subject first,
+        // then the edge's object. Nothing here provisions.
         let index = self.index();
-        if let Decision::Block(candidates) =
-            guard::decide_named(&fact.subject, &index, fact.create_new)
-        {
+        if let Decision::Block(candidates) = guard::decide_existing(&fact.subject, &index) {
             return Ok(Guarded::Blocked {
                 attempted: fact.subject,
                 candidates,
             });
         }
-        // The object faces the same gate, BEFORE the subject's doc is
-        // provisioned: a blocked edge must leave nothing behind.
         if let Some(edge) = &fact.edge
-            && let Decision::Block(candidates) =
-                guard::decide_named(&edge.object, &index, fact.create_new)
+            && let Decision::Block(candidates) = guard::decide_existing(&edge.object, &index)
         {
             return Ok(Guarded::Blocked {
                 attempted: edge.object.clone(),
                 candidates,
             });
         }
-        self.provision(&fact.subject);
 
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
         let home = fact.subject.clone();
@@ -193,8 +173,7 @@ impl Memory for InMemoryMemory {
         // screened before anything is rewritten.
         if let Some(edge) = &patch.edge {
             validate_edge(edge)?;
-            if let Decision::Block(candidates) =
-                guard::decide_named(&edge.object, &self.index(), patch.create_new)
+            if let Decision::Block(candidates) = guard::decide_existing(&edge.object, &self.index())
             {
                 return Ok(Guarded::Blocked {
                     attempted: edge.object.clone(),
@@ -257,8 +236,28 @@ pub mod contract {
     use crate::memory::{Boot, Edge, EdgeShape, FactStatus, Provenance};
     use jiff::civil::{Date, date};
 
-    /// Capture a fact the guard is expected to wave through.
+    /// Make sure `id` exists, so the write guard's **existence gate** is not
+    /// what a spec about something else trips over. Idempotent: the suite runs
+    /// against a shared, pre-populated collection as much as an empty fake.
+    ///
+    /// The gate itself has its own specs below; everywhere else, provisioning is
+    /// setup, not the subject under test.
+    async fn ensure<M: Memory>(store: &M, id: &EntityId) {
+        let known = store.list_entities(None).await.expect("list_entities should succeed");
+        if known.iter().any(|e| &e.id == id) {
+            return;
+        }
+        add(store, NewEntity::new(id.clone(), id.slug(), "contract-fixture")).await;
+    }
+
+    /// Capture a fact the guard is expected to wave through — provisioning its
+    /// subject and any edge object first, because every write that names an
+    /// entity now requires one that exists.
     async fn capture<M: Memory>(store: &M, fact: NewFact) -> Fact {
+        ensure(store, &fact.subject).await;
+        if let Some(edge) = &fact.edge {
+            ensure(store, &edge.object).await;
+        }
         let subject = fact.subject.clone();
         store
             .capture(fact)
@@ -279,8 +278,12 @@ pub mod contract {
             .unwrap_or_else(|| panic!("the guard must not block {id}"))
     }
 
-    /// Edit a fact the guard is expected to wave through.
+    /// Edit a fact the guard is expected to wave through — provisioning any edge
+    /// object the patch attaches, for the same reason [`capture`] does.
     async fn edit<M: Memory>(store: &M, address: &FactAddress, patch: FactPatch) -> Fact {
+        if let Some(edge) = &patch.edge {
+            ensure(store, &edge.object).await;
+        }
         store
             .update_fact(address, patch)
             .await
@@ -336,7 +339,6 @@ pub mod contract {
             status: FactStatus::Active,
             date: date(2026, 3, 9),
             edge: None,
-            create_new: false,
         };
         let captured = capture(store, new).await;
         assert_eq!(captured.subject, subject);
@@ -976,6 +978,10 @@ pub mod contract {
         add(store, NewEntity::new(object.clone(), "Riverbend", "user-named")).await;
 
         let subject = EntityId::person("contract-edge-guarded");
+        // The subject faces the gate too, so it is provisioned first: this spec
+        // is about the object, and the guard reports the first handle it stops.
+        add(store, NewEntity::new(subject.clone(), "Edge Guarded", "user-named")).await;
+
         let typo = EntityId::new(EntityKind::Place, "contract-riverbnd");
         let outcome = store
             .capture(NewFact {
@@ -1099,61 +1105,127 @@ pub mod contract {
         assert_eq!(forced.id, typo);
     }
 
-    /// Capture guards a subject that doesn't resolve — the same check, on the
-    /// path a fact takes. Capturing about an entity that *does* exist is never
-    /// guarded, or every fact would need confirming.
-    pub async fn capture_guards_only_an_unresolved_subject<M: Memory>(store: &M) {
+    /// **Capture's subject must already exist.** Not "must not look like
+    /// something else" — must *be* something.
+    ///
+    /// A novel subject used to self-provision a nameless entity, so every typo
+    /// and every plausible-looking handle an AI produced became a permanent
+    /// record nobody chose, indistinguishable from a real one at a glance. There
+    /// is no create-new escape on this path either: a genuinely new entity is
+    /// `add_entity` and then the capture, two deliberate steps, and the second
+    /// is what proves the first was meant.
+    pub async fn capture_requires_an_existing_subject<M: Memory>(store: &M) {
         let known = EntityId::person("contract-zenith");
         add(store, NewEntity::new(known.clone(), "Zenith", "user-named")).await;
 
-        // Second fact about a known entity: waved straight through.
+        // A fact about an entity that exists: waved straight through, always —
+        // otherwise every second fact about someone would need confirming.
         capture(store, NewFact::about(known.clone(), "likes long walks", date(2026, 7, 1))).await;
 
+        // A near miss comes back with the candidate that explains it…
         let typo = EntityId::person("contract-zenit");
         let outcome = store
-            .capture(NewFact::about(typo.clone(), "should not land yet", date(2026, 7, 1)))
+            .capture(NewFact::about(typo.clone(), "should not land", date(2026, 7, 1)))
             .await
-            .expect("call succeeds");
+            .expect("the call itself succeeds; the guard answers in the result");
         let Guarded::Blocked { candidates, .. } = outcome else {
-            panic!("a near-miss subject must be reported before a doc is spawned");
+            panic!("a near-miss subject must be reported, never provisioned");
         };
-        assert!(candidates.iter().any(|m| m.handle == known));
-        assert!(
-            store.recall(&typo).await.expect("recall").is_empty(),
-            "a blocked capture must write no facts"
+        assert!(candidates.iter().any(|m| m.handle == known), "got {candidates:?}");
+
+        // …and a handle nothing resembles blocks just the same, with nothing to
+        // suggest. This is the case that used to sail through and provision.
+        let stranger = EntityId::new(EntityKind::Work, "contract-first-mix");
+        let outcome = store
+            .capture(NewFact::about(stranger.clone(), "32 tracks", date(2026, 7, 1)))
+            .await
+            .expect("the call itself succeeds; the guard answers in the result");
+        let Guarded::Blocked { attempted, candidates } = outcome else {
+            panic!("an unknown subject must block even with no near match");
+        };
+        assert_eq!(attempted, stranger, "the guard names the handle it stopped");
+        assert!(candidates.is_empty(), "nothing resembles it: {candidates:?}");
+
+        for blocked in [&typo, &stranger] {
+            assert!(
+                store.recall(blocked).await.expect("recall").is_empty(),
+                "a blocked capture must write no facts ({blocked})"
+            );
+            // …and no entity either. Checking only for facts left the guard's
+            // "write NOTHING" half-tested: an adapter that provisioned the doc
+            // before screening would still show an empty fact table here.
+            assert!(
+                store
+                    .list_entities(None)
+                    .await
+                    .expect("list")
+                    .iter()
+                    .all(|e| &e.id != blocked),
+                "a blocked capture must not have provisioned the entity either ({blocked})"
+            );
+        }
+
+        // The way through is to mean it: add the entity, then capture.
+        add(store, NewEntity::new(stranger.clone(), "First Mix", "user-named")).await;
+        let landed = capture(
+            store,
+            NewFact::about(stranger.clone(), "32 tracks", date(2026, 7, 1)),
+        )
+        .await;
+        assert_eq!(landed.subject, stranger);
+        assert_eq!(read_back(store, &stranger, &landed.id).await.content, "32 tracks");
+        assert_eq!(
+            read_entity(store, &stranger).await.source,
+            "user-named",
+            "existence is sourced by whoever asked for it, never by a side effect"
         );
-        // …and no entity either. Checking only for facts left the guard's
-        // "write NOTHING" half-tested: an adapter that provisioned the doc
-        // before screening would still show an empty fact table here, so the
-        // near-duplicate entity it just spawned would pass unnoticed.
+    }
+
+    /// The same gate on an **edge's object**: a handle nothing resembles is
+    /// refused rather than quietly becoming a new node. This is where ask-across
+    /// rots silently — the edge points at something nobody else references, the
+    /// walk comes back empty, and nothing looks wrong.
+    pub async fn capture_requires_an_existing_edge_object<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-edge-stranger");
+        add(store, NewEntity::new(subject.clone(), "Edge Stranger", "user-named")).await;
+
+        let stranger = EntityId::new(EntityKind::Event, "contract-unheard-of-fest");
+        let outcome = store
+            .capture(NewFact {
+                edge: Some(Edge::new(EdgeShape::Attendance, stranger.clone())),
+                ..NewFact::about(subject.clone(), "should not land", date(2026, 7, 1))
+            })
+            .await
+            .expect("the call itself succeeds; the guard answers in the result");
+        let Guarded::Blocked { attempted, candidates } = outcome else {
+            panic!("an unknown edge object must block even with no near match");
+        };
+        assert_eq!(attempted, stranger);
+        assert!(candidates.is_empty(), "nothing resembles it: {candidates:?}");
+        assert!(
+            store.recall(&subject).await.expect("recall").is_empty(),
+            "a blocked object must take its fact with it"
+        );
         assert!(
             store
                 .list_entities(None)
                 .await
                 .expect("list")
                 .iter()
-                .all(|e| e.id != typo),
-            "a blocked capture must not have provisioned the entity either"
+                .all(|e| e.id != stranger),
+            "…and must not have provisioned the object either"
         );
 
-        let forced = capture(
+        add(store, NewEntity::new(stranger.clone(), "Unheard-of Fest", "user-named")).await;
+        let landed = capture(
             store,
-            NewFact { create_new: true, ..NewFact::about(typo.clone(), "now it lands", date(2026, 7, 1)) },
+            NewFact {
+                edge: Some(Edge::new(EdgeShape::Attendance, stranger.clone())),
+                ..NewFact::about(subject.clone(), "went both nights", date(2026, 7, 1))
+            },
         )
         .await;
-        assert_eq!(forced.subject, typo);
-        assert_eq!(read_back(store, &typo, &forced.id).await.content, "now it lands");
-    }
-
-    /// A `capture` about an entity nobody added self-provisions its home, and
-    /// that entity shows up in the listing sourced as `capture` — existence is
-    /// always sourced, never invented.
-    pub async fn capture_self_provisions_a_sourced_entity<M: Memory>(store: &M) {
-        let subject = EntityId::new(EntityKind::Work, "contract-first-mix");
-        capture(store, NewFact::about(subject.clone(), "32 tracks", date(2026, 7, 1))).await;
-        let seen = read_entity(store, &subject).await;
-        assert_eq!(seen.kind, EntityKind::Work);
-        assert_eq!(seen.source, "capture", "a self-provisioned entity says where it came from");
+        assert_eq!(landed.edge.map(|e| e.object), Some(stranger));
     }
 
     /// An entity write with a malformed field is refused outright — a name that
@@ -1501,8 +1573,8 @@ pub mod contract {
 
         add_entity_blocks_an_existing_handle(store).await;
         add_entity_reports_a_near_miss_then_accepts_create_new(store).await;
-        capture_guards_only_an_unresolved_subject(store).await;
-        capture_self_provisions_a_sourced_entity(store).await;
+        capture_requires_an_existing_subject(store).await;
+        capture_requires_an_existing_edge_object(store).await;
         malformed_entity_fields_are_rejected(store).await;
     }
 }

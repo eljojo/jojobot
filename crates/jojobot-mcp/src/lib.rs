@@ -25,7 +25,8 @@ use std::sync::Arc;
 
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
-    FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance, guard::EntityMatch,
+    FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance,
+    guard::{self, EntityMatch},
     search::{DEFAULT_LIMIT, EdgeFilter, Hit, Search, SearchQuery},
     validate_edge,
 };
@@ -66,7 +67,9 @@ pub struct AddEntityArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CaptureArgs {
     /// The entity the fact is about — any `kind:slug` id (a bare handle is read
-    /// as a person).
+    /// as a person). **It must already exist**: a subject jojobot doesn't know
+    /// comes back with candidates and nothing is written. Create it with
+    /// `add_entity` first if it is genuinely new.
     pub subject: String,
     /// The crisp claim to remember (one line; no raw newline).
     pub content: String,
@@ -85,14 +88,11 @@ pub struct CaptureArgs {
     /// Requires `object`; neither works alone.
     #[serde(default)]
     pub shape: Option<String>,
-    /// The entity the edge points at, as `kind:slug`. Screened by the write guard
-    /// exactly as `subject` is — a typo comes back as candidates, never a new node.
+    /// The entity the edge points at, as `kind:slug`. **It must already exist**,
+    /// exactly as `subject` must — an edge into a node nobody else references is
+    /// how a cross-entity question quietly starts coming back empty.
     #[serde(default)]
     pub object: Option<String>,
-    /// Set only after a previous call reported candidates for a subject or an
-    /// edge object that doesn't exist yet, and you judged them different.
-    #[serde(default)]
-    pub create_new: Option<bool>,
 }
 
 /// Arguments to `recall`.
@@ -139,13 +139,10 @@ pub struct UpdateFactArgs {
     /// `about`. Requires `object`; neither works alone.
     #[serde(default)]
     pub shape: Option<String>,
-    /// The entity the edge points at, as `kind:slug`. Screened by the write guard.
+    /// The entity the edge points at, as `kind:slug`. **It must already exist** —
+    /// `add_entity` first if it is genuinely new.
     #[serde(default)]
     pub object: Option<String>,
-    /// Set only after a previous call reported candidates for the edge's object
-    /// and you judged them a different entity.
-    #[serde(default)]
-    pub create_new: Option<bool>,
 }
 
 /// The `edge` filter of a `search` — a shape and the entity it points at.
@@ -283,7 +280,7 @@ impl Jojobot {
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(&attempted, &candidates, "add_entity")),
+            } => Ok(blocked_result(&attempted, &candidates, Blocked::Creating)),
         }
     }
 
@@ -377,7 +374,7 @@ impl Jojobot {
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(&attempted, &candidates, "update_entity")),
+            } => Ok(blocked_result(&attempted, &candidates, Blocked::Renaming)),
         }
     }
 
@@ -385,8 +382,10 @@ impl Jojobot {
     /// address a later `update_fact` can edit it through.
     #[tool(
         description = "Capture a fact about an entity of any kind. Returns the stored fact and \
-                       its address. A subject that doesn't exist yet is screened by the write \
-                       guard first."
+                       its address. Every entity it names — the subject, and an edge's object — \
+                       must ALREADY EXIST: one jojobot doesn't know comes back status: blocked \
+                       with candidates and nothing is written. A genuinely new entity is two \
+                       deliberate steps — add_entity, then capture."
     )]
     async fn capture(
         &self,
@@ -405,14 +404,13 @@ impl Jojobot {
             status: Default::default(),
             date,
             edge,
-            create_new: args.create_new.unwrap_or(false),
         };
         match self.memory.capture(new).await.map_err(memory_error)? {
             Guarded::Written(fact) => json_result(&fact_json(&fact)),
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(&attempted, &candidates, "capture")),
+            } => Ok(blocked_result(&attempted, &candidates, Blocked::MustExist("capture"))),
         }
     }
 
@@ -455,7 +453,6 @@ impl Jojobot {
             provenance: args.provenance.as_deref().map(parse_one_provenance).transpose()?,
             confirmed_by_user: args.confirmed_by_user.unwrap_or(false),
             edge: parse_edge(args.shape.as_deref(), args.object.as_deref())?,
-            create_new: args.create_new.unwrap_or(false),
         };
         match self
             .memory
@@ -467,7 +464,7 @@ impl Jojobot {
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(&attempted, &candidates, "update_fact")),
+            } => Ok(blocked_result(&attempted, &candidates, Blocked::MustExist("update_fact"))),
         }
     }
 }
@@ -583,6 +580,20 @@ fn type_name(kind: EntityKind) -> &'static str {
     }
 }
 
+/// Which gate stopped a write — because the way out of each one is different,
+/// and one copy-pasted paragraph telling a rename to "pick a more qualified
+/// slug" is worse than no advice at all.
+enum Blocked {
+    /// A creation: the handle is being minted here, so an exact collision is
+    /// unforgivable and `create_new` covers only a shared *name*.
+    Creating,
+    /// A rename: no handle is moving, so nothing here is unforgivable.
+    Renaming,
+    /// A write that only **names** an entity (a capture's subject, an edge's
+    /// object). It cannot create one, so `create_new` does not exist on it.
+    MustExist(&'static str),
+}
+
 /// The write guard's answer: **nothing was written**, and here is what jojobot
 /// suspects you meant.
 ///
@@ -592,17 +603,52 @@ fn type_name(kind: EntityKind) -> &'static str {
 /// feature read like a broken server: clients that retry on error retry it, and
 /// clients that unwrap on error handle it exactly wrong. `status` and `wrote`
 /// are what stop it reading as a completed write.
-fn blocked_result(attempted: &EntityId, candidates: &[EntityMatch], verb: &str) -> CallToolResult {
+fn blocked_result(
+    attempted: &EntityId,
+    candidates: &[EntityMatch],
+    gate: Blocked,
+) -> CallToolResult {
+    let exact = candidates
+        .iter()
+        .any(|c| c.reason == guard::MatchReason::ExactHandle);
+    let how_to_proceed = match gate {
+        Blocked::Creating if exact => format!(
+            "Nothing was written. The handle '{attempted}' is already taken, and that cannot be \
+             forced — a handle has exactly one owner. Either this IS the entity above (use its \
+             handle and carry on), or it is a different one and needs a more qualified slug.",
+        ),
+        Blocked::Creating => format!(
+            "Nothing was written. If '{attempted}' IS one of the entities above, use that handle \
+             instead. If it is genuinely a different one that happens to share a name, re-call \
+             add_entity with create_new: true — display names are not unique and never have to \
+             be; the handle is what has to be.",
+        ),
+        Blocked::Renaming => format!(
+            "Nothing was renamed, and the handle '{attempted}' is unaffected either way — a \
+             rename only moves the display name. Either pick a name that isn't already worn, or \
+             re-call update_entity with create_new: true if this entity really does share a name \
+             with one above: names are not unique, handles are.",
+        ),
+        // The candidate list is often empty here — this gate fires on any
+        // unrecognized handle, not only a near miss — so the advice must not
+        // point at "the handles above" when there are none.
+        Blocked::MustExist(verb) if candidates.is_empty() => format!(
+            "Nothing was written. '{attempted}' is not an entity jojobot knows, and nothing \
+             resembles it. {verb} cannot create an entity: call add_entity to create \
+             '{attempted}' first, then re-call {verb}.",
+        ),
+        Blocked::MustExist(verb) => format!(
+            "Nothing was written. '{attempted}' is not an entity jojobot knows. If one of the \
+             handles above is what you meant, use that. Otherwise {verb} cannot create it for \
+             you — call add_entity to create '{attempted}' first, then re-call {verb}.",
+        ),
+    };
     let body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted.as_str(),
         "wrote": false,
         "candidates": candidates.iter().map(candidate_json).collect::<Vec<_>>(),
-        "how_to_proceed": format!(
-            "Nothing was written. Either use an existing handle above, or re-call {verb} with \
-             create_new: true if this is genuinely a different entity. An exact handle \
-             collision can't be forced — pick a more qualified slug instead."
-        ),
+        "how_to_proceed": how_to_proceed,
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -784,11 +830,15 @@ impl ServerHandler for Jojobot {
                  status) · `update_entity` (metadata only) · `list_entities`. A fact may \
                  also draw one typed **edge** — pass `shape` (location · membership · \
                  attendance · about) with `object`, the entity it points at; that is what \
-                 makes cross-entity questions answerable. Two rules to expect: a write that \
-                 looks like an entity jojobot already knows (a subject, a name, or an edge's \
-                 object) comes back with candidates and writes nothing until you confirm or \
-                 pass create_new; and promoting a claim from inference to testimony needs the \
-                 user's explicit confirmation. Responses name types the schema.org way \
+                 makes cross-entity questions answerable. Three rules to expect: **every entity \
+                 a write NAMES must already exist** — a capture's subject and an edge's object \
+                 are never created for you, so a new one is add_entity and then the write, two \
+                 deliberate steps; a **creation or rename** that looks like an entity jojobot \
+                 already knows comes back with candidates and writes nothing until you confirm \
+                 or pass create_new; and promoting a claim from inference to testimony needs the \
+                 user's explicit confirmation. A guarded write is a SUCCESSFUL result whose body \
+                 says `status: blocked`, `wrote: false` — read how_to_proceed, do not retry it \
+                 unchanged. Responses name types the schema.org way \
                  (`Person`, `CreativeWork`, `memberOf`); input stays lowercase `kind:slug`. \
                  More domain verbs arrive later."
                     .to_string(),
@@ -869,7 +919,6 @@ mod tests {
             date: None,
             shape: None,
             object: None,
-            create_new: None,
         }
     }
 
@@ -883,7 +932,6 @@ mod tests {
             confirmed_by_user: None,
             shape: None,
             object: None,
-            create_new: None,
         }
     }
 
@@ -892,8 +940,34 @@ mod tests {
         serde_json::from_str(&text_of(result)).expect("tool results carry a JSON body")
     }
 
-    /// Capture through the handler, expecting the guard to wave it through.
+    /// Make sure a handle names an entity, so the write guard's **existence
+    /// gate** is not what a spec about something else trips over. Idempotent —
+    /// an add that comes back blocked means it is already there.
+    async fn ensure(jojobot: &Jojobot, handle: &str) {
+        let id = EntityId::person(handle);
+        let kind = id.kind().expect("test handles are well-formed");
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                kind: kind.as_token().into(),
+                handle: id.slug().into(),
+                name: id.slug().into(),
+                source: "test-fixture".into(),
+                crm: None,
+                boot: None,
+                create_new: None,
+            }))
+            .await
+            .expect("add_entity call ok");
+    }
+
+    /// Capture through the handler, expecting the guard to wave it through —
+    /// provisioning the subject and any edge object first, because every write
+    /// that names an entity now requires one that exists.
     async fn capture_ok(jojobot: &Jojobot, args: CaptureArgs) -> serde_json::Value {
+        ensure(jojobot, &args.subject).await;
+        if let Some(object) = args.object.as_deref() {
+            ensure(jojobot, object).await;
+        }
         let result = jojobot.capture(Parameters(args)).await.expect("capture ok");
         let body = json_of(&result);
         assert_ne!(body["status"], "blocked", "the guard blocked: {body}");
@@ -1339,28 +1413,53 @@ mod tests {
         assert_eq!(listed["entities"][0]["name"], "Alpha");
     }
 
-    /// The same on the capture path — and `create_new: true` is what lets a
-    /// genuinely different entity through.
+    /// **Capture's subject must exist**, near miss or complete stranger, and the
+    /// way through is `add_entity` — never a flag. The advice in the payload has
+    /// to say that, because the AI reading it is the only thing that acts on it:
+    /// telling it to pass a `create_new` that no longer exists on this verb
+    /// would send it round a loop it can't get out of.
     #[tokio::test]
-    async fn a_blocked_capture_reports_then_accepts_create_new() {
+    async fn a_blocked_capture_says_to_add_the_entity_first() {
         let jojobot = handler();
         jojobot
             .add_entity(Parameters(add_args("person", "zenith", "Zenith")))
             .await
             .expect("add ok");
 
-        let result = jojobot
+        let near = jojobot
             .capture(Parameters(capture_args("zenit", "should not land")))
             .await
             .expect("call ok");
-        assert_eq!(blocked(&result)["candidates"][0]["handle"], "person:zenith");
+        let body = blocked(&near);
+        assert_eq!(body["candidates"][0]["handle"], "person:zenith");
 
-        let forced = capture_ok(
-            &jojobot,
-            CaptureArgs { create_new: Some(true), ..capture_args("zenit", "now it lands") },
-        )
-        .await;
-        assert_eq!(forced["subject"], "person:zenit");
+        // A handle nothing resembles blocks too, with nothing to suggest.
+        let stranger = jojobot
+            .capture(Parameters(capture_args("work:first-mix", "32 tracks")))
+            .await
+            .expect("call ok");
+        let body = blocked(&stranger);
+        assert_eq!(body["attempted"], "work:first-mix");
+        assert!(body["candidates"].as_array().unwrap().is_empty(), "got {body}");
+        let advice = body["how_to_proceed"].as_str().expect("advice");
+        assert!(advice.contains("add_entity"), "must name the way through: {advice}");
+        assert!(
+            !advice.contains("create_new: true"),
+            "capture has no create_new; advising it sends the caller round a loop \
+             with no exit: {advice}"
+        );
+        assert!(
+            !advice.contains("above"),
+            "there are no candidates above to point at: {advice}"
+        );
+
+        // Two deliberate steps, and it lands.
+        jojobot
+            .add_entity(Parameters(add_args("work", "first-mix", "First Mix")))
+            .await
+            .expect("add ok");
+        let landed = capture_ok(&jojobot, capture_args("work:first-mix", "32 tracks")).await;
+        assert_eq!(landed["subject"], "work:first-mix");
     }
 
     // --- structured edges at capture ------------------------------------------
@@ -1463,6 +1562,9 @@ mod tests {
             .add_entity(Parameters(add_args("place", "riverbend", "Riverbend")))
             .await
             .expect("add ok");
+        // The subject faces the gate too, and the guard reports the first handle
+        // it stops — this spec is about the object.
+        ensure(&jojobot, "alpha").await;
 
         let result = jojobot
             .capture(Parameters(CaptureArgs {
@@ -1495,6 +1597,7 @@ mod tests {
         let jojobot = handler();
         let captured = capture_ok(&jojobot, capture_args("alpha", "was at the festival")).await;
         assert!(captured["edge"].is_null());
+        ensure(&jojobot, "event:winter-fest").await;
 
         let updated = json_of(
             &jojobot

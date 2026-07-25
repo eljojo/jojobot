@@ -317,16 +317,49 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
     .await
     .unwrap();
 
+    let tools = client.list_tools(Default::default()).await.unwrap().tools;
     assert!(
-        client
-            .list_tools(Default::default())
-            .await
-            .unwrap()
-            .tools
-            .iter()
-            .any(|t| t.name == "search"),
+        tools.iter().any(|t| t.name == "search"),
         "the server must advertise the search tool"
     );
+
+    // **The advertised schema text is the only spec the caller ever reads**, and
+    // it is what an AI plans against. A description that promises screening the
+    // server no longer does — or omits a gate it now has — is a bug with no
+    // stack trace: the caller writes a call that cannot succeed and has no way
+    // to know why. Pinned here, two lines above the flow it describes.
+    let capture_doc = tools
+        .iter()
+        .find(|t| t.name == "capture")
+        .and_then(|t| t.description.clone())
+        .expect("capture must be advertised, with a description");
+    assert!(
+        capture_doc.contains("add_entity"),
+        "capture's description must name the two-step flow its gate forces: {capture_doc}"
+    );
+    assert!(
+        !capture_doc.contains("create_new"),
+        "capture has no create_new; promising one sends the caller round a loop: {capture_doc}"
+    );
+
+    // A subject must exist before a fact about it can land, so the probe is the
+    // two deliberate steps a new entity takes — end to end, through the wire.
+    let added = client
+        .call_tool(CallToolRequestParams::new("add_entity").with_arguments(
+            serde_json::json!({
+                "kind": "person",
+                "handle": "frontdoor-probe",
+                "name": "Frontdoor Probe",
+                "source": "user-named",
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        ))
+        .await
+        .unwrap();
+    let added = serde_json::to_string(&added).unwrap();
+    assert!(!added.contains("\"status\":\"blocked\""), "add_entity must land: {added}");
 
     let captured = client
         .call_tool(CallToolRequestParams::new("capture").with_arguments(
@@ -344,6 +377,12 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
         .unwrap();
     let captured = serde_json::to_string(&captured).unwrap();
     assert!(!captured.contains("\"isError\":true"), "capture must succeed: {captured}");
+    // A blocked write is a *successful* result now, so isError alone no longer
+    // catches one — the body is what says whether anything was written.
+    assert!(
+        !captured.contains("\"status\":\"blocked\""),
+        "capture must not have been blocked: {captured}"
+    );
 
     let found = client
         .call_tool(

@@ -403,50 +403,35 @@ impl Memory for OutlineStore {
         }
         let collection_id = self.resolve_collection().await?;
 
-        let subject_doc = self.entity_doc(&collection_id, &fact.subject).await?;
-        // An edge's object names an entity too, so it faces the same gate — and
-        // it is screened BEFORE the subject's doc is provisioned, or a blocked
-        // edge would leave a fresh doc behind.
-        if let Some(edge) = &fact.edge {
-            let index = self.entity_index(&collection_id).await?;
-            if let Decision::Block(candidates) =
-                guard::decide_named(&edge.object, &index, fact.create_new)
-            {
-                return Ok(Guarded::Blocked {
-                    attempted: edge.object.clone(),
-                    candidates,
-                });
-            }
+        // Every entity this write names must already exist — the subject first,
+        // then the edge's object. **Nothing here provisions.** A novel subject
+        // used to spawn a nameless doc, so every typo and every plausible handle
+        // an AI produced became a permanent entity nobody chose.
+        let index = self.entity_index(&collection_id).await?;
+        if let Decision::Block(candidates) = guard::decide_existing(&fact.subject, &index) {
+            return Ok(Guarded::Blocked {
+                attempted: fact.subject,
+                candidates,
+            });
+        }
+        if let Some(edge) = &fact.edge
+            && let Decision::Block(candidates) = guard::decide_existing(&edge.object, &index)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: edge.object.clone(),
+                candidates,
+            });
         }
 
-        // A subject with no doc yet is a new entity, so it passes the guard
-        // before anything is written. One that resolves exactly is already
-        // known — guarding it would make every second fact need confirming.
-        let doc = match subject_doc {
-            Some(doc) => doc,
-            None => {
-                let index = self.entity_index(&collection_id).await?;
-                if let Decision::Block(candidates) =
-                    guard::decide(&fact.subject, None, &index, fact.create_new)
-                {
-                    return Ok(Guarded::Blocked {
-                        attempted: fact.subject,
-                        candidates,
-                    });
-                }
-                let provisioned = Entity {
-                    kind: fact.subject.kind().expect("a validated id has a kind"),
-                    id: fact.subject.clone(),
-                    name: String::new(),
-                    // Existence is sourced, never invented: this entity exists
-                    // because a fact arrived about it, and says so.
-                    source: "capture".into(),
-                    crm: None,
-                    boot: Default::default(),
-                };
-                self.create_entity_doc(&collection_id, &provisioned).await?
-            }
-        };
+        // The gate passed, so the entity is in the index — and an entity is in
+        // the index because a doc carries its marker. A miss here is a store
+        // that changed under us mid-write, not a subject to provision.
+        let doc = self
+            .entity_doc(&collection_id, &fact.subject)
+            .await?
+            .ok_or_else(|| {
+                MemoryError::Store(format!("entity {} lost its doc mid-write", fact.subject))
+            })?;
 
         // Read-modify-write, and the lost-update hazard it carries. Outline has
         // no atomic append or compare-and-set, so EVERY write here — this
@@ -516,9 +501,7 @@ impl Memory for OutlineStore {
         if let Some(edge) = &patch.edge {
             validate_edge(edge)?;
             let index = self.entity_index(&collection_id).await?;
-            if let Decision::Block(candidates) =
-                guard::decide_named(&edge.object, &index, patch.create_new)
-            {
+            if let Decision::Block(candidates) = guard::decide_existing(&edge.object, &index) {
                 return Ok(Guarded::Blocked {
                     attempted: edge.object.clone(),
                     candidates,
@@ -803,8 +786,26 @@ mod tests {
         }
     }
 
-    /// Capture through the store, asserting the guard waved it through.
+    /// Make sure a subject exists, so the write guard's existence gate is not
+    /// what a spec about collections or docs trips over.
+    async fn ensure(store: &OutlineStore, id: &EntityId) {
+        let known = store.list_entities(None).await.expect("list_entities ok");
+        if known.iter().any(|e| &e.id == id) {
+            return;
+        }
+        store
+            .add_entity(NewEntity::new(id.clone(), id.slug(), "test-fixture"))
+            .await
+            .expect("add_entity should succeed")
+            .written()
+            .expect("a fixture entity must not be blocked");
+    }
+
+    /// Capture through the store, asserting the guard waved it through —
+    /// provisioning the subject first, because every write that names an entity
+    /// now requires one that exists.
     async fn capture(store: &OutlineStore, fact: NewFact) -> Fact {
+        ensure(store, &fact.subject).await;
         store
             .capture(fact)
             .await

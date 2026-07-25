@@ -288,10 +288,6 @@ pub struct FactPatch {
     /// The user's explicit confirmation, required to promote a claim to
     /// testimony. jojobot infers freely; it never blesses on its own.
     pub confirmed_by_user: bool,
-    /// Set only after the guard reported candidates for the edge's object and the
-    /// caller judged them different — the same signal [`NewFact::create_new`]
-    /// carries, on the update path.
-    pub create_new: bool,
 }
 
 /// The promotion gate: a claim may only become testimony on the user's explicit
@@ -751,10 +747,12 @@ pub struct NewFact {
     pub date: Date,
     /// The typed edge this fact draws, if it draws one. Written atomically with
     /// the fact: an edge is never a second, separately-failing write.
+    ///
+    /// There is deliberately **no `create_new` on this record.** Every entity a
+    /// capture names — its subject, its edge's object — must already exist (see
+    /// [`guard::decide_existing`]), so there is no suspicion for a caller to
+    /// wave away: a new entity is `add_entity` and then this, two steps.
     pub edge: Option<Edge>,
-    /// Set only after the write guard reported candidates for a subject that
-    /// doesn't exist yet, and the caller judged them different.
-    pub create_new: bool,
 }
 
 impl NewFact {
@@ -769,7 +767,6 @@ impl NewFact {
             status: FactStatus::default(),
             date,
             edge: None,
-            create_new: false,
         }
     }
 }
