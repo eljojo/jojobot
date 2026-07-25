@@ -279,6 +279,22 @@ impl OutlineStore {
         Ok(seen)
     }
 
+    /// Put a page back the way a failed write found it. A read-back mismatch
+    /// means the store transformed what was written; leaving the transformed
+    /// page behind strands a half-written row for a retry to duplicate. The
+    /// caller's data is not lost either way — the error carries the whole
+    /// value — but the PAGE must end the call in a state a retry can trust.
+    /// Best-effort: the returned clause lands in the error so the caller knows
+    /// which state the page is actually in.
+    async fn restore(&self, doc: &DocRec, verb: &str) -> String {
+        match self.api.update_document(&doc.id, &doc.text).await {
+            Ok(()) => format!("the page was restored to its state before this {verb}"),
+            Err(e) => {
+                format!("AND restoring the page failed ({e}) — a half-written row may remain")
+            }
+        }
+    }
+
     /// Read an entity back through the read path — the verification half of
     /// every entity write.
     async fn read_entity(
@@ -387,8 +403,9 @@ impl Memory for OutlineStore {
 
         let seen = self.read_entity(&collection_id, handle).await?;
         if seen != entity {
+            let restored = self.restore(&doc, "update_entity").await;
             return Err(MemoryError::Store(format!(
-                "entity {handle} read back changed: wrote {entity:?}, read {seen:?}"
+                "entity {handle} read back changed: wrote {entity:?}, read {seen:?}; {restored}"
             )));
         }
         Ok(Guarded::Written(seen))
@@ -469,8 +486,9 @@ impl Memory for OutlineStore {
         // byte-identical. Writing is not recording.
         let seen = self.read_back_fact(&stored.address()).await?;
         if seen != stored {
+            let restored = self.restore(&doc, "capture").await;
             return Err(MemoryError::Store(format!(
-                "fact {} read back changed: wrote {stored:?}, read {seen:?}",
+                "fact {} read back changed: wrote {stored:?}, read {seen:?}; {restored}",
                 stored.address()
             )));
         }
@@ -486,7 +504,17 @@ impl Memory for OutlineStore {
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         let collection_id = self.resolve_collection().await?;
         match self.entity_doc(&collection_id, subject).await? {
-            None => Ok(Vec::new()),
+            // An unknown entity is a miss with its near candidates — never an
+            // empty page. The production smoke test caught a bad handle and an
+            // empty-but-real entity answering identically; the guard already
+            // knew the difference, recall just never surfaced it.
+            None => {
+                let index = self.entity_index(&collection_id).await?;
+                Err(MemoryError::UnknownEntity {
+                    attempted: subject.to_string(),
+                    nearest: guard::screen(subject, &[], &index),
+                })
+            }
             Some(doc) => Ok(parse_facts_table(&doc.text)),
         }
     }
@@ -548,8 +576,9 @@ impl Memory for OutlineStore {
 
         let seen = self.read_back_fact(address).await?;
         if seen != fact {
+            let restored = self.restore(&doc, "update_fact").await;
             return Err(MemoryError::Store(format!(
-                "fact {address} read back changed: wrote {fact:?}, read {seen:?}"
+                "fact {address} read back changed: wrote {fact:?}, read {seen:?}; {restored}"
             )));
         }
         Ok(Guarded::Written(seen))
@@ -609,9 +638,10 @@ mod tests {
     use jiff::civil::date;
     use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
     use jojobot_domain::memory::testing::contract;
-    use jojobot_domain::memory::{Edge, EdgeShape};
+    use jojobot_domain::memory::{Edge, EdgeShape, FactStatus, Provenance};
 
     use super::*;
+    use super::codec::{TABLE_HEADER, TABLE_SEP, escape_cell, split_cells};
     use crate::search::IndexedMemory;
 
     /// In-memory [`OutlineApi`] double. Ids/`created_at` are a monotonic counter
@@ -622,11 +652,70 @@ mod tests {
         collections: Mutex<Vec<CollectionRec>>,
         // (collection_id, doc)
         documents: Mutex<Vec<(String, DocRec)>>,
+        /// Arms [`with_last_cell_dropped`] for the next `update_document` — the
+        /// induced fault behind the restore-on-mismatch contract.
+        poison: std::sync::atomic::AtomicBool,
+    }
+
+    /// What the real Outline does to a markdown table on save: the editor model
+    /// re-serializes every table RECTANGULAR AT THE HEADER'S WIDTH — long rows
+    /// lose their tail, short rows are padded with empty cells. The production
+    /// edge-loss bug lived exactly in the gap between this and a verbatim fake,
+    /// so the fake is hostile on purpose. Seeds stay verbatim: a seed models
+    /// whatever history already left on disk.
+    fn rectangularized(text: &str) -> String {
+        let lines: Vec<&str> = text.lines().collect();
+        let mut out: Vec<String> = Vec::with_capacity(lines.len());
+        let mut i = 0;
+        while i < lines.len() {
+            if !lines[i].trim_start().starts_with('|') {
+                out.push(lines[i].to_string());
+                i += 1;
+                continue;
+            }
+            let width = split_cells(lines[i]).len();
+            while i < lines.len() && lines[i].trim_start().starts_with('|') {
+                let mut cells = split_cells(lines[i]);
+                cells.resize(width, String::new());
+                let cells: Vec<String> = cells.iter().map(|c| escape_cell(c)).collect();
+                out.push(format!("| {} |", cells.join(" | ")));
+                i += 1;
+            }
+        }
+        out.join("\n")
+    }
+
+    /// One write mangled at a layer the codec doesn't control — the induced
+    /// fault for the restore contract: every data row loses its last cell.
+    fn with_last_cell_dropped(text: &str) -> String {
+        text.lines()
+            .map(|l| {
+                if !l.trim_start().starts_with('|') {
+                    return l.to_string();
+                }
+                let mut cells = split_cells(l);
+                let first = cells.first().map(|c| c.trim().to_string()).unwrap_or_default();
+                let is_header = first.eq_ignore_ascii_case("id");
+                let is_sep = !first.is_empty() && first.chars().all(|c| c == '-');
+                if is_header || is_sep {
+                    return l.to_string();
+                }
+                cells.pop();
+                let cells: Vec<String> = cells.iter().map(|c| escape_cell(c)).collect();
+                format!("| {} |", cells.join(" | "))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     impl FakeOutline {
         fn new() -> Arc<Self> {
             Arc::new(Self::default())
+        }
+
+        /// Mangle the next `update_document` before it lands.
+        fn poison_next_update(&self) {
+            self.poison.store(true, Ordering::SeqCst);
         }
 
         fn stamp(&self) -> String {
@@ -750,7 +839,7 @@ mod tests {
             title: &str,
             text: &str,
         ) -> Result<DocRec, MemoryError> {
-            let id = self.seed_document(collection_id, title, text);
+            let id = self.seed_document(collection_id, title, &rectangularized(text));
             Ok(self
                 .documents
                 .lock()
@@ -762,10 +851,16 @@ mod tests {
         }
 
         async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            let text = if self.poison.swap(false, Ordering::SeqCst) {
+                with_last_cell_dropped(text)
+            } else {
+                text.to_string()
+            };
+            let text = rectangularized(&text);
             let mut docs = self.documents.lock().unwrap();
             match docs.iter_mut().find(|(_, d)| d.id == id) {
                 Some((_, d)) => {
-                    d.text = text.into();
+                    d.text = text;
                     Ok(())
                 }
                 None => Err(MemoryError::Store(format!("update_document: no doc {id}"))),
@@ -833,6 +928,41 @@ mod tests {
         contract::run_all(&store(FakeOutline::new())).await;
     }
 
+    /// The fake stores what the real Outline would store: the editor model
+    /// re-serializes every markdown table RECTANGULAR AT THE HEADER'S WIDTH —
+    /// long rows lose their tail, short rows are padded. Pinned so the fake can
+    /// never quietly regress to the verbatim store that hid the production
+    /// edge-loss bug from 217 green tests.
+    #[tokio::test]
+    async fn the_fake_rectangularizes_tables_like_the_real_store() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let id = fake.seed_document(&coll, "Alpha", "seed");
+        fake.update_document(
+            &id,
+            "| id | subject | content |\n\
+             | --- | --- | --- |\n\
+             | f1 | person:alpha | plays go | EXTRA |\n\
+             | f2 | person:alpha |",
+        )
+        .await
+        .expect("update ok");
+
+        let doc = fake.docs_in(&coll).into_iter().find(|d| d.id == id).expect("doc");
+        let lines: Vec<&str> = doc.text.lines().collect();
+        assert!(
+            !lines[2].contains("EXTRA"),
+            "a cell past the header's width is truncated on save: {:?}",
+            lines[2]
+        );
+        assert_eq!(
+            split_cells(lines[3]).len(),
+            3,
+            "a short row is padded to the header's width: {:?}",
+            lines[3]
+        );
+    }
+
     /// …and the same contract **including retrieval**, with the search projection
     /// over the real store logic. The fake satisfies this suite too, which is what
     /// stops the two from drifting.
@@ -840,6 +970,104 @@ mod tests {
     async fn the_indexed_outline_store_satisfies_the_whole_contract() {
         let indexed = IndexedMemory::new(Arc::new(store(FakeOutline::new()))).expect("index opens");
         contract::run_all_searchable(&indexed).await;
+    }
+
+    /// **The production edge-loss bug, end to end.** A doc provisioned before
+    /// the edges column carries a 7-column header; the store re-serializes
+    /// tables at the header's width, so an appended 8-cell row lost its last
+    /// cell — the edge — while every fresh-doc test stayed green. A write now
+    /// migrates the whole table first, so the row survives the hostile store
+    /// and the page is healed for good.
+    #[tokio::test]
+    async fn a_capture_into_a_legacy_doc_keeps_its_edge_and_heals_the_table() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let legacy = seeded_doc(&person("alpha"))
+            .replace(
+                TABLE_HEADER,
+                "| id | subject | content | details | provenance | status | date |",
+            )
+            .replace(TABLE_SEP, "| --- | --- | --- | --- | --- | --- | --- |")
+            + "| f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |\n";
+        fake.seed_document(&coll, "Alpha", &legacy);
+
+        let store = store(fake.clone());
+        ensure(&store, &EntityId("place:shelbyville".into())).await;
+        let edge = Edge::new(EdgeShape::Location, EntityId("place:shelbyville".into()));
+        let written = store
+            .capture(NewFact {
+                subject: EntityId::person("alpha"),
+                content: "spending the winter away".into(),
+                details: None,
+                provenance: Provenance::Testimony,
+                status: FactStatus::Active,
+                date: date(2026, 7, 2),
+                edge: Some(edge.clone()),
+            })
+            .await
+            .expect("capture succeeds against the hostile store")
+            .written()
+            .expect("not blocked");
+        assert_eq!(written.edge, Some(edge.clone()), "the edge survives the save");
+
+        let facts = store.recall(&EntityId::person("alpha")).await.expect("recall ok");
+        assert_eq!(facts.len(), 2, "the legacy row and the new one both read");
+        assert_eq!(facts[1].edge, Some(edge), "the edge is on the page, not just in the reply");
+
+        let doc = fake
+            .docs_in(&coll)
+            .into_iter()
+            .find(|d| d.text.contains("id: person:alpha"))
+            .expect("alpha doc");
+        assert!(doc.text.contains(TABLE_HEADER), "the narrow header was migrated on write");
+    }
+
+    /// A write whose read-back mismatches restores the page it found. The
+    /// production incident stranded a half-written row behind the error — a
+    /// retry would have duplicated it. Data the caller handed us is not lost
+    /// either way: the error itself still carries the whole fact.
+    #[tokio::test]
+    async fn a_failed_write_leaves_the_page_as_it_found_it() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let doc0 = with_fact_appended(
+            &seeded_doc(&person("alpha")),
+            "| f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |  |",
+        );
+        let id = fake.seed_document(&coll, "Alpha", &doc0);
+
+        let store = store(fake.clone());
+        ensure(&store, &EntityId("place:shelbyville".into())).await;
+        let before = fake
+            .docs_in(&coll)
+            .into_iter()
+            .find(|d| d.id == id)
+            .expect("alpha doc")
+            .text;
+
+        fake.poison_next_update();
+        let outcome = store
+            .capture(NewFact {
+                subject: EntityId::person("alpha"),
+                content: "spending the winter away".into(),
+                details: None,
+                provenance: Provenance::Testimony,
+                status: FactStatus::Active,
+                date: date(2026, 7, 2),
+                edge: Some(Edge::new(EdgeShape::Location, EntityId("place:shelbyville".into()))),
+            })
+            .await;
+        assert!(outcome.is_err(), "a mangled write must not report success: {outcome:?}");
+
+        let after = fake
+            .docs_in(&coll)
+            .into_iter()
+            .find(|d| d.id == id)
+            .expect("alpha doc")
+            .text;
+        assert_eq!(after, before, "the page is restored to its pre-write state");
+        let facts = store.recall(&EntityId::person("alpha")).await.expect("recall ok");
+        assert_eq!(facts.len(), 1, "no half-written row remains for a retry to duplicate");
     }
 
     /// **The read-side leak, through the real reader.** A doc where the answer

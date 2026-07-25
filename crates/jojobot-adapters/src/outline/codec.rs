@@ -16,6 +16,26 @@ pub(super) const TABLE_HEADER: &str =
     "| id | subject | content | details | provenance | status | date | edges |";
 /// The markdown table separator under the header.
 pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | --- |";
+/// The doc schema's CURRENT version, stamped into the machine block (`schema:`)
+/// by every write. Schema evolution is a standing condition of this system —
+/// long-lived docs, written by every era of this software — so the eras are
+/// first-class, oldest first, and every one reads forever:
+///
+///   0 — slice 1:      `id | subject | content | status | date | edges`
+///   1 — pre-details:  `id | subject | content | provenance | status | date`
+///   2 — details (M1): `id | subject | content | details | provenance | status | date`
+///   3 — edges (M2):   the current 8-column [`TABLE_HEADER`]
+///
+/// A doc with no `schema:` line predates the field; its rows read by structural
+/// inference ([`layout_of`]), which is kept forever — hand-written and ancient
+/// docs never stop reading. **Declared beats inferred** ([`era_layout`]): a
+/// stamp resolves the six-cell ambiguity by testimony instead of date-sniffing,
+/// and makes a future format change that width alone can't betray recognizable
+/// at all. Upgrades today are reparse + re-render ([`migrated_region`]); the
+/// first version whose upgrade can't be that gets its explicit step registered
+/// alongside this constant.
+pub(super) const SCHEMA_CURRENT: u32 = 3;
+
 /// Where each field sits in a row. **Four layouts exist on disk** — the schema
 /// grew twice and was reshuffled once — and rows written under every one of them
 /// must keep reading. A column is added to a row on its next touch (lazy
@@ -69,6 +89,20 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
     }
 }
 
+/// The row layout a declared era names, when the row's width matches that era.
+/// A width that doesn't match the doc's own stamp is a hand edit from some
+/// other era — structural inference handles it, so the stamp can sharpen a
+/// read but never lose a row.
+fn era_layout(version: u32, width: usize) -> Option<Layout> {
+    match (version, width) {
+        (3, 8) => Some(Layout { details: Some(3), provenance: Some(4), status: 5, date: 6, edges: Some(7) }),
+        (2, 7) => Some(Layout { details: Some(3), provenance: Some(4), status: 5, date: 6, edges: None }),
+        (1, 6) => Some(Layout { details: None, provenance: Some(3), status: 4, date: 5, edges: None }),
+        (0, 6) => Some(Layout { details: None, provenance: None, status: 3, date: 4, edges: Some(5) }),
+        _ => None,
+    }
+}
+
 /// Render a fact's edge for its cell: `shape=object`, empty when there is none.
 /// `=` rather than `:`, because an object id already carries a colon.
 fn render_edge(edge: Option<&Edge>) -> String {
@@ -89,13 +123,13 @@ fn parse_edge(cell: &str) -> Option<Edge> {
 
 /// Escape a value for a markdown table cell — the one character a cell can't
 /// carry raw is the column delimiter.
-fn escape_cell(s: &str) -> String {
+pub(super) fn escape_cell(s: &str) -> String {
     s.replace('|', "\\|")
 }
 
 /// Split a markdown table row into trimmed, unescaped cells, honouring `\|` as a
 /// literal pipe inside a cell.
-fn split_cells(row: &str) -> Vec<String> {
+pub(super) fn split_cells(row: &str) -> Vec<String> {
     let row = row.trim();
     let inner = row.strip_prefix('|').unwrap_or(row);
     let inner = inner.strip_suffix('|').unwrap_or(inner);
@@ -145,8 +179,16 @@ pub(super) fn render_fact_row(f: &Fact) -> String {
 /// Every row layout that exists on disk is accepted — see [`Layout`]. Anything
 /// else is not a fact row.
 pub(super) fn parse_fact_row(row: &str, home: &EntityId) -> Option<Fact> {
+    parse_fact_row_in(row, home, None)
+}
+
+/// [`parse_fact_row`] with the doc's declared era in hand: declared beats
+/// inferred, inference stays as the net for rows from another era.
+fn parse_fact_row_in(row: &str, home: &EntityId, declared: Option<u32>) -> Option<Fact> {
     let cells = split_cells(row);
-    let at = layout_of(&cells)?;
+    let at = declared
+        .and_then(|v| era_layout(v, cells.len()))
+        .or_else(|| layout_of(&cells))?;
     let id = cells[0].trim();
     if id.is_empty() || id.eq_ignore_ascii_case("id") {
         return None; // empty or the header row
@@ -230,19 +272,81 @@ pub(super) fn parse_facts_table(doc: &str) -> Vec<Fact> {
     let Some(home) = parse_id_marker(doc).map(EntityId) else {
         return Vec::new();
     };
+    let declared = parse_schema(doc);
     let lines: Vec<&str> = doc.lines().collect();
     let Some((start, end)) = facts_region(&lines) else {
         return Vec::new();
     };
     lines[start..end]
         .iter()
-        .filter_map(|l| parse_fact_row(l, &home))
+        .filter_map(|l| parse_fact_row_in(l, &home, declared))
         .collect()
+}
+
+/// One table-region line under migration: a parseable fact row is re-rendered
+/// in the current full-width layout; the old header and separator are dropped
+/// (the caller emits the canonical pair); anything else is kept verbatim — a
+/// migration must never cost content, and an unreadable row padded by the store
+/// is still visible where a dropped one is gone.
+fn migrated_row(line: &str, home: &EntityId) -> Option<String> {
+    if let Some(f) = parse_fact_row(line, home) {
+        return Some(render_fact_row(&f));
+    }
+    let cells = split_cells(line);
+    let first = cells.first().map(|c| c.trim()).unwrap_or("");
+    let is_header = first.eq_ignore_ascii_case("id");
+    let is_separator = !first.is_empty() && first.chars().all(|c| c == '-');
+    (!is_header && !is_separator).then(|| line.to_string())
+}
+
+/// The table region rewritten in the current layout: canonical header and
+/// separator, every parseable row at full width, unreadable lines verbatim.
+///
+/// This is why the writers rewrite the WHOLE table and not just their row: the
+/// store re-serializes every table **at its header's width** on save. An 8-cell
+/// row appended under a 7-column header comes back without its last cell — the
+/// production edge-loss bug. Lazy migration therefore covers the header, not
+/// just the touched row: any write heals the doc it lands in.
+fn migrated_region(lines: &[&str], start: usize, end: usize, home: &EntityId) -> Vec<String> {
+    let mut out = vec![TABLE_HEADER.to_string(), TABLE_SEP.to_string()];
+    out.extend(lines[start..end].iter().filter_map(|l| migrated_row(l, home)));
+    out
+}
+
+/// The doc's own declared identity, for re-parsing rows during migration; the
+/// home never renders into a row, so a doc without a marker migrates the same.
+fn migration_home(doc: &str) -> EntityId {
+    EntityId(parse_id_marker(doc).unwrap_or_default())
+}
+
+/// Return `doc` with its machine block stamped `schema: SCHEMA_CURRENT` — the
+/// declared era every write leaves behind, so the next reader dispatches by
+/// testimony instead of sniffing. A doc with no machine block is not jojobot's
+/// to stamp and comes back unchanged.
+pub(super) fn with_schema_stamped(doc: &str) -> String {
+    let lines: Vec<&str> = doc.lines().collect();
+    let Some((open, close)) = machine_block(&lines) else {
+        return doc.to_string();
+    };
+    let stamp = format!("schema: {SCHEMA_CURRENT}");
+    let mut out: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+    match (open + 1..close - 1).find(|&i| field_of(lines[i], "schema").is_some()) {
+        Some(i) => out[i] = stamp,
+        None => {
+            let at = (open + 1..close - 1)
+                .find(|&i| field_of(lines[i], "id").is_some())
+                .map(|i| i + 1)
+                .unwrap_or(open + 1);
+            out.insert(at, stamp);
+        }
+    }
+    out.join("\n")
 }
 
 /// Return `doc` with the row carrying `id` replaced by `row`, or `None` if no
 /// such row exists. `None` is the signal that the address missed — the store
-/// turns it into an error rather than appending a row nobody asked for.
+/// turns it into an error rather than appending a row nobody asked for. The
+/// whole table migrates to the current layout on the way ([`migrated_region`]).
 ///
 /// **Only a row the reader can parse is a target.** The writer used to match on
 /// the id cell alone, a wider predicate than [`parse_fact_row`]'s: an edit could
@@ -258,14 +362,22 @@ pub(super) fn with_row_replaced(
 ) -> Option<String> {
     let lines: Vec<&str> = doc.lines().collect();
     let (start, end) = facts_region(&lines)?;
-    let target = lines[start..end]
+    lines[start..end]
         .iter()
-        .position(|l| parse_fact_row(l, home).is_some_and(|f| &f.id == id))?
-        + start;
+        .position(|l| parse_fact_row(l, home).is_some_and(|f| &f.id == id))?;
 
-    let mut out: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
-    out[target] = row.to_string();
-    Some(out.join("\n"))
+    let mut out: Vec<String> = lines[..start].iter().map(|s| s.to_string()).collect();
+    out.push(TABLE_HEADER.to_string());
+    out.push(TABLE_SEP.to_string());
+    for line in &lines[start..end] {
+        if parse_fact_row(line, home).is_some_and(|f| &f.id == id) {
+            out.push(row.to_string());
+        } else if let Some(kept) = migrated_row(line, home) {
+            out.push(kept);
+        }
+    }
+    out.extend(lines[end..].iter().map(|s| s.to_string()));
+    Some(with_schema_stamped(&out.join("\n")))
 }
 
 /// The local id a table row carries, if it looks like a fact row at all — the
@@ -284,19 +396,17 @@ fn row_id(row: &str) -> Option<String> {
 }
 
 /// Return `doc` with `row` appended to the fact table. Creates the section (and
-/// its header/separator) if the doc doesn't have one yet.
+/// its header/separator) if the doc doesn't have one yet. The whole table
+/// migrates to the current layout on the way ([`migrated_region`]).
 pub(super) fn with_fact_appended(doc: &str, row: &str) -> String {
+    let home = migration_home(doc);
     let lines: Vec<&str> = doc.lines().collect();
     let mut out: Vec<String> = Vec::with_capacity(lines.len() + 6);
 
     match facts_region(&lines) {
         Some((start, end)) => {
-            out.extend(lines[..end].iter().map(|s| s.to_string()));
-            if start == end {
-                // Header present but no table drawn yet.
-                out.push(TABLE_HEADER.to_string());
-                out.push(TABLE_SEP.to_string());
-            }
+            out.extend(lines[..start].iter().map(|s| s.to_string()));
+            out.extend(migrated_region(&lines, start, end, &home));
             out.push(row.to_string());
             out.extend(lines[end..].iter().map(|s| s.to_string()));
         }
@@ -312,7 +422,7 @@ pub(super) fn with_fact_appended(doc: &str, row: &str) -> String {
             out.push(row.to_string());
         }
     }
-    out.join("\n")
+    with_schema_stamped(&out.join("\n"))
 }
 
 /// The next light/local id for a doc: `f{max+1}` over **every** `fN` id present
@@ -440,6 +550,12 @@ pub(super) fn parse_id_marker(doc: &str) -> Option<String> {
     parse_field(doc, "id")
 }
 
+/// The doc's declared schema era, if a write ever stamped one. `None` is a doc
+/// from before the field — read by inference, upgraded on its next touch.
+fn parse_schema(doc: &str) -> Option<u32> {
+    parse_field(doc, "schema")?.trim().parse().ok()
+}
+
 /// Read the doc's entity out of its frontmatter, or `None` if the doc carries no
 /// id marker — a doc the user wrote by hand is not an entity, and jojobot never
 /// adopts one. Tolerant on every other field: a doc written before the
@@ -485,7 +601,7 @@ fn parse_aliases(doc: &str) -> Vec<String> {
 /// says only what is true.
 fn frontmatter(e: &Entity) -> String {
     let mut out = format!(
-        "```yaml\nid: {}\nkind: {}\nname: {}\n",
+        "```yaml\nid: {}\nschema: {SCHEMA_CURRENT}\nkind: {}\nname: {}\n",
         e.id,
         e.kind,
         e.name,
@@ -1125,6 +1241,146 @@ mod tests {
         assert_eq!(parsed.len(), 2, "the pre-edges row and the new one both read");
         assert_eq!(parsed[0].edge, None);
         assert_eq!(parsed[1], f2);
+    }
+
+    /// A write migrates the WHOLE table to the current layout — header,
+    /// separator, every parseable row re-rendered at full width. The store this
+    /// doc lives in re-serializes tables at the header's width, so an 8-cell row
+    /// under a 7-column header loses its last cell on save: the production
+    /// edge-loss bug. Rows the reader cannot parse are kept verbatim — a
+    /// migration must never cost content.
+    #[test]
+    fn an_append_migrates_a_legacy_table_to_the_current_layout() {
+        let doc = format!(
+            "```yaml\nid: person:alpha\n```\n\n{FACTS_HEADER}\n\n\
+             | id | subject | content | details | provenance | status | date |\n\
+             | --- | --- | --- | --- | --- | --- | --- |\n\
+             | f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |\n\
+             | f2 | person:alpha | joined the guild | active | 2026-07-02 | membership=org:guild |\n\
+             | not-a-fact-row |\n"
+        );
+        let f3 = Fact {
+            edge: Some(Edge::new(EdgeShape::Location, EntityId("place:shelbyville".into()))),
+            ..fact("f3", "person:alpha", "spending the winter away", Provenance::Testimony, date(2026, 7, 3))
+        };
+        let out = with_fact_appended(&doc, &render_fact_row(&f3));
+
+        assert!(out.contains(TABLE_HEADER), "the header is rewritten to the current layout");
+        assert!(out.contains(TABLE_SEP), "so is the separator");
+        assert!(
+            !out.contains("| id | subject | content | details | provenance | status | date |\n"),
+            "the narrow header is gone"
+        );
+        assert!(out.contains("| not-a-fact-row |"), "an unreadable line is kept verbatim, never dropped");
+        for line in out.lines().filter(|l| l.trim_start().starts_with('|')) {
+            if line.contains("not-a-fact-row") {
+                continue;
+            }
+            assert_eq!(
+                split_cells(line).len(),
+                8,
+                "every rewritten table line is full-width so the store's \
+                 rectangularizer has nothing to truncate: {line:?}"
+            );
+        }
+
+        let parsed = parse_facts_table(&out);
+        assert_eq!(parsed.len(), 3, "both legacy rows and the appended one read");
+        assert_eq!(parsed[0].edge, None);
+        assert_eq!(
+            parsed[1].edge,
+            Some(Edge::new(EdgeShape::Membership, EntityId("org:guild".into()))),
+            "a slice-1 row's edge survives the migration into the full-width shape"
+        );
+        assert_eq!(parsed[2], f3);
+    }
+
+    /// **Declared beats inferred.** A six-cell row where BOTH candidate cells
+    /// parse as dates is unreadable to inference (the ambiguity is genuine) —
+    /// but a doc stamped `schema: 0` has already testified which era wrote it,
+    /// and the row reads under that era's layout. The stamp turns a dropped row
+    /// into a kept one; it can never do the reverse, because inference stays as
+    /// the net when widths don't match the stamp.
+    #[test]
+    fn a_stamped_doc_reads_by_its_declared_era_not_by_sniffing() {
+        let ambiguous = "| f1 | person:alpha | joined up | active | 2026-07-01 | 2026-07-02 |";
+        let unstamped = format!(
+            "```yaml\nid: person:alpha\n```\n\n{FACTS_HEADER}\n\n\
+             | id | subject | content | status | date | edges |\n\
+             | --- | --- | --- | --- | --- | --- |\n\
+             {ambiguous}\n"
+        );
+        assert_eq!(
+            parse_facts_table(&unstamped).len(),
+            0,
+            "without a stamp the ambiguous row is no evidence, and stays unread"
+        );
+
+        let stamped = unstamped.replace(
+            "id: person:alpha\n",
+            "id: person:alpha\nschema: 0\n",
+        );
+        let parsed = parse_facts_table(&stamped);
+        assert_eq!(parsed.len(), 1, "the declared era resolves what sniffing cannot");
+        assert_eq!(parsed[0].date, date(2026, 7, 1), "slice-1's date column, by testimony");
+        assert_eq!(parsed[0].status, FactStatus::Active);
+    }
+
+    /// Every write leaves the current era stamped on the doc, so the next
+    /// reader dispatches by testimony — and a legacy doc gains the field on its
+    /// first touch, never by sweep.
+    #[test]
+    fn a_write_stamps_the_current_schema() {
+        let legacy = format!(
+            "```yaml\nid: person:alpha\n```\n\n{FACTS_HEADER}\n\n\
+             | id | subject | content | details | provenance | status | date |\n\
+             | --- | --- | --- | --- | --- | --- | --- |\n"
+        );
+        let out = with_fact_appended(
+            &legacy,
+            "| f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |  |",
+        );
+        assert!(
+            out.contains(&format!("schema: {SCHEMA_CURRENT}")),
+            "the append stamped the era: {out}"
+        );
+        let restamped = with_fact_appended(
+            &out.replace(&format!("schema: {SCHEMA_CURRENT}"), "schema: 2"),
+            "| f2 | person:alpha | still plays |  | testimony | active | 2026-07-02 |  |",
+        );
+        assert!(
+            restamped.contains(&format!("schema: {SCHEMA_CURRENT}")),
+            "a stale stamp is rewritten in place, not duplicated"
+        );
+        assert_eq!(restamped.matches("schema:").count(), 1);
+    }
+
+    /// The edit path migrates too — a doc healed on append would be re-broken by
+    /// the next edit if `with_row_replaced` preserved a narrow header.
+    #[test]
+    fn a_row_edit_migrates_the_table_too() {
+        let doc = format!(
+            "```yaml\nid: person:alpha\n```\n\n{FACTS_HEADER}\n\n\
+             | id | subject | content | details | provenance | status | date |\n\
+             | --- | --- | --- | --- | --- | --- | --- |\n\
+             | f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |\n"
+        );
+        let edited = Fact {
+            edge: Some(Edge::new(EdgeShape::Location, EntityId("place:shelbyville".into()))),
+            ..fact("f1", "person:alpha", "plays go", Provenance::Testimony, date(2026, 7, 1))
+        };
+        let out = with_row_replaced(
+            &doc,
+            &EntityId::person("alpha"),
+            &FactId("f1".into()),
+            &render_fact_row(&edited),
+        )
+        .expect("f1 is a readable target");
+
+        assert!(out.contains(TABLE_HEADER), "the header is rewritten to the current layout");
+        let parsed = parse_facts_table(&out);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0], edited);
     }
 
     // --- the status column ----------------------------------------------------
