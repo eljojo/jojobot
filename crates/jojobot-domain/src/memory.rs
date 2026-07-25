@@ -1043,8 +1043,9 @@ pub trait Memory: Send + Sync {
     /// Every entity jojobot knows, optionally filtered to one kind.
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError>;
 
-    /// Edit an entity's metadata in place. Never the handle. A **name** change
-    /// is screened by the write guard just as a creation is, so this can come
+    /// Edit an entity's metadata in place. Never the handle. A change to what it
+    /// is **called** — its name or its aliases — is screened by the write guard
+    /// just as a creation is (see [`screen_entity_patch`]), so this can come
     /// back [`Guarded::Blocked`]. An unknown handle is
     /// [`MemoryError::UnknownEntity`], never a create.
     async fn update_entity(

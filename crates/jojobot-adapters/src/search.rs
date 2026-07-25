@@ -1107,13 +1107,13 @@ mod tests {
     async fn a_query_on_an_alias_finds_the_entity_and_the_facts_on_its_page() {
         let homer = Entity {
             aliases: vec!["Cosme Fulanito".into()],
-            ..entity("person:homer-simpson", "Homer Simpson")
+            ..entity("person:homer", "Homer Simpson")
         };
         let index = index_of(vec![scan(
             "doc-1",
             Some(homer.clone()),
             "",
-            vec![fact("person:homer-simpson", "f1", "plays the bass", date(2026, 1, 1))],
+            vec![fact("person:homer", "f1", "plays the bass", date(2026, 1, 1))],
         )]);
 
         let hits = index.search(&SearchQuery::text("Cosme Fulanito")).expect("search ok");
@@ -1127,6 +1127,10 @@ mod tests {
         );
 
         // The display name still works, and the two are not different questions.
+        // The handle deliberately does NOT spell the display name out: one that
+        // did would put every token of the name into the fact's text through the
+        // subject alone, and this assertion would then hold with the labels
+        // stripped out entirely — passing while proving nothing.
         assert!(
             index
                 .search(&SearchQuery::text("Homer Simpson"))
@@ -1201,6 +1205,11 @@ mod tests {
         assert_eq!(
             ghost.0.name, None,
             "a subject that names nothing must read as unresolved, not as itself"
+        );
+        assert!(
+            ghost.0.aliases.is_empty(),
+            "…and it answers to nothing either: an unresolvable handle reports no \
+             names rather than inventing one from its own slug"
         );
         assert_eq!(ghost.1.name.as_deref(), Some("Alpha"), "its home still resolves");
     }

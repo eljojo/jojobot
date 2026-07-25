@@ -213,9 +213,9 @@ pub struct UpdateEntityArgs {
     /// New kanban token, as `card:N`.
     #[serde(default)]
     pub crm: Option<String>,
-    /// Set only after a previous call reported candidates for the new name and
-    /// you judged them a different entity. A rename is screened exactly as a
-    /// creation is.
+    /// Set only after a previous call reported candidates for a name or alias
+    /// you are claiming here, and you judged them a different entity. Any change
+    /// to what this entity is CALLED is screened exactly as a creation is.
     #[serde(default)]
     pub create_new: Option<bool>,
 }

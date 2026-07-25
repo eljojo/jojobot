@@ -217,7 +217,7 @@ fn reason_for(
         });
     }
 
-    // The name channels, shared with `screen_name`.
+    // The name channels, shared with `screen_labels`.
     let by_name = name_reason(handle.kind(), incoming_names, incoming_name_slugs, existing);
     if matches!(
         by_name,
