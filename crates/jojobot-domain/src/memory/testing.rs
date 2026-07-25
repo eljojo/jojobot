@@ -160,6 +160,15 @@ impl Memory for InMemoryMemory {
     /// The fake cannot produce that disagreement — every capture homes a fact at
     /// its subject — but the two adapters must not differ on the rule.
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        // An unknown entity is a miss with its near candidates — never an
+        // empty page. Empty-but-real and nonexistent are different answers.
+        let index = self.index();
+        if !index.iter().any(|e| &e.id == subject) {
+            return Err(MemoryError::UnknownEntity {
+                attempted: subject.to_string(),
+                nearest: guard::screen(subject, &[], &index),
+            });
+        }
         let facts = self.facts.lock().expect("fake mutex poisoned");
         Ok(facts
             .iter()
@@ -494,12 +503,44 @@ pub mod contract {
         }
     }
 
-    /// Recalling a subject that has no doc yet returns empty — not an error, and
-    /// without creating anything.
-    pub async fn recall_unknown_subject_is_empty<M: Memory>(store: &M) {
+    /// Recalling an entity nobody ever created is a MISS — `UnknownEntity`,
+    /// naming the attempt with the near candidates that explain it — never an
+    /// empty success. An empty page and a nonexistent entity are different
+    /// facts, and the production smoke test caught them dressed identically: a
+    /// caller told a bad handle "reads fine, no facts" can never repair it.
+    /// An entity that EXISTS with no facts still recalls empty, and nothing is
+    /// created either way.
+    pub async fn recall_unknown_is_a_miss_not_an_empty_page<M: Memory>(store: &M) {
         let never = EntityId::person("contract-never-captured");
-        let facts = store.recall(&never).await.expect("recall should succeed");
-        assert!(facts.is_empty(), "unknown subject must recall empty: {facts:?}");
+        let err = store
+            .recall(&never)
+            .await
+            .expect_err("an unknown entity must not read as an empty page");
+        match &err {
+            MemoryError::UnknownEntity { attempted, .. } => {
+                assert_eq!(attempted, &never.to_string());
+            }
+            other => panic!("expected UnknownEntity, got {other:?}"),
+        }
+
+        // A typo'd handle explains itself: the miss carries its neighbour.
+        let real = EntityId::person("contract-orient");
+        ensure(store, &real).await;
+        let typo = EntityId::person("contract-orjent");
+        let err = store.recall(&typo).await.expect_err("a typo'd handle is a miss");
+        match &err {
+            MemoryError::UnknownEntity { nearest, .. } => {
+                assert!(
+                    nearest.iter().any(|m| m.handle == real),
+                    "the near candidate must surface: {err:?}"
+                );
+            }
+            other => panic!("expected UnknownEntity, got {other:?}"),
+        }
+
+        // Exists-but-empty is the OTHER case, and it still reads fine.
+        let facts = store.recall(&real).await.expect("an existing entity's empty page reads");
+        assert!(facts.is_empty(), "no facts were created along the way: {facts:?}");
     }
 
     // --- the entity model ----------------------------------------------------
@@ -1124,6 +1165,18 @@ pub mod contract {
         }
     }
 
+    /// Nothing was recorded for `subject`: either its page reads empty or the
+    /// entity never came to exist at all — both prove a refused write did not
+    /// land. (Recalling a nonexistent entity is a miss by contract, so a spec
+    /// probing a subject it never ensured accepts the miss as its proof.)
+    async fn assert_nothing_recorded<M: Memory>(store: &M, subject: &EntityId) {
+        match store.recall(subject).await {
+            Ok(facts) => assert!(facts.is_empty(), "nothing must be written: {facts:?}"),
+            Err(MemoryError::UnknownEntity { .. }) => {}
+            Err(other) => panic!("unexpected recall error: {other:?}"),
+        }
+    }
+
     /// An object of the wrong kind for its shape is refused outright, and the
     /// fact does not land either — the edge is part of the write, not a garnish.
     pub async fn a_wrong_kind_edge_object_is_refused<M: Memory>(store: &M) {
@@ -1137,10 +1190,7 @@ pub mod contract {
             .await
             .expect_err("a wrong-kind edge object must be refused");
         assert!(matches!(err, MemoryError::InvalidEdge(_)), "got {err:?}");
-        assert!(
-            store.recall(&subject).await.expect("recall").is_empty(),
-            "a refused edge must take its fact with it: nothing written"
-        );
+        assert_nothing_recorded(store, &subject).await;
     }
 
     /// The **object is screened by the write guard exactly as a subject is.** A
@@ -1172,10 +1222,7 @@ pub mod contract {
             candidates.iter().any(|m| m.handle == object),
             "the guard must name the place it suspects: {candidates:?}"
         );
-        assert!(
-            store.recall(&subject).await.expect("recall").is_empty(),
-            "a blocked edge object must write no fact"
-        );
+        assert_nothing_recorded(store, &subject).await;
 
         // Confirming the existing object is the ordinary path out.
         let landed = capture(
@@ -1321,10 +1368,7 @@ pub mod contract {
         assert!(candidates.is_empty(), "nothing resembles it: {candidates:?}");
 
         for blocked in [&typo, &stranger] {
-            assert!(
-                store.recall(blocked).await.expect("recall").is_empty(),
-                "a blocked capture must write no facts ({blocked})"
-            );
+            assert_nothing_recorded(store, blocked).await;
             // …and no entity either. Checking only for facts left the guard's
             // "write NOTHING" half-tested: an adapter that provisioned the doc
             // before screening would still show an empty fact table here.
@@ -1376,10 +1420,7 @@ pub mod contract {
         };
         assert_eq!(attempted, stranger);
         assert!(candidates.is_empty(), "nothing resembles it: {candidates:?}");
-        assert!(
-            store.recall(&subject).await.expect("recall").is_empty(),
-            "a blocked object must take its fact with it"
-        );
+        assert_nothing_recorded(store, &subject).await;
         assert!(
             store
                 .list_entities(None)
@@ -1966,7 +2007,7 @@ pub mod contract {
         multiple_facts_all_recallable(store).await;
         subjects_are_isolated(store).await;
         malicious_subjects_are_rejected(store).await;
-        recall_unknown_subject_is_empty(store).await;
+        recall_unknown_is_a_miss_not_an_empty_page(store).await;
 
         every_kind_holds_facts(store).await;
         add_entity_reads_back(store).await;

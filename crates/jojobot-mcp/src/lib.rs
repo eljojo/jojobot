@@ -2016,6 +2016,36 @@ mod tests {
         );
     }
 
+    /// **An unknown handle is a miss at the wire too.** The production smoke
+    /// test asked for a nonexistent person and was told "reads fine, no facts"
+    /// — the same answer an empty page gives, so a caller can never repair a
+    /// bad handle. The miss now comes back as an error naming the handle and
+    /// its near candidates, while an empty-but-real entity still reads fine.
+    #[tokio::test]
+    async fn recall_of_an_unknown_entity_is_a_miss_with_candidates() {
+        let jojobot = handler();
+        jojobot
+            .add_entity(Parameters(add_args("person", "zenith", "Zenith")))
+            .await
+            .expect("add ok");
+
+        let err = jojobot
+            .recall(Parameters(RecallArgs { subject: "person:zenit".into() }))
+            .await
+            .expect_err("an unknown entity must not read as an empty page");
+        let msg = format!("{err:?}");
+        assert!(msg.contains("no entity"), "the miss names itself: {msg}");
+        assert!(msg.contains("zenith"), "the near candidate surfaces: {msg}");
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs { subject: "person:zenith".into() }))
+                .await
+                .expect("an existing entity's empty page still reads"),
+        );
+        assert_eq!(body["facts"].as_array().expect("a list").len(), 0);
+    }
+
     /// **`recall` shows the edges too.** Search grew a neighborhood; a recall
     /// that answered with the same rows stripped of their edges would make the
     /// graph a thing you can only see by searching for it, and reading an
