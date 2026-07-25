@@ -7,6 +7,8 @@ use std::sync::Arc;
 use anyhow::Context;
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
 use jojobot_adapters::search::IndexedMemory;
+use jojobot_adapters::vikunja::{Secret as VikunjaSecret, VikunjaConfig, VikunjaStore};
+use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::Memory;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -94,6 +96,24 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
 
+    // The Mailboxes port — a different bounded context with a different store.
+    // Same convention-over-configuration deal as Memory: credentials only, and
+    // the project, its columns and every mailbox label are discovered or
+    // provisioned at runtime.
+    let mailboxes: Arc<dyn Mailboxes> = match vikunja_from_env() {
+        Some(cfg) => {
+            tracing::info!(base_url = %cfg.base_url, "mailboxes: Vikunja store wired");
+            Arc::new(VikunjaStore::new(http.clone(), cfg))
+        }
+        None => {
+            tracing::warn!(
+                "MAILBOXES DISABLED — set JOJOBOT_VIKUNJA_URL and JOJOBOT_VIKUNJA_TOKEN to \
+                 enable them. The mailbox verbs return a NotConfigured error until then."
+            );
+            Arc::new(VikunjaStore::unconfigured())
+        }
+    };
+
     let metadata_url = format!(
         "{}/.well-known/oauth-protected-resource",
         origin_of(&config.resource)
@@ -105,6 +125,7 @@ async fn main() -> anyhow::Result<()> {
         metadata_url,
         memory: indexed.clone(),
         search: indexed,
+        mailboxes,
     };
 
     let ct = CancellationToken::new();
@@ -135,6 +156,19 @@ fn outline_from_env() -> Option<OutlineConfig> {
     Some(OutlineConfig {
         base_url: nonempty("JOJOBOT_OUTLINE_URL")?,
         token: Secret::new(nonempty("JOJOBOT_OUTLINE_TOKEN")?),
+    })
+}
+
+/// Read the Vikunja store's **credentials** from the environment — the only
+/// config there is; the project, its columns and every mailbox label are
+/// discovered or provisioned by convention. The URL is Vikunja's root, without
+/// the `/api/v1` suffix. Both must be set; either missing → `None` (mailboxes
+/// disabled). The adapter never reads env itself.
+fn vikunja_from_env() -> Option<VikunjaConfig> {
+    let nonempty = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
+    Some(VikunjaConfig {
+        base_url: nonempty("JOJOBOT_VIKUNJA_URL")?,
+        token: VikunjaSecret::new(nonempty("JOJOBOT_VIKUNJA_TOKEN")?),
     })
 }
 

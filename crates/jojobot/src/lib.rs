@@ -13,6 +13,7 @@ use rmcp::transport::streamable_http_server::{
 };
 use tokio_util::sync::CancellationToken;
 
+use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::search::Search;
 use jojobot_mcp::Jojobot;
@@ -37,6 +38,10 @@ pub struct AppState {
     /// A separate port, not a second store: in production both fields are the one
     /// indexed adapter, so every write keeps the index current.
     pub search: Arc<dyn Search>,
+    /// The Mailboxes port backing the mailbox tools. A **different bounded
+    /// context with a different store** (Vikunja, not Outline) — always the real
+    /// adapter, possibly unconfigured; no toy store ships.
+    pub mailboxes: Arc<dyn Mailboxes>,
 }
 
 /// Build the full HTTP application: the guarded MCP transport plus the public
@@ -54,8 +59,9 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
 
     let memory = state.memory.clone();
     let search = state.search.clone();
+    let mailboxes = state.mailboxes.clone();
     let mcp = StreamableHttpService::new(
-        move || Ok(Jojobot::new(memory.clone(), search.clone())),
+        move || Ok(Jojobot::new(memory.clone(), search.clone(), mailboxes.clone())),
         LocalSessionManager::default().into(),
         server_config,
     );

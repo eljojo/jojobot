@@ -23,6 +23,10 @@
 
 use std::sync::Arc;
 
+use jojobot_domain::mailbox::{
+    self, Delivered, Delivery, Mailbox, MailboxError, MailboxName, Mailboxes, Message, MessageId,
+    NewMessage, guard::MailboxMatch,
+};
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
     FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance,
@@ -220,6 +224,46 @@ pub struct UpdateEntityArgs {
     pub create_new: Option<bool>,
 }
 
+// --- mailboxes ---------------------------------------------------------------
+
+/// Arguments to `create_mailbox`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CreateMailboxArgs {
+    /// The box's name: `[a-z0-9-]+`, starting and ending alphanumeric. One
+    /// spelling per box, so two callers cannot create `Inbox` and `inbox`.
+    pub name: String,
+}
+
+/// Arguments to `post_message`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PostMessageArgs {
+    /// The box to leave it in. **It must already exist** — an unknown name comes
+    /// back with candidates and nothing is written.
+    pub mailbox: String,
+    /// The message itself. Prose: paragraphs are fine.
+    pub body: String,
+    /// Who is sending, as you declare it. Recorded as claimed — jojobot does not
+    /// resolve or verify identity yet.
+    pub sender: String,
+}
+
+/// Arguments to `read_mailbox`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReadMailboxArgs {
+    /// The box to read.
+    pub mailbox: String,
+}
+
+/// Arguments to `mark_processed`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct MarkProcessedArgs {
+    /// The message's id, exactly as `read_mailbox` returned it.
+    pub message_id: String,
+    /// What happened — including a failure. Optional, one plain line.
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct Jojobot {
     // Consumed by the `#[tool_handler]` macro's generated routing; rustc's
@@ -232,15 +276,24 @@ pub struct Jojobot {
     /// separately because it is a different port, not a second store: in
     /// production both are the one indexed adapter.
     search: Arc<dyn Search>,
+    /// The Mailboxes port — a **separate bounded context**, with its own store
+    /// (Vikunja) and its own vocabulary. It shares nothing with Memory but this
+    /// handler.
+    mailboxes: Arc<dyn Mailboxes>,
 }
 
 #[tool_router]
 impl Jojobot {
-    pub fn new(memory: Arc<dyn Memory>, search: Arc<dyn Search>) -> Self {
+    pub fn new(
+        memory: Arc<dyn Memory>,
+        search: Arc<dyn Search>,
+        mailboxes: Arc<dyn Mailboxes>,
+    ) -> Self {
         Self {
             tool_router: Self::tool_router(),
             memory,
             search,
+            mailboxes,
         }
     }
 
@@ -487,6 +540,147 @@ impl Jojobot {
             } => Ok(blocked_result(&attempted, &candidates, Blocked::MustExist("update_fact"))),
         }
     }
+
+    /// Create a mailbox. Screened against the boxes that exist, so a near miss
+    /// comes back as candidates instead of a second box nobody meant.
+    #[tool(
+        description = "Create a mailbox. The name is [a-z0-9-]+ and has exactly one spelling. \
+                       If it looks like a box that already exists, returns candidates to confirm \
+                       instead of creating one — a typo that mints a box is a message posted \
+                       where nobody is listening."
+    )]
+    async fn create_mailbox(
+        &self,
+        Parameters(args): Parameters<CreateMailboxArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let name = MailboxName(args.name.trim().to_string());
+        match self
+            .mailboxes
+            .create_mailbox(&name)
+            .await
+            .map_err(mailbox_error)?
+        {
+            mailbox::Guarded::Written(created) => json_result(&mailbox_json(&created)),
+            mailbox::Guarded::Blocked {
+                attempted,
+                candidates,
+            } => Ok(mailbox_blocked(&attempted, &candidates, BlockedBox::Creating)),
+        }
+    }
+
+    /// Every mailbox, with what is new, seen, and handled in each.
+    #[tool(
+        description = "List every mailbox with its per-state counts: new (left, never delivered) \
+                       · read (delivered, not yet acted on) · processed (handled — terminal, and \
+                       an archive, so nothing is ever deleted)."
+    )]
+    async fn list_mailboxes(&self) -> Result<CallToolResult, McpError> {
+        let boxes = self
+            .mailboxes
+            .list_mailboxes()
+            .await
+            .map_err(mailbox_error)?;
+        let body = serde_json::json!({
+            "count": boxes.len(),
+            "mailboxes": boxes.iter().map(mailbox_json).collect::<Vec<_>>(),
+        });
+        json_result(&body)
+    }
+
+    /// Leave a message in a box.
+    #[tool(
+        description = "Leave a message in a mailbox. It lands in `new`. The mailbox must ALREADY \
+                       EXIST: an unknown name comes back status: blocked with candidates and \
+                       nothing is written — call create_mailbox first if the box is genuinely \
+                       new. `sender` is recorded as you declare it."
+    )]
+    async fn post_message(
+        &self,
+        Parameters(args): Parameters<PostMessageArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let new = NewMessage {
+            mailbox: MailboxName(args.mailbox.trim().to_string()),
+            body: args.body,
+            sender: args.sender,
+            // Stamped here, at the edge, for the same reason `capture` stamps a
+            // date here: the domain stays clock-free, and a caller does not get
+            // to backdate a message it is posting now.
+            sent_at: jiff::Timestamp::now(),
+        };
+        match self
+            .mailboxes
+            .post_message(new)
+            .await
+            .map_err(mailbox_error)?
+        {
+            mailbox::Guarded::Written(message) => json_result(&message_json(&message)),
+            mailbox::Guarded::Blocked {
+                attempted,
+                candidates,
+            } => Ok(mailbox_blocked(
+                &attempted,
+                &candidates,
+                BlockedBox::MustExist("post_message"),
+            )),
+        }
+    }
+
+    /// Take delivery of everything unprocessed in a box.
+    #[tool(
+        description = "Take delivery of every unprocessed message in a mailbox, oldest first, and \
+                       move each from `new` to `read`. There is no peek: reading IS taking \
+                       delivery. Messages a previous read already handed over come back too, \
+                       flagged seen_before: true — those are a crashed consumer's leftovers, not \
+                       fresh mail. Act on what you receive, then call mark_processed."
+    )]
+    async fn read_mailbox(
+        &self,
+        Parameters(args): Parameters<ReadMailboxArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let name = MailboxName(args.mailbox.trim().to_string());
+        match self
+            .mailboxes
+            .read_mailbox(&name)
+            .await
+            .map_err(mailbox_error)?
+        {
+            mailbox::Guarded::Written(delivery) => json_result(&delivery_json(&delivery)),
+            mailbox::Guarded::Blocked {
+                attempted,
+                candidates,
+            } => Ok(mailbox_blocked(
+                &attempted,
+                &candidates,
+                BlockedBox::MustExist("read_mailbox"),
+            )),
+        }
+    }
+
+    /// Retire a message once it has actually been acted on.
+    #[tool(
+        description = "Move a message to `processed` — terminal, an archive, never a deletion — \
+                       and optionally record the outcome in `notes`. \
+                       THE CRASH CONTRACT: call this ONLY AFTER you have acted on the message. \
+                       If you mark first and then fail, the message is gone from every future \
+                       delivery and nobody will ever know it was dropped; if you act first and \
+                       crash before marking, the next read_mailbox hands it back flagged as a \
+                       leftover, which is recoverable. A FAILURE IS DATA, NOT A STATE: record it \
+                       in notes (and reply with a new message if someone needs to know) — there \
+                       is no failed column, because a message whose handling failed has still \
+                       been handled."
+    )]
+    async fn mark_processed(
+        &self,
+        Parameters(args): Parameters<MarkProcessedArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let id = MessageId(args.message_id.trim().to_string());
+        let processed = self
+            .mailboxes
+            .mark_processed(&id, args.notes.as_deref())
+            .await
+            .map_err(mailbox_error)?;
+        json_result(&message_json(&processed))
+    }
 }
 
 /// A fact on the wire: the whole row plus the **address** — the handle a caller
@@ -711,6 +905,136 @@ fn blocked_result(
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
+// --- mailboxes on the wire ---------------------------------------------------
+
+/// A mailbox on the wire: its name and what is in it, per state.
+fn mailbox_json(mailbox: &Mailbox) -> serde_json::Value {
+    serde_json::json!({
+        "name": mailbox.name.as_str(),
+        "counts": {
+            "new": mailbox.counts.new,
+            "read": mailbox.counts.read,
+            "processed": mailbox.counts.processed,
+            "total": mailbox.counts.total(),
+        },
+    })
+}
+
+/// A message on the wire. Rendered by hand rather than derived, so
+/// `post_message`, `read_mailbox` and `mark_processed` cannot drift into three
+/// spellings of one record — the same rule the fact renderer follows.
+fn message_json(message: &Message) -> serde_json::Value {
+    serde_json::json!({
+        "id": message.id.as_str(),
+        "mailbox": message.mailbox.as_str(),
+        "sender": message.sender,
+        "sent_at": message.sent_at.to_string(),
+        "body": message.body,
+        "state": message.state.as_token(),
+        "notes": message.notes,
+    })
+}
+
+/// One delivered message: the whole record, plus whether a previous read had
+/// already handed it over.
+fn delivered_json(delivered: &Delivered) -> serde_json::Value {
+    let mut body = message_json(&delivered.message);
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("seen_before".into(), delivered.seen_before.into());
+    }
+    body
+}
+
+/// A whole delivery.
+fn delivery_json(delivery: &Delivery) -> serde_json::Value {
+    serde_json::json!({
+        "mailbox": delivery.mailbox.as_str(),
+        "count": delivery.messages.len(),
+        "messages": delivery.messages.iter().map(delivered_json).collect::<Vec<_>>(),
+    })
+}
+
+/// One of the mailbox guard's candidates on the wire.
+fn mailbox_candidate_json(candidate: &MailboxMatch) -> serde_json::Value {
+    serde_json::json!({
+        "name": candidate.name.as_str(),
+        "reason": match candidate.reason {
+            mailbox::guard::MatchReason::Exact => "exact",
+            mailbox::guard::MatchReason::Near => "near",
+            mailbox::guard::MatchReason::Contains => "contains",
+        },
+    })
+}
+
+/// Which mailbox gate stopped a write — because the way out of each is
+/// different, and one copy-pasted paragraph telling a create to "call
+/// create_mailbox" is advice that goes in a circle.
+enum BlockedBox {
+    /// A creation: the name is being minted here.
+    Creating,
+    /// A write that only **names** a box. It cannot create one.
+    MustExist(&'static str),
+}
+
+/// The mailbox guard's answer: **nothing was written**, and here is what jojobot
+/// suspects you meant. A successful result carrying a structured payload, not a
+/// protocol error — the same shape the Memory verbs use, so one client-side
+/// branch handles both contexts.
+fn mailbox_blocked(
+    attempted: &MailboxName,
+    candidates: &[MailboxMatch],
+    gate: BlockedBox,
+) -> CallToolResult {
+    let how_to_proceed = match gate {
+        BlockedBox::Creating => format!(
+            "Nothing was created. '{attempted}' is the same as, or a near miss of, a mailbox \
+             that already exists. If one of the boxes above is the one you meant, use its name; \
+             otherwise pick a name that is not confusable with it. Two boxes with names a typo \
+             apart cannot both be right: the whole value of a box is that a sender can name it \
+             without checking.",
+        ),
+        BlockedBox::MustExist(verb) if candidates.is_empty() => format!(
+            "Nothing was written. '{attempted}' is not a mailbox jojobot knows, and nothing \
+             resembles it. {verb} cannot create one: call create_mailbox to create '{attempted}' \
+             first, then re-call {verb}.",
+        ),
+        BlockedBox::MustExist(verb) => format!(
+            "Nothing was written. '{attempted}' is not a mailbox jojobot knows. If one of the \
+             names above is what you meant, use that — it is almost certainly a typo. Otherwise \
+             {verb} cannot create the box for you: call create_mailbox first, then re-call \
+             {verb}.",
+        ),
+    };
+    let body = serde_json::json!({
+        "status": "blocked",
+        "attempted": attempted.as_str(),
+        "wrote": false,
+        "candidates": candidates.iter().map(mailbox_candidate_json).collect::<Vec<_>>(),
+        "how_to_proceed": how_to_proceed,
+    });
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
+/// Map a domain [`MailboxError`] to an MCP error, splitting client mistakes from
+/// server-side failures — the same split [`memory_error`] makes.
+fn mailbox_error(e: MailboxError) -> McpError {
+    match e {
+        MailboxError::InvalidName(_)
+        | MailboxError::InvalidMessageId(_)
+        | MailboxError::InvalidMessage(_)
+        | MailboxError::UnknownMessage { .. } => McpError::invalid_params(e.to_string(), None),
+        // Not a caller mistake and not something a caller can fix by calling
+        // differently: jojobot found a card on its own board that belongs to
+        // another project, and refused. That is an integrity condition on the
+        // server side.
+        MailboxError::ForeignProject(_) => McpError::internal_error(e.to_string(), None),
+        MailboxError::NotConfigured(msg) => {
+            McpError::internal_error(format!("mailboxes not configured: {msg}"), None)
+        }
+        MailboxError::Store(msg) => McpError::internal_error(msg, None),
+    }
+}
+
 /// Render a JSON body as a successful tool result.
 fn json_result(body: &serde_json::Value) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::success(vec![ContentBlock::text(
@@ -900,6 +1224,19 @@ impl ServerHandler for Jojobot {
                  says `status: blocked`, `wrote: false` — read how_to_proceed, do not retry it \
                  unchanged. Responses name types the schema.org way \
                  (`Person`, `CreativeWork`, `memberOf`); input stays lowercase `kind:slug`. \
+                 \n\nSeparately, jojobot carries **mailboxes** — a place to leave a message for \
+                 a consumer that is not in this conversation. A mailbox is a named box \
+                 (`[a-z0-9-]+`) and a message moves through three states, which are columns: \
+                 `new` → `read` → `processed`, with `processed` terminal and an archive — \
+                 nothing is ever deleted. Tools: `create_mailbox` · `list_mailboxes` (per-state \
+                 counts) · `post_message` · `read_mailbox` · `mark_processed`. The same \
+                 must-already-exist rule applies: posting into a box jojobot doesn't know comes \
+                 back blocked with candidates, because a typo that mints a box is a message \
+                 posted where nobody is listening. `read_mailbox` IS taking delivery — there is \
+                 no peek — and it re-delivers anything a previous read handed over, flagged \
+                 `seen_before`. **Mark a message processed only AFTER acting on it**: marking \
+                 first and then failing drops it from every future delivery with nobody the \
+                 wiser. \
                  More domain verbs arrive later."
                     .to_string(),
             )
@@ -911,6 +1248,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use jojobot_domain::mailbox::testing::InMemoryMailboxes;
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{Boot, Edge, EdgeShape, EntityKind, FactId};
 
@@ -952,12 +1290,17 @@ mod tests {
         Jojobot::new(
             Arc::new(InMemoryMemory::new()),
             Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::new()),
         )
     }
 
     /// A handler whose search port is a spy the test keeps a handle on.
     fn handler_with(spy: Arc<SpySearch>) -> Jojobot {
-        Jojobot::new(Arc::new(InMemoryMemory::new()), spy)
+        Jojobot::new(
+            Arc::new(InMemoryMemory::new()),
+            spy,
+            Arc::new(InMemoryMailboxes::new()),
+        )
     }
 
     /// Pull the single text block out of a tool result.
@@ -2148,5 +2491,235 @@ mod tests {
             .await
             .expect_err("must reject empty content");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    }
+
+    // --- mailboxes ------------------------------------------------------------
+
+    fn mailbox_handler() -> Jojobot {
+        Jojobot::new(
+            Arc::new(InMemoryMemory::new()),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::new()),
+        )
+    }
+
+    async fn make_box(jojobot: &Jojobot, name: &str) -> serde_json::Value {
+        let result = jojobot
+            .create_mailbox(Parameters(CreateMailboxArgs { name: name.into() }))
+            .await
+            .expect("create_mailbox call ok");
+        let body = json_of(&result);
+        assert_ne!(body["status"], "blocked", "the guard blocked: {body}");
+        body
+    }
+
+    async fn send(jojobot: &Jojobot, mailbox: &str, sender: &str, body: &str) -> serde_json::Value {
+        let result = jojobot
+            .post_message(Parameters(PostMessageArgs {
+                mailbox: mailbox.into(),
+                sender: sender.into(),
+                body: body.into(),
+            }))
+            .await
+            .expect("post_message call ok");
+        let body = json_of(&result);
+        assert_ne!(body["status"], "blocked", "the guard blocked: {body}");
+        body
+    }
+
+    /// The whole arc through the MCP surface: make a box, leave a message, see
+    /// it as new, take delivery, mark it handled.
+    #[tokio::test]
+    async fn the_mailbox_arc_through_the_handler() {
+        let jojobot = mailbox_handler();
+        let created = make_box(&jojobot, "inbox").await;
+        assert_eq!(created["name"], "inbox");
+        assert_eq!(created["counts"]["new"], 0);
+
+        let posted = send(&jojobot, "inbox", "alpha", "the shipment landed").await;
+        assert_eq!(posted["mailbox"], "inbox");
+        assert_eq!(posted["sender"], "alpha");
+        assert_eq!(posted["body"], "the shipment landed");
+        assert_eq!(posted["state"], "new");
+        assert!(posted["sent_at"].is_string(), "a message says when it was sent");
+        let id = posted["id"].as_str().expect("a message carries its id").to_string();
+
+        let listed = json_of(&jojobot.list_mailboxes().await.expect("list ok"));
+        assert_eq!(listed["count"], 1);
+        assert_eq!(listed["mailboxes"][0]["name"], "inbox");
+        assert_eq!(listed["mailboxes"][0]["counts"]["new"], 1);
+
+        let delivery = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into() }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(delivery["mailbox"], "inbox");
+        assert_eq!(delivery["count"], 1);
+        assert_eq!(delivery["messages"][0]["id"], id);
+        assert_eq!(delivery["messages"][0]["state"], "read", "delivery moves the column");
+        assert_eq!(
+            delivery["messages"][0]["seen_before"], false,
+            "a first delivery is nobody's leftover"
+        );
+
+        let processed = json_of(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_id: id.clone(),
+                    notes: Some("filed under shipments".into()),
+                }))
+                .await
+                .expect("mark_processed ok"),
+        );
+        assert_eq!(processed["state"], "processed");
+        assert_eq!(processed["notes"], "filed under shipments");
+
+        let after = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into() }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(after["count"], 0, "a processed message is never delivered again");
+    }
+
+    /// **A crashed consumer's leftovers are visible as such.** A second read
+    /// hands the same message back flagged, rather than as fresh mail.
+    #[tokio::test]
+    async fn a_redelivered_message_says_it_was_seen_before() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        send(&jojobot, "inbox", "alpha", "the shipment landed").await;
+        jojobot
+            .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into() }))
+            .await
+            .expect("read ok");
+
+        let again = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into() }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(again["count"], 1);
+        assert_eq!(again["messages"][0]["seen_before"], true);
+    }
+
+    /// **Blocked is a result, not a protocol error** — the same shape the Memory
+    /// verbs use, so one client-side branch handles both contexts.
+    #[tokio::test]
+    async fn posting_into_an_unknown_box_is_blocked_not_an_error() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+
+        let result = jojobot
+            .post_message(Parameters(PostMessageArgs {
+                mailbox: "inbx".into(),
+                sender: "alpha".into(),
+                body: "the shipment landed".into(),
+            }))
+            .await
+            .expect("a blocked post is a successful call");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "inbx");
+        assert_eq!(body["candidates"][0]["name"], "inbox");
+        assert_eq!(body["candidates"][0]["reason"], "near");
+        let advice = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            advice.contains("create_mailbox"),
+            "the way out of this gate is naming the verb that opens it: {advice}"
+        );
+    }
+
+    /// Creating a box that looks like one already there is blocked too — and its
+    /// advice is a different one, because the way out is different.
+    #[tokio::test]
+    async fn creating_a_near_miss_box_is_blocked_with_its_own_advice() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+
+        let result = jojobot
+            .create_mailbox(Parameters(CreateMailboxArgs { name: "inbx".into() }))
+            .await
+            .expect("a blocked create is a successful call");
+        let body = blocked(&result);
+        assert_eq!(body["candidates"][0]["name"], "inbox");
+        let advice = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            !advice.contains("create_mailbox"),
+            "telling a create to call create is advice that goes in a circle: {advice}"
+        );
+    }
+
+    /// Reading a box jojobot doesn't know is blocked — never an empty delivery,
+    /// which would read as "your box is empty" for a name that does not exist.
+    #[tokio::test]
+    async fn reading_an_unknown_box_is_blocked_rather_than_empty() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let result = jojobot
+            .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbx".into() }))
+            .await
+            .expect("a blocked read is a successful call");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "inbx");
+    }
+
+    /// Malformed input is a client error that says what the grammar is, rather
+    /// than a store failure or a silently-normalized name.
+    #[tokio::test]
+    async fn malformed_mailbox_input_is_a_client_error() {
+        let jojobot = mailbox_handler();
+        let err = jojobot
+            .create_mailbox(Parameters(CreateMailboxArgs { name: "Inbox".into() }))
+            .await
+            .expect_err("a name outside the grammar must be refused");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+
+        make_box(&jojobot, "inbox").await;
+        let err = jojobot
+            .post_message(Parameters(PostMessageArgs {
+                mailbox: "inbox".into(),
+                sender: "  ".into(),
+                body: "the shipment landed".into(),
+            }))
+            .await
+            .expect_err("a message with no sender has no provenance");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    }
+
+    /// An id nothing answers to is a client error carrying the id that missed —
+    /// never a silent success, which would look exactly like a handled message.
+    #[tokio::test]
+    async fn processing_an_unknown_message_is_a_client_error() {
+        let jojobot = mailbox_handler();
+        let err = jojobot
+            .mark_processed(Parameters(MarkProcessedArgs {
+                message_id: "999999".into(),
+                notes: None,
+            }))
+            .await
+            .expect_err("an unknown id must not report success");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(err.message.contains("999999"), "got {}", err.message);
+    }
+
+    /// **The crash contract is in the tool description, not only in the docs.**
+    /// A consumer that marks first and then fails drops the message silently;
+    /// the model reading this surface has to be told which order is safe.
+    #[test]
+    fn the_mark_processed_description_states_the_crash_contract() {
+        let tools = Jojobot::tool_router().list_all();
+        let mark = tools
+            .iter()
+            .find(|t| t.name == "mark_processed")
+            .expect("mark_processed is a tool");
+        let description = mark.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains("ONLY AFTER"),
+            "the crash contract must be stated where a consumer reads it: {description}"
+        );
     }
 }
