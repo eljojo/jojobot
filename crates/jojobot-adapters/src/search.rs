@@ -1722,6 +1722,57 @@ mod tests {
         );
     }
 
+    /// The **other** counter, on the same path. A subject retyped onto a handle
+    /// that EXISTS orphans nothing, so the orphan reporter has nothing to say
+    /// about it — which is exactly the disguise the Cosme split brain wore. Both
+    /// counters have to survive a write, not just a boot scan; only the boot
+    /// scan was pinned, so dropping the foreign one from the write path left the
+    /// whole suite green.
+    #[tokio::test]
+    async fn a_write_re_reads_its_doc_and_counts_the_foreign_subjects_it_finds() {
+        let logged = log_sink();
+        const DOC: &str = "outline-uuid-f0r31gn";
+
+        let elsewhere = Fact {
+            subject: EntityId::person("kappa"),
+            ..fact("person:alpha", "f1", "subject cell retyped onto a live handle", date(2026, 1, 1))
+        };
+        let store = IndexedMemory::new(Scanned::new(vec![
+            scan(DOC, Some(entity("person:alpha", "Alpha")), "", vec![elsewhere]),
+            scan("outline-uuid-kappa", Some(entity("person:kappa", "Kappa")), "", Vec::new()),
+        ]))
+        .expect("index opens");
+
+        // Make kappa known the way a running server does — one doc at a time.
+        // Never a rebuild: a rebuild reports this doc itself, and the assertion
+        // would stop being about the write path.
+        store
+            .reindex(&EntityId::person("kappa"))
+            .await
+            .expect("reindex ok");
+
+        store
+            .capture(NewFact::about(
+                EntityId::person("alpha"),
+                "another ordinary fact, written now",
+                date(2026, 1, 2),
+            ))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("this double does not guard");
+
+        // Per LINE, not per buffer: the sink is process-wide and append-only, so
+        // a substring match would happily find another test's event.
+        let text = logged.text();
+        assert!(
+            text.lines().any(|l| l.contains(DOC)
+                && l.contains("person:kappa")
+                && l.contains("about a different entity that exists")),
+            "the write path must count the foreign subject, not only the orphans: {text}"
+        );
+    }
+
     /// **A row about another live entity is counted too** — the consistency check
     /// the orphan counter cannot make. The Cosme incident wore exactly this
     /// shape: a hand edit retyped a subject cell into a handle that *exists*, so
