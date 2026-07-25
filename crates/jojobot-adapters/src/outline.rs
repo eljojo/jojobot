@@ -477,14 +477,17 @@ impl Memory for OutlineStore {
         Ok(Guarded::Written(seen))
     }
 
+    /// **Home-doc membership counts, not only the subject column.** Every row in
+    /// this entity's doc is homed here, so every row comes back — a subject cell
+    /// a hand edit mistyped can hide a doc's facts from nobody, least of all from
+    /// the entity whose page they sit on. Filtering on the subject column was the
+    /// split brain: the entity was readable under one id and writable under
+    /// another, and the rows nobody could see were the ones needing repair.
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         let collection_id = self.resolve_collection().await?;
         match self.entity_doc(&collection_id, subject).await? {
             None => Ok(Vec::new()),
-            Some(doc) => Ok(parse_facts_table(&doc.text)
-                .into_iter()
-                .filter(|f| &f.subject == subject)
-                .collect()),
+            Some(doc) => Ok(parse_facts_table(&doc.text)),
         }
     }
 
@@ -915,6 +918,78 @@ mod tests {
         assert!(
             facts.iter().any(|h| matches!(h, Hit::Fact { fact } if fact.content == "plays chess")),
             "got {facts:?}"
+        );
+    }
+
+    /// **The split brain.** A hand edit leaves a doc whose declared `id:` marker
+    /// and its rows' `subject` cells disagree. Recall resolved through the rows
+    /// and `list_entities` through the marker, so the entity was readable under
+    /// one id and writable under another: its own facts were invisible on its own
+    /// page, and every repair had to be aimed at a handle nothing else agreed on.
+    ///
+    /// A row homed in a doc is now reachable under the id that doc declares,
+    /// full stop. A typo in the subject column can hide a doc's facts from
+    /// nobody — least of all from the entity whose page they are sitting on.
+    #[tokio::test]
+    async fn a_docs_own_rows_are_reachable_under_the_id_it_declares() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let doc = with_fact_appended(
+            &seeded_doc(&person("alpha")),
+            // The subject cell names someone else — one hand-typed character.
+            "| f1 | person:alphaa | plays chess |  | testimony | active | 2026-07-01 |  |",
+        );
+        fake.seed_document(&coll, "alpha", &doc);
+        let store = store(fake.clone());
+        let alpha = EntityId::person("alpha");
+
+        let facts = store.recall(&alpha).await.expect("recall");
+        assert_eq!(facts.len(), 1, "the doc's own row must be reachable: {facts:?}");
+        assert_eq!(facts[0].home, alpha, "the doc it lives in is its home");
+        assert_eq!(
+            facts[0].address().to_string(),
+            "person:alpha#f1",
+            "…and its address is the one the reader can act on"
+        );
+
+        // Reachable means repairable: the address recall handed back edits the row.
+        store
+            .update_fact(
+                &facts[0].address(),
+                FactPatch { content: Some("plays go".into()), ..Default::default() },
+            )
+            .await
+            .expect("the row must be editable through the address recall gave")
+            .written()
+            .expect("not blocked");
+        assert!(fake.docs_in(&coll)[0].text.contains("plays go"));
+    }
+
+    /// …and the search projection agrees: `subject: person:alpha` finds the rows
+    /// on alpha's page. A projection that disagreed with recall about which
+    /// entity a row belongs to is a second, quieter split brain.
+    #[tokio::test]
+    async fn a_subject_filter_finds_the_rows_homed_in_that_entitys_doc() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let doc = with_fact_appended(
+            &seeded_doc(&person("alpha")),
+            "| f1 | person:alphaa | plays chess |  | testimony | active | 2026-07-01 |  |",
+        );
+        fake.seed_document(&coll, "alpha", &doc);
+
+        let indexed = IndexedMemory::new(Arc::new(store(fake))).expect("index opens");
+        indexed.rebuild().await.expect("rebuild");
+
+        let hits = indexed
+            .search(&SearchQuery {
+                subject: Some(EntityId::person("alpha")),
+                ..Default::default()
+            })
+            .expect("search ok");
+        assert!(
+            hits.iter().any(|h| matches!(h, Hit::Fact { fact } if fact.content == "plays chess")),
+            "a row homed in alpha's doc must answer a subject filter for alpha: {hits:?}"
         );
     }
 

@@ -154,11 +154,15 @@ impl Memory for InMemoryMemory {
         Ok(Guarded::Written(stored))
     }
 
+    /// Home-doc membership counts alongside the subject, as it does in the real
+    /// store: a row homed here is reachable here, whatever its subject cell says.
+    /// The fake cannot produce that disagreement — every capture homes a fact at
+    /// its subject — but the two adapters must not differ on the rule.
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         let facts = self.facts.lock().expect("fake mutex poisoned");
         Ok(facts
             .iter()
-            .filter(|f| &f.subject == subject)
+            .filter(|f| &f.subject == subject || &f.home == subject)
             .cloned()
             .collect())
     }

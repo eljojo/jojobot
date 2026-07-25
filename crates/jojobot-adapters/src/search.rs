@@ -30,7 +30,7 @@ use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, Memory,
     MemoryError, NewEntity, NewFact,
     guard::{self, MatchReason},
-    search::{DocScan, Hit, Search, SearchQuery},
+    search::{self, DocScan, Hit, Search, SearchQuery},
 };
 
 /// How much a fresh fact is worth against text relevance. Small on purpose: it
@@ -179,6 +179,17 @@ impl FullTextIndex {
         Ok(())
     }
 
+    /// Every entity the index currently holds — the set an incremental reindex
+    /// checks a doc's subjects against.
+    pub fn known_entities(&self) -> std::collections::HashSet<EntityId> {
+        self.entities
+            .read()
+            .expect("entity mirror poisoned")
+            .iter()
+            .map(|(e, _)| e.id.clone())
+            .collect()
+    }
+
     /// Drop everything indexed under `entity`'s document — the doc is gone from
     /// the store, so its hits must go with it.
     ///
@@ -247,6 +258,13 @@ impl FullTextIndex {
                 f.provenance => fact.provenance.as_token(),
                 f.payload => payload_json(&Payload::Fact { fact: fact.clone() })?,
             );
+            // Home-doc membership counts alongside the subject column, exactly as
+            // `recall` counts it: a row is reachable under the id its doc
+            // declares, so a mistyped subject cell cannot hide a doc's own facts
+            // from a subject filter for that doc's entity.
+            if fact.home != fact.subject {
+                document.add_text(f.subject, fact.home.as_str());
+            }
             // A fact is filed under its SUBJECT's kind, not its home's: that is
             // what makes `kind=person` + an edge filter answer "which people".
             if let Some(kind) = fact.subject.kind() {
@@ -591,6 +609,30 @@ fn store_err(e: impl std::fmt::Display) -> MemoryError {
     MemoryError::Store(format!("search index: {e}"))
 }
 
+/// Say out loud that a doc holds rows whose subject names no entity — the
+/// split-brain tell a hand edit leaves behind.
+///
+/// **Never a failure, never a drop.** The rows stay indexed and reachable
+/// through their home; the only thing wrong with them before was that nobody
+/// could tell. Surfacing the quarantine to the caller is later work — being able
+/// to see it at all is the floor, and a scan that quietly normalizes a
+/// corruption is how the corruption becomes permanent.
+fn report_orphans(doc: &DocScan, known: &std::collections::HashSet<EntityId>) {
+    let orphans = search::orphan_subjects(doc, known);
+    if orphans.is_empty() {
+        return;
+    }
+    let subjects: Vec<&str> = orphans.iter().map(EntityId::as_str).collect();
+    tracing::warn!(
+        doc = %doc.doc_id,
+        entity = %doc.entity.as_ref().map_or("-", |e| e.id.as_str()),
+        count = orphans.len(),
+        subjects = ?subjects,
+        "fact rows name a subject that is no known entity; reachable through their home doc, \
+         not dropped — a hand-edited subject cell is the usual cause"
+    );
+}
+
 /// A [`Memory`] with a live search projection behind it.
 ///
 /// Every verb delegates to the store, and every **successful** write re-scans the
@@ -618,6 +660,10 @@ impl IndexedMemory {
     pub async fn rebuild(&self) -> Result<usize, MemoryError> {
         let scan = self.inner.scan().await?;
         self.index.ingest_all(&scan)?;
+        let known = search::known_entities(&scan);
+        for doc in &scan {
+            report_orphans(doc, &known);
+        }
         Ok(scan.len())
     }
 
@@ -632,7 +678,11 @@ impl IndexedMemory {
     /// handle (see [`FullTextIndex::forget`]).
     async fn reindex(&self, entity: &EntityId) -> Result<(), MemoryError> {
         match self.inner.scan_entity(entity).await? {
-            Some(scan) => self.index.ingest_doc(&scan),
+            Some(scan) => {
+                self.index.ingest_doc(&scan)?;
+                report_orphans(&scan, &self.index.known_entities());
+                Ok(())
+            }
             None => self.index.forget(entity),
         }
     }
@@ -1112,41 +1162,35 @@ mod tests {
         );
     }
 
-    /// A store whose doc ids are **not** entity handles — the real store's
-    /// shape, where Outline mints a UUID per page — and able to make its one doc
-    /// vanish, the way a human deleting the page in the wiki does. The fake
-    /// keys facts by handle, so the gap between the two ids only shows up here.
-    struct Vanishing {
-        present: std::sync::atomic::AtomicBool,
+    /// A store that just hands back the docs it was given, and can drop them.
+    ///
+    /// Its doc ids are deliberately **not** entity handles — the real store's
+    /// shape, where Outline mints a UUID per page. The fake keys facts by
+    /// handle, so anything that turns on the gap between the two ids is
+    /// invisible to it and shows up only here.
+    struct Scanned {
+        docs: RwLock<Vec<DocScan>>,
     }
 
-    impl Vanishing {
-        /// Deliberately nothing like the handle: the bug was deleting by one and
-        /// having stored under the other.
+    impl Scanned {
+        /// Nothing like a handle: the ghost bug was deleting by one id having
+        /// stored under the other.
         const DOC_ID: &'static str = "outline-uuid-7f3a";
 
-        fn new() -> Self {
-            Vanishing { present: std::sync::atomic::AtomicBool::new(true) }
+        fn new(docs: Vec<DocScan>) -> Arc<Self> {
+            Arc::new(Scanned { docs: RwLock::new(docs) })
         }
 
+        /// The page is deleted in the wiki.
         fn vanish(&self) {
-            self.present.store(false, std::sync::atomic::Ordering::SeqCst);
+            self.docs.write().expect("docs poisoned").clear();
         }
     }
 
     #[async_trait]
-    impl Memory for Vanishing {
+    impl Memory for Scanned {
         async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
-            if !self.present.load(std::sync::atomic::Ordering::SeqCst) {
-                return Ok(Vec::new());
-            }
-            Ok(vec![DocScan {
-                doc_id: Self::DOC_ID.into(),
-                title: "Alpha".into(),
-                prose: "Alpha is allergic to penicillin.".into(),
-                entity: Some(entity("person:alpha", "Alpha")),
-                facts: vec![fact("person:alpha", "f1", "keeps a ferret", date(2026, 1, 1))],
-            }])
+            Ok(self.docs.read().expect("docs poisoned").clone())
         }
 
         async fn add_entity(&self, _: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
@@ -1184,7 +1228,13 @@ mod tests {
     /// one of its hits was still being served, forever, from the last scan.
     #[tokio::test]
     async fn reindexing_a_vanished_doc_evicts_every_hit_it_had() {
-        let inner = Arc::new(Vanishing::new());
+        let inner = Scanned::new(vec![DocScan {
+            doc_id: Scanned::DOC_ID.into(),
+            title: "Alpha".into(),
+            prose: "Alpha is allergic to penicillin.".into(),
+            entity: Some(entity("person:alpha", "Alpha")),
+            facts: vec![fact("person:alpha", "f1", "keeps a ferret", date(2026, 1, 1))],
+        }]);
         let store = IndexedMemory::new(inner.clone()).expect("index opens");
         store.rebuild().await.expect("rebuild");
 
@@ -1211,6 +1261,98 @@ mod tests {
         assert!(
             store.search(&SearchQuery::text("person:alpha")).expect("search ok").is_empty(),
             "…and so must the entity, pin and all"
+        );
+    }
+
+    /// A sink that keeps whatever was logged, so a test can assert on it. `it
+    /// gets logged` is not a claim you can make by reading the call site.
+    #[derive(Clone, Default)]
+    struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl Captured {
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().expect("log buffer poisoned")).into_owned()
+        }
+    }
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log buffer poisoned").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Captured;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// The one log sink for this test binary.
+    ///
+    /// **Global on purpose.** `tracing` keeps a process-wide max-level hint, so a
+    /// thread-local subscriber is not enough: a sibling test running with none
+    /// can leave that hint below WARN, and the event never fires at all — the
+    /// assertion then reads an empty buffer and blames the code. Passing alone
+    /// and failing in the suite is the tell. One global sink, installed once, is
+    /// deterministic. `report_orphans` is the only thing in this crate that logs.
+    fn log_sink() -> &'static Captured {
+        static SINK: std::sync::OnceLock<Captured> = std::sync::OnceLock::new();
+        SINK.get_or_init(|| {
+            let captured = Captured::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(captured.clone())
+                .with_ansi(false)
+                .with_max_level(tracing::Level::WARN)
+                .finish();
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("only this sink installs a global subscriber");
+            captured
+        })
+    }
+
+    /// **A row whose subject names nothing is counted and said out loud.** This
+    /// is the split-brain tell a hand edit leaves: the row stays reachable
+    /// through its home doc, so nothing breaks and nothing looks wrong — which
+    /// is exactly the problem. A scan that silently normalizes a corruption is
+    /// how the corruption becomes permanent.
+    ///
+    /// Never a failure, never a drop: the fact is still indexed and still found.
+    #[tokio::test]
+    async fn a_scan_counts_and_logs_a_subject_that_names_no_entity() {
+        let logged = log_sink();
+
+        let orphan = Fact {
+            subject: EntityId::person("alphaa"),
+            ..fact("person:alpha", "f1", "plays chess", date(2026, 1, 1))
+        };
+        let store = IndexedMemory::new(Scanned::new(vec![scan(
+            Scanned::DOC_ID,
+            Some(entity("person:alpha", "Alpha")),
+            "",
+            vec![orphan, fact("person:alpha", "f2", "plays go", date(2026, 1, 2))],
+        )]))
+        .expect("index opens");
+        store.rebuild().await.expect("rebuild");
+
+        let text = logged.text();
+        assert!(text.contains(Scanned::DOC_ID), "the log must say which doc: {text}");
+        assert!(text.contains("person:alphaa"), "…and which subject: {text}");
+        assert!(text.contains("count=1"), "…and how many: {text}");
+        assert!(
+            !text.contains("person:alpha\""),
+            "the doc's own well-formed subject is not an orphan: {text}"
+        );
+
+        // …and the row is still there. Reporting it is not quarantining it.
+        assert_eq!(
+            store.search(&SearchQuery::text("chess")).expect("search ok").len(),
+            1,
+            "a counted row is still indexed and still findable"
         );
     }
 

@@ -26,3 +26,7 @@ tokio = { workspace = true }
 # The shared contract + fake live behind the domain's `testing` feature; the
 # contract runs here against the real Outline adapter (gated integration test).
 jojobot-domain = { workspace = true, features = ["testing"] }
+# Dev only. The scan's split-brain report IS a log line, and "it gets logged" is
+# not a claim a test can make by reading the code — this subscribes to the
+# events and asserts on what actually came out.
+tracing-subscriber = { workspace = true }

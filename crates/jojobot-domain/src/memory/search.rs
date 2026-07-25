@@ -13,6 +13,8 @@
 //! This module is pure vocabulary — no tantivy, no I/O. The index that satisfies
 //! [`Search`] lives in the adapters.
 
+use std::collections::HashSet;
+
 use super::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactStatus, MemoryError, Provenance,
     validate_edge, validate_subject,
@@ -37,6 +39,36 @@ pub struct DocScan {
     pub entity: Option<Entity>,
     /// Every fact the doc's table holds.
     pub facts: Vec<Fact>,
+}
+
+/// The subjects in `doc`'s table that name **no known entity** — the split-brain
+/// tell, deduped and in first-seen order.
+///
+/// A row is legitimately homed in its doc and legitimately about another entity;
+/// what is never legitimate is a subject cell naming something that does not
+/// exist. That is a hand edit gone wrong, and it used to be invisible: the row
+/// stayed reachable through its home (which is why nothing broke) while quietly
+/// projecting onto a handle no other read would ever agree on.
+///
+/// Counting is all this does. **A scan must never hard-fail on one, and must
+/// never drop it** — the row is a fact somebody wrote. Surfacing the quarantine
+/// to the caller is later work; being able to see it in a log is the floor.
+pub fn orphan_subjects(doc: &DocScan, known: &HashSet<EntityId>) -> Vec<EntityId> {
+    let mut seen = HashSet::new();
+    doc.facts
+        .iter()
+        .map(|f| &f.subject)
+        .filter(|s| !known.contains(*s))
+        .filter(|s| seen.insert((*s).clone()))
+        .cloned()
+        .collect()
+}
+
+/// Every entity a scan declares — the set [`orphan_subjects`] checks against.
+pub fn known_entities(scan: &[DocScan]) -> HashSet<EntityId> {
+    scan.iter()
+        .filter_map(|d| d.entity.as_ref().map(|e| e.id.clone()))
+        .collect()
 }
 
 /// Match facts by the edge they draw. `shape: None` means **any** shape pointing
@@ -301,6 +333,62 @@ mod tests {
             ..Default::default()
         };
         assert!(open.validate().is_ok());
+    }
+
+    /// A subject naming an entity nobody declares is counted; one naming a real
+    /// entity — this doc's own, or another doc's — is not. The row is never
+    /// dropped and never fails the scan: it is a fact somebody wrote, and the
+    /// point is only that it stops being invisible.
+    #[test]
+    fn a_subject_that_names_no_known_entity_is_counted_once() {
+        use crate::memory::{Boot, FactId};
+        use jiff::civil::date;
+
+        let entity = |id: &str| Entity {
+            id: EntityId(id.into()),
+            kind: EntityId(id.into()).kind().expect("test ids are well-formed"),
+            name: String::new(),
+            source: "test".into(),
+            crm: None,
+            boot: Boot::OnDemand,
+        };
+        let row = |id: &str, subject: &str| Fact {
+            id: FactId(id.into()),
+            home: EntityId::person("alpha"),
+            subject: EntityId(subject.into()),
+            content: "a claim".into(),
+            details: None,
+            provenance: Provenance::Inference,
+            status: FactStatus::Active,
+            date: date(2026, 7, 1),
+            edge: None,
+        };
+
+        let doc = DocScan {
+            doc_id: "doc-1".into(),
+            title: "Alpha".into(),
+            prose: String::new(),
+            entity: Some(entity("person:alpha")),
+            facts: vec![
+                row("f1", "person:alpha"),   // its own entity
+                row("f2", "person:beta"),    // another doc's entity, legitimately
+                row("f3", "person:alphaa"),  // names nothing — the hand-edit tell
+                row("f4", "person:alphaa"),  // …twice, reported once
+            ],
+        };
+        let known: HashSet<EntityId> =
+            [EntityId::person("alpha"), EntityId::person("beta")].into_iter().collect();
+
+        assert_eq!(
+            orphan_subjects(&doc, &known),
+            vec![EntityId::person("alphaa")],
+            "only the subject naming no entity, and only once"
+        );
+        assert_eq!(
+            known_entities(std::slice::from_ref(&doc)),
+            [EntityId::person("alpha")].into_iter().collect::<HashSet<_>>(),
+            "a scan's known set is the entities its docs declare"
+        );
     }
 
     #[test]
