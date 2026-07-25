@@ -1372,6 +1372,21 @@ pub mod contract {
         )
         .await;
 
+        // A fact drawing the same shape at a DIFFERENT event. Without it this
+        // spec is a containment assertion, and an `edge` filter that matched
+        // everything would satisfy it — "connected to X" has to mean X.
+        let elsewhere = capture(
+            store,
+            NewFact {
+                edge: Some(Edge::new(
+                    EdgeShape::Attendance,
+                    EntityId::new(EntityKind::Event, "contract-connected-other"),
+                )),
+                ..NewFact::about(EntityId::person("contract-conn-two"), "went to the other one", date(2026, 7, 3))
+            },
+        )
+        .await;
+
         let hits = found(
             store,
             SearchQuery {
@@ -1386,6 +1401,10 @@ pub mod contract {
                 "every shape pointing at it must come back, got {addresses:?}"
             );
         }
+        assert!(
+            !addresses.contains(&elsewhere.address().to_string()),
+            "…and only the ones pointing at it: {addresses:?}"
+        );
     }
 
     /// A query that names an entity outright puts **that entity first** — decided
