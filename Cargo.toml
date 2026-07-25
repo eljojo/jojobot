@@ -56,6 +56,12 @@ reqwest = { version = "0.13", default-features = false, features = [
     "default-tls",
 ] }
 
+# --- full-text search: the index behind the `search` verb ---
+# Default features off on purpose: they buy on-disk directories (mmap, file
+# locking) and compression, and this index lives in RAM and is rebuilt from
+# Outline at start — so none of that is load-bearing, it is only build time.
+tantivy = { version = "0.25", default-features = false }
+
 # --- errors + logging ---
 thiserror = "2"
 anyhow = "1"

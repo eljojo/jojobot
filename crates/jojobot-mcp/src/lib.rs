@@ -593,6 +593,7 @@ fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::InvalidAddress(_)
         | MemoryError::InvalidEntity(_)
         | MemoryError::InvalidEdge(_)
+        | MemoryError::InvalidQuery(_)
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::UnconfirmedPromotion => McpError::invalid_params(e.to_string(), None),

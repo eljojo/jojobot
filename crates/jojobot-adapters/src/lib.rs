@@ -5,6 +5,8 @@
 //! wire format.
 //!
 //! The Outline store — the Memory port's real adapter — is the first one
-//! landed. Vikunja, CalDAV, and Raindrop clients are still pending.
+//! landed, with the search projection over it ([`search`]). Vikunja, CalDAV, and
+//! Raindrop clients are still pending.
 
 pub mod outline;
+pub mod search;

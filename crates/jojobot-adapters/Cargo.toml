@@ -17,6 +17,9 @@ reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 jiff = { workspace = true }
+# The search projection: an in-RAM full-text index over facts, entities and prose.
+tantivy = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

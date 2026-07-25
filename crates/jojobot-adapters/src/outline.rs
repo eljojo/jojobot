@@ -29,12 +29,13 @@ use jojobot_domain::memory::{
     NewEntity, NewFact, apply_entity_patch, apply_fact_patch, normalize_content, normalize_details,
     validate_content, validate_details, validate_edge, validate_entity, validate_subject,
     guard::{self, Decision},
+    search::DocScan,
 };
 
 use api::{CollectionRec, DocRec, HttpOutline, OutlineApi, Unconfigured};
 use codec::{
-    next_fact_id, parse_entity, parse_facts_table, parse_id_marker, render_fact_row, seeded_doc,
-    with_fact_appended, with_frontmatter_replaced, with_row_replaced,
+    next_fact_id, parse_entity, parse_facts_table, parse_id_marker, parse_prose, render_fact_row,
+    seeded_doc, with_fact_appended, with_frontmatter_replaced, with_row_replaced,
 };
 
 /// Outline's page cap for list endpoints. The store pages until a short page, so
@@ -560,6 +561,51 @@ impl Memory for OutlineStore {
             )));
         }
         Ok(Guarded::Written(seen))
+    }
+
+    /// Every doc in the collection, whole — including docs that are **not**
+    /// entities. A page the user wrote by hand carries no marker, so it is no
+    /// entity and holds no facts; its prose is still worth finding, which is why
+    /// it comes back rather than being filtered out here.
+    async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
+        let collection_id = self.resolve_collection().await?;
+        let mut docs = self.all_docs(&collection_id).await?;
+        // Canonical-first, so a double-created doc's twin can't shadow it.
+        docs.sort_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
+
+        let mut seen = std::collections::HashSet::new();
+        Ok(docs
+            .into_iter()
+            .map(|doc| {
+                let entity = parse_entity(&doc.text).filter(|e| seen.insert(e.id.clone()));
+                DocScan {
+                    doc_id: doc.id,
+                    title: doc.title,
+                    prose: parse_prose(&doc.text),
+                    facts: match &entity {
+                        Some(_) => parse_facts_table(&doc.text),
+                        // No marker (or a shadowed twin) means no address, and an
+                        // unaddressable fact is one nobody could ever correct.
+                        None => Vec::new(),
+                    },
+                    entity,
+                }
+            })
+            .collect())
+    }
+
+    async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
+        let collection_id = self.resolve_collection().await?;
+        Ok(self
+            .entity_doc(&collection_id, entity)
+            .await?
+            .map(|doc| DocScan {
+                doc_id: doc.id,
+                title: doc.title,
+                prose: parse_prose(&doc.text),
+                facts: parse_facts_table(&doc.text),
+                entity: parse_entity(&doc.text),
+            }))
     }
 }
 

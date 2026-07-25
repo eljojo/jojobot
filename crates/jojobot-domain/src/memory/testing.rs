@@ -16,7 +16,7 @@ use std::sync::Mutex;
 use super::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, Guarded,
     Memory, MemoryError, NewEntity, NewFact, apply_entity_patch, apply_fact_patch,
-    normalize_content, normalize_details, validate_content, validate_details, validate_edge,
+    normalize_content, normalize_details, search, validate_content, validate_details, validate_edge,
     validate_entity, validate_subject,
     guard::{self, Decision},
 };
@@ -220,6 +220,25 @@ impl Memory for InMemoryMemory {
         apply_fact_patch(fact, &patch)?;
         Ok(Guarded::Written(fact.clone()))
     }
+
+    /// The fake holds no prose — no verb writes any yet, so a doc here is its
+    /// frontmatter plus its facts. The **handle doubles as the doc id**: in the
+    /// fake an entity's handle IS the key its facts are filed under, so it is the
+    /// honest answer to "which document is this".
+    async fn scan(&self) -> Result<Vec<search::DocScan>, MemoryError> {
+        let facts = self.facts.lock().expect("fake mutex poisoned").clone();
+        Ok(self
+            .index()
+            .into_iter()
+            .map(|entity| search::DocScan {
+                doc_id: entity.id.to_string(),
+                title: entity.name.clone(),
+                prose: String::new(),
+                facts: facts.iter().filter(|f| f.home == entity.id).cloned().collect(),
+                entity: Some(entity),
+            })
+            .collect())
+    }
 }
 
 /// The behavioural contract every [`Memory`] adapter must satisfy. Each function
@@ -234,8 +253,9 @@ impl Memory for InMemoryMemory {
 /// and carries no user PII, not even in test data.
 pub mod contract {
     use super::*;
+    use crate::memory::search::{EdgeFilter, Hit, Search, SearchQuery};
     use crate::memory::{Boot, Edge, EdgeShape, FactStatus, Provenance};
-    use jiff::civil::date;
+    use jiff::civil::{Date, date};
 
     /// Capture a fact the guard is expected to wave through.
     async fn capture<M: Memory>(store: &M, fact: NewFact) -> Fact {
@@ -1147,6 +1167,271 @@ pub mod contract {
                 "expected InvalidEntity for {name:?}/{source:?}/{crm:?}, got {err:?}"
             );
         }
+    }
+
+    // --- retrieval: the search verb ------------------------------------------
+    //
+    // These run against a store that also carries the search projection. They
+    // are scoped to handles this suite owns, so they hold against a shared,
+    // pre-populated collection as much as against an empty fake.
+
+    /// Search the store, expecting the query to be well-formed.
+    fn found<S: Search>(store: &S, query: SearchQuery) -> Vec<Hit> {
+        store
+            .search(&query)
+            .unwrap_or_else(|e| panic!("search should succeed: {e}"))
+    }
+
+    /// The facts in a result list, by address.
+    fn fact_hits(hits: &[Hit]) -> Vec<&Fact> {
+        hits.iter()
+            .filter_map(|h| match h {
+                Hit::Fact { fact } => Some(fact),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// **Read-back extends to the index.** A fact captured a moment ago is
+    /// findable by the next search call, with no restart — otherwise "captured"
+    /// means "written somewhere the assistant can't look".
+    pub async fn search_finds_a_fact_captured_moments_ago<S: Memory + Search>(store: &S) {
+        let subject = EntityId::person("contract-searchable");
+        let captured = capture(
+            store,
+            NewFact::about(subject.clone(), "keeps a zamboni in the garage", date(2026, 7, 1)),
+        )
+        .await;
+
+        let hits = found(store, SearchQuery::text("zamboni"));
+        let addresses: Vec<String> = fact_hits(&hits).iter().map(|f| f.address().to_string()).collect();
+        assert!(
+            addresses.contains(&captured.address().to_string()),
+            "the fact just captured must be findable without a restart: {hits:?}"
+        );
+    }
+
+    /// Every fact hit carries the **whole row** — its address and its provenance
+    /// included. The address is what an edit needs; the provenance is what keeps a
+    /// guess from being read as something the user said.
+    pub async fn search_fact_hits_carry_an_address_and_provenance<S: Memory + Search>(store: &S) {
+        let subject = EntityId::person("contract-search-fields");
+        capture(
+            store,
+            NewFact {
+                provenance: Provenance::Testimony,
+                details: Some("said so twice".into()),
+                ..NewFact::about(subject.clone(), "cycles to the velodrome", date(2026, 7, 1))
+            },
+        )
+        .await;
+
+        let hits = found(store, SearchQuery::text("velodrome"));
+        let facts = fact_hits(&hits);
+        let found_fact = facts
+            .iter()
+            .find(|f| f.subject == subject)
+            .unwrap_or_else(|| panic!("the captured fact must come back: {hits:?}"));
+        assert_eq!(found_fact.provenance, Provenance::Testimony);
+        assert_eq!(found_fact.details.as_deref(), Some("said so twice"));
+        assert_eq!(found_fact.address().home, subject, "the address names its home doc");
+        assert_eq!(found_fact.address().local, found_fact.id);
+    }
+
+    /// Negated and superseded facts are **out by default** — a correction that
+    /// keeps coming back as current truth is worse than no memory at all — and
+    /// `status: negated` is exactly how the anti-fact list is read.
+    pub async fn search_excludes_negated_by_default_and_lists_it_on_request<S: Memory + Search>(
+        store: &S,
+    ) {
+        let subject = EntityId::person("contract-search-negated");
+        let live = capture(
+            store,
+            NewFact::about(subject.clone(), "plays the theremin", date(2026, 7, 1)),
+        )
+        .await;
+        let corrected = capture(
+            store,
+            NewFact::about(subject.clone(), "plays the theremin professionally", date(2026, 7, 2)),
+        )
+        .await;
+        edit(
+            store,
+            &corrected.address(),
+            FactPatch {
+                content: Some("does NOT play the theremin professionally — do not re-infer".into()),
+                status: Some(FactStatus::Negated),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let default = found(store, SearchQuery::text("theremin"));
+        let addresses: Vec<String> = fact_hits(&default).iter().map(|f| f.address().to_string()).collect();
+        assert!(
+            addresses.contains(&live.address().to_string()),
+            "the active fact must be found: {default:?}"
+        );
+        assert!(
+            !addresses.contains(&corrected.address().to_string()),
+            "a negated fact must not come back as current truth: {default:?}"
+        );
+
+        let anti = found(
+            store,
+            SearchQuery {
+                status: Some(FactStatus::Negated),
+                ..SearchQuery::text("theremin")
+            },
+        );
+        let anti_addresses: Vec<String> = fact_hits(&anti).iter().map(|f| f.address().to_string()).collect();
+        assert!(
+            anti_addresses.contains(&corrected.address().to_string()),
+            "status: negated IS the anti-fact list: {anti:?}"
+        );
+        assert!(
+            !anti_addresses.contains(&live.address().to_string()),
+            "…and it holds only the negated ones: {anti:?}"
+        );
+    }
+
+    /// **Ask-across, the capability this milestone exists for:** one call answers
+    /// "which people are in X". The filter walks the typed edges, so a fact that
+    /// merely *mentions* X in its text is not an answer — that difference is the
+    /// whole reason edges are written at capture instead of inferred later.
+    pub async fn search_answers_ask_across_by_kind_and_edge<S: Memory + Search>(store: &S) {
+        let far = EntityId::new(EntityKind::Place, "contract-faraway");
+        let here = capture_at(store, "contract-away-one", &far, date(2026, 7, 1)).await;
+        let there = capture_at(store, "contract-away-two", &far, date(2026, 7, 2)).await;
+
+        // A fact that talks about the place but draws no edge to it.
+        let talker = EntityId::person("contract-away-talker");
+        capture(
+            store,
+            NewFact::about(talker.clone(), "keeps talking about contract-faraway", date(2026, 7, 3)),
+        )
+        .await;
+        // …and a place that is edged there but is not a person.
+        let project = EntityId::new(EntityKind::Project, "contract-away-project");
+        capture(
+            store,
+            NewFact {
+                edge: Some(Edge::new(EdgeShape::Location, far.clone())),
+                ..NewFact::about(project.clone(), "runs out of contract-faraway", date(2026, 7, 4))
+            },
+        )
+        .await;
+
+        let hits = found(
+            store,
+            SearchQuery {
+                kind: Some(EntityKind::Person),
+                edge: Some(EdgeFilter {
+                    shape: Some(EdgeShape::Location),
+                    object: far.clone(),
+                }),
+                ..Default::default()
+            },
+        );
+        let mut subjects: Vec<String> = fact_hits(&hits)
+            .iter()
+            .map(|f| f.subject.to_string())
+            .collect();
+        subjects.sort();
+        subjects.dedup();
+        assert_eq!(
+            subjects,
+            vec![here.subject.to_string(), there.subject.to_string()],
+            "exactly the people edged there — not the one who merely mentions it, \
+             not the project that is: {hits:?}"
+        );
+    }
+
+    /// An edge filter with **no shape** answers "what's connected to X" — every
+    /// edge pointing at it, whatever its shape.
+    pub async fn search_by_edge_object_alone_finds_any_shape<S: Memory + Search>(store: &S) {
+        let fest = EntityId::new(EntityKind::Event, "contract-connected-fest");
+        let attendee = capture(
+            store,
+            NewFact {
+                edge: Some(Edge::new(EdgeShape::Attendance, fest.clone())),
+                ..NewFact::about(EntityId::person("contract-conn-one"), "went both nights", date(2026, 7, 1))
+            },
+        )
+        .await;
+        let about = capture(
+            store,
+            NewFact {
+                edge: Some(Edge::new(EdgeShape::About, fest.clone())),
+                ..NewFact::about(
+                    EntityId::new(EntityKind::Work, "contract-conn-mix"),
+                    "recorded live that weekend",
+                    date(2026, 7, 2),
+                )
+            },
+        )
+        .await;
+
+        let hits = found(
+            store,
+            SearchQuery {
+                edge: Some(EdgeFilter { shape: None, object: fest }),
+                ..Default::default()
+            },
+        );
+        let addresses: Vec<String> = fact_hits(&hits).iter().map(|f| f.address().to_string()).collect();
+        for expected in [attendee.address(), about.address()] {
+            assert!(
+                addresses.contains(&expected.to_string()),
+                "every shape pointing at it must come back, got {addresses:?}"
+            );
+        }
+    }
+
+    /// A query that names an entity outright puts **that entity first** — decided
+    /// by the write guard's own matcher, so search and the guard can never
+    /// disagree about what counts as the same thing.
+    pub async fn search_pins_a_named_entity_first<S: Memory + Search>(store: &S) {
+        let handle = EntityId::new(EntityKind::Org, "contract-pinnable-guild");
+        add(store, NewEntity::new(handle.clone(), "Pinnable Guild", "user-named")).await;
+        // Facts that also match the query text, so the pin has something to beat.
+        capture(
+            store,
+            NewFact::about(handle.clone(), "meets at the contract-pinnable-guild hall", date(2026, 7, 1)),
+        )
+        .await;
+
+        let hits = found(store, SearchQuery::text(handle.as_str()));
+        assert!(
+            matches!(hits.first(), Some(Hit::Entity { entity, .. }) if entity.id == handle),
+            "an exact handle query must return that entity first: {hits:?}"
+        );
+    }
+
+    /// Capture a fact placing `who` at `place`, and return it.
+    async fn capture_at<M: Memory>(store: &M, who: &str, place: &EntityId, on: Date) -> Fact {
+        capture(
+            store,
+            NewFact {
+                edge: Some(Edge::new(EdgeShape::Location, place.clone())),
+                ..NewFact::about(EntityId::person(who), "spending the season there", on)
+            },
+        )
+        .await
+    }
+
+    /// Run the whole contract, **including retrieval**, against a store that
+    /// carries the search projection. The search half can't live in `run_all`:
+    /// the bare Memory port has no read side for it.
+    pub async fn run_all_searchable<S: Memory + Search>(store: &S) {
+        run_all(store).await;
+
+        search_finds_a_fact_captured_moments_ago(store).await;
+        search_fact_hits_carry_an_address_and_provenance(store).await;
+        search_excludes_negated_by_default_and_lists_it_on_request(store).await;
+        search_answers_ask_across_by_kind_and_edge(store).await;
+        search_by_edge_object_alone_finds_any_shape(store).await;
+        search_pins_a_named_entity_first(store).await;
     }
 
     /// Run the whole contract against one store.

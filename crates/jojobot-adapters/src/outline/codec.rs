@@ -362,6 +362,30 @@ fn parse_field(doc: &str, key: &str) -> Option<String> {
         .find_map(|l| field_of(l, key))
 }
 
+/// The **human** half of a doc: everything that is neither jojobot's machine
+/// block nor its fact table. This is what the search index carries as prose, and
+/// it is why a detail demoted into a paragraph is still findable — nobody has to
+/// have remembered to file it as a fact.
+///
+/// Read generously: a doc with no marker and no table is prose from end to end,
+/// because a page the user wrote by hand is exactly the page worth finding.
+pub(super) fn parse_prose(doc: &str) -> String {
+    let lines: Vec<&str> = doc.lines().collect();
+    let limit = lines
+        .iter()
+        .position(|l| l.trim() == FACTS_HEADER)
+        .unwrap_or(lines.len());
+    let machine = machine_block(&lines).filter(|(start, _)| *start < limit);
+
+    let kept = lines[..limit].iter().enumerate().filter_map(|(i, line)| {
+        match machine {
+            Some((start, end)) if i >= start && i < end => None,
+            _ => Some(*line),
+        }
+    });
+    kept.collect::<Vec<&str>>().join("\n").trim().to_string()
+}
+
 /// Read the doc's embedded `id:` identity marker — the durable, cosmetic-proof
 /// handle on the entity. It lives in the machine block near the top, above the
 /// fact table. This — not the (user-renamable) title — is what resolves a doc to
@@ -684,6 +708,48 @@ mod tests {
         assert_eq!(parsed.provenance, Provenance::Testimony);
         assert_eq!(parsed.status, FactStatus::Active);
         assert_eq!(parsed.date, date(2026, 7, 1));
+    }
+
+    // --- the prose half of a doc ----------------------------------------------
+
+    /// Prose is the doc minus jojobot's two machine sections. The point of
+    /// reading it at all: a detail a human demoted into a paragraph stays
+    /// findable, without anyone having filed it as a fact.
+    #[test]
+    fn prose_is_the_doc_without_the_machine_block_or_the_fact_table() {
+        let doc = with_fact_appended(
+            &format!(
+                "Alpha keeps a paper notebook and hates phone calls.\n\n{}\n\n{FACTS_HEADER}\n\n\
+                 {TABLE_HEADER}\n{TABLE_SEP}\n",
+                frontmatter(&alpha())
+            ),
+            &render_fact_row(&fact("f1", "person:alpha", "plays go", Provenance::Testimony, date(2026, 7, 1))),
+        );
+        let prose = parse_prose(&doc);
+        assert_eq!(prose, "Alpha keeps a paper notebook and hates phone calls.");
+        assert!(!prose.contains("id: person:alpha"), "the machine block is not prose");
+        assert!(!prose.contains("plays go"), "a fact row is not prose");
+    }
+
+    /// A doc the user wrote by hand — no marker, no table — is prose end to end.
+    /// It is not an entity, and it is still exactly the page worth finding.
+    #[test]
+    fn a_hand_written_doc_is_prose_end_to_end() {
+        let doc = "Notes from the trip.\n\nThe pass was closed on Tuesday.";
+        assert_eq!(parse_prose(doc), doc);
+        assert_eq!(parse_entity(doc), None);
+    }
+
+    /// A fenced block the user wrote is prose; only jojobot's own is stripped.
+    #[test]
+    fn a_users_own_fenced_block_stays_in_the_prose() {
+        let doc = format!(
+            "Prose above.\n\n```\nimportant snippet the user wrote\n```\n\n{}\n\n{FACTS_HEADER}\n",
+            frontmatter(&alpha())
+        );
+        let prose = parse_prose(&doc);
+        assert!(prose.contains("important snippet the user wrote"), "got: {prose}");
+        assert!(!prose.contains("source: crm-card"), "jojobot's block is stripped: {prose}");
     }
 
     // --- the edges column -----------------------------------------------------

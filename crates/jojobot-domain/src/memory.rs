@@ -21,6 +21,7 @@ use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
 pub mod guard;
+pub mod search;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
@@ -852,6 +853,10 @@ pub enum MemoryError {
     /// object of the wrong kind for its shape.
     #[error("invalid edge: {0}")]
     InvalidEdge(String),
+    /// The search query can't be served as asked (see
+    /// [`SearchQuery::validate`](search::SearchQuery::validate)).
+    #[error("invalid query: {0}")]
+    InvalidQuery(String),
     /// The addressed fact doesn't exist. Never auto-created, never guessed at —
     /// the nearest live addresses come back so the caller can retarget.
     #[error("no fact at '{attempted}'; addresses here: {}", nearest.join(", "))]
@@ -945,6 +950,30 @@ pub trait Memory: Send + Sync {
         address: &FactAddress,
         patch: FactPatch,
     ) -> Result<Guarded<Fact>, MemoryError>;
+
+    /// Every document in the store, whole: its prose, the entity it is, and the
+    /// facts in its table. This is the **index's boot scan** — the search
+    /// projection is rebuilt from it by a plain full re-fetch at start, which is
+    /// what keeps the index a projection and not a second source of truth.
+    async fn scan(&self) -> Result<Vec<search::DocScan>, MemoryError>;
+
+    /// One entity's document, scanned. The incremental half of the same
+    /// mechanism: after a write, the index re-reads the touched doc **from the
+    /// store** rather than patching itself from what the writer believed — so a
+    /// partial-update bug has nowhere to live.
+    ///
+    /// Defaulted off [`scan`](Memory::scan), so an adapter that can do better
+    /// overrides it and one that can't is still correct.
+    async fn scan_entity(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Option<search::DocScan>, MemoryError> {
+        Ok(self
+            .scan()
+            .await?
+            .into_iter()
+            .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == entity)))
+    }
 }
 
 #[cfg(test)]
