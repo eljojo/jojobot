@@ -428,9 +428,10 @@ impl std::fmt::Display for EdgeShape {
 pub struct Edge {
     /// Which of the four shapes.
     pub shape: EdgeShape,
-    /// The entity the edge points at. Validated and **screened by the write
-    /// guard** exactly as a subject is: a typo'd object gets candidates back, it
-    /// never becomes a silent new node.
+    /// The entity the edge points at. Validated, and required to **already
+    /// exist** exactly as a subject is: a typo'd object gets candidates back and
+    /// an unrecognized one gets refused, so an edge never points at a node
+    /// nobody else references.
     pub object: EntityId,
 }
 
@@ -813,8 +814,12 @@ impl Fact {
 pub enum Guarded<T> {
     /// No suspicion, or the caller had already resolved it: this is the record.
     Written(T),
-    /// **Nothing was written.** Confirm one of the candidates, or re-call with
-    /// an explicit create-new signal (which never clears an exact handle).
+    /// **Nothing was written.** The way out depends on the gate: a creation or a
+    /// rename takes one of the candidates or an explicit create-new signal
+    /// (which never clears an exact handle); a write that only *names* an entity
+    /// takes an existing handle or an [`add_entity`](Memory::add_entity) first,
+    /// because it cannot create one. `candidates` may be empty — an unrecognized
+    /// handle is blocked whether or not anything resembles it.
     Blocked {
         /// The handle the caller tried to write.
         attempted: EntityId,
@@ -926,8 +931,10 @@ fn nearest_handles(nearest: &[guard::EntityMatch]) -> String {
 ///   path returns it, byte-identical. Writing is not recording.
 /// * **the guard is on the write path** — every entity-touching write screens
 ///   against the index first, so it cannot be skipped by a caller who forgot.
-/// * **never create on a miss** — an unknown address or handle errors with the
-///   nearest candidates. Guessing is how two people become one.
+/// * **never create on a miss** — an unknown address or handle errors, or comes
+///   back blocked, with the nearest candidates. Guessing is how two people
+///   become one; auto-provisioning is how one typo becomes a second person.
+///   Only [`add_entity`](Memory::add_entity) brings an entity into existence.
 #[async_trait::async_trait]
 pub trait Memory: Send + Sync {
     /// Create an entity. Kind-general: the handle carries the kind. Screened by
@@ -949,13 +956,18 @@ pub trait Memory: Send + Sync {
 
     /// Write a fact and return it with the id its home assigned, its content
     /// normalized. The returned fact must be visible — byte-identical — to a
-    /// subsequent [`recall`](Memory::recall) of its subject. A subject that
-    /// doesn't resolve is screened by the write guard, and so is an edge's
-    /// object: both name an entity, so both face the same gate.
+    /// subsequent [`recall`](Memory::recall) of its subject. **Both entities it
+    /// names — the subject and an edge's object — must already exist**
+    /// ([`guard::decide_existing`]); this verb never creates one, so a handle it
+    /// cannot resolve comes back [`Guarded::Blocked`].
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError>;
 
-    /// Read back every fact whose subject is `subject`, in an unspecified order.
-    /// Each carries its [`FactAddress`] — that is what makes them editable.
+    /// Read back every fact belonging to `subject`, in an unspecified order:
+    /// facts *about* it, and facts **homed in its doc** whatever their subject
+    /// column says. Home-doc membership counts because a mistyped subject cell
+    /// must not be able to hide a doc's own rows from the entity whose page they
+    /// sit on. Each carries its [`FactAddress`] — that is what makes them
+    /// editable, and it is how such a row gets repaired.
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError>;
 
     /// Edit one addressed fact in place (fix-the-source). An unknown address is

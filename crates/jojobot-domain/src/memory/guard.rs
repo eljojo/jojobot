@@ -482,8 +482,9 @@ mod tests {
         );
     }
 
-    /// An entity with no name yet (a doc self-provisioned by `capture`) is still
-    /// screened on its slug, and never matches on an empty name.
+    /// An entity with no name yet — a doc from before the existence gate, or one
+    /// a human started by hand — is still screened on its slug, and never
+    /// matches on an empty name.
     #[test]
     fn an_unnamed_entity_still_screens_by_slug() {
         let idx = vec![entity("person:alpha", "", "capture")];
