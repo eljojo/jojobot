@@ -16,14 +16,49 @@ pub(super) const TABLE_HEADER: &str =
     "| id | subject | content | details | provenance | status | date | edges |";
 /// The markdown table separator under the header.
 pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | --- |";
-/// Cell counts of the row formats that exist on disk: the current one, the
-/// pre-`edges` one, and the pre-`details` one. A row is parsed by its width —
-/// the schema has grown twice, and rows written before each growth must keep
-/// reading. The column is added to a row on its next touch (lazy migration);
-/// there is no sweep.
-const CELLS: usize = 8;
-const CELLS_NO_EDGES: usize = 7;
-const CELLS_LEGACY: usize = 6;
+/// Where each field sits in a row. **Four layouts exist on disk** — the schema
+/// grew twice and was reshuffled once — and rows written under every one of them
+/// must keep reading. A column is added to a row on its next touch (lazy
+/// migration); there is no sweep.
+///
+/// Width tells three of them apart. It cannot tell the last two apart: the
+/// slice-1 row (`id | subject | content | status | date | edges`, provenance
+/// riding a trailing `❓` on the content cell) is six cells wide, and so is the
+/// pre-`details` row that replaced it (`id | subject | content | provenance |
+/// status | date`) — with a different meaning in every column after `content`.
+/// **Which cell holds a date** is what separates them.
+struct Layout {
+    /// Absent before the `details` column existed.
+    details: Option<usize>,
+    /// Absent in slice 1, where a trailing `❓` on the content cell carried it.
+    provenance: Option<usize>,
+    status: usize,
+    date: usize,
+    /// Absent in the two shapes written between slice 1 and the `edges` column.
+    edges: Option<usize>,
+}
+
+/// The layout of a row, or `None` if it is not a fact row at all.
+///
+/// The six-cell ambiguity is resolved by looking for the date: whichever of the
+/// two candidate cells parses as one names the layout. A row where neither does
+/// is unreadable under both, so it is no row — the same verdict either way.
+fn layout_of(cells: &[String]) -> Option<Layout> {
+    let is_date = |i: usize| cells.get(i).is_some_and(|c| c.trim().parse::<Date>().is_ok());
+    match cells.len() {
+        8 => Some(Layout { details: Some(3), provenance: Some(4), status: 5, date: 6, edges: Some(7) }),
+        7 => Some(Layout { details: Some(3), provenance: Some(4), status: 5, date: 6, edges: None }),
+        // Pre-`details`: … | provenance | status | date
+        6 if is_date(5) => {
+            Some(Layout { details: None, provenance: Some(3), status: 4, date: 5, edges: None })
+        }
+        // Slice 1: … | status | date | edges
+        6 if is_date(4) => {
+            Some(Layout { details: None, provenance: None, status: 3, date: 4, edges: Some(5) })
+        }
+        _ => None,
+    }
+}
 
 /// Render a fact's edge for its cell: `shape=object`, empty when there is none.
 /// `=` rather than `:`, because an object id already carries a colon.
@@ -98,16 +133,11 @@ pub(super) fn render_fact_row(f: &Fact) -> String {
 /// separator, or not a well-formed fact row. `home` is the entity whose doc the
 /// row was read from — the other half of the fact's global address.
 ///
-/// Every row width that exists on disk is accepted: the current eight-cell
-/// format, the seven-cell one from before `edges`, and the six-cell one from
-/// before `details`. Anything else is not a fact row.
+/// Every row layout that exists on disk is accepted — see [`Layout`]. Anything
+/// else is not a fact row.
 pub(super) fn parse_fact_row(row: &str, home: &EntityId) -> Option<Fact> {
     let cells = split_cells(row);
-    let legacy = match cells.len() {
-        CELLS | CELLS_NO_EDGES => false,
-        CELLS_LEGACY => true,
-        _ => return None,
-    };
+    let at = layout_of(&cells)?;
     let id = cells[0].trim();
     if id.is_empty() || id.eq_ignore_ascii_case("id") {
         return None; // empty or the header row
@@ -126,18 +156,18 @@ pub(super) fn parse_fact_row(row: &str, home: &EntityId) -> Option<Fact> {
         return None;
     }
 
-    // The legacy row has no details cell, so every column after content shifts.
-    let details = (!legacy)
-        .then(|| cells[3].trim())
+    let cell = |i: usize| cells[i].as_str();
+    let details = at
+        .details
+        .map(|i| cells[i].trim())
         .filter(|d| !d.is_empty())
         .map(str::to_string);
-    let shift = usize::from(legacy);
-    let provenance = Provenance::from_token(&cells[4 - shift]);
-    let status = FactStatus::from_token(&cells[5 - shift]);
-    let date: Date = cells[6 - shift].trim().parse().ok()?;
-    // The edges column is the newest, so it sits last: every earlier index is
-    // unchanged, and a row that predates it simply has no cell there.
-    let edge = cells.get(7).and_then(|c| parse_edge(c));
+    // A row from before the provenance column reads as inference: absent is the
+    // less-trusted side, and a read never promotes a claim it cannot vouch for.
+    let provenance = at.provenance.map_or(Provenance::default(), |i| Provenance::from_token(cell(i)));
+    let status = FactStatus::from_token(cell(at.status));
+    let date: Date = cells[at.date].trim().parse().ok()?;
+    let edge = at.edges.and_then(|i| parse_edge(cell(i)));
 
     Some(Fact {
         id: FactId(id.to_string()),
@@ -234,7 +264,9 @@ pub(super) fn with_row_replaced(
 /// reader can't parse still holds its id and can never be handed out twice.
 fn row_id(row: &str) -> Option<String> {
     let cells = split_cells(row);
-    if !matches!(cells.len(), CELLS | CELLS_NO_EDGES | CELLS_LEGACY) {
+    // Width alone, on purpose: this is deliberately wider than `layout_of`, so a
+    // row the reader gives up on still holds its id and can never be re-minted.
+    if !matches!(cells.len(), 6..=8) {
         return None;
     }
     let id = cells[0].trim();
@@ -713,6 +745,109 @@ mod tests {
         assert_eq!(parsed.provenance, Provenance::Testimony);
         assert_eq!(parsed.status, FactStatus::Active);
         assert_eq!(parsed.date, date(2026, 7, 1));
+    }
+
+    /// **The slice-1 table.** Before `provenance` was its own column it rode a
+    /// trailing `❓` on the content cell, and the row was
+    /// `id | subject | content | status | date | edges` — six cells, exactly as
+    /// wide as the pre-`details` shape that replaced it
+    /// (`id | subject | content | provenance | status | date`) and meaning
+    /// something different in every column after `content`.
+    ///
+    /// Reading one as the other put a status token in the provenance cell, a
+    /// date in the status cell, and the empty `edges` cell where the date should
+    /// be — which failed to parse, so the row was dropped. Silently, and for
+    /// every row on the page: a slice-1 doc read back as having no facts at all.
+    ///
+    /// Width alone cannot tell the two apart. **Which cell holds a date** can.
+    #[test]
+    fn a_slice_one_row_parses_beside_the_six_column_shape_that_replaced_it() {
+        let home = EntityId::person("alpha");
+
+        let slice1 = parse_fact_row(
+            "| f1 | person:alpha | plays go ❓ | active | 2026-07-01 |  |",
+            &home,
+        )
+        .expect("a slice-1 row must parse");
+        assert_eq!(slice1.content, "plays go ❓", "the ❓ is content now; nothing invents a column");
+        assert_eq!(slice1.details, None);
+        assert_eq!(slice1.status, FactStatus::Active);
+        assert_eq!(slice1.date, date(2026, 7, 1));
+        assert_eq!(slice1.edge, None);
+        assert_eq!(
+            slice1.provenance,
+            Provenance::Inference,
+            "no provenance column means the less-trusted side, never a promotion"
+        );
+
+        // Slice 1 wrote a blank status cell for active…
+        let blank = parse_fact_row(
+            "| f2 | person:alpha | keeps a paper notebook |  | 2026-07-02 |  |",
+            &home,
+        )
+        .expect("a blank status cell must parse");
+        assert_eq!(blank.status, FactStatus::Active);
+        assert_eq!(blank.date, date(2026, 7, 2));
+
+        // …and superseded survives the trip, where dropping the row would have
+        // quietly promoted a retired claim back to current truth.
+        let retired = parse_fact_row(
+            "| f3 | person:alpha | the old address | superseded | 2026-07-03 |  |",
+            &home,
+        )
+        .expect("a superseded slice-1 row must parse");
+        assert_eq!(retired.status, FactStatus::Superseded);
+
+        // The shape that replaced it is untouched: same width, other meaning.
+        let no_details =
+            parse_fact_row("| f1 | person:alpha | plays go | testimony | active | 2026-07-01 |", &home)
+                .expect("the pre-details row must still parse");
+        assert_eq!(no_details.provenance, Provenance::Testimony);
+        assert_eq!(no_details.status, FactStatus::Active);
+        assert_eq!(no_details.date, date(2026, 7, 1));
+    }
+
+    /// A whole slice-1 page reads, keeps its ids reserved, and gains the current
+    /// columns on the rows a write touches — the same lazy migration the `edges`
+    /// and `details` additions got, now for a column that was *missing*.
+    #[test]
+    fn a_slice_one_table_reads_and_gains_the_current_columns_on_touch() {
+        let doc = "# Alpha\n\nSome prose.\n\n```yaml\nid: person:alpha\n```\n\n### ⚙ facts\n\n\
+                   | id | subject | content | status | date | edges |\n\
+                   | --- | --- | --- | --- | --- | --- |\n\
+                   | f1 | person:alpha | plays go ❓ | active | 2026-07-01 |  |\n\
+                   | f2 | person:alpha | speaks two languages |  | 2026-07-02 |  |\n";
+        let facts = parse_facts_table(doc);
+        assert_eq!(facts.len(), 2, "both slice-1 rows read: {facts:?}");
+        assert_eq!(
+            next_fact_id(doc),
+            FactId("f3".into()),
+            "the ids on the page are taken"
+        );
+
+        // A capture lands beside them, and everything still reads.
+        let fresh = Fact {
+            details: Some("mentioned twice".into()),
+            ..fact("f3", "person:alpha", "learning Rust", Provenance::Testimony, date(2026, 7, 3))
+        };
+        let appended = with_fact_appended(doc, &render_fact_row(&fresh));
+        let parsed = parse_facts_table(&appended);
+        assert_eq!(parsed.len(), 3, "old rows and new one together: {parsed:?}");
+        assert_eq!(parsed[2], fresh);
+        assert!(appended.contains("Some prose."), "prose above the table is untouched");
+
+        // …and touching a slice-1 row rewrites it in the current eight-cell form.
+        let touched = with_row_replaced(
+            &appended,
+            &EntityId::person("alpha"),
+            &FactId("f1".into()),
+            &render_fact_row(&facts[0]),
+        )
+        .expect("a slice-1 row is addressable");
+        assert!(
+            touched.contains("| f1 | person:alpha | plays go ❓ |  | inference | active | 2026-07-01 |  |"),
+            "the touched row carries every current column: {touched}"
+        );
     }
 
     // --- the prose half of a doc ----------------------------------------------

@@ -1109,6 +1109,37 @@ mod tests {
         assert_eq!(store.recall(&subject).await.unwrap().len(), 2, "both facts reachable");
     }
 
+    /// **A slice-1 page, through the real store.** Its table predates both the
+    /// `provenance` and `details` columns, so every row on it read as unparseable
+    /// and vanished: `recall` came back empty, and a capture landed a lone new
+    /// row on a page that looked, to jojobot, like it had never held anything.
+    /// The page had to be repaired by hand before the store could see it.
+    #[tokio::test]
+    async fn a_slice_one_page_recalls_its_facts_and_takes_a_new_one() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        // Literally as slice 1 left it: no provenance column (a trailing ❓ meant
+        // inference), no details column, a blank status cell for active.
+        let doc = "```yaml\nid: person:alpha\nkind: person\n```\n\n### ⚙ facts\n\n\
+                   | id | subject | content | status | date | edges |\n\
+                   | --- | --- | --- | --- | --- | --- |\n\
+                   | f1 | person:alpha | plays go ❓ | active | 2026-07-01 |  |\n\
+                   | f2 | person:alpha | speaks two languages |  | 2026-07-02 |  |\n";
+        fake.seed_document(&coll, "alpha", doc);
+        let store = store(fake.clone());
+        let subject = EntityId::person("alpha");
+
+        let before = store.recall(&subject).await.expect("recall");
+        assert_eq!(before.len(), 2, "the page's own facts must be readable: {before:?}");
+
+        capture(&store, NewFact::about(subject.clone(), "learning Rust", date(2026, 7, 3))).await;
+
+        let after = store.recall(&subject).await.expect("recall");
+        assert_eq!(after.len(), 3, "the new fact lands beside the old ones: {after:?}");
+        assert_eq!(after[2].id.as_str(), "f3", "the ids already on the page are taken");
+        assert_eq!(fake.docs_in(&coll).len(), 1, "no second doc was forked");
+    }
+
     #[tokio::test]
     async fn creates_an_owned_collection_when_absent() {
         let fake = FakeOutline::new();
