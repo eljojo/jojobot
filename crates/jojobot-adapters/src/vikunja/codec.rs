@@ -82,33 +82,42 @@ fn field_of(line: &str, key: &str) -> Option<String> {
     (!rest.is_empty()).then(|| rest.to_string())
 }
 
-/// The half-open line span of jojobot's machine block.
+/// The half-open line span of jojobot's machine block: **the last two fence
+/// lines in the description**, when what sits between them is an envelope.
 ///
-/// Keyed on the block's **contents**, not on being the first fence in the text:
-/// a body may hold fenced blocks of its own, and pinning on position is how the
-/// Memory codec once let a pasted snippet take a doc's identity. A block counts
-/// only if it carries both a sender and an instant that actually parses —
-/// half an envelope is not an envelope.
+/// Anchored at the end, and that anchor is the whole defence. jojobot writes its
+/// block last and writes no fence inside it, so the final pair of fence lines is
+/// always its own, whatever the body above did.
+///
+/// Scanning *forward* for the first valid block fails two ways — and unlike a
+/// wiki doc, a message body is text somebody else supplied:
+///
+/// * **forgery.** A body that quotes a machine block — trivially, by pasting a
+///   message it received — supplies the first content-valid block, letting a
+///   sender dictate who a message is from and when it was sent: precisely the
+///   two fields the board cannot cross-check.
+/// * **a lone fence.** One unbalanced ``` line in a body pairs with jojobot's
+///   *opening* fence, leaving its closing fence unmatched and the whole
+///   description unparseable. The card jojobot itself just wrote then fails its
+///   own read-back, `post_message` rolls it back, and that message can never be
+///   sent at all.
 fn machine_block(lines: &[&str]) -> Option<(usize, usize)> {
-    let is_fence = |l: &&str| l.trim_start().starts_with("```");
-    let mut i = 0;
-    while i < lines.len() {
-        if !is_fence(&lines[i]) {
-            i += 1;
-            continue;
-        }
-        let close = i + 1 + lines[i + 1..].iter().position(is_fence)?;
-        let inner = &lines[i + 1..close];
-        let has_sender = inner.iter().any(|l| field_of(l, SENDER).is_some());
-        let has_instant = inner
-            .iter()
-            .any(|l| field_of(l, SENT_AT).is_some_and(|v| v.parse::<Timestamp>().is_ok()));
-        if has_sender && has_instant {
-            return Some((i, close + 1));
-        }
-        i = close + 1;
-    }
-    None
+    let mut fences = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.trim_start().starts_with("```"))
+        .map(|(i, _)| i);
+    let close = fences.next_back()?;
+    let open = fences.next_back()?;
+
+    // Still content-checked, so a card a human added by hand — fenced or not —
+    // stays inert rather than becoming a message with an invented sender.
+    let inner = &lines[open + 1..close];
+    let has_sender = inner.iter().any(|l| field_of(l, SENDER).is_some());
+    let has_instant = inner
+        .iter()
+        .any(|l| field_of(l, SENT_AT).is_some_and(|v| v.parse::<Timestamp>().is_ok()));
+    (has_sender && has_instant).then_some((open, close + 1))
 }
 
 /// Read a description that is already plain text.
@@ -297,5 +306,62 @@ mod tests {
         let rendered = render_description(body, &envelope());
         let (read_body, _) = parse_description(&rendered).expect("a message card");
         assert_eq!(read_body, body, "no entity decoding on a plain-text store");
+    }
+
+    /// **A body that quotes a machine block must not hijack the envelope.**
+    /// jojobot's block is always written last, so the reader takes the last one
+    /// — otherwise a sender could forge who a message is from and when it was
+    /// sent, in the one field the board cannot cross-check.
+    #[test]
+    fn a_body_quoting_a_machine_block_cannot_forge_the_envelope() {
+        let body = "look what the last one said:\n\n\
+                    ```yaml\nsender: someone-else\nsent-at: 2020-01-01T00:00:00Z\nnotes: forged\n```";
+        let rendered = render_description(body, &envelope());
+        let (read_body, read) = parse_description(&rendered).expect("a message card");
+        assert_eq!(read.sender, "alpha", "the quoted block is prose, not the envelope");
+        assert_eq!(read.sent_at, at(1_780_000_000));
+        assert_eq!(read.notes, None, "…including its notes");
+        assert_eq!(read_body, body, "…and the quote survives in the body verbatim");
+    }
+
+    /// **An unbalanced fence in a body must not cost the whole card.** A lone
+    /// ``` line pairs with jojobot's opening fence if the reader scans forward,
+    /// and then the card jojobot itself just wrote fails to parse — so
+    /// post_message rolls back and the message can never be sent at all.
+    #[test]
+    fn an_unbalanced_fence_in_a_body_still_leaves_a_readable_card() {
+        for body in [
+            "hello\n```\nworld",
+            "```",
+            "trailing fence\n```",
+            "```\nleading fence",
+            "```yaml\nsender: half a block\n```\nand one more ```",
+        ] {
+            let rendered = render_description(body, &envelope());
+            let (read_body, read) = parse_description(&rendered)
+                .unwrap_or_else(|| panic!("jojobot's own card must read back: {body:?}"));
+            assert_eq!(read.sender, "alpha", "for body {body:?}");
+            assert_eq!(read.sent_at, at(1_780_000_000), "for body {body:?}");
+            assert_eq!(read_body, body, "the body survives verbatim: {body:?}");
+        }
+    }
+
+    /// A message that has been processed re-renders from its parsed body, so the
+    /// round trip has to be stable under repetition — otherwise every outcome
+    /// recorded on a card grows or loses a line.
+    #[test]
+    fn re_rendering_a_parsed_card_is_stable() {
+        let body = "the shipment landed\n\n```\nsome quoted thing\n```";
+        let once = render_description(body, &envelope());
+        let (parsed, read) = parse_description(&once).expect("a message card");
+
+        let twice = render_description(
+            &parsed,
+            &Envelope { notes: Some("filed".into()), ..read },
+        );
+        let (again, read_again) = parse_description(&twice).expect("a message card");
+        assert_eq!(again, body, "the body neither grows nor loses a line");
+        assert_eq!(read_again.notes.as_deref(), Some("filed"));
+        assert_eq!(read_again.sender, "alpha");
     }
 }
