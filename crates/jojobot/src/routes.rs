@@ -12,7 +12,7 @@ use axum::{
 use serde_json::json;
 
 use crate::AppState;
-use crate::auth::bearer_from_header;
+use crate::auth::{AuthError, bearer_from_header};
 
 /// Liveness probe. Unauthenticated.
 pub async fn health() -> &'static str {
@@ -48,7 +48,9 @@ pub async fn require_bearer(
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
 
-    let outcome = bearer_from_header(header_value).and_then(|token| validator.validate(token));
+    let outcome = bearer_from_header(header_value)
+        .and_then(|token| validator.validate(token))
+        .and_then(|claims| validator.authorize(&claims).map(|()| claims));
 
     match outcome {
         Ok(claims) => {
@@ -57,9 +59,24 @@ pub async fn require_bearer(
         }
         Err(err) => {
             tracing::debug!(%err, "rejected /mcp request");
-            unauthorized(&state.metadata_url)
+            // Exhaustive on purpose (no wildcard): a new AuthError variant must
+            // force a deliberate status choice here rather than defaulting to 401.
+            // Authenticated-but-unauthorized → 403; authentication failures → 401
+            // with the discovery challenge.
+            match err {
+                AuthError::Forbidden(_) => forbidden(),
+                AuthError::MissingToken
+                | AuthError::Malformed(_)
+                | AuthError::UnknownKid
+                | AuthError::DisallowedAlg(_)
+                | AuthError::Rejected(_) => unauthorized(&state.metadata_url),
+            }
         }
     }
+}
+
+fn forbidden() -> Response {
+    (StatusCode::FORBIDDEN, "forbidden").into_response()
 }
 
 fn unauthorized(metadata_url: &str) -> Response {

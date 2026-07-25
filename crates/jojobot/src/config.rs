@@ -14,6 +14,10 @@ pub struct AuthConfig {
     pub audience: String,
     /// Optional explicit JWKS URI. When absent it is discovered from the issuer.
     pub jwks_uri: Option<String>,
+    /// Per-user authorization allowlist of subject ids (OIDC `sub` claim values,
+    /// e.g. Pocket ID user ids). Empty means no allowlist is configured — any
+    /// validated token passes, preserving the authentication-only behaviour.
+    pub allowed_subjects: Vec<String>,
 }
 
 /// Full server configuration.
@@ -35,6 +39,7 @@ impl Config {
     /// - `JOJOBOT_ISSUER` — set to enable auth (OIDC issuer URL).
     /// - `JOJOBOT_AUDIENCE` — required audience (default: the resource id).
     /// - `JOJOBOT_JWKS_URI` — optional JWKS override.
+    /// - `JOJOBOT_ALLOWED_SUBJECTS` — optional comma-separated `sub` allowlist.
     pub fn from_env() -> anyhow::Result<Self> {
         Self::build(RawEnv::from_env())
     }
@@ -51,17 +56,31 @@ impl Config {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| format!("http://{bind}/mcp"));
 
-        let auth = raw
-            .issuer
-            .filter(|s| !s.is_empty())
-            .map(|issuer| AuthConfig {
+        let allowlist_set = raw.allowed_subjects.as_deref().is_some_and(|s| !s.is_empty());
+
+        let auth = match raw.issuer.filter(|s| !s.is_empty()) {
+            Some(issuer) => Some(AuthConfig {
                 issuer,
                 audience: raw
                     .audience
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| resource.clone()),
                 jwks_uri: raw.jwks_uri.filter(|s| !s.is_empty()),
-            });
+                allowed_subjects: parse_allowed_subjects(raw.allowed_subjects.as_deref())?,
+            }),
+            None => None,
+        };
+
+        // An allowlist without an issuer can never be enforced (there are no
+        // validated tokens to check). Fail loud rather than silently drop it, so
+        // an operator who set it isn't left believing they're protected.
+        if auth.is_none() && allowlist_set {
+            anyhow::bail!(
+                "JOJOBOT_ALLOWED_SUBJECTS is set but JOJOBOT_ISSUER is not — an allowlist only \
+                 takes effect with authentication enabled. Set JOJOBOT_ISSUER, or unset \
+                 JOJOBOT_ALLOWED_SUBJECTS."
+            );
+        }
 
         // Fail closed: never infer "auth disabled" from a missing issuer alone.
         if auth.is_none() {
@@ -95,6 +114,7 @@ struct RawEnv {
     issuer: Option<String>,
     audience: Option<String>,
     jwks_uri: Option<String>,
+    allowed_subjects: Option<String>,
     allow_no_auth: bool,
 }
 
@@ -106,11 +126,41 @@ impl RawEnv {
             issuer: std::env::var("JOJOBOT_ISSUER").ok(),
             audience: std::env::var("JOJOBOT_AUDIENCE").ok(),
             jwks_uri: std::env::var("JOJOBOT_JWKS_URI").ok(),
+            allowed_subjects: std::env::var("JOJOBOT_ALLOWED_SUBJECTS").ok(),
             allow_no_auth: std::env::var("JOJOBOT_ALLOW_NO_AUTH")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
         }
     }
+}
+
+/// Parse the comma-separated `JOJOBOT_ALLOWED_SUBJECTS` value into a list,
+/// trimming each entry and dropping empties. `sub` values are compared exactly
+/// at authorization time; no case-folding here.
+///
+/// Distinguishes *unset* from *set-but-empty*, which decide opposite policies:
+/// - unset (absent, or literal empty string) → empty list → the deliberate
+///   "no allowlist, allow any authenticated user" case;
+/// - a non-empty value that parses to zero valid entries (`",,"`, `" "`) → error,
+///   so a fat-fingered secret refuses to start rather than serving wide-open.
+fn parse_allowed_subjects(raw: Option<&str>) -> anyhow::Result<Vec<String>> {
+    let Some(raw) = raw.filter(|s| !s.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let subjects: Vec<String> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .map(str::to_string)
+        .collect();
+    if subjects.is_empty() {
+        anyhow::bail!(
+            "JOJOBOT_ALLOWED_SUBJECTS is set ({raw:?}) but lists no valid subject; refusing to \
+             start rather than serve wide-open. Unset it to allow any authenticated user, or \
+             list at least one subject id."
+        );
+    }
+    Ok(subjects)
 }
 
 /// The scheme-and-authority origin of a URL (`https://host:port`), without any
@@ -140,7 +190,74 @@ pub fn authority_of(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, RawEnv, authority_of, origin_of};
+    use super::{Config, RawEnv, authority_of, origin_of, parse_allowed_subjects};
+
+    fn raw_subjects(subjects: Option<&str>) -> RawEnv {
+        RawEnv {
+            bind: "127.0.0.1:8080".to_string(),
+            resource: None,
+            issuer: Some("https://issuer.example".to_string()),
+            audience: None,
+            jwks_uri: None,
+            allowed_subjects: subjects.map(str::to_string),
+            allow_no_auth: false,
+        }
+    }
+
+    #[test]
+    fn allowed_subjects_parse_contract() {
+        // Unset, and literal empty string, both mean "no allowlist".
+        assert!(parse_allowed_subjects(None).unwrap().is_empty());
+        assert!(parse_allowed_subjects(Some("")).unwrap().is_empty());
+        // Valid entries: trimmed, blank fragments dropped, case preserved.
+        assert_eq!(
+            parse_allowed_subjects(Some("sub-abc, Sub-XYZ ,, ")).unwrap(),
+            vec!["sub-abc".to_string(), "Sub-XYZ".to_string()]
+        );
+        // Set to a non-empty value that yields nothing → hard error.
+        assert!(parse_allowed_subjects(Some(",,")).is_err());
+        assert!(parse_allowed_subjects(Some(" , ")).is_err());
+    }
+
+    #[test]
+    fn refuses_allowlist_set_but_empty() {
+        // A fat-fingered secret that lists no valid subject must not silently
+        // collapse to allow-all on an auth-enabled server.
+        assert!(Config::build(raw_subjects(Some(",,"))).is_err());
+        assert!(Config::build(raw_subjects(Some(" "))).is_err());
+    }
+
+    #[test]
+    fn refuses_allowlist_without_issuer() {
+        // An allowlist can only be enforced with authentication on. Set but no
+        // issuer is a misconfiguration that must fail loud, not silently drop —
+        // even in loopback dev mode.
+        let raw = RawEnv {
+            bind: "127.0.0.1:8080".to_string(),
+            resource: None,
+            issuer: None,
+            audience: None,
+            jwks_uri: None,
+            allowed_subjects: Some("sub-1".to_string()),
+            allow_no_auth: true,
+        };
+        assert!(
+            Config::build(raw).is_err(),
+            "an allowlist without an issuer must refuse to start"
+        );
+    }
+
+    #[test]
+    fn accepts_a_valid_allowlist() {
+        let cfg = Config::build(raw_subjects(Some("sub-1"))).expect("valid allowlist");
+        assert_eq!(cfg.auth.unwrap().allowed_subjects, vec!["sub-1".to_string()]);
+    }
+
+    #[test]
+    fn unset_allowlist_allows_all() {
+        let cfg = Config::build(raw_subjects(None)).expect("no allowlist is valid");
+        assert!(cfg.auth.unwrap().allowed_subjects.is_empty());
+    }
 
     #[test]
     fn authority_strips_scheme_and_path() {
@@ -162,6 +279,7 @@ mod tests {
             issuer: issuer.map(str::to_string),
             audience: None,
             jwks_uri: None,
+            allowed_subjects: None,
             allow_no_auth,
         }
     }

@@ -37,9 +37,15 @@ async fn main() -> anyhow::Result<()> {
             let validator = Validator::discover(auth_cfg, &http)
                 .await
                 .context("building the token validator from the issuer JWKS")?;
+            let allowlist = if auth_cfg.allowed_subjects.is_empty() {
+                "open (any authenticated user)".to_string()
+            } else {
+                format!("{} subject(s)", auth_cfg.allowed_subjects.len())
+            };
             tracing::info!(
                 issuer = %auth_cfg.issuer,
                 audience = %auth_cfg.audience,
+                %allowlist,
                 "resource-server auth enabled"
             );
             (Some(std::sync::Arc::new(validator)), Some(auth_cfg.issuer.clone()))

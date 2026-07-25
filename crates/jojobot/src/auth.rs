@@ -1,8 +1,10 @@
-//! Resource-server token validation — the one security-critical module jojobot
-//! owns. It never issues tokens; it only *validates* bearer JWTs minted by the
-//! configured OIDC issuer, per MCP's resource-server model.
+//! Resource-server token validation and authorization — the one
+//! security-critical module jojobot owns. It never issues tokens; it *validates*
+//! bearer JWTs minted by the configured OIDC issuer (per MCP's resource-server
+//! model) and then *authorizes* the principal against an optional subject
+//! allowlist.
 //!
-//! Guarantees enforced here:
+//! Authentication guarantees enforced here:
 //! - **RS256 only.** The algorithm is checked against an allowlist before
 //!   verification, so `alg: none` and HMAC-confusion tokens are rejected.
 //! - **Issuer + audience binding (RFC 8707).** A token minted for a different
@@ -10,6 +12,11 @@
 //! - **Expiry.** Expired tokens are rejected.
 //! - **Key pinning by `kid`.** Only keys published in the issuer's JWKS verify a
 //!   signature; an unknown `kid` is rejected rather than trusted.
+//!
+//! Authorization (see [`Validator::authorize`]): when a subject allowlist is
+//! configured, a validated token is admitted only if its `sub` is on the list —
+//! otherwise 403. With no allowlist, any validated token passes (authentication
+//! only).
 
 use std::collections::HashMap;
 
@@ -30,6 +37,10 @@ pub enum AuthError {
     DisallowedAlg(Algorithm),
     #[error("token rejected: {0}")]
     Rejected(String),
+    /// Authenticated, but the principal is not authorized (subject allowlist).
+    /// Distinct from the rejections above so the HTTP layer answers 403, not 401.
+    #[error("forbidden: {0}")]
+    Forbidden(String),
 }
 
 /// The subset of registered claims jojobot reads after validation. Issuer,
@@ -37,7 +48,9 @@ pub enum AuthError {
 /// carries the principal onward.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Claims {
-    /// Subject — the authenticated principal.
+    /// Subject — the stable, issuer-assigned principal id. This is the
+    /// authorization key ([`Validator::authorize`]): unlike `email`, it is
+    /// present in Pocket ID access tokens and not user-editable.
     pub sub: String,
     /// OAuth scopes, when present.
     #[serde(default)]
@@ -50,6 +63,10 @@ pub struct Validator {
     audience: String,
     /// `kid` → decoding key, as published in the issuer's JWKS.
     keys: HashMap<String, DecodingKey>,
+    /// Authorization allowlist of subject ids (`sub` claim values). `None` means
+    /// no allowlist is configured, so any validated token is authorized
+    /// (authentication only).
+    allowed_subjects: Option<Vec<String>>,
 }
 
 impl Validator {
@@ -64,6 +81,51 @@ impl Validator {
             issuer: issuer.into(),
             audience: audience.into(),
             keys,
+            allowed_subjects: None,
+        }
+    }
+
+    /// Assemble a validator from resolved [`AuthConfig`] and a fetched keyset —
+    /// the issuer/audience binding plus the authorization allowlist. Split out of
+    /// [`Validator::discover`] so the config→validator wiring (crucially, that the
+    /// allowlist is carried through) is unit-testable without the network I/O.
+    pub fn from_config(cfg: &AuthConfig, keys: HashMap<String, DecodingKey>) -> Self {
+        Self::from_keys(cfg.issuer.clone(), cfg.audience.clone(), keys)
+            .with_allowed_subjects(cfg.allowed_subjects.clone())
+    }
+
+    /// Set the authorization allowlist of subject ids. Entries are trimmed and
+    /// blanks dropped, but NOT case-folded — a `sub` is an opaque, case-sensitive
+    /// identifier compared exactly. An empty list leaves the allowlist unset, so
+    /// authorization stays open (any validated token passes). Additive: a
+    /// validator built without this authorizes every authenticated principal.
+    pub fn with_allowed_subjects(mut self, subjects: impl IntoIterator<Item = String>) -> Self {
+        let normalized: Vec<String> = subjects
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        self.allowed_subjects = (!normalized.is_empty()).then_some(normalized);
+        self
+    }
+
+    /// Authorize an authenticated principal against the subject allowlist. Returns
+    /// `Ok(())` when no allowlist is configured, or the token's `sub` is on it.
+    /// Otherwise fails closed with [`AuthError::Forbidden`]: authentication
+    /// succeeded, but the principal is not authorized. `sub` is compared exactly
+    /// (case-sensitive) — it is an opaque, issuer-assigned identifier.
+    pub fn authorize(&self, claims: &Claims) -> Result<(), AuthError> {
+        let Some(allowed) = &self.allowed_subjects else {
+            return Ok(());
+        };
+
+        if allowed.contains(&claims.sub) {
+            Ok(())
+        } else {
+            Err(AuthError::Forbidden(format!(
+                "subject {} is not on the allowlist",
+                claims.sub
+            )))
         }
     }
 
@@ -105,7 +167,7 @@ impl Validator {
             anyhow::bail!("no usable RSA signing keys in JWKS at {jwks_uri}");
         }
 
-        Ok(Self::from_keys(cfg.issuer.clone(), cfg.audience.clone(), keys))
+        Ok(Self::from_config(cfg, keys))
     }
 
     /// Validate a raw JWT string. Returns the claims on success.
@@ -285,6 +347,118 @@ mod tests {
             exp: now() + 3600,
             nbf: None,
         }
+    }
+
+    /// A validator with the given subject allowlist, keyed on `KID`.
+    fn allow_validator(decoding: DecodingKey, subjects: &[&str]) -> Validator {
+        validator(decoding).with_allowed_subjects(subjects.iter().map(|s| s.to_string()))
+    }
+
+    // --- Authorization: the subject allowlist (authn succeeds; authz decides) ---
+
+    #[test]
+    fn allowlist_admits_a_listed_subject() {
+        let kp = gen_keypair();
+        let mut c = good_claims();
+        c.sub = "sub-abc".to_string();
+        let token = sign(&kp.enc, KID, &c);
+        let v = allow_validator(kp.decoding, &["sub-abc", "sub-other"]);
+        let claims = v.validate(&token).expect("token is valid");
+        assert!(v.authorize(&claims).is_ok(), "a listed subject must be authorized");
+    }
+
+    #[test]
+    fn allowlist_rejects_an_unlisted_subject() {
+        let kp = gen_keypair();
+        let mut c = good_claims();
+        c.sub = "sub-stranger".to_string();
+        let token = sign(&kp.enc, KID, &c);
+        let v = allow_validator(kp.decoding, &["sub-abc"]);
+        let claims = v.validate(&token).expect("token is valid");
+        assert!(
+            matches!(v.authorize(&claims), Err(AuthError::Forbidden(_))),
+            "an unlisted subject must be forbidden"
+        );
+    }
+
+    #[test]
+    fn no_allowlist_admits_any_subject() {
+        // Unset allowlist preserves authentication-only behaviour.
+        let kp = gen_keypair();
+        let mut c = good_claims();
+        c.sub = "sub-anyone".to_string();
+        let token = sign(&kp.enc, KID, &c);
+        let v = validator(kp.decoding); // no allowlist
+        let claims = v.validate(&token).expect("token is valid");
+        assert!(v.authorize(&claims).is_ok(), "no allowlist must authorize any principal");
+    }
+
+    #[test]
+    fn allowlist_matches_subject_case_sensitively() {
+        // A `sub` is opaque and compared exactly — a case variant must NOT match.
+        let kp = gen_keypair();
+        let mut c = good_claims();
+        c.sub = "SUB-abc".to_string();
+        let token = sign(&kp.enc, KID, &c);
+        let v = allow_validator(kp.decoding, &["sub-abc"]);
+        let claims = v.validate(&token).expect("token is valid");
+        assert!(
+            matches!(v.authorize(&claims), Err(AuthError::Forbidden(_))),
+            "subject matching must be exact/case-sensitive"
+        );
+    }
+
+    #[test]
+    fn allowlist_trims_config_entries() {
+        // Whitespace around a configured entry is stripped so it still matches the
+        // exact claim; the claim itself is compared as-is.
+        let kp = gen_keypair();
+        let mut c = good_claims();
+        c.sub = "sub-abc".to_string();
+        let token = sign(&kp.enc, KID, &c);
+        let v = allow_validator(kp.decoding, &["  sub-abc  "]);
+        let claims = v.validate(&token).expect("token is valid");
+        assert!(v.authorize(&claims).is_ok(), "a padded config entry must still match");
+    }
+
+    #[test]
+    fn from_config_carries_the_allowlist_through() {
+        // Guards the one production wiring point (discover -> from_config): a
+        // regression that drops the allowlist would authorize any principal.
+        let kp = gen_keypair();
+        let cfg = AuthConfig {
+            issuer: ISS.to_string(),
+            audience: AUD.to_string(),
+            jwks_uri: None,
+            allowed_subjects: vec!["sub-abc".to_string()],
+        };
+        let mut keys = HashMap::new();
+        keys.insert(KID.to_string(), kp.decoding);
+        let v = Validator::from_config(&cfg, keys);
+
+        let mut c = good_claims();
+        c.sub = "sub-stranger".to_string();
+        let token = sign(&kp.enc, KID, &c);
+        let claims = v.validate(&token).expect("token is valid");
+        assert!(
+            matches!(v.authorize(&claims), Err(AuthError::Forbidden(_))),
+            "from_config must wire the allowlist so an off-list principal is denied"
+        );
+    }
+
+    #[test]
+    fn with_allowed_subjects_empty_stays_open() {
+        // The config→validator path for an unset var flows through
+        // with_allowed_subjects([]); it must collapse to no-allowlist (allow-all),
+        // never to an empty active list that locks everyone out.
+        let kp = gen_keypair();
+        let token = sign(&kp.enc, KID, &good_claims());
+        let v = validator(kp.decoding).with_allowed_subjects(std::iter::empty::<String>());
+        let claims = v.validate(&token).expect("token is valid");
+        assert!(
+            v.authorize(&claims).is_ok(),
+            "an empty allowlist must stay open, not lock out"
+        );
     }
 
     #[test]

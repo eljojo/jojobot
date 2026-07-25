@@ -12,6 +12,8 @@ use jojobot::{AppState, build_app};
 use jojobot_adapters::outline::OutlineStore;
 use tokio_util::sync::CancellationToken;
 
+mod support;
+
 /// The Memory port for the transport/auth tests, which never call the memory
 /// verbs — the real adapter, left unconfigured (no network). No toy store.
 fn test_memory() -> std::sync::Arc<dyn jojobot_domain::memory::Memory> {
@@ -131,6 +133,66 @@ async fn mcp_guard_covers_path_and_method_variants() {
             assert_eq!(resp.status(), 401, "{m} {p} must require auth");
         }
     }
+    ct.cancel();
+}
+
+/// Build auth-enabled state around a validator that already carries a subject
+/// allowlist. Consumes the validator (it is not `Clone`), so each test builds
+/// its own.
+fn allowlist_state(validator: Validator) -> impl FnOnce(SocketAddr) -> AppState {
+    move |addr| AppState {
+        resource: format!("http://{addr}/mcp"),
+        issuer: Some(support::ISS.to_string()),
+        validator: Some(Arc::new(validator)),
+        metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
+        memory: test_memory(),
+    }
+}
+
+#[tokio::test]
+async fn allowlist_forbids_a_validated_but_unlisted_token() {
+    // The end-to-end guarantee: a token that *passes* validation but whose sub
+    // is off the allowlist is denied at the edge with 403 — exercising the
+    // authorize() call and the Forbidden→403 arm in require_bearer, not just the
+    // unit-level authorize() decision.
+    let idp = support::TestIdp::new();
+    let token = idp.token("sub-stranger");
+    let (addr, ct) = spawn_server(allowlist_state(idp.validator(&["sub-allowed"]))).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/mcp"))
+        .bearer_auth(&token)
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        403,
+        "a validly-signed token off the allowlist must be forbidden at the edge"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn allowlist_admits_a_listed_token_to_the_handler() {
+    // A listed sub clears both authentication and authorization, so it reaches
+    // the MCP handler — neither 401 nor 403.
+    let idp = support::TestIdp::new();
+    let token = idp.token("sub-allowed");
+    let (addr, ct) = spawn_server(allowlist_state(idp.validator(&["sub-allowed"]))).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/mcp"))
+        .bearer_auth(&token)
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(resp.status(), 401, "a listed token must pass authentication");
+    assert_ne!(resp.status(), 403, "a listed token must pass authorization");
     ct.cancel();
 }
 
