@@ -1089,7 +1089,8 @@ mod tests {
     }
 
     /// Bad tokens are client errors, not silent fallbacks: a mistyped `status`
-    /// that quietly became `active` would hide the anti-fact list.
+    /// that quietly became `active` would answer a question about superseded
+    /// rows with the live ones and look like a straight answer.
     ///
     /// **Every case carries query text**, so the refusal can only be the bad
     /// token. Without it, an implementation that dropped the filter entirely
@@ -1432,6 +1433,23 @@ mod tests {
             .expect("call ok");
         let body = blocked(&near);
         assert_eq!(body["candidates"][0]["handle"], "person:zenith");
+        // The near-miss branch has its own copy, and it has to earn its keep: the
+        // candidate list is the whole reason this case differs from a stranger,
+        // so the advice must point at it rather than repeat the stranger's text.
+        let advice = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            advice.contains("above"),
+            "with candidates in hand, the advice must point at them: {advice}"
+        );
+        assert!(advice.contains("add_entity"), "…and still name the way through: {advice}");
+        assert!(
+            !advice.contains("nothing resembles it"),
+            "something does resemble it — that is what the candidates are: {advice}"
+        );
+        assert!(
+            !advice.contains("create_new"),
+            "capture has no create_new, near miss or not: {advice}"
+        );
 
         // A handle nothing resembles blocks too, with nothing to suggest.
         let stranger = jojobot

@@ -1227,6 +1227,30 @@ mod tests {
             Ok(self.docs.read().expect("docs poisoned").clone())
         }
 
+        /// Append a row to the subject's page and hand it back. **No guard** —
+        /// the gates have their own specs, and what this double exists to
+        /// exercise is what the decorator does *after* a write lands.
+        async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+            let mut docs = self.docs.write().expect("docs poisoned");
+            let doc = docs
+                .iter_mut()
+                .find(|d| d.entity.as_ref().is_some_and(|e| e.id == fact.subject))
+                .ok_or_else(|| MemoryError::Store("this double writes to pages it holds".into()))?;
+            let stored = Fact {
+                id: jojobot_domain::memory::FactId(format!("f{}", doc.facts.len() + 1)),
+                home: fact.subject.clone(),
+                subject: fact.subject,
+                content: fact.content,
+                details: fact.details,
+                provenance: fact.provenance,
+                status: fact.status,
+                date: fact.date,
+                edge: fact.edge,
+            };
+            doc.facts.push(stored.clone());
+            Ok(Guarded::Written(stored))
+        }
+
         async fn add_entity(&self, _: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
             unimplemented!("this double only scans")
         }
@@ -1238,9 +1262,6 @@ mod tests {
             _: &EntityId,
             _: EntityPatch,
         ) -> Result<Guarded<Entity>, MemoryError> {
-            unimplemented!("this double only scans")
-        }
-        async fn capture(&self, _: NewFact) -> Result<Guarded<Fact>, MemoryError> {
             unimplemented!("this double only scans")
         }
         async fn recall(&self, _: &EntityId) -> Result<Vec<Fact>, MemoryError> {
@@ -1387,6 +1408,53 @@ mod tests {
             store.search(&SearchQuery::text("chess")).expect("search ok").len(),
             1,
             "a counted row is still indexed and still findable"
+        );
+    }
+
+    /// **The count survives the incremental path too.** A boot scan is not the
+    /// only way a doc gets read: every write re-reads the page it touched, and
+    /// that is the read most likely to be looking at a page a human just edited
+    /// by hand. A counter wired only into `rebuild` would go quiet for as long as
+    /// the server stayed up — exactly the window in which the damage is done.
+    ///
+    /// Nothing here calls `rebuild`, so the only thing that can have written to
+    /// the log is the write.
+    #[tokio::test]
+    async fn a_write_re_reads_its_doc_and_counts_the_orphans_it_finds() {
+        let logged = log_sink();
+        const DOC: &str = "outline-uuid-re1nd3x";
+
+        let hand_edited = Fact {
+            subject: EntityId::person("ghostly"),
+            ..fact("person:alpha", "f1", "subject cell retyped by hand", date(2026, 1, 1))
+        };
+        let store = IndexedMemory::new(Scanned::new(vec![scan(
+            DOC,
+            Some(entity("person:alpha", "Alpha")),
+            "",
+            vec![hand_edited],
+        )]))
+        .expect("index opens");
+
+        store
+            .capture(NewFact::about(
+                EntityId::person("alpha"),
+                "an ordinary fact, written now",
+                date(2026, 1, 2),
+            ))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("this double does not guard");
+
+        let text = logged.text();
+        assert!(text.contains(DOC), "the reindex must say which doc: {text}");
+        assert!(text.contains("person:ghostly"), "…and which subject: {text}");
+
+        // …and the write is findable, which is the reindex having run at all.
+        assert_eq!(
+            store.search(&SearchQuery::text("ordinary")).expect("search ok").len(),
+            1
         );
     }
 
