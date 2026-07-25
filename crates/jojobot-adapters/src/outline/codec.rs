@@ -877,19 +877,17 @@ mod tests {
     }
 }
 
-/// What a bare carriage return in a fact's content does — asserted, because it
-/// is a live hazard rather than a curiosity.
+/// What a bare carriage return in a fact's content does — **the reason
+/// [`validate_content`](jojobot_domain::memory::validate_content) refuses one.**
 ///
-/// `validate_content` rejects `\n` but not a lone `\r`, so one can reach a cell.
 /// While the store keeps the byte, nothing breaks. But a store that normalizes
 /// line endings (`\r` → `\n`, which markdown pipelines routinely do) splits the
 /// row in two, and the split ends the table's contiguous run of `|` lines — so
 /// **every fact below it is lost as well**, not just the one carrying the CR.
 ///
-/// These tests pin today's behaviour, including the bad half. Rejecting `\r` in
-/// [`validate_content`](jojobot_domain::memory::validate_content) is the obvious
-/// guard and is **deliberately not done here** — it is a separate decision, not
-/// this change's to make.
+/// The domain now rejects a bare `\r` on the write path, so a CR can only reach
+/// a cell by a hand edit. These tests stay as the evidence for that rule: they
+/// build the rows directly, below validation, and measure the blast radius.
 #[cfg(test)]
 mod bare_cr {
     use super::*;

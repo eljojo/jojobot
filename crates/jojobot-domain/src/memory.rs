@@ -490,13 +490,22 @@ pub fn validate_entity(id: &EntityId, name: &str, source: &str, crm: Option<&str
     Ok(())
 }
 
+/// A line break, either byte. A bare `\r` is refused as hard as `\n`: while the
+/// store preserves the byte nothing breaks, but a store that normalizes line
+/// endings (`\r` → `\n`, which markdown pipelines routinely do) splits the row —
+/// and the split ends the table's contiguous run of `|` lines, so **every fact
+/// below it is unread too**, not just the one carrying the CR.
+fn breaks_the_row(value: &str) -> bool {
+    value.contains('\n') || value.contains('\r')
+}
+
 /// A fact's content must be one non-empty line — a table cell is one line, and
 /// an empty claim is not a claim.
 pub fn validate_content(content: &str) -> Result<(), MemoryError> {
     if content.trim().is_empty() {
         return Err(MemoryError::InvalidFact("content is empty".into()));
     }
-    if content.contains('\n') {
+    if breaks_the_row(content) {
         return Err(MemoryError::InvalidFact(
             "content spans multiple lines; a table cell is one line".into(),
         ));
@@ -507,7 +516,7 @@ pub fn validate_content(content: &str) -> Result<(), MemoryError> {
 /// Details ride in the same table row, so they are one line too — but may be
 /// absent.
 pub fn validate_details(details: Option<&str>) -> Result<(), MemoryError> {
-    if details.is_some_and(|d| d.contains('\n')) {
+    if details.is_some_and(breaks_the_row) {
         return Err(MemoryError::InvalidFact(
             "details span multiple lines; a table cell is one line".into(),
         ));
@@ -914,6 +923,27 @@ mod tests {
         }
         assert_eq!(FactStatus::from_token(""), FactStatus::Active);
         assert_eq!(FactStatus::from_token("garbled"), FactStatus::Active);
+    }
+
+    /// A **bare `\r`** is refused exactly as `\n` is, in content and in details.
+    /// It looks harmless — until a store normalizes line endings, which markdown
+    /// pipelines routinely do. Then the row splits, the split ends the table's
+    /// contiguous run of `|` lines, and every fact BELOW it stops being read too
+    /// (the blast radius the codec's `bare_cr` tests demonstrate).
+    #[test]
+    fn a_bare_carriage_return_is_refused_like_a_newline() {
+        for bad in ["hello\rworld", "trailing\r", "\rleading", "a\r\nb"] {
+            assert!(
+                validate_content(bad).is_err(),
+                "content must refuse a bare CR: {bad:?}"
+            );
+            assert!(
+                validate_details(Some(bad)).is_err(),
+                "details ride in the same row, so they refuse it too: {bad:?}"
+            );
+        }
+        assert!(validate_content("hello world").is_ok());
+        assert!(validate_details(Some("plain details")).is_ok());
     }
 
     #[test]
