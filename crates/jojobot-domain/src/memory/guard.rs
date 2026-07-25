@@ -159,14 +159,19 @@ pub fn screen(handle: &EntityId, labels: &[&str], index: &[Entity]) -> Vec<Entit
     matches
 }
 
-/// Every existing entity an incoming **name** might already be — the rename
-/// channel. `kind` is the kind of the entity being renamed; there is no slug to
-/// compare, because a rename never touches the handle.
+/// Every existing entity an incoming set of **labels** might already be — the
+/// relabel channel. `kind` is the kind of the entity being relabelled; there is
+/// no slug to compare, because relabelling never touches the handle.
 ///
 /// Same reasons and same order as [`screen`], minus the two handle channels.
-/// That subtraction is the whole point: see [`decide_rename`].
-pub fn screen_name(kind: Option<EntityKind>, name: &str, index: &[Entity]) -> Vec<EntityMatch> {
-    let incoming = folded(&[name]);
+/// That subtraction is the whole point: see [`decide_relabel`].
+///
+/// A set rather than one name, because a display name and an alias are the same
+/// kind of claim — "this is what it is called" — and screening only the
+/// preferred one leaves the alias channel as an open door onto every collision
+/// the other channel refuses.
+pub fn screen_labels(kind: Option<EntityKind>, labels: &[&str], index: &[Entity]) -> Vec<EntityMatch> {
+    let incoming = folded(labels);
     let incoming_slugs: Vec<String> = incoming.iter().map(|n| slugify(n)).collect();
 
     let mut matches: Vec<EntityMatch> = index
@@ -308,34 +313,48 @@ pub fn decide_existing(handle: &EntityId, index: &[Entity]) -> Decision {
     Decision::Block(screen(handle, &[], index))
 }
 
-/// The guard's decision on a **rename**. A rename is an entity-touching write,
-/// so it faces a gate — without one the guard is trivially side-steppable:
-/// create under a throwaway name, then rename onto the collision. But it is
-/// screened on the **name channel only** ([`screen_name`]), with three
-/// properties of renaming rather than new policy:
+/// The guard's decision on a **relabel** — a change to any of the names an
+/// entity answers to, its display name or its aliases alike.
+///
+/// Relabelling is an entity-touching write, so it faces a gate: without one the
+/// guard is trivially side-steppable — create under a throwaway name, then move
+/// the contested name on afterwards. **The alias channel is the one that was
+/// open**: a patch carrying only aliases named no new display name, so nothing
+/// screened it, and search then indexed two entities answering to one word.
+///
+/// Screened on the **label channel only** ([`screen_labels`]), with three
+/// properties of relabelling rather than new policy:
 ///
 /// * **the handle is not changing, so it is not screened.** Screening it
 ///   re-litigated a near-slug that was adjudicated when the entity was created
 ///   — turning that one settled decision into a permanent block on the name
 ///   field: every later name edit came back blocked, on a channel nothing had
 ///   touched.
-/// * the entity being renamed is excluded, or it would match itself.
-/// * a name that isn't actually changing is not screened, because a no-op cannot
-///   introduce a collision that isn't already there.
+/// * the entity being relabelled is excluded, or it would match itself.
+/// * **a label it already wears is not a new claim.** Only what the patch
+///   actually adds is screened, so a no-op cannot introduce a collision that is
+///   not already there — and a patch touching no label at all (source, crm,
+///   boot) is screened against nothing, with no special case needed for it.
 ///
 /// `create_new` clears any suspicion here: only a handle can collide
 /// unforgivably, and no handle is moving.
-pub fn decide_rename(
+pub fn decide_relabel(
     handle: &EntityId,
-    new_name: &str,
-    current_name: &str,
+    incoming: &[&str],
+    current: &[&str],
     index: &[Entity],
     create_new: bool,
 ) -> Decision {
-    if normalize_name(new_name) == normalize_name(current_name) {
+    let worn = folded(current);
+    let added: Vec<&str> = incoming
+        .iter()
+        .filter(|l| !worn.contains(&normalize_name(l)))
+        .copied()
+        .collect();
+    if added.is_empty() {
         return Decision::Proceed;
     }
-    let matches: Vec<EntityMatch> = screen_name(handle.kind(), new_name, index)
+    let matches: Vec<EntityMatch> = screen_labels(handle.kind(), &added, index)
         .into_iter()
         .filter(|m| &m.handle != handle)
         .collect();
@@ -581,7 +600,7 @@ mod tests {
             entity("person:zenith", "Zenith", "user-named"),
         ];
         let Decision::Block(candidates) =
-            decide_rename(&EntityId("person:zenith".into()), "Cosme Fulanito", "Zenith", &idx, false)
+            rename(&EntityId("person:zenith".into()), "Cosme Fulanito", "Zenith", &idx, false)
         else {
             panic!("renaming onto an alias must block");
         };
@@ -637,7 +656,19 @@ mod tests {
         assert!(none.is_empty(), "nothing to suggest, and nothing invented: {none:?}");
     }
 
-    // --- renames go through the same gate ------------------------------------
+    // --- relabelling goes through the same gate ------------------------------
+
+    /// A rename in the relabel vocabulary: one incoming label replacing the one
+    /// currently worn. Renaming is the special case; relabelling is the rule.
+    fn rename(
+        handle: &EntityId,
+        new_name: &str,
+        current_name: &str,
+        index: &[Entity],
+        create_new: bool,
+    ) -> Decision {
+        decide_relabel(handle, &[new_name], &[current_name], index, create_new)
+    }
 
     /// A rename onto a name the index already holds is blocked, and the same
     /// explicit signal clears it — the creation gate, reused.
@@ -645,14 +676,14 @@ mod tests {
     fn a_rename_onto_an_existing_name_is_blocked_and_create_new_clears_it() {
         let renamer = EntityId("person:zenith".into());
         let Decision::Block(candidates) =
-            decide_rename(&renamer, "Alpha", "Zenith", &index(), false)
+            rename(&renamer, "Alpha", "Zenith", &index(), false)
         else {
             panic!("a rename onto an existing name must block");
         };
         assert_eq!(candidates[0].handle.as_str(), "person:alpha");
         assert_eq!(candidates[0].reason, MatchReason::SameName);
         assert_eq!(
-            decide_rename(&renamer, "Alpha", "Zenith", &index(), true),
+            rename(&renamer, "Alpha", "Zenith", &index(), true),
             Decision::Proceed
         );
     }
@@ -668,7 +699,7 @@ mod tests {
         idx.push(entity("person:alphaa", "Second Alpha", "user-named"));
         let settled = EntityId("person:alphaa".into());
         assert_eq!(
-            decide_rename(&settled, "Something Unrelated", "Second Alpha", &idx, false),
+            rename(&settled, "Something Unrelated", "Second Alpha", &idx, false),
             Decision::Proceed,
             "the handle is not changing, so a settled near-slug must not block a name edit"
         );
@@ -680,7 +711,7 @@ mod tests {
     fn a_rename_onto_an_existing_handles_spelling_is_blocked() {
         let renamer = EntityId("place:trail-spot".into());
         let Decision::Block(candidates) =
-            decide_rename(&renamer, "North Trail", "Trail Spot", &index(), false)
+            rename(&renamer, "North Trail", "Trail Spot", &index(), false)
         else {
             panic!("a name that spells out an existing handle must block");
         };
@@ -694,7 +725,7 @@ mod tests {
     fn a_rename_onto_a_near_name_is_blocked() {
         let renamer = EntityId("person:zenith".into());
         let Decision::Block(candidates) =
-            decide_rename(&renamer, "Bet", "Zenith", &index(), false)
+            rename(&renamer, "Bet", "Zenith", &index(), false)
         else {
             panic!("a name within a typo of an existing one must block");
         };
@@ -708,9 +739,67 @@ mod tests {
     fn a_rename_does_not_screen_the_entity_against_itself() {
         let existing = EntityId("person:alpha".into());
         assert_eq!(
-            decide_rename(&existing, "Something Unrelated", "Alpha", &index(), false),
+            rename(&existing, "Something Unrelated", "Alpha", &index(), false),
             Decision::Proceed,
             "an entity is not a candidate for its own rename"
+        );
+    }
+
+    /// **The door the rename gate left open.** An alias is a name, so claiming
+    /// one another entity already answers to is the same collision — and it
+    /// arrives on a patch that renames nothing, which is exactly why nothing
+    /// used to screen it.
+    #[test]
+    fn an_added_alias_is_screened_like_a_rename() {
+        let idx = vec![
+            also_known_as("person:homer-simpson", "Homer Simpson", &["Cosme Fulanito"]),
+            entity("person:zenith", "Zenith", "user-named"),
+        ];
+        let borrower = EntityId("person:zenith".into());
+        let Decision::Block(candidates) =
+            decide_relabel(&borrower, &["Zenith", "Cosme Fulanito"], &["Zenith"], &idx, false)
+        else {
+            panic!("an alias onto a name another entity wears must block");
+        };
+        assert_eq!(candidates[0].handle.as_str(), "person:homer-simpson");
+        assert_eq!(candidates[0].reason, MatchReason::SameName);
+
+        // Names are not unique; handles are. The same signal clears it.
+        assert_eq!(
+            decide_relabel(&borrower, &["Zenith", "Cosme Fulanito"], &["Zenith"], &idx, true),
+            Decision::Proceed
+        );
+    }
+
+    /// Only what a patch **adds** is screened. A label the entity already wears
+    /// is not a new claim, and a patch that moves no label at all — a source or
+    /// crm edit — is therefore screened against nothing, with no special case.
+    #[test]
+    fn a_label_already_worn_is_not_a_new_claim() {
+        let mut idx = index();
+        idx.push(also_known_as("person:alpha-two", "Second Alpha", &["Alpha"]));
+        let settled = EntityId("person:alpha-two".into());
+
+        assert_eq!(
+            decide_relabel(
+                &settled,
+                &["Second Alpha", "Alpha"],
+                &["Second Alpha", "Alpha"],
+                &idx,
+                false
+            ),
+            Decision::Proceed,
+            "re-sending the labels it already wears is not a collision with anyone"
+        );
+        assert_eq!(
+            decide_relabel(&settled, &["  SECOND   alpha ", "alpha"], &["Second Alpha", "Alpha"], &idx, false),
+            Decision::Proceed,
+            "case and spacing folded on both sides"
+        );
+        assert_eq!(
+            decide_relabel(&settled, &[], &["Second Alpha"], &idx, false),
+            Decision::Proceed,
+            "a patch carrying no label at all screens against nothing"
         );
     }
 
@@ -723,7 +812,7 @@ mod tests {
         idx.push(entity("person:alpha-two", "Alpha", "user-named"));
         let existing = EntityId("person:alpha-two".into());
         assert_eq!(
-            decide_rename(&existing, "  ALPHA  ", "Alpha", &idx, false),
+            rename(&existing, "  ALPHA  ", "Alpha", &idx, false),
             Decision::Proceed,
             "case and spacing folded: this is the same name, not a new collision"
         );

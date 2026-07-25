@@ -750,6 +750,34 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     Ok(())
 }
 
+/// The write guard's verdict on a metadata edit — the gate every adapter runs
+/// before [`apply_entity_patch`], so neither can drift into its own idea of when
+/// a patch is suspicious.
+///
+/// Screened against **the labels the entity will wear once the patch lands**,
+/// which is the only set that can collide with anything. A patch supplying
+/// neither `name` nor `aliases` inherits the entity's current ones, every
+/// incoming label is then one it already wears, and [`guard::decide_relabel`]
+/// proceeds — so a source/crm edit needs no special case to stay unscreened.
+pub fn screen_entity_patch(
+    entity: &Entity,
+    patch: &EntityPatch,
+    index: &[Entity],
+) -> guard::Decision {
+    let name = patch.name.as_deref().unwrap_or(&entity.name);
+    let aliases: &[String] = patch.aliases.as_deref().unwrap_or(&entity.aliases);
+    let incoming: Vec<&str> = std::iter::once(name)
+        .chain(aliases.iter().map(String::as_str))
+        .collect();
+    guard::decide_relabel(
+        &entity.id,
+        &incoming,
+        &entity.labels(),
+        index,
+        patch.create_new,
+    )
+}
+
 /// Apply a metadata edit to an entity. Same contract as [`apply_fact_patch`]:
 /// validate everything first, mutate only once it all passes.
 pub fn apply_entity_patch(entity: &mut Entity, patch: &EntityPatch) -> Result<(), MemoryError> {

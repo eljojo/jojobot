@@ -16,8 +16,8 @@ use std::sync::Mutex;
 use super::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, Guarded,
     Memory, MemoryError, NewEntity, NewFact, apply_entity_patch, apply_fact_patch,
-    normalize_content, normalize_details, search, validate_content, validate_details, validate_edge,
-    validate_entity, validate_subject,
+    normalize_content, normalize_details, screen_entity_patch, search, validate_content,
+    validate_details, validate_edge, validate_entity, validate_subject,
     guard::{self, Decision},
 };
 
@@ -94,11 +94,11 @@ impl Memory for InMemoryMemory {
                 nearest: guard::screen(handle, &[], &entities),
             });
         };
-        // A rename is an entity-touching write, so it faces the same gate.
-        if let Some(new_name) = &patch.name
-            && let Decision::Block(candidates) =
-                guard::decide_rename(handle, new_name, &entity.name, &index, patch.create_new)
-        {
+        // Changing what an entity is CALLED is an entity-touching write, so it
+        // faces the same gate — display name and aliases alike. Unconditional
+        // on purpose: a patch that moves no label screens against nothing, so
+        // there is no "is this a rename?" test to get wrong.
+        if let Decision::Block(candidates) = screen_entity_patch(entity, &patch, &index) {
             return Ok(Guarded::Blocked {
                 attempted: handle.clone(),
                 candidates,
@@ -675,23 +675,126 @@ pub mod contract {
 
     /// Editing metadata that isn't the name is never screened — an entity's own
     /// name must not trip the guard against itself.
-    pub async fn update_entity_without_a_rename_is_not_screened<M: Memory>(store: &M) {
-        let id = EntityId::new(EntityKind::Org, "contract-unscreened");
-        add(store, NewEntity::new(id.clone(), "Unscreened Org", "user-named")).await;
-        let same_name_again = store
+    /// **An alias is a name.** Claiming one that another entity already answers
+    /// to is the same collision a rename is, so it faces the same gate — and it
+    /// is the gate's last door: `add_entity` under a taken name is blocked, but
+    /// an alias patch onto some *other* entity used to walk straight through,
+    /// and search then indexed two entities answering to one word.
+    pub async fn update_entity_screens_a_colliding_alias<M: Memory>(store: &M) {
+        let owner = EntityId::person("contract-alias-owner");
+        add(store, NewEntity::new(owner.clone(), "Contract Alias Owner", "user-named")).await;
+        let borrower = EntityId::person("contract-alias-borrower");
+        add(store, NewEntity::new(borrower.clone(), "Contract Alias Borrower", "user-named")).await;
+
+        let outcome = store
             .update_entity(
-                &id,
+                &borrower,
                 EntityPatch {
-                    name: Some("Unscreened Org".into()),
-                    source: Some("crm-card".into()),
+                    aliases: Some(vec!["Contract Alias Owner".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("the call itself succeeds; the guard answers in the result");
+        let Guarded::Blocked { candidates, .. } = outcome else {
+            panic!("an alias onto a name another entity wears must be blocked");
+        };
+        assert!(
+            candidates.iter().any(|m| m.handle == owner),
+            "the guard must name the entity already wearing it: {candidates:?}"
+        );
+        assert!(
+            store
+                .list_entities(None)
+                .await
+                .expect("list")
+                .iter()
+                .filter(|e| e.id == borrower)
+                .all(|e| e.aliases.is_empty()),
+            "a blocked alias write lands nothing"
+        );
+
+        // The same explicit signal that clears a rename clears this: names are
+        // not unique, and two entities may legitimately answer to one word.
+        let forced = store
+            .update_entity(
+                &borrower,
+                EntityPatch {
+                    aliases: Some(vec!["Contract Alias Owner".into()]),
+                    create_new: true,
                     ..Default::default()
                 },
             )
             .await
             .expect("update should succeed")
             .written()
-            .expect("an entity is not a candidate for its own rename");
-        assert_eq!(same_name_again.source, "crm-card");
+            .expect("an explicit create_new resolves the collision");
+        assert_eq!(forced.aliases, vec!["Contract Alias Owner".to_string()]);
+    }
+
+    /// An alias the entity **already wears** is not a new claim, so re-sending it
+    /// is not a collision with itself. Without this, every later patch to an
+    /// entity's alias set comes back blocked by the entity's own name.
+    pub async fn update_entity_is_not_blocked_by_its_own_labels<M: Memory>(store: &M) {
+        let id = EntityId::new(EntityKind::Org, "contract-self-labelled");
+        add(
+            store,
+            NewEntity {
+                aliases: vec!["Contract Self Nickname".into()],
+                ..NewEntity::new(id.clone(), "Contract Self-Labelled", "user-named")
+            },
+        )
+        .await;
+
+        let again = store
+            .update_entity(
+                &id,
+                EntityPatch {
+                    name: Some("Contract Self-Labelled".into()),
+                    aliases: Some(vec!["Contract Self Nickname".into()]),
+                    crm: Some("card:552".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("update should succeed")
+            .written()
+            .expect("an entity is never a candidate for its own labels");
+        assert_eq!(again.crm.as_deref(), Some("card:552"));
+        assert_eq!(again.aliases, vec!["Contract Self Nickname".to_string()]);
+    }
+
+    /// **Only a change of LABEL is screened.** source, crm and boot say nothing
+    /// about what a thing is called, so they can introduce no collision — and a
+    /// gate that fired on them would make an already-settled duplicate name
+    /// permanently uneditable in every other field.
+    pub async fn update_entity_without_a_rename_is_not_screened<M: Memory>(store: &M) {
+        let first = EntityId::new(EntityKind::Org, "contract-unscreened");
+        add(store, NewEntity::new(first.clone(), "Unscreened Org", "user-named")).await;
+        // A second entity that legitimately shares the name — settled once, at
+        // creation, with the explicit signal. That settlement must not be
+        // re-litigated by a patch that touches no label at all.
+        let twin = EntityId::new(EntityKind::Org, "contract-unscreened-twin");
+        add(
+            store,
+            NewEntity {
+                create_new: true,
+                ..NewEntity::new(twin.clone(), "Unscreened Org", "user-named")
+            },
+        )
+        .await;
+
+        let metadata_only = store
+            .update_entity(
+                &twin,
+                EntityPatch { source: Some("crm-card".into()), ..Default::default() },
+            )
+            .await
+            .expect("update should succeed")
+            .written()
+            .expect("a patch that renames nothing is not a rename");
+        assert_eq!(metadata_only.source, "crm-card");
+        assert_eq!(metadata_only.name, "Unscreened Org", "and it left the name alone");
     }
 
     /// Updating an entity that doesn't exist errors with the nearest candidates
@@ -1854,6 +1957,8 @@ pub mod contract {
         list_entities_filters_by_kind(store).await;
         update_entity_edits_metadata_in_place(store).await;
         update_entity_screens_a_colliding_rename(store).await;
+        update_entity_screens_a_colliding_alias(store).await;
+        update_entity_is_not_blocked_by_its_own_labels(store).await;
         update_entity_does_not_re_screen_the_handle(store).await;
         update_entity_without_a_rename_is_not_screened(store).await;
         update_entity_unknown_handle_never_creates(store).await;

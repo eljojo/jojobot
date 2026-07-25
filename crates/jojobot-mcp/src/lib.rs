@@ -360,12 +360,17 @@ impl Jojobot {
     }
 
     /// Edit an entity's metadata in place. The handle itself never changes, and
-    /// a name change is screened by the write guard just as a creation is.
+    /// any change to what it is CALLED — name or aliases — is screened by the
+    /// write guard just as a creation is.
     #[tool(
-        description = "Edit an entity's metadata (name/source/crm) in place. The handle is \
-                       immutable. A name change is screened by the write guard, so it can come \
-                       back with candidates to confirm. An unknown handle errors with near \
-                       misses — it never creates."
+        description = "Edit an entity's metadata (name/aliases/source/crm) in place. The handle \
+                       is immutable. Any change to what it is CALLED — its name or its aliases \
+                       — is screened by the write guard, so it can come back status: blocked \
+                       with candidates to confirm; aliases are names, so claiming one another \
+                       entity already answers to is the same collision a rename is. Passing \
+                       `aliases` REPLACES the whole set ([] clears it). source/crm edits are \
+                       never screened. An unknown handle errors with near misses — it never \
+                       creates."
     )]
     async fn update_entity(
         &self,
@@ -389,7 +394,7 @@ impl Jojobot {
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(&attempted, &candidates, Blocked::Renaming)),
+            } => Ok(blocked_result(&attempted, &candidates, Blocked::Relabelling)),
         }
     }
 
@@ -631,8 +636,9 @@ enum Blocked {
     /// A creation: the handle is being minted here, so an exact collision is
     /// unforgivable and `create_new` covers only a shared *name*.
     Creating,
-    /// A rename: no handle is moving, so nothing here is unforgivable.
-    Renaming,
+    /// A relabel — a change to a name or an alias. No handle is moving, so
+    /// nothing here is unforgivable.
+    Relabelling,
     /// A write that only **names** an entity (a capture's subject, an edge's
     /// object). It cannot create one, so `create_new` does not exist on it.
     MustExist(&'static str),
@@ -667,11 +673,14 @@ fn blocked_result(
              add_entity with create_new: true — display names are not unique and never have to \
              be; the handle is what has to be.",
         ),
-        Blocked::Renaming => format!(
-            "Nothing was renamed, and the handle '{attempted}' is unaffected either way — a \
-             rename only moves the display name. Either pick a name that isn't already worn, or \
-             re-call update_entity with create_new: true if this entity really does share a name \
-             with one above: names are not unique, handles are.",
+        // Says "name" rather than "rename": this gate fires on an alias write
+        // too, and telling a caller nothing was renamed when they renamed
+        // nothing sends them looking for a rename they never made.
+        Blocked::Relabelling => format!(
+            "Nothing was written, and the handle '{attempted}' is unaffected either way — this \
+             only moves the names it answers to. Either pick a name or alias that isn't already \
+             worn, or re-call update_entity with create_new: true if this entity really does \
+             share a name with one above: names are not unique, handles are.",
         ),
         // The candidate list is often empty here — this gate fires on any
         // unrecognized handle, not only a near miss — so the advice must not
@@ -1442,6 +1451,63 @@ mod tests {
         );
         assert_ne!(forced["status"], "blocked");
         assert_eq!(forced["name"], "Alpha");
+    }
+
+    /// **The guard's last door, through the real handler.** A patch carrying
+    /// only aliases renames nothing, so nothing used to screen it — and the
+    /// advice it gets back must not describe a rename the caller never made.
+    #[tokio::test]
+    async fn an_alias_onto_a_taken_name_is_blocked_and_says_so_in_its_own_words() {
+        let jojobot = handler();
+        for (handle, name) in [("homer-simpson", "Homer Simpson"), ("zenith", "Zenith")] {
+            jojobot
+                .add_entity(Parameters(add_args("person", handle, name)))
+                .await
+                .expect("add ok");
+        }
+
+        let result = jojobot
+            .update_entity(Parameters(UpdateEntityArgs {
+                handle: "person:zenith".into(),
+                name: None,
+                aliases: Some(vec!["Homer Simpson".into()]),
+                source: None,
+                crm: None,
+                create_new: None,
+            }))
+            .await
+            .expect("the call succeeds; the guard answers in the body");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "person:zenith");
+        assert_eq!(body["candidates"][0]["handle"], "person:homer-simpson");
+        let advice = body["how_to_proceed"].as_str().expect("advice is a string");
+        assert!(
+            advice.contains("alias"),
+            "the advice must name the thing that was actually refused: {advice}"
+        );
+        assert!(
+            !advice.contains("renamed"),
+            "nothing was renamed — telling them so sends them hunting for a rename: {advice}"
+        );
+
+        // …and the alias did not land.
+        let listed = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs { kind: Some("person".into()) }))
+                .await
+                .expect("list ok"),
+        );
+        let zenith = listed["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == "person:zenith")
+            .expect("zenith is still there");
+        assert_eq!(
+            zenith["alternateName"].as_array().map(Vec::len),
+            Some(0),
+            "a blocked alias write lands nothing: {zenith}"
+        );
     }
 
     /// **Alternate names go in and come back**, under schema.org's word for

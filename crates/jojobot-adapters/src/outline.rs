@@ -27,7 +27,8 @@ use async_trait::async_trait;
 use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, Memory, MemoryError,
     NewEntity, NewFact, apply_entity_patch, apply_fact_patch, normalize_content, normalize_details,
-    validate_content, validate_details, validate_edge, validate_entity, validate_subject,
+    screen_entity_patch, validate_content, validate_details, validate_edge, validate_entity,
+    validate_subject,
     guard::{self, Decision},
     search::DocScan,
 };
@@ -369,13 +370,11 @@ impl Memory for OutlineStore {
         let mut entity = parse_entity(&doc.text)
             .ok_or_else(|| MemoryError::Store(format!("doc for {handle} lost its marker")))?;
 
-        // A rename is an entity-touching write, so it faces the same gate a
-        // creation does — otherwise the guard is side-steppable: add under a
-        // throwaway name, then rename onto the collision.
-        if let Some(new_name) = &patch.name
-            && let Decision::Block(candidates) =
-                guard::decide_rename(handle, new_name, &entity.name, &index, patch.create_new)
-        {
+        // Changing what an entity is CALLED is an entity-touching write, so it
+        // faces the same gate a creation does — display name and aliases alike.
+        // Otherwise the guard is side-steppable: add under a throwaway name,
+        // then move the contested name on afterwards.
+        if let Decision::Block(candidates) = screen_entity_patch(&entity, &patch, &index) {
             return Ok(Guarded::Blocked {
                 attempted: handle.clone(),
                 candidates,
