@@ -872,7 +872,7 @@ mod tests {
             unreachable!("filtered to prose");
         };
         assert_eq!(
-            entity.as_ref(),
+            entity.as_ref().map(|e| &e.id),
             Some(&EntityId::person("alpha")),
             "a prose hit says whose entity doc it is"
         );
@@ -885,7 +885,7 @@ mod tests {
         // The fact in the same doc is still reachable by its own words.
         let facts = indexed.search(&SearchQuery::text("chess")).expect("search ok");
         assert!(
-            facts.iter().any(|h| matches!(h, Hit::Fact { fact } if fact.content == "plays chess")),
+            facts.iter().any(|h| matches!(h, Hit::Fact { fact, .. } if fact.content == "plays chess")),
             "got {facts:?}"
         );
     }
@@ -918,7 +918,7 @@ mod tests {
         // …and the fact beside it is untouched by the wider prose boundary.
         let facts = indexed.search(&SearchQuery::text("chess")).expect("search ok");
         assert!(
-            facts.iter().any(|h| matches!(h, Hit::Fact { fact } if fact.content == "plays chess")),
+            facts.iter().any(|h| matches!(h, Hit::Fact { fact, .. } if fact.content == "plays chess")),
             "got {facts:?}"
         );
     }
@@ -990,7 +990,7 @@ mod tests {
             })
             .expect("search ok");
         assert!(
-            hits.iter().any(|h| matches!(h, Hit::Fact { fact } if fact.content == "plays chess")),
+            hits.iter().any(|h| matches!(h, Hit::Fact { fact, .. } if fact.content == "plays chess")),
             "a row homed in alpha's doc must answer a subject filter for alpha: {hits:?}"
         );
     }

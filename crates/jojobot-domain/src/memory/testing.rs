@@ -1496,7 +1496,7 @@ pub mod contract {
     fn fact_hits(hits: &[Hit]) -> Vec<&Fact> {
         hits.iter()
             .filter_map(|h| match h {
-                Hit::Fact { fact } => Some(fact),
+                Hit::Fact { fact, .. } => Some(fact),
                 _ => None,
             })
             .collect()
@@ -1737,6 +1737,78 @@ pub mod contract {
         );
     }
 
+    /// **No bare hits.** A fact hit names the entity it is about and the entity
+    /// whose page it sits on — handle, kind AND display name — so a reader knows
+    /// what came back without spending a call per handle to find out.
+    ///
+    /// The name is the part that cannot be derived: a handle carries its kind in
+    /// its grammar, but `person:contract-orient` says nothing about who that is.
+    pub async fn search_fact_hits_name_their_subject_and_home<S: Memory + Search>(store: &S) {
+        let subject = EntityId::person("contract-orient-subject");
+        add(store, NewEntity::new(subject.clone(), "Orienteering Otto", "user-named")).await;
+        capture(
+            store,
+            NewFact::about(subject.clone(), "reads a map for fun", date(2026, 7, 1)),
+        )
+        .await;
+
+        let hits = found(store, SearchQuery::text("map for fun"));
+        let (fact_subject, fact_home) = hits
+            .iter()
+            .find_map(|h| match h {
+                Hit::Fact { fact, subject: s, home } if fact.subject == subject => {
+                    Some((s.clone(), home.clone()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the captured fact must come back: {hits:?}"));
+
+        assert_eq!(fact_subject.id, subject);
+        assert_eq!(fact_subject.kind, Some(EntityKind::Person));
+        assert_eq!(
+            fact_subject.name.as_deref(),
+            Some("Orienteering Otto"),
+            "a hit that names only the handle is the bare hit this exists to kill"
+        );
+        // A single-subject capture homes the row on its own subject, so the two
+        // agree here. What matters is that home is *resolved*, not that it
+        // differs — a reader has to be able to tell when it does.
+        assert_eq!(fact_home.id, subject);
+        assert_eq!(fact_home.name.as_deref(), Some("Orienteering Otto"));
+    }
+
+    /// An entity hit arrives with **where it sits in the graph** — the edges its
+    /// facts draw. Asking about someone and getting back only their name is the
+    /// same bare answer as a fact with no subject: the surroundings are the part
+    /// that makes the next question askable.
+    pub async fn search_entity_hits_carry_their_edges<S: Memory + Search>(store: &S) {
+        let handle = EntityId::new(EntityKind::Org, "contract-orient-guild");
+        let hall = EntityId::new(EntityKind::Place, "contract-orient-hall");
+        add(store, NewEntity::new(handle.clone(), "Orienting Guild", "user-named")).await;
+        capture(
+            store,
+            NewFact {
+                edge: Some(Edge::new(EdgeShape::Location, hall.clone())),
+                ..NewFact::about(handle.clone(), "meets on the first Sunday", date(2026, 7, 1))
+            },
+        )
+        .await;
+
+        let hits = found(store, SearchQuery::text(handle.as_str()));
+        let edges = hits
+            .iter()
+            .find_map(|h| match h {
+                Hit::Entity { entity, edges, .. } if entity.id == handle => Some(edges.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the entity must come back: {hits:?}"));
+
+        assert!(
+            edges.contains(&Edge::new(EdgeShape::Location, hall)),
+            "the entity's own edges ride along with it: {edges:?}"
+        );
+    }
+
     /// Capture a fact placing `who` at `place`, and return it.
     async fn capture_at<M: Memory>(store: &M, who: &str, place: &EntityId, on: Date) -> Fact {
         capture(
@@ -1761,6 +1833,8 @@ pub mod contract {
         search_answers_ask_across_by_kind_and_edge(store).await;
         search_by_edge_object_alone_finds_any_shape(store).await;
         search_pins_a_named_entity_first(store).await;
+        search_fact_hits_name_their_subject_and_home(store).await;
+        search_entity_hits_carry_their_edges(store).await;
     }
 
     /// Run the whole contract against one store.

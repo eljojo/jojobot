@@ -27,7 +27,7 @@ use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
     FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance,
     guard::{self, EntityMatch},
-    search::{DEFAULT_LIMIT, EdgeFilter, Hit, Search, SearchQuery},
+    search::{DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, Search, SearchQuery},
     validate_edge,
 };
 use rmcp::{
@@ -304,6 +304,10 @@ impl Jojobot {
                        question in one call (\"which people are in X\"): it walks the typed \
                        edges, so a doc that merely mentions X is not an answer. Every fact hit \
                        carries its whole row and its address, so you can edit what you find. \
+                       No hit comes back bare: a fact also names who it is `about` and whose \
+                       page it is `home`d on (handle, type and name — a null name means that \
+                       handle resolves to no entity), and an entity or prose hit carries that \
+                       entity's names and the `edges` its facts draw. \
                        No pagination — raise `limit` or ask a better question."
     )]
     async fn search(
@@ -506,20 +510,29 @@ fn fact_json(fact: &Fact) -> serde_json::Value {
 /// caller reads a mixed list without guessing from its shape — and each kind of
 /// hit carries what makes it actionable: an entity its handle, a fact its whole
 /// row and address, prose the doc to open and the text around the match.
+///
+/// **And every hit arrives with its surroundings.** A fact adds `about` and
+/// `home` — its subject and its home doc's entity, resolved to a name — and an
+/// entity or a prose doc adds `edges`, where it sits in the graph. The
+/// enrichment is strictly additive: `subject` is still the same handle string
+/// here as in `recall`, so one record has one spelling across every verb.
 fn hit_json(hit: &Hit) -> serde_json::Value {
     match hit {
-        Hit::Entity { entity, doc_id } => {
+        Hit::Entity { entity, doc_id, edges } => {
             let mut body = entity_json(entity);
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("hit".into(), "entity".into());
                 obj.insert("doc".into(), doc_id.clone().into());
+                obj.insert("edges".into(), edges.iter().map(edge_json).collect());
             }
             body
         }
-        Hit::Fact { fact } => {
+        Hit::Fact { fact, subject, home } => {
             let mut body = fact_json(fact);
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("hit".into(), "fact".into());
+                obj.insert("about".into(), entity_ref_json(subject));
+                obj.insert("home".into(), entity_ref_json(home));
             }
             body
         }
@@ -527,15 +540,32 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
             doc_id,
             title,
             entity,
+            edges,
             snippet,
         } => serde_json::json!({
             "hit": "prose",
             "doc": doc_id,
             "title": title,
-            "entity": entity.as_ref().map(|e| e.as_str()),
+            "entity": entity.as_ref().map(entity_json),
+            "edges": edges.iter().map(edge_json).collect::<Vec<_>>(),
             "snippet": snippet,
         }),
     }
+}
+
+/// A handle the reader can act on **and** understand: the id, the kind, and the
+/// display name when the store knows one.
+///
+/// `name` is null for a handle that resolves to nothing — the orphan case. It is
+/// left null rather than filled with the handle: an unresolvable subject is a
+/// real condition, and hiding it behind a plausible string is how it went
+/// unnoticed for a milestone.
+fn entity_ref_json(reference: &EntityRef) -> serde_json::Value {
+    serde_json::json!({
+        "id": reference.id.as_str(),
+        "type": reference.kind.map(type_name),
+        "name": reference.name,
+    })
 }
 
 /// An edge on the wire. `type` carries schema.org's word for the shape —
@@ -837,7 +867,9 @@ impl ServerHandler for Jojobot {
                  (person/project/place/event/work/thing/org/topic, handled `kind:slug`) or a \
                  **fact** about one (addressed `kind:slug#local-id`). **Start with `search`** — \
                  it is the front door: one ranked list over entities, facts and document prose \
-                 at once, so you do not have to know where something was filed. Tools: `search` \
+                 at once, so you do not have to know where something was filed — and every hit \
+                 arrives with its surroundings, so a result is readable without a second call. \
+                 Tools: `search` \
                  · `ping` (connectivity) · `add_entity` · `capture` (remember a fact) · `recall` \
                  (every fact about one entity) · `update_fact` (edit in place; to refute a \
                  claim, rewrite its content to state the negative truth — there is no negated \
@@ -1142,10 +1174,11 @@ mod tests {
         }
     }
 
-    /// **One list, every hit typed.** An entity, a fact and a prose match come
-    /// back together, each saying what it is and carrying what makes it
-    /// actionable — the entity its handle, the fact its whole row and address,
-    /// the prose the doc to open and the text around the match.
+    /// **One list, every hit typed — and none of them bare.** An entity, a fact
+    /// and a prose match come back together, each saying what it is, carrying
+    /// what makes it actionable, *and* carrying its surroundings: the fact names
+    /// the entities it is about and sits on, the entity and the prose doc carry
+    /// the edges that place them in the graph.
     #[tokio::test]
     async fn search_renders_a_mixed_list_of_typed_hits() {
         let entity = Entity {
@@ -1168,13 +1201,32 @@ mod tests {
             date: jiff::civil::date(2026, 7, 1),
             edge: Some(Edge::new(EdgeShape::Membership, EntityId("org:guild".into()))),
         };
+        let alpha = Entity {
+            id: EntityId::person("alpha"),
+            kind: EntityKind::Person,
+            name: "Alpha".into(),
+            aliases: vec!["Al".into()],
+            source: "user-named".into(),
+            crm: None,
+            boot: Boot::OnDemand,
+        };
+        let guild = Edge::new(EdgeShape::Membership, EntityId("org:guild".into()));
         let spy = Arc::new(SpySearch::answering(vec![
-            Hit::Entity { entity, doc_id: "doc-9".into() },
-            Hit::Fact { fact },
+            Hit::Entity {
+                entity,
+                doc_id: "doc-9".into(),
+                edges: vec![guild.clone()],
+            },
+            Hit::Fact {
+                fact,
+                subject: EntityRef::resolved(&alpha),
+                home: EntityRef::resolved(&alpha),
+            },
             Hit::Prose {
                 doc_id: "doc-1".into(),
                 title: "Alpha".into(),
-                entity: Some(EntityId::person("alpha")),
+                entity: Some(alpha.clone()),
+                edges: vec![guild],
                 snippet: "…allergic to penicillin…".into(),
             },
         ]));
@@ -1195,10 +1247,15 @@ mod tests {
         assert_eq!(results[0]["id"], "work:first-mix");
         assert_eq!(results[0]["type"], "CreativeWork", "the schema.org name");
         assert_eq!(results[0]["doc"], "doc-9");
+        assert_eq!(results[0]["edges"][0]["type"], "memberOf", "where it sits in the graph");
+        assert_eq!(results[0]["edges"][0]["object"], "org:guild");
 
         assert_eq!(results[1]["hit"], "fact");
         assert_eq!(results[1]["address"], "person:alpha#f3", "a fact hit is editable");
-        assert_eq!(results[1]["subject"], "person:alpha");
+        assert_eq!(
+            results[1]["subject"], "person:alpha",
+            "the row keeps one spelling across capture, recall and search"
+        );
         assert_eq!(results[1]["content"], "spending the winter away");
         assert_eq!(results[1]["details"], "said so in June");
         assert_eq!(results[1]["provenance"], "testimony");
@@ -1206,11 +1263,24 @@ mod tests {
         assert_eq!(results[1]["date"], "2026-07-01");
         assert_eq!(results[1]["edge"]["type"], "memberOf");
         assert_eq!(results[1]["edge"]["object"], "org:guild");
+        // …and the surroundings, resolved: who this is about, and whose page it
+        // sits on. A handle alone costs the reader a call to find out.
+        assert_eq!(results[1]["about"]["id"], "person:alpha");
+        assert_eq!(results[1]["about"]["type"], "Person");
+        assert_eq!(results[1]["about"]["name"], "Alpha");
+        assert_eq!(results[1]["home"]["id"], "person:alpha");
+        assert_eq!(results[1]["home"]["name"], "Alpha");
 
         assert_eq!(results[2]["hit"], "prose");
         assert_eq!(results[2]["doc"], "doc-1");
         assert_eq!(results[2]["title"], "Alpha");
-        assert_eq!(results[2]["entity"], "person:alpha");
+        assert_eq!(results[2]["entity"]["id"], "person:alpha");
+        assert_eq!(results[2]["entity"]["name"], "Alpha");
+        assert_eq!(
+            results[2]["entity"]["alternateName"][0], "Al",
+            "the names it answers to come with it"
+        );
+        assert_eq!(results[2]["edges"][0]["object"], "org:guild");
         assert_eq!(results[2]["snippet"], "…allergic to penicillin…");
     }
 
@@ -1867,6 +1937,43 @@ mod tests {
             }),
             "recall must return the captured fact: {body}"
         );
+    }
+
+    /// **`recall` shows the edges too.** Search grew a neighborhood; a recall
+    /// that answered with the same rows stripped of their edges would make the
+    /// graph a thing you can only see by searching for it, and reading an
+    /// entity's own page is the commonest way anyone looks.
+    #[tokio::test]
+    async fn recall_returns_the_edge_a_fact_draws() {
+        let jojobot = handler();
+        jojobot
+            .add_entity(Parameters(add_args("org", "guild", "The Guild")))
+            .await
+            .expect("add_entity ok");
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("membership".into()),
+                object: Some("org:guild".into()),
+                ..capture_args("alpha", "joined in the spring")
+            },
+        )
+        .await;
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs { subject: "alpha".into() }))
+                .await
+                .expect("recall ok"),
+        );
+        let edged = body["facts"]
+            .as_array()
+            .expect("recall returns a list")
+            .iter()
+            .find(|f| f["content"] == "joined in the spring")
+            .unwrap_or_else(|| panic!("the captured fact must come back: {body}"));
+        assert_eq!(edged["edge"]["type"], "memberOf", "got {edged}");
+        assert_eq!(edged["edge"]["object"], "org:guild");
     }
 
     /// Omitting `provenance` defaults to inference (a hypothesis until confirmed).

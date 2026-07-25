@@ -209,8 +209,53 @@ impl SearchQuery {
     }
 }
 
+/// A handle, resolved as far as the index can resolve it — **the cure for a bare
+/// hit**. A result that says only `person:homer-simpson` makes the reader spend a second
+/// call to learn whether that is Homer Simpson, and a third to learn he is also Cosme Fulanito.
+///
+/// `name` is `None` when the handle resolves to no entity the index holds. That
+/// is the orphan case ([`orphan_subjects`]) and it is left visibly empty rather
+/// than filled with the handle: a missing name is a fact about the store, and
+/// papering over it is how the split brain stayed invisible in the first place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityRef {
+    /// The handle itself — always present, always what an edit or a follow-up
+    /// query takes.
+    pub id: EntityId,
+    /// The kind the handle declares. `None` only for an id whose grammar is
+    /// broken, which a tolerant reader can still hand back.
+    pub kind: Option<EntityKind>,
+    /// The display name, when the handle names an entity the index knows.
+    pub name: Option<String>,
+}
+
+impl EntityRef {
+    /// A handle nobody has resolved: the kind its grammar declares, no name.
+    pub fn unresolved(id: EntityId) -> Self {
+        EntityRef {
+            kind: id.kind(),
+            id,
+            name: None,
+        }
+    }
+
+    /// A handle resolved against the entity it names.
+    pub fn resolved(entity: &Entity) -> Self {
+        EntityRef {
+            id: entity.id.clone(),
+            kind: Some(entity.kind),
+            name: Some(entity.name.clone()),
+        }
+    }
+}
+
 /// One result. **Typed, and in one list with the others** — the caller is told
 /// what each hit is rather than having to guess from its shape.
+///
+/// Every variant arrives **with its surroundings**: an answer that is only a row
+/// leaves the reader to go and find out what it is attached to, and the reader
+/// is an assistant that will simply not bother. So a fact names the entities it
+/// is about and sits on, and an entity carries the edges its facts draw.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Hit {
     /// An entity matched by handle or name.
@@ -219,6 +264,9 @@ pub enum Hit {
         entity: Entity,
         /// The doc that carries it.
         doc_id: String,
+        /// The edges its facts draw — where this entity sits in the graph,
+        /// deduped and in first-seen order.
+        edges: Vec<Edge>,
     },
     /// A fact matched by content, details, or a filter. Carried **whole** — the
     /// row, not a snippet — because the answer usually IS the row, and its
@@ -226,6 +274,11 @@ pub enum Hit {
     Fact {
         /// The fact, address and all.
         fact: Fact,
+        /// The entity the fact is about, resolved.
+        subject: EntityRef,
+        /// The entity whose doc holds the row, resolved. Usually the same as
+        /// `subject`; when it is not, that difference is the thing worth seeing.
+        home: EntityRef,
     },
     /// Human prose matched inside a document body.
     Prose {
@@ -233,8 +286,11 @@ pub enum Hit {
         doc_id: String,
         /// The doc's title.
         title: String,
-        /// The entity whose doc this is, when it is an entity doc at all.
-        entity: Option<EntityId>,
+        /// The entity whose doc this is, when it is an entity doc at all —
+        /// whole, not a bare handle.
+        entity: Option<Entity>,
+        /// The edges that entity's facts draw; empty for a doc that is nobody's.
+        edges: Vec<Edge>,
         /// The matching text with enough around it to read.
         snippet: String,
     },

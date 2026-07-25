@@ -27,10 +27,10 @@ use tantivy::schema::{Field, IndexRecordOption, STORED, STRING, Schema, TEXT, Va
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term, doc};
 
 use jojobot_domain::memory::{
-    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, Memory,
+    Edge, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, Memory,
     MemoryError, NewEntity, NewFact,
     guard::{self, MatchReason},
-    search::{self, DocScan, Hit, Search, SearchQuery},
+    search::{self, DocScan, EntityRef, Hit, Search, SearchQuery},
 };
 
 /// How much a fresh fact is worth against text relevance. Small on purpose: it
@@ -108,6 +108,40 @@ impl Fields {
     }
 }
 
+/// What the index remembers about one scanned doc **beside its postings**: the
+/// entity it declares, and the edges its rows draw.
+///
+/// Two jobs, one mirror. The write guard's matcher screens a query against
+/// entities rather than postings, and a hit has to arrive with its surroundings
+/// — the name behind a handle, the edges around an entity. Both are lookups by
+/// id over a corpus of dozens of docs, and neither is a text search, so neither
+/// belongs in tantivy.
+///
+/// Resolution happens on the way **out**, never at ingest: a renamed entity has
+/// to change every hit that names it, not just the hits re-indexed since.
+struct DocMirror {
+    /// The store's id for the doc — the key everything is retained by.
+    doc_id: String,
+    /// The entity this doc declares, if it declares one.
+    entity: Option<Entity>,
+    /// Each row's subject and the edge it draws, for the rows that draw one.
+    edges: Vec<(EntityId, Edge)>,
+}
+
+impl DocMirror {
+    fn of(scan: &DocScan) -> Self {
+        DocMirror {
+            doc_id: scan.doc_id.clone(),
+            entity: scan.entity.clone(),
+            edges: scan
+                .facts
+                .iter()
+                .filter_map(|f| f.edge.clone().map(|e| (f.subject.clone(), e)))
+                .collect(),
+        }
+    }
+}
+
 /// The in-RAM full-text index over entities, facts and prose.
 pub struct FullTextIndex {
     index: Index,
@@ -116,11 +150,10 @@ pub struct FullTextIndex {
     /// The writer is single-instance per index in tantivy, so it is held and
     /// shared rather than reopened per write.
     writer: RwLock<IndexWriter>,
-    /// The entity list the **write guard's** matcher screens a query against, to
-    /// decide which entity gets pinned. Kept beside the index because the guard
-    /// takes entities, not postings — and reusing it is what keeps one definition
-    /// of "the same thing" in the system.
-    entities: RwLock<Vec<(Entity, String)>>,
+    /// One entry per scanned doc — see [`DocMirror`]. Kept beside the index
+    /// because the guard takes entities, not postings, and reusing it is what
+    /// keeps one definition of "the same thing" in the system.
+    docs: RwLock<Vec<DocMirror>>,
 }
 
 impl FullTextIndex {
@@ -135,7 +168,7 @@ impl FullTextIndex {
             reader,
             fields,
             writer: RwLock::new(writer),
-            entities: RwLock::new(Vec::new()),
+            docs: RwLock::new(Vec::new()),
         })
     }
 
@@ -151,10 +184,7 @@ impl FullTextIndex {
         writer.commit().map_err(store_err)?;
         drop(writer);
 
-        *self.entities.write().expect("entity mirror poisoned") = scan
-            .iter()
-            .filter_map(|d| d.entity.clone().map(|e| (e, d.doc_id.clone())))
-            .collect();
+        *self.docs.write().expect("doc mirror poisoned") = scan.iter().map(DocMirror::of).collect();
         self.reader.reload().map_err(store_err)?;
         Ok(())
     }
@@ -169,11 +199,9 @@ impl FullTextIndex {
         writer.commit().map_err(store_err)?;
         drop(writer);
 
-        let mut mirror = self.entities.write().expect("entity mirror poisoned");
-        mirror.retain(|(_, id)| id != &doc.doc_id);
-        if let Some(entity) = &doc.entity {
-            mirror.push((entity.clone(), doc.doc_id.clone()));
-        }
+        let mut mirror = self.docs.write().expect("doc mirror poisoned");
+        mirror.retain(|d| d.doc_id != doc.doc_id);
+        mirror.push(DocMirror::of(doc));
         drop(mirror);
         self.reader.reload().map_err(store_err)?;
         Ok(())
@@ -182,11 +210,11 @@ impl FullTextIndex {
     /// Every entity the index currently holds — the set an incremental reindex
     /// checks a doc's subjects against.
     pub fn known_entities(&self) -> std::collections::HashSet<EntityId> {
-        self.entities
+        self.docs
             .read()
-            .expect("entity mirror poisoned")
+            .expect("doc mirror poisoned")
             .iter()
-            .map(|(e, _)| e.id.clone())
+            .filter_map(|d| d.entity.as_ref().map(|e| e.id.clone()))
             .collect()
     }
 
@@ -200,12 +228,12 @@ impl FullTextIndex {
     /// went on being served from the last scan, indefinitely.
     pub fn forget(&self, entity: &EntityId) -> Result<(), MemoryError> {
         let doc_id = self
-            .entities
+            .docs
             .read()
-            .expect("entity mirror poisoned")
+            .expect("doc mirror poisoned")
             .iter()
-            .find(|(e, _)| &e.id == entity)
-            .map(|(_, doc_id)| doc_id.clone());
+            .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == entity))
+            .map(|d| d.doc_id.clone());
         // Nothing indexed under it: a doc that was never scanned leaves no ghost.
         let Some(doc_id) = doc_id else { return Ok(()) };
 
@@ -214,10 +242,10 @@ impl FullTextIndex {
         writer.commit().map_err(store_err)?;
         drop(writer);
 
-        self.entities
+        self.docs
             .write()
-            .expect("entity mirror poisoned")
-            .retain(|(_, id)| id != &doc_id);
+            .expect("doc mirror poisoned")
+            .retain(|d| d.doc_id != doc_id);
         self.reader.reload().map_err(store_err)?;
         Ok(())
     }
@@ -457,7 +485,7 @@ impl FullTextIndex {
     /// The entities the query names outright — screened by the **write guard's**
     /// matcher, so "close enough to be the same thing" means one thing in this
     /// system, not two. Strongest match first.
-    fn pinned(&self, query: &SearchQuery) -> Vec<Hit> {
+    fn pinned(&self, query: &SearchQuery, mirror: &[DocMirror]) -> Vec<Hit> {
         let Some(text) = query.terms() else {
             return Vec::new();
         };
@@ -466,8 +494,7 @@ impl FullTextIndex {
         if query.is_fact_scoped() {
             return Vec::new();
         }
-        let mirror = self.entities.read().expect("entity mirror poisoned");
-        let index: Vec<Entity> = mirror.iter().map(|(e, _)| e.clone()).collect();
+        let index: Vec<Entity> = mirror.iter().filter_map(|d| d.entity.clone()).collect();
         let matches = guard::screen(&EntityId(text.to_string()), &[text], &index);
 
         matches
@@ -484,14 +511,44 @@ impl FullTextIndex {
             .filter_map(|m| {
                 mirror
                     .iter()
-                    .find(|(e, _)| e.id == m.handle)
-                    .map(|(entity, doc_id)| Hit::Entity {
-                        entity: entity.clone(),
-                        doc_id: doc_id.clone(),
+                    .find(|d| d.entity.as_ref().is_some_and(|e| e.id == m.handle))
+                    .map(|d| Hit::Entity {
+                        entity: d.entity.clone().expect("filtered to docs with an entity"),
+                        doc_id: d.doc_id.clone(),
+                        edges: edges_of(mirror, &m.handle),
                     })
             })
             .collect()
     }
+}
+
+/// The entity a handle names, as far as the mirror knows it. An id that resolves
+/// to nothing comes back **unresolved rather than invented** — the orphan case,
+/// and the reader is entitled to see it as one.
+fn resolve(mirror: &[DocMirror], id: &EntityId) -> EntityRef {
+    mirror
+        .iter()
+        .filter_map(|d| d.entity.as_ref())
+        .find(|e| &e.id == id)
+        .map(EntityRef::resolved)
+        .unwrap_or_else(|| EntityRef::unresolved(id.clone()))
+}
+
+/// Where an entity sits in the graph: the edges drawn by the facts **about** it,
+/// wherever those rows are homed, deduped and in first-seen order.
+///
+/// Subject rather than home, deliberately: an edge belongs to the claim, the
+/// claim belongs to its subject, and a fact about someone written on another
+/// entity's page is ordinary. Homing it elsewhere must not move where the edge
+/// appears to point from.
+fn edges_of(mirror: &[DocMirror], id: &EntityId) -> Vec<Edge> {
+    let mut edges: Vec<Edge> = Vec::new();
+    for (subject, edge) in mirror.iter().flat_map(|d| d.edges.iter()) {
+        if subject == id && !edges.contains(edge) {
+            edges.push(edge.clone());
+        }
+    }
+    edges
 }
 
 impl Search for FullTextIndex {
@@ -516,6 +573,9 @@ impl Search for FullTextIndex {
             .max();
 
         let terms = query.terms().map(|t| self.terms_of(t)).unwrap_or_default();
+        // One read guard for the whole answer: every hit in a list resolves
+        // against the same mirror, so two hits can never disagree about a name.
+        let mirror = self.docs.read().expect("doc mirror poisoned");
         let mut ranked: Vec<(f32, String, Hit)> = scored
             .into_iter()
             .map(|(score, payload)| {
@@ -526,7 +586,7 @@ impl Search for FullTextIndex {
                     }
                     _ => 0.0,
                 };
-                let hit = payload.into_hit(&terms);
+                let hit = payload.into_hit(&terms, &mirror);
                 (score + boost, tiebreak(&hit), hit)
             })
             .collect();
@@ -534,7 +594,7 @@ impl Search for FullTextIndex {
         // sessions asking the same question see the same list in the same order.
         ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
 
-        let mut hits = self.pinned(query);
+        let mut hits = self.pinned(query, &mirror);
         for (_, _, hit) in ranked {
             if !hits.contains(&hit) {
                 hits.push(hit);
@@ -546,21 +606,43 @@ impl Search for FullTextIndex {
 }
 
 impl Payload {
-    fn into_hit(self, terms: &[String]) -> Hit {
+    /// Turn a stored payload into a hit, **resolved against the mirror**. The
+    /// payload holds handles because that is what the doc it came from holds;
+    /// the neighborhood is assembled here, at read time, so a rename shows up in
+    /// every hit and not only in the docs re-indexed since.
+    fn into_hit(self, terms: &[String], mirror: &[DocMirror]) -> Hit {
         match self {
-            Payload::Entity { entity, doc_id } => Hit::Entity { entity, doc_id },
-            Payload::Fact { fact } => Hit::Fact { fact },
+            Payload::Entity { entity, doc_id } => Hit::Entity {
+                edges: edges_of(mirror, &entity.id),
+                entity,
+                doc_id,
+            },
+            Payload::Fact { fact } => Hit::Fact {
+                subject: resolve(mirror, &fact.subject),
+                home: resolve(mirror, &fact.home),
+                fact,
+            },
             Payload::Prose {
                 doc_id,
                 title,
                 entity,
                 body,
-            } => Hit::Prose {
-                doc_id,
-                title,
-                entity,
-                snippet: snippet(&body, terms),
-            },
+            } => {
+                let owner = entity.and_then(|id| {
+                    mirror
+                        .iter()
+                        .filter_map(|d| d.entity.as_ref())
+                        .find(|e| e.id == id)
+                        .cloned()
+                });
+                Hit::Prose {
+                    edges: owner.as_ref().map_or_else(Vec::new, |e| edges_of(mirror, &e.id)),
+                    entity: owner,
+                    doc_id,
+                    title,
+                    snippet: snippet(&body, terms),
+                }
+            }
         }
     }
 }
@@ -570,7 +652,7 @@ impl Payload {
 fn tiebreak(hit: &Hit) -> String {
     match hit {
         Hit::Entity { entity, .. } => entity.id.to_string(),
-        Hit::Fact { fact } => fact.address().to_string(),
+        Hit::Fact { fact, .. } => fact.address().to_string(),
         Hit::Prose { doc_id, .. } => doc_id.clone(),
     }
 }
@@ -810,7 +892,7 @@ impl Search for IndexedMemory {
 #[cfg(test)]
 mod tests {
     use jiff::civil::date;
-    use jojobot_domain::memory::search::{EdgeFilter, DEFAULT_LIMIT};
+    use jojobot_domain::memory::search::{DEFAULT_LIMIT, EdgeFilter, EntityRef};
     use jojobot_domain::memory::testing::{InMemoryMemory, contract};
     use jojobot_domain::memory::{
         Boot, Edge, EdgeShape, FactStatus, Provenance, validate_subject,
@@ -899,7 +981,11 @@ mod tests {
             unreachable!("filtered to prose");
         };
         assert_eq!(doc_id, "doc-1", "a prose hit says which doc to open");
-        assert_eq!(owner.as_ref(), Some(&alpha.id), "…and whose entity doc it is");
+        assert_eq!(
+            owner.as_ref().map(|e| &e.id),
+            Some(&alpha.id),
+            "…and whose entity doc it is"
+        );
         assert!(
             snippet.to_lowercase().contains("penicillin"),
             "the snippet must carry the match: {snippet:?}"
@@ -945,7 +1031,7 @@ mod tests {
         let ids: Vec<String> = hits
             .iter()
             .filter_map(|h| match h {
-                Hit::Fact { fact } => Some(fact.id.to_string()),
+                Hit::Fact { fact, .. } => Some(fact.id.to_string()),
                 _ => None,
             })
             .collect();
@@ -971,7 +1057,7 @@ mod tests {
         let contents: Vec<String> = hits
             .iter()
             .filter_map(|h| match h {
-                Hit::Fact { fact } => Some(fact.content.clone()),
+                Hit::Fact { fact, .. } => Some(fact.content.clone()),
                 _ => None,
             })
             .collect();
@@ -1036,7 +1122,7 @@ mod tests {
             "the entity that wears the nickname leads: {hits:?}"
         );
         assert!(
-            hits.iter().any(|h| matches!(h, Hit::Fact { fact } if fact.content == "plays the bass")),
+            hits.iter().any(|h| matches!(h, Hit::Fact { fact, .. } if fact.content == "plays the bass")),
             "…and the facts on its page come with it: {hits:?}"
         );
 
@@ -1061,6 +1147,108 @@ mod tests {
                 .iter()
                 .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == homer.id)),
             "the entity record itself is indexed under every name it answers to"
+        );
+    }
+
+    /// **The two halves a fact hit has to keep apart.** A row about Beta written
+    /// on Alpha's page names both, resolved — that difference is precisely what a
+    /// reader has to be able to see, and it is invisible if either side comes
+    /// back as a bare handle.
+    ///
+    /// And a subject naming nothing comes back with **no name rather than an
+    /// invented one**. Filling it with the handle would make the orphan look
+    /// exactly like a resolved hit, which is how the split brain stayed
+    /// undetected for a milestone.
+    #[tokio::test]
+    async fn a_fact_hit_resolves_a_home_and_a_subject_that_differ() {
+        let alpha = entity("person:alpha", "Alpha");
+        let beta = entity("person:beta", "Beta");
+        let guest = Fact {
+            subject: beta.id.clone(),
+            ..fact("person:alpha", "f1", "brought the sourdough", date(2026, 1, 1))
+        };
+        let orphan = Fact {
+            subject: EntityId("person:ghost".into()),
+            ..fact("person:alpha", "f2", "brought the sourdough too", date(2026, 1, 2))
+        };
+        let index = index_of(vec![
+            scan("doc-1", Some(alpha.clone()), "", vec![guest, orphan]),
+            scan("doc-2", Some(beta.clone()), "", vec![]),
+        ]);
+
+        let hits = index.search(&SearchQuery::text("sourdough")).expect("search ok");
+        let refs: Vec<(&EntityRef, &EntityRef)> = hits
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Fact { subject, home, .. } => Some((subject, home)),
+                _ => None,
+            })
+            .collect();
+
+        let resolved = refs
+            .iter()
+            .find(|(s, _)| s.id == beta.id)
+            .expect("the row about beta must come back");
+        assert_eq!(resolved.0.name.as_deref(), Some("Beta"), "who it is about");
+        assert_eq!(resolved.1.id, alpha.id, "…and whose page it sits on");
+        assert_eq!(resolved.1.name.as_deref(), Some("Alpha"));
+
+        let ghost = refs
+            .iter()
+            .find(|(s, _)| s.id.as_str() == "person:ghost")
+            .expect("the orphaned row is indexed, not dropped");
+        assert_eq!(ghost.0.kind, Some(EntityKind::Person), "the handle still declares a kind");
+        assert_eq!(
+            ghost.0.name, None,
+            "a subject that names nothing must read as unresolved, not as itself"
+        );
+        assert_eq!(ghost.1.name.as_deref(), Some("Alpha"), "its home still resolves");
+    }
+
+    /// An entity's edges are the ones its **facts** draw, wherever those rows are
+    /// homed — and only its own. A row about someone else, sitting on this page,
+    /// belongs to that someone else's neighborhood.
+    #[tokio::test]
+    async fn entity_hits_carry_the_edges_of_their_own_facts_only() {
+        let alpha = entity("person:alpha", "Alpha");
+        let beta = entity("person:beta", "Beta");
+        let shelbyville = Edge::new(EdgeShape::Location, EntityId("place:shelbyville".into()));
+        let guild = Edge::new(EdgeShape::Membership, EntityId("org:guild".into()));
+        let index = index_of(vec![
+            scan(
+                "doc-1",
+                Some(alpha.clone()),
+                "",
+                vec![
+                    Fact { edge: Some(shelbyville.clone()), ..fact("person:alpha", "f1", "wintering", date(2026, 1, 1)) },
+                    // Beta's row, homed on Alpha's page: Beta's edge, not Alpha's.
+                    Fact {
+                        subject: beta.id.clone(),
+                        edge: Some(guild.clone()),
+                        ..fact("person:alpha", "f2", "joined up", date(2026, 1, 2))
+                    },
+                ],
+            ),
+            scan("doc-2", Some(beta.clone()), "", vec![]),
+        ]);
+
+        let edges_for = |handle: &EntityId| -> Vec<Edge> {
+            index
+                .search(&SearchQuery::text(handle.as_str()))
+                .expect("search ok")
+                .iter()
+                .find_map(|h| match h {
+                    Hit::Entity { entity, edges, .. } if &entity.id == handle => Some(edges.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{handle} must come back as an entity hit"))
+        };
+
+        assert_eq!(edges_for(&alpha.id), vec![shelbyville], "its own claim's edge");
+        assert_eq!(
+            edges_for(&beta.id),
+            vec![guild],
+            "an edge follows the claim's SUBJECT, not the page the row happens to sit on"
         );
     }
 
@@ -1606,6 +1794,15 @@ mod tests {
                 ..Default::default()
             })
             .expect("search ok");
-        assert_eq!(hits, vec![Hit::Fact { fact: edged }], "got {hits:?}");
+        let alpha = EntityRef::resolved(&entity("person:alpha", "Alpha"));
+        assert_eq!(
+            hits,
+            vec![Hit::Fact {
+                fact: edged,
+                subject: alpha.clone(),
+                home: alpha,
+            }],
+            "got {hits:?}"
+        );
     }
 }
