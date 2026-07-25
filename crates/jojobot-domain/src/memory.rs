@@ -254,12 +254,17 @@ impl NewEntity {
 /// A `None` field is left alone.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EntityPatch {
-    /// New display name.
+    /// New display name. Screened by the write guard exactly as a creation is —
+    /// otherwise the guard is trivially side-steppable: create under a
+    /// throwaway name, then rename onto the collision.
     pub name: Option<String>,
     /// New source.
     pub source: Option<String>,
     /// New kanban token.
     pub crm: Option<String>,
+    /// Set only after the guard reported candidates for the new name and the
+    /// caller judged them different. Same signal as [`NewEntity::create_new`].
+    pub create_new: bool,
 }
 
 /// An in-place edit to one addressed fact. A `None` field is left alone; this is
@@ -763,13 +768,15 @@ pub trait Memory: Send + Sync {
     /// Every entity jojobot knows, optionally filtered to one kind.
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError>;
 
-    /// Edit an entity's metadata in place. Never the handle. An unknown handle
-    /// is [`MemoryError::UnknownEntity`], never a create.
+    /// Edit an entity's metadata in place. Never the handle. A **name** change
+    /// is screened by the write guard just as a creation is, so this can come
+    /// back [`Guarded::Blocked`]. An unknown handle is
+    /// [`MemoryError::UnknownEntity`], never a create.
     async fn update_entity(
         &self,
         handle: &EntityId,
         patch: EntityPatch,
-    ) -> Result<Entity, MemoryError>;
+    ) -> Result<Guarded<Entity>, MemoryError>;
 
     /// Write a fact and return it with the id its home assigned, its content
     /// normalized. The returned fact must be visible — byte-identical — to a

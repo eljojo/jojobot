@@ -5,7 +5,9 @@
 
 use jiff::civil::Date;
 
-use jojobot_domain::memory::{Boot, Entity, EntityId, Fact, FactId, FactStatus, Provenance};
+use jojobot_domain::memory::{
+    Boot, Entity, EntityId, Fact, FactId, FactStatus, Provenance, validate_subject,
+};
 
 /// The header that marks the machine-readable fact table at the bottom of a doc.
 pub(super) const FACTS_HEADER: &str = "### ⚙ facts";
@@ -290,7 +292,14 @@ fn machine_block(lines: &[&str]) -> Option<(usize, usize)> {
             .position(is_fence)
             .map(|o| i + 1 + o);
         let close = close?; // unterminated fence: no machine block
-        if lines[i + 1..close].iter().any(|l| field_of(l, "id").is_some()) {
+        // The `id:` must be a well-formed entity id, not merely present. Users
+        // paste YAML and frontmatter into their own docs, and a snippet with an
+        // `id:` line would otherwise take the doc's identity with it — leaving
+        // the real entity unresolvable and its facts unreachable.
+        if lines[i + 1..close]
+            .iter()
+            .any(|l| field_of(l, "id").is_some_and(|v| validate_subject(&EntityId(v)).is_ok()))
+        {
             return Some((i, close + 1));
         }
         i = close + 1;
@@ -441,14 +450,26 @@ mod tests {
 
     /// A hand-broken row still occupies its id: the next fact minted must step
     /// over it, or two rows end up sharing one address.
+    ///
+    /// **The silent drop this test observes is a known gap, not the contract.**
+    /// The architecture calls for a malformed record to be *quarantined and
+    /// surfaced* — "N records couldn't be parsed" — so a human or the AI can
+    /// repair it. M1 drops it with no signal: the fact is simply gone from every
+    /// read. What is asserted here is that the drop is at least *inert* (the id
+    /// stays reserved, the row is never overwritten). Quarantine surfacing is
+    /// deferred work; the `is_empty()` below records today's behaviour, it does
+    /// not endorse it.
     #[test]
-    fn an_unparseable_row_still_reserves_its_id() {
+    fn an_unparseable_row_reserves_its_id_but_is_silently_dropped() {
         let doc = with_fact_appended(
             &seeded_doc(&alpha()),
             // A date a human retyped in the wiki — unparseable, so no reader sees it.
             "| f1 | person:alpha | allergic to penicillin |  | testimony | active | July 1, 2026 |",
         );
-        assert!(parse_facts_table(&doc).is_empty(), "the reader can't see it");
+        assert!(
+            parse_facts_table(&doc).is_empty(),
+            "today the row vanishes from every read, with no quarantine signal"
+        );
         assert_eq!(
             next_fact_id(&doc),
             FactId("f2".into()),
@@ -547,6 +568,51 @@ mod tests {
             updated.matches("id: person:alpha").count(),
             1,
             "exactly one machine block, not a stale duplicate: {updated}"
+        );
+        assert_eq!(parse_entity(&updated).unwrap(), renamed);
+    }
+
+    /// A user pasting a YAML/frontmatter snippet into their own doc must not
+    /// hand that doc's identity to it. Any fence with an `id:` line used to be
+    /// adopted as the machine block — the mirror image of the bug the
+    /// marker-anchored lookup was written to fix, and worse: the doc stops
+    /// resolving to its entity, so its facts become unreachable.
+    #[test]
+    fn a_decoy_fence_cannot_steal_the_docs_identity() {
+        let doc = format!(
+            "Prose about this entity.\n\n\
+             ```yaml\nid: my-service\nversion: 2\n```\n\n\
+             {}\n\n{FACTS_HEADER}\n\n{TABLE_HEADER}\n{TABLE_SEP}\n\
+             | f1 | person:alpha | plays chess |  | testimony | active | 2026-07-01 |\n",
+            frontmatter(&alpha())
+        );
+
+        assert_eq!(
+            parse_id_marker(&doc).as_deref(),
+            Some("person:alpha"),
+            "the decoy's `id:` is not an entity id, so it is not a marker"
+        );
+        assert_eq!(parse_entity(&doc).map(|e| e.id), Some(EntityId::person("alpha")));
+        assert_eq!(parse_facts_table(&doc).len(), 1, "the doc's facts stay reachable");
+    }
+
+    /// The same predicate protects the write path: an entity edit rewrites
+    /// jojobot's block, never the pasted snippet.
+    #[test]
+    fn a_decoy_fence_is_not_rewritten_by_an_entity_edit() {
+        let doc = format!(
+            "```yaml\nid: my-service\nversion: 2\n```\n\n{}\n\n{FACTS_HEADER}\n",
+            frontmatter(&alpha())
+        );
+        let renamed = Entity { name: "Alpha Renamed".into(), ..alpha() };
+        let updated = with_frontmatter_replaced(&doc, &renamed);
+
+        assert!(updated.contains("id: my-service"), "the decoy survives: {updated}");
+        assert!(updated.contains("version: 2"));
+        assert_eq!(
+            updated.matches("id: person:alpha").count(),
+            1,
+            "one machine block, rewritten in place: {updated}"
         );
         assert_eq!(parse_entity(&updated).unwrap(), renamed);
     }
@@ -811,13 +877,26 @@ mod tests {
     }
 }
 
+/// What a bare carriage return in a fact's content does — asserted, because it
+/// is a live hazard rather than a curiosity.
+///
+/// `validate_content` rejects `\n` but not a lone `\r`, so one can reach a cell.
+/// While the store keeps the byte, nothing breaks. But a store that normalizes
+/// line endings (`\r` → `\n`, which markdown pipelines routinely do) splits the
+/// row in two, and the split ends the table's contiguous run of `|` lines — so
+/// **every fact below it is lost as well**, not just the one carrying the CR.
+///
+/// These tests pin today's behaviour, including the bad half. Rejecting `\r` in
+/// [`validate_content`](jojobot_domain::memory::validate_content) is the obvious
+/// guard and is **deliberately not done here** — it is a separate decision, not
+/// this change's to make.
 #[cfg(test)]
-mod cr_probe {
+mod bare_cr {
     use super::*;
     use jiff::civil::date;
 
-    fn f(id: &str, content: &str) -> Fact {
-        Fact {
+    fn doc_with_cr_in_the_first_row() -> String {
+        let fact = |id: &str, content: &str| Fact {
             id: FactId(id.into()),
             home: EntityId("person:alpha".into()),
             subject: EntityId("person:alpha".into()),
@@ -826,27 +905,35 @@ mod cr_probe {
             provenance: Provenance::Inference,
             status: FactStatus::Active,
             date: date(2026, 7, 25),
+        };
+        let mut doc = format!(
+            "```yaml\nid: person:alpha\n```\n\n{FACTS_HEADER}\n\n{TABLE_HEADER}\n{TABLE_SEP}\n"
+        );
+        for (id, content) in [("f1", "hello\rworld"), ("f2", "b"), ("f3", "c"), ("f4", "d")] {
+            doc = with_fact_appended(&doc, &render_fact_row(&fact(id, content)));
         }
+        doc
     }
 
+    /// A store that preserves the byte: the CR rides inside its cell and every
+    /// fact still reads back.
     #[test]
-    fn probe() {
-        // Build a doc with f1..f4, CR inside f1's content, exactly as the
-        // adapter would: render row, append via with_fact_appended.
-        let mut doc = String::from("intro\n\n### \u{2699} facts\n\n| id | subject | content | details | provenance | status | date |\n| --- | --- | --- | --- | --- | --- | --- |\n");
-        doc = format!("id: person:alpha\n{doc}");
-        for (i, c) in [("f1", "hello\rworld"), ("f2", "b"), ("f3", "c"), ("f4", "d")] {
-            doc = with_fact_appended(&doc, &render_fact_row(&f(i, c)));
-        }
+    fn a_preserved_bare_cr_round_trips_inside_its_cell() {
+        let doc = doc_with_cr_in_the_first_row();
         let parsed = parse_facts_table(&doc);
-        eprintln!("RAW DOC BYTES CONTAIN CR: {}", doc.contains('\r'));
-        eprintln!("PARSED COUNT (CR preserved by store) = {}", parsed.len());
-        eprintln!("CONTENTS = {:?}", parsed.iter().map(|x| (x.id.0.clone(), x.content.clone())).collect::<Vec<_>>());
+        assert_eq!(parsed.len(), 4);
+        assert_eq!(parsed[0].content, "hello\rworld");
+    }
 
-        // Now simulate a store that normalizes bare CR -> LF (markdown-it style).
-        let normalized = doc.replace('\r', "\n");
-        let parsed2 = parse_facts_table(&normalized);
-        eprintln!("PARSED COUNT (CR normalized to LF) = {}", parsed2.len());
-        eprintln!("CONTENTS2 = {:?}", parsed2.iter().map(|x| x.id.0.clone()).collect::<Vec<_>>());
+    /// A store that normalizes `\r` to `\n` takes the whole table down with it —
+    /// the split row ends the table's contiguous span, so the three innocent
+    /// rows below are dropped too. Known gap; the guard is a separate decision.
+    #[test]
+    fn a_normalized_bare_cr_silently_drops_the_rest_of_the_table() {
+        let normalized = doc_with_cr_in_the_first_row().replace('\r', "\n");
+        assert!(
+            parse_facts_table(&normalized).is_empty(),
+            "today every fact below the split is lost, silently"
+        );
     }
 }

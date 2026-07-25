@@ -210,6 +210,30 @@ pub fn decide(
     }
 }
 
+/// The guard's decision on a **rename** — the same screen a creation gets, with
+/// two adjustments that are properties of renaming rather than new policy:
+///
+/// * the entity being renamed is excluded from the index, or it would always
+///   match itself on [`MatchReason::ExactHandle`] and no rename could proceed;
+/// * a name that isn't actually changing is not screened, because a no-op
+///   cannot introduce a collision that isn't already there.
+///
+/// Without this, the guard is trivially side-steppable: create under a
+/// throwaway name, then rename onto the collision.
+pub fn decide_rename(
+    handle: &EntityId,
+    new_name: &str,
+    current_name: &str,
+    index: &[Entity],
+    create_new: bool,
+) -> Decision {
+    if normalize_name(new_name) == normalize_name(current_name) {
+        return Decision::Proceed;
+    }
+    let others: Vec<Entity> = index.iter().filter(|e| &e.id != handle).cloned().collect();
+    decide(handle, Some(new_name), &others, create_new)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,6 +402,53 @@ mod tests {
         assert!(
             screen(&EntityId("person:zenith".into()), Some(""), &idx).is_empty(),
             "an empty name must not match an empty name"
+        );
+    }
+
+    // --- renames go through the same gate ------------------------------------
+
+    /// A rename onto a name the index already holds is blocked, and the same
+    /// explicit signal clears it — the creation gate, reused.
+    #[test]
+    fn a_rename_onto_an_existing_name_is_blocked_and_create_new_clears_it() {
+        let renamer = EntityId("person:zenith".into());
+        let Decision::Block(candidates) =
+            decide_rename(&renamer, "Alpha", "Zenith", &index(), false)
+        else {
+            panic!("a rename onto an existing name must block");
+        };
+        assert_eq!(candidates[0].handle.as_str(), "person:alpha");
+        assert_eq!(candidates[0].reason, MatchReason::SameName);
+        assert_eq!(
+            decide_rename(&renamer, "Alpha", "Zenith", &index(), true),
+            Decision::Proceed
+        );
+    }
+
+    /// An entity must not match itself: it is in the index, so screening it
+    /// against the whole index would block every rename on ExactHandle.
+    #[test]
+    fn a_rename_does_not_screen_the_entity_against_itself() {
+        let existing = EntityId("person:alpha".into());
+        assert_eq!(
+            decide_rename(&existing, "Something Unrelated", "Alpha", &index(), false),
+            Decision::Proceed,
+            "an entity is not a candidate for its own rename"
+        );
+    }
+
+    /// A name that isn't changing isn't screened — otherwise editing an
+    /// entity's source would trip over a collision that already exists and was
+    /// already confirmed.
+    #[test]
+    fn an_unchanged_name_is_not_screened() {
+        let mut idx = index();
+        idx.push(entity("person:alpha-two", "Alpha", "user-named"));
+        let existing = EntityId("person:alpha-two".into());
+        assert_eq!(
+            decide_rename(&existing, "  ALPHA  ", "Alpha", &idx, false),
+            Decision::Proceed,
+            "case and spacing folded: this is the same name, not a new collision"
         );
     }
 

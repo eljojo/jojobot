@@ -98,8 +98,10 @@ impl Memory for InMemoryMemory {
         &self,
         handle: &EntityId,
         patch: EntityPatch,
-    ) -> Result<Entity, MemoryError> {
+    ) -> Result<Guarded<Entity>, MemoryError> {
         validate_subject(handle)?;
+        // Taken before the lock: index() locks too.
+        let index = self.index();
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         let Some(entity) = entities.iter_mut().find(|e| &e.id == handle) else {
             return Err(MemoryError::UnknownEntity {
@@ -107,8 +109,18 @@ impl Memory for InMemoryMemory {
                 nearest: guard::screen(handle, None, &entities),
             });
         };
+        // A rename is an entity-touching write, so it faces the same gate.
+        if let Some(new_name) = &patch.name
+            && let Decision::Block(candidates) =
+                guard::decide_rename(handle, new_name, &entity.name, &index, patch.create_new)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: handle.clone(),
+                candidates,
+            });
+        }
         apply_entity_patch(entity, &patch)?;
-        Ok(entity.clone())
+        Ok(Guarded::Written(entity.clone()))
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -489,13 +501,91 @@ pub mod contract {
                 },
             )
             .await
-            .expect("update_entity should succeed");
+            .expect("update_entity should succeed")
+            .written()
+            .expect("the guard must not block an uncontested rename");
         assert_eq!(updated.id, id, "the handle is immutable");
         assert_eq!(updated.source, "user-named", "an omitted field is left alone");
 
         let seen = read_entity(store, &id).await;
         assert_eq!(seen.name, "Red Bike (the gravel one)");
         assert_eq!(seen.crm.as_deref(), Some("card:551"));
+    }
+
+    /// Renaming an entity onto a name the index already holds is screened by the
+    /// same guard that screens creation. Otherwise the guard is trivially
+    /// side-steppable: create under a throwaway name, then rename onto the
+    /// collision — and two people wear one name with no confirmation asked.
+    pub async fn update_entity_screens_a_colliding_rename<M: Memory>(store: &M) {
+        let first = EntityId::person("contract-renamed-onto");
+        let second = EntityId::person("contract-renamer");
+        add(store, NewEntity::new(first.clone(), "Renamed Onto", "user-named")).await;
+        add(store, NewEntity::new(second.clone(), "Renamer", "user-named")).await;
+
+        let outcome = store
+            .update_entity(
+                &second,
+                EntityPatch { name: Some("Renamed Onto".into()), ..Default::default() },
+            )
+            .await
+            .expect("the call itself succeeds; the guard answers in the result");
+        let Guarded::Blocked { candidates, .. } = outcome else {
+            panic!("a rename onto an existing name must be blocked");
+        };
+        assert!(
+            candidates.iter().any(|m| m.handle == first),
+            "the guard must name the entity already wearing it: {candidates:?}"
+        );
+
+        let entities = store.list_entities(None).await.expect("list");
+        let wearing_the_name: Vec<&EntityId> = entities
+            .iter()
+            .filter(|e| e.name == "Renamed Onto")
+            .map(|e| &e.id)
+            .collect();
+        assert_eq!(
+            wearing_the_name,
+            vec![&first],
+            "an unconfirmed rename onto an existing name must not land"
+        );
+
+        // The same explicit signal that clears a creation clears a rename.
+        let forced = store
+            .update_entity(
+                &second,
+                EntityPatch {
+                    name: Some("Renamed Onto".into()),
+                    create_new: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("update should succeed")
+            .written()
+            .expect("an explicit create_new resolves the rename");
+        assert_eq!(forced.name, "Renamed Onto");
+        assert_eq!(forced.id, second, "the handle is untouched by a rename");
+    }
+
+    /// Editing metadata that isn't the name is never screened — an entity's own
+    /// name must not trip the guard against itself.
+    pub async fn update_entity_without_a_rename_is_not_screened<M: Memory>(store: &M) {
+        let id = EntityId::new(EntityKind::Org, "contract-unscreened");
+        add(store, NewEntity::new(id.clone(), "Unscreened Org", "user-named")).await;
+        let same_name_again = store
+            .update_entity(
+                &id,
+                EntityPatch {
+                    name: Some("Unscreened Org".into()),
+                    source: Some("crm-card".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("update should succeed")
+            .written()
+            .expect("an entity is not a candidate for its own rename");
+        assert_eq!(same_name_again.source, "crm-card");
     }
 
     /// Updating an entity that doesn't exist errors with the nearest candidates
@@ -870,6 +960,8 @@ pub mod contract {
         add_entity_reads_back(store).await;
         list_entities_filters_by_kind(store).await;
         update_entity_edits_metadata_in_place(store).await;
+        update_entity_screens_a_colliding_rename(store).await;
+        update_entity_without_a_rename_is_not_screened(store).await;
         update_entity_unknown_handle_never_creates(store).await;
 
         facts_carry_a_usable_address(store).await;

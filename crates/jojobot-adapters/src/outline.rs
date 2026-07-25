@@ -353,12 +353,12 @@ impl Memory for OutlineStore {
         &self,
         handle: &EntityId,
         patch: EntityPatch,
-    ) -> Result<Entity, MemoryError> {
+    ) -> Result<Guarded<Entity>, MemoryError> {
         validate_subject(handle)?;
         let collection_id = self.resolve_collection().await?;
+        let index = self.entity_index(&collection_id).await?;
 
         let Some(doc) = self.entity_doc(&collection_id, handle).await? else {
-            let index = self.entity_index(&collection_id).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: handle.to_string(),
                 nearest: guard::screen(handle, None, &index),
@@ -366,6 +366,19 @@ impl Memory for OutlineStore {
         };
         let mut entity = parse_entity(&doc.text)
             .ok_or_else(|| MemoryError::Store(format!("doc for {handle} lost its marker")))?;
+
+        // A rename is an entity-touching write, so it faces the same gate a
+        // creation does — otherwise the guard is side-steppable: add under a
+        // throwaway name, then rename onto the collision.
+        if let Some(new_name) = &patch.name
+            && let Decision::Block(candidates) =
+                guard::decide_rename(handle, new_name, &entity.name, &index, patch.create_new)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: handle.clone(),
+                candidates,
+            });
+        }
         apply_entity_patch(&mut entity, &patch)?;
 
         let updated = with_frontmatter_replaced(&doc.text, &entity);
@@ -377,7 +390,7 @@ impl Memory for OutlineStore {
                 "entity {handle} read back changed: wrote {entity:?}, read {seen:?}"
             )));
         }
-        Ok(seen)
+        Ok(Guarded::Written(seen))
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -415,9 +428,20 @@ impl Memory for OutlineStore {
             }
         };
 
-        // Read-modify-write. Outline has no atomic append, so two captures
-        // racing on the same doc could collide an id or lose a row — acceptable
-        // for a single-session assistant; noted for a later revision guard.
+        // Read-modify-write, and the lost-update hazard it carries. Outline has
+        // no atomic append or compare-and-set, so EVERY write here — this
+        // `capture`, `update_fact`, and `update_entity` — reads the doc, then
+        // PUTs a whole new document body built from that snapshot. A concurrent
+        // write between the read and the PUT is erased: an already-verified
+        // fact can vanish because a later updater rewrote the doc it never saw.
+        //
+        // **Read-back does not detect this.** Each verb re-reads only the row or
+        // the entity it just wrote, and that one always looks right; nothing
+        // compares the rest of the document against what was there before.
+        //
+        // Accepted for a single-session assistant. The revision guard
+        // (If-Match / document revision) is deliberately deferred, not
+        // forgotten.
         //
         // The id is minted off the doc's text, not off the parsed facts: a row
         // this reader can't parse still holds its id, and handing that id out a
@@ -838,7 +862,9 @@ mod tests {
                 EntityPatch { name: Some("Alpha Renamed".into()), ..Default::default() },
             )
             .await
-            .expect("update_entity should succeed");
+            .expect("update_entity should succeed")
+            .written()
+            .expect("an uncontested rename is not blocked");
         assert_eq!(updated.name, "Alpha Renamed");
 
         let text = &fake.docs_in(&coll)[0].text;
@@ -851,6 +877,46 @@ mod tests {
             1,
             "no stale second machine block: {text}"
         );
+    }
+
+    /// A YAML snippet pasted into a doc must not take that doc's identity. When
+    /// it did, the entity stopped resolving: recall went to zero, the entity
+    /// vanished from the index, and the next capture forked a SECOND doc — the
+    /// original facts unreachable from then on.
+    #[tokio::test]
+    async fn a_pasted_yaml_snippet_cannot_hijack_a_docs_identity() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let doc = format!(
+            "Prose the user wrote.\n\n```yaml\nid: my-service\nversion: 2\n```\n\n{}",
+            seeded_doc(&person("alpha"))
+        );
+        let doc = with_fact_appended(
+            &doc,
+            "| f1 | person:alpha | plays chess |  | testimony | active | 2026-07-01 |",
+        );
+        fake.seed_document(&coll, "alpha", &doc);
+        let store = store(fake.clone());
+        let subject = EntityId::person("alpha");
+
+        assert_eq!(
+            store.recall(&subject).await.unwrap().len(),
+            1,
+            "the doc still resolves to its entity"
+        );
+        assert!(
+            store
+                .list_entities(None)
+                .await
+                .unwrap()
+                .iter()
+                .any(|e| e.id == subject),
+            "the entity is still in the index"
+        );
+
+        capture(&store, NewFact::about(subject.clone(), "learning Rust", date(2026, 7, 2))).await;
+        assert_eq!(fake.docs_in(&coll).len(), 1, "no second doc was forked");
+        assert_eq!(store.recall(&subject).await.unwrap().len(), 2, "both facts reachable");
     }
 
     #[tokio::test]

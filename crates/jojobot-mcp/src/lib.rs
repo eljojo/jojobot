@@ -132,6 +132,11 @@ pub struct UpdateEntityArgs {
     /// New kanban token, as `card:N`.
     #[serde(default)]
     pub crm: Option<String>,
+    /// Set only after a previous call reported candidates for the new name and
+    /// you judged them a different entity. A rename is screened exactly as a
+    /// creation is.
+    #[serde(default)]
+    pub create_new: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -217,10 +222,13 @@ impl Jojobot {
         json_result(&body)
     }
 
-    /// Edit an entity's metadata in place. The handle itself never changes.
+    /// Edit an entity's metadata in place. The handle itself never changes, and
+    /// a name change is screened by the write guard just as a creation is.
     #[tool(
         description = "Edit an entity's metadata (name/source/crm) in place. The handle is \
-                       immutable. An unknown handle errors with near misses — it never creates."
+                       immutable. A name change is screened by the write guard, so it can come \
+                       back with candidates to confirm. An unknown handle errors with near \
+                       misses — it never creates."
     )]
     async fn update_entity(
         &self,
@@ -231,13 +239,20 @@ impl Jojobot {
             name: args.name,
             source: args.source,
             crm: args.crm,
+            create_new: args.create_new.unwrap_or(false),
         };
-        let entity = self
+        match self
             .memory
             .update_entity(&handle, patch)
             .await
-            .map_err(memory_error)?;
-        json_result(&entity_json(&entity))
+            .map_err(memory_error)?
+        {
+            Guarded::Written(entity) => json_result(&entity_json(&entity)),
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => Ok(blocked_result(&attempted, &candidates, "update_entity")),
+        }
     }
 
     /// Remember a fact about an entity. Returns the stored fact including the
@@ -598,6 +613,7 @@ mod tests {
                 name: Some("Red Bike (the gravel one)".into()),
                 source: None,
                 crm: Some("card:551".into()),
+                create_new: None,
             }))
             .await
             .expect("update ok");
@@ -605,6 +621,62 @@ mod tests {
         assert_eq!(body["id"], "thing:red-bike", "the handle is immutable");
         assert_eq!(body["name"], "Red Bike (the gravel one)");
         assert_eq!(body["source"], "user-named", "an omitted field is left alone");
+    }
+
+    /// A rename onto a name the index already holds comes back as the same
+    /// error-flagged candidates response a blocked creation does — the guard
+    /// cannot be side-stepped by creating under a throwaway name and renaming.
+    #[tokio::test]
+    async fn a_rename_onto_an_existing_name_is_blocked() {
+        let jojobot = handler();
+        jojobot
+            .add_entity(Parameters(add_args("person", "alpha", "Alpha")))
+            .await
+            .expect("add ok");
+        jojobot
+            .add_entity(Parameters(add_args("person", "zenith", "Zenith")))
+            .await
+            .expect("add ok");
+
+        let rename = |create_new: Option<bool>| UpdateEntityArgs {
+            handle: "person:zenith".into(),
+            name: Some("Alpha".into()),
+            source: None,
+            crm: None,
+            create_new,
+        };
+
+        let blocked = jojobot
+            .update_entity(Parameters(rename(None)))
+            .await
+            .expect("the call succeeds; the guard answers in the body");
+        assert_eq!(blocked.is_error, Some(true), "a blocked rename must not read as success");
+        let body = json_of(&blocked);
+        assert_eq!(body["status"], "needs_confirmation");
+        assert_eq!(body["attempted"], "person:zenith");
+        assert_eq!(body["candidates"][0]["handle"], "person:alpha");
+
+        // …and the name did not move.
+        let listed = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs { kind: Some("person".into()) }))
+                .await
+                .expect("list ok"),
+        );
+        let names: Vec<&str> = listed["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["Alpha", "Zenith"]);
+
+        let forced = jojobot
+            .update_entity(Parameters(rename(Some(true))))
+            .await
+            .expect("confirmed rename ok");
+        assert_ne!(forced.is_error, Some(true));
+        assert_eq!(json_of(&forced)["name"], "Alpha");
     }
 
     /// Updating an entity that isn't there is a client error naming near misses
@@ -622,6 +694,7 @@ mod tests {
                 name: Some("nope".into()),
                 source: None,
                 crm: None,
+                create_new: None,
             }))
             .await
             .expect_err("unknown handle must error");
