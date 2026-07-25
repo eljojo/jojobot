@@ -609,6 +609,7 @@ mod tests {
     use jiff::civil::date;
     use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
     use jojobot_domain::memory::testing::contract;
+    use jojobot_domain::memory::{Edge, EdgeShape};
 
     use super::*;
     use crate::search::IndexedMemory;
@@ -919,6 +920,47 @@ mod tests {
         assert!(
             facts.iter().any(|h| matches!(h, Hit::Fact { fact, .. } if fact.content == "plays chess")),
             "got {facts:?}"
+        );
+    }
+
+    /// **A prose hit's neighborhood, through the real reader.** The edges come
+    /// off the fact table parsed from the same page, so a doc whose answer lives
+    /// only in its prose still says where its entity sits in the graph. Until
+    /// now this was pinned by a hand-built hit at the MCP boundary — a test that
+    /// proves the renderer copies a field it was handed, and never runs the code
+    /// that fills it.
+    #[tokio::test]
+    async fn a_prose_hit_carries_the_edges_its_docs_facts_draw() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let doc = with_fact_appended(
+            &format!(
+                "Keeps a spare key under the third flowerpot — it came up once and never got \
+                 filed.\n\n{}",
+                seeded_doc(&person("ned-flanders"))
+            ),
+            "| f1 | person:ned-flanders | opens on the first Sunday |  | testimony | active | \
+             2026-07-01 | location=place:leftorium |",
+        );
+        fake.seed_document(&coll, "Ned Flanders", &doc);
+
+        let indexed = IndexedMemory::new(Arc::new(store(fake))).expect("index opens");
+        assert_eq!(indexed.rebuild().await.expect("rebuild"), 1, "one doc scanned");
+
+        let hits = indexed.search(&SearchQuery::text("flowerpot")).expect("search ok");
+        let Some(Hit::Prose { entity, edges, .. }) =
+            hits.iter().find(|h| matches!(h, Hit::Prose { .. }))
+        else {
+            panic!("the prose match must come back: {hits:?}")
+        };
+        assert_eq!(
+            entity.as_ref().map(|e| &e.id),
+            Some(&EntityId::person("ned-flanders"))
+        );
+        assert_eq!(
+            edges,
+            &vec![Edge::new(EdgeShape::Location, EntityId("place:leftorium".into()))],
+            "a prose hit carries the edges its doc's facts draw: {edges:?}"
         );
     }
 

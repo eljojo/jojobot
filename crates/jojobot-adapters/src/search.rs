@@ -1252,6 +1252,33 @@ mod tests {
         );
     }
 
+    /// A prose hit carries its doc's entity's neighborhood too. Prose is where
+    /// this is easiest to lose: the stored payload holds a bare handle, so the
+    /// entity and its edges are assembled on the way out or not at all.
+    #[tokio::test]
+    async fn prose_hits_carry_the_edges_of_their_docs_entity() {
+        let neighbor = entity("person:ned-flanders", "Ned Flanders");
+        let shop = Edge::new(EdgeShape::Location, EntityId("place:leftorium".into()));
+        let index = index_of(vec![scan(
+            "doc-prose-edge",
+            Some(neighbor.clone()),
+            "Keeps a spare key under the third flowerpot; it came up once and never got filed.",
+            vec![Fact {
+                edge: Some(shop.clone()),
+                ..fact("person:ned-flanders", "f1", "opens on the first Sunday", date(2026, 1, 1))
+            }],
+        )]);
+
+        let hits = index.search(&SearchQuery::text("flowerpot")).expect("search ok");
+        let Some(Hit::Prose { entity: owner, edges, .. }) =
+            hits.iter().find(|h| matches!(h, Hit::Prose { .. }))
+        else {
+            panic!("the prose match must come back: {hits:?}")
+        };
+        assert_eq!(owner.as_ref().map(|e| &e.id), Some(&neighbor.id));
+        assert_eq!(edges, &vec![shop], "a prose hit sits in the graph too: {edges:?}");
+    }
+
     /// **A rename changes every hit that names the entity** — not only the hits
     /// whose own doc was re-indexed since.
     ///
