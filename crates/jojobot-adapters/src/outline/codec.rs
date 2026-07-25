@@ -882,11 +882,38 @@ mod tests {
 
     // --- the status column ----------------------------------------------------
 
-    /// All three lifecycle states survive the row, so a negated fact reads back
-    /// negated rather than quietly returning as current truth.
+    /// A retired **`negated`** row still reads — as superseded, which is what it
+    /// behaved like anyway: out of a default search, its id and content intact.
+    /// A schema *removal* must not orphan the rows already on disk any more than
+    /// an addition may; the row is rewritten in the current spelling on its next
+    /// touch, with no sweep.
+    #[test]
+    fn a_legacy_negated_row_reads_as_superseded_and_rewrites_on_touch() {
+        let legacy = format!(
+            "```yaml\nid: person:alpha\n```\n\n{FACTS_HEADER}\n\n{TABLE_HEADER}\n{TABLE_SEP}\n\
+             | f1 | person:alpha | does NOT play the theremin |  | testimony | negated | 2026-07-01 |  |\n"
+        );
+        let facts = parse_facts_table(&legacy);
+        assert_eq!(facts.len(), 1, "the row must still read");
+        assert_eq!(facts[0].status, FactStatus::Superseded);
+        assert_eq!(facts[0].content, "does NOT play the theremin", "content is untouched");
+
+        let touched = with_row_replaced(
+            &legacy,
+            &EntityId::person("alpha"),
+            &FactId("f1".into()),
+            &render_fact_row(&facts[0]),
+        )
+        .expect("the legacy row is addressable");
+        assert!(!touched.contains("negated"), "the retired token is gone on touch: {touched}");
+        assert!(touched.contains("| superseded |"), "…rewritten as superseded: {touched}");
+    }
+
+    /// Both lifecycle states survive the row, so a superseded fact reads back
+    /// superseded rather than quietly returning as current truth.
     #[test]
     fn every_status_round_trips_through_the_row() {
-        for status in [FactStatus::Active, FactStatus::Superseded, FactStatus::Negated] {
+        for status in [FactStatus::Active, FactStatus::Superseded] {
             let f = Fact {
                 status,
                 ..fact("f1", "person:alpha", "a claim", Provenance::Inference, date(2026, 7, 1))
@@ -925,7 +952,7 @@ mod tests {
         }
         let edited = Fact {
             content: "second, corrected".into(),
-            status: FactStatus::Negated,
+            status: FactStatus::Superseded,
             ..fact("f2", "person:alpha", "", Provenance::Inference, date(2026, 7, 2))
         };
         let updated = with_row_replaced(&doc, &EntityId::person("alpha"), &FactId("f2".into()), &render_fact_row(&edited))
@@ -934,7 +961,7 @@ mod tests {
         let facts = parse_facts_table(&updated);
         assert_eq!(facts.len(), 3, "no row gained or lost");
         assert_eq!(facts[1].content, "second, corrected");
-        assert_eq!(facts[1].status, FactStatus::Negated);
+        assert_eq!(facts[1].status, FactStatus::Superseded);
         assert_eq!(facts[0].content, "first");
         assert_eq!(facts[2].content, "third");
         assert!(!updated.contains("| second |"), "the old row is gone, not left beside");

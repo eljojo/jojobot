@@ -54,8 +54,8 @@ pub struct EdgeFilter {
 pub const DEFAULT_LIMIT: usize = 20;
 
 /// What to search for. `text` is optional as long as a structural filter narrows
-/// the field, because the structural questions ("every negated fact", "who is in
-/// Shelbyville") have no keyword.
+/// the field, because the structural questions ("every superseded fact", "who is
+/// in Shelbyville") have no keyword.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchQuery {
     /// Free text, matched over entity handles/names, fact content/details, and
@@ -64,9 +64,10 @@ pub struct SearchQuery {
     /// Narrow to one entity kind: an entity's own kind, a fact's subject's kind,
     /// or the kind of the entity whose doc the prose sits in.
     pub kind: Option<EntityKind>,
-    /// Narrow to one lifecycle state. **`None` means active only** — superseded
-    /// and negated facts are excluded unless asked for by name, and
-    /// `Some(Negated)` is the anti-fact list.
+    /// Narrow to one lifecycle state. **`None` means active only** — a
+    /// superseded fact is excluded unless asked for by name, because a claim the
+    /// store has already moved past coming back as current truth is worse than
+    /// no memory at all.
     pub status: Option<FactStatus>,
     /// Narrow to testimony or inference.
     pub provenance: Option<Provenance>,
@@ -204,15 +205,15 @@ mod tests {
         assert!(SearchQuery::text("   ").validate().is_err());
     }
 
-    /// A structural filter is enough on its own: "every negated fact" and "which
-    /// people are in Shelbyville" carry no keyword.
+    /// A structural filter is enough on its own: "every superseded fact" and
+    /// "which people are in Shelbyville" carry no keyword.
     #[test]
     fn a_structural_filter_alone_is_a_valid_query() {
-        let negated = SearchQuery {
-            status: Some(FactStatus::Negated),
+        let superseded = SearchQuery {
+            status: Some(FactStatus::Superseded),
             ..Default::default()
         };
-        assert!(negated.validate().is_ok());
+        assert!(superseded.validate().is_ok());
         let edged = SearchQuery {
             kind: Some(EntityKind::Person),
             edge: Some(EdgeFilter {
@@ -233,7 +234,7 @@ mod tests {
             "a kind filter applies to entities and prose too"
         );
         for scoped in [
-            SearchQuery { status: Some(FactStatus::Negated), ..Default::default() },
+            SearchQuery { status: Some(FactStatus::Superseded), ..Default::default() },
             SearchQuery { provenance: Some(Provenance::Testimony), ..Default::default() },
             SearchQuery { subject: Some(EntityId::person("alpha")), ..Default::default() },
             SearchQuery {

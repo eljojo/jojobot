@@ -123,8 +123,9 @@ pub struct UpdateFactArgs {
     /// Replacement details; pass an empty string to clear them.
     #[serde(default)]
     pub details: Option<String>,
-    /// `active`, `superseded`, or `negated`. Negating keeps the fact and its id
-    /// — rephrase `content` as the thing NOT to infer.
+    /// `active` or `superseded`. **A refutation is not a status** — to record
+    /// that something is not so, rewrite `content` to state the negative truth;
+    /// it stays `active`, because that IS the current truth.
     #[serde(default)]
     pub status: Option<String>,
     /// `testimony` or `inference`.
@@ -170,9 +171,9 @@ pub struct SearchArgs {
     /// or the owner of the doc a prose match sits in.
     #[serde(default)]
     pub kind: Option<String>,
-    /// `active` (the default), `superseded`, or `negated`. Superseded and negated
-    /// facts are **excluded unless asked for by name**; `negated` is the
-    /// anti-fact list — what NOT to infer.
+    /// `active` (the default) or `superseded`. A superseded fact is **excluded
+    /// unless asked for by name** — a claim already moved past must not come
+    /// back as current truth.
     #[serde(default)]
     pub status: Option<String>,
     /// `testimony` or `inference`.
@@ -291,7 +292,7 @@ impl Jojobot {
         description = "Search everything jojobot knows — entities, facts, and the prose of \
                        documents — as ONE ranked list of typed hits. `query` is free text (all \
                        words must match) and is optional when a filter narrows it: kind · \
-                       status (default active; `negated` is the anti-fact list) · provenance · \
+                       status (default active; superseded is excluded unless named) · provenance · \
                        subject · edge {shape, object}. kind + edge answers a cross-entity \
                        question in one call (\"which people are in X\"): it walks the typed \
                        edges, so a doc that merely mentions X is not an answer. Every fact hit \
@@ -436,9 +437,11 @@ impl Jojobot {
     /// Edit one addressed fact in place — fix the source, never an addendum.
     #[tool(
         description = "Edit an addressed fact in place (content/details/status/provenance). \
-                       Negating is a status flip that keeps the fact. Promoting inference → \
-                       testimony requires confirmed_by_user. An unknown address errors with \
-                       the addresses that do exist — it never creates."
+                       To record that something is NOT so, rewrite content to state the \
+                       negative truth — that is an ordinary edit and the fact stays active; \
+                       there is no negated status. Promoting inference → testimony requires \
+                       confirmed_by_user. An unknown address errors with the addresses that do \
+                       exist — it never creates."
     )]
     async fn update_fact(
         &self,
@@ -673,14 +676,27 @@ fn parse_edge(shape: Option<&str>, object: Option<&str>) -> Result<Option<Edge>,
 }
 
 /// Parse a lifecycle status; unknown values are a client error, never a silent
-/// fallback to active — that would turn a failed negation into a live claim.
+/// fallback to active — a mistyped status that quietly became `active` would
+/// hide the state the caller was reaching for.
+///
+/// **`negated` is refused by name.** The reader still maps a legacy `negated`
+/// cell to superseded (rows carrying it are on disk), but the input grammar
+/// does not: a caller reaching for it is reaching for behaviour that is gone,
+/// and silently aliasing it to superseded would file a refutation where nobody
+/// would look for it. The error says what to do instead.
 fn parse_status(raw: &str) -> Result<FactStatus, McpError> {
     match raw.trim() {
         "active" => Ok(FactStatus::Active),
         "superseded" => Ok(FactStatus::Superseded),
-        "negated" => Ok(FactStatus::Negated),
+        "negated" => Err(McpError::invalid_params(
+            "there is no 'negated' status: to record that something is NOT so, rewrite the \
+             fact's content to state the negative truth — it stays 'active', because that is \
+             the current truth. Use 'superseded' only for a claim a later fact replaced."
+                .to_string(),
+            None,
+        )),
         other => Err(McpError::invalid_params(
-            format!("status must be 'active', 'superseded', or 'negated', got '{other}'"),
+            format!("status must be 'active' or 'superseded', got '{other}'"),
             None,
         )),
     }
@@ -758,8 +774,9 @@ impl ServerHandler for Jojobot {
                  it is the front door: one ranked list over entities, facts and document prose \
                  at once, so you do not have to know where something was filed. Tools: `search` \
                  · `ping` (connectivity) · `add_entity` · `capture` (remember a fact) · `recall` \
-                 (every fact about one entity) · `update_fact` (edit in place; negating is a \
-                 status flip) · `update_entity` (metadata only) · `list_entities`. A fact may \
+                 (every fact about one entity) · `update_fact` (edit in place; to refute a \
+                 claim, rewrite its content to state the negative truth — there is no negated \
+                 status) · `update_entity` (metadata only) · `list_entities`. A fact may \
                  also draw one typed **edge** — pass `shape` (location · membership · \
                  attendance · about) with `object`, the entity it points at; that is what \
                  makes cross-entity questions answerable. Two rules to expect: a write that \
@@ -921,7 +938,7 @@ mod tests {
             .search(Parameters(SearchArgs {
                 query: Some("winter".into()),
                 kind: Some("person".into()),
-                status: Some("negated".into()),
+                status: Some("superseded".into()),
                 provenance: Some("testimony".into()),
                 subject: Some("person:alpha".into()),
                 edge: Some(EdgeFilterArgs {
@@ -936,7 +953,7 @@ mod tests {
         let query = spy.query();
         assert_eq!(query.terms(), Some("winter"));
         assert_eq!(query.kind, Some(EntityKind::Person));
-        assert_eq!(query.status, Some(FactStatus::Negated));
+        assert_eq!(query.status, Some(FactStatus::Superseded));
         assert_eq!(query.provenance, Some(Provenance::Testimony));
         assert_eq!(query.subject.as_ref().map(|s| s.as_str()), Some("person:alpha"));
         let edge = query.edge.expect("the edge filter must survive translation");
@@ -1507,26 +1524,42 @@ mod tests {
         assert_eq!(updated["address"], "person:alpha#f1");
     }
 
-    /// Negating is a status flip through the MCP path too.
+    /// **A refutation is a content edit, and `negated` is refused by name.** The
+    /// rewritten row stays `active` and keeps its address — the negative truth is
+    /// the current truth, so it has to be what a plain read returns. Asking for
+    /// the retired status is a client error that says what to do instead, rather
+    /// than an alias that would file the correction where nobody looks.
     #[tokio::test]
-    async fn update_fact_can_negate() {
+    async fn a_refutation_is_a_content_edit_and_negated_is_refused() {
         let jojobot = handler();
         let captured = capture_ok(&jojobot, capture_args("alpha", "a close contact of the user")).await;
+
+        let err = jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                status: Some("negated".into()),
+                ..update_args(&address_of(&captured))
+            }))
+            .await
+            .expect_err("the retired status must be refused, not aliased");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message.contains("rewrite"),
+            "the error must say what to do instead: {}",
+            err.message
+        );
+
         let updated = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
                     content: Some("NOT a close contact — do not re-infer".into()),
-                    status: Some("negated".into()),
                     ..update_args(&address_of(&captured))
                 }))
                 .await
-                .expect("negate ok"),
+                .expect("the refutation is an ordinary edit"),
         );
-        assert_eq!(updated["status"], "negated");
-        assert_eq!(
-            updated["address"], "person:alpha#f1",
-            "a negated fact keeps its address"
-        );
+        assert_eq!(updated["status"], "active", "the negative truth is the truth");
+        assert_eq!(updated["content"], "NOT a close contact — do not re-infer");
+        assert_eq!(updated["address"], "person:alpha#f1", "the row keeps its address");
     }
 
     /// Promotion to testimony needs the explicit confirmation flag.

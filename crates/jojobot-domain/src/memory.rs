@@ -276,7 +276,8 @@ pub struct FactPatch {
     pub content: Option<String>,
     /// New nuance / why / merge notes.
     pub details: Option<String>,
-    /// New lifecycle state — negating a fact is this flip, not a delete.
+    /// New lifecycle state. A refutation is **not** one of these: rewrite
+    /// `content` to state the negative truth instead (see [`FactStatus`]).
     pub status: Option<FactStatus>,
     /// New provenance. Promoting inference → testimony additionally requires
     /// [`FactPatch::confirmed_by_user`].
@@ -461,8 +462,14 @@ pub fn validate_edge(edge: &Edge) -> Result<(), MemoryError> {
 }
 
 /// A fact's lifecycle state. Lifecycle is a **status flip**, never a deletion:
-/// an id is never destroyed while anything might reference or re-derive it. The
-/// "anti-fact list" — what *not* to infer — is just a `Negated` filter.
+/// an id is never destroyed while anything might reference or re-derive it.
+///
+/// **There is no `negated`.** A refutation is an ordinary
+/// [`update_fact`](Memory::update_fact) that rewrites the content to state the
+/// negative truth — "does NOT play the theremin" is a fact like any other, and
+/// it reads back as the current truth rather than as a flag beside a claim the
+/// reader then has to adjudicate. That is fix-the-source; a card is what is so
+/// today, and the journal keeps the history.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FactStatus {
@@ -471,9 +478,6 @@ pub enum FactStatus {
     Active,
     /// Replaced by a later fact; kept so references survive.
     Superseded,
-    /// Disproved. Keeps its id, and its content is rephrased as the thing NOT
-    /// to infer, so the correction can't be re-derived away.
-    Negated,
 }
 
 impl FactStatus {
@@ -482,18 +486,22 @@ impl FactStatus {
         match self {
             FactStatus::Active => "active",
             FactStatus::Superseded => "superseded",
-            FactStatus::Negated => "negated",
         }
     }
 
     /// Parse a `status` cell. Lenient in one direction only: a blank or garbled
     /// cell reads as active rather than dropping the fact — but a fact is never
-    /// *promoted* out of negated/superseded by a bad cell, because those tokens
-    /// are matched exactly.
+    /// *promoted* out of superseded by a bad cell, because that token is matched
+    /// exactly.
+    ///
+    /// The retired **`negated`** token maps to superseded. Rows carrying it are
+    /// on disk, and removing a variant must not hard-fail a read any more than
+    /// adding one may: the behaviour that mattered — excluded from a default
+    /// search — is the same, and the row is rewritten in the current spelling on
+    /// its next touch (lazy migration, no sweep).
     pub fn from_token(cell: &str) -> Self {
         match cell.trim() {
-            "superseded" => FactStatus::Superseded,
-            "negated" => FactStatus::Negated,
+            "superseded" | "negated" => FactStatus::Superseded,
             _ => FactStatus::Active,
         }
     }
@@ -1084,13 +1092,24 @@ mod tests {
         }
     }
 
-    /// All three lifecycle states have tokens; an unknown or blank cell degrades
-    /// to active (the tolerant-read rule: never drop a fact over a bad cell).
+    /// Both lifecycle states have tokens; an unknown or blank cell degrades to
+    /// active (the tolerant-read rule: never drop a fact over a bad cell).
+    ///
+    /// And the **legacy `negated` token reads as superseded**. Negation-as-status
+    /// is gone — a refutation is an ordinary content edit now — but rows written
+    /// under it are on disk, and a schema removal must never hard-fail a read
+    /// any more than a schema addition may. Superseded is the honest landing
+    /// spot: the behaviour that mattered, excluded-by-default, is identical.
     #[test]
-    fn fact_status_tokens_round_trip_and_degrade_to_active() {
-        for status in [FactStatus::Active, FactStatus::Superseded, FactStatus::Negated] {
+    fn fact_status_tokens_round_trip_and_a_legacy_negated_reads_as_superseded() {
+        for status in [FactStatus::Active, FactStatus::Superseded] {
             assert_eq!(FactStatus::from_token(status.as_token()), status);
         }
+        assert_eq!(
+            FactStatus::from_token("negated"),
+            FactStatus::Superseded,
+            "a row from before negation was removed still reads, and stays out of a default search"
+        );
         assert_eq!(FactStatus::from_token(""), FactStatus::Active);
         assert_eq!(FactStatus::from_token("garbled"), FactStatus::Active);
     }

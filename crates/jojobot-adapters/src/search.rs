@@ -332,9 +332,9 @@ impl FullTextIndex {
         let f = &self.fields;
         let mut clauses = self.text_clauses(query);
         clauses.push(self.must_term(f.class, CLASS_FACT));
-        // The default is the whole point of the field: superseded and negated
-        // facts stay out of an ordinary search, and `status: negated` is how the
-        // anti-fact list is read.
+        // The default is the whole point of the field: a superseded fact stays
+        // out of an ordinary search, and `status: superseded` is how it is
+        // reached deliberately.
         clauses.push(self.must_term(
             f.status,
             query.status.unwrap_or_default().as_token(),
@@ -923,7 +923,7 @@ mod tests {
         }
     }
 
-    /// A fact-only filter narrows to facts. Asking for "negated" and getting an
+    /// A fact-only filter narrows to facts. Asking for "superseded" and getting an
     /// entity back — entities have no lifecycle — would be noise dressed as a hit.
     #[tokio::test]
     async fn a_fact_only_filter_returns_facts_alone() {

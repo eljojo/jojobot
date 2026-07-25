@@ -767,30 +767,42 @@ pub mod contract {
         );
     }
 
-    /// Negating is a status flip: the fact keeps its id and stays readable, so
-    /// nothing that referenced it breaks and the claim can't be re-inferred.
-    pub async fn negating_is_a_status_flip_not_a_delete<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-negatable");
+    /// **A refutation is an ordinary content edit**, not a status. It rewrites
+    /// the row in place to state the negative truth, keeps its id, and stays
+    /// `active` — because "does NOT play the theremin" IS the current truth
+    /// about this entity, and the reader must find it on a plain default read.
+    ///
+    /// The alternative — a `negated` flag beside the disproved claim — was the
+    /// "was wrong, see flag" anti-pattern: it left two versions on the page for
+    /// the reader to adjudicate, and hid the correction from every default
+    /// search, which is precisely where it needed to be.
+    pub async fn a_refutation_is_an_ordinary_content_edit<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-refutable");
         let captured = capture(
             store,
             NewFact::about(subject.clone(), "a close contact of the user", date(2026, 7, 1)),
         )
         .await;
-        let negated = edit(
+        let refuted = edit(
             store,
             &captured.address(),
             FactPatch {
-                content: Some("NOT a close friend — do not re-infer closeness".into()),
-                status: Some(FactStatus::Negated),
+                content: Some("NOT a close contact — do not re-infer closeness".into()),
                 ..Default::default()
             },
         )
         .await;
-        assert_eq!(negated.id, captured.id, "a negated fact keeps its id");
+        assert_eq!(refuted.id, captured.id, "the row is rewritten, not replaced");
 
         let seen = read_back(store, &subject, &captured.id).await;
-        assert_eq!(seen.status, FactStatus::Negated);
-        assert!(seen.content.starts_with("NOT a close friend"));
+        assert_eq!(seen.status, FactStatus::Active, "the negative truth is the truth");
+        assert!(seen.content.starts_with("NOT a close contact"));
+
+        let facts = store.recall(&subject).await.expect("recall");
+        assert!(
+            !facts.iter().any(|f| f.content == "a close contact of the user"),
+            "the refuted claim is gone from the page, not flagged beside it: {facts:?}"
+        );
     }
 
     /// Promotion to testimony is gated on the user's explicit confirmation —
@@ -1238,31 +1250,31 @@ pub mod contract {
         assert_eq!(found_fact.address().local, found_fact.id);
     }
 
-    /// Negated and superseded facts are **out by default** — a correction that
-    /// keeps coming back as current truth is worse than no memory at all — and
-    /// `status: negated` is exactly how the anti-fact list is read.
-    pub async fn search_excludes_negated_by_default_and_lists_it_on_request<S: Memory + Search>(
+    /// A superseded fact is **out of a default search** — a claim the store has
+    /// already moved past coming back as current truth is worse than no memory
+    /// at all — and `status: superseded` is how it is reached deliberately, so
+    /// nothing is destroyed, only demoted.
+    ///
+    /// This is the default-exclusion contract; only the negated variant had one
+    /// before, and that variant is gone.
+    pub async fn search_excludes_superseded_by_default_and_lists_it_on_request<S: Memory + Search>(
         store: &S,
     ) {
-        let subject = EntityId::person("contract-search-negated");
+        let subject = EntityId::person("contract-search-superseded");
         let live = capture(
             store,
             NewFact::about(subject.clone(), "plays the theremin", date(2026, 7, 1)),
         )
         .await;
-        let corrected = capture(
+        let retired = capture(
             store,
-            NewFact::about(subject.clone(), "plays the theremin professionally", date(2026, 7, 2)),
+            NewFact::about(subject.clone(), "plays the theremin on Tuesdays", date(2026, 7, 2)),
         )
         .await;
         edit(
             store,
-            &corrected.address(),
-            FactPatch {
-                content: Some("does NOT play the theremin professionally — do not re-infer".into()),
-                status: Some(FactStatus::Negated),
-                ..Default::default()
-            },
+            &retired.address(),
+            FactPatch { status: Some(FactStatus::Superseded), ..Default::default() },
         )
         .await;
 
@@ -1273,25 +1285,25 @@ pub mod contract {
             "the active fact must be found: {default:?}"
         );
         assert!(
-            !addresses.contains(&corrected.address().to_string()),
-            "a negated fact must not come back as current truth: {default:?}"
+            !addresses.contains(&retired.address().to_string()),
+            "a superseded fact must not come back as current truth: {default:?}"
         );
 
-        let anti = found(
+        let asked = found(
             store,
             SearchQuery {
-                status: Some(FactStatus::Negated),
+                status: Some(FactStatus::Superseded),
                 ..SearchQuery::text("theremin")
             },
         );
-        let anti_addresses: Vec<String> = fact_hits(&anti).iter().map(|f| f.address().to_string()).collect();
+        let asked_addresses: Vec<String> = fact_hits(&asked).iter().map(|f| f.address().to_string()).collect();
         assert!(
-            anti_addresses.contains(&corrected.address().to_string()),
-            "status: negated IS the anti-fact list: {anti:?}"
+            asked_addresses.contains(&retired.address().to_string()),
+            "asking for it by name is how a superseded fact is reached: {asked:?}"
         );
         assert!(
-            !anti_addresses.contains(&live.address().to_string()),
-            "…and it holds only the negated ones: {anti:?}"
+            !asked_addresses.contains(&live.address().to_string()),
+            "…and that list holds only the superseded ones: {asked:?}"
         );
     }
 
@@ -1447,7 +1459,7 @@ pub mod contract {
 
         search_finds_a_fact_captured_moments_ago(store).await;
         search_fact_hits_carry_an_address_and_provenance(store).await;
-        search_excludes_negated_by_default_and_lists_it_on_request(store).await;
+        search_excludes_superseded_by_default_and_lists_it_on_request(store).await;
         search_answers_ask_across_by_kind_and_edge(store).await;
         search_by_edge_object_alone_finds_any_shape(store).await;
         search_pins_a_named_entity_first(store).await;
@@ -1482,7 +1494,7 @@ pub mod contract {
 
         facts_carry_a_usable_address(store).await;
         update_fact_edits_in_place(store).await;
-        negating_is_a_status_flip_not_a_delete(store).await;
+        a_refutation_is_an_ordinary_content_edit(store).await;
         promotion_to_testimony_needs_confirmation(store).await;
         demotion_to_inference_is_free(store).await;
         update_fact_unknown_address_never_creates(store).await;
