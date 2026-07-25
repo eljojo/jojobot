@@ -4,8 +4,10 @@
 //! handler; the binary mounts it on an HTTP transport. Alongside the skeleton's
 //! `ping` it carries the six Memory verbs — `add_entity`, `capture`,
 //! `update_fact`, `update_entity`, `recall`, `list_entities` — mapped onto the
-//! [`Memory`](jojobot_domain::memory::Memory) port. The port's adapter (real
-//! Outline in production, a fake in tests) is injected; this layer only
+//! [`Memory`](jojobot_domain::memory::Memory) port, and **`search`**, the front
+//! door, on the [`Search`](jojobot_domain::memory::search::Search) port. Both
+//! adapters (real Outline behind the index in production, a fake in tests) are
+//! injected; this layer only
 //! translates MCP calls to domain calls and back, and holds no policy of its
 //! own: the write guard and the promotion gate live in the domain, on the write
 //! path, where no caller can route around them.
@@ -24,6 +26,7 @@ use std::sync::Arc;
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
     FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance, guard::EntityMatch,
+    search::{DEFAULT_LIMIT, EdgeFilter, Hit, Search, SearchQuery},
     validate_edge,
 };
 use rmcp::{
@@ -144,6 +147,50 @@ pub struct UpdateFactArgs {
     pub create_new: Option<bool>,
 }
 
+/// The `edge` filter of a `search` — a shape and the entity it points at.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EdgeFilterArgs {
+    /// Narrow to one shape (`location` · `membership` · `attendance` · `about`).
+    /// Omit for **any** edge pointing at `object` — "what's connected to X".
+    #[serde(default)]
+    pub shape: Option<String>,
+    /// The entity the edge must point at, as `kind:slug`.
+    pub object: String,
+}
+
+/// Arguments to `search`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SearchArgs {
+    /// Free text over entity handles/names, fact claims and details, and the
+    /// prose of documents. **All words must match.** Optional when at least one
+    /// filter below is given.
+    #[serde(default)]
+    pub query: Option<String>,
+    /// Narrow to one entity kind — an entity's own kind, a fact's subject's kind,
+    /// or the owner of the doc a prose match sits in.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// `active` (the default), `superseded`, or `negated`. Superseded and negated
+    /// facts are **excluded unless asked for by name**; `negated` is the
+    /// anti-fact list — what NOT to infer.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// `testimony` or `inference`.
+    #[serde(default)]
+    pub provenance: Option<String>,
+    /// Facts about this entity, as `kind:slug`.
+    #[serde(default)]
+    pub subject: Option<String>,
+    /// Facts drawing a matching edge. With `kind`, this is how a cross-entity
+    /// question ("which people are in X") is answered in one call.
+    #[serde(default)]
+    pub edge: Option<EdgeFilterArgs>,
+    /// How many results; defaults to 20. There is no pagination — a second page
+    /// is a better query.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
 /// Arguments to `update_entity`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct UpdateEntityArgs {
@@ -174,14 +221,19 @@ pub struct Jojobot {
     tool_router: ToolRouter<Jojobot>,
     /// The Memory port. Injected: real Outline in production, a fake in tests.
     memory: Arc<dyn Memory>,
+    /// The retrieval port — the search projection over the same store. Injected
+    /// separately because it is a different port, not a second store: in
+    /// production both are the one indexed adapter.
+    search: Arc<dyn Search>,
 }
 
 #[tool_router]
 impl Jojobot {
-    pub fn new(memory: Arc<dyn Memory>) -> Self {
+    pub fn new(memory: Arc<dyn Memory>, search: Arc<dyn Search>) -> Self {
         Self {
             tool_router: Self::tool_router(),
             memory,
+            search,
         }
     }
 
@@ -232,6 +284,52 @@ impl Jojobot {
                 candidates,
             } => Ok(blocked_result(&attempted, &candidates, "add_entity")),
         }
+    }
+
+    /// The front door: one ranked list over entities, facts and prose.
+    #[tool(
+        description = "Search everything jojobot knows — entities, facts, and the prose of \
+                       documents — as ONE ranked list of typed hits. `query` is free text (all \
+                       words must match) and is optional when a filter narrows it: kind · \
+                       status (default active; `negated` is the anti-fact list) · provenance · \
+                       subject · edge {shape, object}. kind + edge answers a cross-entity \
+                       question in one call (\"which people are in X\"): it walks the typed \
+                       edges, so a doc that merely mentions X is not an answer. Every fact hit \
+                       carries its whole row and its address, so you can edit what you find. \
+                       No pagination — raise `limit` or ask a better question."
+    )]
+    async fn search(
+        &self,
+        Parameters(args): Parameters<SearchArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let edge = args
+            .edge
+            .as_ref()
+            .map(|e| -> Result<EdgeFilter, McpError> {
+                Ok(EdgeFilter {
+                    shape: e.shape.as_deref().map(parse_shape).transpose()?,
+                    object: EntityId(e.object.trim().to_string()),
+                })
+            })
+            .transpose()?;
+        let query = SearchQuery {
+            text: args.query,
+            kind: args.kind.as_deref().map(parse_kind).transpose()?,
+            status: args.status.as_deref().map(parse_status).transpose()?,
+            provenance: args.provenance.as_deref().map(parse_one_provenance).transpose()?,
+            subject: args.subject.as_deref().map(EntityId::person),
+            edge,
+            limit: args.limit.map_or(DEFAULT_LIMIT, |l| l as usize),
+        };
+        // Checked here as well as in the index: a malformed query is the caller's
+        // mistake, and it should read as one no matter which adapter is behind us.
+        query.validate().map_err(memory_error)?;
+        let hits = self.search.search(&query).map_err(memory_error)?;
+        let body = serde_json::json!({
+            "count": hits.len(),
+            "results": hits.iter().map(hit_json).collect::<Vec<_>>(),
+        });
+        json_result(&body)
     }
 
     /// Every entity jojobot knows, optionally narrowed to one kind.
@@ -393,6 +491,42 @@ fn fact_json(fact: &Fact) -> serde_json::Value {
     })
 }
 
+/// One search result on the wire. **Every hit says what it is** (`hit`), so a
+/// caller reads a mixed list without guessing from its shape — and each kind of
+/// hit carries what makes it actionable: an entity its handle, a fact its whole
+/// row and address, prose the doc to open and the text around the match.
+fn hit_json(hit: &Hit) -> serde_json::Value {
+    match hit {
+        Hit::Entity { entity, doc_id } => {
+            let mut body = entity_json(entity);
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("hit".into(), "entity".into());
+                obj.insert("doc".into(), doc_id.clone().into());
+            }
+            body
+        }
+        Hit::Fact { fact } => {
+            let mut body = fact_json(fact);
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("hit".into(), "fact".into());
+            }
+            body
+        }
+        Hit::Prose {
+            doc_id,
+            title,
+            entity,
+            snippet,
+        } => serde_json::json!({
+            "hit": "prose",
+            "doc": doc_id,
+            "title": title,
+            "entity": entity.as_ref().map(|e| e.as_str()),
+            "snippet": snippet,
+        }),
+    }
+}
+
 /// An edge on the wire. `type` carries schema.org's word for the shape —
 /// `memberOf`, `attendee` — where the input token is `membership`, `attendance`.
 fn edge_json(edge: &Edge) -> serde_json::Value {
@@ -499,6 +633,19 @@ fn entity_id(kind: &str, handle: &str) -> Result<EntityId, McpError> {
     }
 }
 
+/// Parse an edge-shape token; the closed set is named in the error. Strict about
+/// case and spelling: the **response** names (`memberOf`, `attendee`) are not
+/// input, and the input grammar stays lowercase.
+fn parse_shape(raw: &str) -> Result<EdgeShape, McpError> {
+    EdgeShape::from_token(raw).ok_or_else(|| {
+        let shapes: Vec<&str> = EdgeShape::ALL.iter().map(|s| s.as_token()).collect();
+        McpError::invalid_params(
+            format!("shape must be one of {}, got '{raw}'", shapes.join(", ")),
+            None,
+        )
+    })
+}
+
 /// Parse the `shape`/`object` pair into an edge. **Half an edge is an error, not
 /// a shrug:** a shape with no object has nothing to point at, and an object with
 /// no shape has no meaning — either way the caller meant an edge and did not get
@@ -507,13 +654,7 @@ fn parse_edge(shape: Option<&str>, object: Option<&str>) -> Result<Option<Edge>,
     match (shape.map(str::trim).filter(|s| !s.is_empty()), object.map(str::trim).filter(|s| !s.is_empty())) {
         (None, None) => Ok(None),
         (Some(shape), Some(object)) => {
-            let shape = EdgeShape::from_token(shape).ok_or_else(|| {
-                let shapes: Vec<&str> = EdgeShape::ALL.iter().map(|s| s.as_token()).collect();
-                McpError::invalid_params(
-                    format!("shape must be one of {}, got '{shape}'", shapes.join(", ")),
-                    None,
-                )
-            })?;
+            let shape = parse_shape(shape)?;
             let edge = Edge::new(shape, EntityId(object.to_string()));
             // Grammar and the shape's kind rule, checked here so the caller hears
             // it as a client error rather than a store failure.
@@ -613,9 +754,11 @@ impl ServerHandler for Jojobot {
             .with_instructions(
                 "jojobot — a personal-assistant server. Everything it knows is an **entity** \
                  (person/project/place/event/work/thing/org/topic, handled `kind:slug`) or a \
-                 **fact** about one (addressed `kind:slug#local-id`). Tools: `ping` \
-                 (connectivity) · `add_entity` · `capture` (remember a fact) · `recall` (read \
-                 facts, each with its address) · `update_fact` (edit in place; negating is a \
+                 **fact** about one (addressed `kind:slug#local-id`). **Start with `search`** — \
+                 it is the front door: one ranked list over entities, facts and document prose \
+                 at once, so you do not have to know where something was filed. Tools: `search` \
+                 · `ping` (connectivity) · `add_entity` · `capture` (remember a fact) · `recall` \
+                 (every fact about one entity) · `update_fact` (edit in place; negating is a \
                  status flip) · `update_entity` (metadata only) · `list_entities`. A fact may \
                  also draw one typed **edge** — pass `shape` (location · membership · \
                  attendance · about) with `object`, the entity it points at; that is what \
@@ -633,11 +776,56 @@ impl ServerHandler for Jojobot {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
     use jojobot_domain::memory::testing::InMemoryMemory;
+    use jojobot_domain::memory::{Boot, Edge, EdgeShape, EntityKind, FactId};
+
+    /// A [`Search`] double: it records the query it was handed and answers with
+    /// canned hits. On this path the MCP layer's whole job is translating
+    /// arguments into a query and hits into JSON, and that is exactly what this
+    /// pins — the ranking and matching are the index's tests, not these.
+    #[derive(Default)]
+    struct SpySearch {
+        seen: Mutex<Option<SearchQuery>>,
+        hits: Mutex<Vec<Hit>>,
+    }
+
+    impl SpySearch {
+        fn answering(hits: Vec<Hit>) -> Self {
+            SpySearch {
+                seen: Mutex::new(None),
+                hits: Mutex::new(hits),
+            }
+        }
+
+        fn query(&self) -> SearchQuery {
+            self.seen
+                .lock()
+                .unwrap()
+                .clone()
+                .expect("search must have reached the port")
+        }
+    }
+
+    impl Search for SpySearch {
+        fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
+            *self.seen.lock().unwrap() = Some(query.clone());
+            Ok(self.hits.lock().unwrap().clone())
+        }
+    }
 
     fn handler() -> Jojobot {
-        Jojobot::new(Arc::new(InMemoryMemory::new()))
+        Jojobot::new(
+            Arc::new(InMemoryMemory::new()),
+            Arc::new(SpySearch::default()),
+        )
+    }
+
+    /// A handler whose search port is a spy the test keeps a handle on.
+    fn handler_with(spy: Arc<SpySearch>) -> Jojobot {
+        Jojobot::new(Arc::new(InMemoryMemory::new()), spy)
     }
 
     /// Pull the single text block out of a tool result.
@@ -709,6 +897,193 @@ mod tests {
         }
     }
 
+    fn search_args() -> SearchArgs {
+        SearchArgs {
+            query: None,
+            kind: None,
+            status: None,
+            provenance: None,
+            subject: None,
+            edge: None,
+            limit: None,
+        }
+    }
+
+    // --- search: the front door -----------------------------------------------
+
+    /// Every argument reaches the port as the typed query it means — including the
+    /// edge filter, which is the whole point of the verb.
+    #[tokio::test]
+    async fn search_translates_every_argument_into_the_query() {
+        let spy = Arc::new(SpySearch::default());
+        let jojobot = handler_with(spy.clone());
+        jojobot
+            .search(Parameters(SearchArgs {
+                query: Some("winter".into()),
+                kind: Some("person".into()),
+                status: Some("negated".into()),
+                provenance: Some("testimony".into()),
+                subject: Some("person:alpha".into()),
+                edge: Some(EdgeFilterArgs {
+                    shape: Some("location".into()),
+                    object: "place:shelbyville".into(),
+                }),
+                limit: Some(5),
+            }))
+            .await
+            .expect("search ok");
+
+        let query = spy.query();
+        assert_eq!(query.terms(), Some("winter"));
+        assert_eq!(query.kind, Some(EntityKind::Person));
+        assert_eq!(query.status, Some(FactStatus::Negated));
+        assert_eq!(query.provenance, Some(Provenance::Testimony));
+        assert_eq!(query.subject.as_ref().map(|s| s.as_str()), Some("person:alpha"));
+        let edge = query.edge.expect("the edge filter must survive translation");
+        assert_eq!(edge.shape, Some(EdgeShape::Location));
+        assert_eq!(edge.object.as_str(), "place:shelbyville");
+        assert_eq!(query.limit, 5);
+    }
+
+    /// An edge filter with no shape means any edge pointing at the object, and the
+    /// limit defaults to twenty.
+    #[tokio::test]
+    async fn a_shapeless_edge_filter_and_the_default_limit_reach_the_port() {
+        let spy = Arc::new(SpySearch::default());
+        handler_with(spy.clone())
+            .search(Parameters(SearchArgs {
+                edge: Some(EdgeFilterArgs {
+                    shape: None,
+                    object: "event:winter-fest".into(),
+                }),
+                ..search_args()
+            }))
+            .await
+            .expect("search ok");
+        let query = spy.query();
+        assert_eq!(query.edge.as_ref().map(|e| e.shape), Some(None));
+        assert_eq!(query.limit, DEFAULT_LIMIT);
+    }
+
+    /// Neither text nor a filter is a request for everything, which is not a
+    /// search — and it is the caller's mistake, whatever adapter is behind us.
+    #[tokio::test]
+    async fn search_with_neither_text_nor_a_filter_is_a_client_error() {
+        let err = handler()
+            .search(Parameters(search_args()))
+            .await
+            .expect_err("an unbounded search must be refused");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    }
+
+    /// Bad tokens are client errors, not silent fallbacks: a mistyped `status`
+    /// that quietly became `active` would hide the anti-fact list.
+    ///
+    /// **Every case carries query text**, so the refusal can only be the bad
+    /// token. Without it, an implementation that dropped the filter entirely
+    /// would still error — as an unbounded search — and this would pass green
+    /// over a `search` that ignored its filters.
+    #[tokio::test]
+    async fn malformed_search_filters_are_client_errors() {
+        let jojobot = handler();
+        let searching = || SearchArgs { query: Some("winter".into()), ..search_args() };
+        let bad = [
+            SearchArgs { kind: Some("receipt".into()), ..searching() },
+            SearchArgs { status: Some("retired".into()), ..searching() },
+            SearchArgs { provenance: Some("maybe".into()), ..searching() },
+            // A *bare* subject is read as a person, as everywhere else — so the
+            // malformed case is one that can't be an id at all.
+            SearchArgs { subject: Some("person:a|b".into()), ..searching() },
+            SearchArgs {
+                edge: Some(EdgeFilterArgs { shape: Some("knows".into()), object: "place:x".into() }),
+                ..searching()
+            },
+            SearchArgs {
+                edge: Some(EdgeFilterArgs { shape: None, object: "place:a|b".into() }),
+                ..searching()
+            },
+            SearchArgs { limit: Some(0), ..searching() },
+        ];
+        for args in bad {
+            let err = jojobot
+                .search(Parameters(args))
+                .await
+                .expect_err("a malformed filter must be refused");
+            assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        }
+    }
+
+    /// **One list, every hit typed.** An entity, a fact and a prose match come
+    /// back together, each saying what it is and carrying what makes it
+    /// actionable — the entity its handle, the fact its whole row and address,
+    /// the prose the doc to open and the text around the match.
+    #[tokio::test]
+    async fn search_renders_a_mixed_list_of_typed_hits() {
+        let entity = Entity {
+            id: EntityId::new(EntityKind::Work, "first-mix"),
+            kind: EntityKind::Work,
+            name: "First Mix".into(),
+            source: "user-named".into(),
+            crm: None,
+            boot: Boot::OnDemand,
+        };
+        let fact = Fact {
+            id: FactId("f3".into()),
+            home: EntityId::person("alpha"),
+            subject: EntityId::person("alpha"),
+            content: "spending the winter away".into(),
+            details: Some("said so in June".into()),
+            provenance: Provenance::Testimony,
+            status: FactStatus::Active,
+            date: jiff::civil::date(2026, 7, 1),
+            edge: Some(Edge::new(EdgeShape::Membership, EntityId("org:guild".into()))),
+        };
+        let spy = Arc::new(SpySearch::answering(vec![
+            Hit::Entity { entity, doc_id: "doc-9".into() },
+            Hit::Fact { fact },
+            Hit::Prose {
+                doc_id: "doc-1".into(),
+                title: "Alpha".into(),
+                entity: Some(EntityId::person("alpha")),
+                snippet: "…allergic to penicillin…".into(),
+            },
+        ]));
+
+        let body = json_of(
+            &handler_with(spy)
+                .search(Parameters(SearchArgs {
+                    query: Some("winter".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(body["count"], 3);
+        let results = body["results"].as_array().expect("a list of results");
+
+        assert_eq!(results[0]["hit"], "entity");
+        assert_eq!(results[0]["id"], "work:first-mix");
+        assert_eq!(results[0]["type"], "CreativeWork", "the schema.org name");
+        assert_eq!(results[0]["doc"], "doc-9");
+
+        assert_eq!(results[1]["hit"], "fact");
+        assert_eq!(results[1]["address"], "person:alpha#f3", "a fact hit is editable");
+        assert_eq!(results[1]["subject"], "person:alpha");
+        assert_eq!(results[1]["content"], "spending the winter away");
+        assert_eq!(results[1]["details"], "said so in June");
+        assert_eq!(results[1]["provenance"], "testimony");
+        assert_eq!(results[1]["status"], "active");
+        assert_eq!(results[1]["date"], "2026-07-01");
+        assert_eq!(results[1]["edge"]["type"], "memberOf");
+        assert_eq!(results[1]["edge"]["object"], "org:guild");
+
+        assert_eq!(results[2]["hit"], "prose");
+        assert_eq!(results[2]["doc"], "doc-1");
+        assert_eq!(results[2]["title"], "Alpha");
+        assert_eq!(results[2]["entity"], "person:alpha");
+        assert_eq!(results[2]["snippet"], "…allergic to penicillin…");
+    }
+
     // --- the entity verbs -----------------------------------------------------
 
     /// `add_entity` creates any kind, and `list_entities` reads it back — the
@@ -743,6 +1118,36 @@ mod tests {
         let jojobot = handler();
         let captured = capture_ok(&jojobot, capture_args("place:north-trail", "swimmable in August")).await;
         assert_eq!(captured["subject"], "place:north-trail");
+    }
+
+    /// **The response vocabulary, whole.** Every kind renders its schema.org
+    /// name — and the table is walked from `EntityKind::ALL`, so a ninth kind
+    /// cannot arrive without someone deciding what it is called on the wire.
+    ///
+    /// The other half is the input grammar, which is **unchanged**: the names
+    /// are output only, and a capitalized kind is still not a kind token.
+    #[test]
+    fn every_kind_renders_its_schema_org_name_and_none_is_an_input_token() {
+        let table = [
+            (EntityKind::Person, "person", "Person"),
+            (EntityKind::Place, "place", "Place"),
+            (EntityKind::Event, "event", "Event"),
+            (EntityKind::Work, "work", "CreativeWork"),
+            (EntityKind::Thing, "thing", "Product"),
+            (EntityKind::Org, "org", "Organization"),
+            (EntityKind::Topic, "topic", "Topic"),
+            (EntityKind::Project, "project", "Project"),
+        ];
+        assert_eq!(table.len(), EntityKind::ALL.len(), "every kind must be named here");
+        for (kind, token, name) in table {
+            assert_eq!(kind.as_token(), token, "the input token stays lowercase");
+            assert_eq!(type_name(kind), name);
+            // The response name is a name, not a token: input grammar unchanged.
+            if name != token {
+                assert!(parse_kind(name).is_err(), "{name} must not parse as a kind");
+            }
+        }
+        assert!(parse_kind("Person").is_err(), "a capitalized kind stays rejected");
     }
 
     /// An unknown kind is a client error that names the closed set, rather than

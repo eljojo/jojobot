@@ -29,6 +29,9 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+# The fake store behind the domain's `testing` feature: the end-to-end tests
+# need a store that actually holds a write, with no network.
+jojobot-domain = { workspace = true, features = ["testing"] }
 # rmcp client, for the end-to-end ping test. native-tls keeps the test build off
 # aws-lc/cmake, matching the server's TLS choice (the test server is plain HTTP).
 rmcp = { workspace = true, features = [

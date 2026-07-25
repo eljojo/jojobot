@@ -14,6 +14,7 @@ use rmcp::transport::streamable_http_server::{
 use tokio_util::sync::CancellationToken;
 
 use jojobot_domain::memory::Memory;
+use jojobot_domain::memory::search::Search;
 use jojobot_mcp::Jojobot;
 
 use crate::auth::Validator;
@@ -32,6 +33,10 @@ pub struct AppState {
     /// The Memory port backing the `capture`/`recall` tools. Always the real
     /// Outline adapter (possibly unconfigured) — no toy store ships.
     pub memory: Arc<dyn Memory>,
+    /// The retrieval port backing `search` — the projection over the same store.
+    /// A separate port, not a second store: in production both fields are the one
+    /// indexed adapter, so every write keeps the index current.
+    pub search: Arc<dyn Search>,
 }
 
 /// Build the full HTTP application: the guarded MCP transport plus the public
@@ -48,8 +53,9 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     }
 
     let memory = state.memory.clone();
+    let search = state.search.clone();
     let mcp = StreamableHttpService::new(
-        move || Ok(Jojobot::new(memory.clone())),
+        move || Ok(Jojobot::new(memory.clone(), search.clone())),
         LocalSessionManager::default().into(),
         server_config,
     );

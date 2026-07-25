@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
+use jojobot_adapters::search::IndexedMemory;
 use jojobot_domain::memory::Memory;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -63,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
     // credentials. Unset credentials yield an unconfigured store: the server
     // still boots and serves `ping`, but `capture`/`recall` refuse loudly until
     // Outline is wired (see the fail-soft rationale in the handoff/report).
-    let memory: Arc<dyn Memory> = match outline_from_env() {
+    let store: Arc<dyn Memory> = match outline_from_env() {
         Some(cfg) => {
             tracing::info!(base_url = %cfg.base_url, "memory: Outline store wired");
             Arc::new(OutlineStore::new(http.clone(), cfg))
@@ -77,6 +78,22 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // The search projection sits in FRONT of the store, so every write through
+    // the port keeps the index current. Boot is a plain full re-scan — and a
+    // failed scan is not fatal: the store is the truth, and refusing to start
+    // because a projection couldn't be built is worse than a thin `search`. It
+    // says so loudly instead.
+    let indexed = Arc::new(IndexedMemory::new(store).context("opening the search index")?);
+    match indexed.rebuild().await {
+        Ok(docs) => tracing::info!(docs, "search: index built from a full scan"),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "SEARCH INDEX EMPTY — the boot scan failed, so `search` sees only what this process \
+             writes from here on. The memory verbs are unaffected; restart once the store is \
+             reachable to get a full index."
+        ),
+    }
+
     let metadata_url = format!(
         "{}/.well-known/oauth-protected-resource",
         origin_of(&config.resource)
@@ -86,7 +103,8 @@ async fn main() -> anyhow::Result<()> {
         issuer,
         validator,
         metadata_url,
-        memory,
+        memory: indexed.clone(),
+        search: indexed,
     };
 
     let ct = CancellationToken::new();

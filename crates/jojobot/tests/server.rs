@@ -10,14 +10,22 @@ use std::sync::Arc;
 use jojobot::auth::Validator;
 use jojobot::{AppState, build_app};
 use jojobot_adapters::outline::OutlineStore;
+use jojobot_adapters::search::IndexedMemory;
+use jojobot_domain::memory::Memory;
+use jojobot_domain::memory::search::Search;
+use jojobot_domain::memory::testing::InMemoryMemory;
 use tokio_util::sync::CancellationToken;
 
 mod support;
 
-/// The Memory port for the transport/auth tests, which never call the memory
-/// verbs — the real adapter, left unconfigured (no network). No toy store.
-fn test_memory() -> std::sync::Arc<dyn jojobot_domain::memory::Memory> {
-    std::sync::Arc::new(OutlineStore::unconfigured())
+/// The Memory and Search ports for the transport/auth tests, which never call the
+/// domain verbs — the real store, left unconfigured (no network), behind the real
+/// index. No toy store, and the same one-adapter-two-ports pairing production
+/// wires, so these tests can't pass on a shape the binary doesn't build.
+fn test_ports() -> (Arc<dyn Memory>, Arc<dyn Search>) {
+    let store: Arc<dyn Memory> = Arc::new(OutlineStore::unconfigured());
+    let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
+    (indexed.clone(), indexed)
 }
 
 /// Bind an ephemeral port, build the app from `make_state`, and serve it on a
@@ -43,12 +51,14 @@ async fn spawn_server(
 }
 
 fn no_auth_state(addr: SocketAddr) -> AppState {
+    let (memory, search) = test_ports();
     AppState {
         resource: format!("http://{addr}/mcp"),
         issuer: None,
         validator: None,
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: test_memory(),
+        memory,
+        search,
     }
 }
 
@@ -56,6 +66,7 @@ fn no_auth_state(addr: SocketAddr) -> AppState {
 /// mounts and rejects unauthenticated requests. Token *acceptance* is covered by
 /// the unit golden tests in `auth.rs`.
 fn auth_state(addr: SocketAddr) -> AppState {
+    let (memory, search) = test_ports();
     AppState {
         resource: format!("http://{addr}/mcp"),
         issuer: Some("https://issuer.example".to_string()),
@@ -65,7 +76,8 @@ fn auth_state(addr: SocketAddr) -> AppState {
             HashMap::new(),
         ))),
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: test_memory(),
+        memory,
+        search,
     }
 }
 
@@ -140,12 +152,16 @@ async fn mcp_guard_covers_path_and_method_variants() {
 /// allowlist. Consumes the validator (it is not `Clone`), so each test builds
 /// its own.
 fn allowlist_state(validator: Validator) -> impl FnOnce(SocketAddr) -> AppState {
-    move |addr| AppState {
-        resource: format!("http://{addr}/mcp"),
-        issuer: Some(support::ISS.to_string()),
-        validator: Some(Arc::new(validator)),
-        metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: test_memory(),
+    move |addr| {
+        let (memory, search) = test_ports();
+        AppState {
+            resource: format!("http://{addr}/mcp"),
+            issuer: Some(support::ISS.to_string()),
+            validator: Some(Arc::new(validator)),
+            metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
+            memory,
+            search,
+        }
     }
 }
 
@@ -213,12 +229,14 @@ async fn mcp_is_open_when_auth_disabled() {
 /// Auth-off state whose resource is a *public* URL, so the transport's Host
 /// allowlist must accept that hostname rather than only loopback.
 fn public_no_auth_state(_addr: SocketAddr) -> AppState {
+    let (memory, search) = test_ports();
     AppState {
         resource: "https://jojobot.example/mcp".to_string(),
         issuer: None,
         validator: None,
         metadata_url: "https://jojobot.example/.well-known/oauth-protected-resource".to_string(),
-        memory: test_memory(),
+        memory,
+        search,
     }
 }
 
@@ -255,6 +273,97 @@ async fn mcp_accepts_public_host_but_still_guards_dns_rebinding() {
         .unwrap();
     assert_eq!(spoofed.status(), 403, "an unknown Host must still be forbidden");
 
+    ct.cancel();
+}
+
+/// A **live** store behind the real index, wired the way `main` wires it: one
+/// `IndexedMemory` serving both ports. The fake stands in for Outline; nothing
+/// else about the pairing is faked.
+fn searchable_state(addr: SocketAddr) -> AppState {
+    let indexed = Arc::new(
+        IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("the search index opens"),
+    );
+    AppState {
+        resource: format!("http://{addr}/mcp"),
+        issuer: None,
+        validator: None,
+        metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
+        memory: indexed.clone(),
+        search: indexed,
+    }
+}
+
+/// **The front door, over the wire.** A fact captured through the `capture` tool
+/// is findable through the `search` tool on the next call — no restart — and
+/// comes back as a fact hit carrying its address and provenance.
+///
+/// This is the one claim the composition root makes that no lower test can:
+/// that the port `search` reads is the projection over the store the memory
+/// verbs write to. Wire two stores together and everything below still passes
+/// while the assistant can't find what it just wrote.
+#[tokio::test]
+async fn a_fact_captured_through_the_front_door_is_findable_there() {
+    use rmcp::ServiceExt;
+    use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation};
+    use rmcp::transport::StreamableHttpClientTransport;
+
+    let (addr, ct) = spawn_server(searchable_state).await;
+    let transport = StreamableHttpClientTransport::from_uri(format!("http://{addr}/mcp"));
+    let client = ClientInfo::new(
+        ClientCapabilities::default(),
+        Implementation::new("jojobot-test-client", "0.0.1"),
+    )
+    .serve(transport)
+    .await
+    .unwrap();
+
+    assert!(
+        client
+            .list_tools(Default::default())
+            .await
+            .unwrap()
+            .tools
+            .iter()
+            .any(|t| t.name == "search"),
+        "the server must advertise the search tool"
+    );
+
+    let captured = client
+        .call_tool(CallToolRequestParams::new("capture").with_arguments(
+            serde_json::json!({
+                "subject": "person:frontdoor-probe",
+                "content": "keeps a zamboni in the garage",
+                "provenance": "testimony",
+                "date": "2026-07-01",
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        ))
+        .await
+        .unwrap();
+    let captured = serde_json::to_string(&captured).unwrap();
+    assert!(!captured.contains("\"isError\":true"), "capture must succeed: {captured}");
+
+    let found = client
+        .call_tool(
+            CallToolRequestParams::new("search").with_arguments(
+                serde_json::json!({ "query": "zamboni" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    let found = serde_json::to_string(&found).unwrap();
+    assert!(
+        found.contains("person:frontdoor-probe#f1"),
+        "the fact just captured must be findable, with its address: {found}"
+    );
+    assert!(found.contains("testimony"), "…and its provenance: {found}");
+
+    client.cancel().await.unwrap();
     ct.cancel();
 }
 
