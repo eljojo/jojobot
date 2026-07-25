@@ -369,19 +369,24 @@ fn parse_field(doc: &str, key: &str) -> Option<String> {
 ///
 /// Read generously: a doc with no marker and no table is prose from end to end,
 /// because a page the user wrote by hand is exactly the page worth finding.
+///
+/// **The boundary is the table, not the header.** [`facts_region`] finds the
+/// table wherever it sits under the header — deliberately, because humans type
+/// notes in that gap — but prose used to stop at the header line, so anything in
+/// the gap belonged to no hit class at all: a write preserved it forever and no
+/// search could ever surface it. Text below the table is prose for the same
+/// reason.
 pub(super) fn parse_prose(doc: &str) -> String {
     let lines: Vec<&str> = doc.lines().collect();
-    let limit = lines
-        .iter()
-        .position(|l| l.trim() == FACTS_HEADER)
-        .unwrap_or(lines.len());
-    let machine = machine_block(&lines).filter(|(start, _)| *start < limit);
+    let header = lines.iter().position(|l| l.trim() == FACTS_HEADER);
+    let machine = machine_block(&lines);
+    let table = facts_region(&lines).filter(|(start, end)| start < end);
 
-    let kept = lines[..limit].iter().enumerate().filter_map(|(i, line)| {
-        match machine {
-            Some((start, end)) if i >= start && i < end => None,
-            _ => Some(*line),
-        }
+    let within = |span: Option<(usize, usize)>, i: usize| {
+        span.is_some_and(|(start, end)| i >= start && i < end)
+    };
+    let kept = lines.iter().enumerate().filter_map(|(i, line)| {
+        (Some(i) != header && !within(machine, i) && !within(table, i)).then_some(*line)
     });
     kept.collect::<Vec<&str>>().join("\n").trim().to_string()
 }
@@ -729,6 +734,38 @@ mod tests {
         assert_eq!(prose, "Alpha keeps a paper notebook and hates phone calls.");
         assert!(!prose.contains("id: person:alpha"), "the machine block is not prose");
         assert!(!prose.contains("plays go"), "a fact row is not prose");
+    }
+
+    /// **The gap between the header and the table is prose.** The reader finds
+    /// the table wherever it sits under `### ⚙ facts` — deliberately, because a
+    /// human types notes in there — so a write preserves whatever is in that
+    /// gap. But prose stopped at the header line, so that same text was in no
+    /// hit class at all: kept forever, findable never. Prose is everything that
+    /// is neither the machine block nor the actual table rows.
+    #[test]
+    fn a_note_between_the_facts_header_and_the_table_is_prose() {
+        let doc = format!(
+            "Prose above.\n\n{}\n\n{FACTS_HEADER}\n\nthe pass was closed on Tuesday\n\n\
+             {TABLE_HEADER}\n{TABLE_SEP}\n\
+             | f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |  |\n\
+             \ntrailing note under the table\n",
+            frontmatter(&alpha())
+        );
+        let prose = parse_prose(&doc);
+        assert!(prose.contains("Prose above."), "got: {prose}");
+        assert!(
+            prose.contains("the pass was closed on Tuesday"),
+            "a note in the header/table gap must be findable: {prose}"
+        );
+        assert!(
+            prose.contains("trailing note under the table"),
+            "…and so must one below the table: {prose}"
+        );
+        assert!(!prose.contains(FACTS_HEADER), "jojobot's own header is not prose: {prose}");
+        assert!(!prose.contains("plays go"), "a fact row is not prose: {prose}");
+        assert!(!prose.contains("id: person:alpha"), "the machine block is not prose: {prose}");
+        // …and the note is still just a note: it neither hides nor forks the table.
+        assert_eq!(parse_facts_table(&doc).len(), 1);
     }
 
     /// A doc the user wrote by hand — no marker, no table — is prose end to end.

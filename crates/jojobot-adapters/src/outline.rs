@@ -878,6 +878,39 @@ mod tests {
         );
     }
 
+    /// **A note typed in the gap under `### ⚙ facts` is findable.** The reader
+    /// tolerates it and the writer preserves it — so before this, that text was
+    /// kept forever and searchable never: it belonged to no hit class at all.
+    /// The user's most likely place to leave a note was the one place the front
+    /// door could not see.
+    #[tokio::test]
+    async fn a_note_under_the_facts_header_is_findable_as_prose() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        // Written out literally, as a user would leave the page.
+        let doc = "```yaml\nid: person:alpha\nkind: person\nname: \nsource: capture\nboot: on-demand\n```\n\n\
+                   ### ⚙ facts\n\nnote: the pass was closed on Tuesday\n\n\
+                   | id | subject | content | details | provenance | status | date | edges |\n\
+                   | --- | --- | --- | --- | --- | --- | --- | --- |\n\
+                   | f1 | person:alpha | plays chess |  | testimony | active | 2026-07-01 |  |\n";
+        fake.seed_document(&coll, "alpha", doc);
+
+        let indexed = IndexedMemory::new(Arc::new(store(fake))).expect("index opens");
+        indexed.rebuild().await.expect("rebuild");
+
+        let hits = indexed.search(&SearchQuery::text("pass closed")).expect("search ok");
+        assert!(
+            hits.iter().any(|h| matches!(h, Hit::Prose { snippet, .. } if snippet.contains("pass was closed"))),
+            "the note must come back as a prose hit: {hits:?}"
+        );
+        // …and the fact beside it is untouched by the wider prose boundary.
+        let facts = indexed.search(&SearchQuery::text("chess")).expect("search ok");
+        assert!(
+            facts.iter().any(|h| matches!(h, Hit::Fact { fact } if fact.content == "plays chess")),
+            "got {facts:?}"
+        );
+    }
+
     /// A doc carrying no id marker is nobody's entity — and its prose is still
     /// scanned, because a page the user wrote by hand is exactly the page worth
     /// finding. Its (absent) facts are not invented.
