@@ -427,6 +427,51 @@ impl VikunjaStore {
             .ok_or_else(|| MailboxError::Store(format!("message {id} did not read back")))
     }
 
+    /// A card ready to be written back: exactly what Vikunja handed over, with
+    /// the two fields jojobot owns replaced.
+    ///
+    /// **Everything else has to ride along.** Vikunja's task update writes the
+    /// whole model, so a field left out of the payload is written back as its
+    /// zero value — a due date, a priority, an assignee, the kanban position,
+    /// all blanked by an edit that only meant to record an outcome.
+    fn card_with(card: &TaskRec, title: &str, description: &str) -> serde_json::Value {
+        let mut payload = card.raw.clone();
+        if !payload.is_object() {
+            payload = serde_json::json!({ "project_id": card.project_id });
+        }
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("id".into(), card.id.into());
+            obj.insert("title".into(), title.into());
+            obj.insert("description".into(), description.into());
+        }
+        payload
+    }
+
+    /// Put a whole batch of cards back in the columns they were in. A delivery
+    /// moves every message before it verifies any of them, so a failure has to
+    /// undo **all** of them: restoring only the one that failed leaves the rest
+    /// marked delivered, to a caller that was told the call failed and never
+    /// received them.
+    async fn restore_all(
+        &self,
+        scope: &Scope,
+        cards: &[(TaskRec, MessageState)],
+        verb: &str,
+    ) -> String {
+        let mut failures = Vec::new();
+        for (card, state) in cards {
+            let restored = self.restore(scope, card, *state, verb).await;
+            if !restored.starts_with("the card was restored") {
+                failures.push(format!("card {}: {restored}", card.id));
+            }
+        }
+        if failures.is_empty() {
+            format!("every card this {verb} moved was put back")
+        } else {
+            format!("AND restoring part of this {verb} failed ({})", failures.join("; "))
+        }
+    }
+
     /// Put a card back the way a failed write found it. A read-back mismatch
     /// means the store transformed what was written; leaving the transformed
     /// card behind hands a garbled message to the next consumer. Best-effort:
@@ -441,7 +486,10 @@ impl VikunjaStore {
     ) -> String {
         let description = self
             .api
-            .update_task(scope.project(), task.id, &task.title, &task.description)
+            .update_task(
+                scope.project(),
+                &Self::card_with(task, &task.title, &task.description),
+            )
             .await;
         let column = match self.column(scope, state).await {
             Ok(bucket) => self
@@ -590,11 +638,22 @@ impl Mailboxes for VikunjaStore {
         // A fresh card carries neither its mailbox nor its state: Vikunja drops
         // it in the view's default column and gives it no labels. Both are set
         // here, and both are checked by the read-back below.
-        self.api.set_task_labels(card.id, &[label]).await?;
-        let new_column = self.column(&scope, MessageState::New).await?;
-        self.api
-            .move_task(scope.project(), scope.view, new_column, card.id)
-            .await?;
+        //
+        // **Every step from here on rolls the card back.** A `?` that returned
+        // early left the created card stranded in the default column with no
+        // mailbox label — invisible to every verb, and there forever.
+        let placed = async {
+            self.api.set_task_labels(card.id, &[label]).await?;
+            let new_column = self.column(&scope, MessageState::New).await?;
+            self.api
+                .move_task(scope.project(), scope.view, new_column, card.id)
+                .await
+        }
+        .await;
+        if let Err(e) = placed {
+            let undone = self.undo_create(card.id, "post_message").await;
+            return Err(MailboxError::Store(format!("{e}; {undone}")));
+        }
 
         let expected = Message {
             id: MessageId(card.id.to_string()),
@@ -641,12 +700,21 @@ impl Mailboxes for VikunjaStore {
 
         let read_column = self.column(&scope, MessageState::Read).await?;
         let mut delivered = Vec::with_capacity(owed.len());
+        // Every card this call actually moved, with the column it came from —
+        // so a failure anywhere in the batch can put all of them back.
+        let mut moved: Vec<(TaskRec, MessageState)> = Vec::new();
         for (card, message) in owed {
             let seen_before = message.state == MessageState::Read;
             if !seen_before {
-                self.api
+                if let Err(e) = self
+                    .api
                     .move_task(scope.project(), scope.view, read_column, card.id)
-                    .await?;
+                    .await
+                {
+                    let restored = self.restore_all(&scope, &moved, "read_mailbox").await;
+                    return Err(MailboxError::Store(format!("{e}; {restored}")));
+                }
+                moved.push((card.clone(), message.state));
             }
             delivered.push((card, message, seen_before));
         }
@@ -662,21 +730,23 @@ impl Mailboxes for VikunjaStore {
                 .iter()
                 .find(|(_, m)| m.id == expected.id)
                 .map(|(_, m)| m.clone());
-            let moved = Message {
+            let expected_read = Message {
                 state: MessageState::Read,
                 ..expected.clone()
             };
             match seen {
-                Some(seen) if seen == moved => messages.push(Delivered {
+                Some(seen) if seen == expected_read => messages.push(Delivered {
                     message: seen,
                     seen_before,
                 }),
                 seen => {
-                    let restored = self
-                        .restore(&scope, &card, expected.state, "read_mailbox")
-                        .await;
+                    // The whole batch goes back, not just this card: the caller
+                    // is being told the call failed, so nothing in it may stay
+                    // marked delivered.
+                    let _ = &card;
+                    let restored = self.restore_all(&scope, &moved, "read_mailbox").await;
                     return Err(MailboxError::Store(format!(
-                        "message {} did not read back as delivered: expected {moved:?}, \
+                        "message {} did not read back as delivered: expected {expected_read:?}, \
                          read {seen:?}; {restored}",
                         expected.id
                     )));
@@ -716,18 +786,33 @@ impl Mailboxes for VikunjaStore {
             sent_at: message.sent_at,
             notes: notes.clone(),
         };
-        self.api
-            .update_task(
-                scope.project(),
-                card.id,
-                &card.title,
-                &render_description(&message.body, &envelope),
-            )
-            .await?;
-        let processed_column = self.column(&scope, MessageState::Processed).await?;
-        self.api
-            .move_task(scope.project(), scope.view, processed_column, card.id)
-            .await?;
+        // The outcome is written first, then the column moves. A `?` between the
+        // two left the message carrying a recorded outcome while still sitting
+        // in a column a read delivers — so the next consumer would act a second
+        // time on a message that already says it was handled.
+        let retired = async {
+            self.api
+                .update_task(
+                    scope.project(),
+                    &Self::card_with(
+                        &card,
+                        &card.title,
+                        &render_description(&message.body, &envelope),
+                    ),
+                )
+                .await?;
+            let processed_column = self.column(&scope, MessageState::Processed).await?;
+            self.api
+                .move_task(scope.project(), scope.view, processed_column, card.id)
+                .await
+        }
+        .await;
+        if let Err(e) = retired {
+            let restored = self
+                .restore(&scope, &card, message.state, "mark_processed")
+                .await;
+            return Err(MailboxError::Store(format!("{e}; {restored}")));
+        }
 
         let expected = Message {
             state: MessageState::Processed,
@@ -802,6 +887,11 @@ mod tests {
         /// Every card any call wrote to. A card id is global in Vikunja, so
         /// this is the half of the invariant a project id cannot cover.
         written_tasks: Mutex<std::collections::HashSet<u64>>,
+        /// Arms a transport failure for the next call to the named method — the
+        /// induced fault behind the rollback contracts. A write path has more
+        /// than one step, and a store that only rolls back the *last* one leaves
+        /// damage on every other.
+        fail_next: Mutex<Option<(&'static str, u64)>>,
     }
 
     /// The column Vikunja gives a fresh kanban view. Deliberately not one of
@@ -850,6 +940,36 @@ mod tests {
         /// Mangle the description of the next write before it lands.
         fn poison_next_write(&self) {
             self.poison.store(true, Ordering::SeqCst);
+        }
+
+        /// Make the next call to `method` fail as a transport error would.
+        fn fail_next(&self, method: &'static str) {
+            self.fail_nth(method, 1);
+        }
+
+        /// Make the **nth** call to `method` from now on fail. A write path with
+        /// several steps only shows its rollback gaps when the failure lands
+        /// part-way through it, not on the first step — which is exactly the
+        /// case a fail-the-next-call injector cannot reach.
+        fn fail_nth(&self, method: &'static str, nth: u64) {
+            *self.fail_next.lock().unwrap() = Some((method, nth));
+        }
+
+        /// Fail here if this call is the armed one.
+        fn maybe_fail(&self, method: &'static str) -> Result<(), MailboxError> {
+            let mut armed = self.fail_next.lock().unwrap();
+            let Some((target, remaining)) = armed.as_mut() else {
+                return Ok(());
+            };
+            if *target != method {
+                return Ok(());
+            }
+            *remaining -= 1;
+            if *remaining == 0 {
+                *armed = None;
+                return Err(MailboxError::Store(format!("induced failure in {method}")));
+            }
+            Ok(())
         }
 
         fn mangle(&self, description: &str) -> String {
@@ -940,6 +1060,26 @@ mod tests {
                 .collect()
         }
 
+        /// Set a field on a card that jojobot's own model knows nothing about —
+        /// the operator reaching into Vikunja and setting a due date or a
+        /// priority on a message card.
+        fn set_field(&self, task: u64, key: &str, value: serde_json::Value) {
+            let mut tasks = self.tasks.lock().unwrap();
+            let card = tasks.iter_mut().find(|t| t.id == task).expect("card exists");
+            card.raw[key] = value;
+        }
+
+        /// Read such a field back.
+        fn field(&self, task: u64, key: &str) -> serde_json::Value {
+            self.tasks
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|t| t.id == task)
+                .map(|t| t.raw[key].clone())
+                .unwrap_or(serde_json::Value::Null)
+        }
+
         /// The title of the column a card sits in.
         fn column_of(&self, task: u64) -> Option<String> {
             let bucket = *self.placement.lock().unwrap().get(&task)?;
@@ -961,6 +1101,12 @@ mod tests {
                 title: title.into(),
                 description: description.into(),
                 labels: Vec::new(),
+                raw: serde_json::json!({
+                    "id": id,
+                    "project_id": project,
+                    "title": title,
+                    "description": description,
+                }),
             });
             self.task_labels.lock().unwrap().insert(id, labels.to_vec());
             if let Some(bucket) = self.default_bucket(project, self.kanban_view(project)) {
@@ -1119,12 +1265,19 @@ mod tests {
         ) -> Result<TaskRec, MailboxError> {
             self.named(project_id);
             let id = self.next_id();
+            let description = self.mangle(description);
             let task = TaskRec {
                 id,
                 project_id,
                 title: title.into(),
-                description: self.mangle(description),
+                description: description.clone(),
                 labels: Vec::new(),
+                raw: serde_json::json!({
+                    "id": id,
+                    "project_id": project_id,
+                    "title": title,
+                    "description": description,
+                }),
             };
             self.tasks.lock().unwrap().push(task.clone());
             // Vikunja drops a fresh card in the view's default column, not in
@@ -1136,21 +1289,33 @@ mod tests {
             Ok(task)
         }
 
+        /// **The whole model is what gets written.** Vikunja's task update
+        /// persists the task it is handed, so any writable field the payload
+        /// omits comes back as its Go zero value. The fake stores exactly the
+        /// payload, which is what makes "a field jojobot does not model
+        /// survives" a thing a test can fail on.
         async fn update_task(
             &self,
             project_id: u64,
-            task_id: u64,
-            title: &str,
-            description: &str,
+            task: &serde_json::Value,
         ) -> Result<(), MailboxError> {
+            self.maybe_fail("update_task")?;
             self.named(project_id);
+            let task_id = task["id"]
+                .as_u64()
+                .ok_or_else(|| MailboxError::Store("update_task: no id".into()))?;
             self.wrote(task_id);
-            let description = self.mangle(description);
+
+            let mut payload = task.clone();
+            let description = self.mangle(payload["description"].as_str().unwrap_or_default());
+            payload["description"] = description.clone().into();
+
             let mut tasks = self.tasks.lock().unwrap();
             match tasks.iter_mut().find(|t| t.id == task_id) {
-                Some(task) => {
-                    task.title = title.into();
-                    task.description = description;
+                Some(stored) => {
+                    stored.title = payload["title"].as_str().unwrap_or_default().to_string();
+                    stored.description = description;
+                    stored.raw = payload;
                     Ok(())
                 }
                 None => Err(MailboxError::Store(format!("update_task: no card {task_id}"))),
@@ -1172,6 +1337,7 @@ mod tests {
             bucket_id: u64,
             task_id: u64,
         ) -> Result<(), MailboxError> {
+            self.maybe_fail("move_task")?;
             self.named(project_id);
             let _ = view_id;
             self.wrote(task_id);
@@ -1209,6 +1375,7 @@ mod tests {
         }
 
         async fn set_task_labels(&self, task_id: u64, labels: &[u64]) -> Result<(), MailboxError> {
+            self.maybe_fail("set_task_labels")?;
             self.wrote(task_id);
             self.task_labels.lock().unwrap().insert(task_id, labels.to_vec());
             Ok(())
@@ -1486,16 +1653,17 @@ mod tests {
             !written.contains(&their_card),
             "a verb wrote to a card on the operator's board: {written:?}"
         );
+        let theirs_after = fake.tasks_in(theirs);
+        assert_eq!(theirs_after.len(), 1, "no card was added to their board");
+        assert_eq!(theirs_after[0].id, their_card);
         assert_eq!(
-            fake.tasks_in(theirs),
-            vec![TaskRec {
-                id: their_card,
-                project_id: theirs,
-                title: "renew the passport".into(),
-                description: "due in March".into(),
-                labels: Vec::new(),
-            }],
-            "the operator's card is byte-for-byte as they left it"
+            theirs_after[0].project_id, theirs,
+            "…and none was moved off it either"
+        );
+        assert_eq!(
+            (theirs_after[0].title.as_str(), theirs_after[0].description.as_str()),
+            ("renew the passport", "due in March"),
+            "the operator's card is exactly as they left it"
         );
     }
 
@@ -1611,5 +1779,118 @@ mod tests {
         let last = delivery.messages.last().expect("a message").message.id.clone();
         let processed = store.mark_processed(&last, None).await.expect("mark_processed ok");
         assert_eq!(processed.state, MessageState::Processed);
+    }
+
+    // --- a failed write leaves no damage, at EVERY step -----------------------
+
+    /// **The rollback has to cover the whole write, not just its last step.**
+    /// A post is four calls — create the card, label it, find the column, move
+    /// it — and a failure at any of them used to return early, leaving the
+    /// created card stranded in Vikunja's default column with no mailbox label:
+    /// invisible to every verb, and there forever.
+    #[tokio::test]
+    async fn a_post_that_fails_midway_leaves_no_card_behind() {
+        for step in ["set_task_labels", "move_task"] {
+            let fake = FakeVikunja::new();
+            let store = store_with_box(fake.clone(), "inbox").await;
+            let project = fake.projects_titled(PROJECT)[0].id;
+
+            fake.fail_next(step);
+            let outcome = store
+                .post_message(NewMessage {
+                    mailbox: MailboxName("inbox".into()),
+                    body: "the shipment landed".into(),
+                    sender: "alpha".into(),
+                    sent_at: at(1_780_000_000),
+                })
+                .await;
+            assert!(outcome.is_err(), "a failed {step} must not report success");
+            assert!(
+                fake.tasks_in(project).is_empty(),
+                "a card stranded by a failed {step} is invisible to every verb and \
+                 stays on the board forever: {:?}",
+                fake.tasks_in(project)
+            );
+        }
+    }
+
+    /// A processing that fails after the outcome was written must put the card
+    /// back — otherwise the message is redelivered as unprocessed while already
+    /// carrying a recorded outcome, and the consumer acts on it twice.
+    #[tokio::test]
+    async fn a_processing_that_fails_after_writing_the_outcome_restores_the_card() {
+        let fake = FakeVikunja::new();
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let posted = contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
+        contract::read(&store, "inbox").await;
+        let card: u64 = posted.id.as_str().parse().expect("a numeric card id");
+
+        // The description write lands; the column move is what fails.
+        fake.fail_next("move_task");
+        let outcome = store.mark_processed(&posted.id, Some("filed")).await;
+        assert!(outcome.is_err(), "a failed move must not report success: {outcome:?}");
+
+        assert_eq!(fake.column_of(card).as_deref(), Some("read"), "the column is unchanged");
+        let again = contract::read(&store, "inbox").await;
+        assert_eq!(again.messages.len(), 1, "still deliverable");
+        assert_eq!(
+            again.messages[0].message.notes, None,
+            "no outcome is left on a message that was not processed"
+        );
+    }
+
+    /// **A batch is delivered or it is not.** A read moves every message before
+    /// verifying any of them; restoring only the one that failed left the rest
+    /// moved to `read` while the caller was told the call failed — messages
+    /// nobody received, silently marked as received.
+    #[tokio::test]
+    async fn a_delivery_that_fails_partway_restores_the_whole_batch() {
+        let fake = FakeVikunja::new();
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let mut cards = Vec::new();
+        for i in 0..3 {
+            let posted = contract::post(&store, "inbox", "alpha", &format!("message {i}"), i).await;
+            cards.push(posted.id.as_str().parse::<u64>().expect("a numeric card id"));
+        }
+
+        // The last move in the batch fails, after the first two have landed.
+        fake.fail_nth("move_task", 3);
+        let outcome = store.read_mailbox(&MailboxName("inbox".into())).await;
+        assert!(outcome.is_err(), "a partial delivery must not report success: {outcome:?}");
+
+        for card in &cards {
+            assert_eq!(
+                fake.column_of(*card).as_deref(),
+                Some("new"),
+                "every message in the batch goes back to new, not just the failing one"
+            );
+        }
+    }
+
+    /// **A card update must not blank the rest of the card.** Vikunja's task
+    /// update writes the whole model, so any writable field missing from the
+    /// payload is written back as its zero value — a due date, a priority, an
+    /// assignee, the kanban position. jojobot rewrites two fields and has to
+    /// send back everything else exactly as it found it.
+    #[tokio::test]
+    async fn processing_a_message_preserves_every_other_field_on_the_card() {
+        let fake = FakeVikunja::new();
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let posted = contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
+        let card: u64 = posted.id.as_str().parse().expect("a numeric card id");
+
+        // Something the operator set by hand on the card, that jojobot's own
+        // model knows nothing about.
+        fake.set_field(card, "priority", serde_json::json!(3));
+        fake.set_field(card, "due_date", serde_json::json!("2026-08-01T00:00:00Z"));
+
+        store.mark_processed(&posted.id, Some("filed")).await.expect("mark_processed ok");
+
+        assert_eq!(fake.field(card, "priority"), serde_json::json!(3));
+        assert_eq!(
+            fake.field(card, "due_date"),
+            serde_json::json!("2026-08-01T00:00:00Z"),
+            "a field jojobot does not model must survive a field jojobot does write"
+        );
     }
 }

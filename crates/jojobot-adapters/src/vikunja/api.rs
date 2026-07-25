@@ -60,6 +60,15 @@ pub(super) struct TaskRec {
     /// The label titles on the card. A mailbox IS a label, so this is where a
     /// message's box is read from.
     pub labels: Vec<String>,
+    /// **The card exactly as Vikunja returned it.**
+    ///
+    /// Vikunja's task update writes the whole task model, so every writable
+    /// field absent from an update payload is written back as its Go zero
+    /// value — a due date, a priority, an assignee, the kanban position, all
+    /// silently blanked by an edit that only meant to change a description.
+    /// jojobot rewrites two fields, so it sends this back with those two
+    /// replaced and everything else exactly as it found it.
+    pub raw: Value,
 }
 
 /// A column together with the cards in it — the board endpoint's shape.
@@ -120,16 +129,11 @@ pub(super) trait VikunjaApi: Send + Sync {
         title: &str,
         description: &str,
     ) -> Result<TaskRec, MailboxError>;
-    /// Rewrite a card's title and description. Vikunja's task update takes the
-    /// task model, so the project id rides along — these are jojobot's own
-    /// cards, which carry no due date, assignee, or reminder to preserve.
-    async fn update_task(
-        &self,
-        project_id: u64,
-        task_id: u64,
-        title: &str,
-        description: &str,
-    ) -> Result<(), MailboxError>;
+    /// Write a card back. **Takes the whole task model**, because that is what
+    /// Vikunja's update writes: anything omitted is zeroed. `project_id` is
+    /// passed alongside rather than read out of the model so the write-scope
+    /// invariant has one explicit place to be checked.
+    async fn update_task(&self, project_id: u64, task: &Value) -> Result<(), MailboxError>;
     async fn delete_task(&self, task_id: u64) -> Result<(), MailboxError>;
     async fn move_task(
         &self,
@@ -187,6 +191,7 @@ fn task_rec(t: &Value) -> Option<TaskRec> {
             .as_array()
             .map(|ls| ls.iter().map(|l| text(&l["title"])).collect())
             .unwrap_or_default(),
+        raw: t.clone(),
     })
 }
 
@@ -383,24 +388,13 @@ impl VikunjaApi for HttpVikunja {
         task_rec(&v).ok_or_else(|| MailboxError::Store("tasks.create: malformed".into()))
     }
 
-    async fn update_task(
-        &self,
-        project_id: u64,
-        task_id: u64,
-        title: &str,
-        description: &str,
-    ) -> Result<(), MailboxError> {
-        self.post(
-            &format!("/tasks/{task_id}"),
-            json!({
-                "id": task_id,
-                "project_id": project_id,
-                "title": title,
-                "description": description,
-            }),
-        )
-        .await
-        .map(|_| ())
+    async fn update_task(&self, project_id: u64, task: &Value) -> Result<(), MailboxError> {
+        let task_id = as_u64(&task["id"])
+            .ok_or_else(|| MailboxError::Store("tasks.update: card has no id".into()))?;
+        let _ = project_id;
+        self.post(&format!("/tasks/{task_id}"), task.clone())
+            .await
+            .map(|_| ())
     }
 
     async fn delete_task(&self, task_id: u64) -> Result<(), MailboxError> {
@@ -498,7 +492,7 @@ impl VikunjaApi for Unconfigured {
     async fn create_task(&self, _: u64, _: &str, _: &str) -> Result<TaskRec, MailboxError> {
         Self::refuse()
     }
-    async fn update_task(&self, _: u64, _: u64, _: &str, _: &str) -> Result<(), MailboxError> {
+    async fn update_task(&self, _: u64, _: &Value) -> Result<(), MailboxError> {
         Self::refuse()
     }
     async fn delete_task(&self, _: u64) -> Result<(), MailboxError> {
