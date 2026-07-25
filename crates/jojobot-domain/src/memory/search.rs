@@ -13,7 +13,10 @@
 //! This module is pure vocabulary — no tantivy, no I/O. The index that satisfies
 //! [`Search`] lives in the adapters.
 
-use super::{Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactStatus, MemoryError, Provenance, validate_subject};
+use super::{
+    Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactStatus, MemoryError, Provenance,
+    validate_edge, validate_subject,
+};
 
 /// One document as the index needs it: its prose, the entity it is (if it is
 /// one), and the facts in its table. This is the shape a **full re-scan** yields,
@@ -139,8 +142,15 @@ impl SearchQuery {
         if let Some(subject) = &self.subject {
             validate_subject(subject)?;
         }
-        if let Some(edge) = &self.edge {
-            validate_subject(&edge.object)?;
+        // The same rule the write path applies, reused rather than restated: a
+        // filter combination no write could ever produce must read as the
+        // caller's mistake, not as an honest empty answer.
+        match &self.edge {
+            Some(EdgeFilter { shape: Some(shape), object }) => {
+                validate_edge(&Edge::new(*shape, object.clone()))?
+            }
+            Some(EdgeFilter { shape: None, object }) => validate_subject(object)?,
+            None => {}
         }
         Ok(())
     }
@@ -262,6 +272,41 @@ mod tests {
             bad_object.validate(),
             Err(MemoryError::InvalidSubject(_))
         ));
+    }
+
+    /// The shape→kind rule binds the **read** path as hard as the write path.
+    /// `{shape: location, object: person:x}` is a combination no write can
+    /// produce, so serving it returns zero hits — and zero hits reads as "nobody
+    /// is there", not "you asked something impossible". The caller's mis-drawn
+    /// filter has to come back as their mistake.
+    #[test]
+    fn an_edge_filter_whose_object_is_wrong_for_its_shape_is_refused() {
+        let impossible = SearchQuery {
+            edge: Some(EdgeFilter {
+                shape: Some(EdgeShape::Location),
+                object: EntityId::person("alpha"),
+            }),
+            ..Default::default()
+        };
+        assert!(
+            matches!(impossible.validate(), Err(MemoryError::InvalidEdge(_))),
+            "a location edge points at a place, on the query path too"
+        );
+        // A shapeless filter is "what's connected to X" — every kind is fair game.
+        let any_shape = SearchQuery {
+            edge: Some(EdgeFilter { shape: None, object: EntityId::person("alpha") }),
+            ..Default::default()
+        };
+        assert!(any_shape.validate().is_ok());
+        // …and `about` is the open shape, so it accepts a person too.
+        let open = SearchQuery {
+            edge: Some(EdgeFilter {
+                shape: Some(EdgeShape::About),
+                object: EntityId::person("alpha"),
+            }),
+            ..Default::default()
+        };
+        assert!(open.validate().is_ok());
     }
 
     #[test]
