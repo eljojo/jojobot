@@ -10,3 +10,4 @@
 
 pub mod outline;
 pub mod search;
+pub mod vikunja;
