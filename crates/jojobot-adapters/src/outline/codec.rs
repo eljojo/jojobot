@@ -123,19 +123,36 @@ pub(super) fn parse_fact_row(row: &str, home: &EntityId) -> Option<Fact> {
     })
 }
 
-/// Locate the fact table's line range within a doc: the half-open span of lines
-/// that start with `|` under the `### ⚙ facts` header. `None` if no header.
+/// Locate the fact table's line range within a doc: the half-open span of the
+/// contiguous `|` lines under the `### ⚙ facts` header. `None` if no header.
+///
+/// The table is found **wherever it sits** under the header, not only flush
+/// against it — a human will type a note in there, and requiring adjacency once
+/// meant the reader saw no facts while the writer started a second table above
+/// the note and orphaned every fact already on the page. An empty span (start ==
+/// end) means the header is there but no table has been drawn yet.
 fn facts_region(lines: &[&str]) -> Option<(usize, usize)> {
     let header = lines.iter().position(|l| l.trim() == FACTS_HEADER)?;
-    let mut i = header + 1;
-    while i < lines.len() && lines[i].trim().is_empty() {
-        i += 1;
+    let is_row = |l: &&str| l.trim_start().starts_with('|');
+
+    match lines[header + 1..].iter().position(is_row) {
+        Some(offset) => {
+            let start = header + 1 + offset;
+            let mut end = start;
+            while end < lines.len() && is_row(&lines[end]) {
+                end += 1;
+            }
+            Some((start, end))
+        }
+        // No table yet: the insertion point is the first line after the header.
+        None => {
+            let mut i = header + 1;
+            while i < lines.len() && lines[i].trim().is_empty() {
+                i += 1;
+            }
+            Some((i, i))
+        }
     }
-    let start = i;
-    while i < lines.len() && lines[i].trim_start().starts_with('|') {
-        i += 1;
-    }
-    Some((start, i))
 }
 
 /// Every fact in a doc, in document order. A doc with no `id:` marker yields
@@ -158,12 +175,24 @@ pub(super) fn parse_facts_table(doc: &str) -> Vec<Fact> {
 /// Return `doc` with the row carrying `id` replaced by `row`, or `None` if no
 /// such row exists. `None` is the signal that the address missed — the store
 /// turns it into an error rather than appending a row nobody asked for.
-pub(super) fn with_row_replaced(doc: &str, id: &FactId, row: &str) -> Option<String> {
+///
+/// **Only a row the reader can parse is a target.** The writer used to match on
+/// the id cell alone, a wider predicate than [`parse_fact_row`]'s: an edit could
+/// then land on a row no read had ever returned — silently destroying a fact the
+/// caller never saw, and passing read-back, because the verification matched
+/// that same wrong row. A row the reader skips is inert: unreadable, and now
+/// unwritable too.
+pub(super) fn with_row_replaced(
+    doc: &str,
+    home: &EntityId,
+    id: &FactId,
+    row: &str,
+) -> Option<String> {
     let lines: Vec<&str> = doc.lines().collect();
     let (start, end) = facts_region(&lines)?;
     let target = lines[start..end]
         .iter()
-        .position(|l| row_id(l).as_deref() == Some(id.as_str()))?
+        .position(|l| parse_fact_row(l, home).is_some_and(|f| &f.id == id))?
         + start;
 
     let mut out: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
@@ -171,7 +200,9 @@ pub(super) fn with_row_replaced(doc: &str, id: &FactId, row: &str) -> Option<Str
     Some(out.join("\n"))
 }
 
-/// The local id a table row carries, if it looks like a fact row at all.
+/// The local id a table row carries, if it looks like a fact row at all — the
+/// *widest* reading, deliberately: this is what id minting counts, so a row the
+/// reader can't parse still holds its id and can never be handed out twice.
 fn row_id(row: &str) -> Option<String> {
     let cells = split_cells(row);
     if !matches!(cells.len(), CELLS | CELLS_LEGACY) {
@@ -214,32 +245,85 @@ pub(super) fn with_fact_appended(doc: &str, row: &str) -> String {
     out.join("\n")
 }
 
-/// The next light/local id for a doc: `f{max+1}` over existing `fN` ids.
-pub(super) fn next_fact_id(existing: &[Fact]) -> FactId {
-    let max = existing
+/// The next light/local id for a doc: `f{max+1}` over **every** `fN` id present
+/// in the table, counted with the widest reading ([`row_id`]) rather than the
+/// reader's.
+///
+/// Minting off the parsed facts alone was the bug: a row the reader dropped
+/// freed its id, the next capture handed it out again, and two rows ended up
+/// sharing one address — after which an edit to that address was a coin flip.
+/// An id is taken the moment it appears on the page, readable or not.
+pub(super) fn next_fact_id(doc: &str) -> FactId {
+    let lines: Vec<&str> = doc.lines().collect();
+    let (start, end) = facts_region(&lines).unwrap_or((0, 0));
+    let max = lines[start..end]
         .iter()
-        .filter_map(|f| f.id.as_str().strip_prefix('f')?.parse::<u64>().ok())
+        .filter_map(|l| row_id(l)?.strip_prefix('f')?.parse::<u64>().ok())
         .max()
         .unwrap_or(0);
     FactId(format!("f{}", max + 1))
 }
 
-/// Read one `key: value` field out of the machine block. The scan stops at the
-/// fact table so a fact's own cells can never masquerade as a frontmatter field.
-fn parse_field(doc: &str, key: &str) -> Option<String> {
-    for line in doc.lines() {
-        let t = line.trim();
-        if t == FACTS_HEADER {
-            break;
+/// The half-open line span of the **machine block**: the fenced block above the
+/// fact table that carries the `id:` marker.
+///
+/// Keyed on the marker, not on being the first fence in the doc. A doc's prose
+/// may hold fenced blocks of its own — pinning on position once meant an entity
+/// edit overwrote the user's snippet and left the real frontmatter stale below
+/// it, with read-back passing because the reader also took the first block.
+/// Reader and writer now agree on which block is jojobot's.
+fn machine_block(lines: &[&str]) -> Option<(usize, usize)> {
+    let limit = lines
+        .iter()
+        .position(|l| l.trim() == FACTS_HEADER)
+        .unwrap_or(lines.len());
+    let is_fence = |l: &&str| l.trim_start().starts_with("```");
+
+    let mut i = 0;
+    while i < limit {
+        if !is_fence(&lines[i]) {
+            i += 1;
+            continue;
         }
-        if let Some(rest) = t.strip_prefix(key).and_then(|r| r.strip_prefix(':')) {
-            let value = rest.trim();
-            if !value.is_empty() {
-                return Some(value.to_string());
-            }
+        let close = lines[i + 1..limit]
+            .iter()
+            .position(is_fence)
+            .map(|o| i + 1 + o);
+        let close = close?; // unterminated fence: no machine block
+        if lines[i + 1..close].iter().any(|l| field_of(l, "id").is_some()) {
+            return Some((i, close + 1));
         }
+        i = close + 1;
     }
     None
+}
+
+/// The value of a `key: value` line, if this line is one.
+fn field_of(line: &str, key: &str) -> Option<String> {
+    let rest = line.trim().strip_prefix(key)?.strip_prefix(':')?.trim();
+    (!rest.is_empty()).then(|| rest.to_string())
+}
+
+/// Read one `key: value` field out of the machine block. Fields are read from
+/// **inside** the block when there is one, so a `name:`-shaped sentence in the
+/// prose is prose — it can neither forge a field nor hijack the id marker. A doc
+/// with no fenced block at all falls back to scanning above the fact table, so
+/// an older or hand-written marker still identifies its entity.
+fn parse_field(doc: &str, key: &str) -> Option<String> {
+    let lines: Vec<&str> = doc.lines().collect();
+    let (start, end) = match machine_block(&lines) {
+        Some((open, close)) => (open + 1, close - 1),
+        None => (
+            0,
+            lines
+                .iter()
+                .position(|l| l.trim() == FACTS_HEADER)
+                .unwrap_or(lines.len()),
+        ),
+    };
+    lines[start..end.min(lines.len())]
+        .iter()
+        .find_map(|l| field_of(l, key))
 }
 
 /// Read the doc's embedded `id:` identity marker — the durable, cosmetic-proof
@@ -287,31 +371,14 @@ fn frontmatter(e: &Entity) -> String {
     out
 }
 
-/// The half-open line span of the fenced machine block above the fact table.
-fn frontmatter_region(lines: &[&str]) -> Option<(usize, usize)> {
-    let limit = lines
-        .iter()
-        .position(|l| l.trim() == FACTS_HEADER)
-        .unwrap_or(lines.len());
-    let open = lines[..limit]
-        .iter()
-        .position(|l| l.trim_start().starts_with("```"))?;
-    let close = lines[open + 1..limit]
-        .iter()
-        .position(|l| l.trim_start().starts_with("```"))?
-        + open
-        + 1;
-    Some((open, close + 1))
-}
-
-/// Return `doc` with its frontmatter block rewritten to `entity` — an in-place
+/// Return `doc` with its machine block rewritten to `entity` — an in-place
 /// metadata edit (fix the source). Prose above it and the fact table below are
-/// untouched. A doc with no block yet gets one at the top rather than losing the
-/// edit.
+/// untouched, including any fenced block the user wrote themselves. A doc with
+/// no machine block yet gets one at the top rather than losing the edit.
 pub(super) fn with_frontmatter_replaced(doc: &str, entity: &Entity) -> String {
     let lines: Vec<&str> = doc.lines().collect();
     let block = frontmatter(entity);
-    match frontmatter_region(&lines) {
+    match machine_block(&lines) {
         Some((start, end)) => {
             let mut out: Vec<String> = lines[..start].iter().map(|s| s.to_string()).collect();
             out.push(block);
@@ -361,6 +428,140 @@ mod tests {
             crm: Some("card:554".into()),
             boot: Boot::OnDemand,
         }
+    }
+
+    // --- a row the reader can't parse is inert, never a target ----------------
+    //
+    // These docs are human-editable wiki pages, so a hand-typed date or an
+    // emptied cell is expected. The rule that keeps that harmless: **mint ids
+    // over every row that carries one, address only rows the reader can parse.**
+    // When those two sets disagreed, an unreadable row's id got re-minted and
+    // the next edit landed on the unreadable row — destroying it, and passing
+    // read-back because the verification matched the same wrong row.
+
+    /// A hand-broken row still occupies its id: the next fact minted must step
+    /// over it, or two rows end up sharing one address.
+    #[test]
+    fn an_unparseable_row_still_reserves_its_id() {
+        let doc = with_fact_appended(
+            &seeded_doc(&alpha()),
+            // A date a human retyped in the wiki — unparseable, so no reader sees it.
+            "| f1 | person:alpha | allergic to penicillin |  | testimony | active | July 1, 2026 |",
+        );
+        assert!(parse_facts_table(&doc).is_empty(), "the reader can't see it");
+        assert_eq!(
+            next_fact_id(&doc),
+            FactId("f2".into()),
+            "an id the reader can't see is still taken"
+        );
+    }
+
+    /// …and it is not addressable: an edit aimed at that id must miss rather
+    /// than overwrite a row nobody could read (and so nobody could have meant).
+    #[test]
+    fn an_unparseable_row_is_never_the_target_of_an_edit() {
+        let doc = with_fact_appended(
+            &seeded_doc(&alpha()),
+            "| f1 | person:alpha | allergic to penicillin |  | testimony | active | July 1, 2026 |",
+        );
+        assert!(
+            with_row_replaced(&doc, &EntityId::person("alpha"), &FactId("f1".into()), "| f1 | x |")
+                .is_none(),
+            "a row the reader skipped must not be rewritten"
+        );
+    }
+
+    /// With both halves in place, a doc that already holds a broken row keeps it
+    /// while the addressed row edits normally — the broken row is inert, not a
+    /// landmine.
+    #[test]
+    fn an_edit_beside_a_broken_row_touches_only_the_addressed_row() {
+        let mut doc = with_fact_appended(
+            &seeded_doc(&alpha()),
+            "| f1 | person:alpha | allergic to penicillin |  | testimony | active | July 1, 2026 |",
+        );
+        let good = fact("f2", "person:alpha", "takes the 8am train", Provenance::Testimony, date(2026, 7, 2));
+        doc = with_fact_appended(&doc, &render_fact_row(&good));
+
+        let edited = Fact { content: "takes the 7am train".into(), ..good };
+        let updated = with_row_replaced(
+            &doc,
+            &EntityId::person("alpha"),
+            &FactId("f2".into()),
+            &render_fact_row(&edited),
+        )
+        .expect("the addressed row exists");
+
+        assert!(
+            updated.contains("allergic to penicillin"),
+            "the unreadable row must survive untouched: {updated}"
+        );
+        assert!(updated.contains("takes the 7am train"));
+        assert!(!updated.contains("takes the 8am train"));
+    }
+
+    // --- the table is found wherever it sits under its header -----------------
+
+    /// A user typing a line under `### ⚙ facts` must not hide the table. It did:
+    /// the reader saw no facts and the writer started a *second* table above the
+    /// note, orphaning every fact already there.
+    #[test]
+    fn a_note_under_the_facts_header_does_not_hide_or_fork_the_table() {
+        let doc = format!(
+            "```yaml\nid: person:alpha\n```\n\n{FACTS_HEADER}\n\nnote: do not edit below\n\n\
+             {TABLE_HEADER}\n{TABLE_SEP}\n\
+             | f1 | person:alpha | plays chess |  | testimony | active | 2026-07-01 |\n"
+        );
+        assert_eq!(parse_facts_table(&doc).len(), 1, "the table is still readable");
+
+        let f2 = fact("f2", "person:alpha", "learning Rust", Provenance::Inference, date(2026, 7, 2));
+        let updated = with_fact_appended(&doc, &render_fact_row(&f2));
+        assert_eq!(
+            updated.matches(TABLE_HEADER).count(),
+            1,
+            "one table, not a second one above the note: {updated}"
+        );
+        assert_eq!(parse_facts_table(&updated).len(), 2, "both facts readable");
+        assert!(updated.contains("note: do not edit below"), "the note survives");
+    }
+
+    // --- the frontmatter block is the one carrying the marker -----------------
+
+    /// A fenced block in the prose is not the machine block. Overwriting it
+    /// destroyed the user's snippet AND left the real frontmatter stale below —
+    /// with read-back passing, because the reader took the first match too.
+    #[test]
+    fn frontmatter_replacement_targets_the_block_carrying_the_marker() {
+        let doc = format!(
+            "Prose about this entity.\n\n```\nimportant snippet the user wrote\n```\n\n{}\n\n{FACTS_HEADER}\n",
+            frontmatter(&alpha())
+        );
+        let renamed = Entity { name: "Alpha Renamed".into(), ..alpha() };
+        let updated = with_frontmatter_replaced(&doc, &renamed);
+
+        assert!(
+            updated.contains("important snippet the user wrote"),
+            "the user's own fenced block must survive: {updated}"
+        );
+        assert_eq!(
+            updated.matches("id: person:alpha").count(),
+            1,
+            "exactly one machine block, not a stale duplicate: {updated}"
+        );
+        assert_eq!(parse_entity(&updated).unwrap(), renamed);
+    }
+
+    /// A `name:`-looking line in the prose is prose, not a field — the machine
+    /// block is where fields live, so prose can't forge one.
+    #[test]
+    fn a_field_shaped_line_in_prose_is_not_read_as_frontmatter() {
+        let doc = format!(
+            "Notes: name: Someone Else\nid: person:hijacked\n\n{}\n\n{FACTS_HEADER}\n",
+            frontmatter(&alpha())
+        );
+        let e = parse_entity(&doc).expect("the machine block identifies the entity");
+        assert_eq!(e.id, EntityId::person("alpha"), "prose must not forge the marker");
+        assert_eq!(e.name, "Alpha", "prose must not forge a field");
     }
 
     // --- the details column ---------------------------------------------------
@@ -439,7 +640,7 @@ mod tests {
             status: FactStatus::Negated,
             ..fact("f2", "person:alpha", "", Provenance::Inference, date(2026, 7, 2))
         };
-        let updated = with_row_replaced(&doc, &FactId("f2".into()), &render_fact_row(&edited))
+        let updated = with_row_replaced(&doc, &EntityId::person("alpha"), &FactId("f2".into()), &render_fact_row(&edited))
             .expect("the row exists");
 
         let facts = parse_facts_table(&updated);
@@ -456,7 +657,7 @@ mod tests {
     #[test]
     fn replacing_a_missing_row_reports_rather_than_appends() {
         let doc = seeded_doc(&alpha());
-        assert!(with_row_replaced(&doc, &FactId("f9".into()), "| f9 | x |").is_none());
+        assert!(with_row_replaced(&doc, &EntityId::person("alpha"), &FactId("f9".into()), "| f9 | x |").is_none());
     }
 
     // --- entity frontmatter ---------------------------------------------------
@@ -567,12 +768,13 @@ mod tests {
 
     #[test]
     fn next_id_increments_over_existing() {
-        let existing = vec![
-            fact("f1", "person:alpha", "a", Provenance::Testimony, date(2026, 1, 1)),
-            fact("f3", "person:alpha", "b", Provenance::Testimony, date(2026, 1, 1)),
-        ];
-        assert_eq!(next_fact_id(&existing), FactId("f4".into()));
-        assert_eq!(next_fact_id(&[]), FactId("f1".into()));
+        let mut doc = seeded_doc(&alpha());
+        assert_eq!(next_fact_id(&doc), FactId("f1".into()));
+        for id in ["f1", "f3"] {
+            let row = render_fact_row(&fact(id, "person:alpha", "a", Provenance::Testimony, date(2026, 1, 1)));
+            doc = with_fact_appended(&doc, &row);
+        }
+        assert_eq!(next_fact_id(&doc), FactId("f4".into()));
     }
 
     /// A doc written entirely in the pre-`details` format — old header, old
@@ -606,5 +808,45 @@ mod tests {
     #[test]
     fn marker_is_absent_when_there_is_no_machine_block() {
         assert_eq!(parse_id_marker("# just prose\n\nnothing structured here"), None);
+    }
+}
+
+#[cfg(test)]
+mod cr_probe {
+    use super::*;
+    use jiff::civil::date;
+
+    fn f(id: &str, content: &str) -> Fact {
+        Fact {
+            id: FactId(id.into()),
+            home: EntityId("person:alpha".into()),
+            subject: EntityId("person:alpha".into()),
+            content: content.into(),
+            details: None,
+            provenance: Provenance::Inference,
+            status: FactStatus::Active,
+            date: date(2026, 7, 25),
+        }
+    }
+
+    #[test]
+    fn probe() {
+        // Build a doc with f1..f4, CR inside f1's content, exactly as the
+        // adapter would: render row, append via with_fact_appended.
+        let mut doc = String::from("intro\n\n### \u{2699} facts\n\n| id | subject | content | details | provenance | status | date |\n| --- | --- | --- | --- | --- | --- | --- |\n");
+        doc = format!("id: person:alpha\n{doc}");
+        for (i, c) in [("f1", "hello\rworld"), ("f2", "b"), ("f3", "c"), ("f4", "d")] {
+            doc = with_fact_appended(&doc, &render_fact_row(&f(i, c)));
+        }
+        let parsed = parse_facts_table(&doc);
+        eprintln!("RAW DOC BYTES CONTAIN CR: {}", doc.contains('\r'));
+        eprintln!("PARSED COUNT (CR preserved by store) = {}", parsed.len());
+        eprintln!("CONTENTS = {:?}", parsed.iter().map(|x| (x.id.0.clone(), x.content.clone())).collect::<Vec<_>>());
+
+        // Now simulate a store that normalizes bare CR -> LF (markdown-it style).
+        let normalized = doc.replace('\r', "\n");
+        let parsed2 = parse_facts_table(&normalized);
+        eprintln!("PARSED COUNT (CR normalized to LF) = {}", parsed2.len());
+        eprintln!("CONTENTS2 = {:?}", parsed2.iter().map(|x| x.id.0.clone()).collect::<Vec<_>>());
     }
 }

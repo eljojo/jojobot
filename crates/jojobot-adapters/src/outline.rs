@@ -251,6 +251,32 @@ impl OutlineStore {
             .ok_or_else(|| MemoryError::Store("entity doc missing after create".into()))
     }
 
+    /// Read one addressed fact back through the read path — the verification
+    /// half of every fact write.
+    ///
+    /// **An address must identify exactly one row.** Taking the first match
+    /// would make read-back theatre: it would happily confirm a write that had
+    /// landed on the wrong one of two rows sharing an id. If a doc somehow holds
+    /// a duplicate, that is a corrupt page and the write says so rather than
+    /// picking a winner.
+    async fn read_back_fact(&self, address: &FactAddress) -> Result<Fact, MemoryError> {
+        let collection_id = self.resolve_collection().await?;
+        let facts = match self.entity_doc(&collection_id, &address.home).await? {
+            None => Vec::new(),
+            Some(doc) => parse_facts_table(&doc.text),
+        };
+        let mut matching = facts.into_iter().filter(|f| f.id == address.local);
+        let seen = matching
+            .next()
+            .ok_or_else(|| MemoryError::Store(format!("fact {address} did not read back")))?;
+        if matching.next().is_some() {
+            return Err(MemoryError::Store(format!(
+                "fact {address} is ambiguous: its doc holds more than one row with that id"
+            )));
+        }
+        Ok(seen)
+    }
+
     /// Read an entity back through the read path — the verification half of
     /// every entity write.
     async fn read_entity(
@@ -392,9 +418,12 @@ impl Memory for OutlineStore {
         // Read-modify-write. Outline has no atomic append, so two captures
         // racing on the same doc could collide an id or lose a row — acceptable
         // for a single-session assistant; noted for a later revision guard.
-        let existing = parse_facts_table(&doc.text);
+        //
+        // The id is minted off the doc's text, not off the parsed facts: a row
+        // this reader can't parse still holds its id, and handing that id out a
+        // second time would alias two rows onto one address.
         let stored = Fact {
-            id: next_fact_id(&existing),
+            id: next_fact_id(&doc.text),
             home: fact.subject.clone(),
             subject: fact.subject,
             content: normalize_content(&fact.content),
@@ -408,14 +437,7 @@ impl Memory for OutlineStore {
 
         // Read-back: a capture succeeds only if the read path returns the fact,
         // byte-identical. Writing is not recording.
-        let seen = self
-            .recall(&stored.subject)
-            .await?
-            .into_iter()
-            .find(|f| f.id == stored.id)
-            .ok_or_else(|| {
-                MemoryError::Store(format!("fact {} did not read back", stored.address()))
-            })?;
+        let seen = self.read_back_fact(&stored.address()).await?;
         if seen != stored {
             return Err(MemoryError::Store(format!(
                 "fact {} read back changed: wrote {stored:?}, read {seen:?}",
@@ -460,19 +482,19 @@ impl Memory for OutlineStore {
         apply_fact_patch(&mut fact, &patch)?;
 
         // The row is rewritten where it stands — fix the source, never an
-        // addendum beside it.
-        let updated = with_row_replaced(&doc.text, &address.local, &render_fact_row(&fact))
-            .ok_or_else(|| unknown(facts.iter().map(|f| f.address().to_string()).collect()))?;
+        // addendum beside it. `with_row_replaced` targets only a row this same
+        // reader can parse, so an edit can never land on a row the caller never
+        // saw.
+        let updated = with_row_replaced(
+            &doc.text,
+            &address.home,
+            &address.local,
+            &render_fact_row(&fact),
+        )
+        .ok_or_else(|| unknown(facts.iter().map(|f| f.address().to_string()).collect()))?;
         self.api.update_document(&doc.id, &updated).await?;
 
-        let seen = self
-            .entity_doc(&collection_id, &address.home)
-            .await?
-            .map(|d| parse_facts_table(&d.text))
-            .unwrap_or_default()
-            .into_iter()
-            .find(|f| f.id == address.local)
-            .ok_or_else(|| MemoryError::Store(format!("fact {address} did not read back")))?;
+        let seen = self.read_back_fact(address).await?;
         if seen != fact {
             return Err(MemoryError::Store(format!(
                 "fact {address} read back changed: wrote {fact:?}, read {seen:?}"
@@ -690,6 +712,145 @@ mod tests {
     #[tokio::test]
     async fn outline_store_satisfies_the_contract() {
         contract::run_all(&store(FakeOutline::new())).await;
+    }
+
+    // --- hand-edited docs: the adversarial-review regressions -----------------
+    //
+    // These pages are user-visible wiki docs, so a retyped date or a stray note
+    // is normal. Each of these scenarios used to destroy data AND report
+    // success, because the write path read the doc with a looser predicate than
+    // the read path did — so the verification confirmed the wrong row.
+
+    /// A row this reader can't parse must be inert: it keeps its id (so nothing
+    /// collides with it) and it is never the row an edit lands on.
+    #[tokio::test]
+    async fn a_hand_broken_row_is_neither_reused_nor_overwritten() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let broken = with_fact_appended(
+            &seeded_doc(&person("alpha")),
+            // A date a human retyped in Outline — unreadable to the parser.
+            "| f1 | person:alpha | allergic to penicillin |  | testimony | active | July 1, 2026 |",
+        );
+        fake.seed_document(&coll, "alpha", &broken);
+        let store = store(fake.clone());
+        let subject = EntityId::person("alpha");
+
+        let captured = capture(
+            &store,
+            NewFact::about(subject.clone(), "takes the 8am train", date(2026, 7, 2)),
+        )
+        .await;
+        assert_eq!(
+            captured.id.as_str(),
+            "f2",
+            "the unreadable row's id is taken, so the new fact must not reuse it"
+        );
+
+        store
+            .update_fact(
+                &captured.address(),
+                FactPatch { content: Some("takes the 7am train".into()), ..Default::default() },
+            )
+            .await
+            .expect("the addressed row updates");
+
+        let text = &fake.docs_in(&coll)[0].text;
+        assert!(
+            text.contains("allergic to penicillin"),
+            "the row the caller never saw must survive untouched: {text}"
+        );
+        assert!(text.contains("takes the 7am train"));
+        assert!(!text.contains("takes the 8am train"), "the edit rewrote its own row");
+    }
+
+    /// An address that no readable row answers to is a miss — never a silent
+    /// rewrite of the unreadable row that happens to carry that id.
+    #[tokio::test]
+    async fn an_address_matching_only_an_unreadable_row_is_a_miss() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let broken = with_fact_appended(
+            &seeded_doc(&person("alpha")),
+            "| f1 | person:alpha | allergic to penicillin |  | testimony | active | July 1, 2026 |",
+        );
+        fake.seed_document(&coll, "alpha", &broken);
+
+        let err = store(fake.clone())
+            .update_fact(
+                &FactAddress::new(EntityId::person("alpha"), jojobot_domain::memory::FactId("f1".into())),
+                FactPatch { content: Some("should not land".into()), ..Default::default() },
+            )
+            .await
+            .expect_err("an unreadable row is not addressable");
+        assert!(matches!(err, MemoryError::UnknownFact { .. }), "got {err:?}");
+        assert!(
+            fake.docs_in(&coll)[0].text.contains("allergic to penicillin"),
+            "a missed address must write nothing"
+        );
+    }
+
+    /// A note typed under the facts header must not hide the table from `recall`
+    /// nor make `capture` start a second one above it.
+    #[tokio::test]
+    async fn a_note_under_the_facts_header_does_not_orphan_the_facts() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        // Written out literally, exactly as a user would leave the page. Building
+        // this fixture with with_fact_appended would let the code under test
+        // choose where the table goes, and the test would pass either way.
+        let doc = "```yaml\nid: person:alpha\nkind: person\nname: \nsource: capture\nboot: on-demand\n```\n\n\
+                   ### ⚙ facts\n\nnote: do not edit below\n\n\
+                   | id | subject | content | details | provenance | status | date |\n\
+                   | --- | --- | --- | --- | --- | --- | --- |\n\
+                   | f1 | person:alpha | plays chess |  | testimony | active | 2026-07-01 |\n";
+        fake.seed_document(&coll, "alpha", doc);
+        let store = store(fake.clone());
+        let subject = EntityId::person("alpha");
+
+        assert_eq!(
+            store.recall(&subject).await.unwrap().len(),
+            1,
+            "the note must not hide the existing fact"
+        );
+        capture(&store, NewFact::about(subject.clone(), "learning Rust", date(2026, 7, 2))).await;
+
+        let facts = store.recall(&subject).await.unwrap();
+        assert_eq!(facts.len(), 2, "both facts live in the one table: {facts:?}");
+        assert!(fake.docs_in(&coll)[0].text.contains("note: do not edit below"));
+    }
+
+    /// Editing an entity must rewrite jojobot's own machine block — not a fenced
+    /// block the user wrote in the prose above it.
+    #[tokio::test]
+    async fn update_entity_leaves_a_users_own_fenced_block_alone() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let doc = format!(
+            "Prose about this entity.\n\n```\nimportant snippet the user wrote\n```\n\n{}",
+            seeded_doc(&person("alpha"))
+        );
+        fake.seed_document(&coll, "alpha", &doc);
+
+        let updated = store(fake.clone())
+            .update_entity(
+                &EntityId::person("alpha"),
+                EntityPatch { name: Some("Alpha Renamed".into()), ..Default::default() },
+            )
+            .await
+            .expect("update_entity should succeed");
+        assert_eq!(updated.name, "Alpha Renamed");
+
+        let text = &fake.docs_in(&coll)[0].text;
+        assert!(
+            text.contains("important snippet the user wrote"),
+            "the user's own fenced block must survive: {text}"
+        );
+        assert_eq!(
+            text.matches("id: person:alpha").count(),
+            1,
+            "no stale second machine block: {text}"
+        );
     }
 
     #[tokio::test]

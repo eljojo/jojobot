@@ -793,7 +793,20 @@ pub mod contract {
         assert!(candidates.iter().any(|m| m.handle == known));
         assert!(
             store.recall(&typo).await.expect("recall").is_empty(),
-            "a blocked capture must write nothing"
+            "a blocked capture must write no facts"
+        );
+        // …and no entity either. Checking only for facts left the guard's
+        // "write NOTHING" half-tested: an adapter that provisioned the doc
+        // before screening would still show an empty fact table here, so the
+        // near-duplicate entity it just spawned would pass unnoticed.
+        assert!(
+            store
+                .list_entities(None)
+                .await
+                .expect("list")
+                .iter()
+                .all(|e| e.id != typo),
+            "a blocked capture must not have provisioned the entity either"
         );
 
         let forced = capture(
