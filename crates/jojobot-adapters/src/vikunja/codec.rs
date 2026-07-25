@@ -144,11 +144,19 @@ fn read(description: &str) -> Option<(String, Envelope)> {
 }
 
 /// Flatten rich text back to the plain text it was written as: block-level tags
-/// become line breaks, every other tag is dropped, and the five entities a
-/// serializer escapes are decoded.
+/// become line breaks, every other tag is dropped, and the entities a serializer
+/// escapes are decoded.
 ///
 /// `&amp;` is decoded **last**, so a body that legitimately contained `&amp;lt;`
 /// does not come back as `<`.
+///
+/// **What this does not cover.** It recovers a description whose line structure
+/// was re-expressed as block tags. It cannot recover one whose newlines were
+/// simply dropped — in HTML they are insignificant whitespace, so an editor
+/// round trip that collapses the machine block onto one line leaves nothing to
+/// reconstruct from. That case is not silently papered over: the read-back on
+/// every write fails loudly instead. Which of the two Vikunja actually does is
+/// unverified until the gated integration test runs.
 fn de_html(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();

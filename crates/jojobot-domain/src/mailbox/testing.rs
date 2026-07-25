@@ -40,6 +40,13 @@ impl InMemoryMailboxes {
         self.boxes.lock().expect("mailbox lock").clone()
     }
 
+    /// A minted id as the number it is, for tie-breaking. Ids here are a
+    /// counter rendered decimal, so comparing them as text would put `10`
+    /// before `2`.
+    fn numeric(id: &MessageId) -> u64 {
+        id.as_str().parse().unwrap_or(u64::MAX)
+    }
+
     fn mint_id(&self) -> MessageId {
         let mut next = self.next_id.lock().expect("id lock");
         *next += 1;
@@ -118,7 +125,7 @@ impl Mailboxes for InMemoryMailboxes {
         }
 
         let mut messages = self.messages.lock().expect("message lock");
-        let delivered: Vec<Delivered> = messages
+        let mut delivered: Vec<Delivered> = messages
             .iter_mut()
             .filter(|m| &m.mailbox == name && m.state.is_unprocessed())
             .map(|m| {
@@ -130,6 +137,15 @@ impl Mailboxes for InMemoryMailboxes {
                 }
             })
             .collect();
+        // Oldest **by the instant the sender declared**, not by the order this
+        // store happened to be handed them — the same total order the real
+        // adapter reads off the board, with the minted id breaking a tie.
+        delivered.sort_by(|a, b| {
+            a.message
+                .sent_at
+                .cmp(&b.message.sent_at)
+                .then_with(|| Self::numeric(&a.message.id).cmp(&Self::numeric(&b.message.id)))
+        });
         Ok(Guarded::Written(Delivery {
             mailbox: name.clone(),
             messages: delivered,
@@ -327,8 +343,12 @@ pub mod contract {
     /// column `new → read`.
     pub async fn a_read_delivers_everything_new_and_moves_the_column(store: &dyn Mailboxes) {
         create(store, "inbox").await;
-        post(store, "inbox", "alpha", "first", 0).await;
+        // **Posted out of order on purpose.** With the later message posted
+        // first, insertion order and `sent_at` order disagree, so "oldest
+        // first" is an assertion about the instant rather than about whichever
+        // order the store happened to return.
         post(store, "inbox", "milhouse", "second", 60).await;
+        post(store, "inbox", "alpha", "first", 0).await;
 
         let delivery = read(store, "inbox").await;
         assert_eq!(delivery.mailbox.as_str(), "inbox");
@@ -357,9 +377,18 @@ pub mod contract {
         post(store, "inbox", "alpha", "first", 0).await;
         read(store, "inbox").await;
 
-        post(store, "inbox", "milhouse", "second", 60).await;
+        // Sent *earlier* than the leftover, and posted later — so the ordering
+        // has to hold across the two columns as well as within one.
+        post(store, "inbox", "milhouse", "earlier", -60).await;
+        post(store, "inbox", "otto", "later", 60).await;
         let again = read(store, "inbox").await;
-        assert_eq!(again.messages.len(), 2, "both the leftover and the fresh one");
+        assert_eq!(again.messages.len(), 3, "the leftover and both fresh ones");
+        let bodies: Vec<&str> = again.messages.iter().map(|d| d.message.body.as_str()).collect();
+        assert_eq!(
+            bodies,
+            vec!["earlier", "first", "later"],
+            "oldest first spans the columns: a leftover is not automatically first"
+        );
 
         let leftovers: Vec<&str> = again
             .leftovers()
@@ -372,7 +401,7 @@ pub mod contract {
             .filter(|d| !d.seen_before)
             .map(|d| d.message.body.as_str())
             .collect();
-        assert_eq!(fresh, vec!["second"]);
+        assert_eq!(fresh, vec!["earlier", "later"]);
     }
 
     /// `mark_processed` is terminal: the message leaves the delivery set for

@@ -13,17 +13,19 @@
 //!   cargo test -p jojobot-adapters --test vikunja_integration -- --ignored
 //! ```
 //!
-//! **The operator's real task boards live on this Vikunja.** Three things keep
+//! **The operator's real task boards live on this Vikunja.** Four things keep
 //! this test away from them:
 //!
 //! * every project it uses is named with the [`TEST_PREFIX`] and stamped with
-//!   jojobot's owner tag, and teardown deletes **only** projects matching both —
-//!   a board without the tag is somebody's real one and is never touched;
+//!   jojobot's owner tag, and teardown deletes **only** what matches both — a
+//!   board without the tag is somebody's real one and is never touched;
 //! * each contract case gets its **own** throwaway project, because the spec
 //!   assumes a store that starts empty; mailbox labels are namespaced by project
 //!   title, so the cases cannot see each other's boxes either;
-//! * the test fingerprints every other project before and after and asserts the
-//!   set is unchanged.
+//! * each *test* owns a sub-prefix and tears down only that, because the two
+//!   run in parallel in one binary;
+//! * the run fingerprints every project and label it does not own, before and
+//!   after, and asserts the set is unchanged.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,10 +34,18 @@ use jojobot_adapters::vikunja::{Secret, VikunjaConfig, VikunjaStore};
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::mailbox::testing::contract;
 
-/// Every project this test creates is titled `<TEST_PREFIX><n>`. Deliberately
+/// Every project this file creates is titled under this prefix. Deliberately
 /// distinct from [`VikunjaStore::DEFAULT_PROJECT`], so a run can never adopt or
 /// delete the real mailbox board.
 const TEST_PREFIX: &str = "jojobot-mailboxes-itest-";
+
+/// **Each test owns a sub-prefix, and tears down only that one.** The two tests
+/// live in one binary and the harness runs them in parallel, so a teardown
+/// scoped to the whole file would delete the other test's projects and labels
+/// out from under it, mid-run — a flake that looks exactly like a real failure.
+const CONTRACT_PREFIX: &str = "jojobot-mailboxes-itest-c";
+/// The adoption test's own namespace. See [`CONTRACT_PREFIX`].
+const ADOPT_PREFIX: &str = "jojobot-mailboxes-itest-a";
 
 /// The tag jojobot stamps on what it creates. Teardown requires it as well as
 /// the name: two independent conditions, because one of them being wrong must
@@ -121,29 +131,46 @@ async fn all_labels(http: &reqwest::Client, c: &Creds) -> Vec<(u64, String, Stri
     found
 }
 
-/// The ids of every project this test does **not** own — the fingerprint that
-/// proves the operator's boards were left alone.
-async fn other_project_ids(http: &reqwest::Client, c: &Creds) -> Vec<u64> {
-    let mut ids: Vec<u64> = all_projects(http, c)
+/// A fingerprint of everything this test does **not** own: the operator's
+/// projects and their titles, and every label that is not one of jojobot's.
+///
+/// Labels are in it because they are **global** in Vikunja — the one thing a
+/// mailbox run creates that is not confined to its own project, and therefore
+/// the one thing a leak would leave in the operator's face.
+///
+/// Honest about its reach: this compares the shape of the instance, not the
+/// contents of the operator's cards. A write landing on a card inside one of
+/// their boards would not show up here. That case is covered where it can
+/// actually be proven — the unit-level invariant test, against a fake that
+/// records every project and every card any call touched.
+async fn foreign_fingerprint(http: &reqwest::Client, c: &Creds) -> Vec<String> {
+    let mut seen: Vec<String> = all_projects(http, c)
         .await
         .into_iter()
         .filter(|(_, title, _)| !title.starts_with(TEST_PREFIX))
-        .map(|(id, _, _)| id)
+        .map(|(id, title, _)| format!("project {id} {title}"))
+        .chain(
+            all_labels(http, c)
+                .await
+                .into_iter()
+                .filter(|(_, title, _)| !title.starts_with(TEST_PREFIX))
+                .map(|(id, title, _)| format!("label {id} {title}")),
+        )
         .collect();
-    ids.sort();
-    ids
+    seen.sort();
+    seen
 }
 
 /// Delete every project and label this test created — and **nothing else**.
 /// Both conditions are required: the test-only name, and jojobot's owner tag.
-async fn teardown(http: &reqwest::Client, c: &Creds) {
+async fn teardown(http: &reqwest::Client, c: &Creds, prefix: &str) {
     for (id, title, description) in all_projects(http, c).await {
-        if title.starts_with(TEST_PREFIX) && description.contains(OWNER_TAG) {
+        if title.starts_with(prefix) && description.contains(OWNER_TAG) {
             delete(http, c, &format!("/projects/{id}")).await;
         }
     }
     for (id, title, description) in all_labels(http, c).await {
-        if title.starts_with(TEST_PREFIX) && description.contains(OWNER_TAG) {
+        if title.starts_with(prefix) && description.contains(OWNER_TAG) {
             delete(http, c, &format!("/labels/{id}")).await;
         }
     }
@@ -159,9 +186,9 @@ async fn real_vikunja_satisfies_the_contract() {
 
     let http = reqwest::Client::new();
     // Clean slate, in case a prior run aborted before teardown.
-    teardown(&http, &c).await;
+    teardown(&http, &c, CONTRACT_PREFIX).await;
 
-    let before = other_project_ids(&http, &c).await;
+    let before = foreign_fingerprint(&http, &c).await;
 
     // Each contract case gets its own throwaway project: the spec assumes a
     // store that starts empty, and mailbox labels are namespaced by project
@@ -178,7 +205,7 @@ async fn real_vikunja_satisfies_the_contract() {
                 base_url: url.clone(),
                 token: Secret::new(token.clone()),
             },
-            format!("{TEST_PREFIX}{n}"),
+            format!("{CONTRACT_PREFIX}{n}"),
         )
     };
 
@@ -186,18 +213,18 @@ async fn real_vikunja_satisfies_the_contract() {
     // either way, so nothing is left behind on a failure.
     let outcome = tokio::spawn(async move { contract::run_all(fresh).await }).await;
 
-    teardown(&http, &c).await;
+    teardown(&http, &c, CONTRACT_PREFIX).await;
 
-    let after = other_project_ids(&http, &c).await;
+    let after = foreign_fingerprint(&http, &c).await;
     assert_eq!(
         before, after,
-        "every project this test does not own must be untouched"
+        "every project and label this test does not own must be untouched"
     );
 
     let leftovers: Vec<String> = all_labels(&http, &c)
         .await
         .into_iter()
-        .filter(|(_, title, _)| title.starts_with(TEST_PREFIX))
+        .filter(|(_, title, _)| title.starts_with(CONTRACT_PREFIX))
         .map(|(_, title, _)| title)
         .collect();
     assert!(
@@ -223,7 +250,7 @@ async fn a_store_never_adopts_a_board_it_did_not_create() {
         return;
     };
     let http = reqwest::Client::new();
-    teardown(&http, &c).await;
+    teardown(&http, &c, ADOPT_PREFIX).await;
 
     let store = Arc::new(VikunjaStore::with_project(
         http.clone(),
@@ -231,7 +258,7 @@ async fn a_store_never_adopts_a_board_it_did_not_create() {
             base_url: c.url.clone(),
             token: Secret::new(c.token.clone()),
         },
-        format!("{TEST_PREFIX}adopt"),
+        format!("{ADOPT_PREFIX}dopt"),
     ));
 
     let outcome = {
@@ -250,6 +277,6 @@ async fn a_store_never_adopts_a_board_it_did_not_create() {
         .await
     };
 
-    teardown(&http, &c).await;
+    teardown(&http, &c, ADOPT_PREFIX).await;
     outcome.expect("the store must stay inside its own project");
 }
