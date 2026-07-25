@@ -117,6 +117,26 @@ impl Scope {
     fn project(&self) -> u64 {
         self.project
     }
+
+    /// Confirm a card belongs to jojobot's project.
+    ///
+    /// **This is the sharp edge of the invariant.** A card id is global in
+    /// Vikunja: `POST /tasks/{id}` reaches any card the token can see, the
+    /// operator's boards included, and the update carries a `project_id` — so
+    /// writing to a card jojobot does not own does not merely edit it, it
+    /// *moves* it onto jojobot's board. A card that turns up in jojobot's
+    /// columns while declaring another project is an integrity violation, not
+    /// routine noise, and every verb refuses rather than degrading around it.
+    fn verify(&self, task: &TaskRec) -> Result<(), MailboxError> {
+        if task.project_id == self.project {
+            Ok(())
+        } else {
+            Err(MailboxError::ForeignProject(format!(
+                "card {} declares project {}, not jojobot's mailbox project {}",
+                task.id, task.project_id, self.project
+            )))
+        }
+    }
 }
 
 // --- the store --------------------------------------------------------------
@@ -333,6 +353,11 @@ impl VikunjaStore {
                 continue;
             };
             for task in bucket.tasks {
+                // The one choke point for the write-scope invariant: every card
+                // jojobot ever writes to arrives either from here or from a
+                // `create_task` in its own project, so checking here covers
+                // every verb at once.
+                scope.verify(&task)?;
                 let Some(mailbox) = task
                     .labels
                     .iter()
@@ -751,6 +776,12 @@ mod tests {
         /// Arms a mangled description for the next `update_task`/`create_task` —
         /// the induced fault behind the restore contract.
         poison: AtomicBool,
+        /// Every project id any call named. The write-scope invariant is
+        /// asserted against this: it must only ever hold jojobot's own.
+        named_projects: Mutex<std::collections::HashSet<u64>>,
+        /// Every card any call wrote to. A card id is global in Vikunja, so
+        /// this is the half of the invariant a project id cannot cover.
+        written_tasks: Mutex<std::collections::HashSet<u64>>,
     }
 
     /// The column Vikunja gives a fresh kanban view. Deliberately not one of
@@ -758,6 +789,16 @@ mod tests {
     const DEFAULT_COLUMN: &str = "Backlog";
 
     impl FakeVikunja {
+        /// Record a project id a call named — the write-scope evidence.
+        fn named(&self, project: u64) {
+            self.named_projects.lock().unwrap().insert(project);
+        }
+
+        /// Record a card a call wrote to.
+        fn wrote(&self, task: u64) {
+            self.written_tasks.lock().unwrap().insert(task);
+        }
+
         fn new() -> Arc<Self> {
             Arc::new(Self::default())
         }
@@ -959,6 +1000,7 @@ mod tests {
         }
 
         async fn list_views(&self, project_id: u64) -> Result<Vec<ViewRec>, MailboxError> {
+            self.named(project_id);
             Ok(self
                 .views
                 .lock()
@@ -974,6 +1016,7 @@ mod tests {
             project_id: u64,
             view_id: u64,
         ) -> Result<Vec<BucketRec>, MailboxError> {
+            self.named(project_id);
             Ok(self
                 .buckets
                 .lock()
@@ -990,6 +1033,7 @@ mod tests {
             view_id: u64,
             title: &str,
         ) -> Result<BucketRec, MailboxError> {
+            self.named(project_id);
             let bucket = BucketRec { id: self.next_id(), title: title.into() };
             self.buckets
                 .lock()
@@ -1005,6 +1049,7 @@ mod tests {
             page: u64,
             per_page: u64,
         ) -> Result<Vec<BoardBucket>, MailboxError> {
+            self.named(project_id);
             let buckets: Vec<BucketRec> = self
                 .buckets
                 .lock()
@@ -1036,6 +1081,7 @@ mod tests {
             title: &str,
             description: &str,
         ) -> Result<TaskRec, MailboxError> {
+            self.named(project_id);
             let id = self.next_id();
             let task = TaskRec {
                 id,
@@ -1056,11 +1102,13 @@ mod tests {
 
         async fn update_task(
             &self,
-            _project_id: u64,
+            project_id: u64,
             task_id: u64,
             title: &str,
             description: &str,
         ) -> Result<(), MailboxError> {
+            self.named(project_id);
+            self.wrote(task_id);
             let description = self.mangle(description);
             let mut tasks = self.tasks.lock().unwrap();
             match tasks.iter_mut().find(|t| t.id == task_id) {
@@ -1074,6 +1122,7 @@ mod tests {
         }
 
         async fn delete_task(&self, task_id: u64) -> Result<(), MailboxError> {
+            self.wrote(task_id);
             self.tasks.lock().unwrap().retain(|t| t.id != task_id);
             self.placement.lock().unwrap().remove(&task_id);
             self.task_labels.lock().unwrap().remove(&task_id);
@@ -1082,11 +1131,14 @@ mod tests {
 
         async fn move_task(
             &self,
-            _project_id: u64,
-            _view_id: u64,
+            project_id: u64,
+            view_id: u64,
             bucket_id: u64,
             task_id: u64,
         ) -> Result<(), MailboxError> {
+            self.named(project_id);
+            let _ = view_id;
+            self.wrote(task_id);
             self.placement.lock().unwrap().insert(task_id, bucket_id);
             Ok(())
         }
@@ -1121,6 +1173,7 @@ mod tests {
         }
 
         async fn set_task_labels(&self, task_id: u64, labels: &[u64]) -> Result<(), MailboxError> {
+            self.wrote(task_id);
             self.task_labels.lock().unwrap().insert(task_id, labels.to_vec());
             Ok(())
         }
@@ -1357,5 +1410,105 @@ mod tests {
         );
         assert_eq!(again.messages[0].message.body, "the shipment landed");
         assert_eq!(again.messages[0].message.notes, None, "no half-written outcome remains");
+    }
+
+    // --- the write-scope invariant --------------------------------------------
+
+    /// **No verb reaches another project.** The operator's own boards live on
+    /// this Vikunja; a mis-scoped write to one of them is not something a
+    /// read-back can undo.
+    ///
+    /// The fake records every project id any call named and every card any call
+    /// wrote to, so this fails the moment a verb can address something outside
+    /// jojobot's own board — whether by project id or by the global card id that
+    /// would sidestep it.
+    #[tokio::test]
+    async fn no_verb_ever_reaches_a_project_other_than_jojobots() {
+        let fake = FakeVikunja::new();
+        // The operator's board, with real cards on it.
+        let theirs = fake.seed_project("their-own-board", "not jojobot's");
+        let their_card = fake.seed_task(theirs, "renew the passport", "due in March", &[]);
+
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let ours = fake.projects_titled(PROJECT)[0].id;
+
+        // Every verb, once.
+        let posted = contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
+        store.list_mailboxes().await.expect("list ok");
+        contract::read(&store, "inbox").await;
+        store.mark_processed(&posted.id, Some("filed")).await.expect("processed");
+
+        let named = fake.named_projects.lock().unwrap().clone();
+        assert_eq!(
+            named,
+            std::collections::HashSet::from([ours]),
+            "a verb named a project that is not jojobot's: {named:?} (jojobot's is {ours})"
+        );
+
+        let written: Vec<u64> = fake.written_tasks.lock().unwrap().iter().copied().collect();
+        assert!(
+            !written.contains(&their_card),
+            "a verb wrote to a card on the operator's board: {written:?}"
+        );
+        assert_eq!(
+            fake.tasks_in(theirs),
+            vec![TaskRec {
+                id: their_card,
+                project_id: theirs,
+                title: "renew the passport".into(),
+                description: "due in March".into(),
+                labels: Vec::new(),
+            }],
+            "the operator's card is byte-for-byte as they left it"
+        );
+    }
+
+    /// **The sharp edge: a card id is global.** A card that turns up on
+    /// jojobot's board while declaring another project — a view shared across
+    /// projects, a store that answers with more than it was asked — is refused
+    /// **before anything is written to it**, rather than being rewritten with
+    /// jojobot's project id and quietly moved off the operator's board.
+    #[tokio::test]
+    async fn a_card_declaring_another_project_is_refused_before_any_write() {
+        let fake = FakeVikunja::new();
+        let theirs = fake.seed_project("their-own-board", "not jojobot's");
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let ours = fake.projects_titled(PROJECT)[0].id;
+        let label = fake.labels.lock().unwrap()[0].id;
+
+        // Their card, wearing jojobot's mailbox label and sitting in jojobot's
+        // `new` column — everything a message looks like, except whose it is.
+        let intruder = fake.seed_task(
+            theirs,
+            "alpha: looks like a message",
+            &render_description(
+                "looks like a message",
+                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), notes: None },
+            ),
+            &[label],
+        );
+        fake.seed_placement(ours, intruder, "new");
+        fake.written_tasks.lock().unwrap().clear();
+
+        let err = store
+            .mark_processed(&MessageId(intruder.to_string()), Some("filed"))
+            .await
+            .expect_err("a card from another project must not be written");
+        assert!(
+            matches!(err, MailboxError::ForeignProject(_)),
+            "got {err:?}"
+        );
+        assert!(
+            fake.written_tasks.lock().unwrap().is_empty(),
+            "the refusal must come before any write reaches the card"
+        );
+        assert_eq!(
+            fake.tasks_in(theirs)[0].description,
+            render_description(
+                "looks like a message",
+                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), notes: None },
+            ),
+            "…and the card is untouched"
+        );
     }
 }
