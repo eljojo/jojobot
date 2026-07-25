@@ -567,6 +567,36 @@ pub mod contract {
         assert_eq!(forced.id, second, "the handle is untouched by a rename");
     }
 
+    /// A rename is screened on the **name** channel only. An entity whose handle
+    /// is a near-slug of another's — a collision already adjudicated when it was
+    /// created — must still be freely renamable: re-screening the immutable
+    /// handle turned that one decision into a permanent block on the name field.
+    pub async fn update_entity_does_not_re_screen_the_handle<M: Memory>(store: &M) {
+        let settled = EntityId::person("contract-nearslug");
+        let neighbour = EntityId::person("contract-nearslugg");
+        add(store, NewEntity::new(settled, "Nearslug One", "user-named")).await;
+        add(
+            store,
+            NewEntity {
+                // The near-slug the guard reported, judged different at creation.
+                create_new: true,
+                ..NewEntity::new(neighbour.clone(), "Quite Another Two", "user-named")
+            },
+        )
+        .await;
+
+        let renamed = store
+            .update_entity(
+                &neighbour,
+                EntityPatch { name: Some("Quite Another Three".into()), ..Default::default() },
+            )
+            .await
+            .expect("update_entity should succeed")
+            .written()
+            .expect("a near-slug settled at creation must not block a later name edit");
+        assert_eq!(renamed.name, "Quite Another Three");
+    }
+
     /// Editing metadata that isn't the name is never screened — an entity's own
     /// name must not trip the guard against itself.
     pub async fn update_entity_without_a_rename_is_not_screened<M: Memory>(store: &M) {
@@ -961,6 +991,7 @@ pub mod contract {
         list_entities_filters_by_kind(store).await;
         update_entity_edits_metadata_in_place(store).await;
         update_entity_screens_a_colliding_rename(store).await;
+        update_entity_does_not_re_screen_the_handle(store).await;
         update_entity_without_a_rename_is_not_screened(store).await;
         update_entity_unknown_handle_never_creates(store).await;
 

@@ -63,7 +63,7 @@ pub enum Decision {
 
 /// The edit-distance budget for "this is probably a typo of that". Two is the
 /// point where transposition + a dropped letter still match but distinct short
-/// names (`ada` / `omar`) do not.
+/// names (`ada` / `otto`) do not.
 const NEAR: usize = 2;
 
 /// Fold a display name to its comparison form: lowercase, edge-trimmed, inner
@@ -144,6 +144,35 @@ pub fn screen(handle: &EntityId, name: Option<&str>, index: &[Entity]) -> Vec<En
     matches
 }
 
+/// Every existing entity an incoming **name** might already be — the rename
+/// channel. `kind` is the kind of the entity being renamed; there is no slug to
+/// compare, because a rename never touches the handle.
+///
+/// Same reasons and same order as [`screen`], minus the two handle channels.
+/// That subtraction is the whole point: see [`decide_rename`].
+pub fn screen_name(kind: Option<EntityKind>, name: &str, index: &[Entity]) -> Vec<EntityMatch> {
+    let incoming = normalize_name(name);
+    let incoming = (!incoming.is_empty()).then_some(incoming);
+    let incoming_slug = incoming.as_deref().map(slugify);
+
+    let mut matches: Vec<EntityMatch> = index
+        .iter()
+        .filter_map(|e| {
+            name_reason(kind, incoming.as_deref(), incoming_slug.as_deref(), e).map(|reason| {
+                EntityMatch {
+                    handle: e.id.clone(),
+                    kind: e.kind,
+                    name: e.name.clone(),
+                    source: e.source.clone(),
+                    reason,
+                }
+            })
+        })
+        .collect();
+    matches.sort_by(|a, b| a.reason.cmp(&b.reason).then_with(|| a.handle.cmp(&b.handle)));
+    matches
+}
+
 /// The strongest reason one existing entity is a candidate, or `None`.
 fn reason_for(
     handle: &EntityId,
@@ -159,21 +188,24 @@ fn reason_for(
     let existing_name = normalize_name(&existing.name);
     let existing_name = (!existing_name.is_empty()).then_some(existing_name);
 
-    // Names agree — or a name agrees with the other side's handle, which is the
-    // same collision wearing a different hat ("Alpha One" vs `person:alpha-one`).
-    let names_agree = match (incoming_name, existing_name.as_deref()) {
-        (Some(a), Some(b)) if a == b => true,
-        _ => {
-            incoming_name_slug.is_some_and(|s| s == existing.id.slug())
-                || existing_name.as_deref().is_some_and(|n| slugify(n) == incoming_slug)
-        }
-    };
-    if names_agree {
+    // The handle channel of a name collision: an existing entity's name spells
+    // out the incoming handle ("Alpha One" already there, `person:alpha-one`
+    // arriving) — the same collision wearing a different hat.
+    if existing_name.as_deref().is_some_and(|n| slugify(n) == incoming_slug) {
         return Some(if same_kind {
             MatchReason::SameName
         } else {
             MatchReason::SameNameOtherKind
         });
+    }
+
+    // The name channels, shared with `screen_name`.
+    let by_name = name_reason(handle.kind(), incoming_name, incoming_name_slug, existing);
+    if matches!(
+        by_name,
+        Some(MatchReason::SameName | MatchReason::SameNameOtherKind)
+    ) {
+        return by_name;
     }
 
     // Typo range is only meaningful within a kind: `place:x` and `person:y`
@@ -184,7 +216,38 @@ fn reason_for(
     if edit_distance(incoming_slug, existing.id.slug()) <= NEAR {
         return Some(MatchReason::NearSlug);
     }
-    match (incoming_name, existing_name.as_deref()) {
+    by_name
+}
+
+/// The strongest reason an incoming **name** means an existing entity: the names
+/// agree once folded, the name spells out the existing handle, or the two names
+/// are within a typo. `incoming` is already normalized, `incoming_slug` is its
+/// slugified form.
+fn name_reason(
+    kind: Option<EntityKind>,
+    incoming: Option<&str>,
+    incoming_slug: Option<&str>,
+    existing: &Entity,
+) -> Option<MatchReason> {
+    let same_kind = kind == Some(existing.kind);
+    let existing_name = normalize_name(&existing.name);
+    let existing_name = (!existing_name.is_empty()).then_some(existing_name);
+
+    let agree = match (incoming, existing_name.as_deref()) {
+        (Some(a), Some(b)) if a == b => true,
+        _ => incoming_slug.is_some_and(|s| s == existing.id.slug()),
+    };
+    if agree {
+        return Some(if same_kind {
+            MatchReason::SameName
+        } else {
+            MatchReason::SameNameOtherKind
+        });
+    }
+    if !same_kind {
+        return None;
+    }
+    match (incoming, existing_name.as_deref()) {
         (Some(a), Some(b)) if edit_distance(a, b) <= NEAR => Some(MatchReason::NearName),
         _ => None,
     }
@@ -210,16 +273,23 @@ pub fn decide(
     }
 }
 
-/// The guard's decision on a **rename** — the same screen a creation gets, with
-/// two adjustments that are properties of renaming rather than new policy:
+/// The guard's decision on a **rename**. A rename is an entity-touching write,
+/// so it faces a gate — without one the guard is trivially side-steppable:
+/// create under a throwaway name, then rename onto the collision. But it is
+/// screened on the **name channel only** ([`screen_name`]), with three
+/// properties of renaming rather than new policy:
 ///
-/// * the entity being renamed is excluded from the index, or it would always
-///   match itself on [`MatchReason::ExactHandle`] and no rename could proceed;
-/// * a name that isn't actually changing is not screened, because a no-op
-///   cannot introduce a collision that isn't already there.
+/// * **the handle is not changing, so it is not screened.** Screening it
+///   re-litigated a near-slug that was adjudicated when the entity was created
+///   — turning that one settled decision into a permanent block on the name
+///   field: every later name edit came back blocked, on a channel nothing had
+///   touched.
+/// * the entity being renamed is excluded, or it would match itself.
+/// * a name that isn't actually changing is not screened, because a no-op cannot
+///   introduce a collision that isn't already there.
 ///
-/// Without this, the guard is trivially side-steppable: create under a
-/// throwaway name, then rename onto the collision.
+/// `create_new` clears any suspicion here: only a handle can collide
+/// unforgivably, and no handle is moving.
 pub fn decide_rename(
     handle: &EntityId,
     new_name: &str,
@@ -230,8 +300,15 @@ pub fn decide_rename(
     if normalize_name(new_name) == normalize_name(current_name) {
         return Decision::Proceed;
     }
-    let others: Vec<Entity> = index.iter().filter(|e| &e.id != handle).cloned().collect();
-    decide(handle, Some(new_name), &others, create_new)
+    let matches: Vec<EntityMatch> = screen_name(handle.kind(), new_name, index)
+        .into_iter()
+        .filter(|m| &m.handle != handle)
+        .collect();
+    if matches.is_empty() || create_new {
+        Decision::Proceed
+    } else {
+        Decision::Block(matches)
+    }
 }
 
 #[cfg(test)]
@@ -333,7 +410,7 @@ mod tests {
 
     #[test]
     fn a_typo_in_the_name_is_caught_within_two_edits() {
-        assert_eq!(reasons("person:omar-r", Some("Bet")), vec![MatchReason::NearName]);
+        assert_eq!(reasons("person:otto", Some("Bet")), vec![MatchReason::NearName]);
     }
 
     #[test]
@@ -423,6 +500,51 @@ mod tests {
             decide_rename(&renamer, "Alpha", "Zenith", &index(), true),
             Decision::Proceed
         );
+    }
+
+    /// A rename screens the NAME, never the handle — the handle isn't changing.
+    /// Screening it re-litigated a near-slug that was already adjudicated when
+    /// the entity was created, so that one decision froze the name field forever:
+    /// every later name edit came back blocked, on a channel nothing had touched.
+    #[test]
+    fn a_rename_does_not_re_screen_the_immutable_handle() {
+        let mut idx = index();
+        // `person:alphaa` is one edit from `person:alpha` — settled at creation.
+        idx.push(entity("person:alphaa", "Second Alpha", "user-named"));
+        let settled = EntityId("person:alphaa".into());
+        assert_eq!(
+            decide_rename(&settled, "Something Unrelated", "Second Alpha", &idx, false),
+            Decision::Proceed,
+            "the handle is not changing, so a settled near-slug must not block a name edit"
+        );
+    }
+
+    /// The name channels still fire on a rename: an incoming name that lands on
+    /// an existing handle is the collision the guard exists for.
+    #[test]
+    fn a_rename_onto_an_existing_handles_spelling_is_blocked() {
+        let renamer = EntityId("place:trail-spot".into());
+        let Decision::Block(candidates) =
+            decide_rename(&renamer, "North Trail", "Trail Spot", &index(), false)
+        else {
+            panic!("a name that spells out an existing handle must block");
+        };
+        assert_eq!(candidates[0].handle.as_str(), "place:north-trail");
+        assert_eq!(candidates[0].reason, MatchReason::SameName);
+    }
+
+    /// A near-*name* is still caught on a rename — only the handle channels are
+    /// out of scope.
+    #[test]
+    fn a_rename_onto_a_near_name_is_blocked() {
+        let renamer = EntityId("person:zenith".into());
+        let Decision::Block(candidates) =
+            decide_rename(&renamer, "Bet", "Zenith", &index(), false)
+        else {
+            panic!("a name within a typo of an existing one must block");
+        };
+        assert_eq!(candidates[0].handle.as_str(), "person:beta");
+        assert_eq!(candidates[0].reason, MatchReason::NearName);
     }
 
     /// An entity must not match itself: it is in the index, so screening it
