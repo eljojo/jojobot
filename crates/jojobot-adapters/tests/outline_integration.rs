@@ -18,7 +18,10 @@
 //! nothing behind. Missing either variable → it skips. It never scans for or
 //! hardcodes a token; the token comes from the env the operator sets.
 
+use std::sync::Arc;
+
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
+use jojobot_adapters::search::IndexedMemory;
 use jojobot_domain::memory::testing::contract;
 
 /// The collection this test owns end to end. NOT the real `jojobot` collection.
@@ -130,12 +133,15 @@ async fn real_outline_satisfies_the_contract() {
         TEST_COLLECTION,
     );
 
+    // The spec runs against the store **behind the search projection**, so the
+    // retrieval half is proven against real Outline too: the index is fed by the
+    // real scan (real prose, real fact tables), not by a fake's approximation.
+    let indexed = IndexedMemory::new(Arc::new(store)).expect("the search index opens");
+    indexed.rebuild().await.expect("the boot scan must succeed");
+
     // Run the shared spec in a task so a panic is caught — the test collection
     // is dropped either way, so nothing is left behind.
-    let outcome = {
-        let store = store.clone();
-        tokio::spawn(async move { contract::run_all(&store).await }).await
-    };
+    let outcome = tokio::spawn(async move { contract::run_all_searchable(&indexed).await }).await;
 
     drop_test_collection(&http, &c).await;
 

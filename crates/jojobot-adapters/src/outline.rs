@@ -615,9 +615,11 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use jiff::civil::date;
+    use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
     use jojobot_domain::memory::testing::contract;
 
     use super::*;
+    use crate::search::IndexedMemory;
 
     /// In-memory [`OutlineApi`] double. Ids/`created_at` are a monotonic counter
     /// (zero-padded so lexicographic = chronological) — no clock, deterministic.
@@ -817,6 +819,80 @@ mod tests {
     #[tokio::test]
     async fn outline_store_satisfies_the_contract() {
         contract::run_all(&store(FakeOutline::new())).await;
+    }
+
+    /// …and the same contract **including retrieval**, with the search projection
+    /// over the real store logic. The fake satisfies this suite too, which is what
+    /// stops the two from drifting.
+    #[tokio::test]
+    async fn the_indexed_outline_store_satisfies_the_whole_contract() {
+        let indexed = IndexedMemory::new(Arc::new(store(FakeOutline::new()))).expect("index opens");
+        contract::run_all_searchable(&indexed).await;
+    }
+
+    /// **The read-side leak, through the real reader.** A doc where the answer
+    /// lives only in the prose a human typed — nobody filed it as a fact — is
+    /// found, in the same list as the fact hits. This is the scenario the codec's
+    /// prose reader exists for, exercised end to end: seed the page as a user
+    /// would leave it, scan it through the store, search it.
+    #[tokio::test]
+    async fn prose_a_human_typed_is_searchable_beside_the_facts() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let doc = with_fact_appended(
+            &format!(
+                "Alpha is allergic to penicillin — it came up once and never got filed.\n\n{}",
+                seeded_doc(&person("alpha"))
+            ),
+            "| f1 | person:alpha | plays chess |  | testimony | active | 2026-07-01 |  |",
+        );
+        fake.seed_document(&coll, "Alpha", &doc);
+
+        let indexed = IndexedMemory::new(Arc::new(store(fake))).expect("index opens");
+        assert_eq!(indexed.rebuild().await.expect("rebuild"), 1, "one doc scanned");
+
+        let hits = indexed
+            .search(&SearchQuery::text("penicillin"))
+            .expect("search ok");
+        let prose: Vec<&Hit> = hits.iter().filter(|h| matches!(h, Hit::Prose { .. })).collect();
+        assert_eq!(prose.len(), 1, "the prose match must be findable: {hits:?}");
+        let Some(Hit::Prose { entity, snippet, .. }) = prose.first().copied() else {
+            unreachable!("filtered to prose");
+        };
+        assert_eq!(
+            entity.as_ref(),
+            Some(&EntityId::person("alpha")),
+            "a prose hit says whose entity doc it is"
+        );
+        assert!(snippet.contains("penicillin"), "got {snippet:?}");
+        assert!(
+            !snippet.contains("id: person:alpha"),
+            "jojobot's own machine block is not prose: {snippet:?}"
+        );
+
+        // The fact in the same doc is still reachable by its own words.
+        let facts = indexed.search(&SearchQuery::text("chess")).expect("search ok");
+        assert!(
+            facts.iter().any(|h| matches!(h, Hit::Fact { fact } if fact.content == "plays chess")),
+            "got {facts:?}"
+        );
+    }
+
+    /// A doc carrying no id marker is nobody's entity — and its prose is still
+    /// scanned, because a page the user wrote by hand is exactly the page worth
+    /// finding. Its (absent) facts are not invented.
+    #[tokio::test]
+    async fn scan_returns_a_non_entity_doc_as_prose_only() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        fake.seed_document(&coll, "Trip notes", "The pass was closed on Tuesday.");
+
+        let scanned = store(fake).scan().await.expect("scan ok");
+        assert_eq!(scanned.len(), 1);
+        assert_eq!(scanned[0].entity, None, "no marker, no entity");
+        assert_eq!(scanned[0].prose, "The pass was closed on Tuesday.");
+        assert!(scanned[0].facts.is_empty());
+        assert!(!scanned[0].doc_id.is_empty(), "a scan always says which doc");
     }
 
     // --- hand-edited docs: the adversarial-review regressions -----------------
