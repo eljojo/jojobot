@@ -5,30 +5,114 @@
 //! Making this an enum means every place that consumes a fact must decide how
 //! it treats the two — the compiler lists the sites.
 //!
-//! This module carries the **first Memory slice**: the [`Memory`] port and the
-//! [`Fact`] it moves. The port has exactly two verbs — [`Memory::capture`] and
-//! [`Memory::recall`] — bound by one invariant: a capture succeeds only if a
-//! subsequent recall returns the fact. Facts are about **entities** (people);
-//! there is no privileged owner. The port is pure (no rmcp, no reqwest);
+//! This module carries the [`Memory`] port and the records it moves — the
+//! [`Entity`] (a noun, one of eight [`EntityKind`]s) and the [`Fact`] (an
+//! assertion about one). Six verbs, bound by one invariant: a write succeeds
+//! only if the read path returns it. There is no privileged owner entity — the
+//! user is a person like any other. The port is pure (no rmcp, no reqwest);
 //! adapters behind it (the in-memory fake, the real Outline store) live outside
-//! this crate.
+//! this crate, and the write guard ([`guard`]) sits on their write paths.
+//!
+//! **This is user-agnostic software: no user PII, fixtures included.** Records
+//! name roles and synthetic placeholders; every real specific is data, read from
+//! the store at runtime.
 
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
+pub mod guard;
+
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
-/// A noun jojobot knows about — a person, project, or place. Stable; never
-/// true/false. Everything points at an entity by its id, so the id is a stable
-/// typed string (`person:jose`). There is no privileged `self`/owner entity:
-/// the user is a person like any other.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// The eight kinds of noun jojobot knows about — a **closed** set, each earned
+/// by an inventory of real data. Closed is the point: an id whose kind isn't one
+/// of these is not an entity id, so no unknown kind can enter the store, and
+/// every consumer that matches on a kind is exhaustive by construction.
+///
+/// `project` is jojobot's own personal-goal sense (trips, big rocks, builds),
+/// deliberately not schema.org's Organization-subtype meaning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EntityKind {
+    /// People in the user's life and public figures alike (artists included).
+    Person,
+    /// An activity with a status funnel: big rocks, builds, processes, trips.
+    Project,
+    /// Venues, destinations, trails, informal spots.
+    Place,
+    /// A dated occurrence: shows, stays, outings, festivals.
+    Event,
+    /// A creative/media artifact with its own identity: sets, albums, posts.
+    Work,
+    /// A named possession or device with a history: bikes, plants, machines.
+    Thing,
+    /// Clubs, venues-as-institutions, labels, schools, vendors.
+    Org,
+    /// The glue noun: interest areas, and the anchor for world-facts that
+    /// attach to no person, place, or project.
+    Topic,
+}
+
+impl EntityKind {
+    /// Every kind, in declaration order — the enumeration `list_entities`
+    /// filters over and the guard scans.
+    pub const ALL: [EntityKind; 8] = [
+        EntityKind::Person,
+        EntityKind::Project,
+        EntityKind::Place,
+        EntityKind::Event,
+        EntityKind::Work,
+        EntityKind::Thing,
+        EntityKind::Org,
+        EntityKind::Topic,
+    ];
+
+    /// The wire token — the `kind:` prefix of an id and the frontmatter value.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            EntityKind::Person => "person",
+            EntityKind::Project => "project",
+            EntityKind::Place => "place",
+            EntityKind::Event => "event",
+            EntityKind::Work => "work",
+            EntityKind::Thing => "thing",
+            EntityKind::Org => "org",
+            EntityKind::Topic => "topic",
+        }
+    }
+
+    /// Parse a kind token. Strict — unlike the tolerant `status`/`provenance`
+    /// cells, an unknown kind has no safe fallback: guessing one would file a
+    /// record under a noun the user never chose.
+    pub fn from_token(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_token() == token)
+    }
+}
+
+impl std::fmt::Display for EntityKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_token())
+    }
+}
+
+/// A noun jojobot knows about. Stable; never true/false. Everything points at an
+/// entity by its id, so the id is a stable typed string with the grammar
+/// `kind:slug` (`person:alpha`) — the **handle**: identity, not position. There is
+/// no privileged `self`/owner entity: the user is a person like any other.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntityId(pub String);
 
 impl EntityId {
-    /// A person entity id from a bare handle: `person("jose")` → `person:jose`.
-    /// If the handle already carries a `kind:` prefix it is used verbatim.
+    /// An id from its two parts: `new(Project, "atlas")` → `project:atlas`.
+    pub fn new(kind: EntityKind, slug: impl AsRef<str>) -> Self {
+        EntityId(format!("{}:{}", kind.as_token(), slug.as_ref().trim()))
+    }
+
+    /// A person entity id from a bare handle: `person("alpha")` → `person:alpha`.
+    /// If the handle already carries a `kind:` prefix it is used verbatim. The
+    /// bare-handle default stays `person` because that is what the wire has
+    /// meant since slice 1; every other kind must be spelled out.
     pub fn person(handle: impl AsRef<str>) -> Self {
         let h = handle.as_ref().trim();
         if h.contains(':') {
@@ -41,6 +125,17 @@ impl EntityId {
     /// Borrow the underlying id string.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// The id's kind, or `None` if it doesn't parse — a read never panics on a
+    /// hand-edited id.
+    pub fn kind(&self) -> Option<EntityKind> {
+        self.0.split_once(':').and_then(|(k, _)| EntityKind::from_token(k))
+    }
+
+    /// The id's slug — the part after the kind. Empty for a malformed id.
+    pub fn slug(&self) -> &str {
+        self.0.split_once(':').map(|(_, s)| s).unwrap_or("")
     }
 }
 
@@ -67,6 +162,139 @@ impl std::fmt::Display for FactId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
     }
+}
+
+/// Whether an entity's doc is read on every boot or fetched when the
+/// conversation reaches for it. Tolerant on read — an unknown value means
+/// on-demand, which is the cheap, safe side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Boot {
+    /// Read every boot.
+    Always,
+    /// Fetched when something reaches for it.
+    #[default]
+    OnDemand,
+}
+
+impl Boot {
+    /// The wire token written to the frontmatter's `boot` field.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            Boot::Always => "always",
+            Boot::OnDemand => "on-demand",
+        }
+    }
+
+    /// Parse a `boot` field; anything but the exact `always` token is on-demand.
+    pub fn from_token(value: &str) -> Self {
+        match value.trim() {
+            "always" => Boot::Always,
+            _ => Boot::OnDemand,
+        }
+    }
+}
+
+/// An entity as its doc's frontmatter carries it. **Lean and uniform across all
+/// eight kinds** — no per-kind fields: what varies between a person and a place
+/// is the *facts* about them, not the record's shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Entity {
+    /// The handle — identity, never position. Immutable in this milestone.
+    pub id: EntityId,
+    /// The kind, always the one its handle carries.
+    pub kind: EntityKind,
+    /// Display name. Free text for humans; renamed freely, nothing moves.
+    pub name: String,
+    /// Where this entity came from — **never invented**. An entity exists
+    /// because the user named it or a real source produced it.
+    pub source: String,
+    /// The kanban token this entity is mirrored by, if any (`card:554`).
+    pub crm: Option<String>,
+    /// Boot tier.
+    pub boot: Boot,
+}
+
+/// An entity about to be created. `create_new` is the caller's explicit
+/// "I checked, it's a different one" answer to the write guard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewEntity {
+    /// The handle to create.
+    pub id: EntityId,
+    /// Display name.
+    pub name: String,
+    /// Where it came from — required, and never invented by jojobot.
+    pub source: String,
+    /// Optional kanban token.
+    pub crm: Option<String>,
+    /// Boot tier.
+    pub boot: Boot,
+    /// Set only after the guard reported candidates and the caller judged them
+    /// different. Never clears an exact handle collision.
+    pub create_new: bool,
+}
+
+impl NewEntity {
+    /// An entity with the two fields that are always required, defaults
+    /// elsewhere — the common shape.
+    pub fn new(id: EntityId, name: impl Into<String>, source: impl Into<String>) -> Self {
+        NewEntity {
+            id,
+            name: name.into(),
+            source: source.into(),
+            crm: None,
+            boot: Boot::default(),
+            create_new: false,
+        }
+    }
+}
+
+/// A metadata edit to an existing entity. **The handle is not in here**: a
+/// rename is a pointer-rewrite, a separate gated operation, not a field edit.
+/// A `None` field is left alone.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EntityPatch {
+    /// New display name.
+    pub name: Option<String>,
+    /// New source.
+    pub source: Option<String>,
+    /// New kanban token.
+    pub crm: Option<String>,
+}
+
+/// An in-place edit to one addressed fact. A `None` field is left alone; this is
+/// fix-the-source, so the row is rewritten rather than appended beside.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FactPatch {
+    /// New crisp claim.
+    pub content: Option<String>,
+    /// New nuance / why / merge notes.
+    pub details: Option<String>,
+    /// New lifecycle state — negating a fact is this flip, not a delete.
+    pub status: Option<FactStatus>,
+    /// New provenance. Promoting inference → testimony additionally requires
+    /// [`FactPatch::confirmed_by_user`].
+    pub provenance: Option<Provenance>,
+    /// The user's explicit confirmation, required to promote a claim to
+    /// testimony. jojobot infers freely; it never blesses on its own.
+    pub confirmed_by_user: bool,
+}
+
+/// The promotion gate: a claim may only become testimony on the user's explicit
+/// confirmation. Everything else — demotion, a no-op restatement, a status flip
+/// — is free. This is one face of the cross-kind invariant (the other being
+/// draft → confirmed for rules), so it lives in the domain where both adapters
+/// call it and neither can forget it.
+pub fn check_promotion(
+    current: Provenance,
+    requested: Provenance,
+    confirmed_by_user: bool,
+) -> Result<(), MemoryError> {
+    let promoting = current == Provenance::Inference && requested == Provenance::Testimony;
+    if promoting && !confirmed_by_user {
+        return Err(MemoryError::UnconfirmedPromotion);
+    }
+    Ok(())
 }
 
 /// Where a claim came from. The default is [`Provenance::Inference`]: anything
@@ -105,16 +333,20 @@ impl Provenance {
     }
 }
 
-/// A fact's lifecycle state. This slice implements **[`FactStatus::Active`]
-/// only** — no supersede/negate machinery and no status *filter* on recall. The
-/// column exists in the table (and the type is an enum) so the schema is stable
-/// and the lifecycle states can land later without a migration.
+/// A fact's lifecycle state. Lifecycle is a **status flip**, never a deletion:
+/// an id is never destroyed while anything might reference or re-derive it. The
+/// "anti-fact list" — what *not* to infer — is just a `Negated` filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FactStatus {
-    /// The current truth — the only state this slice writes or reads.
+    /// The current truth.
     #[default]
     Active,
+    /// Replaced by a later fact; kept so references survive.
+    Superseded,
+    /// Disproved. Keeps its id, and its content is rephrased as the thing NOT
+    /// to infer, so the correction can't be re-derived away.
+    Negated,
 }
 
 impl FactStatus {
@@ -122,27 +354,223 @@ impl FactStatus {
     pub fn as_token(self) -> &'static str {
         match self {
             FactStatus::Active => "active",
+            FactStatus::Superseded => "superseded",
+            FactStatus::Negated => "negated",
+        }
+    }
+
+    /// Parse a `status` cell. Lenient in one direction only: a blank or garbled
+    /// cell reads as active rather than dropping the fact — but a fact is never
+    /// *promoted* out of negated/superseded by a bad cell, because those tokens
+    /// are matched exactly.
+    pub fn from_token(cell: &str) -> Self {
+        match cell.trim() {
+            "superseded" => FactStatus::Superseded,
+            "negated" => FactStatus::Negated,
+            _ => FactStatus::Active,
         }
     }
 }
 
-/// Validate a subject id before it is written anywhere. Entity ids are
-/// **structured** (`kind:slug`), never free text, so a safe charset is enough to
-/// keep an adversarial subject out of the markdown: no newline (forge a row or a
-/// `###` header), no `|` (forge a cell), no backtick (forge a fence), no space.
-/// Anything outside `[a-z0-9:_-]` — or empty, or absurdly long — is rejected.
-/// This is the primary defence; escaping-on-write is the belt-and-suspenders.
+/// The global address of a fact: its home doc's entity handle plus the row's
+/// local id, written `person:alpha#f3`. Local ids are only unique within a doc, so
+/// every cross-doc reference is doc-qualified and can never collide. `recall`
+/// returns one with every fact; `update_fact` targets one — that pairing is what
+/// makes day-to-day editing possible at all.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FactAddress {
+    /// The entity whose doc holds the row.
+    pub home: EntityId,
+    /// The row's light, doc-local id.
+    pub local: FactId,
+}
+
+impl FactAddress {
+    /// An address from its two parts.
+    pub fn new(home: EntityId, local: FactId) -> Self {
+        FactAddress { home, local }
+    }
+
+    /// Parse the wire form `kind:slug#local-id`. Both halves are validated —
+    /// an address arrives from a client and is used to select a row to rewrite.
+    pub fn parse(raw: &str) -> Result<Self, MemoryError> {
+        let bad = || MemoryError::InvalidAddress(raw.to_string());
+        let (home, local) = raw.trim().split_once('#').ok_or_else(bad)?;
+        let home = EntityId(home.to_string());
+        validate_subject(&home).map_err(|_| bad())?;
+        let local = local.trim();
+        if local.is_empty() || !local.bytes().all(is_slug_byte) {
+            return Err(bad());
+        }
+        Ok(FactAddress::new(home, FactId(local.to_string())))
+    }
+}
+
+impl std::fmt::Display for FactAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}#{}", self.home, self.local)
+    }
+}
+
+/// The slug charset: `[a-z0-9-]`. Deliberately narrow — no newline (forge a row
+/// or a `###` header), no `|` (forge a cell), no backtick (forge a fence), no
+/// space, no uppercase (so a handle has exactly one spelling).
+fn is_slug_byte(b: u8) -> bool {
+    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'
+}
+
+/// Validate an entity id before it is written anywhere. Ids are **structured**
+/// (`kind:slug`, kind one of the eight, slug `[a-z0-9-]+`), never free text — so
+/// an adversarial subject can neither forge markdown nor invent a kind. This is
+/// the primary defence; escaping-on-write is the belt-and-suspenders.
 pub fn validate_subject(subject: &EntityId) -> Result<(), MemoryError> {
     let s = subject.as_str();
-    let ok = !s.is_empty()
-        && s.len() <= 128
-        && s.bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b':' | b'_' | b'-'));
+    let ok = s.len() <= 128
+        && subject.kind().is_some()
+        && !subject.slug().is_empty()
+        && subject.slug().bytes().all(is_slug_byte);
     if ok {
         Ok(())
     } else {
         Err(MemoryError::InvalidSubject(s.to_string()))
     }
+}
+
+/// Validate a value destined for a **frontmatter line** (`name`, `source`).
+/// A frontmatter field is one line inside a fenced block, so a newline would
+/// forge a field and a backtick could close the fence. Rejected outright rather
+/// than escaped: unlike a fact's content, these are short labels, and silently
+/// mangling a name is worse than refusing it.
+pub fn validate_field(label: &str, value: &str) -> Result<(), MemoryError> {
+    let v = value.trim();
+    if v.is_empty() {
+        return Err(MemoryError::InvalidEntity(format!("{label} is empty")));
+    }
+    if v.chars().count() > 200 {
+        return Err(MemoryError::InvalidEntity(format!("{label} is too long")));
+    }
+    if v.chars().any(|c| c == '`' || c.is_control()) {
+        return Err(MemoryError::InvalidEntity(format!(
+            "{label} must be one plain line (no newline, no backtick)"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate the optional `crm` link. It points at a kanban token and has exactly
+/// one shape — `card:N` — so a typo can't quietly become a dangling pointer.
+pub fn validate_crm(crm: &str) -> Result<(), MemoryError> {
+    let ok = crm
+        .strip_prefix("card:")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    if ok {
+        Ok(())
+    } else {
+        Err(MemoryError::InvalidEntity(format!(
+            "crm must be card:N, got '{crm}'"
+        )))
+    }
+}
+
+/// Validate everything an entity write carries: the handle's grammar, its
+/// required labels, and the `crm` pointer if present. Both adapters call this,
+/// so neither can accept a record the other would refuse.
+pub fn validate_entity(id: &EntityId, name: &str, source: &str, crm: Option<&str>) -> Result<(), MemoryError> {
+    validate_subject(id)?;
+    validate_field("name", name)?;
+    validate_field("source", source)?;
+    if let Some(crm) = crm {
+        validate_crm(crm)?;
+    }
+    Ok(())
+}
+
+/// A fact's content must be one non-empty line — a table cell is one line, and
+/// an empty claim is not a claim.
+pub fn validate_content(content: &str) -> Result<(), MemoryError> {
+    if content.trim().is_empty() {
+        return Err(MemoryError::InvalidFact("content is empty".into()));
+    }
+    if content.contains('\n') {
+        return Err(MemoryError::InvalidFact(
+            "content spans multiple lines; a table cell is one line".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Details ride in the same table row, so they are one line too — but may be
+/// absent.
+pub fn validate_details(details: Option<&str>) -> Result<(), MemoryError> {
+    if details.is_some_and(|d| d.contains('\n')) {
+        return Err(MemoryError::InvalidFact(
+            "details span multiple lines; a table cell is one line".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Apply an in-place edit to a fact — **the** definition of what an update
+/// means, called by every adapter so none can drift. Enforces the promotion gate
+/// before touching anything, so a rejected promotion leaves the fact untouched.
+/// Passing `details: Some("")` clears the details; omitting it leaves them.
+pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), MemoryError> {
+    if let Some(requested) = patch.provenance {
+        check_promotion(fact.provenance, requested, patch.confirmed_by_user)?;
+    }
+    if let Some(content) = &patch.content {
+        validate_content(content)?;
+    }
+    validate_details(patch.details.as_deref())?;
+
+    if let Some(content) = &patch.content {
+        fact.content = normalize_content(content);
+    }
+    if patch.details.is_some() {
+        fact.details = normalize_details(patch.details.as_deref());
+    }
+    if let Some(status) = patch.status {
+        fact.status = status;
+    }
+    if let Some(provenance) = patch.provenance {
+        fact.provenance = provenance;
+    }
+    Ok(())
+}
+
+/// Apply a metadata edit to an entity. Same contract as [`apply_fact_patch`]:
+/// validate everything first, mutate only once it all passes.
+pub fn apply_entity_patch(entity: &mut Entity, patch: &EntityPatch) -> Result<(), MemoryError> {
+    if let Some(name) = &patch.name {
+        validate_field("name", name)?;
+    }
+    if let Some(source) = &patch.source {
+        validate_field("source", source)?;
+    }
+    if let Some(crm) = &patch.crm {
+        validate_crm(crm)?;
+    }
+
+    if let Some(name) = &patch.name {
+        entity.name = name.trim().to_string();
+    }
+    if let Some(source) = &patch.source {
+        entity.source = source.trim().to_string();
+    }
+    if let Some(crm) = &patch.crm {
+        entity.crm = Some(crm.trim().to_string());
+    }
+    Ok(())
+}
+
+/// Normalize a fact's optional details the way [`normalize_content`] does its
+/// content: edge whitespace can't survive a table cell, and a cell that trims to
+/// nothing is no details at all.
+pub fn normalize_details(details: Option<&str>) -> Option<String> {
+    details
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(str::to_string)
 }
 
 /// Normalize a fact's content to the form that survives a table round-trip.
@@ -163,12 +591,17 @@ pub struct NewFact {
     pub subject: EntityId,
     /// The crisp claim — what surfaces, like a card title.
     pub content: String,
+    /// Nuance / why / merge notes — the description under the title.
+    pub details: Option<String>,
     /// Testimony vs inference; defaults to inference.
     pub provenance: Provenance,
     /// Lifecycle state; a fresh capture is [`FactStatus::Active`].
     pub status: FactStatus,
     /// The fact's own freshness stamp, authoritative in the source.
     pub date: Date,
+    /// Set only after the write guard reported candidates for a subject that
+    /// doesn't exist yet, and the caller judged them different.
+    pub create_new: bool,
 }
 
 impl NewFact {
@@ -178,9 +611,11 @@ impl NewFact {
         NewFact {
             subject,
             content: content.into(),
+            details: None,
             provenance: Provenance::default(),
             status: FactStatus::default(),
             date,
+            create_new: false,
         }
     }
 }
@@ -191,16 +626,57 @@ impl NewFact {
 pub struct Fact {
     /// Light/local id, unique in its home.
     pub id: FactId,
+    /// The entity whose doc physically holds this row. With [`Fact::id`] it
+    /// forms the fact's global [`FactAddress`] — the handle `update_fact` takes.
+    pub home: EntityId,
     /// The entity this fact is about.
     pub subject: EntityId,
     /// The crisp claim.
     pub content: String,
+    /// Nuance / why / merge notes.
+    pub details: Option<String>,
     /// Testimony vs inference.
     pub provenance: Provenance,
     /// Lifecycle state.
     pub status: FactStatus,
     /// The fact's own freshness stamp.
     pub date: Date,
+}
+
+impl Fact {
+    /// This fact's global address — returned with every read precisely so the
+    /// caller can turn around and edit it.
+    pub fn address(&self) -> FactAddress {
+        FactAddress::new(self.home.clone(), self.id.clone())
+    }
+}
+
+/// The result of a write that names an entity: it either happened, or the write
+/// guard stopped it and is asking. Modelled as a value rather than an error so
+/// every caller has to face the question — a blocked write is a decision the AI
+/// owes, not a failure to log and move past.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Guarded<T> {
+    /// No suspicion, or the caller had already resolved it: this is the record.
+    Written(T),
+    /// **Nothing was written.** Confirm one of the candidates, or re-call with
+    /// an explicit create-new signal (which never clears an exact handle).
+    Blocked {
+        /// The handle the caller tried to write.
+        attempted: EntityId,
+        /// What the guard found, strongest first.
+        candidates: Vec<guard::EntityMatch>,
+    },
+}
+
+impl<T> Guarded<T> {
+    /// The written record, or `None` if the guard blocked the write.
+    pub fn written(self) -> Option<T> {
+        match self {
+            Guarded::Written(v) => Some(v),
+            Guarded::Blocked { .. } => None,
+        }
+    }
 }
 
 /// Why a memory operation failed. Adapters map their transport/parse errors into
@@ -212,8 +688,41 @@ pub enum MemoryError {
     InvalidFact(String),
     /// The subject id is not a well-formed entity id (see [`validate_subject`]).
     /// Treated as adversarial: it never reaches the store.
-    #[error("invalid subject '{0}': entity ids must match [a-z0-9:_-]")]
+    #[error(
+        "invalid entity id '{0}': ids are kind:slug — kind one of \
+         person|project|place|event|work|thing|org|topic, slug [a-z0-9-]+"
+    )]
     InvalidSubject(String),
+    /// A fact address didn't parse (see [`FactAddress::parse`]).
+    #[error("invalid fact address '{0}': expected kind:slug#local-id, e.g. person:alpha#f3")]
+    InvalidAddress(String),
+    /// An entity field is malformed for storage (empty, multi-line, or carrying
+    /// markdown that would break out of its frontmatter line).
+    #[error("invalid entity: {0}")]
+    InvalidEntity(String),
+    /// The addressed fact doesn't exist. Never auto-created, never guessed at —
+    /// the nearest live addresses come back so the caller can retarget.
+    #[error("no fact at '{attempted}'; addresses here: {}", nearest.join(", "))]
+    UnknownFact {
+        /// The address that missed.
+        attempted: String,
+        /// Addresses that do exist, nearest first.
+        nearest: Vec<String>,
+    },
+    /// The named entity doesn't exist. Same rule: report, never create.
+    #[error("no entity '{attempted}'{}", nearest_handles(nearest))]
+    UnknownEntity {
+        /// The handle that missed.
+        attempted: String,
+        /// What the write guard found nearby.
+        nearest: Vec<guard::EntityMatch>,
+    },
+    /// A claim can only become testimony on the user's explicit confirmation.
+    #[error(
+        "promoting inference → testimony requires the user's explicit confirmation \
+         (confirmed_by_user); jojobot infers freely but never blesses on its own"
+    )]
+    UnconfirmedPromotion,
     /// The underlying store (Outline, or its network/parse layer) failed.
     #[error("store error: {0}")]
     Store(String),
@@ -223,20 +732,62 @@ pub enum MemoryError {
     NotConfigured(String),
 }
 
-/// The Memory port: capture a fact about an entity, recall an entity's facts.
-/// One real adapter stands behind it in production (Outline); a fake stands
-/// behind it in tests. The invariant that binds every adapter: **a `capture`
-/// succeeds only if a subsequent `recall` of the same subject returns the
-/// fact**, byte-identical.
+/// Render the guard's nearby candidates for an error message.
+fn nearest_handles(nearest: &[guard::EntityMatch]) -> String {
+    if nearest.is_empty() {
+        return String::new();
+    }
+    let list: Vec<String> = nearest
+        .iter()
+        .map(|m| format!("{} ({})", m.handle, m.name))
+        .collect();
+    format!("; did you mean: {}", list.join(", "))
+}
+
+/// The Memory port — six verbs over entities and the facts about them. One real
+/// adapter stands behind it in production (Outline); a fake stands behind it in
+/// tests. Three invariants bind every adapter:
+///
+/// * **read-back** — a write succeeds only if reading it back through the read
+///   path returns it, byte-identical. Writing is not recording.
+/// * **the guard is on the write path** — every entity-touching write screens
+///   against the index first, so it cannot be skipped by a caller who forgot.
+/// * **never create on a miss** — an unknown address or handle errors with the
+///   nearest candidates. Guessing is how two people become one.
 #[async_trait::async_trait]
 pub trait Memory: Send + Sync {
+    /// Create an entity. Kind-general: the handle carries the kind. Screened by
+    /// the write guard, so this can come back [`Guarded::Blocked`].
+    async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError>;
+
+    /// Every entity jojobot knows, optionally filtered to one kind.
+    async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError>;
+
+    /// Edit an entity's metadata in place. Never the handle. An unknown handle
+    /// is [`MemoryError::UnknownEntity`], never a create.
+    async fn update_entity(
+        &self,
+        handle: &EntityId,
+        patch: EntityPatch,
+    ) -> Result<Entity, MemoryError>;
+
     /// Write a fact and return it with the id its home assigned, its content
     /// normalized. The returned fact must be visible — byte-identical — to a
-    /// subsequent [`recall`](Memory::recall) of its subject.
-    async fn capture(&self, fact: NewFact) -> Result<Fact, MemoryError>;
+    /// subsequent [`recall`](Memory::recall) of its subject. A subject that
+    /// doesn't resolve is screened by the write guard.
+    async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError>;
 
     /// Read back every fact whose subject is `subject`, in an unspecified order.
+    /// Each carries its [`FactAddress`] — that is what makes them editable.
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError>;
+
+    /// Edit one addressed fact in place (fix-the-source). An unknown address is
+    /// [`MemoryError::UnknownFact`], never a create.
+    async fn update_fact(
+        &self,
+        address: &FactAddress,
+        patch: FactPatch,
+    ) -> Result<Fact, MemoryError>;
 }
 
 #[cfg(test)]
@@ -260,21 +811,102 @@ mod tests {
 
     #[test]
     fn person_id_prefixes_a_bare_handle_but_respects_a_typed_one() {
-        assert_eq!(EntityId::person("jose").as_str(), "person:jose");
-        assert_eq!(EntityId::person("person:jose").as_str(), "person:jose");
+        assert_eq!(EntityId::person("alpha").as_str(), "person:alpha");
+        assert_eq!(EntityId::person("person:alpha").as_str(), "person:alpha");
     }
 
     #[test]
     fn validate_subject_accepts_ids_and_rejects_adversarial_ones() {
-        assert!(validate_subject(&EntityId::person("jose")).is_ok());
+        assert!(validate_subject(&EntityId::person("alpha")).is_ok());
         assert!(validate_subject(&EntityId("project:jojobot-server".into())).is_ok());
         // Injection vectors: newline, pipe, header, fence, space, uppercase, empty.
-        for bad in ["person:a|b", "a\nb", "### forged", "a`b", "a b", "Person:Jose", ""] {
+        for bad in ["person:a|b", "a\nb", "### forged", "a`b", "a b", "Person:Alpha", ""] {
             assert!(
                 validate_subject(&EntityId(bad.into())).is_err(),
                 "must reject {bad:?}"
             );
         }
+    }
+
+    /// All eight kinds round-trip through their wire token, and nothing else
+    /// parses — the enum is closed, so an unknown kind can never enter the store.
+    #[test]
+    fn the_eight_kinds_round_trip_and_the_set_is_closed() {
+        let all = [
+            (EntityKind::Person, "person"),
+            (EntityKind::Project, "project"),
+            (EntityKind::Place, "place"),
+            (EntityKind::Event, "event"),
+            (EntityKind::Work, "work"),
+            (EntityKind::Thing, "thing"),
+            (EntityKind::Org, "org"),
+            (EntityKind::Topic, "topic"),
+        ];
+        for (kind, token) in all {
+            assert_eq!(kind.as_token(), token);
+            assert_eq!(EntityKind::from_token(token), Some(kind));
+        }
+        assert_eq!(EntityKind::ALL.len(), 8, "eight kinds, no more");
+        for unknown in ["receipt", "self", "Person", "", "peson"] {
+            assert_eq!(EntityKind::from_token(unknown), None, "{unknown:?} is not a kind");
+        }
+    }
+
+    /// An id is `kind:slug` — the kind and the slug are readable off it, which is
+    /// what lets the guard compare slugs and the codec stamp a kind.
+    #[test]
+    fn an_id_splits_into_its_kind_and_slug() {
+        let id = EntityId::new(EntityKind::Project, "jojobot-server");
+        assert_eq!(id.as_str(), "project:jojobot-server");
+        assert_eq!(id.kind(), Some(EntityKind::Project));
+        assert_eq!(id.slug(), "jojobot-server");
+        // A malformed id yields no kind rather than panicking — reads never hard-fail.
+        assert_eq!(EntityId("nonsense".into()).kind(), None);
+    }
+
+    /// The grammar is `kind:slug` with slug `[a-z0-9-]+`: an unknown kind, a
+    /// missing kind, an underscore, or a second colon is not an entity id.
+    #[test]
+    fn validate_subject_enforces_the_kind_slug_grammar() {
+        for good in ["person:alpha", "topic:widgets", "org:north-trail-club", "thing:red-bike"] {
+            assert!(validate_subject(&EntityId(good.into())).is_ok(), "must accept {good:?}");
+        }
+        for bad in [
+            "alpha",            // no kind
+            "receipt:il-2026",   // not one of the eight
+            "person:",           // empty slug
+            ":alpha",           // empty kind
+            "person:a_b",        // underscore is out of the slug charset
+            "person:a:b",        // one colon only
+        ] {
+            assert!(
+                validate_subject(&EntityId(bad.into())).is_err(),
+                "must reject {bad:?}"
+            );
+        }
+    }
+
+    /// The compound address `doc#local-id` — what `recall` hands back and
+    /// `update_fact` targets — round-trips, and a malformed one is rejected.
+    #[test]
+    fn a_fact_address_round_trips_through_its_wire_form() {
+        let addr = FactAddress::new(EntityId::person("alpha"), FactId("f3".into()));
+        assert_eq!(addr.to_string(), "person:alpha#f3");
+        assert_eq!(FactAddress::parse("person:alpha#f3").unwrap(), addr);
+        for bad in ["person:alpha", "#f3", "person:alpha#", "person:alpha#f 3", "nope:x#f1", ""] {
+            assert!(FactAddress::parse(bad).is_err(), "must reject {bad:?}");
+        }
+    }
+
+    /// All three lifecycle states have tokens; an unknown or blank cell degrades
+    /// to active (the tolerant-read rule: never drop a fact over a bad cell).
+    #[test]
+    fn fact_status_tokens_round_trip_and_degrade_to_active() {
+        for status in [FactStatus::Active, FactStatus::Superseded, FactStatus::Negated] {
+            assert_eq!(FactStatus::from_token(status.as_token()), status);
+        }
+        assert_eq!(FactStatus::from_token(""), FactStatus::Active);
+        assert_eq!(FactStatus::from_token("garbled"), FactStatus::Active);
     }
 
     #[test]

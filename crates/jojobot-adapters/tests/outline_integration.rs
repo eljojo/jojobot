@@ -14,7 +14,7 @@
 //! Convention over configuration: the adapter discovers/creates a collection by
 //! name. This test points it at a dedicated **`jojobot-test`** collection, which
 //! it deletes (collection + all its docs) before and after the run — so it never
-//! touches the real `jojobot` collection or any About-José doc, and it leaves
+//! touches the real `jojobot` collection or any of the user’s own docs, and it leaves
 //! nothing behind. Missing either variable → it skips. It never scans for or
 //! hardcodes a token; the token comes from the env the operator sets.
 

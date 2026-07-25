@@ -25,11 +25,17 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use jojobot_domain::memory::{
-    EntityId, Fact, Memory, MemoryError, NewFact, normalize_content, validate_subject,
+    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, Memory, MemoryError,
+    NewEntity, NewFact, apply_entity_patch, apply_fact_patch, normalize_content, normalize_details,
+    validate_content, validate_details, validate_entity, validate_subject,
+    guard::{self, Decision},
 };
 
 use api::{CollectionRec, DocRec, HttpOutline, OutlineApi, Unconfigured};
-use codec::{next_fact_id, parse_facts_table, parse_id_marker, render_fact_row, seeded_doc, with_fact_appended};
+use codec::{
+    next_fact_id, parse_entity, parse_facts_table, parse_id_marker, render_fact_row, seeded_doc,
+    with_fact_appended, with_frontmatter_replaced, with_row_replaced,
+};
 
 /// Outline's page cap for list endpoints. The store pages until a short page, so
 /// a match past the first page is never missed (a stop-at-100 bug forks docs).
@@ -165,63 +171,97 @@ impl OutlineStore {
             .ok_or_else(|| MemoryError::Store("collection missing after create".into()))
     }
 
-    /// Every doc in the collection whose embedded `id:` marker is `subject` —
-    /// paged in full. Resolution keys on the marker, never the title, so a
-    /// renamed doc is never orphaned.
-    async fn entity_docs(
-        &self,
-        collection_id: &str,
-        subject: &EntityId,
-    ) -> Result<Vec<DocRec>, MemoryError> {
-        let mut matches = Vec::new();
+    /// Every doc in the collection — paged in full. A match past the first page
+    /// is never missed (a stop-at-100 bug forks docs).
+    async fn all_docs(&self, collection_id: &str) -> Result<Vec<DocRec>, MemoryError> {
+        let mut docs = Vec::new();
         let mut offset = 0;
         loop {
             let page = self.api.list_documents(collection_id, offset, PAGE).await?;
             let count = page.len() as u64;
-            matches.extend(
-                page.into_iter()
-                    .filter(|d| parse_id_marker(&d.text).as_deref() == Some(subject.as_str())),
-            );
+            docs.extend(page);
             if count < PAGE {
                 break;
             }
             offset += PAGE;
         }
-        Ok(matches)
+        Ok(docs)
     }
 
-    /// Resolve an entity's doc by marker, creating a seeded one when `create` is
-    /// set and none exists. After a create it re-lists and picks the canonical
-    /// (oldest), self-healing a concurrent double-create. `Ok(None)` means "no
-    /// doc and not asked to create one".
-    async fn resolve_entity_doc(
+    /// Every doc whose embedded `id:` marker is `subject`. Resolution keys on
+    /// the marker, never the title, so a renamed doc is never orphaned.
+    async fn entity_docs(
         &self,
+        collection_id: &str,
         subject: &EntityId,
-        create: bool,
+    ) -> Result<Vec<DocRec>, MemoryError> {
+        Ok(self
+            .all_docs(collection_id)
+            .await?
+            .into_iter()
+            .filter(|d| parse_id_marker(&d.text).as_deref() == Some(subject.as_str()))
+            .collect())
+    }
+
+    /// The entity index the write guard screens against: one entity per handle,
+    /// the canonical (oldest) doc winning where a double-create left two.
+    async fn entity_index(&self, collection_id: &str) -> Result<Vec<Entity>, MemoryError> {
+        let mut docs = self.all_docs(collection_id).await?;
+        docs.sort_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
+        let mut seen = std::collections::HashSet::new();
+        Ok(docs
+            .iter()
+            .filter_map(|d| parse_entity(&d.text))
+            .filter(|e| seen.insert(e.id.clone()))
+            .collect())
+    }
+
+    /// The canonical doc for an entity, or `None` if it has none.
+    async fn entity_doc(
+        &self,
+        collection_id: &str,
+        subject: &EntityId,
     ) -> Result<Option<DocRec>, MemoryError> {
-        let collection_id = self.resolve_collection().await?;
-
-        if let Some(d) = pick_oldest(
-            self.entity_docs(&collection_id, subject).await?,
+        Ok(pick_oldest(
+            self.entity_docs(collection_id, subject).await?,
             |d| &d.created_at,
             |d| &d.id,
-        ) {
-            return Ok(Some(d));
-        }
-        if !create {
-            return Ok(None);
-        }
+        ))
+    }
 
+    /// Create an entity's doc and return the canonical one afterwards —
+    /// re-listing so a concurrent double-create converges on the oldest rather
+    /// than forking. The title is the human's handle on the doc and is purely
+    /// cosmetic; the marker inside is what resolves it.
+    async fn create_entity_doc(
+        &self,
+        collection_id: &str,
+        entity: &Entity,
+    ) -> Result<DocRec, MemoryError> {
+        let title = if entity.name.trim().is_empty() {
+            entity.id.to_string()
+        } else {
+            entity.name.clone()
+        };
         self.api
-            .create_document(&collection_id, subject.as_str(), &seeded_doc(subject))
+            .create_document(collection_id, &title, &seeded_doc(entity))
             .await?;
-        pick_oldest(
-            self.entity_docs(&collection_id, subject).await?,
-            |d| &d.created_at,
-            |d| &d.id,
-        )
-        .map(Some)
-        .ok_or_else(|| MemoryError::Store("entity doc missing after create".into()))
+        self.entity_doc(collection_id, &entity.id)
+            .await?
+            .ok_or_else(|| MemoryError::Store("entity doc missing after create".into()))
+    }
+
+    /// Read an entity back through the read path — the verification half of
+    /// every entity write.
+    async fn read_entity(
+        &self,
+        collection_id: &str,
+        id: &EntityId,
+    ) -> Result<Entity, MemoryError> {
+        self.entity_doc(collection_id, id)
+            .await?
+            .and_then(|d| parse_entity(&d.text))
+            .ok_or_else(|| MemoryError::Store(format!("entity {id} did not read back")))
     }
 }
 
@@ -238,22 +278,116 @@ fn pick_oldest<T>(
 
 #[async_trait]
 impl Memory for OutlineStore {
-    async fn capture(&self, fact: NewFact) -> Result<Fact, MemoryError> {
-        validate_subject(&fact.subject)?;
-        let content = normalize_content(&fact.content);
-        if content.is_empty() {
-            return Err(MemoryError::InvalidFact("content is empty".into()));
-        }
-        if content.contains('\n') {
-            return Err(MemoryError::InvalidFact(
-                "content spans multiple lines; a table cell is one line".into(),
-            ));
+    async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+        validate_entity(&new.id, &new.name, &new.source, new.crm.as_deref())?;
+        let collection_id = self.resolve_collection().await?;
+
+        let index = self.entity_index(&collection_id).await?;
+        if let Decision::Block(candidates) =
+            guard::decide(&new.id, Some(&new.name), &index, new.create_new)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: new.id,
+                candidates,
+            });
         }
 
-        let doc = self
-            .resolve_entity_doc(&fact.subject, true)
+        let entity = Entity {
+            kind: new.id.kind().expect("a validated id has a kind"),
+            id: new.id,
+            name: new.name.trim().to_string(),
+            source: new.source.trim().to_string(),
+            crm: new.crm.map(|c| c.trim().to_string()),
+            boot: new.boot,
+        };
+        self.create_entity_doc(&collection_id, &entity).await?;
+
+        // Read-back: the entity is only added once the read path returns it.
+        let seen = self.read_entity(&collection_id, &entity.id).await?;
+        if seen != entity {
+            return Err(MemoryError::Store(format!(
+                "entity {} read back changed: wrote {entity:?}, read {seen:?}",
+                entity.id
+            )));
+        }
+        Ok(Guarded::Written(seen))
+    }
+
+    async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
+        let collection_id = self.resolve_collection().await?;
+        Ok(self
+            .entity_index(&collection_id)
             .await?
-            .ok_or_else(|| MemoryError::Store("entity doc was not created".into()))?;
+            .into_iter()
+            .filter(|e| kind.is_none_or(|k| e.kind == k))
+            .collect())
+    }
+
+    async fn update_entity(
+        &self,
+        handle: &EntityId,
+        patch: EntityPatch,
+    ) -> Result<Entity, MemoryError> {
+        validate_subject(handle)?;
+        let collection_id = self.resolve_collection().await?;
+
+        let Some(doc) = self.entity_doc(&collection_id, handle).await? else {
+            let index = self.entity_index(&collection_id).await?;
+            return Err(MemoryError::UnknownEntity {
+                attempted: handle.to_string(),
+                nearest: guard::screen(handle, None, &index),
+            });
+        };
+        let mut entity = parse_entity(&doc.text)
+            .ok_or_else(|| MemoryError::Store(format!("doc for {handle} lost its marker")))?;
+        apply_entity_patch(&mut entity, &patch)?;
+
+        let updated = with_frontmatter_replaced(&doc.text, &entity);
+        self.api.update_document(&doc.id, &updated).await?;
+
+        let seen = self.read_entity(&collection_id, handle).await?;
+        if seen != entity {
+            return Err(MemoryError::Store(format!(
+                "entity {handle} read back changed: wrote {entity:?}, read {seen:?}"
+            )));
+        }
+        Ok(seen)
+    }
+
+    async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        validate_subject(&fact.subject)?;
+        validate_content(&fact.content)?;
+        validate_details(fact.details.as_deref())?;
+        let collection_id = self.resolve_collection().await?;
+
+        // A subject with no doc yet is a new entity, so it passes the guard
+        // before anything is written. One that resolves exactly is already
+        // known — guarding it would make every second fact need confirming.
+        let doc = match self.entity_doc(&collection_id, &fact.subject).await? {
+            Some(doc) => doc,
+            None => {
+                let index = self.entity_index(&collection_id).await?;
+                if let Decision::Block(candidates) =
+                    guard::decide(&fact.subject, None, &index, fact.create_new)
+                {
+                    return Ok(Guarded::Blocked {
+                        attempted: fact.subject,
+                        candidates,
+                    });
+                }
+                let provisioned = Entity {
+                    kind: fact.subject.kind().expect("a validated id has a kind"),
+                    id: fact.subject.clone(),
+                    name: String::new(),
+                    // Existence is sourced, never invented: this entity exists
+                    // because a fact arrived about it, and says so.
+                    source: "capture".into(),
+                    crm: None,
+                    boot: Default::default(),
+                };
+                self.create_entity_doc(&collection_id, &provisioned).await?
+            }
+        };
 
         // Read-modify-write. Outline has no atomic append, so two captures
         // racing on the same doc could collide an id or lose a row — acceptable
@@ -261,25 +395,90 @@ impl Memory for OutlineStore {
         let existing = parse_facts_table(&doc.text);
         let stored = Fact {
             id: next_fact_id(&existing),
+            home: fact.subject.clone(),
             subject: fact.subject,
-            content,
+            content: normalize_content(&fact.content),
+            details: normalize_details(fact.details.as_deref()),
             provenance: fact.provenance,
             status: fact.status,
             date: fact.date,
         };
         let updated = with_fact_appended(&doc.text, &render_fact_row(&stored));
         self.api.update_document(&doc.id, &updated).await?;
-        Ok(stored)
+
+        // Read-back: a capture succeeds only if the read path returns the fact,
+        // byte-identical. Writing is not recording.
+        let seen = self
+            .recall(&stored.subject)
+            .await?
+            .into_iter()
+            .find(|f| f.id == stored.id)
+            .ok_or_else(|| {
+                MemoryError::Store(format!("fact {} did not read back", stored.address()))
+            })?;
+        if seen != stored {
+            return Err(MemoryError::Store(format!(
+                "fact {} read back changed: wrote {stored:?}, read {seen:?}",
+                stored.address()
+            )));
+        }
+        Ok(Guarded::Written(seen))
     }
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        match self.resolve_entity_doc(subject, false).await? {
+        let collection_id = self.resolve_collection().await?;
+        match self.entity_doc(&collection_id, subject).await? {
             None => Ok(Vec::new()),
             Some(doc) => Ok(parse_facts_table(&doc.text)
                 .into_iter()
                 .filter(|f| &f.subject == subject)
                 .collect()),
         }
+    }
+
+    async fn update_fact(
+        &self,
+        address: &FactAddress,
+        patch: FactPatch,
+    ) -> Result<Fact, MemoryError> {
+        validate_subject(&address.home)?;
+        let collection_id = self.resolve_collection().await?;
+
+        let unknown = |nearest: Vec<String>| MemoryError::UnknownFact {
+            attempted: address.to_string(),
+            nearest,
+        };
+        let Some(doc) = self.entity_doc(&collection_id, &address.home).await? else {
+            return Err(unknown(Vec::new()));
+        };
+        let facts = parse_facts_table(&doc.text);
+        let Some(mut fact) = facts.iter().find(|f| f.id == address.local).cloned() else {
+            return Err(unknown(
+                facts.iter().map(|f| f.address().to_string()).collect(),
+            ));
+        };
+        apply_fact_patch(&mut fact, &patch)?;
+
+        // The row is rewritten where it stands — fix the source, never an
+        // addendum beside it.
+        let updated = with_row_replaced(&doc.text, &address.local, &render_fact_row(&fact))
+            .ok_or_else(|| unknown(facts.iter().map(|f| f.address().to_string()).collect()))?;
+        self.api.update_document(&doc.id, &updated).await?;
+
+        let seen = self
+            .entity_doc(&collection_id, &address.home)
+            .await?
+            .map(|d| parse_facts_table(&d.text))
+            .unwrap_or_default()
+            .into_iter()
+            .find(|f| f.id == address.local)
+            .ok_or_else(|| MemoryError::Store(format!("fact {address} did not read back")))?;
+        if seen != fact {
+            return Err(MemoryError::Store(format!(
+                "fact {address} read back changed: wrote {fact:?}, read {seen:?}"
+            )));
+        }
+        Ok(seen)
     }
 }
 
@@ -462,6 +661,29 @@ mod tests {
         format!("Managed by jojobot. {OWNER_TAG}")
     }
 
+    /// The person entity a doc fixture is seeded for.
+    fn person(handle: &str) -> Entity {
+        let id = EntityId::person(handle);
+        Entity {
+            kind: EntityKind::Person,
+            id,
+            name: String::new(),
+            source: "capture".into(),
+            crm: None,
+            boot: Default::default(),
+        }
+    }
+
+    /// Capture through the store, asserting the guard waved it through.
+    async fn capture(store: &OutlineStore, fact: NewFact) -> Fact {
+        store
+            .capture(fact)
+            .await
+            .expect("capture should succeed")
+            .written()
+            .expect("the guard must not block this capture")
+    }
+
     /// The whole real store logic (provisioning + codec) against a fake
     /// transport — the fast/CI coverage that used to exist only in the gated
     /// integration test.
@@ -473,10 +695,11 @@ mod tests {
     #[tokio::test]
     async fn creates_an_owned_collection_when_absent() {
         let fake = FakeOutline::new();
-        store(fake.clone())
-            .capture(NewFact::about(EntityId::person("jose"), "x", date(2026, 7, 24)))
-            .await
-            .unwrap();
+        capture(
+            &store(fake.clone()),
+            NewFact::about(EntityId::person("alpha"), "x", date(2026, 7, 24)),
+        )
+        .await;
         assert_eq!(fake.owned_named(COLL), 1, "exactly one owned collection");
     }
 
@@ -486,10 +709,11 @@ mod tests {
         // A user's own collection that happens to share the name — no owner tag.
         let user_coll = fake.seed_collection(COLL, "my personal notes");
 
-        store(fake.clone())
-            .capture(NewFact::about(EntityId::person("jose"), "x", date(2026, 7, 24)))
-            .await
-            .unwrap();
+        capture(
+            &store(fake.clone()),
+            NewFact::about(EntityId::person("alpha"), "x", date(2026, 7, 24)),
+        )
+        .await;
 
         assert_eq!(fake.owned_named(COLL), 1, "jojobot made its own owned collection");
         assert!(
@@ -504,10 +728,11 @@ mod tests {
         let older = fake.seed_collection(COLL, &owned_desc());
         let _newer = fake.seed_collection(COLL, &owned_desc());
 
-        store(fake.clone())
-            .capture(NewFact::about(EntityId::person("jose"), "x", date(2026, 7, 24)))
-            .await
-            .unwrap();
+        capture(
+            &store(fake.clone()),
+            NewFact::about(EntityId::person("alpha"), "x", date(2026, 7, 24)),
+        )
+        .await;
 
         assert_eq!(fake.owned_named(COLL), 2, "no third collection created");
         assert_eq!(fake.docs_in(&older).len(), 1, "the fact went to the oldest");
@@ -522,10 +747,11 @@ mod tests {
         // The one owned match sits past the first page.
         let owned = fake.seed_collection(COLL, &owned_desc());
 
-        store(fake.clone())
-            .capture(NewFact::about(EntityId::person("jose"), "x", date(2026, 7, 24)))
-            .await
-            .unwrap();
+        capture(
+            &store(fake.clone()),
+            NewFact::about(EntityId::person("alpha"), "x", date(2026, 7, 24)),
+        )
+        .await;
 
         assert_eq!(fake.owned_named(COLL), 1, "must find the paged-past match, not fork");
         assert_eq!(fake.docs_in(&owned).len(), 1);
@@ -536,11 +762,13 @@ mod tests {
         let fake = FakeOutline::new();
         let coll = fake.seed_collection(COLL, &owned_desc());
         let text = with_fact_appended(
-            &seeded_doc(&EntityId::person("jose")),
+            &seeded_doc(&person("alpha")),
             &render_fact_row(&Fact {
                 id: jojobot_domain::memory::FactId("f1".into()),
-                subject: EntityId::person("jose"),
+                home: EntityId::person("alpha"),
+                subject: EntityId::person("alpha"),
                 content: "plays go".into(),
+                details: None,
                 provenance: jojobot_domain::memory::Provenance::Testimony,
                 status: Default::default(),
                 date: date(2026, 7, 1),
@@ -548,7 +776,7 @@ mod tests {
         );
         fake.seed_document(&coll, "Totally Unrelated Title", &text);
 
-        let facts = store(fake).recall(&EntityId::person("jose")).await.unwrap();
+        let facts = store(fake).recall(&EntityId::person("alpha")).await.unwrap();
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].content, "plays go");
     }
@@ -556,27 +784,25 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_title_does_not_orphan_or_duplicate_the_doc() {
         let fake = FakeOutline::new();
-        let jose = EntityId::person("jose");
+        let subject = EntityId::person("alpha");
 
         // First capture creates the doc.
-        store(fake.clone())
-            .capture(NewFact::about(jose.clone(), "plays go", date(2026, 7, 1)))
-            .await
-            .unwrap();
+        capture(&store(fake.clone()), NewFact::about(subject.clone(), "plays go", date(2026, 7, 1))).await;
         let coll = fake.collections_named(COLL)[0].id.clone();
         let doc_id = fake.docs_in(&coll)[0].id.clone();
 
         // The user renames the doc's title — the marker is untouched.
-        fake.rename_document(&doc_id, "José 🎉 (my buddy)");
+        fake.rename_document(&doc_id, "Renamed By Hand 🎉");
 
         // Second capture must land in the SAME doc, found by marker.
-        store(fake.clone())
-            .capture(NewFact::about(jose.clone(), "learning Rust", date(2026, 7, 2)))
-            .await
-            .unwrap();
+        capture(
+            &store(fake.clone()),
+            NewFact::about(subject.clone(), "learning Rust", date(2026, 7, 2)),
+        )
+        .await;
 
         assert_eq!(fake.docs_in(&coll).len(), 1, "no duplicate doc spawned on rename");
-        let facts = store(fake).recall(&jose).await.unwrap();
+        let facts = store(fake).recall(&subject).await.unwrap();
         assert_eq!(facts.len(), 2, "both facts live in the one doc");
     }
 
@@ -584,13 +810,13 @@ mod tests {
     async fn reconciles_duplicate_docs_to_the_oldest_canonical() {
         let fake = FakeOutline::new();
         let coll = fake.seed_collection(COLL, &owned_desc());
-        let marker = &seeded_doc(&EntityId::person("jose"));
-        let older = with_fact_appended(marker, "| f1 | person:jose | older fact | testimony | active | 2026-07-01 |");
-        let newer = with_fact_appended(marker, "| f1 | person:jose | newer fact | testimony | active | 2026-07-02 |");
+        let marker = &seeded_doc(&person("alpha"));
+        let older = with_fact_appended(marker, "| f1 | person:alpha | older fact |  | testimony | active | 2026-07-01 |");
+        let newer = with_fact_appended(marker, "| f1 | person:alpha | newer fact |  | testimony | active | 2026-07-02 |");
         fake.seed_document(&coll, "a", &older);
         fake.seed_document(&coll, "b", &newer);
 
-        let facts = store(fake).recall(&EntityId::person("jose")).await.unwrap();
+        let facts = store(fake).recall(&EntityId::person("alpha")).await.unwrap();
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].content, "older fact", "the oldest doc is canonical");
     }
@@ -600,15 +826,17 @@ mod tests {
         let fake = FakeOutline::new();
         let coll = fake.seed_collection(COLL, &owned_desc());
         for i in 0..120 {
-            fake.seed_document(&coll, &format!("other-{i}"), &seeded_doc(&EntityId::person(format!("other-{i}"))));
+            fake.seed_document(&coll, &format!("other-{i}"), &seeded_doc(&person(&format!("other-{i}"))));
         }
         let target = with_fact_appended(
-            &seeded_doc(&EntityId::person("jose")),
-            "| f1 | person:jose | found me | testimony | active | 2026-07-01 |",
+            &seeded_doc(&person("alpha")),
+            // A row in the pre-`details` format — the paged-past doc is also the
+            // legacy-row regression, read through the real store.
+            "| f1 | person:alpha | found me | testimony | active | 2026-07-01 |",
         );
-        fake.seed_document(&coll, "jose doc", &target);
+        fake.seed_document(&coll, "entity doc", &target);
 
-        let facts = store(fake).recall(&EntityId::person("jose")).await.unwrap();
+        let facts = store(fake).recall(&EntityId::person("alpha")).await.unwrap();
         assert_eq!(facts.len(), 1, "must find the paged-past doc");
         assert_eq!(facts[0].content, "found me");
     }
