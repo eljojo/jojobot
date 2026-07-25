@@ -584,12 +584,17 @@ fn type_name(kind: EntityKind) -> &'static str {
 }
 
 /// The write guard's answer: **nothing was written**, and here is what jojobot
-/// suspects you meant. Flagged as an error result so it can't read as a
-/// completed write, with the candidates in the body so the caller can decide —
-/// jojobot detects, the AI decides.
+/// suspects you meant.
+///
+/// A **successful** result carrying a structured payload, not a protocol error.
+/// The guard doing its job is an answer the caller has to act on — jojobot
+/// detects, the AI decides — and dressing it as an exception made a working
+/// feature read like a broken server: clients that retry on error retry it, and
+/// clients that unwrap on error handle it exactly wrong. `status` and `wrote`
+/// are what stop it reading as a completed write.
 fn blocked_result(attempted: &EntityId, candidates: &[EntityMatch], verb: &str) -> CallToolResult {
     let body = serde_json::json!({
-        "status": "needs_confirmation",
+        "status": "blocked",
         "attempted": attempted.as_str(),
         "wrote": false,
         "candidates": candidates.iter().map(candidate_json).collect::<Vec<_>>(),
@@ -599,7 +604,7 @@ fn blocked_result(attempted: &EntityId, candidates: &[EntityMatch], verb: &str) 
              collision can't be forced — pick a more qualified slug instead."
         ),
     });
-    CallToolResult::error(vec![ContentBlock::text(body.to_string())])
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
 /// Render a JSON body as a successful tool result.
@@ -890,8 +895,24 @@ mod tests {
     /// Capture through the handler, expecting the guard to wave it through.
     async fn capture_ok(jojobot: &Jojobot, args: CaptureArgs) -> serde_json::Value {
         let result = jojobot.capture(Parameters(args)).await.expect("capture ok");
-        assert_ne!(result.is_error, Some(true), "the guard blocked: {}", text_of(&result));
-        json_of(&result)
+        let body = json_of(&result);
+        assert_ne!(body["status"], "blocked", "the guard blocked: {body}");
+        body
+    }
+
+    /// A tool result the guard blocked: a **successful** call whose body says
+    /// nothing was written. Returns the body.
+    fn blocked(result: &CallToolResult) -> serde_json::Value {
+        assert_ne!(
+            result.is_error,
+            Some(true),
+            "'needs confirmation' is an answer, not a protocol failure: {}",
+            text_of(result)
+        );
+        let body = json_of(result);
+        assert_eq!(body["status"], "blocked", "got {body}");
+        assert_eq!(body["wrote"], false, "a blocked write says so in the body: {body}");
+        body
     }
 
     /// The `address` field of a rendered fact — every read carries one.
@@ -1226,13 +1247,11 @@ mod tests {
             create_new,
         };
 
-        let blocked = jojobot
+        let result = jojobot
             .update_entity(Parameters(rename(None)))
             .await
             .expect("the call succeeds; the guard answers in the body");
-        assert_eq!(blocked.is_error, Some(true), "a blocked rename must not read as success");
-        let body = json_of(&blocked);
-        assert_eq!(body["status"], "needs_confirmation");
+        let body = blocked(&result);
         assert_eq!(body["attempted"], "person:zenith");
         assert_eq!(body["candidates"][0]["handle"], "person:alpha");
 
@@ -1251,12 +1270,14 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["Alpha", "Zenith"]);
 
-        let forced = jojobot
-            .update_entity(Parameters(rename(Some(true))))
-            .await
-            .expect("confirmed rename ok");
-        assert_ne!(forced.is_error, Some(true));
-        assert_eq!(json_of(&forced)["name"], "Alpha");
+        let forced = json_of(
+            &jojobot
+                .update_entity(Parameters(rename(Some(true))))
+                .await
+                .expect("confirmed rename ok"),
+        );
+        assert_ne!(forced["status"], "blocked");
+        assert_eq!(forced["name"], "Alpha");
     }
 
     /// Updating an entity that isn't there is a client error naming near misses
@@ -1284,24 +1305,24 @@ mod tests {
 
     // --- the write guard, through the MCP boundary ----------------------------
 
-    /// A guarded write comes back as an **error-flagged** result carrying the
-    /// candidates — never as a quiet success the caller could mistake for a
-    /// completed write.
+    /// A guarded write comes back as a **successful** result whose body says
+    /// nothing was written. "Needs confirmation" is an answer — the guard did its
+    /// job and is handing the decision over — not an exception; delivering it as
+    /// a protocol error made a working feature look like a broken server, and
+    /// clients that retry or unwrap on error handle it exactly wrong.
     #[tokio::test]
-    async fn a_blocked_add_returns_the_candidates_as_an_error_result() {
+    async fn a_blocked_add_returns_the_candidates_in_a_successful_result() {
         let jojobot = handler();
         jojobot
             .add_entity(Parameters(add_args("person", "alpha", "Alpha")))
             .await
             .expect("first add ok");
 
-        let blocked = jojobot
+        let result = jojobot
             .add_entity(Parameters(add_args("person", "alpha", "Alpha Two")))
             .await
             .expect("the call succeeds; the guard answers in the body");
-        assert_eq!(blocked.is_error, Some(true), "a blocked write must not read as success");
-        let body = json_of(&blocked);
-        assert_eq!(body["status"], "needs_confirmation");
+        let body = blocked(&result);
         assert_eq!(body["attempted"], "person:alpha");
         assert_eq!(body["candidates"][0]["handle"], "person:alpha");
         assert_eq!(body["candidates"][0]["reason"], "exact-handle");
@@ -1328,12 +1349,11 @@ mod tests {
             .await
             .expect("add ok");
 
-        let blocked = jojobot
+        let result = jojobot
             .capture(Parameters(capture_args("zenit", "should not land")))
             .await
             .expect("call ok");
-        assert_eq!(blocked.is_error, Some(true));
-        assert_eq!(json_of(&blocked)["candidates"][0]["handle"], "person:zenith");
+        assert_eq!(blocked(&result)["candidates"][0]["handle"], "person:zenith");
 
         let forced = capture_ok(
             &jojobot,
@@ -1444,7 +1464,7 @@ mod tests {
             .await
             .expect("add ok");
 
-        let blocked = jojobot
+        let result = jojobot
             .capture(Parameters(CaptureArgs {
                 shape: Some("location".into()),
                 object: Some("place:riverbnd".into()),
@@ -1452,8 +1472,7 @@ mod tests {
             }))
             .await
             .expect("the call succeeds; the guard answers in the body");
-        assert_eq!(blocked.is_error, Some(true));
-        let body = json_of(&blocked);
+        let body = blocked(&result);
         assert_eq!(body["attempted"], "place:riverbnd");
         assert_eq!(body["candidates"][0]["handle"], "place:riverbend");
         assert_eq!(body["candidates"][0]["type"], "Place");
