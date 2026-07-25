@@ -1298,6 +1298,65 @@ pub mod contract {
         assert_eq!(landed.edge.map(|e| e.object), Some(stranger));
     }
 
+    /// The same gate on an **edge attached later**. `capture` has had this spec
+    /// since the gate was built; `update_fact` had the code and no spec, so
+    /// deleting the check from its path left the whole suite green — and the
+    /// hole would have been exactly the interesting one: an edge realized after
+    /// the fact is the day-to-day way edges get drawn.
+    pub async fn update_fact_requires_an_existing_edge_object<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-late-edge");
+        let captured = capture(
+            store,
+            NewFact::about(subject.clone(), "was somewhere that week", date(2026, 7, 1)),
+        )
+        .await;
+
+        let stranger = EntityId::new(EntityKind::Place, "contract-nowhere-in-particular");
+        let outcome = store
+            .update_fact(
+                &captured.address(),
+                FactPatch {
+                    edge: Some(Edge::new(EdgeShape::Location, stranger.clone())),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("the call itself succeeds; the guard answers in the result");
+        let Guarded::Blocked { attempted, candidates } = outcome else {
+            panic!("an edge object that names no entity must block the edit");
+        };
+        assert_eq!(attempted, stranger, "the guard names the handle it stopped");
+        assert!(candidates.is_empty(), "nothing resembles it: {candidates:?}");
+
+        assert_eq!(
+            read_back(store, &subject, &captured.id).await.edge,
+            None,
+            "a blocked edit must leave the fact exactly as it was"
+        );
+        assert!(
+            store
+                .list_entities(None)
+                .await
+                .expect("list")
+                .iter()
+                .all(|e| e.id != stranger),
+            "…and must not have provisioned the object either"
+        );
+
+        // Two deliberate steps, here as everywhere: add the entity, then write.
+        add(store, NewEntity::new(stranger.clone(), "Nowhere In Particular", "user-named")).await;
+        let landed = edit(
+            store,
+            &captured.address(),
+            FactPatch {
+                edge: Some(Edge::new(EdgeShape::Location, stranger.clone())),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(landed.edge.map(|e| e.object), Some(stranger));
+    }
+
     /// An entity write with a malformed field is refused outright — a name that
     /// could break out of its frontmatter line never reaches the store.
     pub async fn malformed_entity_fields_are_rejected<M: Memory>(store: &M) {
@@ -1646,6 +1705,7 @@ pub mod contract {
         add_entity_reports_a_near_miss_then_accepts_create_new(store).await;
         capture_requires_an_existing_subject(store).await;
         capture_requires_an_existing_edge_object(store).await;
+        update_fact_requires_an_existing_edge_object(store).await;
         malformed_entity_fields_are_rejected(store).await;
     }
 }
