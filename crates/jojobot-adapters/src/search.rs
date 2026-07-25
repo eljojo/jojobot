@@ -179,6 +179,38 @@ impl FullTextIndex {
         Ok(())
     }
 
+    /// Drop everything indexed under `entity`'s document — the doc is gone from
+    /// the store, so its hits must go with it.
+    ///
+    /// **Eviction keys on the store's doc id**, looked up in the entity mirror,
+    /// because that is what the postings were written under. Deleting by the
+    /// handle instead matched nothing in the real store, where a doc id is an
+    /// Outline UUID: the page was deleted in the wiki and every hit it ever had
+    /// went on being served from the last scan, indefinitely.
+    pub fn forget(&self, entity: &EntityId) -> Result<(), MemoryError> {
+        let doc_id = self
+            .entities
+            .read()
+            .expect("entity mirror poisoned")
+            .iter()
+            .find(|(e, _)| &e.id == entity)
+            .map(|(_, doc_id)| doc_id.clone());
+        // Nothing indexed under it: a doc that was never scanned leaves no ghost.
+        let Some(doc_id) = doc_id else { return Ok(()) };
+
+        let mut writer = self.writer.write().expect("index writer poisoned");
+        writer.delete_term(Term::from_field_text(self.fields.doc_id, &doc_id));
+        writer.commit().map_err(store_err)?;
+        drop(writer);
+
+        self.entities
+            .write()
+            .expect("entity mirror poisoned")
+            .retain(|(_, id)| id != &doc_id);
+        self.reader.reload().map_err(store_err)?;
+        Ok(())
+    }
+
     /// Every tantivy document one scanned doc produces: the entity it is, each
     /// fact in its table, and its prose — three classes, one index.
     fn write_doc(&self, writer: &IndexWriter, scan: &DocScan) -> Result<(), MemoryError> {
@@ -595,17 +627,13 @@ impl IndexedMemory {
     }
 
     /// Re-index one entity's doc by **re-reading it from the store**. A doc that
-    /// has vanished is dropped from the index rather than left as a ghost.
+    /// has vanished is dropped from the index rather than left as a ghost — by
+    /// the id its postings were stored under, which is the store's, not the
+    /// handle (see [`FullTextIndex::forget`]).
     async fn reindex(&self, entity: &EntityId) -> Result<(), MemoryError> {
         match self.inner.scan_entity(entity).await? {
             Some(scan) => self.index.ingest_doc(&scan),
-            None => self.index.ingest_doc(&DocScan {
-                doc_id: entity.to_string(),
-                title: String::new(),
-                prose: String::new(),
-                entity: None,
-                facts: Vec::new(),
-            }),
+            None => self.index.forget(entity),
         }
     }
 }
@@ -1069,6 +1097,108 @@ mod tests {
         assert_eq!(
             store.search(&SearchQuery::text("before")).expect("search ok").len(),
             1
+        );
+    }
+
+    /// A store whose doc ids are **not** entity handles — the real store's
+    /// shape, where Outline mints a UUID per page — and able to make its one doc
+    /// vanish, the way a human deleting the page in the wiki does. The fake
+    /// keys facts by handle, so the gap between the two ids only shows up here.
+    struct Vanishing {
+        present: std::sync::atomic::AtomicBool,
+    }
+
+    impl Vanishing {
+        /// Deliberately nothing like the handle: the bug was deleting by one and
+        /// having stored under the other.
+        const DOC_ID: &'static str = "outline-uuid-7f3a";
+
+        fn new() -> Self {
+            Vanishing { present: std::sync::atomic::AtomicBool::new(true) }
+        }
+
+        fn vanish(&self) {
+            self.present.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl Memory for Vanishing {
+        async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
+            if !self.present.load(std::sync::atomic::Ordering::SeqCst) {
+                return Ok(Vec::new());
+            }
+            Ok(vec![DocScan {
+                doc_id: Self::DOC_ID.into(),
+                title: "Alpha".into(),
+                prose: "Alpha is allergic to penicillin.".into(),
+                entity: Some(entity("person:alpha", "Alpha")),
+                facts: vec![fact("person:alpha", "f1", "keeps a ferret", date(2026, 1, 1))],
+            }])
+        }
+
+        async fn add_entity(&self, _: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+            unimplemented!("this double only scans")
+        }
+        async fn list_entities(&self, _: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
+            unimplemented!("this double only scans")
+        }
+        async fn update_entity(
+            &self,
+            _: &EntityId,
+            _: EntityPatch,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            unimplemented!("this double only scans")
+        }
+        async fn capture(&self, _: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+            unimplemented!("this double only scans")
+        }
+        async fn recall(&self, _: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+            unimplemented!("this double only scans")
+        }
+        async fn update_fact(
+            &self,
+            _: &FactAddress,
+            _: FactPatch,
+        ) -> Result<Guarded<Fact>, MemoryError> {
+            unimplemented!("this double only scans")
+        }
+    }
+
+    /// **A vanished doc leaves no ghost.** Eviction has to key on the id the
+    /// postings were written under — the store's doc id — not the entity handle.
+    /// It keyed on the handle, so in the real store (where a doc id is an Outline
+    /// UUID) the delete matched nothing: the page was gone from the wiki and every
+    /// one of its hits was still being served, forever, from the last scan.
+    #[tokio::test]
+    async fn reindexing_a_vanished_doc_evicts_every_hit_it_had() {
+        let inner = Arc::new(Vanishing::new());
+        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        store.rebuild().await.expect("rebuild");
+
+        let alpha = EntityId::person("alpha");
+        assert_eq!(store.search(&SearchQuery::text("ferret")).expect("search ok").len(), 1);
+        assert_eq!(store.search(&SearchQuery::text("penicillin")).expect("search ok").len(), 1);
+        assert!(
+            store
+                .search(&SearchQuery::text("person:alpha"))
+                .expect("search ok")
+                .iter()
+                .any(|h| matches!(h, Hit::Entity { .. }))
+        );
+
+        inner.vanish();
+        store.reindex(&alpha).await.expect("reindex ok");
+
+        for gone in ["ferret", "penicillin"] {
+            assert!(
+                store.search(&SearchQuery::text(gone)).expect("search ok").is_empty(),
+                "{gone:?} must be gone from the index with its doc"
+            );
+        }
+        assert!(
+            store.search(&SearchQuery::text("person:alpha")).expect("search ok").is_empty(),
+            "…and so must the entity, pin and all"
         );
     }
 
