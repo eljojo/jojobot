@@ -49,13 +49,6 @@ pub struct EdgeFilter {
     pub object: EntityId,
 }
 
-impl EdgeFilter {
-    /// Does `edge` satisfy this filter?
-    pub fn matches(&self, edge: &Edge) -> bool {
-        edge.object == self.object && self.shape.is_none_or(|s| s == edge.shape)
-    }
-}
-
 /// The default number of results — raisable by the caller. There is **no
 /// pagination and no cursor**: a second page is a better query.
 pub const DEFAULT_LIMIT: usize = 20;
@@ -315,28 +308,4 @@ mod tests {
         assert!(matches!(query.validate(), Err(MemoryError::InvalidQuery(_))));
     }
 
-    /// An edge filter with no shape matches any edge pointing at the object —
-    /// "what's connected to X".
-    #[test]
-    fn an_edge_filter_without_a_shape_matches_any_shape() {
-        let object = EntityId("event:winter-fest".into());
-        let any = EdgeFilter { shape: None, object: object.clone() };
-        for shape in EdgeShape::ALL {
-            assert!(any.matches(&Edge::new(shape, object.clone())), "{shape} must match");
-        }
-        assert!(
-            !any.matches(&Edge::new(EdgeShape::About, EntityId("topic:widgets".into()))),
-            "a different object must not match"
-        );
-
-        let only_attendance = EdgeFilter {
-            shape: Some(EdgeShape::Attendance),
-            object: object.clone(),
-        };
-        assert!(only_attendance.matches(&Edge::new(EdgeShape::Attendance, object.clone())));
-        assert!(
-            !only_attendance.matches(&Edge::new(EdgeShape::About, object)),
-            "a shape filter must exclude the other shapes"
-        );
-    }
 }
