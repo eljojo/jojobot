@@ -51,14 +51,15 @@ const BOARD_PAGE: u64 = 250;
 /// adopts something it created itself.
 const OWNER_TAG: &str = "[jojobot:owned]";
 
-/// The prefix on every mailbox label's title.
+/// The separator between a mailbox label's namespace and the mailbox's name.
 ///
-/// **Vikunja labels are global, not per-project**, so a mailbox label shares one
-/// namespace with every facet the operator uses on their own boards. Without a
-/// prefix a mailbox named for an ordinary word would collide with one of theirs
-/// in the UI and in every label list. The prefix is presentation only: the
-/// mailbox's name is what follows it.
-const LABEL_PREFIX: &str = "jojobot-mailbox/";
+/// **Vikunja labels are global, not per-project.** A mailbox label therefore
+/// shares one namespace with every facet the operator keeps on their own boards
+/// — and with every other jojobot store pointed at the same Vikunja. So a label
+/// is titled `<project>/<mailbox>`: the project half keeps jojobot's labels out
+/// of the operator's namespace, *and* keeps a throwaway store's boxes out of the
+/// real one's. It is presentation only; the mailbox's name is what follows it.
+const LABEL_SEPARATOR: char = '/';
 
 // --- secret -----------------------------------------------------------------
 
@@ -189,6 +190,12 @@ impl VikunjaStore {
         format!("Managed by jojobot — do not edit by hand. {OWNER_TAG}")
     }
 
+    /// The namespace every mailbox label of *this* store's project is titled
+    /// under. See [`LABEL_SEPARATOR`] for why a global label namespace needs one.
+    fn label_prefix(&self) -> String {
+        format!("{}{LABEL_SEPARATOR}", self.project)
+    }
+
     /// Every project that is both named ours AND carries the ownership tag —
     /// paged in full.
     async fn owned_projects(&self) -> Result<Vec<ProjectRec>, MailboxError> {
@@ -280,13 +287,14 @@ impl VikunjaStore {
     /// namespace disjoint from the operator's own facets, and the owner tag is
     /// what proves jojobot created it.
     async fn mailbox_labels(&self) -> Result<Vec<(MailboxName, u64)>, MailboxError> {
+        let prefix = self.label_prefix();
         let mut owned: Vec<LabelRec> = Vec::new();
         let mut page = 1;
         loop {
             let batch = self.api.list_labels(page, PAGE).await?;
             let count = batch.len() as u64;
             owned.extend(batch.into_iter().filter(|l| {
-                l.title.starts_with(LABEL_PREFIX) && l.description.contains(OWNER_TAG)
+                l.title.starts_with(&prefix) && l.description.contains(OWNER_TAG)
             }));
             if count < PAGE {
                 break;
@@ -300,7 +308,7 @@ impl VikunjaStore {
         Ok(owned
             .into_iter()
             .filter_map(|l| {
-                let name = MailboxName(l.title.strip_prefix(LABEL_PREFIX)?.to_string());
+                let name = MailboxName(l.title.strip_prefix(&prefix)?.to_string());
                 seen.insert(name.clone()).then_some((name, l.id))
             })
             .collect())
@@ -347,6 +355,7 @@ impl VikunjaStore {
     /// counts it as mail. A card whose label is not a mailbox label is skipped
     /// for the same reason.
     async fn messages(&self, scope: &Scope) -> Result<Vec<(TaskRec, Message)>, MailboxError> {
+        let prefix = self.label_prefix();
         let mut found = Vec::new();
         for bucket in self.board(scope).await? {
             let Some(state) = MessageState::from_token(&bucket.title) else {
@@ -361,7 +370,7 @@ impl VikunjaStore {
                 let Some(mailbox) = task
                     .labels
                     .iter()
-                    .find_map(|l| l.strip_prefix(LABEL_PREFIX))
+                    .find_map(|l| l.strip_prefix(&prefix))
                     .map(|n| MailboxName(n.to_string()))
                 else {
                     continue;
@@ -487,7 +496,7 @@ impl Mailboxes for VikunjaStore {
 
         self.api
             .create_label(
-                &format!("{LABEL_PREFIX}{name}"),
+                &format!("{}{name}", self.label_prefix()),
                 &self.owner_description(),
             )
             .await?;
@@ -1510,5 +1519,27 @@ mod tests {
             ),
             "…and the card is untouched"
         );
+    }
+
+    /// **Mailbox labels are namespaced by the project that owns them.** Vikunja
+    /// labels are global, so without this a throwaway store — the gated
+    /// integration test's, say — would see, screen against, and be blocked by
+    /// the boxes of the real one running beside it.
+    #[tokio::test]
+    async fn two_stores_on_different_projects_do_not_see_each_others_boxes() {
+        let fake = FakeVikunja::new();
+        let mine = VikunjaStore::from_api(fake.clone(), "jojobot-mailboxes-a");
+        let theirs = VikunjaStore::from_api(fake.clone(), "jojobot-mailboxes-b");
+
+        contract::create(&mine, "inbox").await;
+
+        assert!(
+            theirs.list_mailboxes().await.expect("list ok").is_empty(),
+            "another project's boxes are not this one's"
+        );
+        // …and the name is therefore free here, rather than blocked as taken.
+        contract::create(&theirs, "inbox").await;
+        assert_eq!(mine.list_mailboxes().await.expect("list ok").len(), 1);
+        assert_eq!(theirs.list_mailboxes().await.expect("list ok").len(), 1);
     }
 }
