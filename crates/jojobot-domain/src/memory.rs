@@ -862,9 +862,11 @@ pub enum MemoryError {
     /// [`SearchQuery::validate`](search::SearchQuery::validate)).
     #[error("invalid query: {0}")]
     InvalidQuery(String),
-    /// The addressed fact doesn't exist. Never auto-created, never guessed at —
-    /// the nearest live addresses come back so the caller can retarget.
-    #[error("no fact at '{attempted}'; addresses here: {}", nearest.join(", "))]
+    /// The addressed fact doesn't exist, in an entity that does. Never
+    /// auto-created, never guessed at — the live addresses come back so the
+    /// caller can retarget. An address that misses on its *handle* is
+    /// [`MemoryError::UnknownEntity`] instead: different mistake, different fix.
+    #[error("no fact at '{attempted}'{}", live_addresses(nearest))]
     UnknownFact {
         /// The address that missed.
         attempted: String,
@@ -892,6 +894,16 @@ pub enum MemoryError {
     /// Outline; until it's wired, the memory verbs refuse rather than lie.
     #[error("memory store not configured: {0}")]
     NotConfigured(String),
+}
+
+/// Render the addresses that do exist. An entity that simply holds nothing says
+/// so — trailing off into an empty list ("addresses here: ") named nothing,
+/// pointed at nothing, and read like a bug in the server rather than an answer.
+fn live_addresses(nearest: &[String]) -> String {
+    if nearest.is_empty() {
+        return "; that entity has no facts yet".to_string();
+    }
+    format!("; addresses here: {}", nearest.join(", "))
 }
 
 /// Render the guard's nearby candidates for an error message.

@@ -181,6 +181,16 @@ impl Memory for InMemoryMemory {
                 });
             }
         }
+        // A miss on the HANDLE is an entity miss, with the near candidates that
+        // explain it — not a fact miss trailing an empty address list.
+        let index = self.index();
+        if !index.iter().any(|e| e.id == address.home) {
+            return Err(MemoryError::UnknownEntity {
+                attempted: address.home.to_string(),
+                nearest: guard::screen(&address.home, None, &index),
+            });
+        }
+
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
         let nearest: Vec<String> = facts
             .iter()
@@ -899,6 +909,62 @@ pub mod contract {
         assert_eq!(facts[0].content, "the only row here");
     }
 
+    /// **An address that misses on its HANDLE is an entity miss, not a fact
+    /// miss.** It came back as "no fact at 'person:zenit#f1'; addresses here:"
+    /// — a dangling empty list that named nothing and pointed at nothing, while
+    /// the actual mistake was one field to the left. The two misses have
+    /// different causes and different fixes, so they say different things: an
+    /// unknown handle answers with near misses, exactly as `update_entity`
+    /// does, and a known entity that simply holds no rows says so plainly.
+    pub async fn update_fact_tells_an_unknown_handle_from_an_empty_entity<M: Memory>(store: &M) {
+        let known = EntityId::person("contract-addressee");
+        add(store, NewEntity::new(known.clone(), "Addressee", "user-named")).await;
+
+        let nudge = || FactPatch { content: Some("nope".into()), ..Default::default() };
+
+        let typo = EntityId::person("contract-addresse");
+        let err = store
+            .update_fact(&FactAddress::new(typo, FactId("f1".into())), nudge())
+            .await
+            .expect_err("an address on an unknown handle must error");
+        let MemoryError::UnknownEntity { nearest, .. } = &err else {
+            panic!("a handle that names no entity is an entity miss, got {err:?}");
+        };
+        assert!(
+            nearest.iter().any(|m| m.handle == known),
+            "…and it names the near miss the caller probably meant: {nearest:?}"
+        );
+
+        // The entity is real; it just has nothing in it yet.
+        let err = store
+            .update_fact(&FactAddress::new(known.clone(), FactId("f1".into())), nudge())
+            .await
+            .expect_err("an address on an entity with no facts must error");
+        let MemoryError::UnknownFact { nearest, .. } = &err else {
+            panic!("a real entity with no rows is a fact miss, got {err:?}");
+        };
+        assert!(nearest.is_empty(), "there are no addresses to list: {nearest:?}");
+        assert!(
+            !err.to_string().trim_end().ends_with(':'),
+            "the message must not trail off into an empty list: {err}"
+        );
+
+        // …and once it holds one, the miss lists what does exist.
+        let real = capture(
+            store,
+            NewFact::about(known.clone(), "the only row here", date(2026, 7, 1)),
+        )
+        .await;
+        let err = store
+            .update_fact(&FactAddress::new(known, FactId("f999".into())), nudge())
+            .await
+            .expect_err("an unknown row must still error");
+        let MemoryError::UnknownFact { nearest, .. } = &err else {
+            panic!("expected UnknownFact, got {err:?}");
+        };
+        assert!(nearest.contains(&real.address().to_string()), "got {nearest:?}");
+    }
+
     // --- structured edges at capture -----------------------------------------
 
     /// An edge is written atomically with its fact and comes back on the read
@@ -1570,6 +1636,7 @@ pub mod contract {
         promotion_to_testimony_needs_confirmation(store).await;
         demotion_to_inference_is_free(store).await;
         update_fact_unknown_address_never_creates(store).await;
+        update_fact_tells_an_unknown_handle_from_an_empty_entity(store).await;
 
         add_entity_blocks_an_existing_handle(store).await;
         add_entity_reports_a_near_miss_then_accepts_create_new(store).await;

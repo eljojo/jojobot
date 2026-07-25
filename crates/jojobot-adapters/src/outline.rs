@@ -513,8 +513,14 @@ impl Memory for OutlineStore {
             attempted: address.to_string(),
             nearest,
         };
+        // A miss on the HANDLE is an entity miss, with the near candidates that
+        // explain it — not a fact miss trailing an empty address list.
         let Some(doc) = self.entity_doc(&collection_id, &address.home).await? else {
-            return Err(unknown(Vec::new()));
+            let index = self.entity_index(&collection_id).await?;
+            return Err(MemoryError::UnknownEntity {
+                attempted: address.home.to_string(),
+                nearest: guard::screen(&address.home, None, &index),
+            });
         };
         let facts = parse_facts_table(&doc.text);
         let Some(mut fact) = facts.iter().find(|f| f.id == address.local).cloned() else {
