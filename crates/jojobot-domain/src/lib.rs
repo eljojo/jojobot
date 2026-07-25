@@ -10,6 +10,7 @@
 //! TODO: skeleton — only the Memory `Provenance` seed type exists so far.
 
 pub mod memory;
+pub mod mailbox;
 pub mod attention;
 pub mod session;
 pub mod life;
