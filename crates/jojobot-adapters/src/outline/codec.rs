@@ -26,7 +26,8 @@ pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | 
 /// riding a trailing `❓` on the content cell) is six cells wide, and so is the
 /// pre-`details` row that replaced it (`id | subject | content | provenance |
 /// status | date`) — with a different meaning in every column after `content`.
-/// **Which cell holds a date** is what separates them.
+/// **Which cell holds a date** is what separates them — and only when exactly
+/// one of the two candidates parses as one. Both, or neither, is no evidence.
 struct Layout {
     /// Absent before the `details` column existed.
     details: Option<usize>,
@@ -41,19 +42,27 @@ struct Layout {
 /// The layout of a row, or `None` if it is not a fact row at all.
 ///
 /// The six-cell ambiguity is resolved by looking for the date: whichever of the
-/// two candidate cells parses as one names the layout. A row where neither does
-/// is unreadable under both, so it is no row — the same verdict either way.
+/// two candidate cells parses as one names the layout — but only when **exactly
+/// one** of them does. Both parsing is no more evidence than neither parsing, so
+/// the verdict is the same in both directions: it is no row.
+///
+/// The alternative was first-match-wins, which answers regardless and hands back
+/// a row carrying a plausible **wrong** date — the pre-`details` reading of a
+/// row that may well have been slice-1. A dropped row is visible in a count; a
+/// wrong date reads like a fact, and nobody goes back to check it. The id stays
+/// reserved either way ([`row_id`] is deliberately wider than this), so an
+/// unread row is inert rather than destroyed.
 fn layout_of(cells: &[String]) -> Option<Layout> {
     let is_date = |i: usize| cells.get(i).is_some_and(|c| c.trim().parse::<Date>().is_ok());
     match cells.len() {
         8 => Some(Layout { details: Some(3), provenance: Some(4), status: 5, date: 6, edges: Some(7) }),
         7 => Some(Layout { details: Some(3), provenance: Some(4), status: 5, date: 6, edges: None }),
         // Pre-`details`: … | provenance | status | date
-        6 if is_date(5) => {
+        6 if is_date(5) && !is_date(4) => {
             Some(Layout { details: None, provenance: Some(3), status: 4, date: 5, edges: None })
         }
         // Slice 1: … | status | date | edges
-        6 if is_date(4) => {
+        6 if is_date(4) && !is_date(5) => {
             Some(Layout { details: None, provenance: None, status: 3, date: 4, edges: Some(5) })
         }
         _ => None,
@@ -805,6 +814,42 @@ mod tests {
         assert_eq!(no_details.provenance, Provenance::Testimony);
         assert_eq!(no_details.status, FactStatus::Active);
         assert_eq!(no_details.date, date(2026, 7, 1));
+    }
+
+    /// **A six-cell row whose date is ambiguous is no row at all.**
+    ///
+    /// Which cell holds the date is the only thing separating the slice-1 layout
+    /// from the pre-`details` one. When *both* candidates parse as dates that
+    /// evidence says nothing — and first-match-wins would answer anyway, picking
+    /// the pre-`details` reading and handing back a row with a plausible, wrong
+    /// date. A silently wrong date is worse than a missing row: nobody goes
+    /// looking for it. So both-parse is refused exactly as neither-parse is, and
+    /// the id stays reserved either way (`row_id` is deliberately wider than the
+    /// reader), which is what keeps the row inert rather than destroyed.
+    #[test]
+    fn a_six_cell_row_whose_date_is_ambiguous_is_refused_like_one_with_no_date() {
+        let home = EntityId::person("alpha");
+
+        // Both cell 4 and cell 5 parse: slice 1 would read 2026-01-01 and call
+        // the rest an edges cell; the pre-details shape would read 2026-02-02.
+        let two_dates = "| f1 | person:alpha | moved house | active | 2026-01-01 | 2026-02-02 |";
+        assert_eq!(
+            parse_fact_row(two_dates, &home),
+            None,
+            "two candidate dates is no evidence, and a guess here is a wrong date nobody checks"
+        );
+
+        // Neither parses: unreadable under both layouts, the same verdict.
+        let no_date = "| f1 | person:alpha | moved house | active | someday | later |";
+        assert_eq!(parse_fact_row(no_date, &home), None);
+
+        // Both are still rows for the purpose of minting: an id on the page is
+        // taken, readable or not, or the next capture hands it out twice.
+        for row in [two_dates, no_date] {
+            let doc = with_fact_appended(&seeded_doc(&alpha()), row);
+            assert!(parse_facts_table(&doc).is_empty(), "no reader sees it: {row}");
+            assert_eq!(next_fact_id(&doc), FactId("f2".into()), "…and its id is spent: {row}");
+        }
     }
 
     /// A whole slice-1 page reads, keeps its ids reserved, and gains the current
