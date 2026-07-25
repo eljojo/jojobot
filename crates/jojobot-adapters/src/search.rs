@@ -1252,6 +1252,61 @@ mod tests {
         );
     }
 
+    /// **A rename changes every hit that names the entity** — not only the hits
+    /// whose own doc was re-indexed since.
+    ///
+    /// This is the claim that justifies resolving on the way OUT rather than
+    /// freezing a name into the stored payload, and it is only testable where a
+    /// row lives somewhere other than its subject's page: renaming an entity
+    /// re-indexes that entity's doc alone, so a fact homed elsewhere is never
+    /// re-read. If the name were stored at ingest, that hit would go on
+    /// answering with the old one until something unrelated touched its page.
+    #[tokio::test]
+    async fn a_rename_reaches_a_hit_whose_own_doc_was_never_reindexed() {
+        let renamed = entity("person:milhouse", "Milhouse Van Houten");
+        let guest = Fact {
+            subject: renamed.id.clone(),
+            ..fact("person:alpha", "f1", "brought the sourdough", date(2026, 1, 1))
+        };
+        let store = IndexedMemory::new(Scanned::new(vec![
+            scan("doc-alpha", Some(entity("person:alpha", "Alpha")), "", vec![guest]),
+            scan("doc-milhouse", Some(renamed.clone()), "", Vec::new()),
+        ]))
+        .expect("index opens");
+        store.rebuild().await.expect("rebuild");
+
+        // Asked for by the fact's own CONTENT: a row about someone else, sitting
+        // on this page, is deliberately not indexed under their labels, so
+        // querying the name would fail for an unrelated reason.
+        let named = |store: &IndexedMemory| -> Option<String> {
+            store
+                .search(&SearchQuery::text("sourdough"))
+                .expect("search ok")
+                .iter()
+                .find_map(|h| match h {
+                    Hit::Fact { subject, .. } if subject.id == renamed.id => subject.name.clone(),
+                    _ => None,
+                })
+        };
+        assert_eq!(named(&store).as_deref(), Some("Milhouse Van Houten"));
+
+        store
+            .update_entity(
+                &renamed.id,
+                EntityPatch { name: Some("Thrillhouse".into()), ..Default::default() },
+            )
+            .await
+            .expect("rename ok")
+            .written()
+            .expect("this double does not guard");
+
+        assert_eq!(
+            named(&store).as_deref(),
+            Some("Thrillhouse"),
+            "the row on the OTHER doc still names them, and must name them correctly"
+        );
+    }
+
     /// A `kind:slug` handle is an ordinary query, not query syntax. tantivy's own
     /// parser reads `person:` as a field name and errors — which would make the
     /// most natural query in this system a hard failure.
@@ -1521,12 +1576,23 @@ mod tests {
         async fn list_entities(&self, _: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
             unimplemented!("this double only scans")
         }
+        /// Rename the entity on the page that declares it. **No guard**, for the
+        /// same reason `capture` has none: what is under test is what the
+        /// decorator does after a write lands, not whether the write was allowed.
         async fn update_entity(
             &self,
-            _: &EntityId,
-            _: EntityPatch,
+            handle: &EntityId,
+            patch: EntityPatch,
         ) -> Result<Guarded<Entity>, MemoryError> {
-            unimplemented!("this double only scans")
+            let mut docs = self.docs.write().expect("docs poisoned");
+            let doc = docs
+                .iter_mut()
+                .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == handle))
+                .ok_or_else(|| MemoryError::Store("this double edits pages it holds".into()))?;
+            let entity = doc.entity.as_mut().expect("found by its entity");
+            jojobot_domain::memory::apply_entity_patch(entity, &patch)?;
+            doc.title = entity.name.clone();
+            Ok(Guarded::Written(entity.clone()))
         }
         async fn recall(&self, _: &EntityId) -> Result<Vec<Fact>, MemoryError> {
             unimplemented!("this double only scans")
