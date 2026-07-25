@@ -64,6 +64,33 @@ pub fn orphan_subjects(doc: &DocScan, known: &HashSet<EntityId>) -> Vec<EntityId
         .collect()
 }
 
+/// The subjects in `doc`'s table that name **a different entity that exists** —
+/// the doc's declared id and its own rows disagreeing, deduped and in first-seen
+/// order.
+///
+/// This is the split-brain tell in its commoner disguise. [`orphan_subjects`]
+/// only fires when a subject names *nothing*; a hand edit that retypes the cell
+/// into another live handle leaves every read working — the row answers to one
+/// id and lives under another, and the entity ends up readable under one and
+/// writable under the other. Unlike an orphan, this **can be perfectly
+/// legitimate**: a fact about one entity is often written on another's page. So
+/// it is a signal, not a fault — counted, said out loud, and nothing more.
+///
+/// A doc that declares no entity has no id for its rows to disagree with.
+pub fn foreign_subjects(doc: &DocScan, known: &HashSet<EntityId>) -> Vec<EntityId> {
+    let Some(home) = doc.entity.as_ref().map(|e| &e.id) else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    doc.facts
+        .iter()
+        .map(|f| &f.subject)
+        .filter(|s| *s != home && known.contains(*s))
+        .filter(|s| seen.insert((*s).clone()))
+        .cloned()
+        .collect()
+}
+
 /// Every entity a scan declares — the set [`orphan_subjects`] checks against.
 pub fn known_entities(scan: &[DocScan]) -> HashSet<EntityId> {
     scan.iter()
@@ -389,6 +416,67 @@ mod tests {
             [EntityId::person("alpha")].into_iter().collect::<HashSet<_>>(),
             "a scan's known set is the entities its docs declare"
         );
+    }
+
+    /// The **other** half of the split-brain tell, and the one the Cosme incident
+    /// actually wore: a row whose subject names a real entity that is not the doc
+    /// it sits in. A hand edit retyped the subject cell into another live handle,
+    /// so nothing was orphaned — the row simply answered to one id and lived under
+    /// another, and the orphan counter (which only fires on a subject naming
+    /// *nothing*) had nothing to say about it.
+    #[test]
+    fn a_subject_naming_another_existing_entity_is_counted_apart_from_an_orphan() {
+        use crate::memory::{Boot, FactId};
+        use jiff::civil::date;
+
+        let entity = |id: &str| Entity {
+            id: EntityId(id.into()),
+            kind: EntityId(id.into()).kind().expect("test ids are well-formed"),
+            name: String::new(),
+            source: "test".into(),
+            crm: None,
+            boot: Boot::OnDemand,
+        };
+        let row = |id: &str, subject: &str| Fact {
+            id: FactId(id.into()),
+            home: EntityId::person("alpha"),
+            subject: EntityId(subject.into()),
+            content: "a claim".into(),
+            details: None,
+            provenance: Provenance::Inference,
+            status: FactStatus::Active,
+            date: date(2026, 7, 1),
+            edge: None,
+        };
+        let doc = DocScan {
+            doc_id: "doc-1".into(),
+            title: "Alpha".into(),
+            prose: String::new(),
+            entity: Some(entity("person:alpha")),
+            facts: vec![
+                row("f1", "person:alpha"),  // its own entity
+                row("f2", "person:beta"),   // a different entity that exists
+                row("f3", "person:beta"),   // …twice, reported once
+                row("f4", "person:alphaa"), // names nothing: an orphan, not this
+            ],
+        };
+        let known: HashSet<EntityId> =
+            [EntityId::person("alpha"), EntityId::person("beta")].into_iter().collect();
+
+        assert_eq!(
+            foreign_subjects(&doc, &known),
+            vec![EntityId::person("beta")],
+            "only the subject naming another live entity, and only once"
+        );
+        assert_eq!(
+            orphan_subjects(&doc, &known),
+            vec![EntityId::person("alphaa")],
+            "the two counters must not swallow each other's case"
+        );
+
+        // A doc that declares no entity has no id to disagree with.
+        let loose = DocScan { entity: None, ..doc };
+        assert!(foreign_subjects(&loose, &known).is_empty());
     }
 
     #[test]

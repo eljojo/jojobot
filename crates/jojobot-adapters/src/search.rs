@@ -633,6 +633,40 @@ fn report_orphans(doc: &DocScan, known: &std::collections::HashSet<EntityId>) {
     );
 }
 
+/// Say out loud that a doc's declared id and its own rows' subjects disagree —
+/// the consistency check [`report_orphans`] cannot make, because these subjects
+/// name entities that **exist**.
+///
+/// This is the shape the split brain actually arrived in: a retyped subject cell
+/// landing on another live handle, so nothing was orphaned, every read went on
+/// working, and the entity ended up readable under one id and writable under the
+/// other. It is also, routinely, nothing at all — a fact about one entity written
+/// on another's page is ordinary. Hence a count and a line, never a verdict.
+fn report_foreign_subjects(doc: &DocScan, known: &std::collections::HashSet<EntityId>) {
+    let foreign = search::foreign_subjects(doc, known);
+    if foreign.is_empty() {
+        return;
+    }
+    let subjects: Vec<&str> = foreign.iter().map(EntityId::as_str).collect();
+    tracing::warn!(
+        doc = %doc.doc_id,
+        entity = %doc.entity.as_ref().map_or("-", |e| e.id.as_str()),
+        count = foreign.len(),
+        subjects = ?subjects,
+        "fact rows in this doc are about a different entity that exists; often legitimate, but \
+         a doc whose declared id disagrees with its own rows is how one entity becomes readable \
+         under one handle and writable under another"
+    );
+}
+
+/// Everything a scan of one doc has to say about its own consistency. One call
+/// site for both counters, so a new scan path cannot pick up one and forget the
+/// other.
+fn report_consistency(doc: &DocScan, known: &std::collections::HashSet<EntityId>) {
+    report_orphans(doc, known);
+    report_foreign_subjects(doc, known);
+}
+
 /// A [`Memory`] with a live search projection behind it.
 ///
 /// Every verb delegates to the store, and every **successful** write re-scans the
@@ -662,7 +696,7 @@ impl IndexedMemory {
         self.index.ingest_all(&scan)?;
         let known = search::known_entities(&scan);
         for doc in &scan {
-            report_orphans(doc, &known);
+            report_consistency(doc, &known);
         }
         Ok(scan.len())
     }
@@ -680,7 +714,7 @@ impl IndexedMemory {
         match self.inner.scan_entity(entity).await? {
             Some(scan) => {
                 self.index.ingest_doc(&scan)?;
-                report_orphans(&scan, &self.index.known_entities());
+                report_consistency(&scan, &self.index.known_entities());
                 Ok(())
             }
             None => self.index.forget(entity),
@@ -1353,6 +1387,51 @@ mod tests {
             store.search(&SearchQuery::text("chess")).expect("search ok").len(),
             1,
             "a counted row is still indexed and still findable"
+        );
+    }
+
+    /// **A row about another live entity is counted too** — the consistency check
+    /// the orphan counter cannot make. The Cosme incident wore exactly this
+    /// shape: a hand edit retyped a subject cell into a handle that *exists*, so
+    /// nothing was orphaned and every read went on working, while the entity
+    /// quietly became readable under one id and writable under another.
+    ///
+    /// Legitimate as often as not — a fact about one entity is frequently
+    /// written on another's page — so this is a signal, never a fault: counted,
+    /// logged with its doc, and the row left exactly where it is.
+    #[tokio::test]
+    async fn a_scan_counts_and_logs_a_row_about_another_entity() {
+        let logged = log_sink();
+        const DOC: &str = "outline-uuid-c05m3";
+
+        let elsewhere = Fact {
+            subject: EntityId::person("beta"),
+            ..fact("person:alpha", "f1", "took the ferry", date(2026, 1, 1))
+        };
+        let store = IndexedMemory::new(Scanned::new(vec![
+            scan(
+                DOC,
+                Some(entity("person:alpha", "Alpha")),
+                "",
+                vec![elsewhere, fact("person:alpha", "f2", "took the bus", date(2026, 1, 2))],
+            ),
+            scan("outline-uuid-beta", Some(entity("person:beta", "Beta")), "", Vec::new()),
+        ]))
+        .expect("index opens");
+        store.rebuild().await.expect("rebuild");
+
+        let text = logged.text();
+        assert!(text.contains(DOC), "the log must say which doc: {text}");
+        assert!(text.contains("person:beta"), "…and which subject: {text}");
+        assert!(
+            text.contains("count=1"),
+            "…and how many — the doc's own subject is not one of them: {text}"
+        );
+
+        // Counted is not quarantined: the row is still indexed and still found.
+        assert_eq!(
+            store.search(&SearchQuery::text("ferry")).expect("search ok").len(),
+            1
         );
     }
 
