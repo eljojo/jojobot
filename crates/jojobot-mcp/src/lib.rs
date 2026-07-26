@@ -548,60 +548,96 @@ impl Jojobot {
         })))
     }
 
-    /// The live state of the box a bot owns — opening it if nobody has.
+    /// The live state of the box a bot owns — **reported, never opened.**
     ///
-    /// **This is the one place outside `create_mailbox` that mints a box**, and
-    /// it is sanctioned because the name is not typed mid-errand: it was
-    /// written on the bot's own record, deliberately, by whoever stood the bot
-    /// up. A bot booting pointed at a box that does not exist is an identity
-    /// that cannot receive mail and does not say so.
+    /// Booting used to mint a declared box that was missing. It doesn't now:
+    /// creation is an intentional act, and `create_mailbox` is both the only
+    /// mint and the only place the full name screen runs. A door that opened a
+    /// box on the side was a door that opened near-duplicates nobody was ever
+    /// shown — and there is no verb that deletes one.
+    ///
+    /// So a missing box is *said*, plainly, with the deliberate verb named. A
+    /// bot whose box nobody has opened still boots: it is an identity that
+    /// cannot receive mail yet, and the honest thing is to tell it so.
     async fn owned_mailbox(&self, name: &str) -> Result<serde_json::Value, McpError> {
         let name = MailboxName(name.trim().to_string());
-        let existing = self
-            .mailboxes
-            .list_mailboxes()
-            .await
-            .map_err(mailbox_error)?
-            .into_iter()
-            .find(|b| b.name == name);
-        if let Some(mailbox) = existing {
-            let mut body = mailbox_json(&mailbox);
-            if let Some(obj) = body.as_object_mut() {
-                obj.insert("provisioned".into(), false.into());
-            }
-            return Ok(body);
-        }
+        let boxes = self.mailboxes.list_mailboxes().await.map_err(mailbox_error)?;
 
-        // Minted under the declared name, so the similarity screen — which
-        // exists to stop a typo becoming a box — must not refuse a name the
-        // operator chose on purpose. An exact name it cannot override is a
-        // box that appeared since the listing: re-read rather than fail.
-        let opened = self
-            .mailboxes
-            .create_mailbox(&name, true)
-            .await
-            .map_err(mailbox_error)?;
-        let mailbox = match opened {
-            mailbox::Guarded::Written(mailbox) => mailbox,
-            mailbox::Guarded::Blocked { .. } => self
-                .mailboxes
-                .list_mailboxes()
-                .await
-                .map_err(mailbox_error)?
-                .into_iter()
-                .find(|b| b.name == name)
-                .ok_or_else(|| {
-                    McpError::internal_error(
-                        format!("mailbox {name} could neither be opened nor found"),
-                        None,
-                    )
-                })?,
+        let Some(mailbox) = boxes.into_iter().find(|b| b.name == name) else {
+            return Ok(serde_json::json!({
+                "name": name.as_str(),
+                "exists": false,
+                "counts": serde_json::Value::Null,
+                "how_to_proceed": format!(
+                    "This bot owns '{name}', but no such mailbox exists yet, so nothing can be \
+                     left for it and nothing is waiting. Booting does not open one — creating a \
+                     box is a deliberate act, because a near-duplicate box is a channel nobody \
+                     drains and there is no verb that removes one. Call create_mailbox '{name}' \
+                     if that is the box that was meant; if it looks like a typo of a box that \
+                     already exists, the claim on this bot is what needs correcting instead."
+                ),
+            }));
         };
         let mut body = mailbox_json(&mailbox);
         if let Some(obj) = body.as_object_mut() {
-            obj.insert("provisioned".into(), true.into());
+            obj.insert("exists".into(), true.into());
         }
         Ok(body)
+    }
+
+    /// Screen a mailbox claim against the boxes that exist, returning the
+    /// refusal when it is a near miss of one.
+    ///
+    /// **This is the only invariant on this surface that needs both worlds at
+    /// once**, and it is why it sits here rather than on a store's write path
+    /// with every other gate: Memory cannot see mailboxes, and Mailboxes is
+    /// deliberately ignorant of who might own one. The *decision* is still the
+    /// domain's pure function — this only fetches the two halves and puts them
+    /// together.
+    ///
+    /// A world that is down fails the write rather than waving it through: a
+    /// claim nobody could screen is exactly the near-duplicate this gate exists
+    /// to catch, and an entity is writable without one.
+    async fn screen_claim(
+        &self,
+        claimed: &str,
+        create_new: bool,
+    ) -> Result<Option<CallToolResult>, McpError> {
+        let name = MailboxName(claimed.trim().to_string());
+        let existing: Vec<MailboxName> = self
+            .mailboxes
+            .list_mailboxes()
+            .await
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!(
+                        "the claim on mailbox '{name}' could not be checked against the boxes \
+                         that exist, so it was not written ({e}). Retry, or write the entity \
+                         without a mailbox and claim it once the mailbox world is reachable."
+                    ),
+                    None,
+                )
+            })?
+            .into_iter()
+            .map(|b| b.name)
+            .collect();
+
+        let mailbox::guard::Decision::Block(candidates) =
+            mailbox::guard::decide_claim(&name, &existing, create_new)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(mailbox_blocked_body(
+            name.as_str(),
+            Some(&candidates),
+            format!(
+                "Nothing was written. '{name}' is a near miss of a mailbox that already exists, \
+                 and a claim on the wrong name is an identity whose mail arrives somewhere it \
+                 will never look. If one of the boxes above is the one meant, claim that name \
+                 instead. If this really is a separate box — a sibling like worker-2 beside \
+                 worker-1 — re-call with create_new: true, and open it with create_mailbox."
+            ),
+        )))
     }
 
     /// Create an entity of any kind. Screened by the write guard, so a handle
@@ -623,6 +659,15 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         let id = entity_id(&args.kind, &args.handle)?;
         let claimed = args.mailbox.clone();
+        // Screened before anything is written, so a blocked claim costs the
+        // entity too — the claim was part of what the caller asked for.
+        if let Some(name) = claimed.as_deref()
+            && let Some(refused) = self
+                .screen_claim(name, args.create_new.unwrap_or(false))
+                .await?
+        {
+            return Ok(refused);
+        }
         let new = NewEntity {
             id,
             name: args.name,
@@ -743,6 +788,15 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         let handle = EntityId::person(&args.handle);
         let claimed = args.mailbox.clone();
+        // A claim moved onto an entity later is screened exactly as one written
+        // at creation — otherwise the gate is a two-step walk around.
+        if let Some(name) = claimed.as_deref()
+            && let Some(refused) = self
+                .screen_claim(name, args.create_new.unwrap_or(false))
+                .await?
+        {
+            return Ok(refused);
+        }
         let patch = EntityPatch {
             name: args.name,
             aliases: args.aliases,
@@ -3754,38 +3808,156 @@ mod tests {
         let owned = &me["owned_mailbox"];
         assert_eq!(owned["name"], "otto-inbox");
         assert_eq!(owned["counts"]["new"], 1, "the state of its own box: {owned}");
-        assert_eq!(owned["provisioned"], false, "the box was already there");
+        assert_eq!(owned["exists"], true, "the box is there and says so");
     }
 
-    /// **The one sanctioned mint.** A bot whose declared box does not exist yet
-    /// would otherwise boot pointed at nothing — so this door opens it, by the
-    /// name the bot itself declares. Nothing else on this surface mints a box
-    /// outside `create_mailbox`, and the answer says plainly that it did.
+    /// **Booting creates nothing.** A bot whose declared box nobody has opened
+    /// yet still boots — with the box reported plainly as not there, and the
+    /// deliberate act named. Creation is an intentional act: `create_mailbox`
+    /// is the only mint, and it is the only thing that runs the full name
+    /// screen, so a door that minted on the side would be a door that minted
+    /// near-duplicates nobody was ever shown.
     #[tokio::test]
-    async fn boot_bot_opens_the_box_its_bot_declares_if_nobody_has() {
+    async fn boot_bot_reports_a_missing_box_and_opens_nothing() {
         let jojobot = handler();
         make_bot(&jojobot, "sigma", Some("sigma-inbox")).await;
 
         let body = boot(&jojobot, "sigma").await;
         let owned = &body["identity"]["owned_mailbox"];
         assert_eq!(owned["name"], "sigma-inbox");
-        assert_eq!(owned["counts"]["total"], 0);
-        assert_eq!(owned["provisioned"], true, "the answer says it was opened: {owned}");
-
-        // …and it is a real box afterwards, reachable by every ordinary verb.
-        let listed = json_of(&jojobot.list_mailboxes().await.expect("list ok"));
+        assert_eq!(owned["exists"], false, "said plainly: {owned}");
+        assert!(owned["counts"].is_null(), "there are no counts for a box that is not there");
         assert!(
-            listed["mailboxes"]
-                .as_array()
-                .expect("boxes")
-                .iter()
-                .any(|b| b["name"] == "sigma-inbox"),
-            "got {listed}"
+            owned["how_to_proceed"].as_str().is_some_and(|a| a.contains("create_mailbox")),
+            "the way forward is the deliberate verb: {owned}"
         );
 
-        // Booting again does not open a second one.
-        let again = boot(&jojobot, "sigma").await;
-        assert_eq!(again["identity"]["owned_mailbox"]["provisioned"], false);
+        // **Nothing was created**, by this call or any number of them.
+        for _ in 0..2 {
+            boot(&jojobot, "sigma").await;
+        }
+        let listed = json_of(&jojobot.list_mailboxes().await.expect("list ok"));
+        assert_eq!(
+            listed["count"], 0,
+            "booting must not put a box on the board: {listed}"
+        );
+    }
+
+    /// …and once someone opens it deliberately, the same boot reports it live.
+    #[tokio::test]
+    async fn boot_bot_reports_the_box_once_it_has_been_opened_deliberately() {
+        let jojobot = handler();
+        make_bot(&jojobot, "sigma", Some("sigma-inbox")).await;
+        assert_eq!(boot(&jojobot, "sigma").await["identity"]["owned_mailbox"]["exists"], false);
+
+        make_box(&jojobot, "sigma-inbox").await;
+        send(&jojobot, "sigma-inbox", "alpha", "the shipment landed").await;
+
+        let owned = boot(&jojobot, "sigma").await["identity"]["owned_mailbox"].clone();
+        assert_eq!(owned["exists"], true);
+        assert_eq!(owned["counts"]["new"], 1, "got {owned}");
+        assert!(owned["how_to_proceed"].is_null(), "nothing to advise: {owned}");
+    }
+
+    /// **A claim is screened against the boxes that exist.** The review's hole:
+    /// `dev2` claimed beside an existing `dev` met no screen anywhere in its
+    /// life, and the box then got minted on the side. Now the claim itself is
+    /// the gate — blocked, naming what it resembles, before anything is written.
+    #[tokio::test]
+    async fn a_claim_that_near_misses_an_existing_box_is_blocked() {
+        let jojobot = handler();
+        make_box(&jojobot, "gamma-inbox").await;
+
+        let result = jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                mailbox: Some("gamma-inbo".into()),
+                ..add_args("bot", "gamma", "Gamma")
+            }))
+            .await
+            .expect("a near-miss claim is an answer, not a protocol failure");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "gamma-inbo", "the suspicious thing is the box name");
+        assert_eq!(body["candidates"][0]["name"], "gamma-inbox");
+        assert_eq!(body["candidates"][0]["reason"], "near");
+
+        // Nothing was written — not the claim, and not the entity carrying it.
+        let listed = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs { kind: Some("bot".into()) }))
+                .await
+                .expect("list ok"),
+        );
+        assert_eq!(listed["count"], 0, "a blocked claim writes no entity: {listed}");
+    }
+
+    /// The same signal a deliberate sibling box is created with clears it — and
+    /// claiming the box that actually exists was never suspicious at all.
+    #[tokio::test]
+    async fn a_deliberate_sibling_claim_and_an_exact_one_both_go_through() {
+        let jojobot = handler();
+        make_box(&jojobot, "gamma-inbox").await;
+
+        let sibling = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    mailbox: Some("gamma-inbo".into()),
+                    create_new: Some(true),
+                    ..add_args("bot", "gamma", "Gamma")
+                }))
+                .await
+                .expect("add ok"),
+        );
+        assert_eq!(sibling["mailbox"], "gamma-inbo", "the signal clears it: {sibling}");
+
+        let exact = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    mailbox: Some("gamma-inbox".into()),
+                    ..add_args("bot", "delta", "Delta")
+                }))
+                .await
+                .expect("add ok"),
+        );
+        assert_eq!(
+            exact["mailbox"], "gamma-inbox",
+            "claiming the box that exists is the ordinary case: {exact}"
+        );
+    }
+
+    /// A claim moved onto an entity later is screened exactly as one written at
+    /// creation — the two-step route round every gate, closed here too.
+    #[tokio::test]
+    async fn a_claim_added_by_update_is_screened_the_same_way() {
+        let jojobot = handler();
+        make_box(&jojobot, "gamma-inbox").await;
+        make_bot(&jojobot, "gamma", None).await;
+
+        let result = jojobot
+            .update_entity(Parameters(UpdateEntityArgs {
+                handle: "bot:gamma".into(),
+                name: None,
+                aliases: None,
+                source: None,
+                crm: None,
+                mailbox: Some("gamma-inbo".into()),
+                create_new: None,
+            }))
+            .await
+            .expect("a near-miss claim is an answer, not a protocol failure");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "gamma-inbo");
+        assert_eq!(body["candidates"][0]["name"], "gamma-inbox");
+
+        let listed = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs { kind: Some("bot".into()) }))
+                .await
+                .expect("list ok"),
+        );
+        assert!(
+            listed["entities"][0]["mailbox"].is_null(),
+            "a blocked claim leaves the entity as it was: {listed}"
+        );
     }
 
     /// A bot that owns no box boots perfectly well — ownership is optional, and

@@ -89,9 +89,18 @@ Shipped and live:
   facts, so each carries its own provenance) · memory · one owned mailbox
   (a `mailbox:` claim on the bot's own record, unique across entities).
   **`boot_bot` is the one orienting door**: it grows from `start_here` —
-  same world-model, same snapshot, plus the identity — and it may open the
-  box its bot declares, the only mailbox mint outside `create_mailbox`.
-  Mailboxes stay bot-ignorant: ownership is a read of Memory, never an ACL.
+  same world-model, same snapshot, plus the identity — and it **creates
+  nothing**: a declared box nobody has opened is reported as missing, with
+  `create_mailbox` named. Mailboxes stay bot-ignorant: ownership is a read
+  of Memory, never an ACL.
+
+> **Creation is an intentional act.** `create_mailbox` is the only mint on
+> the surface, and the only place the full name screen runs. A claim written
+> by `add_entity`/`update_entity` is screened against the boxes that exist
+> (near miss → blocked with candidates; `create_new` clears similarity, never
+> an ownership collision) — but it never brings a box into being. Any future
+> verb that would create something as a side effect of doing something else
+> is the thing this rule exists to forbid.
 
 Ahead: **M5** sessions → **M6** trace (claim → fact → receipt → evidence) →
 **M7** portraits (which generalize `set_charter` into the one prose verb) →
