@@ -226,6 +226,13 @@ pub struct Entity {
     pub source: String,
     /// The kanban token this entity is mirrored by, if any (`card:554`).
     pub crm: Option<String>,
+    /// The mailbox this entity owns, if it owns one — the box whose mail is
+    /// *its* mail. Ownership lives here, on the owner, and nowhere else: the
+    /// Mailboxes context stays a plain rail with no idea any of its boxes is
+    /// spoken for, so "whose box is this" is a read of Memory rather than a
+    /// permission the mail rail has to enforce. Absent is the ordinary case.
+    #[serde(default)]
+    pub mailbox: Option<String>,
     /// Boot tier.
     pub boot: Boot,
 }
@@ -260,6 +267,9 @@ pub struct NewEntity {
     pub source: String,
     /// Optional kanban token.
     pub crm: Option<String>,
+    /// The mailbox this entity claims to own. Screened for a rival claim by
+    /// [`guard::decide_mailbox_claim`] — a box has exactly one owner.
+    pub mailbox: Option<String>,
     /// Boot tier.
     pub boot: Boot,
     /// Set only after the guard reported candidates and the caller judged them
@@ -277,6 +287,7 @@ impl NewEntity {
             aliases: Vec::new(),
             source: source.into(),
             crm: None,
+            mailbox: None,
             boot: Boot::default(),
             create_new: false,
         }
@@ -311,6 +322,10 @@ pub struct EntityPatch {
     pub source: Option<String>,
     /// New kanban token.
     pub crm: Option<String>,
+    /// The mailbox this entity claims to own. Screened for a rival claim
+    /// exactly as a creation is — otherwise ownership is trivially stealable:
+    /// create claiming nothing, then move the contested box on afterwards.
+    pub mailbox: Option<String>,
     /// Set only after the guard reported candidates for the new name and the
     /// caller judged them different. Same signal as [`NewEntity::create_new`].
     pub create_new: bool,
@@ -669,15 +684,35 @@ pub fn validate_crm(crm: &str) -> Result<(), MemoryError> {
     }
 }
 
+/// Validate an owned-mailbox claim. The value is a **mailbox name**, and the
+/// grammar is the Mailboxes context's own — restated here rather than imported,
+/// because the two contexts share no types, and pinned against it by test: a
+/// claim this side accepts and that side cannot address points at nothing.
+pub fn validate_mailbox(name: &str) -> Result<(), MemoryError> {
+    let ok = !name.is_empty()
+        && name.len() <= 64
+        && name.bytes().all(is_slug_byte)
+        && name.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && name.ends_with(|c: char| c.is_ascii_alphanumeric());
+    if ok {
+        Ok(())
+    } else {
+        Err(MemoryError::InvalidEntity(format!(
+            "mailbox must be a box name ([a-z0-9-]+, starting and ending alphanumeric), got '{name}'"
+        )))
+    }
+}
+
 /// Validate everything an entity write carries: the handle's grammar, its
-/// required labels, and the `crm` pointer if present. Both adapters call this,
-/// so neither can accept a record the other would refuse.
+/// required labels, and the `crm` and `mailbox` pointers if present. Both
+/// adapters call this, so neither can accept a record the other would refuse.
 pub fn validate_entity(
     id: &EntityId,
     name: &str,
     aliases: &[String],
     source: &str,
     crm: Option<&str>,
+    mailbox: Option<&str>,
 ) -> Result<(), MemoryError> {
     validate_subject(id)?;
     validate_field("name", name)?;
@@ -685,6 +720,9 @@ pub fn validate_entity(
     validate_field("source", source)?;
     if let Some(crm) = crm {
         validate_crm(crm)?;
+    }
+    if let Some(mailbox) = mailbox {
+        validate_mailbox(mailbox)?;
     }
     Ok(())
 }
@@ -800,6 +838,9 @@ pub fn apply_entity_patch(entity: &mut Entity, patch: &EntityPatch) -> Result<()
     if let Some(crm) = &patch.crm {
         validate_crm(crm)?;
     }
+    if let Some(mailbox) = &patch.mailbox {
+        validate_mailbox(mailbox)?;
+    }
 
     if let Some(name) = &patch.name {
         entity.name = name.trim().to_string();
@@ -812,6 +853,9 @@ pub fn apply_entity_patch(entity: &mut Entity, patch: &EntityPatch) -> Result<()
     }
     if let Some(crm) = &patch.crm {
         entity.crm = Some(crm.trim().to_string());
+    }
+    if let Some(mailbox) = &patch.mailbox {
+        entity.mailbox = Some(mailbox.trim().to_string());
     }
     Ok(())
 }
@@ -1371,6 +1415,7 @@ mod tests {
             aliases: vec!["Al".into()],
             source: "user-named".into(),
             crm: None,
+            mailbox: None,
             boot: Boot::OnDemand,
         };
 
@@ -1415,6 +1460,7 @@ mod tests {
             aliases,
             source: "user-named".into(),
             crm: None,
+            mailbox: None,
             boot: Boot::OnDemand,
         };
         assert_eq!(
@@ -1427,6 +1473,23 @@ mod tests {
             entity("", vec!["  ".into()]).labels().is_empty(),
             "an entity with nothing written on it has no labels, not blank ones"
         );
+    }
+
+    /// **The mailbox claim is validated as the box name it is.** Memory writes
+    /// the field; the Mailboxes context is the one that has to resolve it, so a
+    /// value this side accepts and that side cannot address is a claim pointing
+    /// at nothing.
+    #[test]
+    fn a_mailbox_claim_is_validated_exactly_as_a_box_name_is() {
+        // Restated rather than imported: the two contexts share no types. This
+        // pins the two rules together so neither can drift alone.
+        for value in ["inbox", "gamma-inbox", "box-2", "a", "", "Inbox", "in box", "-inbox", "inbox-", "in`box", "in\nbox"] {
+            assert_eq!(
+                validate_mailbox(value).is_ok(),
+                crate::mailbox::validate_mailbox_name(&crate::mailbox::MailboxName(value.into())).is_ok(),
+                "Memory and Mailboxes must agree on whether {value:?} is a box name"
+            );
+        }
     }
 
     #[test]

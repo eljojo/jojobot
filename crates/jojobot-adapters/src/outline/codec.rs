@@ -573,6 +573,7 @@ pub(super) fn parse_entity(doc: &str) -> Option<Entity> {
         aliases: parse_aliases(doc),
         source: parse_field(doc, "source").unwrap_or_default(),
         crm: parse_field(doc, "crm"),
+        mailbox: parse_field(doc, "mailbox"),
         boot: parse_field(doc, "boot").map_or(Boot::default(), |b| Boot::from_token(&b)),
     })
 }
@@ -612,6 +613,9 @@ fn frontmatter(e: &Entity) -> String {
     out.push_str(&format!("source: {}\n", e.source));
     if let Some(crm) = &e.crm {
         out.push_str(&format!("crm: {crm}\n"));
+    }
+    if let Some(mailbox) = &e.mailbox {
+        out.push_str(&format!("mailbox: {mailbox}\n"));
     }
     out.push_str(&format!("boot: {}\n```", e.boot.as_token()));
     out
@@ -674,6 +678,7 @@ mod tests {
             aliases: Vec::new(),
             source: "crm-card".into(),
             crm: Some("card:554".into()),
+            mailbox: None,
             boot: Boot::OnDemand,
         }
     }
@@ -1076,6 +1081,43 @@ mod tests {
             parse_aliases("```yaml\nid: person:alpha\naliases: Al, , Alph ,\n```"),
             vec!["Al".to_string(), "Alph".to_string()]
         );
+    }
+
+    /// **The box an identity owns is written on its own doc.** One line in the
+    /// machine block, read back as it was written — which is what lets ownership
+    /// be answered from Memory alone, with no mailbox code learning what a bot
+    /// is. Absent is the ordinary case for the other eight kinds, so no line is
+    /// written and none is expected.
+    #[test]
+    fn an_owned_mailbox_round_trips_and_an_entity_without_one_writes_no_line() {
+        let owner = Entity {
+            id: EntityId("bot:gamma".into()),
+            kind: EntityKind::Bot,
+            mailbox: Some("gamma-inbox".into()),
+            ..alpha()
+        };
+        let doc = seeded_doc(&owner);
+        assert!(doc.contains("mailbox: gamma-inbox"), "one legible line: {doc}");
+        assert_eq!(parse_entity(&doc).expect("the doc is an entity"), owner);
+
+        assert!(
+            !seeded_doc(&alpha()).contains("mailbox"),
+            "no claim, no line: {}",
+            seeded_doc(&alpha())
+        );
+
+        // A doc from before the field reads as claiming nothing, and gains the
+        // line on the next write that touches its block — the lazy migration
+        // `aliases`, `details` and `edges` each got.
+        let legacy = "```yaml\nid: bot:gamma\nkind: bot\nname: Gamma\nsource: user-named\n\
+                      boot: on-demand\n```\n";
+        let read = parse_entity(legacy).expect("a legacy doc still identifies its entity");
+        assert_eq!(read.mailbox, None, "an absent field is no claim, not a failure");
+        let touched = with_frontmatter_replaced(
+            legacy,
+            &Entity { mailbox: Some("gamma-inbox".into()), ..read },
+        );
+        assert!(touched.contains("mailbox: gamma-inbox"), "gained on touch: {touched}");
     }
 
     // --- the prose half of a doc ----------------------------------------------

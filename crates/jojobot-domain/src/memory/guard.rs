@@ -22,6 +22,9 @@ use super::{Entity, EntityId, EntityKind};
 pub enum MatchReason {
     /// The very same handle already exists. Never overridable.
     ExactHandle,
+    /// This entity already owns the mailbox the incoming write claims. Never
+    /// overridable, for the reason an exact handle isn't: a box has one owner.
+    MailboxClaimed,
     /// Same kind, and the names (or a name and the other's slug) agree once
     /// case and whitespace are folded.
     SameName,
@@ -313,6 +316,40 @@ pub fn decide_existing(handle: &EntityId, index: &[Entity]) -> Decision {
     Decision::Block(screen(handle, &[], index))
 }
 
+/// The guard's decision on a **claim to a mailbox** — the box whose mail
+/// belongs to this entity.
+///
+/// A box has exactly one owner. Two identities both believing the mail is
+/// theirs is not a naming ambiguity a human could sort out later: each one's
+/// `mark_processed` is the other's message vanishing from every future
+/// delivery, and neither ever learns it happened.
+///
+/// So this gate is **exact and never overridable**. Exact, because a box is
+/// addressed by one spelling — near-miss advice belongs to the mailbox guard,
+/// at the point a box is created, and applying it here would refuse a legal
+/// sibling box on a resemblance nothing else in the system cares about. Never
+/// overridable, because there is no honest `create_new` answer to "someone else
+/// already owns this": the way out is a different box, or taking the claim off
+/// the entity that holds it.
+pub fn decide_mailbox_claim(handle: &EntityId, mailbox: &str, index: &[Entity]) -> Decision {
+    let claimants: Vec<EntityMatch> = index
+        .iter()
+        .filter(|e| &e.id != handle && e.mailbox.as_deref() == Some(mailbox))
+        .map(|e| EntityMatch {
+            handle: e.id.clone(),
+            kind: e.kind,
+            name: e.name.clone(),
+            source: e.source.clone(),
+            reason: MatchReason::MailboxClaimed,
+        })
+        .collect();
+    if claimants.is_empty() {
+        Decision::Proceed
+    } else {
+        Decision::Block(claimants)
+    }
+}
+
 /// The guard's decision on a **relabel** — a change to any of the names an
 /// entity answers to, its display name or its aliases alike.
 ///
@@ -378,6 +415,7 @@ mod tests {
             aliases: Vec::new(),
             source: source.into(),
             crm: None,
+            mailbox: None,
             boot: Default::default(),
         }
     }
@@ -815,6 +853,62 @@ mod tests {
             rename(&existing, "  ALPHA  ", "Alpha", &idx, false),
             Decision::Proceed,
             "case and spacing folded: this is the same name, not a new collision"
+        );
+    }
+
+    // --- a mailbox has exactly one owner -------------------------------------
+
+    fn owning(id: &str, name: &str, mailbox: &str) -> Entity {
+        Entity {
+            mailbox: Some(mailbox.into()),
+            ..entity(id, name, "user-named")
+        }
+    }
+
+    /// **Two identities can never claim one box.** Ownership is what makes a
+    /// mailbox *someone's* — a second claimant means two sessions both believe
+    /// the mail is theirs, and each one's `mark_processed` is the other's
+    /// silently lost message.
+    #[test]
+    fn a_mailbox_already_claimed_blocks_a_second_claimant() {
+        let idx = vec![owning("bot:gamma", "Gamma", "gamma-inbox")];
+
+        let Decision::Block(candidates) =
+            decide_mailbox_claim(&EntityId("bot:delta".into()), "gamma-inbox", &idx)
+        else {
+            panic!("a box another identity owns must block");
+        };
+        assert_eq!(candidates[0].handle.as_str(), "bot:gamma");
+        assert_eq!(candidates[0].reason, MatchReason::MailboxClaimed);
+    }
+
+    /// An unclaimed box proceeds, and so does the owner re-stating its own
+    /// claim — an idempotent write is not a collision with itself.
+    #[test]
+    fn an_unclaimed_box_and_a_reasserted_claim_both_proceed() {
+        let idx = vec![owning("bot:gamma", "Gamma", "gamma-inbox")];
+        assert_eq!(
+            decide_mailbox_claim(&EntityId("bot:delta".into()), "delta-inbox", &idx),
+            Decision::Proceed,
+            "a box nobody owns is free to claim"
+        );
+        assert_eq!(
+            decide_mailbox_claim(&EntityId("bot:gamma".into()), "gamma-inbox", &idx),
+            Decision::Proceed,
+            "an entity is not a rival claimant to its own box"
+        );
+    }
+
+    /// The claim is screened on the **exact** name, never on resemblance: a box
+    /// is addressed by one spelling, so `gamma-inbox` and `gamma-inbo` are two
+    /// boxes and claiming both is legal. Near-miss advice belongs to the mailbox
+    /// guard, at the point a box is created.
+    #[test]
+    fn a_claim_screens_the_exact_name_not_a_near_one() {
+        let idx = vec![owning("bot:gamma", "Gamma", "gamma-inbox")];
+        assert_eq!(
+            decide_mailbox_claim(&EntityId("bot:delta".into()), "gamma-inbo", &idx),
+            Decision::Proceed
         );
     }
 

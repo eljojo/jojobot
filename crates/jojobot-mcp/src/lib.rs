@@ -96,6 +96,12 @@ pub struct AddEntityArgs {
     /// written `card:N`.
     #[serde(default)]
     pub crm: Option<String>,
+    /// The mailbox this entity owns — the box whose mail is its mail. **One box
+    /// has one owner**: claiming a box another entity already owns comes back
+    /// blocked naming that owner, and `create_new` does not override it. The box
+    /// need not exist yet.
+    #[serde(default)]
+    pub mailbox: Option<String>,
     /// `always` marks this entity as part of the core an assistant loads at
     /// the start of every session; the default `on-demand` is fetched when the
     /// conversation reaches for it. Only the exact token `always` counts.
@@ -252,6 +258,11 @@ pub struct UpdateEntityArgs {
     /// New cross-link to the entity's card in the user's task system, `card:N`.
     #[serde(default)]
     pub crm: Option<String>,
+    /// The mailbox this entity owns. **One box has one owner**: claiming one
+    /// another entity already owns comes back blocked naming that owner, and
+    /// `create_new` does not override it.
+    #[serde(default)]
+    pub mailbox: Option<String>,
     /// Set only after a previous call reported candidates for a name or alias
     /// you are claiming here, and you judged them a different entity. Any change
     /// to what this entity is CALLED is screened exactly as a creation is.
@@ -425,12 +436,14 @@ impl Jojobot {
         Parameters(args): Parameters<AddEntityArgs>,
     ) -> Result<CallToolResult, McpError> {
         let id = entity_id(&args.kind, &args.handle)?;
+        let claimed = args.mailbox.clone();
         let new = NewEntity {
             id,
             name: args.name,
             aliases: args.aliases.unwrap_or_default(),
             source: args.source,
             crm: args.crm,
+            mailbox: args.mailbox,
             boot: args
                 .boot
                 .as_deref()
@@ -442,7 +455,12 @@ impl Jojobot {
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(&attempted, &candidates, Blocked::Creating)),
+            } => Ok(blocked_result(
+                &attempted,
+                &candidates,
+                Blocked::Creating,
+                claimed.as_deref(),
+            )),
         }
     }
 
@@ -535,11 +553,13 @@ impl Jojobot {
         Parameters(args): Parameters<UpdateEntityArgs>,
     ) -> Result<CallToolResult, McpError> {
         let handle = EntityId::person(&args.handle);
+        let claimed = args.mailbox.clone();
         let patch = EntityPatch {
             name: args.name,
             aliases: args.aliases,
             source: args.source,
             crm: args.crm,
+            mailbox: args.mailbox,
             create_new: args.create_new.unwrap_or(false),
         };
         match self
@@ -552,7 +572,12 @@ impl Jojobot {
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(&attempted, &candidates, Blocked::Relabelling)),
+            } => Ok(blocked_result(
+                &attempted,
+                &candidates,
+                Blocked::Relabelling,
+                claimed.as_deref(),
+            )),
         }
     }
 
@@ -591,7 +616,12 @@ impl Jojobot {
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(&attempted, &candidates, Blocked::MustExist("capture"))),
+            } => Ok(blocked_result(
+                &attempted,
+                &candidates,
+                Blocked::MustExist("capture"),
+                None,
+            )),
         }
     }
 
@@ -652,7 +682,12 @@ impl Jojobot {
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(&attempted, &candidates, Blocked::MustExist("update_fact"))),
+            } => Ok(blocked_result(
+                &attempted,
+                &candidates,
+                Blocked::MustExist("update_fact"),
+                None,
+            )),
         }
     }
 
@@ -936,6 +971,9 @@ fn entity_json(entity: &Entity) -> serde_json::Value {
         "alternateName": entity.aliases,
         "source": entity.source,
         "crm": entity.crm,
+        // The box whose mail is this entity's. Null for everything that owns
+        // none, which is nearly everything.
+        "mailbox": entity.mailbox,
         "boot": entity.boot.as_token(),
     })
 }
@@ -1001,10 +1039,35 @@ fn blocked_result(
     attempted: &EntityId,
     candidates: &[EntityMatch],
     gate: Blocked,
+    claimed: Option<&str>,
 ) -> CallToolResult {
     let exact = candidates
         .iter()
         .any(|c| c.reason == guard::MatchReason::ExactHandle);
+    // A claimed box is its own gate whichever verb carried the claim, and the
+    // advice for the verb would be actively wrong here — it would send the
+    // caller back with an override that cannot clear this.
+    let claimants: Vec<&EntityMatch> = candidates
+        .iter()
+        .filter(|c| c.reason == guard::MatchReason::MailboxClaimed)
+        .collect();
+    if let Some(owner) = claimants.first() {
+        let held: Vec<&str> = claimants.iter().map(|c| c.handle.as_str()).collect();
+        let name = claimed.unwrap_or("that mailbox");
+        return blocked_body(
+            attempted,
+            candidates,
+            format!(
+                "Nothing was written. The mailbox '{name}' is already owned by {} — a box has \
+                 exactly one owner, and there is no override for this: a second owner means each \
+                 one's mark_processed is the other's message gone from every future delivery. \
+                 Either '{name}' IS {}'s box (leave the claim off '{attempted}' and let it stay \
+                 where it is), or '{attempted}' needs a box of its own under a different name.",
+                held.join(", "),
+                owner.handle,
+            ),
+        );
+    }
     let how_to_proceed = match gate {
         Blocked::Creating if exact => format!(
             "Nothing was written. The handle '{attempted}' is already taken, and that cannot be \
@@ -1040,6 +1103,16 @@ fn blocked_result(
              you — call add_entity to create '{attempted}' first, then re-call {verb}.",
         ),
     };
+    blocked_body(attempted, candidates, how_to_proceed)
+}
+
+/// The blocked envelope itself, once — so every gate's advice arrives in one
+/// shape and a client branches on `status`, never on which gate fired.
+fn blocked_body(
+    attempted: &EntityId,
+    candidates: &[EntityMatch],
+    how_to_proceed: String,
+) -> CallToolResult {
     let body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted.as_str(),
@@ -1543,6 +1616,7 @@ mod tests {
                 aliases: None,
                 source: "test-fixture".into(),
                 crm: None,
+                mailbox: None,
                 boot: None,
                 create_new: None,
             }))
@@ -1595,6 +1669,7 @@ mod tests {
             aliases: None,
             source: "user-named".into(),
             crm: None,
+            mailbox: None,
             boot: None,
             create_new: None,
         }
@@ -1731,6 +1806,7 @@ mod tests {
             aliases: vec!["The First One".into()],
             source: "user-named".into(),
             crm: None,
+            mailbox: None,
             boot: Boot::OnDemand,
         };
         let fact = Fact {
@@ -1751,6 +1827,7 @@ mod tests {
             aliases: vec!["Al".into()],
             source: "user-named".into(),
             crm: None,
+            mailbox: None,
             boot: Boot::OnDemand,
         };
         let guild = Edge::new(EdgeShape::Membership, EntityId("org:guild".into()));
@@ -1831,6 +1908,51 @@ mod tests {
         );
         assert_eq!(results[2]["edges"][0]["object"], "org:guild");
         assert_eq!(results[2]["snippet"], "…allergic to penicillin…");
+    }
+
+    // --- an identity and the box it owns --------------------------------------
+
+    /// **A bot claims its box through ordinary plumbing.** No special write
+    /// verb: `add_entity` carries the claim, the entity comes back wearing it,
+    /// and a second identity reaching for the same box is refused with advice
+    /// that does NOT send it back with `create_new` — that signal answers a
+    /// question about names, and there is no honest answer of that shape to
+    /// "someone else already owns this".
+    #[tokio::test]
+    async fn a_bot_owns_a_mailbox_and_a_rival_claim_is_refused_without_an_override() {
+        let jojobot = handler();
+        let owner = jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                mailbox: Some("gamma-inbox".into()),
+                ..add_args("bot", "gamma", "Gamma")
+            }))
+            .await
+            .expect("add ok");
+        let body = json_of(&owner);
+        assert_eq!(body["id"], "bot:gamma");
+        assert_eq!(body["type"], "SoftwareApplication");
+        assert_eq!(body["mailbox"], "gamma-inbox", "the claim reads back: {body}");
+
+        let result = jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                mailbox: Some("gamma-inbox".into()),
+                create_new: Some(true),
+                ..add_args("bot", "delta", "Delta")
+            }))
+            .await
+            .expect("a claimed box is an answer, not a protocol failure");
+        let refused = blocked(&result);
+        assert_eq!(refused["candidates"][0]["handle"], "bot:gamma");
+        assert_eq!(refused["candidates"][0]["reason"], "mailbox-claimed");
+        let advice = refused["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            advice.contains("gamma-inbox") && advice.contains("bot:gamma"),
+            "the advice names the box and who holds it: {advice}"
+        );
+        assert!(
+            !advice.contains("create_new"),
+            "an override that cannot clear this gate must not be offered: {advice}"
+        );
     }
 
     // --- the entity verbs -----------------------------------------------------
@@ -1927,6 +2049,7 @@ mod tests {
                 aliases: None,
                 source: None,
                 crm: Some("card:551".into()),
+                mailbox: None,
                 create_new: None,
             }))
             .await
@@ -1958,6 +2081,7 @@ mod tests {
             aliases: None,
             source: None,
             crm: None,
+            mailbox: None,
             create_new,
         };
 
@@ -2014,6 +2138,7 @@ mod tests {
                 aliases: Some(vec!["Homer Simpson".into()]),
                 source: None,
                 crm: None,
+                mailbox: None,
                 create_new: None,
             }))
             .await
@@ -2075,6 +2200,7 @@ mod tests {
             aliases: Some(aliases),
             source: None,
             crm: None,
+            mailbox: None,
             create_new: None,
         };
 
@@ -2125,6 +2251,7 @@ mod tests {
                 aliases: None,
                 source: None,
                 crm: None,
+                mailbox: None,
                 create_new: None,
             }))
             .await
@@ -3104,6 +3231,7 @@ mod tests {
                 aliases: None,
                 source: "user-named".into(),
                 crm: None,
+                mailbox: None,
                 boot: None,
                 create_new: None,
             }))

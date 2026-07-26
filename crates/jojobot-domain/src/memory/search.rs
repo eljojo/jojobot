@@ -445,6 +445,7 @@ mod tests {
             aliases: Vec::new(),
             source: "test".into(),
             crm: None,
+            mailbox: None,
             boot: Boot::OnDemand,
         };
         let row = |id: &str, subject: &str| Fact {
@@ -504,6 +505,7 @@ mod tests {
             aliases: Vec::new(),
             source: "test".into(),
             crm: None,
+            mailbox: None,
             boot: Boot::OnDemand,
         };
         let row = |id: &str, subject: &str| Fact {

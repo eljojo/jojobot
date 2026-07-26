@@ -323,12 +323,31 @@ fn pick_oldest<T>(
 #[async_trait]
 impl Memory for OutlineStore {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
-        validate_entity(&new.id, &new.name, &new.aliases, &new.source, new.crm.as_deref())?;
+        validate_entity(
+            &new.id,
+            &new.name,
+            &new.aliases,
+            &new.source,
+            new.crm.as_deref(),
+            new.mailbox.as_deref(),
+        )?;
         let collection_id = self.resolve_collection().await?;
 
         let index = self.entity_index(&collection_id).await?;
         if let Decision::Block(candidates) =
             guard::decide(&new.id, &new.labels(), &index, new.create_new)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: new.id,
+                candidates,
+            });
+        }
+        // A box has exactly one owner, so the claim faces its own gate —
+        // deliberately not cleared by `create_new`, which answers a question
+        // about names, not about ownership.
+        if let Some(mailbox) = new.mailbox.as_deref()
+            && let Decision::Block(candidates) =
+                guard::decide_mailbox_claim(&new.id, mailbox, &index)
         {
             return Ok(Guarded::Blocked {
                 attempted: new.id,
@@ -343,6 +362,7 @@ impl Memory for OutlineStore {
             aliases: new.aliases.iter().map(|a| a.trim().to_string()).collect(),
             source: new.source.trim().to_string(),
             crm: new.crm.map(|c| c.trim().to_string()),
+            mailbox: new.mailbox.map(|m| m.trim().to_string()),
             boot: new.boot,
         };
         self.create_entity_doc(&collection_id, &entity).await?;
@@ -391,6 +411,16 @@ impl Memory for OutlineStore {
         // Otherwise the guard is side-steppable: add under a throwaway name,
         // then move the contested name on afterwards.
         if let Decision::Block(candidates) = screen_entity_patch(&entity, &patch, &index) {
+            return Ok(Guarded::Blocked {
+                attempted: handle.clone(),
+                candidates,
+            });
+        }
+        // A claim moved onto an entity is screened exactly as one written at
+        // creation — otherwise ownership is stealable in two steps.
+        if let Some(mailbox) = patch.mailbox.as_deref()
+            && let Decision::Block(candidates) = guard::decide_mailbox_claim(handle, mailbox, &index)
+        {
             return Ok(Guarded::Blocked {
                 attempted: handle.clone(),
                 candidates,
@@ -888,6 +918,7 @@ mod tests {
             aliases: Vec::new(),
             source: "capture".into(),
             crm: None,
+            mailbox: None,
             boot: Default::default(),
         }
     }

@@ -932,6 +932,7 @@ mod tests {
             aliases: Vec::new(),
             source: "user-named".into(),
             crm: None,
+            mailbox: None,
             boot: Boot::OnDemand,
         }
     }
