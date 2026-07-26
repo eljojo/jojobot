@@ -159,10 +159,10 @@ struct BoardRead {
     quarantined: Vec<Quarantined>,
 }
 
-/// A card on jojobot's board that cannot be read as a message: surfaced by
-/// `list_mailboxes`, acted on by no verb, and carrying **why** — because the
-/// answer a caller gets when they address one has to say what a person should
-/// go and look at.
+/// A card on jojobot's board that cannot be read as a message: acted on by no
+/// verb, reported by `list_mailboxes` under its box when the card still says
+/// which box that is, and carrying **why** — because the answer a caller gets
+/// when they address one has to say what a person should go and look at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Quarantined {
     /// The box it belongs to, when the card still says so. **`None` when the
@@ -652,8 +652,9 @@ impl VikunjaStore {
 
     /// The `parked` column's id, creating the column on demand. Deliberately
     /// **not a state token**: a card here has no place in the funnel, so the
-    /// board read quarantines it — surfaced by `list_mailboxes`, counted as
-    /// nothing, delivered to nobody.
+    /// board read quarantines it — counted as nothing, delivered to nobody, and
+    /// reported by `list_mailboxes` under its box as long as the card still
+    /// wears the label that says which box that is.
     async fn parking_column(&self, scope: &Scope) -> Result<u64, MailboxError> {
         if let Some(bucket) = self
             .api
@@ -1610,6 +1611,10 @@ mod tests {
             page: u64,
             per_page: u64,
         ) -> Result<Vec<BoardBucket>, MailboxError> {
+            // The read path fails too. Without this arm, a test that armed
+            // "board" proved nothing while reading as though it had covered the
+            // one call every verb makes.
+            self.maybe_fail("board")?;
             self.named(project_id);
             let buckets: Vec<BucketRec> = self
                 .buckets
@@ -2408,7 +2413,7 @@ mod tests {
 
         // Their card, wearing jojobot's label, sitting in a column that is no
         // state — so the quarantine branch is what it reaches first.
-        let intruder = fake.seed_task(theirs, "renew the passport", "due in March", &[label]);
+        let intruder = fake.seed_task(theirs, "milhouse's own card", "not a message", &[label]);
         fake.seed_placement(ours, intruder, DEFAULT_COLUMN);
 
         let listed = store.list_mailboxes().await;
@@ -2628,10 +2633,16 @@ mod tests {
     /// failed, which a one-shot injector papers over.
     #[tokio::test]
     async fn no_single_api_failure_leaves_a_created_card_outside_the_funnel_and_quarantine() {
-        // Every API method a post can reach. `create_bucket` is not among them
-        // — a provisioned board has its columns, so a healthy post never calls
-        // it; it is armed in the provisioning test instead, where it fires.
-        for step in ["create_task", "set_task_labels", "list_buckets", "move_task"] {
+        // Every method whose failure can strand a card a post created — the
+        // card write itself, the two calls that file it, and the read-back.
+        //
+        // `create_bucket` is deliberately absent, and NOT because a post cannot
+        // reach it: a failing post reaches it through the parking column. It is
+        // absent because arming it alone strands nothing — a provisioned board
+        // already has the three funnel columns, so nothing in a *succeeding*
+        // post calls it and the post under test would report success. Where it
+        // fires is the provisioning test.
+        for step in ["create_task", "set_task_labels", "list_buckets", "move_task", "board"] {
             let fake = FakeVikunja::new();
             let store = store_with_box(fake.clone(), "inbox").await;
             let project = fake.projects_titled(PROJECT)[0].id;

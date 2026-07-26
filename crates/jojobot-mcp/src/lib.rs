@@ -602,8 +602,10 @@ impl Jojobot {
     #[tool(
         description = "Leave a message in a mailbox. It is filed in `new`, and the `state` in the \
                        reply is the one jojobot read back off the board — so it can already say \
-                       `read` if a consumer took delivery in between. That is success, not a \
-                       problem: the message exists and someone has it. The mailbox must ALREADY \
+                       `read` if somebody working the board picked the message up in between. \
+                       That is success, not a problem: the message exists and someone has it. \
+                       (It will not be another of your tool calls: jojobot's own verbs run one at \
+                       a time.) The mailbox must ALREADY \
                        EXIST: an unknown name comes back status: blocked with candidates and \
                        nothing is written — call create_mailbox first if the box is genuinely \
                        new. `sender` is recorded as you declare it."
@@ -1042,8 +1044,8 @@ fn mailbox_blocked(
 }
 
 /// **A quarantined card, answered in the guards' own shape.** The id is real —
-/// `list_mailboxes` published it — but the card behind it cannot be read, so no
-/// verb will act on it until a person repairs it. A successful result carrying a
+/// jojobot is looking straight at the card — but it cannot be read as a
+/// message, so no verb will act on it until a person repairs it. A successful result carrying a
 /// structured refusal, exactly like a blocked write: same `status` / `wrote` /
 /// `how_to_proceed` keys, so one client-side branch handles every "jojobot
 /// declined, here is what to do" answer in this context.
@@ -1055,11 +1057,13 @@ fn mailbox_quarantined(attempted: &str, reason: &str) -> CallToolResult {
         "reason": format!("card {attempted} is quarantined: {reason}"),
         "how_to_proceed": format!(
             "Nothing was written, and retrying will not help — this is not a missing message. \
-             Card {attempted} is on a jojobot mailbox board (list_mailboxes reports it under the \
-             box's quarantined ids) but jojobot cannot read it as a message, so no verb will act \
-             on it. A PERSON has to open that card in the task board and either restore what was \
-             edited out of its description or drag it back into one of the funnel's columns. \
-             Until then, treat the message it was carrying as unhandled and say so."
+             Card {attempted} is on a jojobot mailbox board, but jojobot cannot read it as a \
+             message, so no verb will act on it. A PERSON has to open that card in the task board \
+             and put back whichever of the three things above is missing: its mailbox label, its \
+             machine block, or a place in one of the funnel's columns. **All three, not one** — a \
+             card moved into a funnel column while still missing its label reads as somebody \
+             else's note and goes invisible to jojobot entirely, which is worse than where it is \
+             now. Until then, treat the message it was carrying as unhandled and say so."
         ),
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])

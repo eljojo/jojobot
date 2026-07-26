@@ -434,20 +434,23 @@ pub enum MailboxError {
         attempted: String,
     },
     /// The addressed id is a **quarantined card**: it is on a jojobot mailbox
-    /// board — `list_mailboxes` publishes this very id — but it cannot be read
-    /// as a message, so no verb may act on it.
+    /// board — `list_mailboxes` reports it under its box, whenever the card
+    /// still says which box that is — but it cannot be read as a message, so no
+    /// verb may act on it.
     ///
     /// Distinct from [`MailboxError::UnknownMessage`] on purpose. Answering
-    /// "no such message" here is a false statement about an id jojobot itself
-    /// handed out, and it sends the caller looking for a lost message instead
-    /// of at the card that is sitting right there.
+    /// "no such message" here is a false statement about a card jojobot is
+    /// looking straight at, and it sends the caller looking for a lost message
+    /// instead of at the card that is sitting right there.
     #[error(
         "message '{attempted}' is a quarantined card: {reason}. jojobot will not act on a card it \
-         cannot read — a person needs to open card {attempted} on the mailbox board and either \
-         restore what was edited out of it or move it back into one of the funnel's columns"
+         cannot read — a person needs to open card {attempted} on the mailbox board and put back \
+         whatever it is missing: its mailbox label, its machine block, and a place in the funnel. \
+         Moving it into a funnel column while it still has no mailbox label reads as somebody \
+         else's card and makes it invisible to jojobot altogether"
     )]
     Quarantined {
-        /// The id that was addressed — the same one `list_mailboxes` published.
+        /// The id that was addressed.
         attempted: String,
         /// Why the card cannot be read.
         reason: String,
@@ -523,10 +526,11 @@ pub trait Mailboxes: Send + Sync {
     /// exist** — an unknown name comes back [`Guarded::Blocked`], never a new box.
     ///
     /// The returned message carries **the state the store read back**, which is
-    /// not always `new`: a consumer taking delivery between the write and its
-    /// verification leaves the message in `read`, and that is this verb
-    /// succeeding — the message exists and someone has it — not a failure to
-    /// file it.
+    /// not always `new`: somebody picking the message up off the board between
+    /// the write and its verification leaves it in `read`, and that is this
+    /// verb succeeding — the message exists and someone has it — not a failure
+    /// to file it. An adapter that serializes its own verbs (the Vikunja store
+    /// does) narrows that somebody to a person working the board by hand.
     async fn post_message(&self, message: NewMessage) -> Result<Guarded<Message>, MailboxError>;
 
     /// Deliver everything unprocessed in a box — messages in `new` and messages
