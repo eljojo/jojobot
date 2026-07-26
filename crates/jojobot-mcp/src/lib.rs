@@ -2920,13 +2920,16 @@ mod tests {
         let mut names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
         names.sort_unstable();
 
+        // Sorted, so the list is stable and a diff to it is legible — which
+        // means it is NOT grouped by context, and any comment here claiming
+        // otherwise would be describing a different list than the one below.
+        // The five mailbox verbs in it are create_mailbox, list_mailboxes,
+        // post_message, read_mailbox and mark_processed; the rest are Memory's.
         assert_eq!(
             names,
             [
-                // memory
                 "add_entity",
                 "capture",
-                // mailboxes — five verbs, none of which deletes
                 "create_mailbox",
                 "list_entities",
                 "list_mailboxes",

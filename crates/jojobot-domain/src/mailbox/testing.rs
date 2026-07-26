@@ -44,6 +44,12 @@ impl InMemoryMailboxes {
     /// every surface above (the counts a caller reads, the answer
     /// `mark_processed` gives for one of these ids) has no store that can
     /// produce the condition, and so no test that can exercise it.
+    ///
+    /// A quarantined id is invisible to **every** verb here, exactly as it is
+    /// in the real store — where a card the board read cannot parse is left out
+    /// of the message list that counts and delivery are both built from. A fake
+    /// that only taught two of its verbs the word would answer differently from
+    /// the store on the other two, in a place the shared contract is silent.
     pub fn quarantine(&self, mailbox: &MailboxName, card: &MessageId, reason: &str) {
         self.quarantined.lock().expect("quarantine lock").push((
             mailbox.clone(),
@@ -51,6 +57,7 @@ impl InMemoryMailboxes {
             reason.to_string(),
         ));
     }
+
 
     /// The names currently on the board, in creation order.
     fn names(&self) -> Vec<MailboxName> {
@@ -102,7 +109,12 @@ impl Mailboxes for InMemoryMailboxes {
             .into_iter()
             .map(|name| {
                 let mut counts = StateCounts::default();
-                for message in messages.iter().filter(|m| m.mailbox == name) {
+                for message in messages.iter().filter(|m| {
+                    // The guard above is still held — re-locking it here (via a
+                    // helper that takes it again) is a deadlock, not a
+                    // convenience: this mutex is not reentrant.
+                    m.mailbox == name && !quarantined.iter().any(|(_, card, _)| card == &m.id)
+                }) {
                     counts.add(message.state);
                 }
                 Mailbox {
@@ -155,10 +167,19 @@ impl Mailboxes for InMemoryMailboxes {
             });
         }
 
+        let quarantined: Vec<MessageId> = self
+            .quarantined
+            .lock()
+            .expect("quarantine lock")
+            .iter()
+            .map(|(_, card, _)| card.clone())
+            .collect();
         let mut messages = self.messages.lock().expect("message lock");
         let mut delivered: Vec<Delivered> = messages
             .iter_mut()
-            .filter(|m| &m.mailbox == name && m.state.is_unprocessed())
+            .filter(|m| {
+                &m.mailbox == name && m.state.is_unprocessed() && !quarantined.contains(&m.id)
+            })
             .map(|m| {
                 let seen_before = m.state == MessageState::Read;
                 m.state = MessageState::Read;
@@ -191,16 +212,17 @@ impl Mailboxes for InMemoryMailboxes {
         validate_message_id(id)?;
         validate_notes(notes)?;
 
-        if let Some((_, _, reason)) = self
+        let quarantined = self
             .quarantined
             .lock()
             .expect("quarantine lock")
             .iter()
             .find(|(_, card, _)| card == id)
-        {
+            .map(|(_, _, reason)| reason.clone());
+        if let Some(reason) = quarantined {
             return Err(MailboxError::Quarantined {
                 attempted: id.to_string(),
-                reason: reason.clone(),
+                reason,
             });
         }
 
