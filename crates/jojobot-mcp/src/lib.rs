@@ -67,9 +67,13 @@ When the right write is not obvious, ask the operator — an unasked write outli
 
 ## The answers that are not errors
 
-A **blocked** result is a SUCCESS whose body says `status: "blocked"`, `wrote: false`: nothing was written, and `how_to_proceed` says what to do next. Never retry one unchanged. Three gates produce it, with different ways out: **resemblance** (creating or renaming something that looks like what exists — pick the candidate you meant, or `create_new: true` only when you can say how the two differ; an exact handle or box name is never overridable), **absence** (you named something that must already exist — the subject of a capture, an edge's object, the box of a post; empty `candidates` means nothing even resembles it, not that your call was malformed; for an entity, creating it and retrying is usually right — for a mailbox it usually is not), and **unreadable** (`mark_processed` reached an item jojobot cannot read — no retry helps, a person must repair it; treat what it carried as unhandled and say so).
+A **blocked** result is a SUCCESS whose body says `status: "blocked"`, `wrote: false`: nothing was written, and `how_to_proceed` says what to do next. Never retry one unchanged. Four gates produce it, with different ways out: **resemblance** (creating or renaming something that looks like what exists — pick the candidate you meant, or `create_new: true` only when you can say how the two differ; an exact handle or box name is never overridable), **absence** (you named something that is not there — the subject of a capture, an edge's object, the box of a post, a handle to read, an address to edit, a message id to retire; empty `candidates` means nothing even resembles it, not that your call was malformed; for an entity, creating it and retrying is usually right — for a mailbox it usually is not), **ownership** (a mailbox has exactly one owner, and a second claim on one is refused naming the holder; `create_new` does not clear this — it answers a question about names), and **unreadable** (`mark_processed` reached an item jojobot cannot read — no retry helps, a person must repair it; treat what it carried as unhandled and say so).
 
-A plain **error** is a malformed call, an unknown message id, or the store itself failing. And know what the guards do NOT cover: they catch resemblance and absence, never judgement — a wholly novel name sails through, and nothing will stop you standing up a box nobody drains. That call is yours, and the store keeps whatever you decide.
+A plain **error** is a malformed call — a token that is no kind, a string that is no address — or the store itself failing. **Absence is never an error here**: naming something that does not exist is an answer with candidates, not a broken server, so read `status` rather than branching on whether the call errored. And know what the guards do NOT cover: they catch resemblance, absence and ownership, never judgement — a wholly novel name sails through, and nothing will stop you standing up a box nobody drains. That call is yours, and the store keeps whatever you decide.
+
+## Bots
+
+An **identity** is an entity of kind `bot`: a handle like `bot:gamma`, a **charter** (its prose — what this identity is, its hard lines, where its work lives), **rules** as ordinary facts about it (so each one carries its own provenance: an inferred rule is a hypothesis, not a policy), and optionally **one owned mailbox**. If you were told which identity you are, `boot_bot` is your first call instead of this one: it hands over everything here plus that identity. Nothing about a bot is built into jojobot — a bot is data somebody wrote, like every other entity.
 "#;
 
 /// Arguments to `add_entity`.
@@ -441,11 +445,10 @@ impl Jojobot {
         Parameters(args): Parameters<SetCharterArgs>,
     ) -> Result<CallToolResult, McpError> {
         let bot = bot_id(&args.bot)?;
-        let stored = self
-            .memory
-            .set_prose(&bot, &args.prose)
-            .await
-            .map_err(memory_error)?;
+        let stored = match self.memory.set_prose(&bot, &args.prose).await {
+            Ok(stored) => stored,
+            Err(e) => return memory_declined("set_charter", e),
+        };
         json_result(&serde_json::json!({
             "bot": bot.as_str(),
             "charter": stored,
@@ -722,14 +725,17 @@ impl Jojobot {
     /// any change to what it is CALLED — name or aliases — is screened by the
     /// write guard just as a creation is.
     #[tool(
-        description = "Edit what an entity is called or where it came from (name/aliases/\
-                       source/crm), in place. The handle never changes — there is no rename. \
-                       Any change to what it is CALLED — name or aliases — is screened exactly \
-                       as a creation is, because an alias is a name: it can come back status: \
-                       blocked with candidates, and create_new: true is how you confirm a \
-                       genuinely shared name. Passing `aliases` REPLACES the whole set ([] \
-                       clears it). source/crm edits are never screened. An unknown handle \
-                       errors with near misses — it never creates."
+        description = "Edit what an entity is called, where it came from, or which mailbox it \
+                       owns (name/aliases/source/crm/mailbox), in place. The handle never \
+                       changes — there is no rename. Any change to what it is CALLED — name or \
+                       aliases — faces the same check a creation does, because an alias is a \
+                       name: it can come back status: blocked with candidates, and create_new: \
+                       true is how you confirm a genuinely shared name. Claiming a mailbox \
+                       another entity owns is also blocked, and create_new does NOT clear that \
+                       one — a box has exactly one owner. Passing `aliases` REPLACES the whole \
+                       set ([] clears it); source and crm edits are never questioned. A handle \
+                       that names nothing comes back blocked with the nearest handles — it \
+                       never creates."
     )]
     async fn update_entity(
         &self,
@@ -745,12 +751,11 @@ impl Jojobot {
             mailbox: args.mailbox,
             create_new: args.create_new.unwrap_or(false),
         };
-        match self
-            .memory
-            .update_entity(&handle, patch)
-            .await
-            .map_err(memory_error)?
-        {
+        let written = match self.memory.update_entity(&handle, patch).await {
+            Ok(written) => written,
+            Err(e) => return memory_declined("update_entity", e),
+        };
+        match written {
             Guarded::Written(entity) => json_result(&entity_json(&entity)),
             Guarded::Blocked {
                 attempted,
@@ -815,17 +820,20 @@ impl Jojobot {
                        and want the whole picture; use search when you don't. Unlike search, \
                        this returns claims of every status, superseded included. An entity that \
                        exists with nothing recorded comes back as an empty list; a handle that \
-                       names nothing is an error naming the nearest handles, never an empty \
-                       page. Rows filed here that claim to be about someone else come back too \
-                       — that mismatch is worth surfacing, and the address is how it gets \
-                       repaired."
+                       names nothing comes back status: blocked with the nearest handles, never \
+                       as an empty list. A fact recorded under this entity that claims to be \
+                       about someone else comes back too — that mismatch is worth surfacing, and \
+                       the address is how it gets repaired."
     )]
     async fn recall(
         &self,
         Parameters(args): Parameters<RecallArgs>,
     ) -> Result<CallToolResult, McpError> {
         let subject = EntityId::person(&args.subject);
-        let facts = self.memory.recall(&subject).await.map_err(memory_error)?;
+        let facts = match self.memory.recall(&subject).await {
+            Ok(facts) => facts,
+            Err(e) => return memory_declined("recall", e),
+        };
         let body = serde_json::json!({
             "subject": subject.as_str(),
             "facts": facts.iter().map(fact_json).collect::<Vec<_>>(),
@@ -839,8 +847,8 @@ impl Jojobot {
                        To record that something is NOT so, rewrite content to state the \
                        negative truth — that is an ordinary edit and the fact stays active; \
                        there is no negated status. Promoting inference → testimony requires \
-                       confirmed_by_user. An unknown address errors with the addresses that do \
-                       exist — it never creates."
+                       confirmed_by_user. An address that names no fact comes back status: \
+                       blocked with the addresses that do exist — it never creates."
     )]
     async fn update_fact(
         &self,
@@ -855,12 +863,11 @@ impl Jojobot {
             confirmed_by_user: args.confirmed_by_user.unwrap_or(false),
             edge: parse_edge(args.shape.as_deref(), args.object.as_deref())?,
         };
-        match self
-            .memory
-            .update_fact(&address, patch)
-            .await
-            .map_err(memory_error)?
-        {
+        let written = match self.memory.update_fact(&address, patch).await {
+            Ok(written) => written,
+            Err(e) => return memory_declined("update_fact", e),
+        };
+        match written {
             Guarded::Written(fact) => json_result(&fact_json(&fact)),
             Guarded::Blocked {
                 attempted,
@@ -1017,11 +1024,12 @@ impl Jojobot {
                        FAILURE IS DATA, NOT A STATE: record it in notes (and reply with a new \
                        message if someone needs to know) — there is no failed status, because a \
                        message whose handling failed has still been handled. A message can be \
-                       processed straight from `new`, no delivery first. An id that names \
-                       nothing is an error; an id naming an item jojobot cannot read comes back \
-                       status: blocked with a reason and no candidates — retrying will not \
-                       help, a person has to repair it, and until then treat whatever it \
-                       carried as unhandled and say so."
+                       processed straight from `new`, no delivery first. Two refusals wear the \
+                       same status: blocked shape and mean different things: an id that names \
+                       nothing at all (use one read_mailbox or post_message handed you), and an \
+                       id naming an item jojobot cannot read, which comes with a `reason` — \
+                       retrying that one will not help, a person has to repair it, and until \
+                       then treat whatever it carried as unhandled and say so."
     )]
     async fn mark_processed(
         &self,
@@ -1030,15 +1038,11 @@ impl Jojobot {
         let id = MessageId(args.message_id.trim().to_string());
         match self.mailboxes.mark_processed(&id, args.notes.as_deref()).await {
             Ok(processed) => json_result(&message_json(&processed)),
-            // A quarantined id is not a caller mistake and not a miss: it is an
-            // id list_mailboxes itself published, for a card nobody can act on
-            // until a person fixes it. It gets the blocked shape the guards use
-            // — a successful call whose body says nothing was written and what
-            // to do — rather than an error that reads as "no such message".
-            Err(MailboxError::Quarantined { attempted, reason }) => {
-                Ok(mailbox_quarantined(&attempted, &reason))
-            }
-            Err(e) => Err(mailbox_error(e)),
+            // Both misses here are answers, not failures: an id that names
+            // nothing, and an id naming a card jojobot cannot read. They stay
+            // different answers — one is repairable by a better id, the other
+            // only by a person on the board — in the guards' one shape.
+            Err(e) => mailbox_declined(e),
         }
     }
 }
@@ -1416,11 +1420,27 @@ fn mailbox_blocked(
              this box was asked for by name.",
         ),
     };
+    mailbox_blocked_body(attempted.as_str(), Some(candidates), how_to_proceed)
+}
+
+/// The mailbox blocked envelope itself, once. `None` candidates is a refusal
+/// with nothing to suggest — an id nothing answers to — and the key is still
+/// present and empty, because a client that branches on its shape must not have
+/// to branch on whether it is there.
+fn mailbox_blocked_body(
+    attempted: &str,
+    candidates: Option<&[MailboxMatch]>,
+    how_to_proceed: String,
+) -> CallToolResult {
     let body = serde_json::json!({
         "status": "blocked",
-        "attempted": attempted.as_str(),
+        "attempted": attempted,
         "wrote": false,
-        "candidates": candidates.iter().map(mailbox_candidate_json).collect::<Vec<_>>(),
+        "candidates": candidates
+            .unwrap_or_default()
+            .iter()
+            .map(mailbox_candidate_json)
+            .collect::<Vec<_>>(),
         "how_to_proceed": how_to_proceed,
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
@@ -1450,6 +1470,74 @@ fn mailbox_quarantined(attempted: &str, reason: &str) -> CallToolResult {
         ),
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
+/// **A miss and a block speak one shape.** An id, handle or address that names
+/// nothing is not a malformed call and not a server failure: it is jojobot
+/// declining because what the caller named is not there — the same answer the
+/// resemblance and existence gates give — so it comes back as a *successful*
+/// result whose body says `status: blocked`, `wrote: false`, with whatever is
+/// nearby and what to do next.
+///
+/// Two shapes for one idea meant a client had to branch twice to learn the same
+/// thing, and the error half read as a broken server: clients that retry on
+/// error retry it, and clients that unwrap on error handle it exactly wrong.
+///
+/// Everything that is genuinely a caller mistake (a malformed address, an
+/// unknown kind token) or genuinely a failure (the store is down) stays an
+/// error. `Ok` here is the refusal; `Err` is still an error.
+fn memory_declined(verb: &'static str, e: MemoryError) -> Result<CallToolResult, McpError> {
+    match e {
+        MemoryError::UnknownEntity { attempted, nearest } => Ok(blocked_result(
+            &EntityId(attempted),
+            &nearest,
+            Blocked::MustExist(verb),
+            None,
+        )),
+        // A fact miss has no entity candidates — its near misses are the live
+        // addresses in the same doc, which is what makes it repairable.
+        MemoryError::UnknownFact { attempted, nearest } => {
+            let live = if nearest.is_empty() {
+                "That entity holds no facts at all yet, so there is nothing here to edit — \
+                 capture one first."
+                    .to_string()
+            } else {
+                format!("The addresses that do exist here are: {}.", nearest.join(", "))
+            };
+            Ok(blocked_body(
+                &EntityId(attempted.clone()),
+                &[],
+                format!(
+                    "Nothing was written. '{attempted}' addresses no fact jojobot holds, and this \
+                     verb never creates one. {live} Recall the entity if none of them is what you \
+                     meant — every fact comes back carrying the address that edits it."
+                ),
+            ))
+        }
+        other => Err(memory_error(other)),
+    }
+}
+
+/// The mailbox half of [`memory_declined`]: an id that names nothing, and the
+/// quarantined card that names something jojobot cannot read. Different answers
+/// — one is repairable by a better id, the other only by a person on the board
+/// — in one shape.
+fn mailbox_declined(e: MailboxError) -> Result<CallToolResult, McpError> {
+    match e {
+        MailboxError::UnknownMessage { attempted } => Ok(mailbox_blocked_body(
+            &attempted,
+            None,
+            format!(
+                "Nothing was written. No message jojobot holds has the id '{attempted}', in any \
+                 mailbox. Ids are minted by jojobot and handed back by read_mailbox and \
+                 post_message — take a delivery and use an id from it rather than composing one."
+            ),
+        )),
+        MailboxError::Quarantined { attempted, reason } => {
+            Ok(mailbox_quarantined(&attempted, &reason))
+        }
+        other => Err(mailbox_error(other)),
+    }
 }
 
 /// Map a domain [`MailboxError`] to an MCP error, splitting client mistakes from
@@ -1691,9 +1779,11 @@ impl ServerHandler for Jojobot {
                  SUCCESSFUL result whose body says `status: blocked`, `wrote: false`, with \
                  `candidates` and `how_to_proceed` — nothing was written; use the candidate you \
                  meant, or re-call with `create_new: true` if it truly is a different thing \
-                 sharing a name. Never retry unchanged. A plain error is different: a malformed \
-                 call, or an id/address that names nothing at all. Nothing on this surface \
-                 deletes anything. 3. **Mark a message processed only AFTER acting on it**: \
+                 sharing a name. **Naming something that does not exist is blocked too**, with \
+                 whatever is nearby — never a plain error, so branch on `status`, not on whether \
+                 the call errored. A plain error is a malformed call, or the store failing. \
+                 Nothing on this surface deletes anything. 3. **Mark a message processed only \
+                 AFTER acting on it**: \
                  mark first and then fail, and it is gone from every future delivery with \
                  nobody the wiser; act first and crash, and the next read hands it back, \
                  flagged `seen_before` — recoverable.\
@@ -2458,9 +2548,13 @@ mod tests {
                 create_new: None,
             }))
             .await
-            .expect_err("unknown handle must error");
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("thing:red-bike"), "must name the near miss: {}", err.message);
+            .expect("an unknown handle is an answer, not a protocol failure");
+        let body = blocked(&err);
+        assert_eq!(body["attempted"], "thing:red-bikee");
+        assert_eq!(
+            body["candidates"][0]["handle"], "thing:red-bike",
+            "must name the near miss: {body}"
+        );
     }
 
     // --- the write guard, through the MCP boundary ----------------------------
@@ -2813,21 +2907,41 @@ mod tests {
         assert_eq!(ok["provenance"], "testimony");
     }
 
-    /// A malformed or unknown address is a client error — never a new fact.
+    /// **A malformed address and a missed one are different answers**, and
+    /// never a new fact. Malformed is the caller writing something that is not
+    /// an address at all — a protocol error. Missed is a well-formed address
+    /// naming nothing, which is the same "you named what does not exist" every
+    /// gate answers, so it wears the blocked shape and carries the addresses
+    /// that do exist.
     #[tokio::test]
-    async fn a_bad_address_is_a_client_error() {
+    async fn a_malformed_address_errors_and_a_missed_one_is_blocked() {
         let jojobot = handler();
         capture_ok(&jojobot, capture_args("alpha", "the only fact here")).await;
-        for address in ["not-an-address", "person:alpha#f99"] {
-            let err = jojobot
+
+        let err = jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                content: Some("nope".into()),
+                ..update_args("not-an-address")
+            }))
+            .await
+            .expect_err("a string that is no address is a malformed call");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+
+        let missed = blocked(
+            &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
                     content: Some("nope".into()),
-                    ..update_args(address)
+                    ..update_args("person:alpha#f99")
                 }))
                 .await
-                .expect_err("must reject {address}");
-            assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "for {address}");
-        }
+                .expect("an address that names nothing is an answer, not a protocol failure"),
+        );
+        assert_eq!(missed["attempted"], "person:alpha#f99");
+        let advice = missed["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            advice.contains("person:alpha#f1"),
+            "the addresses that DO exist are what makes this repairable: {advice}"
+        );
         let body = json_of(
             &jojobot
                 .recall(Parameters(RecallArgs { subject: "alpha".into() }))
@@ -2889,13 +3003,17 @@ mod tests {
             .await
             .expect("add ok");
 
-        let err = jojobot
-            .recall(Parameters(RecallArgs { subject: "person:zenit".into() }))
-            .await
-            .expect_err("an unknown entity must not read as an empty page");
-        let msg = format!("{err:?}");
-        assert!(msg.contains("no entity"), "the miss names itself: {msg}");
-        assert!(msg.contains("zenith"), "the near candidate surfaces: {msg}");
+        let missed = blocked(
+            &jojobot
+                .recall(Parameters(RecallArgs { subject: "person:zenit".into() }))
+                .await
+                .expect("a handle that names nothing is an answer, not a protocol failure"),
+        );
+        assert_eq!(missed["attempted"], "person:zenit");
+        assert_eq!(
+            missed["candidates"][0]["handle"], "person:zenith",
+            "the near candidate surfaces: {missed}"
+        );
 
         let body = json_of(
             &jojobot
@@ -3268,20 +3386,32 @@ mod tests {
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     }
 
-    /// An id nothing answers to is a client error carrying the id that missed —
-    /// never a silent success, which would look exactly like a handled message.
+    /// An id nothing answers to is **blocked**, carrying the id that missed —
+    /// never a silent success, which would look exactly like a handled message,
+    /// and no longer a protocol error either: naming something that does not
+    /// exist is the same kind of answer whichever gate catches it, so it wears
+    /// one shape.
     #[tokio::test]
-    async fn processing_an_unknown_message_is_a_client_error() {
+    async fn processing_an_unknown_message_is_blocked_not_an_error() {
         let jojobot = mailbox_handler();
-        let err = jojobot
+        let result = jojobot
             .mark_processed(Parameters(MarkProcessedArgs {
                 message_id: "999999".into(),
                 notes: None,
             }))
             .await
-            .expect_err("an unknown id must not report success");
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("999999"), "got {}", err.message);
+            .expect("an id that names nothing is an answer, not a protocol failure");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "999999");
+        assert!(
+            body["candidates"].as_array().is_some_and(|c| c.is_empty()),
+            "nothing resembles a message id: {body}"
+        );
+        let advice = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            advice.contains("read_mailbox"),
+            "the way out is a delivery that hands back real ids: {advice}"
+        );
     }
 
     /// **A quarantined card is visible on the wire, and it is not a count of
@@ -3349,15 +3479,27 @@ mod tests {
             "…and that the way out is a human on the board, not a retry: {advice}"
         );
 
-        // …and it is emphatically not the answer an unknown id gets.
-        let err = jojobot
-            .mark_processed(Parameters(MarkProcessedArgs {
-                message_id: "999999".into(),
-                notes: None,
-            }))
-            .await
-            .expect_err("an id nothing answers to is still a miss");
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        // Both wear the blocked shape now — but they are still different
+        // answers, and the difference is the one that matters: a quarantined
+        // card is a real card no retry can reach, while an unknown id names
+        // nothing at all.
+        let unknown = blocked(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_id: "999999".into(),
+                    notes: None,
+                }))
+                .await
+                .expect("an id nothing answers to is still an answer"),
+        );
+        assert!(
+            unknown["reason"].is_null(),
+            "there is no card to explain — that field belongs to the quarantine answer: {unknown}"
+        );
+        assert!(
+            !unknown["how_to_proceed"].as_str().expect("advice").contains("PERSON"),
+            "and its way out is not a human on the board: {unknown}"
+        );
     }
 
     /// **The whole tool surface, named.** Production jojobot never deletes
@@ -3465,6 +3607,10 @@ mod tests {
             "drain",
             "superseded",
             "ask the operator",
+            // M4: an identity is a thing a session can be, and the orientation
+            // has to say what one is made of before boot_bot hands one over.
+            "bot",
+            "charter",
         ] {
             assert!(
                 orientation.contains(taught),
@@ -3749,14 +3895,21 @@ mod tests {
             "Holds the plan. Does not implement."
         );
 
-        // A charter for a bot that does not exist misses — it never creates one.
-        let err = jojobot
-            .set_charter(Parameters(SetCharterArgs {
-                bot: "nobody".into(),
-                prose: "a charter for nobody".into(),
-            }))
-            .await
-            .expect_err("an unknown bot must miss");
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        // A charter for a bot that does not exist misses — it never creates one,
+        // and the miss wears the same blocked shape every other absence does.
+        let missed = blocked(
+            &jojobot
+                .set_charter(Parameters(SetCharterArgs {
+                    bot: "nobody".into(),
+                    prose: "a charter for nobody".into(),
+                }))
+                .await
+                .expect("an unknown bot is an answer, not a protocol failure"),
+        );
+        assert_eq!(missed["attempted"], "bot:nobody");
+        assert!(
+            missed["how_to_proceed"].as_str().is_some_and(|a| a.contains("add_entity")),
+            "the way out names the verb that opens it: {missed}"
+        );
     }
 }

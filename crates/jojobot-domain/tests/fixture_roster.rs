@@ -29,6 +29,7 @@ const ROSTER: &[&str] = &[
     "bot:epsilon",
     "bot:gamm",
     "bot:gamma",
+    "bot:nobody",
     "bot:otto",
     "bot:sigma",
     "event:winter-fest",
