@@ -51,20 +51,25 @@ jojobot is a personal-assistant server: the durable memory and message rail behi
 
 **MEMORY** is a typed graph of the operator's life. An **entity** is a noun — person · project · place · event · work · thing · org · topic — with a permanent handle like `person:milhouse`. A **fact** is one dated claim about an entity, addressed `person:milhouse#3`, carrying a **provenance**: `testimony` (the operator said or confirmed it) or `inference` (an AI derived it). Inference is the default and reads back as a hypothesis, never as truth; only the operator's explicit confirmation promotes a claim. A fact may draw one typed **edge** at another entity — `location` · `membership` · `attendance` · `about` — and edges are what make cross-entity questions answerable. **`search` is the front door** to all of it (memory only — never messages).
 
-**MAILBOXES** are the async rail between sessions: named boxes where one session leaves a message another will find. A message is `new` → `read` → `processed`. Reading IS taking delivery (no peek); anything read but not yet processed comes back on the next read, flagged — so crashed work resurfaces on its own. `processed` means acted-on, and it is a terminal archive: nothing here is ever deleted.
+**MAILBOXES** are the async rail between sessions: named boxes where one session leaves a message another will find. A message is `new` → `read` → `processed`. Reading IS taking delivery (no peek); anything read but not yet processed comes back on the next read, flagged — so crashed work resurfaces on its own. `processed` means acted-on, and it is a terminal archive: nothing here is ever deleted. **A box is infrastructure, not data**: a permanent label in the operator's own task system, worth having only because some specific party is committed to draining it. A message is addressed to a box, never to you — there is no recipient field, and no box is "yours" unless you were told it is.
 
 ## Working here, by example
 
-- *"Remember that Milhouse is allergic to shellfish"* → `search` for milhouse to find the handle → `capture` subject `person:milhouse`, content the claim, provenance `testimony` (they told you) or `inference` (you concluded it).
-- *Something genuinely new* → two deliberate steps, always: `add_entity` (or `create_mailbox`), then the write. Nothing is ever created as a side effect.
+- *"Remember that Milhouse is allergic to shellfish"* → `search` for milhouse to find the handle → `capture` subject `person:milhouse`, content the claim, provenance `testimony` (the operator's own words back it) or `inference` (you concluded it). The gate is on promotion, not assertion — a first capture declares its own provenance on honour, so declare `testimony` only for the operator's words, and capture what a later session would need: a passing mention is not a fact.
+- *A person, place, org or event the operator named that jojobot doesn't know* → `add_entity`, then the write: two deliberate steps, nothing created as a side effect. This is the normal, welcome move — the graph is meant to grow with the operator's life.
+- *No mailbox fits what you want to leave* → almost never `create_mailbox`. A new box is a message posted where nobody is listening, plus a permanent label. Use an existing, agreed box, or say plainly there is nowhere fitting and let the operator decide — mint one only when the operator or a standing arrangement asked for that box by name.
 - *"Which people are in Shelbyville?"* → `search` with kind `person` and edge `{shape: location, object: place:shelbyville}` — an edge walk, not a text match.
-- *"That was wrong"* → `recall` the subject, then `update_fact` rewrites the claim in place to state what is true NOW — including negative truth ("NOT allergic — confirmed by the operator"). The record is current truth, never a correction trail.
-- *Leave word for another session* → `list_mailboxes` to see what boxes exist, `post_message` with a body written for a reader with none of your context, and your `sender` declared specifically enough to reach you with a reply.
-- *Handle mail* → `read_mailbox`, act, then `mark_processed` — ONLY after acting, with the outcome in notes. A failure is data to record, not a state to park in.
+- *"That was wrong"* → `recall` the subject, then `update_fact` rewrites the claim in place to state what is true NOW — including negative truth ("NOT allergic — confirmed by the operator"). The record is current truth, never a correction trail. *"That changed"* is a different move: the old claim was true in its day — mark it `superseded` and `capture` the new one.
+- *Leave word for another session* → `list_mailboxes` to see what exists and what is waiting, `post_message` into an agreed box with a body written for a reader with none of your context, and your `sender` naming a role that still exists next week, not this session's id.
+- *Handle mail* → `read_mailbox` on the box you were told to drain — reading takes delivery of every message in it, and they are not yours just because you can read them — act, then `mark_processed`, ONLY after acting, with the outcome in notes. A failure is data to record, not a state to park in.
 
-## The two answers that are not errors
+When the right write is not obvious, ask the operator — an unasked write outlives the conversation that guessed it.
 
-A **blocked** result is a SUCCESS whose body says `status: "blocked"`, `wrote: false`: jojobot suspects you meant something that already exists, and wrote nothing. Read `candidates` and `how_to_proceed`; never retry unchanged. A plain **error** means the call itself was malformed or named something that does not exist at all. Both protect the same thing: a store many sessions trust, which no single session may quietly corrupt.
+## The answers that are not errors
+
+A **blocked** result is a SUCCESS whose body says `status: "blocked"`, `wrote: false`: nothing was written, and `how_to_proceed` says what to do next. Never retry one unchanged. Three gates produce it, with different ways out: **resemblance** (creating or renaming something that looks like what exists — pick the candidate you meant, or `create_new: true` only when you can say how the two differ; an exact handle or box name is never overridable), **absence** (you named something that must already exist — the subject of a capture, an edge's object, the box of a post; empty `candidates` means nothing even resembles it, not that your call was malformed; for an entity, creating it and retrying is usually right — for a mailbox it usually is not), and **unreadable** (`mark_processed` reached an item jojobot cannot read — no retry helps, a person must repair it; treat what it carried as unhandled and say so).
+
+A plain **error** is a malformed call, an unknown message id, or the store itself failing. And know what the guards do NOT cover: they catch resemblance and absence, never judgement — a wholly novel name sails through, and nothing will stop you standing up a box nobody drains. That call is yours, and the store keeps whatever you decide.
 "#;
 
 /// Arguments to `add_entity`.
@@ -1138,14 +1143,18 @@ fn mailbox_blocked(
         ),
         BlockedBox::MustExist(verb) if candidates.is_empty() => format!(
             "Nothing was written. '{attempted}' is not a mailbox jojobot knows, and nothing \
-             resembles it. {verb} cannot create one: call create_mailbox to create '{attempted}' \
-             first, then re-call {verb}.",
+             resembles it. {verb} cannot create one — and a new box is rarely the answer: a \
+             mailbox is a channel someone must be draining, so use list_mailboxes to pick an \
+             existing box, or tell the operator there is nowhere fitting to put this. Only \
+             create_mailbox '{attempted}' if the operator or a standing arrangement asked for \
+             that box by name.",
         ),
-        BlockedBox::MustExist(verb) => format!(
+        BlockedBox::MustExist(_) => format!(
             "Nothing was written. '{attempted}' is not a mailbox jojobot knows. If one of the \
-             names above is what you meant, use that — it is almost certainly a typo. Otherwise \
-             {verb} cannot create the box for you: call create_mailbox first, then re-call \
-             {verb}.",
+             names above is what you meant, use that — it is almost certainly a typo. \
+             Otherwise: a new box is rarely the answer (a mailbox is a channel someone must be \
+             draining), so prefer an existing box or ask the operator; create_mailbox only if \
+             this box was asked for by name.",
         ),
     };
     let body = serde_json::json!({
@@ -3113,6 +3122,12 @@ mod tests {
             "processed",
             "search",
             "blocked",
+            // The norms the box-minting review added (2026-07-26): a mailbox is
+            // a channel someone drains, never minted mid-errand; changed claims
+            // supersede rather than overwrite; ambiguity goes to the operator.
+            "drain",
+            "superseded",
+            "ask the operator",
         ] {
             assert!(
                 orientation.contains(taught),
