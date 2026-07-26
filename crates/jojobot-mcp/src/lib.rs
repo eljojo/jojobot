@@ -437,8 +437,9 @@ impl Jojobot {
                        starts as this bot — what this identity is, its hard lines, where its work \
                        lives. Replaces the whole charter rather than adding to it, and returns \
                        the stored text, which is what a later boot_bot will read back. A bot that \
-                       does not exist is an error naming the nearest handles — add_entity first. \
-                       Rules are not written here: a rule is a fact about the bot, so capture it."
+                       does not exist comes back status: blocked with the nearest handles — \
+                       add_entity first; nothing is created here. Rules are not written here \
+                       either: a rule is a fact about the bot, so capture it."
     )]
     async fn set_charter(
         &self,
@@ -3689,6 +3690,41 @@ mod tests {
             ],
             "the tool surface changed — if that was deliberate, say so here"
         );
+    }
+
+    /// **Every verb whose miss is blocked says so where a caller reads it.**
+    ///
+    /// A description that promises an error for a miss is worse than one that
+    /// says nothing: a client written against it branches on the wrong thing
+    /// and handles the answer exactly wrong. The unification rider fixed four
+    /// of these descriptions and missed `set_charter`, which went on promising
+    /// "an error naming the nearest handles" while the code returned blocked —
+    /// so the whole class is pinned here rather than one more instance of it.
+    #[test]
+    fn the_verbs_whose_misses_are_blocked_all_say_so() {
+        let tools = Jojobot::tool_router().list_all();
+        for name in [
+            "recall",
+            "update_entity",
+            "update_fact",
+            "mark_processed",
+            "set_charter",
+            "boot_bot",
+        ] {
+            let tool = tools
+                .iter()
+                .find(|t| t.name == name)
+                .unwrap_or_else(|| panic!("{name} is a tool"));
+            let description = tool.description.as_deref().unwrap_or_default();
+            assert!(
+                description.contains("blocked"),
+                "{name} must tell a caller its miss is a blocked result: {description}"
+            );
+            assert!(
+                !description.contains("is an error"),
+                "{name} still promises an error for a miss it no longer errors on: {description}"
+            );
+        }
     }
 
     /// **The crash contract is in the tool description, not only in the docs.**

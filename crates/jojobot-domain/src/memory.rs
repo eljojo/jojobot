@@ -1562,13 +1562,37 @@ mod tests {
     fn a_mailbox_claim_is_validated_exactly_as_a_box_name_is() {
         // Restated rather than imported: the two contexts share no types. This
         // pins the two rules together so neither can drift alone.
-        for value in ["inbox", "gamma-inbox", "box-2", "a", "", "Inbox", "in box", "-inbox", "inbox-", "in`box", "in\nbox"] {
+        let samples = [
+            "inbox".to_string(),
+            "gamma-inbox".to_string(),
+            "box-2".to_string(),
+            "a".to_string(),
+            String::new(),
+            "Inbox".to_string(),
+            "in box".to_string(),
+            "-inbox".to_string(),
+            "inbox-".to_string(),
+            "in`box".to_string(),
+            "in\nbox".to_string(),
+            // **The length clause, which both grammars duplicate.** Every other
+            // sample here is short, so the cap was the one rule the pin never
+            // touched — it could have drifted on either side in silence. 64 is
+            // the last accepted name and 65 the first refused, so a cap moved
+            // by one on one side goes red.
+            "a".repeat(64),
+            "a".repeat(65),
+        ];
+        for value in samples {
             assert_eq!(
-                validate_mailbox(value).is_ok(),
-                crate::mailbox::validate_mailbox_name(&crate::mailbox::MailboxName(value.into())).is_ok(),
-                "Memory and Mailboxes must agree on whether {value:?} is a box name"
+                validate_mailbox(&value).is_ok(),
+                crate::mailbox::validate_mailbox_name(&crate::mailbox::MailboxName(value.clone())).is_ok(),
+                "Memory and Mailboxes must agree on whether a {}-char name is a box name",
+                value.chars().count()
             );
         }
+        // …and the pin only means something if the boundary is where it says.
+        assert!(validate_mailbox(&"a".repeat(64)).is_ok(), "64 is the last accepted");
+        assert!(validate_mailbox(&"a".repeat(65)).is_err(), "65 is the first refused");
     }
 
     #[test]
