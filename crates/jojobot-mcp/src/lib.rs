@@ -1073,11 +1073,14 @@ fn mailbox_error(e: MailboxError) -> McpError {
         // Reached only if a verb other than mark_processed ever surfaces one;
         // that verb renders it as a structured result instead.
         | MailboxError::Quarantined { .. } => McpError::invalid_params(e.to_string(), None),
-        // Not a caller mistake and not something a caller can fix by calling
-        // differently: jojobot found a card on its own board that belongs to
-        // another project, and refused. That is an integrity condition on the
-        // server side.
-        MailboxError::ForeignProject(_) => McpError::internal_error(e.to_string(), None),
+        // Neither of these is a caller mistake, and neither is something a
+        // caller can fix by calling differently: jojobot found a card on its
+        // own board that belongs to another project and refused, or a write
+        // failed and could not be undone, leaving a card mid-verb. Both are
+        // integrity conditions on the server side that need a person.
+        MailboxError::ForeignProject(_) | MailboxError::Stranded { .. } => {
+            McpError::internal_error(e.to_string(), None)
+        }
         MailboxError::NotConfigured(msg) => {
             McpError::internal_error(format!("mailboxes not configured: {msg}"), None)
         }

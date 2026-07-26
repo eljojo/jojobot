@@ -594,8 +594,7 @@ impl VikunjaStore {
         scope: &Scope,
         cards: &[(TaskRec, MessageState)],
         written: MessageState,
-        verb: &str,
-    ) -> String {
+    ) -> Rollback {
         let untouchable: std::collections::HashSet<u64> = match self.board_read(scope).await {
             Ok(board) => board
                 .messages
@@ -612,14 +611,10 @@ impl VikunjaStore {
                 continue;
             }
             if let Err(failure) = self.restore(scope, card, *state).await {
-                failures.push(format!("card {}: {failure}", card.id));
+                failures.push((card.id, failure));
             }
         }
-        if failures.is_empty() {
-            format!("every card this {verb} moved was put back")
-        } else {
-            format!("AND restoring part of this {verb} failed ({})", failures.join("; "))
-        }
+        Rollback::of(failures)
     }
 
     /// Put a card back the way a failed write found it. A read-back mismatch
@@ -654,13 +649,6 @@ impl VikunjaStore {
         }
     }
 
-    /// The clause a failed verb appends about its restore attempt.
-    fn restore_clause(outcome: Result<(), MailboxError>, verb: &str) -> String {
-        match outcome {
-            Ok(()) => format!("the card was restored to its state before this {verb}"),
-            Err(e) => format!("AND restoring the card failed ({e}) — it may be left mid-{verb}"),
-        }
-    }
 
     /// The `parked` column's id, creating the column on demand. Deliberately
     /// **not a state token**: a card here has no place in the funnel, so the
@@ -724,6 +712,49 @@ impl VikunjaStore {
                      left where the failure found it"
                 )
             }
+        }
+    }
+}
+
+/// What a rollback managed to do — **a value, never a sentence**. Whether the
+/// cards a failed write moved are back where they were is the one thing the
+/// caller cannot work out from anything else in the answer, so it does not ride
+/// in prose that a reader (or a later edit) has to parse.
+#[derive(Debug)]
+enum Rollback {
+    /// Every card this verb moved is back where it found it.
+    Undone,
+    /// Some cards could not be put back. They are left mid-write.
+    Stranded(Vec<(u64, MailboxError)>),
+}
+
+impl Rollback {
+    fn of(failures: Vec<(u64, MailboxError)>) -> Self {
+        if failures.is_empty() {
+            Rollback::Undone
+        } else {
+            Rollback::Stranded(failures)
+        }
+    }
+
+    /// The error a failed verb answers with: the cause on its own when the
+    /// rollback held, and a [`MailboxError::Stranded`] naming the cards when it
+    /// did not.
+    fn into_error(self, verb: &str, cause: impl std::fmt::Display) -> MailboxError {
+        match self {
+            Rollback::Undone => MailboxError::Store(format!(
+                "{cause}; every card this {verb} moved was put back"
+            )),
+            Rollback::Stranded(failures) => MailboxError::Stranded {
+                verb: verb.to_string(),
+                cards: failures.iter().map(|(card, _)| card.to_string()).collect(),
+                cause: cause.to_string(),
+                rollback: failures
+                    .iter()
+                    .map(|(card, why)| format!("card {card}: {why}"))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            },
         }
     }
 }
@@ -972,8 +1003,10 @@ impl Mailboxes for VikunjaStore {
                     .move_task(scope.project(), scope.view, read_column, card.id)
                     .await
                 {
-                    let restored = self.restore_all(&scope, &moved, MessageState::Read, "read_mailbox").await;
-                    return Err(MailboxError::Store(format!("{e}; {restored}")));
+                    return Err(self
+                        .restore_all(&scope, &moved, MessageState::Read)
+                        .await
+                        .into_error("read_mailbox", e));
                 }
                 moved.push((card.clone(), message.state));
             }
@@ -1024,12 +1057,17 @@ impl Mailboxes for VikunjaStore {
                     // is being told the call failed, so nothing in it may stay
                     // marked delivered.
                     let _ = &card;
-                    let restored = self.restore_all(&scope, &moved, MessageState::Read, "read_mailbox").await;
-                    return Err(MailboxError::Store(format!(
-                        "message {} did not read back as delivered: expected {expected_read:?}, \
-                         read {seen:?}; {restored}",
-                        expected.id
-                    )));
+                    return Err(self
+                        .restore_all(&scope, &moved, MessageState::Read)
+                        .await
+                        .into_error(
+                            "read_mailbox",
+                            format!(
+                                "message {} did not read back as delivered: expected \
+                                 {expected_read:?}, read {seen:?}",
+                                expected.id
+                            ),
+                        ));
                 }
             }
         }
@@ -1099,12 +1137,14 @@ impl Mailboxes for VikunjaStore {
                 .await
         }
         .await;
+        // One card, so the batch rollback's vocabulary covers it exactly: the
+        // answer says whether the card is back where it was, by type.
+        let put_back = |outcome: Result<(), MailboxError>| {
+            Rollback::of(outcome.err().map(|e| vec![(card.id, e)]).unwrap_or_default())
+        };
         if let Err(e) = retired {
-            let restored = Self::restore_clause(
-                self.restore(&scope, &card, message.state).await,
-                "mark_processed",
-            );
-            return Err(MailboxError::Store(format!("{e}; {restored}")));
+            let restored = put_back(self.restore(&scope, &card, message.state).await);
+            return Err(restored.into_error("mark_processed", e));
         }
 
         let expected = Message {
@@ -1115,17 +1155,16 @@ impl Mailboxes for VikunjaStore {
         match self.read_back(&scope, id).await {
             Ok(seen) if seen == expected => Ok(seen),
             outcome => {
-                let restored = Self::restore_clause(
-                    self.restore(&scope, &card, message.state).await,
+                let restored = put_back(self.restore(&scope, &card, message.state).await);
+                Err(restored.into_error(
                     "mark_processed",
-                );
-                Err(MailboxError::Store(match outcome {
-                    Ok(seen) => format!(
-                        "message {id} read back changed: wrote {expected:?}, read {seen:?}; \
-                         {restored}"
-                    ),
-                    Err(e) => format!("{e}; {restored}"),
-                }))
+                    match outcome {
+                        Ok(seen) => {
+                            format!("message {id} read back changed: wrote {expected:?}, read {seen:?}")
+                        }
+                        Err(e) => e.to_string(),
+                    },
+                ))
             }
         }
     }
@@ -2903,6 +2942,73 @@ mod tests {
             fake.column_of(handled_card).as_deref(),
             Some("processed"),
             "…and it is left where the handler put it, not rolled back into the funnel"
+        );
+    }
+
+    /// **A rollback that fails is REPORTED as having failed — by type.** The
+    /// card is left mid-write: not processed, not restored, and nothing the
+    /// caller can retry its way out of. That is the one thing an answer cannot
+    /// leave to prose, because prose is what a caller ends up matching on: the
+    /// last time this was a sentence inside a general store error, rewording
+    /// the sentence broke the detection with every test green.
+    #[tokio::test]
+    async fn a_processing_whose_rollback_also_fails_says_the_card_is_stranded() {
+        let fake = FakeVikunja::new();
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let posted = contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
+        contract::read(&store, "inbox").await;
+
+        // The outcome write fails — and so does the one the restore makes.
+        fake.fail_all("update_task");
+        let err = store
+            .mark_processed(&posted.id, Some("filed"))
+            .await
+            .expect_err("a failed processing must not report success");
+
+        let MailboxError::Stranded { verb, cards, .. } = &err else {
+            panic!("a card left mid-write needs its own answer, not prose: {err:?}");
+        };
+        assert_eq!(verb, "mark_processed");
+        assert_eq!(cards, &vec![posted.id.to_string()], "the answer names the card");
+    }
+
+    /// The batch sibling: when a delivery rolls back and a card it moved cannot
+    /// be put back, that card is named — while the card the rollback
+    /// deliberately leaves alone (quarantined) is not, because it was never
+    /// owed a restore.
+    #[tokio::test]
+    async fn a_delivery_whose_rollback_fails_names_the_cards_left_behind() {
+        let fake = FakeVikunja::new();
+        let api = Interleaved::new(fake.clone());
+        let store = VikunjaStore::from_api(api.clone(), PROJECT);
+        contract::create(&store, "inbox").await;
+        let intact = contract::post(&store, "inbox", "alpha", "message one", 0).await;
+        let garbled = contract::post(&store, "inbox", "milhouse", "message two", 60).await;
+        let garbled_card: u64 = garbled.id.as_str().parse().expect("a numeric card id");
+
+        api.before_board(3, move |fake| {
+            let mut tasks = fake.tasks.lock().unwrap();
+            let card = tasks.iter_mut().find(|t| t.id == garbled_card).expect("the card");
+            card.description = "hand-garbled mid-delivery".into();
+            card.raw["description"] = "hand-garbled mid-delivery".into();
+        });
+        // The delivery moves both cards, fails its read-back on the garbled
+        // one, and then cannot write the other one back either.
+        fake.fail_all("update_task");
+
+        let err = store
+            .read_mailbox(&MailboxName("inbox".into()))
+            .await
+            .expect_err("a delivery that could not be undone must not report success");
+
+        let MailboxError::Stranded { verb, cards, .. } = &err else {
+            panic!("a batch left mid-delivery needs its own answer, not prose: {err:?}");
+        };
+        assert_eq!(verb, "read_mailbox");
+        assert_eq!(
+            cards,
+            &vec![intact.id.to_string()],
+            "only the card the rollback owed something to is named"
         );
     }
 

@@ -452,6 +452,30 @@ pub enum MailboxError {
         /// Why the card cannot be read.
         reason: String,
     },
+    /// **A write failed, and putting the card back failed too.** The card is
+    /// left mid-verb: not written, not restored, and not something the caller
+    /// can retry its way out of.
+    ///
+    /// Its own variant on purpose. Whether a rollback worked is the one thing a
+    /// caller cannot infer from anything else in the answer, and the last time
+    /// it was carried as a sentence inside a general store error, detecting it
+    /// meant string-matching that sentence — so rewording it silently broke the
+    /// detection with every test green.
+    #[error(
+        "{verb} failed ({cause}) AND putting it back failed ({rollback}) — card(s) {} are left \
+         mid-{verb}, and a person has to look at the board",
+        .cards.join(", ")
+    )]
+    Stranded {
+        /// The verb that failed.
+        verb: String,
+        /// The cards left mid-write.
+        cards: Vec<String>,
+        /// What failed first.
+        cause: String,
+        /// Why the rollback could not undo it.
+        rollback: String,
+    },
     /// **The write-scope invariant.** A call path reached for a project that is
     /// not the discovered mailbox project. Refused before any request leaves the
     /// process: the operator's own boards live on the same Vikunja, and a
