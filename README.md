@@ -9,17 +9,23 @@ jojobot is **not** an MCP proxy. It is software with a domain: it feeds the
 assistant context, guards writes behind invariants, remembers what matters, and
 never runs inference of its own — the assistant is the only mind.
 
-> **Status: two domains live, and sessions can boot as an identity.** The
-> server ships **Memory** — typed entities and dated facts with provenance
-> (testimony vs inference), a write guard that blocks near-miss creations with
-> candidates, full-text `search` with structured edges, aliases, and
+> **Status: two domains live, one front door over both, and sessions can boot
+> as an identity.** The server ships **Memory** — typed entities and dated
+> facts with provenance (testimony vs inference), a write guard that blocks
+> near-miss creations with candidates, structured edges, aliases, and
 > orienteering retrieval (every hit arrives with its surroundings) — and
 > **Mailboxes** — kanban-backed message boxes with `new → read → processed`
 > state (read ≠ processed; processed is a terminal archive; no delete verbs —
-> the tool surface is pinned by test). On top of both, **bots**: an AI
-> identity is an entity of kind `bot` with a charter, rules, memory and one
-> owned mailbox, and `boot_bot` hands a session all of it in one call.
-> All behind OAuth2 resource-server auth, every write verified by read-back.
+> the tool surface is pinned by test), each message optionally carrying a
+> `subject`, and `read_message` taking delivery of one without draining its
+> box. **`search` spans both**: one ranked list over entities, facts, prose and
+> messages, mail included by default and in every state (`processed` archives
+> too), each mail hit carrying its box, state, sender and id — and an answer
+> that could not see the board says so rather than reading as "nothing
+> matched". On top of both, **bots**: an AI identity is an entity of kind `bot`
+> with a charter, rules, memory and one owned mailbox, and `boot_bot` hands a
+> session all of it in one call. All behind OAuth2 resource-server auth, every
+> write verified by read-back.
 
 ## Vision & roadmap
 
@@ -29,8 +35,9 @@ roadmap is a ladder of **capabilities** — each milestone is named "after this,
 I can ___", never after infrastructure:
 
 memory (M1) → search & edges (M2) → **mailboxes** (M3) → **bots** — AI
-identities with a handle, charter, rules, memory and an owned mailbox (M4) →
-sessions on the record (M5) → trace: claim → fact → receipt → evidence (M6) →
+identities with a handle, charter, rules, memory and an owned mailbox (M4),
+with mail folded into the one `search` → sessions on the record (M5) → trace:
+claim → fact → receipt → evidence (M6) →
 portraits (M7) → attention: rules, rhythms, nags (M8) → sessions boot *from*
 jojobot (M9) → seeding: batteries included, overrides win (M10). Everything
 up to and including **M4** is shipped.

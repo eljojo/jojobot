@@ -81,9 +81,25 @@ Shipped and live:
 - **M2/M2.5/M2.8** — `search` across facts, entities and prose; structured
   edges (location · membership · attendance · about); aliases; orienteering
   retrieval (every hit arrives with its surroundings).
+
+> **One front door, over both worlds.** Mail is in the same `search` — no
+> second verb, one ranked list — and **in by default**: the reader who needs a
+> filed finding is a later session that does not know it is there, so
+> excluded-by-default would rebuild the blindness with an extra step in front
+> of it. `include_mail: false` takes it back out. Every state is searchable,
+> `processed` included, and the state rides on the hit beside the box, the
+> sender and the id. Retrieval is the ONE place the two contexts meet, and it
+> meets them as a reader: a `Hit` carries a `Message`, nothing writes across.
+> Because a search is a read of an in-process index, a mailbox world that was
+> down at boot means mail is silently missing — so every answer carries
+> `mail: {searched}`, because "no message says that" and "jojobot has read no
+> messages" are different claims and a caller acts on both.
 - **M3** — Mailboxes: kanban-backed message boxes (`new → read → processed`;
   read ≠ processed; processed is a terminal archive; no delete verbs — the
-  tool surface is pinned by test).
+  tool surface is pinned by test). A message may carry a one-line `subject`,
+  and **`read_message` takes delivery of one by id** — draining a whole box
+  makes every message in it owed work, which is the wrong price for wanting
+  the single one a search hit named.
 - **M4** — Bots: a ninth entity kind, `bot` — an AI identity is handle ·
   charter (its doc's prose, written through `set_charter`) · rules (plain
   facts, so each carries its own provenance) · memory · one owned mailbox
