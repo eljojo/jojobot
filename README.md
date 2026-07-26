@@ -9,10 +9,32 @@ jojobot is **not** an MCP proxy. It is software with a domain: it feeds the
 assistant context, guards writes behind invariants, remembers what matters, and
 never runs inference of its own — the assistant is the only mind.
 
-> **Status: walking skeleton.** Today the server exposes one tool, `ping`, over
-> streamable HTTP, behind OAuth2 resource-server auth. It compiles, it's tested,
-> and it proves the transport + auth path end to end. The domain contexts are
-> scaffolded but empty. Grep the tree for `TODO:` to see exactly what's pending.
+> **Status: two domains live.** The server ships **Memory** — typed entities
+> and dated facts with provenance (testimony vs inference), a write guard that
+> blocks near-miss creations with candidates, full-text `search` with
+> structured edges, aliases, and orienteering retrieval (every hit arrives
+> with its surroundings) — and **Mailboxes** — kanban-backed message boxes
+> with `new → read → processed` state (read ≠ processed; processed is a
+> terminal archive; no delete verbs — the tool surface is pinned by test).
+> All behind OAuth2 resource-server auth, every write verified by read-back.
+
+## Vision & roadmap
+
+jojobot's mission is to move an assistant's *method* out of prose (rules files,
+skills, per-session caches) into software: versioned, tested, enforced. The
+roadmap is a ladder of **capabilities** — each milestone is named "after this,
+I can ___", never after infrastructure:
+
+memory (M1) → search & edges (M2) → **mailboxes** (M3) → **bots** — AI
+identities with a handle, charter, rules, memory and an owned mailbox (M4) →
+sessions on the record (M5) → trace: claim → fact → receipt → evidence (M6) →
+portraits (M7) → attention: rules, rhythms, nags (M8) → sessions boot *from*
+jojobot (M9) → seeding: batteries included, overrides win (M10).
+
+Two layers hold it together: the **engine** (this repo — user-agnostic, golden
+tests) and **bots** (data in the user's own store). The design docs live with
+the user, not in-repo. AI sessions working here: read [CLAUDE.md](./CLAUDE.md)
+first.
 
 ## Design
 
@@ -32,7 +54,7 @@ never runs inference of its own — the assistant is the only mind.
 ```
 crates/
   jojobot-domain     pure domain — bounded contexts as modules, no I/O, no MCP
-  jojobot-adapters   anti-corruption layer per fronted service (skeleton)
+  jojobot-adapters   anti-corruption layer per fronted service (Outline, Vikunja)
   jojobot-mcp        the MCP adapter — the only crate that imports rmcp
   jojobot            the binary: HTTP transport + resource-server auth
 ```
@@ -87,6 +109,9 @@ All configuration is environment-driven.
 | `JOJOBOT_AUDIENCE` | Required token audience (RFC 8707) | the resource id |
 | `JOJOBOT_JWKS_URI` | Explicit JWKS URI | discovered from issuer |
 | `JOJOBOT_ALLOW_NO_AUTH` | Set to `1` to run **without auth** (dev only) | unset |
+| `JOJOBOT_ALLOWED_SUBJECTS` | Optional comma-separated `sub` allowlist (requires auth) | unset = any valid token |
+| `JOJOBOT_OUTLINE_URL` / `JOJOBOT_OUTLINE_TOKEN` | The Outline instance Memory fronts | unset |
+| `JOJOBOT_VIKUNJA_URL` / `JOJOBOT_VIKUNJA_TOKEN` | The Vikunja instance Mailboxes front | unset |
 
 The server **fails closed**: with `JOJOBOT_ISSUER` unset it refuses to start
 unless `JOJOBOT_ALLOW_NO_AUTH=1` is set explicitly, and even then it refuses a
