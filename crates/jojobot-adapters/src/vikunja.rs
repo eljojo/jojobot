@@ -510,22 +510,52 @@ impl VikunjaStore {
         }
     }
 
-    /// Delete a card jojobot created seconds ago whose read-back did not match.
-    ///
-    /// This is the one place a card is removed, and it is a **rollback, not a
-    /// lifecycle step**: `processed` is the terminal state and nothing ever
-    /// leaves it. A create has no prior state to restore to — its prior state is
-    /// absence — and unlike a Memory doc, a half-written message card is not
-    /// inert: left in `new`, the next `read_mailbox` would deliver it.
-    async fn undo_create(&self, task_id: u64, verb: &str) -> String {
-        match self.api.delete_task(task_id).await {
-            Ok(()) => format!("the card this {verb} created was removed"),
+    /// Park a card jojobot created seconds ago that a failed write cannot vouch
+    /// for: move it to the `processed` column — terminal, never delivered — so
+    /// the next `read_mailbox` cannot hand a half-written message to a
+    /// consumer. **Nothing is ever deleted**: jojobot has no delete capability
+    /// at all, so a rollback's only moves are restore and park. A create has no
+    /// prior state to restore to — its prior state is absence — which is why
+    /// parking is what stands in.
+    async fn park_create(&self, scope: &Scope, task_id: u64, verb: &str) -> String {
+        let parked = match self.column(scope, MessageState::Processed).await {
+            Ok(bucket) => {
+                self.api
+                    .move_task(scope.project(), scope.view, bucket, task_id)
+                    .await
+            }
+            Err(e) => Err(e),
+        };
+        match parked {
+            Ok(()) => format!(
+                "the card this {verb} created was parked in '{}' — nothing is deleted",
+                MessageState::Processed
+            ),
             Err(e) => format!(
-                "AND removing the card this {verb} created failed ({e}) — card {task_id} may \
-                 remain on the board"
+                "AND parking the card this {verb} created failed ({e}) — card {task_id} is left \
+                 where the failure found it"
             ),
         }
     }
+}
+
+/// Whether a read-back vouches for a write: it returned exactly what was
+/// written — or the same message **further down the funnel**. A card that
+/// advanced past the written state was received and consumed by someone between
+/// the write and its verification; that is delivery working, not corruption,
+/// and rolling it back would destroy a message a consumer already has. Notes
+/// are not compared once the state advanced: they belong to whichever consumer
+/// moved the card.
+fn read_back_confirms(expected: &Message, seen: &Message) -> bool {
+    if seen == expected {
+        return true;
+    }
+    seen.state > expected.state
+        && seen.id == expected.id
+        && seen.mailbox == expected.mailbox
+        && seen.body == expected.body
+        && seen.sender == expected.sender
+        && seen.sent_at == expected.sent_at
 }
 
 /// The deterministic canonical winner: oldest by the record's own creation
@@ -651,8 +681,8 @@ impl Mailboxes for VikunjaStore {
         }
         .await;
         if let Err(e) = placed {
-            let undone = self.undo_create(card.id, "post_message").await;
-            return Err(MailboxError::Store(format!("{e}; {undone}")));
+            let parked = self.park_create(&scope, card.id, "post_message").await;
+            return Err(MailboxError::Store(format!("{e}; {parked}")));
         }
 
         let expected = Message {
@@ -665,15 +695,15 @@ impl Mailboxes for VikunjaStore {
             notes: None,
         };
         match self.read_back(&scope, &expected.id).await {
-            Ok(seen) if seen == expected => Ok(Guarded::Written(seen)),
+            Ok(seen) if read_back_confirms(&expected, &seen) => Ok(Guarded::Written(seen)),
             outcome => {
-                let undone = self.undo_create(card.id, "post_message").await;
+                let parked = self.park_create(&scope, card.id, "post_message").await;
                 Err(MailboxError::Store(match outcome {
                     Ok(seen) => format!(
-                        "message {} read back changed: wrote {expected:?}, read {seen:?}; {undone}",
+                        "message {} read back changed: wrote {expected:?}, read {seen:?}; {parked}",
                         expected.id
                     ),
-                    Err(e) => format!("{e}; {undone}"),
+                    Err(e) => format!("{e}; {parked}"),
                 }))
             }
         }
@@ -735,10 +765,12 @@ impl Mailboxes for VikunjaStore {
                 ..expected.clone()
             };
             match seen {
-                Some(seen) if seen == expected_read => messages.push(Delivered {
-                    message: seen,
-                    seen_before,
-                }),
+                Some(seen) if read_back_confirms(&expected_read, &seen) => {
+                    messages.push(Delivered {
+                        message: seen,
+                        seen_before,
+                    })
+                }
                 seen => {
                     // The whole batch goes back, not just this card: the caller
                     // is being told the call failed, so nothing in it may stay
@@ -1115,6 +1147,19 @@ mod tests {
             id
         }
 
+        /// The bucket id of a named column — for a test hook reaching into the
+        /// board the way a concurrent session would.
+        fn bucket_titled(&self, project: u64, title: &str) -> u64 {
+            let view = self.kanban_view(project);
+            self.buckets
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(p, v, b)| *p == project && *v == view && b.title == title)
+                .map(|(_, _, b)| b.id)
+                .expect("the column exists")
+        }
+
         /// Move a seeded card into a named column, as the store would.
         fn seed_placement(&self, project: u64, task: u64, column: &str) {
             let view = self.kanban_view(project);
@@ -1322,14 +1367,6 @@ mod tests {
             }
         }
 
-        async fn delete_task(&self, task_id: u64) -> Result<(), MailboxError> {
-            self.wrote(task_id);
-            self.tasks.lock().unwrap().retain(|t| t.id != task_id);
-            self.placement.lock().unwrap().remove(&task_id);
-            self.task_labels.lock().unwrap().remove(&task_id);
-            Ok(())
-        }
-
         async fn move_task(
             &self,
             project_id: u64,
@@ -1379,6 +1416,131 @@ mod tests {
             self.wrote(task_id);
             self.task_labels.lock().unwrap().insert(task_id, labels.to_vec());
             Ok(())
+        }
+    }
+
+    /// A decorator over the fake that runs a hook right before the **nth**
+    /// `board` read from now — the seam where another session's work
+    /// interleaves with a verb that is between its writes and its read-back.
+    /// Every other call delegates untouched.
+    /// What an armed interleave runs, handed the fake to reach into.
+    type BoardHook = Box<dyn FnOnce(&FakeVikunja) + Send>;
+
+    struct Interleaved {
+        inner: Arc<FakeVikunja>,
+        on_board: Mutex<Option<(u64, BoardHook)>>,
+    }
+
+    impl Interleaved {
+        fn new(inner: Arc<FakeVikunja>) -> Arc<Self> {
+            Arc::new(Self {
+                inner,
+                on_board: Mutex::new(None),
+            })
+        }
+
+        /// Arm `hook` to run right before the nth `board` call from now.
+        fn before_board(&self, nth: u64, hook: impl FnOnce(&FakeVikunja) + Send + 'static) {
+            *self.on_board.lock().unwrap() = Some((nth, Box::new(hook)));
+        }
+
+        fn maybe_interleave(&self) {
+            let mut armed = self.on_board.lock().unwrap();
+            let Some((remaining, _)) = armed.as_mut() else {
+                return;
+            };
+            *remaining -= 1;
+            if *remaining == 0 {
+                let (_, hook) = armed.take().expect("just matched");
+                hook(&self.inner);
+            }
+        }
+    }
+
+    #[async_trait]
+    impl VikunjaApi for Interleaved {
+        async fn list_projects(
+            &self,
+            page: u64,
+            per_page: u64,
+        ) -> Result<Vec<ProjectRec>, MailboxError> {
+            self.inner.list_projects(page, per_page).await
+        }
+        async fn create_project(
+            &self,
+            title: &str,
+            description: &str,
+        ) -> Result<ProjectRec, MailboxError> {
+            self.inner.create_project(title, description).await
+        }
+        async fn list_views(&self, project_id: u64) -> Result<Vec<ViewRec>, MailboxError> {
+            self.inner.list_views(project_id).await
+        }
+        async fn list_buckets(
+            &self,
+            project_id: u64,
+            view_id: u64,
+        ) -> Result<Vec<BucketRec>, MailboxError> {
+            self.inner.list_buckets(project_id, view_id).await
+        }
+        async fn create_bucket(
+            &self,
+            project_id: u64,
+            view_id: u64,
+            title: &str,
+        ) -> Result<BucketRec, MailboxError> {
+            self.inner.create_bucket(project_id, view_id, title).await
+        }
+        async fn board(
+            &self,
+            project_id: u64,
+            view_id: u64,
+            page: u64,
+            per_page: u64,
+        ) -> Result<Vec<BoardBucket>, MailboxError> {
+            self.maybe_interleave();
+            self.inner.board(project_id, view_id, page, per_page).await
+        }
+        async fn create_task(
+            &self,
+            project_id: u64,
+            title: &str,
+            description: &str,
+        ) -> Result<TaskRec, MailboxError> {
+            self.inner.create_task(project_id, title, description).await
+        }
+        async fn update_task(
+            &self,
+            project_id: u64,
+            task: &serde_json::Value,
+        ) -> Result<(), MailboxError> {
+            self.inner.update_task(project_id, task).await
+        }
+        async fn move_task(
+            &self,
+            project_id: u64,
+            view_id: u64,
+            bucket_id: u64,
+            task_id: u64,
+        ) -> Result<(), MailboxError> {
+            self.inner.move_task(project_id, view_id, bucket_id, task_id).await
+        }
+        async fn list_labels(
+            &self,
+            page: u64,
+            per_page: u64,
+        ) -> Result<Vec<LabelRec>, MailboxError> {
+            self.inner.list_labels(page, per_page).await
+        }
+        async fn create_label(
+            &self,
+            title: &str,
+            description: &str,
+        ) -> Result<LabelRec, MailboxError> {
+            self.inner.create_label(title, description).await
+        }
+        async fn set_task_labels(&self, task_id: u64, labels: &[u64]) -> Result<(), MailboxError> {
+            self.inner.set_task_labels(task_id, labels).await
         }
     }
 
@@ -1556,11 +1718,13 @@ mod tests {
 
     // --- read-back, and what a failed write leaves behind ----------------------
 
-    /// A post whose read-back mismatches leaves **no card on the board**. Unlike
-    /// a half-written Memory doc, a half-written message card is not inert: left
-    /// in `new`, the next read would hand it to a consumer as mail.
+    /// A post whose read-back mismatches leaves **no deliverable card** — but
+    /// deletes nothing. A half-written message card is not inert: left in
+    /// `new`, the next read would hand it to a consumer as mail. So the
+    /// rollback parks it in `processed`, the terminal column no read ever
+    /// delivers, and the card itself survives: jojobot never deletes.
     #[tokio::test]
-    async fn a_failed_post_leaves_no_card_on_the_board() {
+    async fn a_failed_post_parks_the_card_out_of_delivery_without_deleting_it() {
         let fake = FakeVikunja::new();
         let store = store_with_box(fake.clone(), "inbox").await;
         let project = fake.projects_titled(PROJECT)[0].id;
@@ -1576,12 +1740,24 @@ mod tests {
             .await;
         assert!(outcome.is_err(), "a mangled write must not report success: {outcome:?}");
 
-        assert!(
-            fake.tasks_in(project).is_empty(),
-            "no card is left for the next read to deliver: {:?}",
-            fake.tasks_in(project)
+        let left = fake.tasks_in(project);
+        assert_eq!(left.len(), 1, "nothing is deleted, ever: {left:?}");
+        assert_eq!(
+            fake.column_of(left[0].id).as_deref(),
+            Some("processed"),
+            "the card is parked in the terminal column"
         );
-        assert_eq!(contract::counts(&store, "inbox").await.expect("inbox").total(), 0);
+        let delivery = contract::read(&store, "inbox").await;
+        assert!(
+            delivery.messages.is_empty(),
+            "a parked card is never handed to a consumer as mail: {:?}",
+            delivery.messages
+        );
+        assert_eq!(
+            contract::counts(&store, "inbox").await.expect("inbox").new,
+            0,
+            "…and it is not counted as pending mail either"
+        );
     }
 
     /// A processing whose read-back mismatches puts the card back where it was —
@@ -1785,11 +1961,11 @@ mod tests {
 
     /// **The rollback has to cover the whole write, not just its last step.**
     /// A post is four calls — create the card, label it, find the column, move
-    /// it — and a failure at any of them used to return early, leaving the
-    /// created card stranded in Vikunja's default column with no mailbox label:
-    /// invisible to every verb, and there forever.
+    /// it — and a failure at any of them must leave nothing a consumer could
+    /// receive: the created card is parked in the terminal column, never
+    /// deleted, and never delivered.
     #[tokio::test]
-    async fn a_post_that_fails_midway_leaves_no_card_behind() {
+    async fn a_post_that_fails_midway_parks_the_card_out_of_delivery() {
         for step in ["set_task_labels", "move_task"] {
             let fake = FakeVikunja::new();
             let store = store_with_box(fake.clone(), "inbox").await;
@@ -1805,11 +1981,23 @@ mod tests {
                 })
                 .await;
             assert!(outcome.is_err(), "a failed {step} must not report success");
+            let left = fake.tasks_in(project);
+            assert_eq!(left.len(), 1, "a failed {step} deletes nothing: {left:?}");
+            assert_eq!(
+                fake.column_of(left[0].id).as_deref(),
+                Some("processed"),
+                "a failed {step} parks the card in the terminal column"
+            );
+            let delivery = contract::read(&store, "inbox").await;
             assert!(
-                fake.tasks_in(project).is_empty(),
-                "a card stranded by a failed {step} is invisible to every verb and \
-                 stays on the board forever: {:?}",
-                fake.tasks_in(project)
+                delivery.messages.is_empty(),
+                "a card stranded by a failed {step} must never be delivered as mail: {:?}",
+                delivery.messages
+            );
+            assert_eq!(
+                contract::counts(&store, "inbox").await.expect("inbox").new,
+                0,
+                "…and never counted as pending mail (failed step: {step})"
             );
         }
     }
@@ -1865,6 +2053,67 @@ mod tests {
                 "every message in the batch goes back to new, not just the failing one"
             );
         }
+    }
+
+    // --- rollback never deletes -----------------------------------------------
+
+    /// **A consumed message is a delivered message, not a failed post.** A
+    /// concurrent `read_mailbox` can move the card `new → read` between the
+    /// post's placement and its read-back; the read-back then finds the card in
+    /// a *later* state than it wrote. That is delivery working — the message
+    /// exists and someone received it. The rollback used to call this a
+    /// mismatch and delete the card, destroying a message a consumer had
+    /// already been handed.
+    #[tokio::test]
+    async fn a_post_racing_a_concurrent_delivery_is_success_not_a_rollback() {
+        let fake = FakeVikunja::new();
+        let api = Interleaved::new(fake.clone());
+        let store = VikunjaStore::from_api(api.clone(), PROJECT);
+        contract::create(&store, "inbox").await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+
+        // The post's read-back is its first board read; right before it, a
+        // concurrent consumer takes delivery of the box: everything in `new`
+        // moves to `read`.
+        api.before_board(1, move |fake| {
+            let new = fake.bucket_titled(project, "new");
+            let read = fake.bucket_titled(project, "read");
+            for bucket in fake.placement.lock().unwrap().values_mut() {
+                if *bucket == new {
+                    *bucket = read;
+                }
+            }
+        });
+
+        let posted = store
+            .post_message(NewMessage {
+                mailbox: MailboxName("inbox".into()),
+                body: "the shipment landed".into(),
+                sender: "alpha".into(),
+                sent_at: at(1_780_000_000),
+            })
+            .await
+            .expect("a consumed message is a delivered message, not a failure")
+            .written()
+            .expect("…and not a blocked write either");
+
+        let card: u64 = posted.id.as_str().parse().expect("a numeric card id");
+        assert_eq!(
+            fake.tasks_in(project).len(),
+            1,
+            "the card a consumer already received must never be deleted"
+        );
+        assert_eq!(
+            fake.column_of(card).as_deref(),
+            Some("read"),
+            "…and it stays exactly where the consumer's delivery moved it"
+        );
+        assert_eq!(posted.body, "the shipment landed");
+        assert_eq!(
+            posted.state,
+            MessageState::Read,
+            "the post reports the state the card is actually in"
+        );
     }
 
     /// **A card update must not blank the rest of the card.** Vikunja's task

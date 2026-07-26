@@ -2706,6 +2706,44 @@ mod tests {
         assert!(err.message.contains("999999"), "got {}", err.message);
     }
 
+    /// **The mailbox surface is five verbs, and none of them deletes.**
+    /// Production jojobot never deletes anything — the standing rule is
+    /// structural (the store's port has no delete operation at all), and this
+    /// pins the other end: no delete-shaped capability is ever exposed over
+    /// MCP, for mailboxes or anything else.
+    #[test]
+    fn the_mailbox_surface_is_exactly_five_verbs_and_none_deletes() {
+        let tools = Jojobot::tool_router().list_all();
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+
+        let mailbox_verbs = [
+            "create_mailbox",
+            "list_mailboxes",
+            "post_message",
+            "read_mailbox",
+            "mark_processed",
+        ];
+        let mailbox_shaped: std::collections::BTreeSet<&str> = names
+            .iter()
+            .copied()
+            .filter(|n| {
+                n.contains("mailbox") || n.contains("message") || n.contains("processed")
+            })
+            .collect();
+        assert_eq!(
+            mailbox_shaped,
+            mailbox_verbs.iter().copied().collect(),
+            "the mailbox surface is exactly the five verbs, no more, no fewer"
+        );
+
+        for shape in ["delete", "remove", "destroy", "purge", "erase", "drop"] {
+            assert!(
+                names.iter().all(|n| !n.contains(shape)),
+                "no tool may be {shape}-shaped: {names:?}"
+            );
+        }
+    }
+
     /// **The crash contract is in the tool description, not only in the docs.**
     /// A consumer that marks first and then fails drops the message silently;
     /// the model reading this surface has to be told which order is safe.

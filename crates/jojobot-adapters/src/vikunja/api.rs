@@ -134,7 +134,12 @@ pub(super) trait VikunjaApi: Send + Sync {
     /// passed alongside rather than read out of the model so the write-scope
     /// invariant has one explicit place to be checked.
     async fn update_task(&self, project_id: u64, task: &Value) -> Result<(), MailboxError>;
-    async fn delete_task(&self, task_id: u64) -> Result<(), MailboxError>;
+    // There is deliberately NO delete operation on this port. Production
+    // jojobot never deletes anything — `processed` is an archive, and a failed
+    // write restores or parks. Keeping the capability out of the port makes
+    // that structural: no call path can reach a delete that does not exist.
+    // (The gated integration test's teardown deletes its own throwaway
+    // projects through its own raw HTTP client, not through this port.)
     async fn move_task(
         &self,
         project_id: u64,
@@ -397,17 +402,6 @@ impl VikunjaApi for HttpVikunja {
             .map(|_| ())
     }
 
-    async fn delete_task(&self, task_id: u64) -> Result<(), MailboxError> {
-        self.send(
-            reqwest::Method::DELETE,
-            &format!("/tasks/{task_id}"),
-            &[],
-            None,
-        )
-        .await
-        .map(|_| ())
-    }
-
     async fn move_task(
         &self,
         project_id: u64,
@@ -493,9 +487,6 @@ impl VikunjaApi for Unconfigured {
         Self::refuse()
     }
     async fn update_task(&self, _: u64, _: &Value) -> Result<(), MailboxError> {
-        Self::refuse()
-    }
-    async fn delete_task(&self, _: u64) -> Result<(), MailboxError> {
         Self::refuse()
     }
     async fn move_task(&self, _: u64, _: u64, _: u64, _: u64) -> Result<(), MailboxError> {
