@@ -561,11 +561,30 @@ impl Jojobot {
     /// cannot receive mail yet, and the honest thing is to tell it so.
     async fn owned_mailbox(&self, name: &str) -> Result<serde_json::Value, McpError> {
         let name = MailboxName(name.trim().to_string());
-        let boxes = self.mailboxes.list_mailboxes().await.map_err(mailbox_error)?;
+        // The mailbox half degrades on its own, exactly as the snapshot's does.
+        // Hard-erroring here made every box-owning identity unbootable over an
+        // outage in the *other* world — while its charter and its rules, the
+        // things a session most needs, were sitting right there in Memory.
+        let boxes = match self.mailboxes.list_mailboxes().await {
+            Ok(boxes) => boxes,
+            Err(_) => {
+                return Ok(serde_json::json!({
+                    "name": name.as_str(),
+                    "available": false,
+                    // Not false: jojobot does not know whether it exists, and
+                    // saying it does not would be a guess a session would act on.
+                    "exists": serde_json::Value::Null,
+                    "note": "the mailbox world is not reachable right now, so jojobot cannot say \
+                             whether this box exists or what is waiting in it — its tools will \
+                             say why",
+                }));
+            }
+        };
 
         let Some(mailbox) = boxes.into_iter().find(|b| b.name == name) else {
             return Ok(serde_json::json!({
                 "name": name.as_str(),
+                "available": true,
                 "exists": false,
                 "counts": serde_json::Value::Null,
                 "how_to_proceed": format!(
@@ -578,8 +597,12 @@ impl Jojobot {
                 ),
             }));
         };
+        // The three answers wear one shape — `available` then `exists`, always
+        // both present — so a session reads them in one pass instead of
+        // branching on which keys came back.
         let mut body = mailbox_json(&mailbox);
         if let Some(obj) = body.as_object_mut() {
+            obj.insert("available".into(), true.into());
             obj.insert("exists".into(), true.into());
         }
         Ok(body)
@@ -3746,13 +3769,12 @@ mod tests {
         assert_eq!(boxes[0]["counts"]["new"], 1);
     }
 
-    /// One world being down must not take orientation with it: a fresh agent
-    /// on a half-configured server still deserves the map.
-    #[tokio::test]
-    async fn start_here_survives_a_world_that_is_down() {
-        struct DownMailboxes;
-        #[async_trait]
-        impl mailbox::Mailboxes for DownMailboxes {
+    /// A mailbox world that answers nothing. Shared by both orientation doors:
+    /// they make the same promise, so they are held to it by the same double.
+    struct DownMailboxes;
+
+    #[async_trait]
+    impl mailbox::Mailboxes for DownMailboxes {
             async fn create_mailbox(
                 &self,
                 _: &mailbox::MailboxName,
@@ -3781,17 +3803,26 @@ mod tests {
                 &self,
                 _: &mailbox::MessageId,
                 _: Option<&str>,
-            ) -> Result<mailbox::Message, mailbox::MailboxError> {
-                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
-            }
+        ) -> Result<mailbox::Message, mailbox::MailboxError> {
+            Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
         }
+    }
 
-        let jojobot = Jojobot::new(
-            Arc::new(InMemoryMemory::new()),
-            Arc::new(SpySearch::default()),
-            Arc::new(DownMailboxes),
-        );
-        let out = jojobot.start_here().await.expect("orientation still lands");
+    /// A handler whose mailbox world answers nothing, over a memory the caller
+    /// may already have populated — a bot has to be stood up while the world is
+    /// up, since a claim that cannot be screened is refused.
+    fn handler_with_mailboxes_down(memory: Arc<InMemoryMemory>) -> Jojobot {
+        Jojobot::new(memory, Arc::new(SpySearch::default()), Arc::new(DownMailboxes))
+    }
+
+    /// One world being down must not take orientation with it: a fresh agent
+    /// on a half-configured server still deserves the map.
+    #[tokio::test]
+    async fn start_here_survives_a_world_that_is_down() {
+        let out = handler_with_mailboxes_down(Arc::new(InMemoryMemory::new()))
+            .start_here()
+            .await
+            .expect("orientation still lands");
         let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
         assert!(body["orientation"].as_str().is_some_and(|o| !o.is_empty()));
         assert_eq!(body["snapshot"]["mailboxes"]["available"], false);
@@ -3891,6 +3922,7 @@ mod tests {
         let body = boot(&jojobot, "sigma").await;
         let owned = &body["identity"]["owned_mailbox"];
         assert_eq!(owned["name"], "sigma-inbox");
+        assert_eq!(owned["available"], true, "the world is up; the box is not there");
         assert_eq!(owned["exists"], false, "said plainly: {owned}");
         assert!(owned["counts"].is_null(), "there are no counts for a box that is not there");
         assert!(
@@ -3920,6 +3952,7 @@ mod tests {
         send(&jojobot, "sigma-inbox", "alpha", "the shipment landed").await;
 
         let owned = boot(&jojobot, "sigma").await["identity"]["owned_mailbox"].clone();
+        assert_eq!(owned["available"], true);
         assert_eq!(owned["exists"], true);
         assert_eq!(owned["counts"]["new"], 1, "got {owned}");
         assert!(owned["how_to_proceed"].is_null(), "nothing to advise: {owned}");
@@ -4087,6 +4120,55 @@ mod tests {
             .expect_err("another kind must be refused");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
         assert!(err.message.contains("bot"), "the error says what this door takes: {}", err.message);
+    }
+
+    /// **Both doors make the same promise, so both keep it.** `orient` says
+    /// orientation lands even when a world is down — and `start_here` did,
+    /// while `boot_bot` hard-errored the moment a bot owned a box, which made
+    /// every box-owning identity unbootable over an outage in the *other*
+    /// world. The charter and the rules are in Memory and were right there.
+    ///
+    /// Now the mailbox half degrades on its own, the same way the snapshot's
+    /// does: the boot lands, the identity is whole, and the one thing jojobot
+    /// cannot answer says so instead of guessing.
+    #[tokio::test]
+    async fn boot_bot_survives_a_world_that_is_down_exactly_as_start_here_does() {
+        // Stood up while both worlds are up — a claim that cannot be screened
+        // is refused, so this bot could not have been created below.
+        let memory = Arc::new(InMemoryMemory::new());
+        let healthy = Jojobot::new(
+            memory.clone(),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::new()),
+        );
+        make_bot(&healthy, "gamma", Some("gamma-inbox")).await;
+        healthy
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "gamma".into(),
+                prose: "Holds the plan.".into(),
+            }))
+            .await
+            .expect("set_charter ok");
+
+        let jojobot = handler_with_mailboxes_down(memory);
+        let body = boot(&jojobot, "gamma").await;
+        assert_ne!(body["status"], "blocked", "a boot must still land: {body}");
+
+        let me = &body["identity"];
+        assert_eq!(me["bot"]["id"], "bot:gamma");
+        assert_eq!(me["charter"], "Holds the plan.", "the half that is up arrives whole");
+
+        let owned = &me["owned_mailbox"];
+        assert_eq!(owned["name"], "gamma-inbox", "the claim is Memory's and is still known");
+        assert_eq!(owned["available"], false, "got {owned}");
+        assert!(
+            owned["exists"].is_null(),
+            "whether the box is there is unknown, and null says so rather than guessing: {owned}"
+        );
+        assert!(owned["note"].as_str().is_some_and(|n| !n.is_empty()));
+
+        // …and the snapshot degrades beside it, exactly as it does anonymously.
+        assert_eq!(body["snapshot"]["mailboxes"]["available"], false);
     }
 
     /// **One orientation, two doors.** `boot_bot` is `start_here` plus an
