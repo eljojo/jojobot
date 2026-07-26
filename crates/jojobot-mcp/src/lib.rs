@@ -270,6 +270,24 @@ pub struct UpdateEntityArgs {
     pub create_new: Option<bool>,
 }
 
+/// Arguments to `boot_bot`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct BootBotArgs {
+    /// The bot to start as: its bare slug, or its full `bot:`-prefixed handle.
+    /// A handle of any other kind is refused — this door boots bots.
+    pub name: String,
+}
+
+/// Arguments to `set_charter`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetCharterArgs {
+    /// The bot whose charter this is: its bare slug, or its full handle.
+    pub bot: String,
+    /// The charter itself. Prose: paragraphs are fine. It **replaces** whatever
+    /// charter the bot had, so send the whole thing, not an addition.
+    pub prose: String,
+}
+
 // --- mailboxes ---------------------------------------------------------------
 
 /// Arguments to `create_mailbox`.
@@ -382,6 +400,62 @@ impl Jojobot {
                        oriented instead of guessing. Read-only, no side effects."
     )]
     async fn start_here(&self) -> Result<CallToolResult, McpError> {
+        self.orient(None).await
+    }
+
+    /// Orientation with an identity attached: the same world-model and the same
+    /// live snapshot `start_here` hands an anonymous session, plus which bot
+    /// this session is — its charter, its rules, and the state of its own box.
+    #[tool(
+        description = "Start a session AS a named bot. Hands over what start_here does — how \
+                       jojobot's world fits together, and a snapshot of what exists — plus the \
+                       identity itself: the bot's charter (the orienting text: what this identity \
+                       is, its hard lines, where its work lives), its rules as dated claims each \
+                       carrying its own provenance (testimony is settled, inference is a \
+                       hypothesis — read them that way), and the per-state counts of the mailbox \
+                       it owns. Call it first when you have been told which identity you are; \
+                       call start_here when you have not. A name that is no bot comes back \
+                       status: blocked with candidates and boots nothing. If the bot owns a \
+                       mailbox nobody has opened yet, this opens it under that name and says so \
+                       in `provisioned`."
+    )]
+    async fn boot_bot(
+        &self,
+        Parameters(args): Parameters<BootBotArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let bot = bot_id(&args.name)?;
+        self.orient(Some(&bot)).await
+    }
+
+    /// Write a bot's charter — the prose layer of its own page.
+    #[tool(
+        description = "Write a bot's charter: the orienting text boot_bot hands a session that \
+                       starts as this bot — what this identity is, its hard lines, where its work \
+                       lives. Replaces the whole charter rather than adding to it, and returns \
+                       the stored text, which is what a later boot_bot will read back. A bot that \
+                       does not exist is an error naming the nearest handles — add_entity first. \
+                       Rules are not written here: a rule is a fact about the bot, so capture it."
+    )]
+    async fn set_charter(
+        &self,
+        Parameters(args): Parameters<SetCharterArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let bot = bot_id(&args.bot)?;
+        let stored = self
+            .memory
+            .set_prose(&bot, &args.prose)
+            .await
+            .map_err(memory_error)?;
+        json_result(&serde_json::json!({
+            "bot": bot.as_str(),
+            "charter": stored,
+        }))
+    }
+
+    /// The one orientation, anonymous or identified. `start_here` and
+    /// `boot_bot` are this function with and without a bot — deliberately, so
+    /// the two doors can never come to teach two different jojobots.
+    async fn orient(&self, bot: Option<&EntityId>) -> Result<CallToolResult, McpError> {
         // Best-effort per world: orientation must land even when one world is
         // down — a fresh agent on a half-configured server still gets the map.
         let entities = match self.memory.list_entities(None).await {
@@ -412,10 +486,119 @@ impl Jojobot {
                 "note": "the mailbox world is not reachable right now — its tools will say why",
             }),
         };
+        let snapshot = serde_json::json!({ "entities": entities, "mailboxes": mailboxes });
+        let identity = match bot {
+            None => serde_json::Value::Null,
+            Some(bot) => match self.identity(bot).await? {
+                Ok(identity) => identity,
+                // A name that is no bot: the guards' own shape, so one
+                // client-side branch handles every "jojobot declined" answer.
+                Err(candidates) => {
+                    return Ok(blocked_result(
+                        bot,
+                        &candidates,
+                        Blocked::MustExist("boot_bot"),
+                        None,
+                    ));
+                }
+            },
+        };
         json_result(&serde_json::json!({
             "orientation": ORIENTATION,
-            "snapshot": { "entities": entities, "mailboxes": mailboxes },
+            "snapshot": snapshot,
+            "identity": identity,
         }))
+    }
+
+    /// Who this session is: the bot's record, the charter its prose carries,
+    /// the rules its facts carry, and the live state of the box it owns.
+    /// `Err(candidates)` is the guards' answer for a name that is no bot.
+    async fn identity(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Result<serde_json::Value, Vec<EntityMatch>>, McpError> {
+        let index = self.memory.list_entities(None).await.map_err(memory_error)?;
+        let Some(entity) = index.iter().find(|e| &e.id == bot) else {
+            return Ok(Err(guard::screen(bot, &[], &index)));
+        };
+
+        // The charter is the doc's prose; a bot nobody has written one for has
+        // none, and null says so rather than an empty string pretending to be
+        // an answer.
+        let charter = self
+            .memory
+            .scan_entity(bot)
+            .await
+            .map_err(memory_error)?
+            .map(|doc| doc.prose)
+            .filter(|p| !p.trim().is_empty());
+        let rules = self.memory.recall(bot).await.map_err(memory_error)?;
+
+        Ok(Ok(serde_json::json!({
+            "bot": entity_json(entity),
+            "charter": charter,
+            "rules": rules.iter().map(fact_json).collect::<Vec<_>>(),
+            "owned_mailbox": match entity.mailbox.as_deref() {
+                None => serde_json::Value::Null,
+                Some(name) => self.owned_mailbox(name).await?,
+            },
+        })))
+    }
+
+    /// The live state of the box a bot owns — opening it if nobody has.
+    ///
+    /// **This is the one place outside `create_mailbox` that mints a box**, and
+    /// it is sanctioned because the name is not typed mid-errand: it was
+    /// written on the bot's own record, deliberately, by whoever stood the bot
+    /// up. A bot booting pointed at a box that does not exist is an identity
+    /// that cannot receive mail and does not say so.
+    async fn owned_mailbox(&self, name: &str) -> Result<serde_json::Value, McpError> {
+        let name = MailboxName(name.trim().to_string());
+        let existing = self
+            .mailboxes
+            .list_mailboxes()
+            .await
+            .map_err(mailbox_error)?
+            .into_iter()
+            .find(|b| b.name == name);
+        if let Some(mailbox) = existing {
+            let mut body = mailbox_json(&mailbox);
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("provisioned".into(), false.into());
+            }
+            return Ok(body);
+        }
+
+        // Minted under the declared name, so the similarity screen — which
+        // exists to stop a typo becoming a box — must not refuse a name the
+        // operator chose on purpose. An exact name it cannot override is a
+        // box that appeared since the listing: re-read rather than fail.
+        let opened = self
+            .mailboxes
+            .create_mailbox(&name, true)
+            .await
+            .map_err(mailbox_error)?;
+        let mailbox = match opened {
+            mailbox::Guarded::Written(mailbox) => mailbox,
+            mailbox::Guarded::Blocked { .. } => self
+                .mailboxes
+                .list_mailboxes()
+                .await
+                .map_err(mailbox_error)?
+                .into_iter()
+                .find(|b| b.name == name)
+                .ok_or_else(|| {
+                    McpError::internal_error(
+                        format!("mailbox {name} could neither be opened nor found"),
+                        None,
+                    )
+                })?,
+        };
+        let mut body = mailbox_json(&mailbox);
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("provisioned".into(), true.into());
+        }
+        Ok(body)
     }
 
     /// Create an entity of any kind. Screened by the write guard, so a handle
@@ -1324,6 +1507,26 @@ fn entity_id(kind: &str, handle: &str) -> Result<EntityId, McpError> {
         Some((k, slug)) if EntityKind::from_token(k) == Some(kind) => Ok(EntityId::new(kind, slug)),
         Some((k, _)) => Err(McpError::invalid_params(
             format!("handle '{handle}' says kind '{k}' but kind is '{kind}'"),
+            None,
+        )),
+    }
+}
+
+/// Read a bot handle off a name. A bare name is a bot here — this is the bot
+/// door, so a bare slug is read with the bot kind on it — and a handle of
+/// another kind is a client
+/// error rather than a silent winner: booting a person as an identity would
+/// hand somebody's page back as a charter.
+fn bot_id(name: &str) -> Result<EntityId, McpError> {
+    let name = name.trim();
+    match name.split_once(':') {
+        None => Ok(EntityId::new(EntityKind::Bot, name)),
+        Some(("bot", slug)) => Ok(EntityId::new(EntityKind::Bot, slug)),
+        Some((kind, _)) => Err(McpError::invalid_params(
+            format!(
+                "'{name}' is a {kind}, and this verb takes a bot — pass a bare name, or a handle \
+                 with the bot kind on it"
+            ),
             None,
         )),
     }
@@ -3183,6 +3386,7 @@ mod tests {
             names,
             [
                 "add_entity",
+                "boot_bot",
                 "capture",
                 "create_mailbox",
                 "list_entities",
@@ -3193,6 +3397,7 @@ mod tests {
                 "read_mailbox",
                 "recall",
                 "search",
+                "set_charter",
                 "start_here",
                 "update_entity",
                 "update_fact",
@@ -3324,5 +3529,234 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
         assert!(body["orientation"].as_str().is_some_and(|o| !o.is_empty()));
         assert_eq!(body["snapshot"]["mailboxes"]["available"], false);
+    }
+
+    // ── boot_bot ────────────────────────────────────────────────────────────
+
+    /// Stand up a bot the way an operator would: an entity of kind `bot`
+    /// claiming a box, its charter as prose, its rules as facts.
+    async fn make_bot(jojobot: &Jojobot, slug: &str, mailbox: Option<&str>) {
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                mailbox: mailbox.map(str::to_string),
+                ..add_args("bot", slug, slug)
+            }))
+            .await
+            .expect("add_entity ok");
+    }
+
+    async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .boot_bot(Parameters(BootBotArgs { name: name.into() }))
+                .await
+                .expect("boot_bot call ok"),
+        )
+    }
+
+    /// **The acceptance case: "start jojobot as the PM" and the session knows
+    /// who it is.** One call answers all of it — the world (the same orientation
+    /// an anonymous session gets), what exists, and *which identity this is*:
+    /// the charter, the rules with their provenance showing, and the state of
+    /// the box whose mail is this bot's.
+    #[tokio::test]
+    async fn boot_bot_lands_a_session_knowing_which_identity_it_is() {
+        let jojobot = handler();
+        make_bot(&jojobot, "otto", Some("otto-inbox")).await;
+        make_box(&jojobot, "otto-inbox").await;
+        send(&jojobot, "otto-inbox", "alpha", "the shipment landed").await;
+
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "otto".into(),
+                prose: "Keeps the schedule.\n\nHard line: never writes to the ledger.".into(),
+            }))
+            .await
+            .expect("set_charter ok");
+        jojobot
+            .capture(Parameters(CaptureArgs {
+                provenance: Some("testimony".into()),
+                ..capture_args("bot:otto", "answers before noon")
+            }))
+            .await
+            .expect("capture ok");
+
+        let body = boot(&jojobot, "otto").await;
+        assert_ne!(body["status"], "blocked", "a bot that exists boots: {body}");
+
+        // The world, and what is in it — everything start_here hands over.
+        assert!(body["orientation"].as_str().is_some_and(|o| o.contains("provenance")));
+        assert_eq!(body["snapshot"]["entities"]["by_kind"]["bot"], 1);
+
+        let me = &body["identity"];
+        assert_eq!(me["bot"]["id"], "bot:otto");
+        assert_eq!(me["bot"]["type"], "SoftwareApplication");
+        assert!(
+            me["charter"].as_str().is_some_and(|c| c.contains("never writes to the ledger")),
+            "the charter is the orienting text, and it arrives: {me}"
+        );
+
+        let rules = me["rules"].as_array().expect("rules are a list");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["content"], "answers before noon");
+        assert_eq!(
+            rules[0]["provenance"], "testimony",
+            "a rule arrives with its provenance showing, or it reads as settled when it is a guess"
+        );
+        assert!(rules[0]["address"].as_str().is_some(), "and with the address that edits it");
+
+        let owned = &me["owned_mailbox"];
+        assert_eq!(owned["name"], "otto-inbox");
+        assert_eq!(owned["counts"]["new"], 1, "the state of its own box: {owned}");
+        assert_eq!(owned["provisioned"], false, "the box was already there");
+    }
+
+    /// **The one sanctioned mint.** A bot whose declared box does not exist yet
+    /// would otherwise boot pointed at nothing — so this door opens it, by the
+    /// name the bot itself declares. Nothing else on this surface mints a box
+    /// outside `create_mailbox`, and the answer says plainly that it did.
+    #[tokio::test]
+    async fn boot_bot_opens_the_box_its_bot_declares_if_nobody_has() {
+        let jojobot = handler();
+        make_bot(&jojobot, "sigma", Some("sigma-inbox")).await;
+
+        let body = boot(&jojobot, "sigma").await;
+        let owned = &body["identity"]["owned_mailbox"];
+        assert_eq!(owned["name"], "sigma-inbox");
+        assert_eq!(owned["counts"]["total"], 0);
+        assert_eq!(owned["provisioned"], true, "the answer says it was opened: {owned}");
+
+        // …and it is a real box afterwards, reachable by every ordinary verb.
+        let listed = json_of(&jojobot.list_mailboxes().await.expect("list ok"));
+        assert!(
+            listed["mailboxes"]
+                .as_array()
+                .expect("boxes")
+                .iter()
+                .any(|b| b["name"] == "sigma-inbox"),
+            "got {listed}"
+        );
+
+        // Booting again does not open a second one.
+        let again = boot(&jojobot, "sigma").await;
+        assert_eq!(again["identity"]["owned_mailbox"]["provisioned"], false);
+    }
+
+    /// A bot that owns no box boots perfectly well — ownership is optional, and
+    /// nothing is invented to fill the hole.
+    #[tokio::test]
+    async fn a_bot_that_owns_no_box_still_boots() {
+        let jojobot = handler();
+        make_bot(&jojobot, "epsilon", None).await;
+
+        let body = boot(&jojobot, "epsilon").await;
+        assert_eq!(body["identity"]["bot"]["id"], "bot:epsilon");
+        assert!(body["identity"]["owned_mailbox"].is_null(), "got {body}");
+        assert!(
+            json_of(&jojobot.list_mailboxes().await.expect("list ok"))["mailboxes"]
+                .as_array()
+                .expect("boxes")
+                .is_empty(),
+            "a bot with no claim must not cause a box to appear"
+        );
+    }
+
+    /// A name that is no bot comes back in the guards' own shape — nothing was
+    /// written, here is what jojobot suspects you meant — rather than a fresh
+    /// identity conjured out of a typo.
+    #[tokio::test]
+    async fn booting_an_unknown_bot_is_blocked_with_candidates() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma", None).await;
+
+        let body = blocked(
+            &jojobot
+                .boot_bot(Parameters(BootBotArgs { name: "gamm".into() }))
+                .await
+                .expect("an unknown bot is an answer, not a protocol failure"),
+        );
+        assert_eq!(body["attempted"], "bot:gamm");
+        assert_eq!(body["candidates"][0]["handle"], "bot:gamma");
+        assert!(
+            body["how_to_proceed"].as_str().is_some_and(|a| a.contains("add_entity")),
+            "the way out names the verb that opens it: {body}"
+        );
+    }
+
+    /// This door boots bots. A bare name is read as one, and a handle of another
+    /// kind is the caller's mistake — booting a person as an identity would hand
+    /// back somebody's page as a charter.
+    #[tokio::test]
+    async fn boot_bot_reads_a_bare_name_as_a_bot_and_refuses_another_kind() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma", None).await;
+
+        assert_eq!(
+            boot(&jojobot, "bot:gamma").await["identity"]["bot"]["id"],
+            "bot:gamma",
+            "a fully qualified bot handle is the same door"
+        );
+
+        let err = jojobot
+            .boot_bot(Parameters(BootBotArgs { name: "person:milhouse".into() }))
+            .await
+            .expect_err("another kind must be refused");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(err.message.contains("bot"), "the error says what this door takes: {}", err.message);
+    }
+
+    /// **One orientation, two doors.** `boot_bot` is `start_here` plus an
+    /// identity — not a second world-model to drift out of step with the first.
+    #[tokio::test]
+    async fn boot_bot_and_start_here_hand_over_the_same_world() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma", None).await;
+
+        let anonymous = json_of(&jojobot.start_here().await.expect("start_here ok"));
+        let identified = boot(&jojobot, "gamma").await;
+        assert_eq!(
+            anonymous["orientation"], identified["orientation"],
+            "the world-model is one text, or the two doors teach different jojobots"
+        );
+        assert_eq!(anonymous["snapshot"], identified["snapshot"]);
+        assert!(anonymous["identity"].is_null(), "an anonymous session claims no identity");
+    }
+
+    /// `set_charter` writes the orienting prose and reads it back — and it is
+    /// the same text `boot_bot` hands over, so what an operator writes is what a
+    /// session is told.
+    #[tokio::test]
+    async fn set_charter_writes_the_prose_that_boot_bot_reads_back() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma", None).await;
+
+        let written = json_of(
+            &jojobot
+                .set_charter(Parameters(SetCharterArgs {
+                    bot: "gamma".into(),
+                    prose: "  Holds the plan. Does not implement.  ".into(),
+                }))
+                .await
+                .expect("set_charter ok"),
+        );
+        assert_eq!(written["bot"], "bot:gamma");
+        assert_eq!(
+            written["charter"], "Holds the plan. Does not implement.",
+            "the verb returns what a read will return: {written}"
+        );
+        assert_eq!(
+            boot(&jojobot, "gamma").await["identity"]["charter"],
+            "Holds the plan. Does not implement."
+        );
+
+        // A charter for a bot that does not exist misses — it never creates one.
+        let err = jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "nobody".into(),
+                prose: "a charter for nobody".into(),
+            }))
+            .await
+            .expect_err("an unknown bot must miss");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     }
 }
