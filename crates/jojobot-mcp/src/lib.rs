@@ -4207,6 +4207,38 @@ mod tests {
         assert_eq!(body["snapshot"]["mailboxes"]["available"], false);
     }
 
+    /// **One response never contradicts itself about which boxes exist.**
+    ///
+    /// It could before: booting minted the declared box *between* taking the
+    /// snapshot and reporting the identity, so a single payload said in one
+    /// half that no such box was on the board and in the other that it was
+    /// there with counts — and a session had no way to tell which half to
+    /// believe. Nothing is minted mid-orient now, so both halves are reads of
+    /// the same world; this holds them to agreeing, in both directions.
+    #[tokio::test]
+    async fn a_boot_never_disagrees_with_its_own_snapshot_about_a_box() {
+        let jojobot = handler();
+        make_bot(&jojobot, "sigma", Some("sigma-inbox")).await;
+
+        let listed = |body: &serde_json::Value| -> bool {
+            body["snapshot"]["mailboxes"]["boxes"]
+                .as_array()
+                .expect("boxes")
+                .iter()
+                .any(|b| b["name"] == "sigma-inbox")
+        };
+
+        let before = boot(&jojobot, "sigma").await;
+        assert_eq!(before["identity"]["owned_mailbox"]["exists"], false);
+        assert!(!listed(&before), "the snapshot must agree it is absent: {before}");
+
+        make_box(&jojobot, "sigma-inbox").await;
+
+        let after = boot(&jojobot, "sigma").await;
+        assert_eq!(after["identity"]["owned_mailbox"]["exists"], true);
+        assert!(listed(&after), "…and agree it is there: {after}");
+    }
+
     /// **One orientation, two doors.** `boot_bot` is `start_here` plus an
     /// identity — not a second world-model to drift out of step with the first.
     #[tokio::test]
