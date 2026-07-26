@@ -21,3 +21,5 @@ tokio = { workspace = true }
 # The fake behind the domain's `testing` feature backs the MCP verb tests, so
 # capture/recall are exercised through the handler with no network.
 jojobot-domain = { workspace = true, features = ["testing"] }
+# The start_here down-world test stubs the Mailboxes port, which is async-trait.
+async-trait = { workspace = true }

@@ -41,6 +41,32 @@ use rmcp::{
     schemars, tool, tool_handler, tool_router,
 };
 
+/// What `start_here` hands a fresh agent. Engine prose: the method, in role
+/// language only — no operator specifics, fictional example identities.
+const ORIENTATION: &str = r#"# jojobot — start here
+
+jojobot is a personal-assistant server: the durable memory and message rail behind an assistant serving one person, the operator. You are one of possibly many AI sessions connected to it — jojobot itself never thinks; it stores, guards, and serves. What you write here outlives this conversation and will be read back as truth by sessions that cannot ask you what you meant. The rules below exist for them.
+
+## The two worlds
+
+**MEMORY** is a typed graph of the operator's life. An **entity** is a noun — person · project · place · event · work · thing · org · topic — with a permanent handle like `person:milhouse`. A **fact** is one dated claim about an entity, addressed `person:milhouse#3`, carrying a **provenance**: `testimony` (the operator said or confirmed it) or `inference` (an AI derived it). Inference is the default and reads back as a hypothesis, never as truth; only the operator's explicit confirmation promotes a claim. A fact may draw one typed **edge** at another entity — `location` · `membership` · `attendance` · `about` — and edges are what make cross-entity questions answerable. **`search` is the front door** to all of it (memory only — never messages).
+
+**MAILBOXES** are the async rail between sessions: named boxes where one session leaves a message another will find. A message is `new` → `read` → `processed`. Reading IS taking delivery (no peek); anything read but not yet processed comes back on the next read, flagged — so crashed work resurfaces on its own. `processed` means acted-on, and it is a terminal archive: nothing here is ever deleted.
+
+## Working here, by example
+
+- *"Remember that Milhouse is allergic to shellfish"* → `search` for milhouse to find the handle → `capture` subject `person:milhouse`, content the claim, provenance `testimony` (they told you) or `inference` (you concluded it).
+- *Something genuinely new* → two deliberate steps, always: `add_entity` (or `create_mailbox`), then the write. Nothing is ever created as a side effect.
+- *"Which people are in Shelbyville?"* → `search` with kind `person` and edge `{shape: location, object: place:shelbyville}` — an edge walk, not a text match.
+- *"That was wrong"* → `recall` the subject, then `update_fact` rewrites the claim in place to state what is true NOW — including negative truth ("NOT allergic — confirmed by the operator"). The record is current truth, never a correction trail.
+- *Leave word for another session* → `list_mailboxes` to see what boxes exist, `post_message` with a body written for a reader with none of your context, and your `sender` declared specifically enough to reach you with a reply.
+- *Handle mail* → `read_mailbox`, act, then `mark_processed` — ONLY after acting, with the outcome in notes. A failure is data to record, not a state to park in.
+
+## The two answers that are not errors
+
+A **blocked** result is a SUCCESS whose body says `status: "blocked"`, `wrote: false`: jojobot suspects you meant something that already exists, and wrote nothing. Read `candidates` and `how_to_proceed`; never retry unchanged. A plain **error** means the call itself was malformed or named something that does not exist at all. Both protect the same thing: a store many sessions trust, which no single session may quietly corrupt.
+"#;
+
 /// Arguments to `add_entity`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddEntityArgs {
@@ -325,6 +351,55 @@ impl Jojobot {
         Ok(CallToolResult::success(vec![ContentBlock::text(
             body.to_string(),
         )]))
+    }
+
+    /// The orientation call: the world-model in prose, then a live snapshot of
+    /// what exists. The anonymous ancestor of a later per-identity boot.
+    ///
+    /// The prose below is ENGINE material: it explains the method, names only
+    /// roles ("the operator"), and every example identity is fictional.
+    #[tool(
+        description = "New here? Call this first. Explains what jojobot is and how its world \
+                       fits together — entities, facts, provenance, edges, mailboxes — with \
+                       worked examples, and returns a live snapshot of what exists right now \
+                       (entities by kind, every mailbox with its counts), so you start \
+                       oriented instead of guessing. Read-only, no side effects."
+    )]
+    async fn start_here(&self) -> Result<CallToolResult, McpError> {
+        // Best-effort per world: orientation must land even when one world is
+        // down — a fresh agent on a half-configured server still gets the map.
+        let entities = match self.memory.list_entities(None).await {
+            Ok(entities) => {
+                let mut by_kind = std::collections::BTreeMap::<&str, usize>::new();
+                for e in &entities {
+                    let kind = e.id.as_str().split(':').next().unwrap_or("unknown");
+                    *by_kind.entry(kind).or_default() += 1;
+                }
+                serde_json::json!({
+                    "available": true,
+                    "count": entities.len(),
+                    "by_kind": by_kind,
+                })
+            }
+            Err(_) => serde_json::json!({
+                "available": false,
+                "note": "the memory world is not reachable right now — its tools will say why",
+            }),
+        };
+        let mailboxes = match self.mailboxes.list_mailboxes().await {
+            Ok(boxes) => serde_json::json!({
+                "available": true,
+                "boxes": boxes.iter().map(mailbox_json).collect::<Vec<_>>(),
+            }),
+            Err(_) => serde_json::json!({
+                "available": false,
+                "note": "the mailbox world is not reachable right now — its tools will say why",
+            }),
+        };
+        json_result(&serde_json::json!({
+            "orientation": ORIENTATION,
+            "snapshot": { "entities": entities, "mailboxes": mailboxes },
+        }))
     }
 
     /// Create an entity of any kind. Screened by the write guard, so a handle
@@ -1346,6 +1421,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use async_trait::async_trait;
     use jojobot_domain::mailbox::testing::InMemoryMailboxes;
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{Boot, Edge, EdgeShape, EntityKind, FactId};
@@ -2977,6 +3053,7 @@ mod tests {
                 "read_mailbox",
                 "recall",
                 "search",
+                "start_here",
                 "update_entity",
                 "update_fact",
             ],
@@ -2999,5 +3076,106 @@ mod tests {
             description.contains("ONLY AFTER"),
             "the crash contract must be stated where a consumer reads it: {description}"
         );
+    }
+
+    // ── start_here ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn start_here_lands_a_fresh_agent_with_the_world_and_a_snapshot() {
+        let jojobot = handler();
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                kind: "person".into(),
+                handle: "milhouse".into(),
+                name: "Milhouse".into(),
+                aliases: None,
+                source: "user-named".into(),
+                crm: None,
+                boot: None,
+                create_new: None,
+            }))
+            .await
+            .expect("entity ok");
+        make_box(&jojobot, "inbox").await;
+        send(&jojobot, "inbox", "alpha", "the shipment landed").await;
+
+        let out = jojobot.start_here().await.expect("start_here ok");
+        let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
+        let orientation = body["orientation"].as_str().expect("orientation prose");
+        // The orientation must teach the load-bearing vocabulary, not assume it.
+        for taught in [
+            "entity",
+            "fact",
+            "testimony",
+            "inference",
+            "edge",
+            "mailbox",
+            "processed",
+            "search",
+            "blocked",
+        ] {
+            assert!(
+                orientation.contains(taught),
+                "the orientation never teaches `{taught}`"
+            );
+        }
+        assert_eq!(body["snapshot"]["entities"]["count"], 1);
+        assert_eq!(body["snapshot"]["entities"]["by_kind"]["person"], 1);
+        let boxes = body["snapshot"]["mailboxes"]["boxes"]
+            .as_array()
+            .expect("mailboxes listed");
+        assert_eq!(boxes[0]["name"], "inbox");
+        assert_eq!(boxes[0]["counts"]["new"], 1);
+    }
+
+    /// One world being down must not take orientation with it: a fresh agent
+    /// on a half-configured server still deserves the map.
+    #[tokio::test]
+    async fn start_here_survives_a_world_that_is_down() {
+        struct DownMailboxes;
+        #[async_trait]
+        impl mailbox::Mailboxes for DownMailboxes {
+            async fn create_mailbox(
+                &self,
+                _: &mailbox::MailboxName,
+                _: bool,
+            ) -> Result<mailbox::Guarded<mailbox::Mailbox>, mailbox::MailboxError> {
+                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
+            }
+            async fn list_mailboxes(
+                &self,
+            ) -> Result<Vec<mailbox::Mailbox>, mailbox::MailboxError> {
+                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
+            }
+            async fn post_message(
+                &self,
+                _: mailbox::NewMessage,
+            ) -> Result<mailbox::Guarded<mailbox::Message>, mailbox::MailboxError> {
+                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
+            }
+            async fn read_mailbox(
+                &self,
+                _: &mailbox::MailboxName,
+            ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
+                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
+            }
+            async fn mark_processed(
+                &self,
+                _: &mailbox::MessageId,
+                _: Option<&str>,
+            ) -> Result<mailbox::Message, mailbox::MailboxError> {
+                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
+            }
+        }
+
+        let jojobot = Jojobot::new(
+            Arc::new(InMemoryMemory::new()),
+            Arc::new(SpySearch::default()),
+            Arc::new(DownMailboxes),
+        );
+        let out = jojobot.start_here().await.expect("orientation still lands");
+        let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
+        assert!(body["orientation"].as_str().is_some_and(|o| !o.is_empty()));
+        assert_eq!(body["snapshot"]["mailboxes"]["available"], false);
     }
 }
