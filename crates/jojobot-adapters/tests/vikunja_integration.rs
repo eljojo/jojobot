@@ -145,6 +145,16 @@ async fn assert_disposable(http: &reqwest::Client, c: &Creds, prefix: &str) {
     );
 }
 
+/// A client that fails a stuck request instead of hanging the gate forever —
+/// reqwest has no default timeout, so without one a wedged request reads as a
+/// dead server until someone kills the run.
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("building the gate's HTTP client cannot fail")
+}
+
 async fn get(http: &reqwest::Client, c: &Creds, path: &str) -> serde_json::Value {
     http.get(format!("{}/api/v1{path}", c.url.trim_end_matches('/')))
         .bearer_auth(&c.token)
@@ -172,45 +182,65 @@ async fn delete(http: &reqwest::Client, c: &Creds, path: &str) {
 /// size it decides, not the one requested, so "fewer than 50" can be true on
 /// every page. The same rule the store's own loops follow; a teardown or
 /// fingerprint that read only page one would silently narrow the safety net.
+///
+/// Emptiness is judged AFTER filtering: Vikunja appends pseudo-projects with
+/// negative ids (Favorites, "My Open Tasks") to every page of `/projects`, so
+/// a raw page is never empty and an until-raw-empty loop never terminates.
+/// The `as_u64` filter is what drops them; the store's `owned_projects`
+/// terminates by the same mechanism (`project_rec` rejects pseudo ids before
+/// its empty check).
 async fn all_projects(http: &reqwest::Client, c: &Creds) -> Vec<(u64, String, String)> {
     let mut found = Vec::new();
     let mut page = 1;
     loop {
         let body = get(http, c, &format!("/projects?page={page}&per_page=50")).await;
-        let items = body.as_array().cloned().unwrap_or_default();
+        let items: Vec<(u64, String, String)> = body
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|p| {
+                Some((
+                    p["id"].as_u64()?,
+                    p["title"].as_str().unwrap_or_default().to_string(),
+                    p["description"].as_str().unwrap_or_default().to_string(),
+                ))
+            })
+            .collect();
         if items.is_empty() {
             break;
         }
-        found.extend(items.iter().filter_map(|p| {
-            Some((
-                p["id"].as_u64()?,
-                p["title"].as_str().unwrap_or_default().to_string(),
-                p["description"].as_str().unwrap_or_default().to_string(),
-            ))
-        }));
+        found.extend(items);
         page += 1;
     }
     found
 }
 
 /// Every label, paged in full, as `(id, title, description)`. Stops on an
-/// empty page, never a short one — see [`all_projects`].
+/// empty page, never a short one, judged after the same filter — see
+/// [`all_projects`] for both gotchas.
 async fn all_labels(http: &reqwest::Client, c: &Creds) -> Vec<(u64, String, String)> {
     let mut found = Vec::new();
     let mut page = 1;
     loop {
         let body = get(http, c, &format!("/labels?page={page}&per_page=50")).await;
-        let items = body.as_array().cloned().unwrap_or_default();
+        let items: Vec<(u64, String, String)> = body
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|l| {
+                Some((
+                    l["id"].as_u64()?,
+                    l["title"].as_str().unwrap_or_default().to_string(),
+                    l["description"].as_str().unwrap_or_default().to_string(),
+                ))
+            })
+            .collect();
         if items.is_empty() {
             break;
         }
-        found.extend(items.iter().filter_map(|l| {
-            Some((
-                l["id"].as_u64()?,
-                l["title"].as_str().unwrap_or_default().to_string(),
-                l["description"].as_str().unwrap_or_default().to_string(),
-            ))
-        }));
+        found.extend(items);
         page += 1;
     }
     found
@@ -273,7 +303,7 @@ async fn real_vikunja_satisfies_the_contract() {
     let _serialized = GATE.lock().await;
     let c = creds();
 
-    let http = reqwest::Client::new();
+    let http = http_client();
     assert_disposable(&http, &c, CONTRACT_PREFIX).await;
     // Clean slate, in case a prior run aborted before teardown.
     teardown(&http, &c, CONTRACT_PREFIX).await;
@@ -339,7 +369,7 @@ async fn real_vikunja_satisfies_the_contract() {
 async fn a_store_never_adopts_a_board_it_did_not_create() {
     let _serialized = GATE.lock().await;
     let c = creds();
-    let http = reqwest::Client::new();
+    let http = http_client();
     assert_disposable(&http, &c, ADOPT_PREFIX).await;
     teardown(&http, &c, ADOPT_PREFIX).await;
 
