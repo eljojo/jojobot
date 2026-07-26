@@ -103,12 +103,16 @@ fn creds() -> Creds {
 /// otherwise not a server this suite may litter — either way the run stops
 /// before a single contract case exists, making the real instance mechanically
 /// unreachable by the destructive path.
-async fn assert_disposable(http: &reqwest::Client, c: &Creds) {
+/// The canary is titled under the CALLING test's own `prefix`, so a canary
+/// leaked by a crash between its create and its delete is cleaned up by that
+/// test's next clean-slate teardown — by construction, not by a prefix
+/// coincidence.
+async fn assert_disposable(http: &reqwest::Client, c: &Creds, prefix: &str) {
     let resp = http
         .put(format!("{}/api/v1/projects", c.url.trim_end_matches('/')))
         .bearer_auth(&c.token)
         .json(&serde_json::json!({
-            "title": format!("{TEST_PREFIX}canary"),
+            "title": format!("{prefix}-canary"),
             "description": format!("disposability probe — safe to delete. {OWNER_TAG}"),
         }))
         .send()
@@ -163,13 +167,20 @@ async fn delete(http: &reqwest::Client, c: &Creds, path: &str) {
 }
 
 /// Every project, paged in full, as `(id, title, description)`.
+///
+/// Stops on an **empty** page, never a short one — Vikunja serves the page
+/// size it decides, not the one requested, so "fewer than 50" can be true on
+/// every page. The same rule the store's own loops follow; a teardown or
+/// fingerprint that read only page one would silently narrow the safety net.
 async fn all_projects(http: &reqwest::Client, c: &Creds) -> Vec<(u64, String, String)> {
     let mut found = Vec::new();
     let mut page = 1;
     loop {
         let body = get(http, c, &format!("/projects?page={page}&per_page=50")).await;
         let items = body.as_array().cloned().unwrap_or_default();
-        let count = items.len();
+        if items.is_empty() {
+            break;
+        }
         found.extend(items.iter().filter_map(|p| {
             Some((
                 p["id"].as_u64()?,
@@ -177,22 +188,22 @@ async fn all_projects(http: &reqwest::Client, c: &Creds) -> Vec<(u64, String, St
                 p["description"].as_str().unwrap_or_default().to_string(),
             ))
         }));
-        if count < 50 {
-            break;
-        }
         page += 1;
     }
     found
 }
 
-/// Every label, paged in full, as `(id, title, description)`.
+/// Every label, paged in full, as `(id, title, description)`. Stops on an
+/// empty page, never a short one — see [`all_projects`].
 async fn all_labels(http: &reqwest::Client, c: &Creds) -> Vec<(u64, String, String)> {
     let mut found = Vec::new();
     let mut page = 1;
     loop {
         let body = get(http, c, &format!("/labels?page={page}&per_page=50")).await;
         let items = body.as_array().cloned().unwrap_or_default();
-        let count = items.len();
+        if items.is_empty() {
+            break;
+        }
         found.extend(items.iter().filter_map(|l| {
             Some((
                 l["id"].as_u64()?,
@@ -200,9 +211,6 @@ async fn all_labels(http: &reqwest::Client, c: &Creds) -> Vec<(u64, String, Stri
                 l["description"].as_str().unwrap_or_default().to_string(),
             ))
         }));
-        if count < 50 {
-            break;
-        }
         page += 1;
     }
     found
@@ -266,7 +274,7 @@ async fn real_vikunja_satisfies_the_contract() {
     let c = creds();
 
     let http = reqwest::Client::new();
-    assert_disposable(&http, &c).await;
+    assert_disposable(&http, &c, CONTRACT_PREFIX).await;
     // Clean slate, in case a prior run aborted before teardown.
     teardown(&http, &c, CONTRACT_PREFIX).await;
 
@@ -332,7 +340,7 @@ async fn a_store_never_adopts_a_board_it_did_not_create() {
     let _serialized = GATE.lock().await;
     let c = creds();
     let http = reqwest::Client::new();
-    assert_disposable(&http, &c).await;
+    assert_disposable(&http, &c, ADOPT_PREFIX).await;
     teardown(&http, &c, ADOPT_PREFIX).await;
 
     let store = Arc::new(VikunjaStore::with_project(
