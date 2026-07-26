@@ -17,6 +17,13 @@
 //!
 //! The HTTP surface is behind the [`api::VikunjaApi`] port, so all of that logic
 //! runs under fast tests against an in-memory double.
+//!
+//! **Known quirk — no retry on 500.** Vikunja over SQLite answers concurrent
+//! writes with 500s (database-lock class); this adapter surfaces them as
+//! [`MailboxError::Store`] and does not retry. Every write path is
+//! read-back-verified and rolls back on failure, so a 500 is loud and clean —
+//! but a caller running beside another writer should expect occasional
+//! transient failures and re-issue the verb itself.
 
 mod api;
 mod codec;
