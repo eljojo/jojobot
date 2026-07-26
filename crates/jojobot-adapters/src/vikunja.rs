@@ -3558,6 +3558,54 @@ mod tests {
         );
     }
 
+    /// **Every clause of the later-state tolerance, one at a time.** The
+    /// end-to-end cases below can only reach the clauses a live board can
+    /// break: a card's box can be relabelled by hand and its contents
+    /// rewritten, but nothing on a real board hands the read-back a message
+    /// under a different id — the lookup that produced it matched on that id.
+    /// So the id clause has no end-to-end case that can fail it, and in
+    /// practice neither does the box one. Left at that, they are two
+    /// comparisons deletable with the whole suite green — in the one predicate
+    /// standing between "the state advanced" and jojobot vouching for a message
+    /// it did not write. So the predicate is pinned directly, clause by clause.
+    #[test]
+    fn an_advanced_read_back_confirms_only_for_the_very_same_message() {
+        let wrote = Message {
+            id: MessageId("13".into()),
+            mailbox: MailboxName("inbox".into()),
+            body: "the shipment landed".into(),
+            sender: "alpha".into(),
+            sent_at: at(1_780_000_000),
+            state: MessageState::New,
+            notes: None,
+        };
+        let advanced = Message { state: MessageState::Read, ..wrote.clone() };
+        assert!(
+            read_back_confirms(&wrote, &advanced),
+            "the same message, further down the funnel, is delivery working"
+        );
+
+        for (clause, seen) in [
+            ("the id", Message { id: MessageId("14".into()), ..advanced.clone() }),
+            ("the box", Message { mailbox: MailboxName("errands".into()), ..advanced.clone() }),
+            ("the body", Message { body: "a different message".into(), ..advanced.clone() }),
+            ("the sender", Message { sender: "milhouse".into(), ..advanced.clone() }),
+            ("the instant", Message { sent_at: at(1_770_000_000), ..advanced.clone() }),
+        ] {
+            assert!(
+                !read_back_confirms(&wrote, &seen),
+                "a card that advanced with {clause} replaced is not the message that was written"
+            );
+        }
+
+        // Notes are the one field deliberately not compared once the state has
+        // advanced: they belong to whoever moved the card.
+        assert!(
+            read_back_confirms(&wrote, &Message { notes: Some("filed".into()), ..advanced }),
+            "an outcome recorded by whoever took the message is not a corruption"
+        );
+    }
+
     /// **Advancing is not a licence to change the message.** The read-back
     /// tolerates a card that moved further down the funnel — that is delivery
     /// working — but only for the SAME message: body, sender and instant all
