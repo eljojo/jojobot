@@ -31,7 +31,7 @@ use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
     FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance,
     guard::{self, EntityMatch},
-    search::{DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, Search, SearchQuery},
+    search::{DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, MailCoverage, Search, SearchQuery},
     validate_edge,
 };
 use rmcp::{
@@ -759,9 +759,12 @@ impl Jojobot {
                        findable, and the state is how you tell it from live work), its sender \
                        and the id read_message takes, plus a snippet rather than the whole body. \
                        Mail is searched by default — pass include_mail: false to leave session \
-                       traffic out. ALWAYS read the `mail` field of the answer: searched: false \
-                       means no message was searched at all, which is not the same as nothing \
-                       matching. No pagination — raise `limit` or ask a better question."
+                       traffic out, and note that a `kind` filter also leaves it out, since a \
+                       message belongs to no entity and so has no kind to match. ALWAYS read the \
+                       `mail` field of the answer: searched: false means no message was searched \
+                       at all — which is not the same as nothing matching — and its note says \
+                       which of the reasons it was. No pagination — raise `limit` or ask a \
+                       better question."
     )]
     async fn search(
         &self,
@@ -793,7 +796,7 @@ impl Jojobot {
         let hits = self.search.search(&query).map_err(memory_error)?;
         let body = serde_json::json!({
             "count": hits.len(),
-            "mail": mail_coverage(&query, self.search.mail_indexed()),
+            "mail": mail_coverage(&query, self.search.mail_coverage()),
             "results": hits.iter().map(hit_json).collect::<Vec<_>>(),
         });
         json_result(&body)
@@ -1281,25 +1284,48 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
 /// is simply not in it, and an answer that comes back without mail hits and
 /// without a word reads as "no message says that". That is a different claim
 /// from "jojobot has read no messages", and it is the one a caller acts on.
-fn mail_coverage(query: &SearchQuery, indexed: bool) -> serde_json::Value {
-    match (query.include_mail, query.is_fact_scoped(), indexed) {
-        (false, _, _) => serde_json::json!({
-            "searched": false,
-            "note": "you passed include_mail: false, so messages were left out of this answer.",
+fn mail_coverage(query: &SearchQuery, coverage: MailCoverage) -> serde_json::Value {
+    let excluded = |note: &str| serde_json::json!({ "searched": false, "note": note });
+    if !query.include_mail {
+        return excluded("you passed include_mail: false, so messages were left out of this answer.");
+    }
+    if query.is_fact_scoped() {
+        return excluded(
+            "this query filters on a property only a fact has (status, provenance, subject or \
+             edge), so it is a question about facts — messages, entities and prose are all out \
+             of it.",
+        );
+    }
+    // **A `kind` filter excludes mail, silently and structurally.** A message
+    // belongs to no entity, so it has no kind to match — the filter drops it
+    // exactly as it drops prose in a doc that is nobody's. Saying `searched:
+    // true` here was the field's one wrong answer, and a field a caller is told
+    // to trust has to be right in every case rather than in most of them.
+    if query.kind.is_some() {
+        return excluded(
+            "this query narrows to one entity kind, and a message belongs to no entity, so \
+             mail was left out of it. Drop `kind` to search messages too.",
+        );
+    }
+    match coverage {
+        MailCoverage::Unread => excluded(
+            "jojobot has not been able to read the mailbox board, so NO message is searchable \
+             right now — this is not 'nothing matched'. The memory half of this answer is \
+             complete. list_mailboxes will say what is wrong.",
+        ),
+        // Searched, and said so — hits are real. But the board read failed, so
+        // only what this server has handled since is in there, and a caller
+        // hunting an older message has to be told rather than shown an empty
+        // list. Reporting this as `searched: false` was an answer that carried
+        // message hits and denied having searched any.
+        MailCoverage::Partial => serde_json::json!({
+            "searched": true,
+            "note": "PARTIAL: jojobot could not read the mailbox board at startup, so only \
+                     messages it has handled since are searchable. Any hit here is real, but an \
+                     older message may be missing — this is not a complete answer over mail. \
+                     list_mailboxes will say what is wrong.",
         }),
-        (_, true, _) => serde_json::json!({
-            "searched": false,
-            "note": "this query filters on a property only a fact has (status, provenance, \
-                     subject or edge), so it is a question about facts — messages, entities and \
-                     prose are all out of it.",
-        }),
-        (_, _, false) => serde_json::json!({
-            "searched": false,
-            "note": "jojobot has not been able to read the mailbox board, so NO message is \
-                     searchable right now — this is not 'nothing matched'. The memory half of \
-                     this answer is complete. list_mailboxes will say what is wrong.",
-        }),
-        (_, _, true) => serde_json::json!({ "searched": true }),
+        MailCoverage::Loaded => serde_json::json!({ "searched": true }),
     }
 }
 
@@ -2006,10 +2032,10 @@ mod tests {
     struct SpySearch {
         seen: Mutex<Option<SearchQuery>>,
         hits: Mutex<Vec<Hit>>,
-        /// Whether this double claims the mail half of the projection is loaded.
-        /// Default true: an index that has read the board is the ordinary case,
-        /// and the outage is the one worth writing down at a call site.
-        mail_indexed: bool,
+        /// How much of the mail board this double claims to hold. Default
+        /// loaded: an index that has read the board is the ordinary case, and
+        /// the degraded ones are worth writing down at a call site.
+        coverage: MailCoverage,
     }
 
     impl Default for SpySearch {
@@ -2017,7 +2043,7 @@ mod tests {
             SpySearch {
                 seen: Mutex::new(None),
                 hits: Mutex::new(Vec::new()),
-                mail_indexed: true,
+                coverage: MailCoverage::Loaded,
             }
         }
     }
@@ -2030,10 +2056,21 @@ mod tests {
             }
         }
 
+        /// A search port at a given mail coverage — the states a degraded index
+        /// reports.
+        fn covering(coverage: MailCoverage, hits: Vec<Hit>) -> Self {
+            SpySearch {
+                hits: Mutex::new(hits),
+                coverage,
+                ..Default::default()
+            }
+        }
+
         /// A search port whose mailbox world was never readable — the state an
-        /// index is in when the boot scan of the board failed.
+        /// index is in when the boot scan of the board failed and nothing has
+        /// indexed a message since.
         fn with_no_mail_indexed() -> Self {
-            SpySearch { mail_indexed: false, ..Default::default() }
+            Self::covering(MailCoverage::Unread, Vec::new())
         }
 
         fn query(&self) -> SearchQuery {
@@ -2051,8 +2088,8 @@ mod tests {
             Ok(self.hits.lock().unwrap().clone())
         }
 
-        fn mail_indexed(&self) -> bool {
-            self.mail_indexed
+        fn mail_coverage(&self) -> MailCoverage {
+            self.coverage
         }
     }
 
@@ -2413,6 +2450,117 @@ mod tests {
                 .expect("a note")
                 .contains("only a fact has"),
             "got {fact_scoped}"
+        );
+    }
+
+    /// **THE INVARIANT: no answer both returns a message hit and claims no
+    /// message was searched.** After a failed boot board read, every verb still
+    /// indexes the messages it touches and search still returns them — while the
+    /// coverage flag stayed false for the life of the process. One answer said
+    /// both things at once, and a caller reading the field it is told to trust
+    /// would discard a hit that is real.
+    ///
+    /// The fix is a third state, not a flipped flag: hits are real, but the
+    /// board was never read, so anything older than this process is missing —
+    /// which a caller hunting an old message has to be told rather than shown an
+    /// empty list.
+    #[tokio::test]
+    async fn an_answer_carrying_a_message_never_claims_no_mail_was_searched() {
+        let hit = || {
+            vec![Hit::Message {
+                message: Message {
+                    id: MessageId("42".into()),
+                    mailbox: MailboxName("pm".into()),
+                    body: "the damper is still hand-cut".into(),
+                    subject: None,
+                    sender: "dev".into(),
+                    sent_at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
+                    state: mailbox::MessageState::New,
+                    notes: None,
+                },
+                snippet: "…the damper…".into(),
+            }]
+        };
+
+        for coverage in [MailCoverage::Partial, MailCoverage::Loaded] {
+            let body = json_of(
+                &handler_with(Arc::new(SpySearch::covering(coverage, hit())))
+                    .search(Parameters(SearchArgs {
+                        query: Some("damper".into()),
+                        ..search_args()
+                    }))
+                    .await
+                    .expect("search ok"),
+            );
+            assert!(
+                body["results"].as_array().expect("results").iter().any(|h| h["hit"] == "message"),
+                "the double answered with a message: {body}"
+            );
+            assert_eq!(
+                body["mail"]["searched"], true,
+                "an answer carrying a message hit cannot claim no message was searched \
+                 ({coverage:?}): {body}"
+            );
+        }
+
+        // …and the degraded one still says it is degraded, or the caller reads a
+        // partial answer over mail as a complete one.
+        let partial = json_of(
+            &handler_with(Arc::new(SpySearch::covering(MailCoverage::Partial, hit())))
+                .search(Parameters(SearchArgs { query: Some("damper".into()), ..search_args() }))
+                .await
+                .expect("search ok"),
+        );
+        assert!(
+            partial["mail"]["note"]
+                .as_str()
+                .expect("a partial answer says it is partial")
+                .contains("PARTIAL"),
+            "got {partial}"
+        );
+    }
+
+    /// **A `kind` filter excludes every message, and the answer has to say so.**
+    /// The exclusion is structural and silent — a message doc carries no `kind`
+    /// field, so the filter's own MUST clause drops it, exactly as it drops
+    /// prose in nobody's doc. The coverage block knew three reasons and not this
+    /// one, so `kind`-filtered answers claimed `searched: true` while the tool
+    /// description tells a caller to trust that field. A field worth reading is
+    /// a field that has to be right in every case, not in most of them.
+    #[tokio::test]
+    async fn a_kind_filter_reports_that_mail_was_left_out() {
+        let body = json_of(
+            &handler_with(Arc::new(SpySearch::default()))
+                .search(Parameters(SearchArgs {
+                    query: Some("damper".into()),
+                    kind: Some("person".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(
+            body["mail"]["searched"], false,
+            "a kind filter leaves no message in the answer, so it cannot claim it searched them"
+        );
+        let note = body["mail"]["note"].as_str().expect("an absence says why");
+        assert!(
+            note.contains("kind"),
+            "…and it says which filter did it, since the caller can drop that one: {note}"
+        );
+
+        // The tool description makes the same promise, so it names this case too.
+        let tools = Jojobot::tool_router().list_all();
+        let description = tools
+            .iter()
+            .find(|t| t.name == "search")
+            .expect("search is a tool")
+            .description
+            .as_deref()
+            .unwrap_or_default();
+        assert!(
+            description.contains("kind") && description.contains("mail"),
+            "the description tells a caller kind and mail interact: {description}"
         );
     }
 

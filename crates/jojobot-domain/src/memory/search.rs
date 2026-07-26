@@ -338,6 +338,32 @@ pub enum Hit {
     },
 }
 
+/// How much of the mailbox board the projection actually holds — **the honesty
+/// half of degrade-don't-error**, and three states rather than two because the
+/// middle one is reachable and was being reported as one of the others.
+///
+/// A search is a read of an in-process index, so a mailbox world that was
+/// unreachable when the index was built does not make searching fail; it makes
+/// mail missing. "No message says that" and "jojobot has read no messages" are
+/// different claims, and a caller acts on both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MailCoverage {
+    /// The board has never been read and nothing has indexed a message: no
+    /// message is searchable at all, and an empty answer means nothing.
+    Unread,
+    /// The board has never been read, but messages written **through this
+    /// process since** are indexed. Hits are real and findable; anything older
+    /// than this process is missing, and a caller who is looking for an old
+    /// message has to be told that rather than shown an empty list.
+    ///
+    /// This is what a failed boot scan leaves behind, and it is exactly the
+    /// state that used to report [`Unread`](Self::Unread) — an answer carrying
+    /// message hits while saying no message was searched.
+    Partial,
+    /// The board was read: everything on it is searchable.
+    Loaded,
+}
+
 /// The retrieval port: one ranked, mixed list. Synchronous — the index is
 /// in-process, so a search is a memory read, not I/O.
 pub trait Search: Send + Sync {
@@ -346,15 +372,10 @@ pub trait Search: Send + Sync {
     /// or name the query matches pinned to the top.
     fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError>;
 
-    /// Whether messages are in the projection at all.
-    ///
-    /// **The honesty half of degrade-don't-error.** A search is a read of an
-    /// in-process index, so a mailbox world that was unreachable when the index
-    /// was built does not make searching fail — it makes mail silently missing,
-    /// and "no message says that" is a very different claim from "jojobot has
-    /// not read any messages". Memory results still come back either way; this
-    /// is what lets the answer say which of the two it is.
-    fn mail_indexed(&self) -> bool;
+    /// How much of the mail board this projection holds — see [`MailCoverage`].
+    /// Memory results come back whatever it says; this is what lets an answer
+    /// tell a caller which kind of silence they are looking at.
+    fn mail_coverage(&self) -> MailCoverage;
 }
 
 #[cfg(test)]

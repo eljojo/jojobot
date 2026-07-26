@@ -31,7 +31,7 @@ use jojobot_domain::memory::{
     Edge, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, Memory,
     MemoryError, NewEntity, NewFact,
     guard::{self, MatchReason},
-    search::{self, DocScan, EntityRef, Hit, Search, SearchQuery},
+    search::{self, DocScan, EntityRef, Hit, MailCoverage, Search, SearchQuery},
 };
 
 /// How much a fresh fact is worth against text relevance. Small on purpose: it
@@ -163,12 +163,20 @@ pub struct FullTextIndex {
     /// because the guard takes entities, not postings, and reusing it is what
     /// keeps one definition of "the same thing" in the system.
     docs: RwLock<Vec<DocMirror>>,
-    /// Whether the mail half was ever loaded from a board read.
+    /// Whether the mail half was ever loaded from a **board read**.
     ///
     /// **Not "are there messages in it".** An empty board that was read and a
     /// mailbox world that never answered look identical in the postings and are
-    /// opposite answers to the caller — see [`Search::mail_indexed`].
+    /// opposite answers to the caller — see [`MailCoverage`].
     mail_loaded: std::sync::atomic::AtomicBool,
+    /// Whether any single message has been indexed since this index opened.
+    ///
+    /// Tracked apart from the board read because the two disagree exactly where
+    /// it matters: after a failed boot scan, every message this process posts or
+    /// delivers still lands in the index and still comes back as a hit, while
+    /// no board was ever read. Reporting that as "no mail is searchable" made an
+    /// answer carry message hits and deny having searched any.
+    mail_touched: std::sync::atomic::AtomicBool,
 }
 
 impl FullTextIndex {
@@ -185,6 +193,7 @@ impl FullTextIndex {
             writer: RwLock::new(writer),
             docs: RwLock::new(Vec::new()),
             mail_loaded: std::sync::atomic::AtomicBool::new(false),
+            mail_touched: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -223,6 +232,9 @@ impl FullTextIndex {
         self.write_message(&writer, message)?;
         writer.commit().map_err(store_err)?;
         drop(writer);
+
+        self.mail_touched
+            .store(true, std::sync::atomic::Ordering::Release);
         self.reader.reload().map_err(store_err)?;
         Ok(())
     }
@@ -253,9 +265,17 @@ impl FullTextIndex {
     /// Replace the whole index from a full scan — the boot path. A full re-scan
     /// rather than a delta: the corpus is dozens of docs, and a projection that
     /// can drift is worse than one that is rebuilt.
+    /// **Scoped to the memory classes, never `delete_all_documents`.** The two
+    /// halves come from two stores; wiping the whole index here evicted every
+    /// message while leaving the flag saying mail was loaded, so a rebuild of
+    /// Memory silently emptied `search`'s mail half and then vouched for it.
+    /// Only the boot ordering in `main.rs` — untested, and no invariant —
+    /// happened to hide it.
     pub fn ingest_all(&self, scan: &[DocScan]) -> Result<(), MemoryError> {
         let mut writer = self.writer.write().expect("index writer poisoned");
-        writer.delete_all_documents().map_err(store_err)?;
+        for class in [CLASS_ENTITY, CLASS_FACT, CLASS_PROSE] {
+            writer.delete_term(Term::from_field_text(self.fields.class, class));
+        }
         for doc in scan {
             self.write_doc(&writer, doc)?;
         }
@@ -637,8 +657,16 @@ fn edges_of(mirror: &[DocMirror], id: &EntityId) -> Vec<Edge> {
 }
 
 impl Search for FullTextIndex {
-    fn mail_indexed(&self) -> bool {
-        self.mail_loaded.load(std::sync::atomic::Ordering::Acquire)
+    fn mail_coverage(&self) -> MailCoverage {
+        use std::sync::atomic::Ordering::Acquire;
+        match (
+            self.mail_loaded.load(Acquire),
+            self.mail_touched.load(Acquire),
+        ) {
+            (true, _) => MailCoverage::Loaded,
+            (false, true) => MailCoverage::Partial,
+            (false, false) => MailCoverage::Unread,
+        }
     }
 
     fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
@@ -995,8 +1023,8 @@ impl Search for IndexedMemory {
         self.index.search(query)
     }
 
-    fn mail_indexed(&self) -> bool {
-        self.index.mail_indexed()
+    fn mail_coverage(&self) -> MailCoverage {
+        self.index.mail_coverage()
     }
 }
 
@@ -1008,6 +1036,15 @@ impl Search for IndexedMemory {
 /// restart, and a delivery or a retirement keeps the `state` on a search hit
 /// honest. A hit that says `new` for a message somebody drained an hour ago is
 /// worse than no hit, because a reader acts on it.
+///
+/// **The limit of that, stated rather than left to be discovered.** This is a
+/// boot-loaded projection updated by the verbs that pass through it, so a
+/// message that changes any other way keeps its indexed state until some verb
+/// touches it again: a person moving a card on the board by hand, and — inside
+/// jojobot — a message a delivery deliberately excluded, which by definition is
+/// one somebody else moved under it. Neither is a live view, and neither can be
+/// made one without polling the board. The state on a hit is what jojobot last
+/// saw, which is why a hit carries the id: `read_message` reads the store.
 pub struct IndexedMailboxes {
     inner: Arc<dyn Mailboxes>,
     index: Arc<FullTextIndex>,
@@ -2350,7 +2387,7 @@ mod tests {
             "",
             vec![fact("person:alpha", "f1", "keeps a ferret", date(2026, 1, 1))],
         )]);
-        assert!(!index.mail_indexed(), "nothing has loaded mail");
+        assert_eq!(index.mail_coverage(), MailCoverage::Unread, "nothing has loaded mail");
         assert_eq!(
             index.search(&SearchQuery::text("ferret")).expect("search ok").len(),
             1,
@@ -2358,10 +2395,89 @@ mod tests {
         );
 
         index.ingest_mail(&[]).expect("an empty board is still a board");
-        assert!(
-            index.mail_indexed(),
+        assert_eq!(
+            index.mail_coverage(),
+            MailCoverage::Loaded,
             "a board that was read and holds nothing is not the same as a board nobody read"
         );
+    }
+
+    /// **The state a failed boot actually leaves.** The board read never
+    /// happened, but every message this process posts or delivers is still
+    /// indexed and still comes back as a hit — so reporting "no mail is
+    /// searchable" made one answer carry message hits and deny having searched
+    /// any. That is a third state, not one of the two.
+    #[tokio::test]
+    async fn mail_indexed_after_a_failed_board_read_is_partial_not_absent() {
+        let index = index_of(Vec::new());
+        assert_eq!(index.mail_coverage(), MailCoverage::Unread);
+
+        // No ingest_mail — the boot read failed. A verb indexes one message.
+        index
+            .ingest_message(&message("1", "pm", "dev", None, "the shipment landed", MessageState::New))
+            .expect("ingest one");
+
+        assert_eq!(
+            index.mail_coverage(),
+            MailCoverage::Partial,
+            "a message that IS findable must never be reported as no mail at all"
+        );
+        assert_eq!(
+            index.search(&SearchQuery::text("shipment")).expect("search ok").len(),
+            1,
+            "…and it is findable, which is the whole reason the claim was wrong"
+        );
+
+        // A board read later promotes it: now everything is there.
+        index.ingest_mail(&[]).expect("the board comes back");
+        assert_eq!(index.mail_coverage(), MailCoverage::Loaded);
+    }
+
+    /// **Rebuilding one half must not empty the other.** `ingest_all` wiped the
+    /// whole index — mail included — while leaving the flag saying mail was
+    /// loaded, so a Memory rebuild silently emptied the mail half and then
+    /// vouched for it. Nothing but the boot ordering in `main.rs` stood between
+    /// that and production, and boot ordering is not an invariant.
+    ///
+    /// Both orders, because the bug is exactly an order-dependence.
+    #[tokio::test]
+    async fn rebuilding_either_half_leaves_the_other_alone() {
+        let mail = || message("1", "pm", "dev", None, "the shipment landed", MessageState::New);
+        let docs = || {
+            vec![scan(
+                "doc-1",
+                Some(entity("person:alpha", "Alpha")),
+                "",
+                vec![fact("person:alpha", "f1", "keeps a ferret", date(2026, 1, 1))],
+            )]
+        };
+        let both_survive = |index: &FullTextIndex, order: &str| {
+            assert_eq!(
+                index.search(&SearchQuery::text("shipment")).expect("search ok").len(),
+                1,
+                "the mail half is gone after {order}"
+            );
+            assert_eq!(
+                index.search(&SearchQuery::text("ferret")).expect("search ok").len(),
+                1,
+                "the memory half is gone after {order}"
+            );
+            assert_eq!(
+                index.mail_coverage(),
+                MailCoverage::Loaded,
+                "…and the coverage claim still matches what is actually in there"
+            );
+        };
+
+        let mail_first = FullTextIndex::open().expect("index opens");
+        mail_first.ingest_mail(&[mail()]).expect("ingest mail");
+        mail_first.ingest_all(&docs()).expect("ingest docs");
+        both_survive(&mail_first, "mail then memory");
+
+        let memory_first = FullTextIndex::open().expect("index opens");
+        memory_first.ingest_all(&docs()).expect("ingest docs");
+        memory_first.ingest_mail(&[mail()]).expect("ingest mail");
+        both_survive(&memory_first, "memory then mail");
     }
 
     /// **Read-back covers mail too.** A message posted a moment ago is findable

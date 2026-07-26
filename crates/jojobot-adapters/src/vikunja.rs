@@ -1333,9 +1333,14 @@ impl Mailboxes for VikunjaStore {
     }
 
     async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
-        // No verb lock: this writes nothing, so it cannot interleave with
-        // anything, and holding the lock for a whole-board read would stall
-        // every mailbox verb behind a projection rebuild.
+        // **It takes the verb lock, because it is not the pure read it looks
+        // like.** Nothing here touches a message — but `resolve_scope` is a
+        // provisioning path: on a bare Vikunja it creates the project, its three
+        // columns and the done-bucket flag, and reconciles duplicate boards. It
+        // said "this writes nothing, so it cannot interleave with anything",
+        // which was false about the one call it makes, and left the whole
+        // provisioning sequence running unserialized beside every other verb's.
+        let _serialized = self.lock.lock().await;
         let scope = self.resolve_scope().await?;
         Ok(self
             .messages(&scope)
