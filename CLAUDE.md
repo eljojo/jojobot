@@ -77,10 +77,17 @@ Shipped and live:
 - **M3** — Mailboxes: kanban-backed message boxes (`new → read → processed`;
   read ≠ processed; processed is a terminal archive; no delete verbs — the
   tool surface is pinned by test).
+- **M4** — Bots: a ninth entity kind, `bot` — an AI identity is handle ·
+  charter (its doc's prose, written through `set_charter`) · rules (plain
+  facts, so each carries its own provenance) · memory · one owned mailbox
+  (a `mailbox:` claim on the bot's own record, unique across entities).
+  **`boot_bot` is the one orienting door**: it grows from `start_here` —
+  same world-model, same snapshot, plus the identity — and it may open the
+  box its bot declares, the only mailbox mint outside `create_mailbox`.
+  Mailboxes stay bot-ignorant: ownership is a read of Memory, never an ACL.
 
-Ahead: **M4** bots (an AI identity = handle · charter · rules · memory ·
-owned mailbox; `boot_bot` as the one orienting door) → **M5** sessions →
-**M6** trace (claim → fact → receipt → evidence) → **M7** portraits →
+Ahead: **M5** sessions → **M6** trace (claim → fact → receipt → evidence) →
+**M7** portraits (which generalize `set_charter` into the one prose verb) →
 **M8** attention (rules, rhythms, nags) → **M9** boot bundles (sessions boot
 from jojobot) → **M10** seeding (user-agnostic defaults, "batteries included,
 overrides win").
