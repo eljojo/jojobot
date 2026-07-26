@@ -11,3 +11,6 @@
 pub mod outline;
 pub mod search;
 pub mod vikunja;
+
+#[cfg(test)]
+mod log_capture;

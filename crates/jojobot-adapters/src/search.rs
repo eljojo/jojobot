@@ -1685,56 +1685,10 @@ mod tests {
         );
     }
 
-    /// A sink that keeps whatever was logged, so a test can assert on it. `it
-    /// gets logged` is not a claim you can make by reading the call site.
-    #[derive(Clone, Default)]
-    struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
-
-    impl Captured {
-        fn text(&self) -> String {
-            String::from_utf8_lossy(&self.0.lock().expect("log buffer poisoned")).into_owned()
-        }
-    }
-
-    impl std::io::Write for Captured {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().expect("log buffer poisoned").extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-        type Writer = Captured;
-        fn make_writer(&'a self) -> Self::Writer {
-            self.clone()
-        }
-    }
-
-    /// The one log sink for this test binary.
-    ///
-    /// **Global on purpose.** `tracing` keeps a process-wide max-level hint, so a
-    /// thread-local subscriber is not enough: a sibling test running with none
-    /// can leave that hint below WARN, and the event never fires at all — the
-    /// assertion then reads an empty buffer and blames the code. Passing alone
-    /// and failing in the suite is the tell. One global sink, installed once, is
-    /// deterministic. `report_orphans` is the only thing in this crate that logs.
-    fn log_sink() -> &'static Captured {
-        static SINK: std::sync::OnceLock<Captured> = std::sync::OnceLock::new();
-        SINK.get_or_init(|| {
-            let captured = Captured::default();
-            let subscriber = tracing_subscriber::fmt()
-                .with_writer(captured.clone())
-                .with_ansi(false)
-                .with_max_level(tracing::Level::WARN)
-                .finish();
-            tracing::subscriber::set_global_default(subscriber)
-                .expect("only this sink installs a global subscriber");
-            captured
-        })
-    }
+    /// The crate's one log sink. **Shared, not local**: the Vikunja store also
+    /// reports things whose only surface is a log line, and a process gets
+    /// exactly one global subscriber — so the sink lives beside both of them.
+    use crate::log_capture::log_sink;
 
     /// **A row whose subject names nothing is counted and said out loud.** This
     /// is the split-brain tell a hand edit leaves: the row stays reachable

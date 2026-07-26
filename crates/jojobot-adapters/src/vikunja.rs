@@ -152,12 +152,16 @@ impl Scope {
 }
 
 /// What one pass over the board yields: the readable messages, and the cards
-/// wearing a mailbox label that could not be read as messages — quarantined,
-/// surfaced by `list_mailboxes`, acted on by nothing.
+/// that could not be read as messages — quarantined, acted on by nothing.
 struct BoardRead {
     messages: Vec<(TaskRec, Message)>,
-    /// `(box, card id)` per unreadable card.
-    quarantined: Vec<(MailboxName, u64)>,
+    /// `(box, card id)` per unreadable card. The box is **`None` when the card
+    /// carries no mailbox label**: a card jojobot created and could not label
+    /// is still outside the funnel and still must not be lost, but there is
+    /// nothing on it that says which box it belongs to, so `list_mailboxes`
+    /// cannot file it under one. That residue is said at error level, with the
+    /// card id, where it happens.
+    quarantined: Vec<(Option<MailboxName>, u64)>,
 }
 
 // --- the store --------------------------------------------------------------
@@ -405,14 +409,20 @@ impl VikunjaStore {
     /// path, so counts, deliveries and lookups can never disagree about what is
     /// where.
     ///
-    /// A card that carries no mailbox label is **not a message**: it is
-    /// something a human put on the board (or another store's), and jojobot
-    /// neither delivers it nor counts it as mail. A card that DOES wear a
-    /// mailbox label but cannot be read as a message — its description no
-    /// longer parses, or it sits in a column that is no state — is
-    /// **quarantined**: never delivered, never invented a reading for, but
-    /// surfaced by `list_mailboxes` as unreadable, because a real message
-    /// silently skipped is invisible to every verb at once.
+    /// A card that cannot be read as a message is **quarantined**: never
+    /// delivered, never invented a reading for, but surfaced as unreadable,
+    /// because a real message silently skipped is invisible to every verb at
+    /// once. Two things put a card there — a description that no longer parses,
+    /// and a column that is no state.
+    ///
+    /// **Quarantine is decided by the column, not by the label.** An unlabelled
+    /// card in one of the three state columns is somebody else's — a human's
+    /// note on the board — and jojobot neither delivers it nor counts it.
+    /// Outside those columns there is no such thing as somebody else's card on
+    /// this board: it is jojobot's own project, and the one way a card gets
+    /// there unlabelled is a create whose labelling failed. Reading that card as
+    /// "not mine" is how a message jojobot itself wrote becomes invisible to
+    /// every verb, quarantine included.
     async fn board_read(&self, scope: &Scope) -> Result<BoardRead, MailboxError> {
         let prefix = self.label_prefix();
         let mut found = Vec::new();
@@ -420,39 +430,46 @@ impl VikunjaStore {
         for bucket in self.board(scope).await? {
             let state = MessageState::from_token(&bucket.title);
             for task in bucket.tasks {
-                let Some(mailbox) = task
+                let mailbox = task
                     .labels
                     .iter()
                     .find_map(|l| l.strip_prefix(&prefix))
-                    .map(|n| MailboxName(n.to_string()))
-                else {
+                    .map(|n| MailboxName(n.to_string()));
+                // A card with no mailbox label sitting in one of jojobot's three
+                // state columns is somebody else's: it is not a message and not
+                // jojobot's to touch.
+                if state.is_some() && mailbox.is_none() {
                     continue;
-                };
-                let Some(state) = state else {
+                }
+                // The one choke point for the write-scope invariant: every card
+                // jojobot ever writes to arrives either from here or from a
+                // `create_task` in its own project, so checking here covers
+                // every verb at once. **Above the quarantine branches, not
+                // below them** — a foreign card must be refused outright, never
+                // classified, or its id gets published under one of jojobot's
+                // mailboxes as if jojobot had a claim on it.
+                scope.verify(&task)?;
+                let (Some(state), Some(box_of)) = (state, mailbox.clone()) else {
                     // The card id only: a non-state column title is operator- or
                     // Vikunja-authored text, and no log prints operator text.
                     tracing::warn!(
                         card = task.id,
-                        "a card wearing a mailbox label sits in a column that is no state — \
-                         quarantined, not delivered"
+                        attributable = mailbox.is_some(),
+                        "a card sits in a column that is no state — quarantined, not delivered"
                     );
                     quarantined.push((mailbox, task.id));
                     continue;
                 };
-                // The one choke point for the write-scope invariant: every card
-                // jojobot ever writes to arrives either from here or from a
-                // `create_task` in its own project, so checking here covers
-                // every verb at once.
-                scope.verify(&task)?;
                 let Some((body, envelope)) = parse_description(&task.description) else {
                     tracing::warn!(
                         card = task.id,
                         "a card wearing a mailbox label carries no readable machine block — \
                          quarantined, not delivered"
                     );
-                    quarantined.push((mailbox, task.id));
+                    quarantined.push((Some(box_of), task.id));
                     continue;
                 };
+                let mailbox = box_of;
                 let message = Message {
                     id: MessageId(task.id.to_string()),
                     mailbox,
@@ -624,18 +641,23 @@ impl VikunjaStore {
     }
 
     /// Park a card jojobot created seconds ago that a failed write cannot vouch
-    /// for. Two best-effort moves: make sure the card wears its mailbox label —
-    /// so the board read can surface it rather than losing it — then move it to
-    /// the [`PARKED_COLUMN`], where it is quarantined: never delivered as mail,
-    /// and never counted either. Parking it in `processed` instead would
-    /// fabricate handled mail nobody ever received; leaving it in `new` would
-    /// deliver a message the caller was told failed. **Nothing is ever
-    /// deleted**: jojobot has no delete capability at all, so a rollback's only
-    /// moves are restore and park. A create has no prior state to restore to —
-    /// its prior state is absence — which is why parking is what stands in.
-    async fn park_create(&self, scope: &Scope, task_id: u64, label: u64, verb: &str) -> String {
+    /// for: move it to the [`PARKED_COLUMN`], where it is quarantined — never
+    /// delivered as mail, and never counted either. Parking it in `processed`
+    /// instead would fabricate handled mail nobody ever received; leaving it in
+    /// `new` would deliver a message the caller was told failed. **Nothing is
+    /// ever deleted**: jojobot has no delete capability at all, so a rollback's
+    /// only moves are restore and park. A create has no prior state to restore
+    /// to — its prior state is absence — which is why parking is what stands in.
+    ///
+    /// **It re-issues nothing.** This used to relabel the card first, so that
+    /// the board read could see it — which meant that when the label call was
+    /// what failed, the rescue's first act was the call that had just failed,
+    /// and a Vikunja refusing it refused the retry too. Visibility no longer
+    /// depends on this working at all: quarantine is decided by the column, so
+    /// a created card is outside the funnel and surfaced whether this move
+    /// lands or not. This only tidies it into the column that says so.
+    async fn park_create(&self, scope: &Scope, task_id: u64, verb: &str) -> String {
         let parked = async {
-            self.api.set_task_labels(task_id, &[label]).await?;
             let bucket = self.parking_column(scope).await?;
             self.api
                 .move_task(scope.project(), scope.view, bucket, task_id)
@@ -647,10 +669,18 @@ impl VikunjaStore {
                 "the card this {verb} created was parked in '{PARKED_COLUMN}' — quarantined and \
                  surfaced by list_mailboxes; nothing is deleted"
             ),
-            Err(e) => format!(
-                "AND parking the card this {verb} created failed ({e}) — card {task_id} is left \
-                 where the failure found it"
-            ),
+            Err(e) => {
+                tracing::error!(
+                    card = task_id,
+                    "a card this {verb} created could not be parked — it is quarantined where the \
+                     failure left it (outside the funnel, delivered to nobody), but it is not in \
+                     the column that says so"
+                );
+                format!(
+                    "AND parking the card this {verb} created failed ({e}) — card {task_id} is \
+                     left where the failure found it"
+                )
+            }
         }
     }
 }
@@ -747,7 +777,7 @@ impl Mailboxes for VikunjaStore {
                 let quarantined = board
                     .quarantined
                     .iter()
-                    .filter(|(mailbox, _)| mailbox == &name)
+                    .filter(|(mailbox, _)| mailbox.as_ref() == Some(&name))
                     .map(|(_, id)| MessageId(id.to_string()))
                     .collect();
                 Mailbox {
@@ -805,14 +835,32 @@ impl Mailboxes for VikunjaStore {
             .await?;
 
         // A fresh card carries neither its mailbox nor its state: Vikunja drops
-        // it in the view's default column and gives it no labels. Both are set
-        // here, and both are checked by the read-back below.
+        // it in the view's default column and gives it no labels, and neither
+        // can be set in the create call — the task model's `labels` field is
+        // not a column (`xorm:"-"`), and the create handler echoes back the
+        // payload it was given, so a create carrying labels answers 201 with
+        // the labels in the response and none of them stored.
         //
         // **Every step from here on rolls the card back.** A `?` that returned
-        // early left the created card stranded in the default column with no
-        // mailbox label — invisible to every verb, and there forever.
+        // early left the created card stranded in the default column.
         let placed = async {
-            self.api.set_task_labels(card.id, &[label]).await?;
+            self.api
+                .set_task_labels(card.id, &[label])
+                .await
+                .inspect_err(|_| {
+                    // **The residue class, and the only one left.** The card is
+                    // outside the funnel and quarantined by its column, so no
+                    // verb will deliver or count it — but with no mailbox label
+                    // there is nothing on it saying which box it belongs to, so
+                    // `list_mailboxes` cannot file it under one. The card id is
+                    // said here instead, at error level, because a card only a
+                    // log knows about is one a human has to be told about.
+                    tracing::error!(
+                        card = card.id,
+                        "a card this post_message created could not be labelled — it is \
+                         quarantined, but no box can claim it and list_mailboxes cannot show it"
+                    );
+                })?;
             let new_column = self.column(&scope, MessageState::New).await?;
             self.api
                 .move_task(scope.project(), scope.view, new_column, card.id)
@@ -820,7 +868,7 @@ impl Mailboxes for VikunjaStore {
         }
         .await;
         if let Err(e) = placed {
-            let parked = self.park_create(&scope, card.id, label, "post_message").await;
+            let parked = self.park_create(&scope, card.id, "post_message").await;
             return Err(MailboxError::Store(format!("{e}; {parked}")));
         }
 
@@ -836,7 +884,7 @@ impl Mailboxes for VikunjaStore {
         match self.read_back(&scope, &expected.id).await {
             Ok(seen) if read_back_confirms(&expected, &seen) => Ok(Guarded::Written(seen)),
             outcome => {
-                let parked = self.park_create(&scope, card.id, label, "post_message").await;
+                let parked = self.park_create(&scope, card.id, "post_message").await;
                 Err(MailboxError::Store(match outcome {
                     Ok(seen) => format!(
                         "message {} read back changed: wrote {expected:?}, read {seen:?}; {parked}",
@@ -1081,9 +1129,9 @@ mod tests {
         written_tasks: Mutex<std::collections::HashSet<u64>>,
         /// Arms a transport failure for the next call to the named method — the
         /// induced fault behind the rollback contracts. A write path has more
-        /// than one step, and a store that only rolls back the *last* one leaves
-        /// damage on every other.
-        fail_next: Mutex<Option<(&'static str, u64)>>,
+        /// damage on every other. `None` remaining means *every* call to that
+        /// method fails, for good — a rescue path cannot dodge it by retrying.
+        fail_next: Mutex<Option<(&'static str, Option<u64>)>>,
         /// The server-side `maxitemsperpage` this fake enforces. See
         /// [`DEFAULT_PAGE_CAP`].
         page_cap: AtomicU64,
@@ -1159,7 +1207,15 @@ mod tests {
         /// part-way through it, not on the first step — which is exactly the
         /// case a fail-the-next-call injector cannot reach.
         fn fail_nth(&self, method: &'static str, nth: u64) {
-            *self.fail_next.lock().unwrap() = Some((method, nth));
+            *self.fail_next.lock().unwrap() = Some((method, Some(nth)));
+        }
+
+        /// Make **every** call to `method` fail, for good. A one-shot injector
+        /// cannot reach a rescue path that re-issues the call that just failed:
+        /// the retry succeeds, and the hole it was covering stays invisible.
+        /// A method Vikunja is refusing outright refuses the retry too.
+        fn fail_all(&self, method: &'static str) {
+            *self.fail_next.lock().unwrap() = Some((method, None));
         }
 
         /// Fail here if this call is the armed one.
@@ -1171,6 +1227,9 @@ mod tests {
             if *target != method {
                 return Ok(());
             }
+            let Some(remaining) = remaining.as_mut() else {
+                return Err(MailboxError::Store(format!("induced failure in {method}")));
+            };
             *remaining -= 1;
             if *remaining == 0 {
                 *armed = None;
@@ -1807,6 +1866,49 @@ mod tests {
         }
     }
 
+    /// **A board whose columns cannot be provisioned refuses, rather than
+    /// filing mail into a funnel that does not exist.** The columns ARE the
+    /// state here, so a store that shrugged off a failed `create_bucket` would
+    /// post messages into whatever column Vikunja happened to hand it and read
+    /// them back as no state at all.
+    #[tokio::test]
+    async fn a_board_whose_columns_cannot_be_created_refuses_every_verb() {
+        let fake = FakeVikunja::new();
+        let store = store(fake.clone());
+
+        fake.fail_all("create_bucket");
+        let outcome = store
+            .create_mailbox(&MailboxName("inbox".into()), false)
+            .await;
+        assert!(
+            matches!(outcome, Err(MailboxError::Store(_))),
+            "a board that cannot be provisioned is a store failure: {outcome:?}"
+        );
+        assert!(
+            store.list_mailboxes().await.is_err(),
+            "…and every other verb resolves the same scope, so none of them proceeds either"
+        );
+    }
+
+    /// **A mailbox jojobot could not label into existence is not a mailbox.**
+    /// The label IS the box, so a `create_label` that fails must come back as a
+    /// failure — never as a created box a later post would be blocked from.
+    #[tokio::test]
+    async fn a_mailbox_whose_label_cannot_be_created_is_not_reported_as_created() {
+        let fake = FakeVikunja::new();
+        let store = store(fake.clone());
+
+        fake.fail_all("create_label");
+        let outcome = store
+            .create_mailbox(&MailboxName("inbox".into()), false)
+            .await;
+        assert!(outcome.is_err(), "a failed label creation must not report a box: {outcome:?}");
+        assert!(
+            store.list_mailboxes().await.expect("list ok").is_empty(),
+            "…and no box exists afterwards"
+        );
+    }
+
     /// **The operator's own boards live on this Vikunja.** A project that
     /// happens to share jojobot's name but carries no ownership marker is
     /// somebody else's, and jojobot makes its own rather than adopting it.
@@ -2262,9 +2364,11 @@ mod tests {
     /// A post is four calls — create the card, label it, find the column, move
     /// it — and a failure at any of them must leave nothing a consumer could
     /// receive and nothing that reads back as handled: the created card is
-    /// parked into quarantine — labelled (so it is surfaced, not invisible),
-    /// in the `parked` column (so it is no state, and counts as nothing) —
-    /// and never deleted.
+    /// parked into quarantine — in the `parked` column, which is no state, so
+    /// it counts as nothing and is delivered to nobody — and never deleted.
+    ///
+    /// The `set_task_labels` step is the one whose card cannot be attributed to
+    /// a box afterwards; what that costs is pinned separately below.
     #[tokio::test]
     async fn a_post_that_fails_midway_parks_the_card_into_quarantine() {
         for step in ["set_task_labels", "move_task"] {
@@ -2307,11 +2411,127 @@ mod tests {
                 0,
                 "nothing readable is left behind by a failed {step} — no phantom archive"
             );
+            // Whichever step failed, the card is in quarantine — attributed to
+            // its box when the label landed, unattributed when it did not.
+            let scope = store.resolve_scope().await.expect("scope resolves");
+            let board = store.board_read(&scope).await.expect("the board reads");
             assert_eq!(
-                inbox.quarantined,
-                vec![MessageId(left[0].id.to_string())],
-                "the parked card is surfaced even when {step} was what failed"
+                board.quarantined.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+                vec![left[0].id],
+                "the parked card is quarantined even when {step} was what failed"
             );
+        }
+    }
+
+    /// **The one residue class, stated exactly.** When the label call is what
+    /// fails, the card jojobot created wears no mailbox label — and nothing
+    /// else on a card says which box it belongs to (the codec deliberately does
+    /// not repeat what the board already holds, which is what keeps a card from
+    /// having two answers about its own mailbox). So the card is quarantined by
+    /// its column — outside the funnel, counted as nothing, delivered to nobody
+    /// — but no box can claim it, and `list_mailboxes` cannot show it under
+    /// one. That is the whole reason it is said at error level with the card id:
+    /// a card only a log knows about is one a human has to be told about.
+    #[tokio::test]
+    async fn a_card_that_could_not_be_labelled_is_quarantined_but_names_no_box() {
+        let logged = crate::log_capture::log_sink();
+        let fake = FakeVikunja::new();
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+
+        fake.fail_all("set_task_labels");
+        let outcome = store
+            .post_message(NewMessage {
+                mailbox: MailboxName("inbox".into()),
+                body: "the shipment landed".into(),
+                sender: "alpha".into(),
+                sent_at: at(1_780_000_000),
+            })
+            .await;
+        assert!(outcome.is_err(), "a failed labelling must not report success: {outcome:?}");
+        let card = fake.tasks_in(project)[0].id;
+
+        *fake.fail_next.lock().unwrap() = None;
+        let scope = store.resolve_scope().await.expect("scope resolves");
+        let board = store.board_read(&scope).await.expect("the board reads");
+        assert_eq!(
+            board.quarantined,
+            vec![(None, card)],
+            "the card is quarantined, and no box may be invented for it"
+        );
+        assert!(
+            board.messages.is_empty(),
+            "…and it is certainly not a deliverable message: {:?}",
+            board.messages
+        );
+        let inbox = store
+            .list_mailboxes()
+            .await
+            .expect("list ok")
+            .into_iter()
+            .find(|m| m.name.as_str() == "inbox")
+            .expect("inbox");
+        assert!(
+            inbox.quarantined.is_empty(),
+            "a box must not be made to claim a card that carries nothing saying it is theirs"
+        );
+
+        let line = logged
+            .line_with("could not be labelled")
+            .expect("the residue is reported, not swallowed");
+        assert!(line.contains("ERROR"), "…at error level: {line}");
+        assert!(line.contains(&format!("card={card}")), "…naming the card: {line}");
+    }
+
+    /// **A card jojobot created is never invisible to every verb.** The
+    /// invariant, stated whole: no failure of any single API method may leave a
+    /// created card outside BOTH the funnel (a state column, where it is
+    /// counted and delivered) and quarantine (surfaced as unreadable, acted on
+    /// by nothing). A card in neither is a message that exists, is owed to
+    /// somebody, and cannot be seen by counts, delivery, `mark_processed` or
+    /// quarantine — the one outcome this context has no way to recover from.
+    ///
+    /// The failures are armed **for good**, not once: the hole this closes was
+    /// a rescue path whose first act re-issued the very call that had just
+    /// failed, which a one-shot injector papers over.
+    #[tokio::test]
+    async fn no_single_api_failure_leaves_a_created_card_outside_the_funnel_and_quarantine() {
+        // Every API method a post can reach. `create_bucket` is not among them
+        // — a provisioned board has its columns, so a healthy post never calls
+        // it; it is armed in the provisioning test instead, where it fires.
+        for step in ["create_task", "set_task_labels", "list_buckets", "move_task"] {
+            let fake = FakeVikunja::new();
+            let store = store_with_box(fake.clone(), "inbox").await;
+            let project = fake.projects_titled(PROJECT)[0].id;
+
+            fake.fail_all(step);
+            let outcome = store
+                .post_message(NewMessage {
+                    mailbox: MailboxName("inbox".into()),
+                    body: "the shipment landed".into(),
+                    sender: "alpha".into(),
+                    sent_at: at(1_780_000_000),
+                })
+                .await;
+            assert!(outcome.is_err(), "a failed {step} must not report success: {outcome:?}");
+
+            // Read the board back through jojobot's own eyes, with the failure
+            // disarmed — what the next session would see.
+            *fake.fail_next.lock().unwrap() = None;
+            let scope = store.resolve_scope().await.expect("scope resolves");
+            let board = store.board_read(&scope).await.expect("the board reads");
+            for card in fake.tasks_in(project) {
+                let in_funnel = board.messages.iter().any(|(task, _)| task.id == card.id);
+                let quarantined = board.quarantined.iter().any(|(_, id)| *id == card.id);
+                assert!(
+                    in_funnel || quarantined,
+                    "a failed {step} left card {} where no verb can see it: column {:?}, \
+                     labels {:?}",
+                    card.id,
+                    fake.column_of(card.id),
+                    card.labels,
+                );
+            }
         }
     }
 
