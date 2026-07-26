@@ -748,8 +748,13 @@ impl Rollback {
     /// did not.
     fn into_error(self, verb: &str, cause: impl std::fmt::Display) -> MailboxError {
         match self {
+            // Careful with this wording: "put back" is not true of every card.
+            // One that moved on, or that is now quarantined, is left where it
+            // is on purpose — nothing is stranded, which is the claim.
             Rollback::Undone => MailboxError::Store(format!(
-                "{cause}; every card this {verb} moved was put back"
+                "{cause}; this {verb} left nothing mid-write — every card it moved is back where \
+                 it was, bar any that had moved on or that a person has since edited, which are \
+                 deliberately left alone"
             )),
             Rollback::Stranded(failures) => MailboxError::Stranded {
                 verb: verb.to_string(),
@@ -1143,8 +1148,23 @@ impl Mailboxes for VikunjaStore {
                 .await
         }
         .await;
-        // One card, so the batch rollback's vocabulary covers it exactly: the
-        // answer says whether the card is back where it was, by type.
+        // **This verb restores a card it can no longer read; a delivery does
+        // not. The asymmetry is deliberate, and it turns on who wrote the
+        // description.**
+        //
+        // A delivery never writes one, so a card that stopped parsing under it
+        // was changed by somebody else, and putting jojobot's stale snapshot
+        // over that would destroy their edit — `restore_all` leaves it alone
+        // and quarantine surfaces it.
+        //
+        // Here jojobot wrote the description itself, moments ago. A card that
+        // does not read back is most likely that write coming back mangled by
+        // the store, and the repair is to put back what it had. Leaving it
+        // would strand the message in `processed`: handled mail nobody ever
+        // received, invisible to every future delivery. The cost, stated
+        // plainly — a person editing this card inside that window has their
+        // edit overwritten. An overwritten edit is recoverable by asking them;
+        // a silently archived message is recoverable by nobody.
         let put_back = |outcome: Result<(), MailboxError>| {
             Rollback::of(outcome.err().map(|e| vec![(card.id, e)]).unwrap_or_default())
         };
@@ -1228,9 +1248,10 @@ mod tests {
         written_tasks: Mutex<std::collections::HashSet<u64>>,
         /// Arms a transport failure for the next call to the named method — the
         /// induced fault behind the rollback contracts. A write path has more
-        /// damage on every other. `None` remaining means *every* call to that
-        /// method fails, for good — a rescue path cannot dodge it by retrying.
-        fail_next: Mutex<Option<(&'static str, Option<u64>)>>,
+        /// damage on every other. `(method, calls to let through first, keep
+        /// failing after)` — the last flag is what a rescue path cannot dodge
+        /// by retrying the call that just failed.
+        fail_next: Mutex<Option<(&'static str, u64, bool)>>,
         /// The server-side `maxitemsperpage` this fake enforces. See
         /// [`DEFAULT_PAGE_CAP`].
         page_cap: AtomicU64,
@@ -1301,12 +1322,12 @@ mod tests {
             self.fail_nth(method, 1);
         }
 
-        /// Make the **nth** call to `method` from now on fail. A write path with
-        /// several steps only shows its rollback gaps when the failure lands
-        /// part-way through it, not on the first step — which is exactly the
-        /// case a fail-the-next-call injector cannot reach.
+        /// Make the **nth** call to `method` from now on fail, once. A write
+        /// path with several steps only shows its rollback gaps when the
+        /// failure lands part-way through it, not on the first step — which is
+        /// exactly the case a fail-the-next-call injector cannot reach.
         fn fail_nth(&self, method: &'static str, nth: u64) {
-            *self.fail_next.lock().unwrap() = Some((method, Some(nth)));
+            *self.fail_next.lock().unwrap() = Some((method, nth - 1, false));
         }
 
         /// Make **every** call to `method` fail, for good. A one-shot injector
@@ -1314,27 +1335,40 @@ mod tests {
         /// the retry succeeds, and the hole it was covering stays invisible.
         /// A method Vikunja is refusing outright refuses the retry too.
         fn fail_all(&self, method: &'static str) {
-            *self.fail_next.lock().unwrap() = Some((method, None));
+            self.fail_from(method, 1);
+        }
+
+        /// Let the first `nth - 1` calls through, then fail every one after
+        /// that.
+        ///
+        /// Some methods are called both **before** a write begins and during
+        /// it, and `list_buckets` is the case that matters: failing it outright
+        /// takes down the provisioning that runs before the card is created, so
+        /// the verb dies having written nothing — and a test asserting what
+        /// became of the card then asserts over an empty board and passes
+        /// vacuously. Skipping the provisioning call puts the failure where it
+        /// can actually strand something.
+        fn fail_from(&self, method: &'static str, nth: u64) {
+            *self.fail_next.lock().unwrap() = Some((method, nth - 1, true));
         }
 
         /// Fail here if this call is the armed one.
         fn maybe_fail(&self, method: &'static str) -> Result<(), MailboxError> {
             let mut armed = self.fail_next.lock().unwrap();
-            let Some((target, remaining)) = armed.as_mut() else {
+            let Some((target, skips, forever)) = armed.as_mut() else {
                 return Ok(());
             };
             if *target != method {
                 return Ok(());
             }
-            let Some(remaining) = remaining.as_mut() else {
-                return Err(MailboxError::Store(format!("induced failure in {method}")));
-            };
-            *remaining -= 1;
-            if *remaining == 0 {
-                *armed = None;
-                return Err(MailboxError::Store(format!("induced failure in {method}")));
+            if *skips > 0 {
+                *skips -= 1;
+                return Ok(());
             }
-            Ok(())
+            if !*forever {
+                *armed = None;
+            }
+            Err(MailboxError::Store(format!("induced failure in {method}")))
         }
 
         fn mangle(&self, description: &str) -> String {
@@ -2634,7 +2668,16 @@ mod tests {
     #[tokio::test]
     async fn no_single_api_failure_leaves_a_created_card_outside_the_funnel_and_quarantine() {
         // Every method whose failure can strand a card a post created — the
-        // card write itself, the two calls that file it, and the read-back.
+        // card write itself, the two calls that file it, and the read-back —
+        // each armed at the first call that happens AFTER the card exists, and
+        // failing for good from there.
+        //
+        // The `list_buckets` number is the whole point of arming per-call.
+        // Failing it from its first call takes down the provisioning that runs
+        // before `create_task`, so the verb dies having written nothing, and
+        // this test's card assertions run over an empty board — passing while
+        // proving nothing. Its second call is the column lookup that places the
+        // card, which is where a failure can strand one.
         //
         // `create_bucket` is deliberately absent, and NOT because a post cannot
         // reach it: a failing post reaches it through the parking column. It is
@@ -2642,12 +2685,18 @@ mod tests {
         // already has the three funnel columns, so nothing in a *succeeding*
         // post calls it and the post under test would report success. Where it
         // fires is the provisioning test.
-        for step in ["create_task", "set_task_labels", "list_buckets", "move_task", "board"] {
+        for (step, after) in [
+            ("create_task", 1),
+            ("set_task_labels", 1),
+            ("list_buckets", 2),
+            ("move_task", 1),
+            ("board", 1),
+        ] {
             let fake = FakeVikunja::new();
             let store = store_with_box(fake.clone(), "inbox").await;
             let project = fake.projects_titled(PROJECT)[0].id;
 
-            fake.fail_all(step);
+            fake.fail_from(step, after);
             let outcome = store
                 .post_message(NewMessage {
                     mailbox: MailboxName("inbox".into()),
@@ -2663,7 +2712,16 @@ mod tests {
             *fake.fail_next.lock().unwrap() = None;
             let scope = store.resolve_scope().await.expect("scope resolves");
             let board = store.board_read(&scope).await.expect("the board reads");
-            for card in fake.tasks_in(project) {
+            let left = fake.tasks_in(project);
+            // Except where the card was never created, there has to BE a card
+            // for the invariant to say anything about — an empty board passes
+            // every assertion below without meaning any of them.
+            assert_eq!(
+                left.len(),
+                usize::from(step != "create_task"),
+                "a failed {step} must leave exactly the card whose fate this pins"
+            );
+            for card in left {
                 let in_funnel = board.messages.iter().any(|(task, _)| task.id == card.id);
                 let quarantined = board.quarantined.iter().any(|q| q.card == card.id);
                 assert!(
@@ -2986,6 +3044,71 @@ mod tests {
         };
         assert_eq!(verb, "mark_processed");
         assert_eq!(cards, &vec![posted.id.to_string()], "the answer names the card");
+    }
+
+    /// **A processing repairs a card it can no longer read — and that costs a
+    /// hand edit made inside the window.** The asymmetry with a delivery (which
+    /// leaves an unreadable card exactly as found) is deliberate and turns on
+    /// who wrote the description: a delivery never writes one, this verb does.
+    /// So an unreadable card here is most likely jojobot's own write coming
+    /// back mangled, and putting it back is the repair that keeps the message
+    /// deliverable — see `a_failed_processing_restores_the_card`, which is the
+    /// same rollback with the store doing the mangling.
+    ///
+    /// This pins the price of that choice rather than leaving it to be
+    /// discovered: an edit made in the UI inside the window is overwritten. The
+    /// trade is deliberate — an overwritten edit can be asked about; a message
+    /// silently archived in `processed` is recoverable by nobody.
+    #[tokio::test]
+    async fn a_processing_repairs_an_unreadable_card_and_overwrites_an_edit_to_do_it() {
+        let fake = FakeVikunja::new();
+        let api = Interleaved::new(fake.clone());
+        let store = VikunjaStore::from_api(api.clone(), PROJECT);
+        contract::create(&store, "inbox").await;
+        let posted = contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
+        contract::read(&store, "inbox").await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+        let card: u64 = posted.id.as_str().parse().expect("a numeric card id");
+
+        // mark_processed reads the board to find the card, writes the outcome,
+        // moves the column, then reads again to verify — board call 3. A person
+        // edits the card in the UI right before that.
+        api.before_board(3, move |fake| {
+            let mut tasks = fake.tasks.lock().unwrap();
+            let held = tasks.iter_mut().find(|t| t.id == card).expect("the card");
+            held.description = "hand-garbled mid-processing".into();
+            held.raw["description"] = "hand-garbled mid-processing".into();
+        });
+
+        let outcome = store.mark_processed(&posted.id, Some("filed")).await;
+        assert!(outcome.is_err(), "an unverifiable processing must not report success");
+
+        // The message survives, readable and owed to somebody — which is the
+        // point of restoring at all.
+        assert_eq!(
+            fake.column_of(card).as_deref(),
+            Some("read"),
+            "the card goes back into the funnel, not left archived as handled"
+        );
+        let again = contract::read(&store, "inbox").await;
+        assert_eq!(
+            again.messages.len(),
+            1,
+            "the message is still deliverable, not stranded in processed: {:?}",
+            again.messages
+        );
+        assert_eq!(again.messages[0].message.body, "the shipment landed");
+
+        // …and this is what it cost.
+        let stored = fake
+            .tasks_in(project)
+            .into_iter()
+            .find(|t| t.id == card)
+            .expect("the card is still there");
+        assert_ne!(
+            stored.description, "hand-garbled mid-processing",
+            "the edit made inside the window is overwritten — the known price of the repair"
+        );
     }
 
     /// The batch sibling: when a delivery rolls back and a card it moved cannot
