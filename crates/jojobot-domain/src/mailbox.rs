@@ -433,6 +433,25 @@ pub enum MailboxError {
         /// The id that missed.
         attempted: String,
     },
+    /// The addressed id is a **quarantined card**: it is on a jojobot mailbox
+    /// board — `list_mailboxes` publishes this very id — but it cannot be read
+    /// as a message, so no verb may act on it.
+    ///
+    /// Distinct from [`MailboxError::UnknownMessage`] on purpose. Answering
+    /// "no such message" here is a false statement about an id jojobot itself
+    /// handed out, and it sends the caller looking for a lost message instead
+    /// of at the card that is sitting right there.
+    #[error(
+        "message '{attempted}' is a quarantined card: {reason}. jojobot will not act on a card it \
+         cannot read — a person needs to open card {attempted} on the mailbox board and either \
+         restore what was edited out of it or move it back into one of the funnel's columns"
+    )]
+    Quarantined {
+        /// The id that was addressed — the same one `list_mailboxes` published.
+        attempted: String,
+        /// Why the card cannot be read.
+        reason: String,
+    },
     /// **The write-scope invariant.** A call path reached for a project that is
     /// not the discovered mailbox project. Refused before any request leaves the
     /// process: the operator's own boards live on the same Vikunja, and a

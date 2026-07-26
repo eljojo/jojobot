@@ -27,12 +27,29 @@ pub struct InMemoryMailboxes {
     boxes: Mutex<Vec<MailboxName>>,
     messages: Mutex<Vec<Message>>,
     next_id: Mutex<u64>,
+    quarantined: Mutex<Vec<(MailboxName, MessageId, String)>>,
 }
 
 impl InMemoryMailboxes {
     /// An empty store.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Put a card into quarantine, as a hand edit on a real board would.
+    ///
+    /// **Seeding only — nothing in this fake can quarantine itself**, because
+    /// everything that reaches it passed validation on the way in. That is
+    /// exactly why it needs the vocabulary: without it the quarantine half of
+    /// every surface above (the counts a caller reads, the answer
+    /// `mark_processed` gives for one of these ids) has no store that can
+    /// produce the condition, and so no test that can exercise it.
+    pub fn quarantine(&self, mailbox: &MailboxName, card: &MessageId, reason: &str) {
+        self.quarantined.lock().expect("quarantine lock").push((
+            mailbox.clone(),
+            card.clone(),
+            reason.to_string(),
+        ));
     }
 
     /// The names currently on the board, in creation order.
@@ -79,6 +96,7 @@ impl Mailboxes for InMemoryMailboxes {
 
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
         let messages = self.messages.lock().expect("message lock");
+        let quarantined = self.quarantined.lock().expect("quarantine lock");
         Ok(self
             .names()
             .into_iter()
@@ -87,12 +105,14 @@ impl Mailboxes for InMemoryMailboxes {
                 for message in messages.iter().filter(|m| m.mailbox == name) {
                     counts.add(message.state);
                 }
-                // The fake can hold nothing unreadable: every message in it
-                // passed validation on the way in.
                 Mailbox {
+                    quarantined: quarantined
+                        .iter()
+                        .filter(|(mailbox, _, _)| mailbox == &name)
+                        .map(|(_, card, _)| card.clone())
+                        .collect(),
                     name,
                     counts,
-                    quarantined: Vec::new(),
                 }
             })
             .collect())
@@ -170,6 +190,19 @@ impl Mailboxes for InMemoryMailboxes {
     ) -> Result<Message, MailboxError> {
         validate_message_id(id)?;
         validate_notes(notes)?;
+
+        if let Some((_, _, reason)) = self
+            .quarantined
+            .lock()
+            .expect("quarantine lock")
+            .iter()
+            .find(|(_, card, _)| card == id)
+        {
+            return Err(MailboxError::Quarantined {
+                attempted: id.to_string(),
+                reason: reason.clone(),
+            });
+        }
 
         let mut messages = self.messages.lock().expect("message lock");
         let message = messages

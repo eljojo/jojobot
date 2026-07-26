@@ -685,12 +685,18 @@ impl Jojobot {
         Parameters(args): Parameters<MarkProcessedArgs>,
     ) -> Result<CallToolResult, McpError> {
         let id = MessageId(args.message_id.trim().to_string());
-        let processed = self
-            .mailboxes
-            .mark_processed(&id, args.notes.as_deref())
-            .await
-            .map_err(mailbox_error)?;
-        json_result(&message_json(&processed))
+        match self.mailboxes.mark_processed(&id, args.notes.as_deref()).await {
+            Ok(processed) => json_result(&message_json(&processed)),
+            // A quarantined id is not a caller mistake and not a miss: it is an
+            // id list_mailboxes itself published, for a card nobody can act on
+            // until a person fixes it. It gets the blocked shape the guards use
+            // — a successful call whose body says nothing was written and what
+            // to do — rather than an error that reads as "no such message".
+            Err(MailboxError::Quarantined { attempted, reason }) => {
+                Ok(mailbox_quarantined(&attempted, &reason))
+            }
+            Err(e) => Err(mailbox_error(e)),
+        }
     }
 }
 
@@ -1032,6 +1038,30 @@ fn mailbox_blocked(
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
+/// **A quarantined card, answered in the guards' own shape.** The id is real —
+/// `list_mailboxes` published it — but the card behind it cannot be read, so no
+/// verb will act on it until a person repairs it. A successful result carrying a
+/// structured refusal, exactly like a blocked write: same `status` / `wrote` /
+/// `how_to_proceed` keys, so one client-side branch handles every "jojobot
+/// declined, here is what to do" answer in this context.
+fn mailbox_quarantined(attempted: &str, reason: &str) -> CallToolResult {
+    let body = serde_json::json!({
+        "status": "blocked",
+        "attempted": attempted,
+        "wrote": false,
+        "reason": format!("card {attempted} is quarantined: {reason}"),
+        "how_to_proceed": format!(
+            "Nothing was written, and retrying will not help — this is not a missing message. \
+             Card {attempted} is on a jojobot mailbox board (list_mailboxes reports it under the \
+             box's quarantined ids) but jojobot cannot read it as a message, so no verb will act \
+             on it. A PERSON has to open that card in the task board and either restore what was \
+             edited out of its description or drag it back into one of the funnel's columns. \
+             Until then, treat the message it was carrying as unhandled and say so."
+        ),
+    });
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
 /// Map a domain [`MailboxError`] to an MCP error, splitting client mistakes from
 /// server-side failures — the same split [`memory_error`] makes.
 fn mailbox_error(e: MailboxError) -> McpError {
@@ -1039,7 +1069,10 @@ fn mailbox_error(e: MailboxError) -> McpError {
         MailboxError::InvalidName(_)
         | MailboxError::InvalidMessageId(_)
         | MailboxError::InvalidMessage(_)
-        | MailboxError::UnknownMessage { .. } => McpError::invalid_params(e.to_string(), None),
+        | MailboxError::UnknownMessage { .. }
+        // Reached only if a verb other than mark_processed ever surfaces one;
+        // that verb renders it as a structured result instead.
+        | MailboxError::Quarantined { .. } => McpError::invalid_params(e.to_string(), None),
         // Not a caller mistake and not something a caller can fix by calling
         // differently: jojobot found a card on its own board that belongs to
         // another project, and refused. That is an integrity condition on the
@@ -2513,10 +2546,16 @@ mod tests {
     // --- mailboxes ------------------------------------------------------------
 
     fn mailbox_handler() -> Jojobot {
+        with_mailboxes(Arc::new(InMemoryMailboxes::new()))
+    }
+
+    /// A handler over a mailbox store the test still holds a typed handle to —
+    /// for the states only the store can put itself into.
+    fn with_mailboxes(mailboxes: Arc<InMemoryMailboxes>) -> Jojobot {
         Jojobot::new(
             Arc::new(InMemoryMemory::new()),
             Arc::new(SpySearch::default()),
-            Arc::new(InMemoryMailboxes::new()),
+            mailboxes,
         )
     }
 
@@ -2776,6 +2815,82 @@ mod tests {
             .expect_err("an unknown id must not report success");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
         assert!(err.message.contains("999999"), "got {}", err.message);
+    }
+
+    /// **A quarantined card is visible on the wire, and it is not a count of
+    /// zero.** A card jojobot cannot read is invisible to every other verb —
+    /// not counted, not delivered, not processable — so this field is the only
+    /// place a caller learns it exists at all. Rendering it wrong reads as an
+    /// empty, healthy box.
+    #[tokio::test]
+    async fn a_quarantined_card_is_rendered_with_its_count_and_its_ids() {
+        let store = Arc::new(InMemoryMailboxes::new());
+        let jojobot = with_mailboxes(store.clone());
+        make_box(&jojobot, "inbox").await;
+        send(&jojobot, "inbox", "alpha", "the shipment landed").await;
+        store.quarantine(
+            &MailboxName("inbox".into()),
+            &MessageId("4212".into()),
+            "its description no longer carries a readable machine block",
+        );
+
+        let listed = json_of(&jojobot.list_mailboxes().await.expect("list ok"));
+        let inbox = &listed["mailboxes"][0];
+        assert_eq!(inbox["quarantined"]["count"], 1, "got {listed}");
+        assert_eq!(inbox["quarantined"]["card_ids"][0], "4212");
+        assert_eq!(
+            inbox["counts"]["total"], 1,
+            "a quarantined card is not a message and is never counted as one: {listed}"
+        );
+    }
+
+    /// **`mark_processed` on a quarantined id says so.** Answering "no message
+    /// with that id" — for an id `list_mailboxes` published one call ago — is a
+    /// false statement about jojobot's own output, and it sends the caller
+    /// hunting for a lost message instead of at the card sitting on the board.
+    /// The answer takes the blocked shape the guards use, so one client-side
+    /// branch handles every "declined, here is what to do" in this context.
+    #[tokio::test]
+    async fn processing_a_quarantined_card_is_blocked_with_its_own_words() {
+        let store = Arc::new(InMemoryMailboxes::new());
+        let jojobot = with_mailboxes(store.clone());
+        make_box(&jojobot, "inbox").await;
+        store.quarantine(
+            &MailboxName("inbox".into()),
+            &MessageId("4212".into()),
+            "its description no longer carries a readable machine block",
+        );
+
+        let result = jojobot
+            .mark_processed(Parameters(MarkProcessedArgs {
+                message_id: "4212".into(),
+                notes: Some("filed".into()),
+            }))
+            .await
+            .expect("a quarantined card is a structured answer, not a protocol error");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "4212");
+        assert_eq!(body["wrote"], false);
+        let reason = body["reason"].as_str().expect("a reason");
+        assert!(
+            reason.contains("machine block"),
+            "the answer says why this card cannot be read: {reason}"
+        );
+        let advice = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            advice.contains("4212") && advice.contains("PERSON"),
+            "…and that the way out is a human on the board, not a retry: {advice}"
+        );
+
+        // …and it is emphatically not the answer an unknown id gets.
+        let err = jojobot
+            .mark_processed(Parameters(MarkProcessedArgs {
+                message_id: "999999".into(),
+                notes: None,
+            }))
+            .await
+            .expect_err("an id nothing answers to is still a miss");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     }
 
     /// **The mailbox surface is five verbs, and none of them deletes.**

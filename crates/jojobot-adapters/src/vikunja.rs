@@ -155,13 +155,28 @@ impl Scope {
 /// that could not be read as messages — quarantined, acted on by nothing.
 struct BoardRead {
     messages: Vec<(TaskRec, Message)>,
-    /// `(box, card id)` per unreadable card. The box is **`None` when the card
-    /// carries no mailbox label**: a card jojobot created and could not label
-    /// is still outside the funnel and still must not be lost, but there is
-    /// nothing on it that says which box it belongs to, so `list_mailboxes`
+    /// Every card that could not be read as a message.
+    quarantined: Vec<Quarantined>,
+}
+
+/// A card on jojobot's board that cannot be read as a message: surfaced by
+/// `list_mailboxes`, acted on by no verb, and carrying **why** — because the
+/// answer a caller gets when they address one has to say what a person should
+/// go and look at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Quarantined {
+    /// The box it belongs to, when the card still says so. **`None` when the
+    /// card carries no mailbox label**: a card jojobot created and could not
+    /// label is still outside the funnel and still must not be lost, but there
+    /// is nothing on it that says which box it belongs to, so `list_mailboxes`
     /// cannot file it under one. That residue is said at error level, with the
     /// card id, where it happens.
-    quarantined: Vec<(Option<MailboxName>, u64)>,
+    mailbox: Option<MailboxName>,
+    /// The card id.
+    card: u64,
+    /// Why it cannot be read — one clause, in the vocabulary a person needs to
+    /// go fix it.
+    why: &'static str,
 }
 
 // --- the store --------------------------------------------------------------
@@ -457,7 +472,17 @@ impl VikunjaStore {
                         attributable = mailbox.is_some(),
                         "a card sits in a column that is no state — quarantined, not delivered"
                     );
-                    quarantined.push((mailbox, task.id));
+                    quarantined.push(Quarantined {
+                        why: if mailbox.is_some() {
+                            "it sits in a column that is not one of the funnel's, and the column \
+                             is where jojobot reads a message's state from"
+                        } else {
+                            "it sits outside the funnel's columns and carries no mailbox label, \
+                             so nothing on it says which box it belongs to"
+                        },
+                        mailbox,
+                        card: task.id,
+                    });
                     continue;
                 };
                 let Some((body, envelope)) = parse_description(&task.description) else {
@@ -466,7 +491,12 @@ impl VikunjaStore {
                         "a card wearing a mailbox label carries no readable machine block — \
                          quarantined, not delivered"
                     );
-                    quarantined.push((Some(box_of), task.id));
+                    quarantined.push(Quarantined {
+                        mailbox: Some(box_of),
+                        card: task.id,
+                        why: "its description no longer carries a readable machine block, so the \
+                              sender and the instant it was sent cannot be read off it",
+                    });
                     continue;
                 };
                 let mailbox = box_of;
@@ -489,7 +519,7 @@ impl VikunjaStore {
                 .cmp(&b.1.sent_at)
                 .then_with(|| a.0.id.cmp(&b.0.id))
         });
-        quarantined.sort_by_key(|(_, id)| *id);
+        quarantined.sort_by_key(|q| q.card);
         Ok(BoardRead {
             messages: found,
             quarantined,
@@ -777,8 +807,8 @@ impl Mailboxes for VikunjaStore {
                 let quarantined = board
                     .quarantined
                     .iter()
-                    .filter(|(mailbox, _)| mailbox.as_ref() == Some(&name))
-                    .map(|(_, id)| MessageId(id.to_string()))
+                    .filter(|q| q.mailbox.as_ref() == Some(&name))
+                    .map(|q| MessageId(q.card.to_string()))
                     .collect();
                 Mailbox {
                     name,
@@ -1009,9 +1039,20 @@ impl Mailboxes for VikunjaStore {
         // The card is found by walking jojobot's OWN board. An id that is not on
         // it is a miss — never a lookup by raw id, which in Vikunja would reach
         // any card the token can see, the operator's boards included.
-        let (card, message) = self
-            .messages(&scope)
-            .await?
+        let board = self.board_read(&scope).await?;
+        // …but an id that IS on it and cannot be read is not a miss. It is a
+        // card `list_mailboxes` publishes by this very id, so answering "no
+        // such message" would be a false statement about jojobot's own output,
+        // and it would send the caller hunting for a lost message rather than
+        // at the card sitting on the board.
+        if let Some(quarantined) = board.quarantined.iter().find(|q| q.card.to_string() == id.0) {
+            return Err(MailboxError::Quarantined {
+                attempted: id.to_string(),
+                reason: quarantined.why.to_string(),
+            });
+        }
+        let (card, message) = board
+            .messages
             .into_iter()
             .find(|(_, m)| &m.id == id)
             .ok_or_else(|| MailboxError::UnknownMessage {
@@ -2083,11 +2124,18 @@ mod tests {
         );
         assert_eq!(inbox.counts.total(), 0);
         assert!(contract::read(&store, "inbox").await.messages.is_empty());
-        // Every verb still refuses to guess a state for it.
+        // Every verb still refuses to guess a state for it — and says which
+        // refusal this is. "No such message" would be a false statement about
+        // an id `list_mailboxes` published one line ago, and it sends a caller
+        // hunting for a lost message instead of at the card on the board.
         let err = store.mark_processed(&posted.id, None).await;
+        let Err(MailboxError::Quarantined { attempted, reason }) = err else {
+            panic!("a quarantined card needs its own answer, not a miss: {err:?}");
+        };
+        assert_eq!(attempted, posted.id.to_string(), "the answer names the id that was asked for");
         assert!(
-            matches!(err, Err(MailboxError::UnknownMessage { .. })),
-            "a quarantined card is not processable: {err:?}"
+            reason.contains("column"),
+            "…and says why this card cannot be read: {reason}"
         );
     }
 
@@ -2286,6 +2334,33 @@ mod tests {
         );
     }
 
+    /// **A foreign card is refused before it is classified, not after.** The
+    /// write-scope check used to sit below the quarantine branches, so a card
+    /// declaring another project — one that never gets as far as being verified
+    /// because it fails an earlier test — had its id published under one of
+    /// jojobot's mailboxes as a quarantined card. That is jojobot claiming a
+    /// card on somebody else's board: the id goes out over MCP, and the natural
+    /// next move a reader makes is to go and "fix" it.
+    #[tokio::test]
+    async fn a_foreign_card_is_refused_before_it_is_ever_quarantined() {
+        let fake = FakeVikunja::new();
+        let theirs = fake.seed_project("their-own-board", "not jojobot's");
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let ours = fake.projects_titled(PROJECT)[0].id;
+        let label = fake.labels.lock().unwrap()[0].id;
+
+        // Their card, wearing jojobot's label, sitting in a column that is no
+        // state — so the quarantine branch is what it reaches first.
+        let intruder = fake.seed_task(theirs, "renew the passport", "due in March", &[label]);
+        fake.seed_placement(ours, intruder, DEFAULT_COLUMN);
+
+        let listed = store.list_mailboxes().await;
+        assert!(
+            matches!(listed, Err(MailboxError::ForeignProject(_))),
+            "a card on another project's board is refused, never classified: {listed:?}"
+        );
+    }
+
     /// **Mailbox labels are namespaced by the project that owns them.** Vikunja
     /// labels are global, so without this a throwaway store — the gated
     /// integration test's, say — would see, screen against, and be blocked by
@@ -2416,7 +2491,7 @@ mod tests {
             let scope = store.resolve_scope().await.expect("scope resolves");
             let board = store.board_read(&scope).await.expect("the board reads");
             assert_eq!(
-                board.quarantined.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+                board.quarantined.iter().map(|q| q.card).collect::<Vec<_>>(),
                 vec![left[0].id],
                 "the parked card is quarantined even when {step} was what failed"
             );
@@ -2455,7 +2530,7 @@ mod tests {
         let scope = store.resolve_scope().await.expect("scope resolves");
         let board = store.board_read(&scope).await.expect("the board reads");
         assert_eq!(
-            board.quarantined,
+            board.quarantined.iter().map(|q| (q.mailbox.clone(), q.card)).collect::<Vec<_>>(),
             vec![(None, card)],
             "the card is quarantined, and no box may be invented for it"
         );
@@ -2522,7 +2597,7 @@ mod tests {
             let board = store.board_read(&scope).await.expect("the board reads");
             for card in fake.tasks_in(project) {
                 let in_funnel = board.messages.iter().any(|(task, _)| task.id == card.id);
-                let quarantined = board.quarantined.iter().any(|(_, id)| *id == card.id);
+                let quarantined = board.quarantined.iter().any(|q| q.card == card.id);
                 assert!(
                     in_funnel || quarantined,
                     "a failed {step} left card {} where no verb can see it: column {:?}, \
