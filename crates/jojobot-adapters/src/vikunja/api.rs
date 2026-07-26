@@ -30,6 +30,8 @@ pub(super) struct ProjectRec {
     pub title: String,
     pub description: String,
     pub created: String,
+    /// `parent_project_id` — 0 when the project sits at the top level.
+    pub parent: u64,
 }
 
 /// One of a project's views. Only the kanban view carries buckets, and buckets
@@ -39,6 +41,18 @@ pub(super) struct ViewRec {
     pub id: u64,
     /// Vikunja's `view_kind`: `list` · `gantt` · `table` · `kanban`.
     pub kind: String,
+    /// The view's own title.
+    pub title: String,
+    /// The bucket whose cards Vikunja marks done on arrival — 0 when unset.
+    pub done_bucket_id: u64,
+    /// **The view exactly as Vikunja returned it** — same rule as a card's
+    /// `raw`: the view update writes the whole model, and a partial payload
+    /// zeroes what it omits. Probed live, twice: a bare `{done_bucket_id}`
+    /// POST answers nulls and applies nothing, and a `{title, view_kind,
+    /// done_bucket_id}` POST applies — while zeroing `default_bucket_id` and
+    /// `position` and flipping `bucket_configuration_mode` to `none`, which
+    /// breaks the board. One field changes, everything else goes back as read.
+    pub raw: Value,
 }
 
 /// A column on the board.
@@ -98,12 +112,22 @@ pub(super) struct LabelRec {
 #[async_trait]
 pub(super) trait VikunjaApi: Send + Sync {
     async fn list_projects(&self, page: u64, per_page: u64) -> Result<Vec<ProjectRec>, MailboxError>;
+    /// `parent` nests the new project under an existing one; `None` = top level.
     async fn create_project(
         &self,
         title: &str,
         description: &str,
+        parent: Option<u64>,
     ) -> Result<ProjectRec, MailboxError>;
     async fn list_views(&self, project_id: u64) -> Result<Vec<ViewRec>, MailboxError>;
+    /// Point the view's done-marker at a bucket. Takes the whole view record
+    /// because Vikunja's view update writes the whole view model.
+    async fn set_view_done_bucket(
+        &self,
+        project_id: u64,
+        view: &ViewRec,
+        bucket_id: u64,
+    ) -> Result<(), MailboxError>;
     async fn list_buckets(
         &self,
         project_id: u64,
@@ -168,6 +192,7 @@ fn project_rec(p: &Value) -> Option<ProjectRec> {
         title: text(&p["title"]),
         description: text(&p["description"]),
         created: text(&p["created"]),
+        parent: as_u64(&p["parent_project_id"]).unwrap_or_default(),
     })
 }
 
@@ -175,6 +200,9 @@ fn view_rec(v: &Value) -> Option<ViewRec> {
     Some(ViewRec {
         id: as_u64(&v["id"])?,
         kind: text(&v["view_kind"]),
+        title: text(&v["title"]),
+        done_bucket_id: as_u64(&v["done_bucket_id"]).unwrap_or_default(),
+        raw: v.clone(),
     })
 }
 
@@ -331,17 +359,38 @@ impl VikunjaApi for HttpVikunja {
         &self,
         title: &str,
         description: &str,
+        parent: Option<u64>,
     ) -> Result<ProjectRec, MailboxError> {
-        let v = self
-            .put("/projects", json!({ "title": title, "description": description }))
-            .await?;
+        let mut body = json!({ "title": title, "description": description });
+        if let Some(parent) = parent {
+            body["parent_project_id"] = json!(parent);
+        }
+        let v = self.put("/projects", body).await?;
         project_rec(&v).ok_or_else(|| MailboxError::Store("projects.create: malformed".into()))
     }
+
 
     async fn list_views(&self, project_id: u64) -> Result<Vec<ViewRec>, MailboxError> {
         let path = format!("/projects/{project_id}/views");
         let v = self.get(&path, &[]).await?;
         Ok(Self::array(&v, &path)?.iter().filter_map(view_rec).collect())
+    }
+
+    async fn set_view_done_bucket(
+        &self,
+        project_id: u64,
+        view: &ViewRec,
+        bucket_id: u64,
+    ) -> Result<(), MailboxError> {
+        // The view exactly as read, one field replaced — the same whole-model
+        // rule as a card update. A hand-built payload here broke the live
+        // board: it zeroed `default_bucket_id` and flipped
+        // `bucket_configuration_mode` to `none` (see [`ViewRec::raw`]).
+        let mut model = view.raw.clone();
+        model["done_bucket_id"] = json!(bucket_id);
+        self.post(&format!("/projects/{project_id}/views/{}", view.id), model)
+            .await
+            .map(|_| ())
     }
 
     async fn list_buckets(
@@ -468,10 +517,18 @@ impl VikunjaApi for Unconfigured {
     async fn list_projects(&self, _: u64, _: u64) -> Result<Vec<ProjectRec>, MailboxError> {
         Self::refuse()
     }
-    async fn create_project(&self, _: &str, _: &str) -> Result<ProjectRec, MailboxError> {
+    async fn create_project(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<u64>,
+    ) -> Result<ProjectRec, MailboxError> {
         Self::refuse()
     }
     async fn list_views(&self, _: u64) -> Result<Vec<ViewRec>, MailboxError> {
+        Self::refuse()
+    }
+    async fn set_view_done_bucket(&self, _: u64, _: &ViewRec, _: u64) -> Result<(), MailboxError> {
         Self::refuse()
     }
     async fn list_buckets(&self, _: u64, _: u64) -> Result<Vec<BucketRec>, MailboxError> {

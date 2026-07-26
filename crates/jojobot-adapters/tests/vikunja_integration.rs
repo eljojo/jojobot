@@ -155,6 +155,37 @@ async fn assert_disposable(http: &reqwest::Client, c: &Creds, prefix: &str) {
     );
 }
 
+/// Make sure jojobot's home (the `jojobot` parent project) exists BEFORE the
+/// foreign fingerprint is taken. The store creates its home for itself on
+/// first provisioning; without this, the first contract case's home-creation
+/// lands between the before- and after-fingerprints and reads as foreign
+/// drift. The home is persistent by design — it is never torn down, mirroring
+/// the production shape (one `jojobot` project with boards nested under it).
+async fn ensure_home(http: &reqwest::Client, c: &Creds) {
+    let exists = all_projects(http, c)
+        .await
+        .into_iter()
+        .any(|(_, title, _)| title == "jojobot");
+    if exists {
+        return;
+    }
+    let resp = http
+        .put(format!("{}/api/v1/projects", c.url.trim_end_matches('/')))
+        .bearer_auth(&c.token)
+        .json(&serde_json::json!({
+            "title": "jojobot",
+            "description": format!("jojobot's home. {OWNER_TAG}"),
+        }))
+        .send()
+        .await
+        .unwrap_or_else(|e| panic!("ensuring jojobot's home: {e}"));
+    assert!(
+        resp.status().is_success(),
+        "ensuring jojobot's home returned {}",
+        resp.status()
+    );
+}
+
 /// A client that fails a stuck request instead of hanging the gate forever —
 /// reqwest has no default timeout, so without one a wedged request reads as a
 /// dead server until someone kills the run.
@@ -315,6 +346,7 @@ async fn real_vikunja_satisfies_the_contract() {
 
     let http = http_client();
     assert_disposable(&http, &c, CONTRACT_PREFIX).await;
+    ensure_home(&http, &c).await;
     // Clean slate, in case a prior run aborted before teardown.
     teardown(&http, &c, CONTRACT_PREFIX).await;
 
@@ -381,6 +413,7 @@ async fn a_store_never_adopts_a_board_it_did_not_create() {
     let c = creds();
     let http = http_client();
     assert_disposable(&http, &c, ADOPT_PREFIX).await;
+    ensure_home(&http, &c).await;
     teardown(&http, &c, ADOPT_PREFIX).await;
 
     let store = Arc::new(VikunjaStore::with_project(

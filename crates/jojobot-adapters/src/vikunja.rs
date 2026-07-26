@@ -62,6 +62,15 @@ const BOARD_PAGE: u64 = PAGE;
 /// adopts something it created itself.
 const OWNER_TAG: &str = "[jojobot:owned]";
 
+/// jojobot's home: the project a NEW mailbox board is created under, by name
+/// convention (the operator's call, 2026-07-26 — the board belongs inside the
+/// `jojobot` project, not beside it). An existing project with this title is
+/// adopted as the home; **when none exists jojobot creates it for itself**.
+/// jojobot never writes INTO the home — no cards, no labels, no edits to its
+/// record — and never re-homes an existing board: where a board sits is the
+/// operator's to arrange; jojobot only decides where one is born.
+const PARENT_PROJECT: &str = "jojobot";
+
 /// The separator between a mailbox label's namespace and the mailbox's name.
 ///
 /// **Vikunja labels are global, not per-project.** A mailbox label therefore
@@ -266,35 +275,75 @@ impl VikunjaStore {
     /// "fewer than I asked for" is true on every page when the server's cap is
     /// below the request, and a loop that stops there reads page one and
     /// concludes the project is absent. Same rule as [`Self::board`].
-    async fn owned_projects(&self) -> Result<Vec<ProjectRec>, MailboxError> {
-        let mut owned = Vec::new();
+    async fn all_projects(&self) -> Result<Vec<ProjectRec>, MailboxError> {
+        let mut all = Vec::new();
         let mut page = 1;
         loop {
             let batch = self.api.list_projects(page, PAGE).await?;
             if batch.is_empty() {
                 break;
             }
-            owned.extend(
-                batch
-                    .into_iter()
-                    .filter(|p| p.title == self.project && p.description.contains(OWNER_TAG)),
-            );
+            all.extend(batch);
             page += 1;
         }
-        Ok(owned)
+        Ok(all)
+    }
+
+    /// The projects that are both named ours AND carry the ownership tag.
+    fn owned_of(&self, all: &[ProjectRec]) -> Vec<ProjectRec> {
+        all.iter()
+            .filter(|p| p.title == self.project && p.description.contains(OWNER_TAG))
+            .cloned()
+            .collect()
+    }
+
+    /// The project the mailbox board is created under — jojobot's own home,
+    /// by name convention: a project titled [`PARENT_PROJECT`]. The operator's
+    /// existing one is adopted by title; when none exists **jojobot creates it
+    /// for itself**. Either way jojobot never writes INTO the parent — no
+    /// cards, no labels, no edits to its record.
+    ///
+    /// A store whose own board is named like the parent gets no parent at all:
+    /// that board IS the home, and a home cannot nest under itself.
+    async fn resolve_parent(&self, all: &[ProjectRec]) -> Result<Option<u64>, MailboxError> {
+        if self.project == PARENT_PROJECT {
+            return Ok(None);
+        }
+        if let Some(p) = oldest(
+            all.iter()
+                .filter(|p| p.title == PARENT_PROJECT)
+                .cloned()
+                .collect::<Vec<_>>(),
+            |p| (p.created.as_str(), p.id),
+        ) {
+            return Ok(Some(p.id));
+        }
+        let created = self
+            .api
+            .create_project(PARENT_PROJECT, &format!("jojobot's home. {OWNER_TAG}"), None)
+            .await?;
+        Ok(Some(created.id))
     }
 
     /// The mailbox project's id, creating it if absent. After a create it
     /// re-lists and picks the canonical (oldest) owned project, so a concurrent
     /// double-create converges on one rather than forking.
+    ///
+    /// A NEW board is created under jojobot's home (see [`Self::resolve_parent`]).
+    /// An existing board is adopted exactly where it stands — there is no
+    /// re-homing (the operator's call, 2026-07-26): where a board sits is the
+    /// operator's to arrange, and jojobot only decides where one is BORN.
     async fn resolve_project(&self) -> Result<u64, MailboxError> {
-        if let Some(p) = oldest(self.owned_projects().await?, |p| (p.created.as_str(), p.id)) {
+        let all = self.all_projects().await?;
+        if let Some(p) = oldest(self.owned_of(&all), |p| (p.created.as_str(), p.id)) {
             return Ok(p.id);
         }
+        let parent = self.resolve_parent(&all).await?;
         self.api
-            .create_project(&self.project, &self.owner_description())
+            .create_project(&self.project, &self.owner_description(), parent)
             .await?;
-        oldest(self.owned_projects().await?, |p| (p.created.as_str(), p.id))
+        let relisted = self.all_projects().await?;
+        oldest(self.owned_of(&relisted), |p| (p.created.as_str(), p.id))
             .map(|p| p.id)
             .ok_or_else(|| MailboxError::Store("mailbox project missing after create".into()))
     }
@@ -310,15 +359,26 @@ impl VikunjaStore {
             .await?
             .into_iter()
             .filter(|v| v.kind == "kanban")
-            .map(|v| v.id)
-            .min()
+            .min_by_key(|v| v.id)
             .ok_or_else(|| {
                 MailboxError::Store(format!(
                     "project {project} has no kanban view — columns are where state lives"
                 ))
             })?;
-        let scope = Scope { project, view };
+        let scope = Scope { project, view: view.id };
         self.ensure_columns(&scope).await?;
+        // `processed` IS done (the operator's call): the archive column carries
+        // the view's done flag, so a card arriving there is marked done by the
+        // store itself and the operator's UI agrees with the archive — and a
+        // card a person checks done lands in `processed`, which reads as
+        // handled. A fresh board ships the flag pointing at its default
+        // column, so this cannot be skipped on the assumption it starts unset.
+        let processed = self.column(&scope, MessageState::Processed).await?;
+        if view.done_bucket_id != processed {
+            self.api
+                .set_view_done_bucket(project, &view, processed)
+                .await?;
+        }
         Ok(scope)
     }
 
@@ -1458,30 +1518,68 @@ mod tests {
 
         /// Pre-seed a project; returns its id. `owned` stamps jojobot's marker.
         fn seed_project(&self, title: &str, description: &str) -> u64 {
+            self.seed_project_under(title, description, 0)
+        }
+
+        fn seed_project_under(&self, title: &str, description: &str, parent: u64) -> u64 {
             let id = self.next_id();
             self.projects.lock().unwrap().push(ProjectRec {
                 id,
                 title: title.into(),
                 description: description.into(),
                 created: self.stamp(),
+                parent,
             });
             self.seed_views(id);
             id
         }
 
         /// A new project comes with Vikunja's default views, and its kanban view
-        /// comes with one default column.
+        /// comes with one default column — which real Vikunja ships **already
+        /// flagged as the view's done bucket**, so a store that assumes the flag
+        /// starts unset on a fresh board is wrong about reality.
         fn seed_views(&self, project: u64) {
             let mut views = self.views.lock().unwrap();
             for kind in ["list", "gantt", "table", "kanban"] {
                 let id = self.next_id();
-                views.push((project, ViewRec { id, kind: kind.into() }));
                 if kind == "kanban" {
                     let bucket = self.next_id();
                     self.buckets.lock().unwrap().push((
                         project,
                         id,
                         BucketRec { id: bucket, title: DEFAULT_COLUMN.into() },
+                    ));
+                    views.push((
+                        project,
+                        ViewRec {
+                            id,
+                            kind: kind.into(),
+                            title: "Kanban".into(),
+                            done_bucket_id: bucket,
+                            raw: serde_json::json!({
+                                "id": id,
+                                "title": "Kanban",
+                                "view_kind": "kanban",
+                                "bucket_configuration_mode": "manual",
+                                "default_bucket_id": bucket,
+                                "done_bucket_id": bucket,
+                            }),
+                        },
+                    ));
+                } else {
+                    views.push((
+                        project,
+                        ViewRec {
+                            id,
+                            kind: kind.into(),
+                            title: kind.to_uppercase(),
+                            done_bucket_id: 0,
+                            raw: serde_json::json!({
+                                "id": id,
+                                "title": kind.to_uppercase(),
+                                "view_kind": kind,
+                            }),
+                        },
                     ));
                 }
             }
@@ -1656,8 +1754,14 @@ mod tests {
             &self,
             title: &str,
             description: &str,
+            parent: Option<u64>,
         ) -> Result<ProjectRec, MailboxError> {
-            let id = self.seed_project(title, description);
+            self.maybe_fail("create_project")?;
+            let id = self.seed_project_under(title, description, parent.unwrap_or_default());
+            eprintln!(
+                "DEBUG fake.create_project: id={id} stored={:?}",
+                self.projects.lock().unwrap().len()
+            );
             Ok(self
                 .projects
                 .lock()
@@ -1667,6 +1771,7 @@ mod tests {
                 .cloned()
                 .expect("just created"))
         }
+
 
         async fn list_views(&self, project_id: u64) -> Result<Vec<ViewRec>, MailboxError> {
             self.named(project_id);
@@ -1825,9 +1930,40 @@ mod tests {
         ) -> Result<(), MailboxError> {
             self.maybe_fail("move_task")?;
             self.named(project_id);
-            let _ = view_id;
             self.wrote(task_id);
             self.placement.lock().unwrap().insert(task_id, bucket_id);
+            // Like real Vikunja (probed live): a card arriving in the view's
+            // done bucket is marked done by the server itself.
+            let is_done_bucket = self
+                .views
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(p, v)| *p == project_id && v.id == view_id && v.done_bucket_id == bucket_id);
+            if is_done_bucket {
+                let mut tasks = self.tasks.lock().unwrap();
+                if let Some(card) = tasks.iter_mut().find(|t| t.id == task_id) {
+                    card.raw["done"] = serde_json::Value::Bool(true);
+                }
+            }
+            Ok(())
+        }
+
+        async fn set_view_done_bucket(
+            &self,
+            project_id: u64,
+            view: &ViewRec,
+            bucket_id: u64,
+        ) -> Result<(), MailboxError> {
+            self.maybe_fail("set_view_done_bucket")?;
+            self.named(project_id);
+            let mut views = self.views.lock().unwrap();
+            let (_, v) = views
+                .iter_mut()
+                .find(|(p, v)| *p == project_id && v.id == view.id)
+                .ok_or_else(|| MailboxError::Store("no such view".into()))?;
+            v.done_bucket_id = bucket_id;
+            v.raw["done_bucket_id"] = serde_json::json!(bucket_id);
             Ok(())
         }
 
@@ -1937,13 +2073,23 @@ mod tests {
             &self,
             title: &str,
             description: &str,
+            parent: Option<u64>,
         ) -> Result<ProjectRec, MailboxError> {
             self.pause().await;
-            self.inner.create_project(title, description).await
+            self.inner.create_project(title, description, parent).await
         }
         async fn list_views(&self, project_id: u64) -> Result<Vec<ViewRec>, MailboxError> {
             self.pause().await;
             self.inner.list_views(project_id).await
+        }
+        async fn set_view_done_bucket(
+            &self,
+            project_id: u64,
+            view: &ViewRec,
+            bucket_id: u64,
+        ) -> Result<(), MailboxError> {
+            self.pause().await;
+            self.inner.set_view_done_bucket(project_id, view, bucket_id).await
         }
         async fn list_buckets(
             &self,
@@ -2798,8 +2944,10 @@ mod tests {
         // Failing it from its first call takes down the provisioning that runs
         // before `create_task`, so the verb dies having written nothing, and
         // this test's card assertions run over an empty board — passing while
-        // proving nothing. Its second call is the column lookup that places the
-        // card, which is where a failure can strand one.
+        // proving nothing. A verb's `resolve_scope` makes two calls (the column
+        // sweep, then the done-flag check on `processed`); the THIRD call is
+        // the column lookup that places the card, which is where a failure can
+        // strand one.
         //
         // `create_bucket` is deliberately absent, and NOT because a post cannot
         // reach it: a failing post reaches it through the parking column. It is
@@ -2810,7 +2958,7 @@ mod tests {
         for (step, after) in [
             ("create_task", 1),
             ("set_task_labels", 1),
-            ("list_buckets", 2),
+            ("list_buckets", 3),
             ("move_task", 1),
             ("board", 1),
         ] {
@@ -3708,6 +3856,161 @@ mod tests {
             fake.field(card, "due_date"),
             serde_json::json!("2026-08-01T00:00:00Z"),
             "a field jojobot does not model must survive a field jojobot does write"
+        );
+    }
+
+    // ── The board's place in the tree, and the done flag ────────────────────
+
+    /// The kanban view's done-bucket id for a project, straight off the fake.
+    fn done_bucket_of(fake: &FakeVikunja, project: u64) -> u64 {
+        fake.views
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(p, v)| *p == project && v.kind == "kanban")
+            .map(|(_, v)| v.done_bucket_id)
+            .expect("a kanban view")
+    }
+
+    /// A bucket's id by title, for a project's kanban view.
+    fn bucket_titled(fake: &FakeVikunja, project: u64, title: &str) -> u64 {
+        let view = fake.kanban_view(project);
+        fake.buckets
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(p, v, b)| *p == project && *v == view && b.title == title)
+            .map(|(_, _, b)| b.id)
+            .expect("bucket exists")
+    }
+
+    #[tokio::test]
+    async fn the_mailbox_board_nests_under_a_project_named_jojobot() {
+        let fake = FakeVikunja::new();
+        let parent = fake.seed_project("jojobot", "the operator's own workspace board");
+        let store = store(fake.clone());
+        contract::create(&store, "inbox").await;
+        let ours = fake.projects_titled(PROJECT);
+        assert_eq!(ours.len(), 1);
+        assert_eq!(
+            ours[0].parent, parent,
+            "the mailbox board must be created UNDER the jojobot project, not beside it"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_home_is_created_and_the_board_nests_under_it() {
+        // jojobot creates its home for itself (the operator's call): from
+        // nothing, provisioning yields TWO projects — `jojobot`, and the
+        // mailbox board under it.
+        let fake = FakeVikunja::new();
+        let store = store(fake.clone());
+        contract::create(&store, "inbox").await;
+        let homes = fake.projects_titled("jojobot");
+        assert_eq!(homes.len(), 1, "the home is created exactly once");
+        assert_eq!(homes[0].parent, 0, "the home itself is top-level");
+        assert_eq!(fake.projects_titled(PROJECT)[0].parent, homes[0].id);
+    }
+
+    #[tokio::test]
+    async fn an_existing_board_is_adopted_where_it_stands() {
+        // There is no re-homing (the operator's call): where an existing board
+        // sits is the operator's to arrange; jojobot only decides where a board
+        // is BORN. An adopted top-level board stays top-level.
+        let fake = FakeVikunja::new();
+        let board = fake.seed_project(PROJECT, &owned_desc());
+        fake.seed_project("jojobot", "the operator's own workspace board");
+        let store = store(fake.clone());
+        contract::create(&store, "inbox").await;
+        let ours = fake.projects_titled(PROJECT);
+        assert_eq!(ours[0].id, board, "adopted, not re-created");
+        assert_eq!(ours[0].parent, 0, "left exactly where it stands");
+    }
+
+    #[tokio::test]
+    async fn nesting_reads_the_parent_but_never_writes_into_it() {
+        let fake = FakeVikunja::new();
+        let parent = fake.seed_project("jojobot", "the operator's own workspace board");
+        let before = fake.projects_titled("jojobot")[0].clone();
+        let store = store(fake.clone());
+        contract::create(&store, "inbox").await;
+        contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
+        assert_eq!(fake.projects_titled("jojobot")[0], before, "the parent record is untouched");
+        assert!(fake.tasks_in(parent).is_empty(), "no card ever lands on the parent");
+    }
+
+    #[tokio::test]
+    async fn a_store_named_like_the_home_never_nests() {
+        // A board named like the home IS the home — no parent, no second
+        // project, no self-nesting.
+        let fake = FakeVikunja::new();
+        let store = VikunjaStore::from_api(fake.clone(), "jojobot");
+        contract::create(&store, "inbox").await;
+        let ours = fake.projects_titled("jojobot");
+        assert_eq!(ours.len(), 1, "no second `jojobot` project is minted");
+        assert_eq!(ours[0].parent, 0);
+    }
+
+    #[tokio::test]
+    async fn a_failed_home_creation_fails_the_board_create_and_the_retry_recovers() {
+        let fake = FakeVikunja::new();
+        // The FIRST create_project call is the home; fail exactly that one.
+        fake.fail_next("create_project");
+        let store = store(fake.clone());
+        let outcome = store.create_mailbox(&MailboxName("inbox".into()), false).await;
+        assert!(outcome.is_err(), "no home, no board: {outcome:?}");
+        assert!(
+            fake.projects_titled(PROJECT).is_empty(),
+            "a failed provisioning leaves no half-made board"
+        );
+        // Nothing exists yet, so the next attempt simply redoes both.
+        contract::create(&store, "inbox").await;
+        let homes = fake.projects_titled("jojobot");
+        assert_eq!(fake.projects_titled(PROJECT)[0].parent, homes[0].id);
+    }
+
+    #[tokio::test]
+    async fn provisioning_points_the_done_flag_at_processed() {
+        let fake = FakeVikunja::new();
+        let store = store(fake.clone());
+        contract::create(&store, "inbox").await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+        let processed = bucket_titled(&fake, project, "processed");
+        assert_eq!(
+            done_bucket_of(&fake, project),
+            processed,
+            "the view's done flag must point at `processed`, not at the default column \
+             a fresh board ships pre-flagged"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_processed_message_is_marked_done_on_the_card() {
+        let fake = FakeVikunja::new();
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let posted = contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
+        store.read_mailbox(&MailboxName("inbox".into())).await.expect("read ok");
+        store
+            .mark_processed(&posted.id, Some("crates stacked"))
+            .await
+            .expect("processed ok");
+        let card: u64 = posted.id.0.parse().expect("numeric card id");
+        assert_eq!(
+            fake.field(card, "done"),
+            serde_json::json!(true),
+            "a processed message's card is done — the operator's UI agrees with the archive"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_done_flagging_fails_provisioning_loudly() {
+        let fake = FakeVikunja::new();
+        fake.fail_all("set_view_done_bucket");
+        let store = store(fake.clone());
+        let outcome = store.create_mailbox(&MailboxName("inbox".into()), false).await;
+        assert!(
+            outcome.is_err(),
+            "a board whose done flag cannot be pointed at `processed` is not provisioned: {outcome:?}"
         );
     }
 }
