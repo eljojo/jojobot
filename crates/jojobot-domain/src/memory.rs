@@ -6,7 +6,7 @@
 //! it treats the two — the compiler lists the sites.
 //!
 //! This module carries the [`Memory`] port and the records it moves — the
-//! [`Entity`] (a noun, one of eight [`EntityKind`]s) and the [`Fact`] (an
+//! [`Entity`] (a noun, one of nine [`EntityKind`]s) and the [`Fact`] (an
 //! assertion about one). Six verbs, bound by one invariant: a write succeeds
 //! only if the read path returns it. There is no privileged owner entity — the
 //! user is a person like any other. The port is pure (no rmcp, no reqwest);
@@ -26,7 +26,7 @@ pub mod search;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
-/// The eight kinds of noun jojobot knows about — a **closed** set, each earned
+/// The nine kinds of noun jojobot knows about — a **closed** set, each earned
 /// by an inventory of real data. Closed is the point: an id whose kind isn't one
 /// of these is not an entity id, so no unknown kind can enter the store, and
 /// every consumer that matches on a kind is exhaustive by construction.
@@ -53,12 +53,17 @@ pub enum EntityKind {
     /// The glue noun: interest areas, and the anchor for world-facts that
     /// attach to no person, place, or project.
     Topic,
+    /// An AI identity: a handle, the charter its doc's prose carries, the rules
+    /// and memory its facts carry, and the mailbox it owns. A noun like any
+    /// other — **nothing about a bot is compiled in**; a bot is data in the
+    /// operator's own store, and this kind is only what lets it be one.
+    Bot,
 }
 
 impl EntityKind {
     /// Every kind, in declaration order — the enumeration `list_entities`
     /// filters over and the guard scans.
-    pub const ALL: [EntityKind; 8] = [
+    pub const ALL: [EntityKind; 9] = [
         EntityKind::Person,
         EntityKind::Project,
         EntityKind::Place,
@@ -67,6 +72,7 @@ impl EntityKind {
         EntityKind::Thing,
         EntityKind::Org,
         EntityKind::Topic,
+        EntityKind::Bot,
     ];
 
     /// The wire token — the `kind:` prefix of an id and the frontmatter value.
@@ -80,6 +86,7 @@ impl EntityKind {
             EntityKind::Thing => "thing",
             EntityKind::Org => "org",
             EntityKind::Topic => "topic",
+            EntityKind::Bot => "bot",
         }
     }
 
@@ -197,7 +204,7 @@ impl Boot {
 }
 
 /// An entity as its doc's frontmatter carries it. **Lean and uniform across all
-/// eight kinds** — no per-kind fields: what varies between a person and a place
+/// nine kinds** — no per-kind fields: what varies between a person and a place
 /// is the *facts* about them, not the record's shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entity {
@@ -593,7 +600,7 @@ fn is_slug_byte(b: u8) -> bool {
 }
 
 /// Validate an entity id before it is written anywhere. Ids are **structured**
-/// (`kind:slug`, kind one of the eight, slug `[a-z0-9-]+`), never free text — so
+/// (`kind:slug`, kind one of the nine, slug `[a-z0-9-]+`), never free text — so
 /// an adversarial subject can neither forge markdown nor invent a kind. This is
 /// the primary defence; escaping-on-write is the belt-and-suspenders.
 pub fn validate_subject(subject: &EntityId) -> Result<(), MemoryError> {
@@ -948,7 +955,7 @@ pub enum MemoryError {
     /// Treated as adversarial: it never reaches the store.
     #[error(
         "invalid entity id '{0}': ids are kind:slug — kind one of \
-         person|project|place|event|work|thing|org|topic, slug [a-z0-9-]+"
+         person|project|place|event|work|thing|org|topic|bot, slug [a-z0-9-]+"
     )]
     InvalidSubject(String),
     /// A fact address didn't parse (see [`FactAddress::parse`]).
@@ -1143,10 +1150,10 @@ mod tests {
         }
     }
 
-    /// All eight kinds round-trip through their wire token, and nothing else
+    /// All nine kinds round-trip through their wire token, and nothing else
     /// parses — the enum is closed, so an unknown kind can never enter the store.
     #[test]
-    fn the_eight_kinds_round_trip_and_the_set_is_closed() {
+    fn the_nine_kinds_round_trip_and_the_set_is_closed() {
         let all = [
             (EntityKind::Person, "person"),
             (EntityKind::Project, "project"),
@@ -1156,15 +1163,29 @@ mod tests {
             (EntityKind::Thing, "thing"),
             (EntityKind::Org, "org"),
             (EntityKind::Topic, "topic"),
+            (EntityKind::Bot, "bot"),
         ];
         for (kind, token) in all {
             assert_eq!(kind.as_token(), token);
             assert_eq!(EntityKind::from_token(token), Some(kind));
         }
-        assert_eq!(EntityKind::ALL.len(), 8, "eight kinds, no more");
+        assert_eq!(EntityKind::ALL.len(), 9, "nine kinds, no more");
         for unknown in ["receipt", "self", "Person", "", "peson"] {
             assert_eq!(EntityKind::from_token(unknown), None, "{unknown:?} is not a kind");
         }
+    }
+
+    /// **A bot is an entity like any other.** Its handle validates by the same
+    /// grammar, so the codec, the guard, `search`, `recall` and `list_entities`
+    /// need no per-kind branch to carry it.
+    #[test]
+    fn a_bot_handle_is_an_ordinary_entity_id() {
+        let id = EntityId::new(EntityKind::Bot, "otto");
+        assert_eq!(id.as_str(), "bot:otto");
+        assert_eq!(id.kind(), Some(EntityKind::Bot));
+        assert!(validate_subject(&id).is_ok());
+        // And it is spelled out on a bare handle, exactly as every non-person is.
+        assert_eq!(EntityId::person("bot:otto").as_str(), "bot:otto");
     }
 
     /// An id is `kind:slug` — the kind and the slug are readable off it, which is
@@ -1188,7 +1209,7 @@ mod tests {
         }
         for bad in [
             "alpha",            // no kind
-            "receipt:il-2026",   // not one of the eight
+            "receipt:il-2026",   // not one of the nine
             "person:",           // empty slug
             ":alpha",           // empty kind
             "person:a_b",        // underscore is out of the slug charset

@@ -596,7 +596,7 @@ fn parse_aliases(doc: &str) -> Vec<String> {
         .collect()
 }
 
-/// The frontmatter block for an entity — lean and identical for all eight kinds.
+/// The frontmatter block for an entity — lean and identical for all nine kinds.
 /// An absent `crm` (or an empty alias set) writes no line at all, so the block
 /// says only what is true.
 fn frontmatter(e: &Entity) -> String {

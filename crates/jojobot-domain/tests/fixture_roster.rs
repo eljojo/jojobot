@@ -18,12 +18,18 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const KINDS: [&str; 8] = [
-    "person", "place", "event", "work", "thing", "org", "topic", "project",
+const KINDS: [&str; 9] = [
+    "person", "place", "event", "work", "thing", "org", "topic", "project", "bot",
 ];
 
 /// The complete allowlist. Keep it sorted; keep it fictional.
 const ROSTER: &[&str] = &[
+    "bot:delta",
+    "bot:delta-two",
+    "bot:epsilon",
+    "bot:gamma",
+    "bot:otto",
+    "bot:sigma",
     "event:winter-fest",
     "org:guild",
     "org:north-trail-club",

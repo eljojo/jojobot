@@ -967,6 +967,9 @@ fn type_name(kind: EntityKind) -> &'static str {
         EntityKind::Org => "Organization",
         EntityKind::Topic => "Topic",
         EntityKind::Project => "Project",
+        // schema.org has no bot; `SoftwareApplication` is its nearest word for
+        // a non-human actor, and it is the one a model already knows.
+        EntityKind::Bot => "SoftwareApplication",
     }
 }
 
@@ -1883,6 +1886,7 @@ mod tests {
             (EntityKind::Org, "org", "Organization"),
             (EntityKind::Topic, "topic", "Topic"),
             (EntityKind::Project, "project", "Project"),
+            (EntityKind::Bot, "bot", "SoftwareApplication"),
         ];
         assert_eq!(table.len(), EntityKind::ALL.len(), "every kind must be named here");
         for (kind, token, name) in table {

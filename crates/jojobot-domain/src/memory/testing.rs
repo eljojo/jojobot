@@ -545,7 +545,7 @@ pub mod contract {
 
     // --- the entity model ----------------------------------------------------
 
-    /// A fact can be about any of the eight kinds, not just people — and each
+    /// A fact can be about any of the nine kinds, not just people — and each
     /// lands in its own home, addressable under its own handle.
     pub async fn every_kind_holds_facts<M: Memory>(store: &M) {
         for kind in EntityKind::ALL {
