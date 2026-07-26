@@ -307,6 +307,37 @@ pub mod contract {
         assert_eq!(delivered.messages[0].message.body, body, "…and on the way back out");
     }
 
+    /// A body written on a CRLF platform reads back the same in every store.
+    /// Line endings normalize to `\n` on the way in — one contract, one answer:
+    /// without this, a store that reconstructs text line-by-line strips the
+    /// `\r`s while a store that keeps bytes preserves them, and the same body
+    /// round-trips in one tier and hard-errors in another.
+    pub async fn a_crlf_body_normalizes_to_plain_newlines(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let posted = post(store, "inbox", "alpha", "line one\r\nline two", 0).await;
+        assert_eq!(posted.body, "line one\nline two");
+
+        let delivered = read(store, "inbox").await;
+        assert_eq!(
+            delivered.messages[0].message.body, "line one\nline two",
+            "…and on the way back out"
+        );
+    }
+
+    /// A body full of HTML-significant characters and an unterminated fence
+    /// survives the round trip verbatim — the store may keep rich text or lean
+    /// on fenced blocks itself, and neither is allowed to eat a message.
+    pub async fn a_body_of_markup_and_a_loose_fence_survives(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let body = "compare a & b, note 1 < 2 and 2 > 1, keep &amp; literal\n\n\
+                    ```\nan unterminated fence";
+        let posted = post(store, "inbox", "alpha", body, 0).await;
+        assert_eq!(posted.body, body);
+
+        let delivered = read(store, "inbox").await;
+        assert_eq!(delivered.messages[0].message.body, body, "…and on the way back out");
+    }
+
     /// **A typo must never silently mint a box.** Posting into a name jojobot
     /// doesn't know comes back blocked, with the box it suspects — and creates
     /// nothing.
@@ -558,6 +589,8 @@ pub mod contract {
         creating_a_near_miss_is_blocked_and_writes_nothing(&fresh()).await;
         a_posted_message_lands_in_new(&fresh()).await;
         a_body_survives_the_round_trip(&fresh()).await;
+        a_crlf_body_normalizes_to_plain_newlines(&fresh()).await;
+        a_body_of_markup_and_a_loose_fence_survives(&fresh()).await;
         posting_into_an_unknown_mailbox_is_blocked(&fresh()).await;
         a_read_delivers_everything_new_and_moves_the_column(&fresh()).await;
         a_second_read_redelivers_leftovers_flagged(&fresh()).await;

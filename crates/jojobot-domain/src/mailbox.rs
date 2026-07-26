@@ -247,9 +247,12 @@ pub fn message_title(sender: &str, body: &str) -> String {
 }
 
 /// Normalize a body to the form that survives a round-trip through the store:
-/// edge whitespace is not significant, and no store preserves it.
+/// edge whitespace is not significant, and no store preserves it; CRLF line
+/// endings become plain `\n`, because a store that reconstructs text
+/// line-by-line strips the `\r`s — normalizing here is what keeps one contract
+/// from getting two answers.
 pub fn normalize_body(body: &str) -> String {
-    body.trim().to_string()
+    body.replace("\r\n", "\n").trim().to_string()
 }
 
 /// Normalize optional notes — blank notes are no notes, not empty ones.
