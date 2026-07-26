@@ -3011,6 +3011,62 @@ mod tests {
         );
     }
 
+    /// **Advancing is not a licence to change the message.** The read-back
+    /// tolerates a card that moved further down the funnel — that is delivery
+    /// working — but only for the SAME message: id, box, body, sender and
+    /// instant all have to still be what was written. Without that, "the state
+    /// advanced" would wave through a card whose body somebody rewrote, and
+    /// `post_message` would report success for a message it did not send.
+    #[tokio::test]
+    async fn a_card_that_advanced_and_changed_is_not_confirmed_by_the_read_back() {
+        let fake = FakeVikunja::new();
+        let api = Interleaved::new(fake.clone());
+        let store = VikunjaStore::from_api(api.clone(), PROJECT);
+        contract::create(&store, "inbox").await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+
+        // Right before the post's read-back: the card is taken (new → read)
+        // AND its body is rewritten — still a perfectly readable message, just
+        // not the one that was posted.
+        api.before_board(1, move |fake| {
+            let new = fake.bucket_titled(project, "new");
+            let read = fake.bucket_titled(project, "read");
+            for bucket in fake.placement.lock().unwrap().values_mut() {
+                if *bucket == new {
+                    *bucket = read;
+                }
+            }
+            let rewritten = render_description(
+                "a different message entirely",
+                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), notes: None },
+            );
+            let mut tasks = fake.tasks.lock().unwrap();
+            let card = tasks.last_mut().expect("the card this post just created");
+            card.description = rewritten.clone();
+            card.raw["description"] = rewritten.into();
+        });
+
+        let outcome = store
+            .post_message(NewMessage {
+                mailbox: MailboxName("inbox".into()),
+                body: "the shipment landed".into(),
+                sender: "alpha".into(),
+                sent_at: at(1_780_000_000),
+            })
+            .await;
+        assert!(
+            outcome.is_err(),
+            "a card that advanced AND changed is corruption, not delivery: {outcome:?}"
+        );
+        let left = fake.tasks_in(project);
+        assert_eq!(left.len(), 1, "nothing is deleted");
+        assert_eq!(
+            fake.column_of(left[0].id).as_deref(),
+            Some("parked"),
+            "…and the card jojobot cannot vouch for is parked, not left in the funnel"
+        );
+    }
+
     /// **A card update must not blank the rest of the card.** Vikunja's task
     /// update writes the whole model, so any writable field missing from the
     /// payload is written back as its zero value — a due date, a priority, an
