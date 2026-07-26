@@ -251,8 +251,16 @@ pub fn message_title(sender: &str, body: &str) -> String {
 /// endings become plain `\n`, because a store that reconstructs text
 /// line-by-line strips the `\r`s — normalizing here is what keeps one contract
 /// from getting two answers.
+///
+/// Folded to a **fixpoint**: a single non-overlapping replace turns `\r\r\n`
+/// into exactly the `\r\n` it was meant to remove. A lone `\r` with no `\n`
+/// after it is left alone — it is body text, and line-based stores keep it.
 pub fn normalize_body(body: &str) -> String {
-    body.replace("\r\n", "\n").trim().to_string()
+    let mut body = body.to_string();
+    while body.contains("\r\n") {
+        body = body.replace("\r\n", "\n");
+    }
+    body.trim().to_string()
 }
 
 /// Normalize optional notes — blank notes are no notes, not empty ones.

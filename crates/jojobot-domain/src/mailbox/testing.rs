@@ -367,6 +367,17 @@ pub mod contract {
             delivered.messages[0].message.body, "line one\nline two",
             "…and on the way back out"
         );
+
+        // A stacked `\r\r\n` must not leave a CRLF behind: a single
+        // non-overlapping replace turns it into exactly the sequence it was
+        // meant to remove, and the store diverges again on that input.
+        let stacked = post(store, "inbox", "alpha", "line one\r\r\nline two", 30).await;
+        assert!(
+            !stacked.body.contains('\r') || !stacked.body.contains("\r\n"),
+            "no \\r may sit before a \\n after normalization: {:?}",
+            stacked.body
+        );
+        assert_eq!(stacked.body, "line one\nline two", "normalized to a fixpoint");
     }
 
     /// A body full of HTML-significant characters and an unterminated fence
