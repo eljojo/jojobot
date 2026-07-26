@@ -20,6 +20,11 @@ jiff = { workspace = true }
 # The search projection: an in-RAM full-text index over facts, entities and prose.
 tantivy = { workspace = true }
 tracing = { workspace = true }
+# The Vikunja store's per-store verb lock. jojobot is the only machine writer to
+# its own mailbox project, so linearizing its own verbs against each other
+# removes every jojobot-vs-jojobot race by construction — see `VikunjaStore`'s
+# § The lock for the constraint that buys.
+tokio = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -163,11 +163,33 @@ struct BoardRead {
 // --- the store --------------------------------------------------------------
 
 /// The real Mailboxes adapter, fronting a Vikunja project it manages by name.
-/// Stateless: it holds an API client and the project *name*, never an id.
+/// Stateless as far as Vikunja goes: it holds an API client and the project
+/// *name*, never an id. The one thing it does keep is [the lock](#the-lock).
+///
+/// # The lock
+///
+/// Every verb is a read-modify-verify sequence over the board, and two of them
+/// running at once interleave: two reads both see a message in `new` and both
+/// hand it over as fresh mail; a post's read-back lands after a delivery moved
+/// its card. **jojobot is the only machine writer to this project** (the
+/// write-scope invariant) and runs as one process, so holding a per-store async
+/// mutex across each verb's whole body removes every jojobot-vs-jojobot race by
+/// construction — and, incidentally, stops jojobot handing real Vikunja the
+/// concurrent writes it answers with 500s.
+///
+/// **Accepted constraint: one server instance.** The lock is in-process, so two
+/// jojobot processes pointed at one project would race again — the same posture
+/// the Outline adapter takes on its read-modify-write (no compare-and-set,
+/// accepted for a single-session assistant, not forgotten). What the lock
+/// cannot cover is what the read-back verification is still for: the operator
+/// hand-editing the board in the UI, and the store normalizing what it stored.
 #[derive(Clone)]
 pub struct VikunjaStore {
     api: Arc<dyn VikunjaApi>,
     project: String,
+    /// One store = one project = one lock. Shared across clones, so a cloned
+    /// handle is the same writer, not a second one.
+    lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl VikunjaStore {
@@ -202,6 +224,7 @@ impl VikunjaStore {
         Self {
             api,
             project: project.into(),
+            lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -671,6 +694,7 @@ impl Mailboxes for VikunjaStore {
         name: &MailboxName,
         create_new: bool,
     ) -> Result<Guarded<Mailbox>, MailboxError> {
+        let _serialized = self.lock.lock().await;
         validate_mailbox_name(name)?;
         // Resolving the scope first is what makes the very first call to a bare
         // Vikunja work: the project and its columns are provisioned before the
@@ -708,6 +732,7 @@ impl Mailboxes for VikunjaStore {
     }
 
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
+        let _serialized = self.lock.lock().await;
         let scope = self.resolve_scope().await?;
         let board = self.board_read(&scope).await?;
         Ok(self
@@ -735,6 +760,7 @@ impl Mailboxes for VikunjaStore {
     }
 
     async fn post_message(&self, message: NewMessage) -> Result<Guarded<Message>, MailboxError> {
+        let _serialized = self.lock.lock().await;
         validate_mailbox_name(&message.mailbox)?;
         validate_sender(&message.sender)?;
         validate_body(&message.body)?;
@@ -823,6 +849,7 @@ impl Mailboxes for VikunjaStore {
     }
 
     async fn read_mailbox(&self, name: &MailboxName) -> Result<Guarded<Delivery>, MailboxError> {
+        let _serialized = self.lock.lock().await;
         validate_mailbox_name(name)?;
         let scope = self.resolve_scope().await?;
 
@@ -909,6 +936,7 @@ impl Mailboxes for VikunjaStore {
         id: &MessageId,
         notes: Option<&str>,
     ) -> Result<Message, MailboxError> {
+        let _serialized = self.lock.lock().await;
         validate_message_id(id)?;
         validate_notes(notes)?;
         let scope = self.resolve_scope().await?;
@@ -1553,10 +1581,20 @@ mod tests {
         }
     }
 
-    /// A decorator over the fake that runs a hook right before the **nth**
-    /// `board` read from now — the seam where another session's work
-    /// interleaves with a verb that is between its writes and its read-back.
-    /// Every other call delegates untouched.
+    /// A decorator over the fake that opens two seams the bare fake has not
+    /// got:
+    ///
+    /// * it runs a hook right before the **nth** `board` read from now — where
+    ///   a hand edit in the Vikunja UI lands, between a verb's writes and its
+    ///   read-back;
+    /// * **every call is a real await point.** The fake awaits nothing, so two
+    ///   verbs joined on one task would run to completion one after the other
+    ///   whatever the store did — a concurrency test over it could not fail.
+    ///   Yielding at each call is what a network round trip does, and it is
+    ///   what makes the serialization tests below able to observe an
+    ///   interleaving.
+    ///
+    /// Every call otherwise delegates untouched.
     /// What an armed interleave runs, handed the fake to reach into.
     type BoardHook = Box<dyn FnOnce(&FakeVikunja) + Send>;
 
@@ -1571,6 +1609,12 @@ mod tests {
                 inner,
                 on_board: Mutex::new(None),
             })
+        }
+
+        /// Hand the runtime a chance to run the other verb — what an HTTP call
+        /// does at every one of these points.
+        async fn pause(&self) {
+            tokio::task::yield_now().await;
         }
 
         /// Arm `hook` to run right before the nth `board` call from now.
@@ -1598,6 +1642,7 @@ mod tests {
             page: u64,
             per_page: u64,
         ) -> Result<Vec<ProjectRec>, MailboxError> {
+            self.pause().await;
             self.inner.list_projects(page, per_page).await
         }
         async fn create_project(
@@ -1605,9 +1650,11 @@ mod tests {
             title: &str,
             description: &str,
         ) -> Result<ProjectRec, MailboxError> {
+            self.pause().await;
             self.inner.create_project(title, description).await
         }
         async fn list_views(&self, project_id: u64) -> Result<Vec<ViewRec>, MailboxError> {
+            self.pause().await;
             self.inner.list_views(project_id).await
         }
         async fn list_buckets(
@@ -1615,6 +1662,7 @@ mod tests {
             project_id: u64,
             view_id: u64,
         ) -> Result<Vec<BucketRec>, MailboxError> {
+            self.pause().await;
             self.inner.list_buckets(project_id, view_id).await
         }
         async fn create_bucket(
@@ -1623,6 +1671,7 @@ mod tests {
             view_id: u64,
             title: &str,
         ) -> Result<BucketRec, MailboxError> {
+            self.pause().await;
             self.inner.create_bucket(project_id, view_id, title).await
         }
         async fn board(
@@ -1632,6 +1681,7 @@ mod tests {
             page: u64,
             per_page: u64,
         ) -> Result<Vec<BoardBucket>, MailboxError> {
+            self.pause().await;
             self.maybe_interleave();
             self.inner.board(project_id, view_id, page, per_page).await
         }
@@ -1641,6 +1691,7 @@ mod tests {
             title: &str,
             description: &str,
         ) -> Result<TaskRec, MailboxError> {
+            self.pause().await;
             self.inner.create_task(project_id, title, description).await
         }
         async fn update_task(
@@ -1648,6 +1699,7 @@ mod tests {
             project_id: u64,
             task: &serde_json::Value,
         ) -> Result<(), MailboxError> {
+            self.pause().await;
             self.inner.update_task(project_id, task).await
         }
         async fn move_task(
@@ -1657,6 +1709,7 @@ mod tests {
             bucket_id: u64,
             task_id: u64,
         ) -> Result<(), MailboxError> {
+            self.pause().await;
             self.inner.move_task(project_id, view_id, bucket_id, task_id).await
         }
         async fn list_labels(
@@ -1664,6 +1717,7 @@ mod tests {
             page: u64,
             per_page: u64,
         ) -> Result<Vec<LabelRec>, MailboxError> {
+            self.pause().await;
             self.inner.list_labels(page, per_page).await
         }
         async fn create_label(
@@ -1671,9 +1725,11 @@ mod tests {
             title: &str,
             description: &str,
         ) -> Result<LabelRec, MailboxError> {
+            self.pause().await;
             self.inner.create_label(title, description).await
         }
         async fn set_task_labels(&self, task_id: u64, labels: &[u64]) -> Result<(), MailboxError> {
+            self.pause().await;
             self.inner.set_task_labels(task_id, labels).await
         }
     }
@@ -2390,9 +2446,11 @@ mod tests {
     }
 
     /// **A batch rollback must not undo another consumer's confirmed work.**
-    /// The read-back accepts a card that advanced (a concurrent
-    /// `mark_processed` was told SUCCESS) — but when a different card in the
-    /// batch genuinely fails, `restore_all` used to put back EVERY moved card,
+    /// The consumer here is a human on the board, not a second jojobot session
+    /// — the verb lock rules that one out — but a card can still advance
+    /// under a delivery's feet, and the read-back accepts it when it does.
+    /// When a different card in the batch genuinely fails, `restore_all` used
+    /// to put back EVERY moved card,
     /// including the processed one: its recorded outcome erased, the handled
     /// message moved back to `new` and delivered again. The rollback now
     /// applies the same later-state-wins rule the read-back does, and skips
@@ -2445,9 +2503,11 @@ mod tests {
 
     // --- rollback never deletes -----------------------------------------------
 
-    /// **A consumed message is a delivered message, not a failed post.** A
-    /// concurrent `read_mailbox` can move the card `new → read` between the
-    /// post's placement and its read-back; the read-back then finds the card in
+    /// **A consumed message is a delivered message, not a failed post.** The
+    /// operator working the board can move the card `new → read` between the
+    /// post's placement and its read-back (a second jojobot verb cannot — the
+    /// lock rules that out, which is exactly why the read-back's remaining job
+    /// is the human); the read-back then finds the card in
     /// a *later* state than it wrote. That is delivery working — the message
     /// exists and someone received it. The rollback used to call this a
     /// mismatch and delete the card, destroying a message a consumer had
@@ -2501,6 +2561,48 @@ mod tests {
             posted.state,
             MessageState::Read,
             "the post reports the state the card is actually in"
+        );
+    }
+
+    // --- jojobot never races jojobot -----------------------------------------
+
+    /// **Two deliveries of one message must not both call it fresh mail.**
+    /// Every verb is a read-modify-verify sequence, so two of them running at
+    /// once over one board interleave: both reads see the message in `new`,
+    /// both move it to `read`, and both hand it over with `seen_before: false`
+    /// — the same message processed twice by two consumers, each told it was
+    /// the first. The per-store lock makes that history unreachable: one read
+    /// finishes before the other starts, so the second sees the column the
+    /// first moved and flags its leftover.
+    #[tokio::test]
+    async fn two_concurrent_reads_never_both_call_one_message_fresh() {
+        let fake = FakeVikunja::new();
+        let store = VikunjaStore::from_api(Interleaved::new(fake.clone()), PROJECT);
+        // Provisioning runs first, alone: the race under test is over one
+        // message, not over two verbs each creating the board's columns.
+        contract::create(&store, "inbox").await;
+        contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
+
+        let name = MailboxName("inbox".into());
+        let (first, second) = tokio::join!(store.read_mailbox(&name), store.read_mailbox(&name));
+        let delivered = |outcome: Result<Guarded<Delivery>, MailboxError>| -> Vec<bool> {
+            outcome
+                .expect("read_mailbox ok")
+                .written()
+                .expect("the guard must not block a box that exists")
+                .messages
+                .iter()
+                .map(|d| d.seen_before)
+                .collect()
+        };
+        let mut flags = delivered(first);
+        flags.extend(delivered(second));
+
+        assert_eq!(flags.len(), 2, "both reads still hand the message over: {flags:?}");
+        assert_eq!(
+            flags.iter().filter(|fresh| !**fresh).count(),
+            1,
+            "exactly one delivery may call it fresh mail; the other is a leftover: {flags:?}"
         );
     }
 
