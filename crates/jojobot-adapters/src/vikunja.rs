@@ -570,13 +570,25 @@ impl VikunjaStore {
     /// marked delivered, to a caller that was told the call failed and never
     /// received them.
     ///
-    /// With one exception — **the same later-state-wins rule the read-back
-    /// applies**: a card that advanced PAST the state this call wrote
-    /// (`written`) was taken and consumed by someone in the meantime, and that
-    /// consumer's `mark_processed` was already told success. Restoring it would
-    /// erase their recorded outcome and redeliver a handled message, so it is
-    /// skipped. If the board cannot be re-read, everything is restored: a card
-    /// wrongly put back is redelivered flagged as a leftover, never lost.
+    /// Two cards are left alone, and a re-read of the board is what identifies
+    /// them:
+    ///
+    /// * **one that advanced PAST the state this call wrote** (`written`) — the
+    ///   same later-state-wins rule the read-back applies. It was taken and
+    ///   consumed in the meantime, and that consumer's `mark_processed` was
+    ///   already told success; restoring it would erase their recorded outcome
+    ///   and redeliver a handled message.
+    /// * **one that is now quarantined** — its description no longer parses, or
+    ///   it sits outside the funnel. Restoring means writing back the copy this
+    ///   call happens to be holding, which would overwrite whatever was done to
+    ///   that card with a stale snapshot — destroying the evidence of the very
+    ///   edit that failed this write, and putting an unreadable card back into
+    ///   the funnel where the next delivery would trip on it again. Quarantine
+    ///   is where it belongs and where it is surfaced; a rollback has no
+    ///   business reaching into it.
+    ///
+    /// If the board cannot be re-read, everything is restored: a card wrongly
+    /// put back is redelivered flagged as a leftover, never lost.
     async fn restore_all(
         &self,
         scope: &Scope,
@@ -584,18 +596,19 @@ impl VikunjaStore {
         written: MessageState,
         verb: &str,
     ) -> String {
-        let advanced: std::collections::HashSet<u64> = match self.board_read(scope).await {
+        let untouchable: std::collections::HashSet<u64> = match self.board_read(scope).await {
             Ok(board) => board
                 .messages
                 .iter()
                 .filter(|(_, m)| m.state > written)
                 .map(|(task, _)| task.id)
+                .chain(board.quarantined.iter().map(|q| q.card))
                 .collect(),
             Err(_) => Default::default(),
         };
         let mut failures = Vec::new();
         for (card, state) in cards {
-            if advanced.contains(&card.id) {
+            if untouchable.contains(&card.id) {
                 continue;
             }
             if let Err(failure) = self.restore(scope, card, *state).await {
@@ -2719,21 +2732,25 @@ mod tests {
     /// must go back, the garbled description restored from the card the first
     /// read handed over.
     #[tokio::test]
-    async fn a_delivery_whose_read_back_finds_a_garbled_card_restores_the_whole_batch() {
+    async fn a_delivery_whose_read_back_finds_a_garbled_card_restores_the_rest_and_leaves_it() {
         let fake = FakeVikunja::new();
         let api = Interleaved::new(fake.clone());
         let store = VikunjaStore::from_api(api.clone(), PROJECT);
         contract::create(&store, "inbox").await;
         let first = contract::post(&store, "inbox", "alpha", "message one", 0).await;
         let second = contract::post(&store, "inbox", "milhouse", "message two", 60).await;
-        let garbled: u64 = second.id.as_str().parse().expect("a numeric card id");
+        let project = fake.projects_titled(PROJECT)[0].id;
+        let garbled_card: u64 = second.id.as_str().parse().expect("a numeric card id");
 
         // A delivery reads the board (two paged calls) to find what is owed,
         // moves the batch, and reads again to verify. The corruption lands
         // right before the verification read — board call 3.
         api.before_board(3, move |fake| {
             let mut tasks = fake.tasks.lock().unwrap();
-            let card = tasks.iter_mut().find(|t| t.id == garbled).expect("the card exists");
+            let card = tasks
+                .iter_mut()
+                .find(|t| t.id == garbled_card)
+                .expect("the card exists");
             card.description = "hand-garbled mid-delivery".into();
             card.raw["description"] = "hand-garbled mid-delivery".into();
         });
@@ -2741,20 +2758,46 @@ mod tests {
         let outcome = store.read_mailbox(&MailboxName("inbox".into())).await;
         assert!(outcome.is_err(), "a garbled batch must not report success: {outcome:?}");
 
-        // The whole batch goes back to `new` — including the card that was fine.
-        for id in [&first.id, &second.id] {
-            let card: u64 = id.as_str().parse().expect("a numeric card id");
-            assert_eq!(
-                fake.column_of(card).as_deref(),
-                Some("new"),
-                "card {id} goes back with the rest of its batch"
-            );
-        }
-        // The restore rewrote the garbled description from the card the first
-        // read handed over, so both messages are deliverable again.
+        // The card that was fine goes back to `new`, ready to be delivered again.
+        let intact: u64 = first.id.as_str().parse().expect("a numeric card id");
+        assert_eq!(
+            fake.column_of(intact).as_deref(),
+            Some("new"),
+            "the card that was fine goes back with the rest of its batch"
+        );
+        // **The garbled one is left exactly as found.** It is quarantined now,
+        // and a rollback that rewrote it would overwrite whatever a person did
+        // to that card with a copy jojobot happened to be holding — destroying
+        // the evidence of the very edit that failed this delivery.
+        let stored = fake
+            .tasks_in(project)
+            .into_iter()
+            .find(|t| t.id == garbled_card)
+            .expect("the card is still there");
+        assert_eq!(
+            stored.description, "hand-garbled mid-delivery",
+            "a rollback must not write over a card it cannot read"
+        );
+        let inbox = store
+            .list_mailboxes()
+            .await
+            .expect("list ok")
+            .into_iter()
+            .find(|m| m.name.as_str() == "inbox")
+            .expect("inbox");
+        assert_eq!(
+            inbox.quarantined,
+            vec![second.id.clone()],
+            "…and it is surfaced as unreadable rather than silently left mid-delivery"
+        );
+
         let again = contract::read(&store, "inbox").await;
         let bodies: Vec<&str> = again.messages.iter().map(|d| d.message.body.as_str()).collect();
-        assert_eq!(bodies, vec!["message one", "message two"], "nothing stays garbled");
+        assert_eq!(
+            bodies,
+            vec!["message one"],
+            "only the readable message is owed delivery"
+        );
     }
 
     /// **A batch rollback must not undo another consumer's confirmed work.**
@@ -2799,17 +2842,24 @@ mod tests {
             Some("processed"),
             "the card a consumer already processed must NOT be dragged back into delivery"
         );
+        let inbox = store
+            .list_mailboxes()
+            .await
+            .expect("list ok")
+            .into_iter()
+            .find(|m| m.name.as_str() == "inbox")
+            .expect("inbox");
         assert_eq!(
-            fake.column_of(garbled_card).as_deref(),
-            Some("new"),
-            "…while the genuinely failed card goes back with its description restored"
+            inbox.quarantined,
+            vec![garbled.id.clone()],
+            "…while the genuinely failed card is surfaced as unreadable, not written over"
         );
+        assert_eq!(inbox.counts.processed, 1, "the handled message is handled");
         let again = contract::read(&store, "inbox").await;
-        let bodies: Vec<&str> = again.messages.iter().map(|d| d.message.body.as_str()).collect();
-        assert_eq!(
-            bodies,
-            vec!["message two"],
-            "only the restored message is owed delivery; the processed one is done"
+        assert!(
+            again.messages.is_empty(),
+            "nothing is owed delivery: one message was handled, the other needs a person: {:?}",
+            again.messages
         );
     }
 
