@@ -600,7 +600,10 @@ impl Jojobot {
 
     /// Leave a message in a box.
     #[tool(
-        description = "Leave a message in a mailbox. It lands in `new`. The mailbox must ALREADY \
+        description = "Leave a message in a mailbox. It is filed in `new`, and the `state` in the \
+                       reply is the one jojobot read back off the board — so it can already say \
+                       `read` if a consumer took delivery in between. That is success, not a \
+                       problem: the message exists and someone has it. The mailbox must ALREADY \
                        EXIST: an unknown name comes back status: blocked with candidates and \
                        nothing is written — call create_mailbox first if the box is genuinely \
                        new. `sender` is recorded as you declare it."
@@ -2896,42 +2899,44 @@ mod tests {
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     }
 
-    /// **The mailbox surface is five verbs, and none of them deletes.**
-    /// Production jojobot never deletes anything — the standing rule is
-    /// structural (the store's port has no delete operation at all), and this
-    /// pins the other end: no delete-shaped capability is ever exposed over
-    /// MCP, for mailboxes or anything else.
+    /// **The whole tool surface, named.** Production jojobot never deletes
+    /// anything: the standing rule is structural at the store (the Mailboxes
+    /// port has no delete operation at all), and this pins the other end — that
+    /// nothing at all reaches a client except these.
+    ///
+    /// **The exact list, not a filter and a list of forbidden words.** A
+    /// name-shape filter only sees the tools it thought to look for, and a
+    /// denylist only catches the wordings somebody guessed: `retire_message`,
+    /// `archive_box`, `clear_mailbox` all sail past both while doing the thing
+    /// the rule exists to forbid. Adding a tool here is a line in this list and
+    /// a reviewer reading it — which is the whole point.
     #[test]
-    fn the_mailbox_surface_is_exactly_five_verbs_and_none_deletes() {
+    fn the_tool_surface_is_exactly_this_list() {
         let tools = Jojobot::tool_router().list_all();
-        let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+        let mut names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+        names.sort_unstable();
 
-        let mailbox_verbs = [
-            "create_mailbox",
-            "list_mailboxes",
-            "post_message",
-            "read_mailbox",
-            "mark_processed",
-        ];
-        let mailbox_shaped: std::collections::BTreeSet<&str> = names
-            .iter()
-            .copied()
-            .filter(|n| {
-                n.contains("mailbox") || n.contains("message") || n.contains("processed")
-            })
-            .collect();
         assert_eq!(
-            mailbox_shaped,
-            mailbox_verbs.iter().copied().collect(),
-            "the mailbox surface is exactly the five verbs, no more, no fewer"
+            names,
+            [
+                // memory
+                "add_entity",
+                "capture",
+                // mailboxes — five verbs, none of which deletes
+                "create_mailbox",
+                "list_entities",
+                "list_mailboxes",
+                "mark_processed",
+                "ping",
+                "post_message",
+                "read_mailbox",
+                "recall",
+                "search",
+                "update_entity",
+                "update_fact",
+            ],
+            "the tool surface changed — if that was deliberate, say so here"
         );
-
-        for shape in ["delete", "remove", "destroy", "purge", "erase", "drop"] {
-            assert!(
-                names.iter().all(|n| !n.contains(shape)),
-                "no tool may be {shape}-shaped: {names:?}"
-            );
-        }
     }
 
     /// **The crash contract is in the tool description, not only in the docs.**

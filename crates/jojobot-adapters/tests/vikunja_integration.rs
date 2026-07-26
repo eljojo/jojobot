@@ -21,9 +21,11 @@
 //!
 //! **The operator's real task boards live on this Vikunja.** Five things keep
 //! this test away from them — starting with a **disposability probe**: the
-//! suite's first act is to create and delete a canary project, and an instance
-//! that refuses the delete is not a disposable test server, so the run panics
-//! before any contract case exists. Then:
+//! suite's first act is to create and delete a canary project, and a token that
+//! cannot delete what it just made is one deliberately issued without the
+//! rights this suite needs, so the run panics before any contract case exists.
+//! It proves the token, not the instance — the four below are what actually
+//! keep the run inside its own sandbox:
 //!
 //! * every project it uses is named with the [`TEST_PREFIX`] and stamped with
 //!   jojobot's owner tag, and teardown deletes **only** what matches both — a
@@ -98,11 +100,19 @@ fn creds() -> Creds {
 }
 
 /// **The disposability probe — the suite's first act.** Create a canary
-/// project and immediately delete it. An instance whose token cannot delete is
-/// the operator's production instance (its tokens cannot delete by design), or
-/// otherwise not a server this suite may litter — either way the run stops
-/// before a single contract case exists, making the real instance mechanically
-/// unreachable by the destructive path.
+/// project and immediately delete it. An instance whose token cannot delete
+/// stops the run before a single contract case exists.
+///
+/// **What it actually proves is narrow: that this token can delete a project it
+/// just created.** It does not establish that the instance is a test server —
+/// an instance whose tokens *can* delete passes it whatever else is on there.
+/// It is one of five guards, and the cheap one: it catches a token deliberately
+/// issued read-only or without delete rights, which is what the operator's
+/// production token is meant to be. The guards that actually keep this suite
+/// off a real board are the other four — the test-only name prefix AND the
+/// owner tag both required before anything is deleted, a throwaway project per
+/// case, a sub-prefix per test, and the before/after fingerprint of everything
+/// this run does not own.
 /// The canary is titled under the CALLING test's own `prefix`, so a canary
 /// leaked by a crash between its create and its delete is cleaned up by that
 /// test's next clean-slate teardown — by construction, not by a prefix

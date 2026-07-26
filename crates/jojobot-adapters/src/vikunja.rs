@@ -696,9 +696,14 @@ impl VikunjaStore {
         }
         .await;
         match parked {
+            // Deliberately does NOT promise list_mailboxes shows it: a card
+            // whose labelling is what failed carries nothing saying which box
+            // it is in, so it is quarantined without a box to be listed under.
+            // That case is said at error level with the card id where it
+            // happens; this clause must not talk over it.
             Ok(()) => format!(
-                "the card this {verb} created was parked in '{PARKED_COLUMN}' — quarantined and \
-                 surfaced by list_mailboxes; nothing is deleted"
+                "the card this {verb} created was parked in '{PARKED_COLUMN}', outside the funnel \
+                 — quarantined, delivered to nobody, counted as nothing; nothing is deleted"
             ),
             Err(e) => {
                 tracing::error!(

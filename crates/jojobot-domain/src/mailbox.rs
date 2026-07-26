@@ -519,8 +519,14 @@ pub trait Mailboxes: Send + Sync {
     /// Every mailbox jojobot manages, with per-state counts.
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError>;
 
-    /// Leave a message in a box. It lands in `new`. **The mailbox must already
+    /// Leave a message in a box, filed in `new`. **The mailbox must already
     /// exist** — an unknown name comes back [`Guarded::Blocked`], never a new box.
+    ///
+    /// The returned message carries **the state the store read back**, which is
+    /// not always `new`: a consumer taking delivery between the write and its
+    /// verification leaves the message in `read`, and that is this verb
+    /// succeeding — the message exists and someone has it — not a failure to
+    /// file it.
     async fn post_message(&self, message: NewMessage) -> Result<Guarded<Message>, MailboxError>;
 
     /// Deliver everything unprocessed in a box — messages in `new` and messages
