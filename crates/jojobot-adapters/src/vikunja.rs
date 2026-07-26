@@ -712,28 +712,13 @@ impl VikunjaStore {
         cards: &[(TaskRec, MessageState)],
         written: MessageState,
     ) -> Rollback {
-        let untouchable: std::collections::HashSet<u64> = match self.board_read(scope).await {
-            Ok(board) => board
-                .messages
-                .iter()
-                .filter(|(_, m)| m.state > written)
-                .map(|(task, _)| task.id)
-                .chain(board.quarantined.iter().map(|q| q.card))
-                .collect(),
+        let untouchable = match self.untouchable(scope, written).await {
+            Ok(untouchable) => untouchable,
             Err(blind) => {
                 return Rollback::Stranded(
                     cards
                         .iter()
-                        .map(|(card, _)| {
-                            (
-                                card.id,
-                                MailboxError::Store(format!(
-                                    "the board could not be re-read, so nothing was put back \
-                                     rather than risk restoring a card somebody else has since \
-                                     moved on or edited: {blind}"
-                                )),
-                            )
-                        })
+                        .map(|(card, _)| (card.id, MailboxError::Store(blind.clone())))
                         .collect(),
                 );
             }
@@ -748,6 +733,86 @@ impl VikunjaStore {
             }
         }
         Rollback::of(failures)
+    }
+
+    /// The cards a rollback must not touch, read off the board **as late as the
+    /// rollback runs**: one that advanced past the state this verb wrote, and
+    /// one that is now quarantined. See [`restore_all`](Self::restore_all) for
+    /// why each is left alone.
+    ///
+    /// `Err` is the blind case, and it is not a detail of one verb: with no
+    /// board there is no way to tell a card somebody moved on or edited from
+    /// one this verb owes a restore, so **nothing is put back**. It carries the
+    /// reason as text rather than an error, because every card a rollback was
+    /// holding is stranded with a copy of it and [`MailboxError`] is not `Clone`.
+    ///
+    /// One function because it is one rule. It was a private detail of the
+    /// batch rollback, which is precisely how the by-id take came to ship
+    /// without it: nothing about `restore` said the guard existed.
+    async fn untouchable(
+        &self,
+        scope: &Scope,
+        written: MessageState,
+    ) -> Result<std::collections::HashSet<u64>, String> {
+        match self.board_read(scope).await {
+            Ok(board) => Ok(board
+                .messages
+                .iter()
+                .filter(|(_, m)| m.state > written)
+                .map(|(task, _)| task.id)
+                .chain(board.quarantined.iter().map(|q| q.card))
+                .collect()),
+            Err(blind) => Err(format!(
+                "the board could not be re-read, so nothing was put back rather than risk \
+                 restoring a card somebody else has since moved on or edited: {blind}"
+            )),
+        }
+    }
+
+    /// Undo a column move, and **only** the column move — the rollback a verb
+    /// that wrote no description is entitled to.
+    ///
+    /// [`restore`](Self::restore) writes the description back as well, which is
+    /// right for `mark_processed`: it wrote that description seconds earlier, so
+    /// a card that no longer matches is most likely its own write coming back
+    /// mangled, and putting it back is the repair. It is wrong for a verb that
+    /// only moved a card. There, every difference a mismatch can show is
+    /// somebody else's work, and writing jojobot's stale snapshot over it
+    /// destroys the evidence of the very edit that failed the write.
+    ///
+    /// Guarded by [`untouchable`](Self::untouchable): a card that advanced past
+    /// what this verb wrote, one that is now quarantined, and any card at all
+    /// when the board cannot be re-read, are left exactly where they are.
+    async fn restore_move(
+        &self,
+        scope: &Scope,
+        card: &TaskRec,
+        to: MessageState,
+        written: MessageState,
+    ) -> Rollback {
+        let untouchable = match self.untouchable(scope, written).await {
+            Ok(untouchable) => untouchable,
+            Err(blind) => {
+                return Rollback::Stranded(vec![(card.id, MailboxError::Store(blind))]);
+            }
+        };
+        if untouchable.contains(&card.id) {
+            tracing::warn!(
+                card = card.id,
+                "the card this write moved has since been handled or edited by somebody else — \
+                 left exactly where it is rather than rolled back over their work"
+            );
+            return Rollback::Undone;
+        }
+        let column = match self.column(scope, to).await {
+            Ok(bucket) => {
+                self.api
+                    .move_task(scope.project(), scope.view, bucket, card.id)
+                    .await
+            }
+            Err(e) => Err(e),
+        };
+        Rollback::of(column.err().map(|e| vec![(card.id, e)]).unwrap_or_default())
     }
 
     /// Put a card back the way a failed write found it. A read-back mismatch
@@ -1303,16 +1368,9 @@ impl Mailboxes for VikunjaStore {
             .await
         {
             return Err(self
-                .restore(&scope, &card, message.state)
+                .restore_move(&scope, &card, message.state, MessageState::Read)
                 .await
-                .err()
-                .map_or_else(
-                    || MailboxError::Store(e.to_string()),
-                    |rollback| {
-                        Rollback::of(vec![(card.id, rollback)])
-                            .into_error("read_message", e.to_string())
-                    },
-                ));
+                .into_error("read_message", e.to_string()));
         }
 
         // Read-back, exactly as a box delivery does it: a message reported as
@@ -1343,15 +1401,17 @@ impl Mailboxes for VikunjaStore {
                     seen_before: true,
                 })
             }
-            outcome => {
-                let restored = Rollback::of(
-                    self.restore(&scope, &card, message.state)
-                        .await
-                        .err()
-                        .map(|e| vec![(card.id, e)])
-                        .unwrap_or_default(),
-                );
-                Err(restored.into_error(
+            // **The column move goes back, and nothing else.** This verb wrote
+            // no description, so every difference a mismatch can show belongs to
+            // somebody else — and `restore_move`'s guard leaves the card alone
+            // altogether when the board says it was handled, quarantined, or
+            // cannot be re-read at all. Using `mark_processed`'s rollback here
+            // walked a card a person had handled out of `processed` and back to
+            // `new`, where the next read served it as fresh mail.
+            outcome => Err(self
+                .restore_move(&scope, &card, message.state, MessageState::Read)
+                .await
+                .into_error(
                     "read_message",
                     match outcome {
                         Ok(seen) => format!(
@@ -1360,8 +1420,7 @@ impl Mailboxes for VikunjaStore {
                         ),
                         Err(e) => e.to_string(),
                     },
-                ))
-            }
+                )),
         }
     }
 
@@ -1606,6 +1665,12 @@ mod tests {
         /// can actually strand something.
         fn fail_from(&self, method: &'static str, nth: u64) {
             *self.fail_next.lock().unwrap() = Some((method, nth - 1, true));
+        }
+
+        /// The store comes back up — for asserting what a verb left behind on a
+        /// board that can be read again, rather than on one that still cannot.
+        fn clear_failures(&self) {
+            *self.fail_next.lock().unwrap() = None;
         }
 
         /// Fail here if this call is the armed one.
@@ -3452,6 +3517,267 @@ mod tests {
             fake.column_of(handled_card).as_deref(),
             Some("processed"),
             "…and it is left where the handler put it, not rolled back into the funnel"
+        );
+    }
+
+    // ── read_message's rollback ────────────────────────────────────────────
+    //
+    // Every case below is a hostility only a real board has: a person moving or
+    // editing a card inside the verb's window. The contract suite cannot reach
+    // any of them — the fake it runs against has no rollback, no quarantine and
+    // nobody working the board — so this verb's whole rollback lived untested
+    // behind a green bar.
+
+    /// A store, a box and one posted message, ready to be taken by id — with
+    /// the API double the hostilities are armed on.
+    async fn taking_one(fake: Arc<FakeVikunja>) -> (Arc<Interleaved>, VikunjaStore, Message, u64, u64)
+    {
+        let api = Interleaved::new(fake.clone());
+        let store = VikunjaStore::from_api(api.clone(), PROJECT);
+        contract::create(&store, "inbox").await;
+        let posted = contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+        let card: u64 = posted.id.as_str().parse().expect("a numeric card id");
+        (api, store, posted, project, card)
+    }
+
+    /// Garble a card's description the way a person editing it in the UI would
+    /// — the machine block does not survive, so the board can no longer read
+    /// the card as a message at all.
+    fn hand_garble(fake: &FakeVikunja, card: u64, text: &'static str) {
+        let mut tasks = fake.tasks.lock().unwrap();
+        let held = tasks.iter_mut().find(|t| t.id == card).expect("the card");
+        held.description = text.into();
+        held.raw["description"] = text.into();
+    }
+
+    /// Rewrite a card's body while leaving it a perfectly readable message —
+    /// the edit that fails a verification on content rather than on parsing, so
+    /// the card is neither quarantined nor unreadable when the rollback looks.
+    fn rewrite_body(fake: &FakeVikunja, card: u64, body: &str) {
+        let rewritten = render_description(
+            body,
+            &Envelope {
+                sender: "alpha".into(),
+                sent_at: at(1_780_000_000),
+                subject: None,
+                notes: None,
+            },
+        );
+        let mut tasks = fake.tasks.lock().unwrap();
+        let held = tasks.iter_mut().find(|t| t.id == card).expect("the card");
+        held.description = rewritten.clone();
+        held.raw["description"] = rewritten.into();
+    }
+
+    /// **THE BLOCKER: taking one message must never resurrect one somebody
+    /// handled.** A person drags the card to `processed` inside the window and
+    /// the verification read then fails, so this verb rolls back — and its
+    /// rollback used `mark_processed`'s, which restores unconditionally. That
+    /// walked a handled message out of `processed`, the one terminal state,
+    /// back to `new`, where the next read hands it over as fresh mail with
+    /// `seen_before: false`: the double-processing this whole context exists to
+    /// prevent, reintroduced through the degraded path.
+    ///
+    /// The rollback's own board read is blind here too, which is the second
+    /// half of the same rule: with no board to check against, there is no way
+    /// to tell a card somebody moved on from one this verb owes a restore, so
+    /// NOTHING is put back.
+    #[tokio::test]
+    async fn taking_one_never_resurrects_a_message_somebody_handled() {
+        let fake = FakeVikunja::new();
+        let (api, store, posted, project, card) = taking_one(fake.clone()).await;
+
+        // Right before the verification read (board_read #2 — each one reads
+        // two pages, so its first call is the third): the operator handles the
+        // message on the board. …and every board read from there on fails, so
+        // the rollback cannot see what happened.
+        api.before_board(3, move |fake| {
+            let processed = fake.bucket_titled(project, "processed");
+            fake.placement.lock().unwrap().insert(card, processed);
+        });
+        fake.fail_from("board", 3);
+
+        let err = store
+            .read_message(&posted.id)
+            .await
+            .expect_err("a take that could not verify must not report success");
+
+        assert_eq!(
+            fake.column_of(card).as_deref(),
+            Some("processed"),
+            "a message somebody handled must stay handled — nothing walks a card out of \
+             processed, least of all a rollback flying blind"
+        );
+        assert!(
+            matches!(err, MailboxError::Stranded { .. }),
+            "a rollback that put nothing back says so, by type: {err:?}"
+        );
+
+        // The proof it was not merely left in a state that looks right: with the
+        // board readable again, it is not owed to anybody.
+        fake.clear_failures();
+        assert!(
+            contract::read(&store, "inbox").await.messages.is_empty(),
+            "a handled message must not come back as fresh mail"
+        );
+    }
+
+    /// **The same blocker with the board readable.** The case above is blind,
+    /// so it is the "put nothing back" arm that saves the card; this one has a
+    /// board to check against and pins the exclusion itself. A person handles
+    /// the card AND rewrites it inside the window — still a readable message,
+    /// so verification fails on content rather than on parsing, and the
+    /// rollback is reached with a card sitting in `processed`.
+    ///
+    /// It stays there. Both halves matter: without the blind arm the degraded
+    /// path resurrects it, and without this exclusion the ordinary path does.
+    #[tokio::test]
+    async fn taking_one_leaves_a_card_that_advanced_where_the_handler_put_it() {
+        let fake = FakeVikunja::new();
+        let (api, store, posted, project, card) = taking_one(fake.clone()).await;
+
+        api.before_board(3, move |fake| {
+            let processed = fake.bucket_titled(project, "processed");
+            fake.placement.lock().unwrap().insert(card, processed);
+            rewrite_body(fake, card, "a different message entirely");
+        });
+
+        let err = store
+            .read_message(&posted.id)
+            .await
+            .expect_err("a take that could not verify must not report success");
+        assert!(
+            !matches!(err, MailboxError::Stranded { .. }),
+            "nothing is stranded — the card was deliberately left, not failed to move: {err:?}"
+        );
+        assert_eq!(
+            fake.column_of(card).as_deref(),
+            Some("processed"),
+            "the handler's outcome stands; a rollback has no claim on a terminal card"
+        );
+        assert!(
+            contract::read(&store, "inbox").await.messages.is_empty(),
+            "…and it is owed to nobody"
+        );
+    }
+
+    /// **A take never writes a description, so its rollback never writes one
+    /// back.** `mark_processed` repairs a card it can no longer read because it
+    /// wrote that description seconds earlier — a mismatch there is most likely
+    /// its own write coming back mangled. This verb writes nothing but a column
+    /// move, so every difference a mismatch can show is somebody else's work,
+    /// and putting jojobot's stale snapshot over it destroys the evidence of
+    /// the very edit that failed the write.
+    ///
+    /// The card is quarantined by that edit, too, and a rollback has no
+    /// business reaching into quarantine: restoring would put an unreadable
+    /// card back in the funnel for the next delivery to trip on.
+    #[tokio::test]
+    async fn taking_one_never_writes_over_the_hand_edit_that_failed_it() {
+        let fake = FakeVikunja::new();
+        let (api, store, posted, project, card) = taking_one(fake.clone()).await;
+
+        // Right before the verification read: the operator edits the card, and
+        // the machine block does not survive it.
+        api.before_board(3, move |fake| hand_garble(fake, card, "hand-garbled mid-take"));
+
+        let err = store
+            .read_message(&posted.id)
+            .await
+            .expect_err("a take that could not verify must not report success");
+        assert!(!matches!(err, MailboxError::UnknownMessage { .. }), "got {err:?}");
+
+        let stored = fake
+            .tasks_in(project)
+            .into_iter()
+            .find(|t| t.id == card)
+            .expect("the card is still there");
+        assert_eq!(
+            stored.description, "hand-garbled mid-take",
+            "the person's edit is the evidence of what broke this write — a rollback that \
+             overwrites it destroys exactly that"
+        );
+        assert_eq!(
+            fake.column_of(card).as_deref(),
+            Some("read"),
+            "…and the card is left exactly where it is: a rollback does not reach into \
+             quarantine, not even to move the column"
+        );
+    }
+
+    /// The move-failure arm, under the same hostility. It is a separate arm in
+    /// the code and was separately wrong: a failed move and a card a person
+    /// edited in the meantime got the same unconditional restore.
+    #[tokio::test]
+    async fn a_failed_take_move_leaves_a_hand_edited_card_alone() {
+        let fake = FakeVikunja::new();
+        let (api, store, posted, project, card) = taking_one(fake.clone()).await;
+
+        // The move itself never lands, and by the time the rollback looks at
+        // the board the operator has edited the card.
+        fake.fail_all("move_task");
+        api.before_board(3, move |fake| hand_garble(fake, card, "hand-garbled mid-take"));
+
+        let err = store
+            .read_message(&posted.id)
+            .await
+            .expect_err("a take whose move failed must not report success");
+        assert!(!matches!(err, MailboxError::UnknownMessage { .. }), "got {err:?}");
+
+        let stored = fake
+            .tasks_in(project)
+            .into_iter()
+            .find(|t| t.id == card)
+            .expect("the card is still there");
+        assert_eq!(
+            stored.description, "hand-garbled mid-take",
+            "a rollback for a move that never happened must not rewrite the card"
+        );
+    }
+
+    /// **…and the guard is not "never put anything back".** When the board says
+    /// the card is still jojobot's own, uncontested, sitting where this verb
+    /// left it, a failed take DOES undo its column move — otherwise the caller
+    /// is told the take failed while the message sits in `read`, owed to
+    /// nobody and invisible to the next delivery as fresh mail.
+    ///
+    /// The undo is a column move and nothing else: the body somebody rewrote
+    /// stays rewritten, because this verb never wrote a body.
+    #[tokio::test]
+    async fn a_failed_take_does_put_back_a_card_nobody_else_touched() {
+        let fake = FakeVikunja::new();
+        let (api, store, posted, project, card) = taking_one(fake.clone()).await;
+
+        // Rewritten mid-take, but still a perfectly readable message — so the
+        // verification fails on content, the card is neither quarantined nor
+        // advanced, and this rollback is this verb's to make.
+        api.before_board(3, move |fake| {
+            rewrite_body(fake, card, "a different message entirely")
+        });
+
+        let err = store
+            .read_message(&posted.id)
+            .await
+            .expect_err("a take that could not verify must not report success");
+        assert!(
+            !matches!(err, MailboxError::Stranded { .. }),
+            "this card was put back, so nothing is stranded: {err:?}"
+        );
+        assert_eq!(
+            fake.column_of(card).as_deref(),
+            Some("new"),
+            "the column move this verb made is undone — a message the caller was told was not \
+             delivered must be owed to somebody again"
+        );
+        let stored = fake
+            .tasks_in(project)
+            .into_iter()
+            .find(|t| t.id == card)
+            .expect("the card is still there");
+        assert!(
+            stored.description.contains("a different message entirely"),
+            "…by a column move alone: this verb wrote no description, so it puts none back"
         );
     }
 
