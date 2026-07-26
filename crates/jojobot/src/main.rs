@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
-use jojobot_adapters::search::IndexedMemory;
+use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory};
 use jojobot_adapters::vikunja::{Secret as VikunjaSecret, VikunjaConfig, VikunjaStore};
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::Memory;
@@ -100,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
     // Same convention-over-configuration deal as Memory: credentials only, and
     // the project, its columns and every mailbox label are discovered or
     // provisioned at runtime.
-    let mailboxes: Arc<dyn Mailboxes> = match vikunja_from_env() {
+    let mailbox_store: Arc<dyn Mailboxes> = match vikunja_from_env() {
         Some(cfg) => {
             tracing::info!(base_url = %cfg.base_url, "mailboxes: Vikunja store wired");
             Arc::new(VikunjaStore::new(http.clone(), cfg))
@@ -113,6 +113,26 @@ async fn main() -> anyhow::Result<()> {
             Arc::new(VikunjaStore::unconfigured())
         }
     };
+
+    // Mail goes into the SAME index — one front door, one ranked list — so the
+    // mailbox store gets the same decorator treatment Memory's does: every verb
+    // that changes a message re-indexes it, and boot loads the board once.
+    //
+    // A failed board read is not fatal, exactly as a failed doc scan is not: the
+    // store is the truth, `search` says `mail: {searched: false}` in every answer
+    // until a restart fixes it, and the memory half is untouched. Refusing to
+    // start over a projection is worse than a thin one that admits what it is.
+    let mailboxes = Arc::new(IndexedMailboxes::new(mailbox_store, indexed.index()));
+    match mailboxes.rebuild().await {
+        Ok(messages) => tracing::info!(messages, "search: mail indexed from a full board read"),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "MAIL NOT SEARCHABLE — the boot board read failed, so `search` sees no messages at \
+             all and says so in every answer. The mailbox verbs are unaffected; restart once \
+             Vikunja is reachable."
+        ),
+    }
+    let mailboxes: Arc<dyn Mailboxes> = mailboxes;
 
     let metadata_url = format!(
         "{}/.well-known/oauth-protected-resource",

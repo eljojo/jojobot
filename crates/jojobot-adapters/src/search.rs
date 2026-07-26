@@ -26,6 +26,7 @@ use tantivy::query::{AllQuery, BooleanQuery, Occur, Query, TermQuery};
 use tantivy::schema::{Field, IndexRecordOption, STORED, STRING, Schema, TEXT, Value};
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term, doc};
 
+use jojobot_domain::mailbox::{MailboxError, Mailboxes, Message};
 use jojobot_domain::memory::{
     Edge, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, Memory,
     MemoryError, NewEntity, NewFact,
@@ -58,12 +59,14 @@ enum Payload {
         entity: Option<EntityId>,
         body: String,
     },
+    Message { message: Message },
 }
 
 /// The hit-class token, indexed so a query can ask for one class of thing.
 const CLASS_ENTITY: &str = "entity";
 const CLASS_FACT: &str = "fact";
 const CLASS_PROSE: &str = "prose";
+const CLASS_MESSAGE: &str = "message";
 
 /// The index's fields. One schema for all three hit classes — a mixed ranked list
 /// is the requirement, and one schema is what makes it one query.
@@ -74,6 +77,11 @@ struct Fields {
     text: Field,
     /// The store's doc id — the unit of incremental re-indexing.
     doc_id: Field,
+    /// A message's id — the mail half's unit of incremental re-indexing. Its own
+    /// field rather than `doc_id`: the two ids come from two different stores
+    /// and share no namespace, so one field would make an Outline page id and a
+    /// card id capable of evicting each other.
+    message_id: Field,
     /// The entity kind this document is filed under.
     kind: Field,
     /// A fact's subject handle.
@@ -96,6 +104,7 @@ impl Fields {
             class: b.add_text_field("class", STRING),
             text: b.add_text_field("text", TEXT),
             doc_id: b.add_text_field("doc_id", STRING),
+            message_id: b.add_text_field("message_id", STRING),
             kind: b.add_text_field("kind", STRING),
             subject: b.add_text_field("subject", STRING),
             status: b.add_text_field("status", STRING),
@@ -154,6 +163,12 @@ pub struct FullTextIndex {
     /// because the guard takes entities, not postings, and reusing it is what
     /// keeps one definition of "the same thing" in the system.
     docs: RwLock<Vec<DocMirror>>,
+    /// Whether the mail half was ever loaded from a board read.
+    ///
+    /// **Not "are there messages in it".** An empty board that was read and a
+    /// mailbox world that never answered look identical in the postings and are
+    /// opposite answers to the caller — see [`Search::mail_indexed`].
+    mail_loaded: std::sync::atomic::AtomicBool,
 }
 
 impl FullTextIndex {
@@ -169,7 +184,70 @@ impl FullTextIndex {
             fields,
             writer: RwLock::new(writer),
             docs: RwLock::new(Vec::new()),
+            mail_loaded: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// Replace the whole **mail** half of the index from a board read — the
+    /// boot path for messages, and the mirror of [`ingest_all`](Self::ingest_all)
+    /// for the other half.
+    ///
+    /// The two halves are replaced independently on purpose: they come from two
+    /// stores, either one can be down while the other is fine, and a rebuild of
+    /// one must never evict the other's hits.
+    pub fn ingest_mail(&self, messages: &[Message]) -> Result<(), MemoryError> {
+        let mut writer = self.writer.write().expect("index writer poisoned");
+        writer.delete_term(Term::from_field_text(self.fields.class, CLASS_MESSAGE));
+        for message in messages {
+            self.write_message(&writer, message)?;
+        }
+        writer.commit().map_err(store_err)?;
+        drop(writer);
+
+        self.mail_loaded
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.reader.reload().map_err(store_err)?;
+        Ok(())
+    }
+
+    /// Re-index one message, replacing whatever was indexed under its id. What
+    /// makes a posted message findable on the next call rather than after a
+    /// restart — and what keeps a hit's `state` honest, since every verb that
+    /// moves a message re-indexes it.
+    pub fn ingest_message(&self, message: &Message) -> Result<(), MemoryError> {
+        let mut writer = self.writer.write().expect("index writer poisoned");
+        writer.delete_term(Term::from_field_text(
+            self.fields.message_id,
+            message.id.as_str(),
+        ));
+        self.write_message(&writer, message)?;
+        writer.commit().map_err(store_err)?;
+        drop(writer);
+        self.reader.reload().map_err(store_err)?;
+        Ok(())
+    }
+
+    /// One message as the index holds it. **Everything on the envelope is
+    /// searchable**, not only the body: the box and the sender are how a reader
+    /// asks "what did the pm box say about the kiln" in one query, and a subject
+    /// is a title precisely so it can be found by.
+    fn write_message(&self, writer: &IndexWriter, message: &Message) -> Result<(), MemoryError> {
+        let f = &self.fields;
+        writer
+            .add_document(doc!(
+                f.class => CLASS_MESSAGE,
+                f.text => format!(
+                    "{} {} {} {}",
+                    message.subject.clone().unwrap_or_default(),
+                    message.body,
+                    message.sender,
+                    message.mailbox,
+                ),
+                f.message_id => message.id.as_str(),
+                f.payload => payload_json(&Payload::Message { message: message.clone() })?,
+            ))
+            .map_err(store_err)?;
+        Ok(())
     }
 
     /// Replace the whole index from a full scan — the boot path. A full re-scan
@@ -423,14 +501,21 @@ impl FullTextIndex {
         clauses
     }
 
-    /// The clauses that select **entities and prose**. Run as a second query
-    /// rather than folded into the first: a fact-only filter (a status, an edge)
-    /// would otherwise exclude every non-fact hit as a side effect of the
+    /// The clauses that select **entities, prose and messages**. Run as a second
+    /// query rather than folded into the first: a fact-only filter (a status, an
+    /// edge) would otherwise exclude every non-fact hit as a side effect of the
     /// `MUST` it adds, which is not the same thing as the caller asking for facts.
     fn other_clauses(&self, query: &SearchQuery) -> Vec<(Occur, Box<dyn Query>)> {
         let f = &self.fields;
         let mut clauses = self.text_clauses(query);
-        let classes: Vec<(Occur, Box<dyn Query>)> = [CLASS_ENTITY, CLASS_PROSE]
+        // Mail is in unless the caller took it out. A `kind` filter takes it out
+        // too, one clause down: a message has no entity kind, so asking for one
+        // excludes it exactly as it excludes prose in nobody's doc.
+        let mut classes = vec![CLASS_ENTITY, CLASS_PROSE];
+        if query.include_mail {
+            classes.push(CLASS_MESSAGE);
+        }
+        let classes: Vec<(Occur, Box<dyn Query>)> = classes
             .into_iter()
             .map(|class| {
                 let q: Box<dyn Query> = Box::new(TermQuery::new(
@@ -552,6 +637,10 @@ fn edges_of(mirror: &[DocMirror], id: &EntityId) -> Vec<Edge> {
 }
 
 impl Search for FullTextIndex {
+    fn mail_indexed(&self) -> bool {
+        self.mail_loaded.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
         query.validate()?;
         let depth = candidate_depth(query.limit);
@@ -643,6 +732,13 @@ impl Payload {
                     snippet: snippet(&body, terms),
                 }
             }
+            // Nothing to resolve: a message's surroundings are its own envelope,
+            // which it already carries. Mail draws no edges and names no
+            // entities — the contexts stay apart everywhere but in this list.
+            Payload::Message { message } => Hit::Message {
+                snippet: snippet(&message.body, terms),
+                message,
+            },
         }
     }
 }
@@ -654,6 +750,7 @@ fn tiebreak(hit: &Hit) -> String {
         Hit::Entity { entity, .. } => entity.id.to_string(),
         Hit::Fact { fact, .. } => fact.address().to_string(),
         Hit::Prose { doc_id, .. } => doc_id.clone(),
+        Hit::Message { message, .. } => format!("{}/{}", message.mailbox, message.id),
     }
 }
 
@@ -897,11 +994,124 @@ impl Search for IndexedMemory {
     fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
         self.index.search(query)
     }
+
+    fn mail_indexed(&self) -> bool {
+        self.index.mail_indexed()
+    }
+}
+
+/// A [`Mailboxes`] with the search projection behind it — the mail half's
+/// [`IndexedMemory`], and it exists for the same reason.
+///
+/// Every verb delegates to the store, and every one that **changes** a message
+/// re-indexes it: posting makes it findable on the next call rather than after a
+/// restart, and a delivery or a retirement keeps the `state` on a search hit
+/// honest. A hit that says `new` for a message somebody drained an hour ago is
+/// worse than no hit, because a reader acts on it.
+pub struct IndexedMailboxes {
+    inner: Arc<dyn Mailboxes>,
+    index: Arc<FullTextIndex>,
+}
+
+impl IndexedMailboxes {
+    /// Wrap a store, writing into the index the Memory half already uses. **One
+    /// index, not two** — that is what makes one ranked list possible at all.
+    pub fn new(inner: Arc<dyn Mailboxes>, index: Arc<FullTextIndex>) -> Self {
+        IndexedMailboxes { inner, index }
+    }
+
+    /// Load the mail half from a full board read — the boot path. Returns how
+    /// many messages were indexed.
+    pub async fn rebuild(&self) -> Result<usize, MailboxError> {
+        let messages = self.inner.scan_messages().await?;
+        self.index.ingest_mail(&messages).map_err(indexing)?;
+        Ok(messages.len())
+    }
+
+    fn reindex(&self, message: &Message) -> Result<(), MailboxError> {
+        self.index.ingest_message(message).map_err(indexing)
+    }
+}
+
+/// An index failure, in the mailbox context's vocabulary. The seam between the
+/// two contexts is exactly here and nowhere else.
+fn indexing(e: MemoryError) -> MailboxError {
+    MailboxError::Store(format!("search index: {e}"))
+}
+
+#[async_trait]
+impl Mailboxes for IndexedMailboxes {
+    async fn create_mailbox(
+        &self,
+        name: &jojobot_domain::mailbox::MailboxName,
+        create_new: bool,
+    ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError>
+    {
+        // A box holds no text of its own — nothing to index until a message
+        // lands in it.
+        self.inner.create_mailbox(name, create_new).await
+    }
+
+    async fn list_mailboxes(
+        &self,
+    ) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+        self.inner.list_mailboxes().await
+    }
+
+    async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+        self.inner.scan_messages().await
+    }
+
+    async fn post_message(
+        &self,
+        message: jojobot_domain::mailbox::NewMessage,
+    ) -> Result<jojobot_domain::mailbox::Guarded<Message>, MailboxError> {
+        let written = self.inner.post_message(message).await?;
+        if let jojobot_domain::mailbox::Guarded::Written(message) = &written {
+            self.reindex(message)?;
+        }
+        Ok(written)
+    }
+
+    async fn read_mailbox(
+        &self,
+        name: &jojobot_domain::mailbox::MailboxName,
+    ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
+    {
+        let delivered = self.inner.read_mailbox(name).await?;
+        if let jojobot_domain::mailbox::Guarded::Written(delivery) = &delivered {
+            for message in &delivery.messages {
+                self.reindex(&message.message)?;
+            }
+        }
+        Ok(delivered)
+    }
+
+    async fn read_message(
+        &self,
+        id: &jojobot_domain::mailbox::MessageId,
+    ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
+        let delivered = self.inner.read_message(id).await?;
+        self.reindex(&delivered.message)?;
+        Ok(delivered)
+    }
+
+    async fn mark_processed(
+        &self,
+        id: &jojobot_domain::mailbox::MessageId,
+        notes: Option<&str>,
+    ) -> Result<Message, MailboxError> {
+        let processed = self.inner.mark_processed(id, notes).await?;
+        self.reindex(&processed)?;
+        Ok(processed)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use jiff::civil::date;
+    use jojobot_domain::mailbox::testing::{InMemoryMailboxes, contract as mail_contract};
+    use jojobot_domain::mailbox::{MailboxName, Message, MessageId, MessageState};
     use jojobot_domain::memory::search::{DEFAULT_LIMIT, EdgeFilter, EntityRef};
     use jojobot_domain::memory::testing::{InMemoryMemory, contract};
     use jojobot_domain::memory::{
@@ -1893,6 +2103,344 @@ mod tests {
         assert_eq!(
             store.search(&SearchQuery::text("ferry")).expect("search ok").len(),
             1
+        );
+    }
+
+    // --- mail in the one list -------------------------------------------------
+
+    fn message(id: &str, mailbox: &str, sender: &str, subject: Option<&str>, body: &str, state: MessageState) -> Message {
+        Message {
+            id: MessageId(id.into()),
+            mailbox: MailboxName(mailbox.into()),
+            body: body.into(),
+            subject: subject.map(str::to_string),
+            sender: sender.into(),
+            sent_at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
+            state,
+            notes: None,
+        }
+    }
+
+    /// **The write-only rail, opened.** A finding filed in a message comes back
+    /// in the same ranked list as the fact, entity and prose hits — which is the
+    /// whole slice: a later session finds context it did not know to look for.
+    /// And it arrives unmistakably as mail: its box, its state, its sender, and
+    /// the id `read_message` takes.
+    #[tokio::test]
+    async fn a_message_comes_back_in_the_same_ranked_list() {
+        let index = index_of(vec![scan(
+            "doc-1",
+            Some(entity("person:alpha", "Alpha")),
+            "",
+            vec![fact("person:alpha", "f1", "runs the kiln on Tuesdays", date(2026, 1, 1))],
+        )]);
+        index
+            .ingest_mail(&[message(
+                "42",
+                "pm",
+                "dev (implementer)",
+                Some("the kiln slice"),
+                "The kiln rebuild landed; the damper is still hand-cut.",
+                MessageState::Read,
+            )])
+            .expect("ingest mail");
+
+        let hits = index.search(&SearchQuery::text("damper")).expect("search ok");
+        let Some(Hit::Message { message, snippet }) =
+            hits.iter().find(|h| matches!(h, Hit::Message { .. }))
+        else {
+            panic!("the message must be a hit: {hits:?}")
+        };
+        assert_eq!(message.id.as_str(), "42", "…carrying the id read_message takes");
+        assert_eq!(message.mailbox.as_str(), "pm", "…and which box it is in");
+        assert_eq!(message.state, MessageState::Read, "…and what state it is in");
+        assert_eq!(message.sender, "dev (implementer)");
+        assert_eq!(message.subject.as_deref(), Some("the kiln slice"));
+        assert!(snippet.to_lowercase().contains("damper"), "got {snippet:?}");
+
+        // One list: the same query reaches mail and memory together.
+        let mixed = index.search(&SearchQuery::text("kiln")).expect("search ok");
+        assert!(mixed.iter().any(|h| matches!(h, Hit::Fact { .. })), "{mixed:?}");
+        assert!(mixed.iter().any(|h| matches!(h, Hit::Message { .. })), "{mixed:?}");
+    }
+
+    /// **Every state is searchable, `processed` included** — an archive is
+    /// exactly where an old report lives, and the state is on the hit, so a
+    /// caller can tell live work from history without a second call.
+    #[tokio::test]
+    async fn mail_is_searchable_in_every_state_and_the_hit_says_which() {
+        let index = index_of(Vec::new());
+        index
+            .ingest_mail(&[
+                message("1", "pm", "dev", None, "the crates are stacked", MessageState::New),
+                message("2", "pm", "dev", None, "the crates were counted", MessageState::Read),
+                message("3", "pm", "dev", None, "the crates went out", MessageState::Processed),
+            ])
+            .expect("ingest mail");
+
+        let hits = index.search(&SearchQuery::text("crates")).expect("search ok");
+        let mut states: Vec<&str> = hits
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Message { message, .. } => Some(message.state.as_token()),
+                _ => None,
+            })
+            .collect();
+        states.sort_unstable();
+        assert_eq!(
+            states,
+            vec!["new", "processed", "read"],
+            "an archived message is still findable: {hits:?}"
+        );
+    }
+
+    /// Mail is in by default and out when the caller says so — a parameter, not
+    /// a mode. Excluding it must not touch the memory half of the answer.
+    #[tokio::test]
+    async fn include_mail_is_a_filter_the_caller_holds() {
+        let index = index_of(vec![scan(
+            "doc-1",
+            Some(entity("person:alpha", "Alpha")),
+            "",
+            vec![fact("person:alpha", "f1", "the shipment is late", date(2026, 1, 1))],
+        )]);
+        index
+            .ingest_mail(&[message(
+                "7",
+                "pm",
+                "dev",
+                None,
+                "the shipment is late again",
+                MessageState::New,
+            )])
+            .expect("ingest mail");
+
+        let by_default = index.search(&SearchQuery::text("shipment")).expect("search ok");
+        assert!(
+            by_default.iter().any(|h| matches!(h, Hit::Message { .. })),
+            "mail is in by default — excluded-by-default rebuilds the blindness: {by_default:?}"
+        );
+
+        let excluded = index
+            .search(&SearchQuery { include_mail: false, ..SearchQuery::text("shipment") })
+            .expect("search ok");
+        assert!(
+            !excluded.iter().any(|h| matches!(h, Hit::Message { .. })),
+            "the caller asked for no mail: {excluded:?}"
+        );
+        assert!(
+            excluded.iter().any(|h| matches!(h, Hit::Fact { .. })),
+            "…and the memory half is untouched by that: {excluded:?}"
+        );
+    }
+
+    /// A fact-only filter still returns facts alone, and a kind filter is a
+    /// question about entities — a message has neither a lifecycle nor a kind,
+    /// so it is out of both answers exactly as nobody's prose is.
+    #[tokio::test]
+    async fn a_structural_filter_leaves_mail_out_the_way_it_leaves_prose_out() {
+        let index = index_of(vec![scan(
+            "doc-1",
+            Some(entity("person:alpha", "Alpha")),
+            "Alpha wrote about the shipment.",
+            vec![fact("person:alpha", "f1", "the shipment is late", date(2026, 1, 1))],
+        )]);
+        index
+            .ingest_mail(&[message("7", "pm", "dev", None, "the shipment is late", MessageState::New)])
+            .expect("ingest mail");
+
+        let fact_scoped = index
+            .search(&SearchQuery {
+                provenance: Some(Provenance::Inference),
+                ..SearchQuery::text("shipment")
+            })
+            .expect("search ok");
+        assert!(!fact_scoped.is_empty());
+        assert!(
+            fact_scoped.iter().all(|h| matches!(h, Hit::Fact { .. })),
+            "a fact-only filter must not surface mail either: {fact_scoped:?}"
+        );
+
+        let by_kind = index
+            .search(&SearchQuery { kind: Some(EntityKind::Person), ..SearchQuery::text("shipment") })
+            .expect("search ok");
+        assert!(
+            !by_kind.iter().any(|h| matches!(h, Hit::Message { .. })),
+            "a message has no entity kind, so asking for one excludes it: {by_kind:?}"
+        );
+    }
+
+    /// **The projection is a projection here too.** A re-ingest replaces the
+    /// mail half wholesale — a message that has since been processed must not
+    /// come back beside its own older copy — and it leaves memory alone.
+    #[tokio::test]
+    async fn re_ingesting_mail_replaces_it_and_leaves_memory_alone() {
+        let index = index_of(vec![scan(
+            "doc-1",
+            Some(entity("person:alpha", "Alpha")),
+            "",
+            vec![fact("person:alpha", "f1", "keeps a ferret", date(2026, 1, 1))],
+        )]);
+        index
+            .ingest_mail(&[message("1", "pm", "dev", None, "the shipment landed", MessageState::New)])
+            .expect("ingest mail");
+        index
+            .ingest_mail(&[message(
+                "1",
+                "pm",
+                "dev",
+                None,
+                "the shipment landed",
+                MessageState::Processed,
+            )])
+            .expect("re-ingest mail");
+
+        let hits = index.search(&SearchQuery::text("shipment")).expect("search ok");
+        let states: Vec<&str> = hits
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Message { message, .. } => Some(message.state.as_token()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(states, vec!["processed"], "one copy, saying the new thing: {hits:?}");
+        assert_eq!(
+            index.search(&SearchQuery::text("ferret")).expect("search ok").len(),
+            1,
+            "rebuilding the mail half must not evict memory"
+        );
+    }
+
+    /// One message, re-indexed in place — the read-back that makes a posted
+    /// message findable on the next call rather than after a restart.
+    #[tokio::test]
+    async fn one_message_is_re_indexed_in_place() {
+        let index = index_of(Vec::new());
+        index
+            .ingest_mail(&[message("1", "pm", "dev", None, "the shipment landed", MessageState::New)])
+            .expect("ingest mail");
+        index
+            .ingest_message(&message(
+                "1",
+                "pm",
+                "dev",
+                None,
+                "the shipment landed",
+                MessageState::Processed,
+            ))
+            .expect("ingest one");
+
+        let hits = index.search(&SearchQuery::text("shipment")).expect("search ok");
+        assert_eq!(hits.len(), 1, "one copy, not two: {hits:?}");
+        assert!(
+            matches!(hits.first(), Some(Hit::Message { message, .. }) if message.state == MessageState::Processed)
+        );
+    }
+
+    /// **A mailbox world that never loaded says so.** An index with no mail in
+    /// it answers memory questions exactly as before — degrade, don't error —
+    /// but it must not let "no message says that" stand in for "jojobot has
+    /// read no messages", which is a different claim and the one a caller would
+    /// act on wrongly.
+    #[tokio::test]
+    async fn an_index_with_no_mail_says_mail_is_not_searchable() {
+        let index = index_of(vec![scan(
+            "doc-1",
+            Some(entity("person:alpha", "Alpha")),
+            "",
+            vec![fact("person:alpha", "f1", "keeps a ferret", date(2026, 1, 1))],
+        )]);
+        assert!(!index.mail_indexed(), "nothing has loaded mail");
+        assert_eq!(
+            index.search(&SearchQuery::text("ferret")).expect("search ok").len(),
+            1,
+            "the memory half still answers"
+        );
+
+        index.ingest_mail(&[]).expect("an empty board is still a board");
+        assert!(
+            index.mail_indexed(),
+            "a board that was read and holds nothing is not the same as a board nobody read"
+        );
+    }
+
+    /// **Read-back covers mail too.** A message posted a moment ago is findable
+    /// on the next call, without a restart — writing a message search cannot
+    /// find is the same class of failure as writing a fact `recall` cannot
+    /// return. And the state on the hit follows the message: once it is
+    /// processed, the hit says so, because a reader acts on that word.
+    #[tokio::test]
+    async fn a_posted_message_is_findable_at_once_and_its_state_follows_it() {
+        let index = Arc::new(FullTextIndex::open().expect("index opens"));
+        let store = IndexedMailboxes::new(Arc::new(InMemoryMailboxes::new()), index.clone());
+        mail_contract::create(&store, "pm").await;
+
+        let posted = mail_contract::post(&store, "pm", "dev", "the damper is still hand-cut", 0).await;
+        let state_of = |index: &FullTextIndex| -> Option<MessageState> {
+            index
+                .search(&SearchQuery::text("damper"))
+                .expect("search ok")
+                .iter()
+                .find_map(|h| match h {
+                    Hit::Message { message, .. } => Some(message.state),
+                    _ => None,
+                })
+        };
+        assert_eq!(
+            state_of(&index),
+            Some(MessageState::New),
+            "a posted message is findable before anything rebuilds"
+        );
+
+        store
+            .mark_processed(&posted.id, Some("filed"))
+            .await
+            .expect("mark_processed ok");
+        assert_eq!(
+            state_of(&index),
+            Some(MessageState::Processed),
+            "the hit's state follows the message, or a reader acts on a stale word"
+        );
+    }
+
+    /// A rebuild loads the board that was already there — the boot path — and a
+    /// blocked post leaves nothing behind, exactly as a blocked capture does.
+    #[tokio::test]
+    async fn a_rebuild_loads_the_board_and_a_blocked_post_indexes_nothing() {
+        let inner = Arc::new(InMemoryMailboxes::new());
+        mail_contract::create(inner.as_ref(), "pm").await;
+        mail_contract::post(inner.as_ref(), "pm", "dev", "written before the server started", 0)
+            .await;
+
+        let index = Arc::new(FullTextIndex::open().expect("index opens"));
+        let store = IndexedMailboxes::new(inner, index.clone());
+        assert!(
+            index.search(&SearchQuery::text("started")).expect("search ok").is_empty(),
+            "nothing is indexed until the board is read"
+        );
+        assert_eq!(store.rebuild().await.expect("rebuild"), 1);
+        assert_eq!(
+            index.search(&SearchQuery::text("started")).expect("search ok").len(),
+            1
+        );
+
+        let blocked = store
+            .post_message(jojobot_domain::mailbox::NewMessage {
+                mailbox: MailboxName("pmm".into()),
+                body: "should not be indexed".into(),
+                subject: None,
+                sender: "dev".into(),
+                sent_at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
+            })
+            .await
+            .expect("a blocked post is a result, not a failure");
+        assert!(matches!(blocked, jojobot_domain::mailbox::Guarded::Blocked { .. }));
+        assert!(
+            index
+                .search(&SearchQuery::text("should not be indexed"))
+                .expect("search ok")
+                .is_empty(),
+            "a blocked post must leave nothing in the index either"
         );
     }
 

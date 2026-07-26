@@ -2,9 +2,17 @@
 //!
 //! Ask-across ("which friends are in Shelbyville?", "what's connected to Duff Fest?") is
 //! the retrieval jojobot exists to serve, and it is served by **one ranked list**
-//! over three things at once: entities, facts, and the **prose** a human wrote.
-//! Mixing them is the point — a detail demoted into a paragraph must be findable
-//! without anyone having remembered to file it as a fact.
+//! over four things at once: entities, facts, the **prose** a human wrote, and
+//! the **messages** left in mailboxes. Mixing them is the point — a detail
+//! demoted into a paragraph, or filed in a report to another session, must be
+//! findable without anyone having remembered to file it as a fact.
+//!
+//! **This is the one place the two bounded contexts meet, and it meets them as a
+//! reader.** Memory and Mailboxes share no type anywhere else and must not; here
+//! a [`Hit`] carries a [`Message`] because the requirement is one ranked list and
+//! one front door, not two search verbs a caller has to know to call both of. It
+//! is a read-side union: nothing here writes to either context, and neither
+//! context learns anything about the other from it.
 //!
 //! Truth stays in the store; the index is a **projection**, rebuilt by full
 //! re-scan at start and updated in-process on every write. Read-back extends to
@@ -19,6 +27,7 @@ use super::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactStatus, MemoryError, Provenance,
     validate_edge, validate_subject,
 };
+use crate::mailbox::Message;
 
 /// One document as the index needs it: its prose, the entity it is (if it is
 /// one), and the facts in its table. This is the shape a **full re-scan** yields,
@@ -134,6 +143,13 @@ pub struct SearchQuery {
     pub subject: Option<EntityId>,
     /// Facts drawing a matching edge.
     pub edge: Option<EdgeFilter>,
+    /// Whether messages are in the answer. **True by default**, because the
+    /// whole point is a session finding context it did not know where to look
+    /// for: excluded-by-default would rebuild the blindness with an extra step
+    /// in front of it. Set it false to keep work-queue traffic out of a recall
+    /// that is asking about the operator's life rather than about the sessions
+    /// serving it.
+    pub include_mail: bool,
     /// How many results to return.
     pub limit: usize,
 }
@@ -147,6 +163,7 @@ impl Default for SearchQuery {
             provenance: None,
             subject: None,
             edge: None,
+            include_mail: true,
             limit: DEFAULT_LIMIT,
         }
     }
@@ -291,6 +308,20 @@ pub enum Hit {
         /// `subject`; when it is not, that difference is the thing worth seeing.
         home: EntityRef,
     },
+    /// A message matched in a mailbox — **unmistakably mail**, and carrying the
+    /// whole envelope: which box, what state it is in, who sent it, and the id
+    /// `read_message` takes. Without those, a mail hit reads as an anonymous
+    /// paragraph and a reader cannot tell live work from an archived report.
+    ///
+    /// The body arrives as a snippet, not whole: a message is often pages, and
+    /// its id is right there for taking delivery of the rest.
+    Message {
+        /// The message, envelope and all. Its `body` is the whole stored text;
+        /// what a caller is shown around the match is `snippet`.
+        message: Message,
+        /// The matching text with enough around it to read.
+        snippet: String,
+    },
     /// Human prose matched inside a document body.
     Prose {
         /// The doc that carries it.
@@ -310,10 +341,20 @@ pub enum Hit {
 /// The retrieval port: one ranked, mixed list. Synchronous — the index is
 /// in-process, so a search is a memory read, not I/O.
 pub trait Search: Send + Sync {
-    /// Search entities, facts and prose at once. Ordering is the ranking: text
-    /// relevance, boosted by recency, with an entity whose handle or name the
-    /// query matches pinned to the top.
+    /// Search entities, facts, prose and messages at once. Ordering is the
+    /// ranking: text relevance, boosted by recency, with an entity whose handle
+    /// or name the query matches pinned to the top.
     fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError>;
+
+    /// Whether messages are in the projection at all.
+    ///
+    /// **The honesty half of degrade-don't-error.** A search is a read of an
+    /// in-process index, so a mailbox world that was unreachable when the index
+    /// was built does not make searching fail — it makes mail silently missing,
+    /// and "no message says that" is a very different claim from "jojobot has
+    /// not read any messages". Memory results still come back either way; this
+    /// is what lets the answer say which of the two it is.
+    fn mail_indexed(&self) -> bool;
 }
 
 #[cfg(test)]

@@ -571,6 +571,16 @@ pub trait Mailboxes: Send + Sync {
     /// Every mailbox jojobot manages, with per-state counts.
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError>;
 
+    /// Every readable message in every box, whatever its state — what the search
+    /// projection is built from, and nothing else's business.
+    ///
+    /// **A read, not a delivery**: nothing moves, nothing is marked, and a
+    /// message returned here is not owed to anybody. That is what makes it safe
+    /// to run over the whole board at boot. Quarantined cards are absent for the
+    /// reason they are absent everywhere else — jojobot cannot read them, so it
+    /// has nothing to index.
+    async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError>;
+
     /// Leave a message in a box, filed in `new`. **The mailbox must already
     /// exist** — an unknown name comes back [`Guarded::Blocked`], never a new box.
     ///

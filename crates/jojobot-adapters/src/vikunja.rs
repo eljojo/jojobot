@@ -1267,6 +1267,19 @@ impl Mailboxes for VikunjaStore {
         }))
     }
 
+    async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+        // No verb lock: this writes nothing, so it cannot interleave with
+        // anything, and holding the lock for a whole-board read would stall
+        // every mailbox verb behind a projection rebuild.
+        let scope = self.resolve_scope().await?;
+        Ok(self
+            .messages(&scope)
+            .await?
+            .into_iter()
+            .map(|(_, message)| message)
+            .collect())
+    }
+
     async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
         let _serialized = self.lock.lock().await;
         validate_message_id(id)?;

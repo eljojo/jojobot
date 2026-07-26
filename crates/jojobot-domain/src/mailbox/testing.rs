@@ -226,6 +226,18 @@ impl Mailboxes for InMemoryMailboxes {
         }))
     }
 
+    async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+        let quarantined = self.quarantined.lock().expect("quarantine lock");
+        Ok(self
+            .messages
+            .lock()
+            .expect("message lock")
+            .iter()
+            .filter(|m| !quarantined.iter().any(|(_, card, _)| card == &m.id))
+            .cloned()
+            .collect())
+    }
+
     async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
         validate_message_id(id)?;
         self.refuse_if_quarantined(id)?;
@@ -618,6 +630,45 @@ pub mod contract {
         );
     }
 
+    /// **The scan behind search sees the whole board.** Every box, every state
+    /// — `processed` included, because finding the report somebody filed last
+    /// month is half the reason mail is searchable at all — and it moves
+    /// nothing: a scan is a read, so running it over the whole board at boot
+    /// cannot make a message owed to anybody.
+    pub async fn a_scan_sees_every_box_and_every_state(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        create(store, "errands").await;
+        let fresh = post(store, "inbox", "alpha", "still new", 0).await;
+        let taken = post(store, "inbox", "milhouse", "already taken", 60).await;
+        let done = post(store, "errands", "otto", "long since handled", 120).await;
+        store.read_message(&taken.id).await.expect("read_message ok");
+        store.mark_processed(&done.id, Some("filed")).await.expect("ok");
+
+        let scanned = store.scan_messages().await.expect("scan_messages ok");
+        let mut seen: Vec<(&str, &str, &str)> = scanned
+            .iter()
+            .map(|m| (m.mailbox.as_str(), m.state.as_token(), m.body.as_str()))
+            .collect();
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            vec![
+                ("errands", "processed", "long since handled"),
+                ("inbox", "new", "still new"),
+                ("inbox", "read", "already taken"),
+            ],
+            "every box, every state, nothing left out"
+        );
+
+        // A scan is a read: the counts are exactly what they were before it.
+        let counts = counts(store, "inbox").await.expect("inbox exists");
+        assert_eq!((counts.new, counts.read, counts.processed), (1, 1, 0));
+        assert!(
+            !store.read_message(&fresh.id).await.expect("ok").seen_before,
+            "the scan did not take delivery of anything"
+        );
+    }
+
     /// An id nothing answers to is a miss here for the same reason it is one
     /// for `mark_processed` — and it is the same answer, so one client branch
     /// handles both.
@@ -892,6 +943,7 @@ pub mod contract {
         read_message_takes_one_and_leaves_the_rest(&fresh()).await;
         read_message_leaves_a_processed_message_terminal(&fresh()).await;
         reading_an_unknown_message_is_a_miss(&fresh()).await;
+        a_scan_sees_every_box_and_every_state(&fresh()).await;
         a_body_survives_the_round_trip(&fresh()).await;
         a_crlf_body_normalizes_to_plain_newlines(&fresh()).await;
         a_body_of_markup_and_a_loose_fence_survives(&fresh()).await;

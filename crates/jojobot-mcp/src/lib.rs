@@ -49,9 +49,9 @@ jojobot is a personal-assistant server: the durable memory and message rail behi
 
 ## The two worlds
 
-**MEMORY** is a typed graph of the operator's life. An **entity** is a noun — person · project · place · event · work · thing · org · topic — with a permanent handle like `person:milhouse`. A **fact** is one dated claim about an entity, addressed `person:milhouse#3`, carrying a **provenance**: `testimony` (the operator said or confirmed it) or `inference` (an AI derived it). Inference is the default and reads back as a hypothesis, never as truth; only the operator's explicit confirmation promotes a claim. A fact may draw one typed **edge** at another entity — `location` · `membership` · `attendance` · `about` — and edges are what make cross-entity questions answerable. **`search` is the front door** to all of it (memory only — never messages).
+**MEMORY** is a typed graph of the operator's life. An **entity** is a noun — person · project · place · event · work · thing · org · topic — with a permanent handle like `person:milhouse`. A **fact** is one dated claim about an entity, addressed `person:milhouse#3`, carrying a **provenance**: `testimony` (the operator said or confirmed it) or `inference` (an AI derived it). Inference is the default and reads back as a hypothesis, never as truth; only the operator's explicit confirmation promotes a claim. A fact may draw one typed **edge** at another entity — `location` · `membership` · `attendance` · `about` — and edges are what make cross-entity questions answerable. **`search` is the front door** to all of it — and to the messages in mailboxes too: one ranked list, one call.
 
-**MAILBOXES** are the async rail between sessions: named boxes where one session leaves a message another will find. A message is `new` → `read` → `processed`. Reading IS taking delivery (no peek); anything read but not yet processed comes back on the next read, flagged — so crashed work resurfaces on its own. `processed` means acted-on, and it is a terminal archive: nothing here is ever deleted. **A box is infrastructure, not data**: a permanent label in the operator's own task system, worth having only because some specific party is committed to draining it. A message is addressed to a box, never to you — there is no recipient field, and no box is "yours" unless you were told it is.
+**MAILBOXES** are the async rail between sessions: named boxes where one session leaves a message another will find. A message is `new` → `read` → `processed`. Reading IS taking delivery (no peek); anything read but not yet processed comes back on the next read, flagged — so crashed work resurfaces on its own. `processed` means acted-on, and it is a terminal archive: nothing here is ever deleted. **A box is infrastructure, not data**: a permanent label in the operator's own task system, worth having only because some specific party is committed to draining it. A message is addressed to a box, never to you — there is no recipient field, and no box is "yours" unless you were told it is. **Messages are searchable**: `search` finds them beside the memory hits, in every state, `processed` archives included — so a finding somebody filed for another session is reachable by anyone who asks the right question, without knowing where to look. A hit says which box and which state; `read_message` takes that one message without making the rest of the box yours.
 
 ## Working here, by example
 
@@ -62,6 +62,7 @@ jojobot is a personal-assistant server: the durable memory and message rail behi
 - *"That was wrong"* → `recall` the subject, then `update_fact` rewrites the claim in place to state what is true NOW — including negative truth ("NOT allergic — confirmed by the operator"). The record is current truth, never a correction trail. *"That changed"* is a different move: the old claim was true in its day — mark it `superseded` and `capture` the new one.
 - *Leave word for another session* → `list_mailboxes` to see what exists and what is waiting, `post_message` into an agreed box with a body written for a reader with none of your context, and your `sender` naming a role that still exists next week, not this session's id.
 - *Handle mail* → `read_mailbox` on the box you were told to drain — reading takes delivery of every message in it, and they are not yours just because you can read them — act, then `mark_processed`, ONLY after acting, with the outcome in notes. A failure is data to record, not a state to park in.
+- *One message, not a whole box* → `search` for it, then `read_message` on the id the hit carries. Draining a box you were not told to drain makes every message in it owed work you never agreed to.
 
 When the right write is not obvious, ask the operator — an unasked write outlives the conversation that guessed it.
 
@@ -237,6 +238,12 @@ pub struct SearchArgs {
     /// question ("which people are in X") is answered in one call.
     #[serde(default)]
     pub edge: Option<EdgeFilterArgs>,
+    /// Whether messages left in mailboxes are searched too. **Defaults to
+    /// true** — a report filed for another session is exactly the context you
+    /// would not know to go looking for. Pass `false` to keep session traffic
+    /// out of a question about the operator's life.
+    #[serde(default)]
+    pub include_mail: Option<bool>,
     /// How many results; defaults to 20. There is no pagination — a second page
     /// is a better query.
     #[serde(default)]
@@ -736,19 +743,25 @@ impl Jojobot {
     /// The front door: one ranked list over entities, facts and prose.
     #[tool(
         description = "The front door — use it first, and any time you do not already hold the \
-                       exact handle or address. One ranked list over entities, facts and free \
-                       prose at once. `query` is free text (ALL words must match) and is \
-                       optional when a filter narrows it: kind · status (default active; \
-                       superseded is excluded unless named) · provenance · subject · edge \
-                       {shape, object}; a call with neither query nor filter is refused. kind + \
-                       edge answers a cross-entity question in one call (\"which people are in \
-                       X\") by walking typed edges — prose that merely mentions X is not an \
-                       answer. No hit comes back bare: a fact carries its whole row, its \
-                       address (feed that to update_fact), and who it is `about` and where it \
-                       is `home`d (a null name there means the handle names nothing — a real \
-                       defect worth reporting); an entity or prose hit carries that entity's \
-                       names and the edges its facts draw. No pagination — raise `limit` or \
-                       ask a better question. Messages and mailboxes are not searchable here."
+                       exact handle or address. One ranked list over entities, facts, free \
+                       prose AND the messages in mailboxes at once. `query` is free text (ALL \
+                       words must match) and is optional when a filter narrows it: kind · status \
+                       (default active; superseded is excluded unless named) · provenance · \
+                       subject · edge {shape, object} · include_mail; a call with neither query \
+                       nor filter is refused. kind + edge answers a cross-entity question in one \
+                       call (\"which people are in X\") by walking typed edges — prose that \
+                       merely mentions X is not an answer. No hit comes back bare: a fact \
+                       carries its whole row, its address (feed that to update_fact), and who it \
+                       is `about` and where it is `home`d (a null name there means the handle \
+                       names nothing — a real defect worth reporting); an entity or prose hit \
+                       carries that entity's names and the edges its facts draw; a message hit \
+                       carries its box, its state (new/read/processed — an archived report is \
+                       findable, and the state is how you tell it from live work), its sender \
+                       and the id read_message takes, plus a snippet rather than the whole body. \
+                       Mail is searched by default — pass include_mail: false to leave session \
+                       traffic out. ALWAYS read the `mail` field of the answer: searched: false \
+                       means no message was searched at all, which is not the same as nothing \
+                       matching. No pagination — raise `limit` or ask a better question."
     )]
     async fn search(
         &self,
@@ -771,6 +784,7 @@ impl Jojobot {
             provenance: args.provenance.as_deref().map(parse_one_provenance).transpose()?,
             subject: args.subject.as_deref().map(EntityId::person),
             edge,
+            include_mail: args.include_mail.unwrap_or(true),
             limit: args.limit.map_or(DEFAULT_LIMIT, |l| l as usize),
         };
         // Checked here as well as in the index: a malformed query is the caller's
@@ -779,6 +793,7 @@ impl Jojobot {
         let hits = self.search.search(&query).map_err(memory_error)?;
         let body = serde_json::json!({
             "count": hits.len(),
+            "mail": mail_coverage(&query, self.search.mail_indexed()),
             "results": hits.iter().map(hit_json).collect::<Vec<_>>(),
         });
         json_result(&body)
@@ -1223,6 +1238,22 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
             }
             body
         }
+        // A mail hit is unmistakably mail: the whole envelope, so a reader can
+        // tell live work from an archived report without a second call, and the
+        // id that takes delivery of the rest. `body` is deliberately absent —
+        // what is here is the snippet, and read_message is how the message is
+        // taken whole.
+        Hit::Message { message, snippet } => serde_json::json!({
+            "hit": "message",
+            "id": message.id.as_str(),
+            "mailbox": message.mailbox.as_str(),
+            "state": message.state.as_token(),
+            "sender": message.sender,
+            "subject": message.subject,
+            "sent_at": message.sent_at.to_string(),
+            "notes": message.notes,
+            "snippet": snippet,
+        }),
         Hit::Prose {
             doc_id,
             title,
@@ -1237,6 +1268,38 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
             "edges": edges.iter().map(edge_json).collect::<Vec<_>>(),
             "snippet": snippet,
         }),
+    }
+}
+
+/// **Whether this answer covered mail, and why not when it didn't.**
+///
+/// One shape, always present, so a caller reads it in one pass instead of
+/// branching on which keys came back — the same deal `owned_mailbox` makes.
+///
+/// It exists because silence is a lie here. A search is a read of an in-process
+/// index: if the mailbox world was unreachable when that index was built, mail
+/// is simply not in it, and an answer that comes back without mail hits and
+/// without a word reads as "no message says that". That is a different claim
+/// from "jojobot has read no messages", and it is the one a caller acts on.
+fn mail_coverage(query: &SearchQuery, indexed: bool) -> serde_json::Value {
+    match (query.include_mail, query.is_fact_scoped(), indexed) {
+        (false, _, _) => serde_json::json!({
+            "searched": false,
+            "note": "you passed include_mail: false, so messages were left out of this answer.",
+        }),
+        (_, true, _) => serde_json::json!({
+            "searched": false,
+            "note": "this query filters on a property only a fact has (status, provenance, \
+                     subject or edge), so it is a question about facts — messages, entities and \
+                     prose are all out of it.",
+        }),
+        (_, _, false) => serde_json::json!({
+            "searched": false,
+            "note": "jojobot has not been able to read the mailbox board, so NO message is \
+                     searchable right now — this is not 'nothing matched'. The memory half of \
+                     this answer is complete. list_mailboxes will say what is wrong.",
+        }),
+        (_, _, true) => serde_json::json!({ "searched": true }),
     }
 }
 
@@ -1656,8 +1719,8 @@ fn mailbox_declined(e: MailboxError) -> Result<CallToolResult, McpError> {
             None,
             format!(
                 "Nothing was written. No message jojobot holds has the id '{attempted}', in any \
-                 mailbox. Ids are minted by jojobot and handed back by read_mailbox and \
-                 post_message — take a delivery and use an id from it rather than composing one."
+                 mailbox. Ids are minted by jojobot and handed back by search, read_mailbox and \
+                 post_message — use an id from one of those rather than composing one."
             ),
         )),
         MailboxError::Quarantined { attempted, reason } => {
@@ -1890,13 +1953,18 @@ impl ServerHandler for Jojobot {
                  fact may also draw one typed **edge** at another entity — `location` · \
                  `membership` · `attendance` · `about` — and edges are what make cross-entity \
                  questions (\"which people are in X\") answerable without reading everything. \
-                 **Start with `search`**: one ranked list over entities, facts and free prose \
-                 at once, every hit arriving with its surroundings.\
+                 **Start with `search`**: one ranked list over entities, facts, free prose and \
+                 mailbox messages at once, every hit arriving with its surroundings.\
                  \n\n**MAILBOXES.** A place to leave a message for someone who is not in this \
                  conversation. A mailbox is a named box (`[a-z0-9-]+`); a message in one is \
                  `new` → `read` → `processed`. **Read is not processed, and processed is not \
                  deleted**: reading takes delivery, processing means you acted, and `processed` \
-                 is a terminal archive. Messages are not searchable — `search` sees memory only.\
+                 is a terminal archive. **Messages are searchable**: `search` returns them beside \
+                 the memory hits, in every state including the processed archive, each hit \
+                 carrying its box, its state, its sender and the id `read_message` takes — so a \
+                 message left for one session is findable by any of them. `read_message` takes \
+                 delivery of that one message; `read_mailbox` takes the whole box, and everything \
+                 in it becomes yours to finish.\
                  \n\n**Three rules of engagement.** 1. **Everything a write NAMES must already \
                  exist.** jojobot never brings an entity or a box into being as a side effect — \
                  not a capture's subject, not an edge's object, not the box you post into. \
@@ -1935,18 +2003,37 @@ mod tests {
     /// canned hits. On this path the MCP layer's whole job is translating
     /// arguments into a query and hits into JSON, and that is exactly what this
     /// pins — the ranking and matching are the index's tests, not these.
-    #[derive(Default)]
     struct SpySearch {
         seen: Mutex<Option<SearchQuery>>,
         hits: Mutex<Vec<Hit>>,
+        /// Whether this double claims the mail half of the projection is loaded.
+        /// Default true: an index that has read the board is the ordinary case,
+        /// and the outage is the one worth writing down at a call site.
+        mail_indexed: bool,
+    }
+
+    impl Default for SpySearch {
+        fn default() -> Self {
+            SpySearch {
+                seen: Mutex::new(None),
+                hits: Mutex::new(Vec::new()),
+                mail_indexed: true,
+            }
+        }
     }
 
     impl SpySearch {
         fn answering(hits: Vec<Hit>) -> Self {
             SpySearch {
-                seen: Mutex::new(None),
                 hits: Mutex::new(hits),
+                ..Default::default()
             }
+        }
+
+        /// A search port whose mailbox world was never readable — the state an
+        /// index is in when the boot scan of the board failed.
+        fn with_no_mail_indexed() -> Self {
+            SpySearch { mail_indexed: false, ..Default::default() }
         }
 
         fn query(&self) -> SearchQuery {
@@ -1962,6 +2049,10 @@ mod tests {
         fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
             *self.seen.lock().unwrap() = Some(query.clone());
             Ok(self.hits.lock().unwrap().clone())
+        }
+
+        fn mail_indexed(&self) -> bool {
+            self.mail_indexed
         }
     }
 
@@ -2103,6 +2194,7 @@ mod tests {
             provenance: None,
             subject: None,
             edge: None,
+            include_mail: None,
             limit: None,
         }
     }
@@ -2126,6 +2218,7 @@ mod tests {
                     shape: Some("location".into()),
                     object: "place:shelbyville".into(),
                 }),
+                include_mail: Some(false),
                 limit: Some(5),
             }))
             .await
@@ -2133,6 +2226,7 @@ mod tests {
 
         let query = spy.query();
         assert_eq!(query.terms(), Some("winter"));
+        assert!(!query.include_mail, "the caller's exclusion must reach the port");
         assert_eq!(query.kind, Some(EntityKind::Person));
         assert_eq!(query.status, Some(FactStatus::Superseded));
         assert_eq!(query.provenance, Some(Provenance::Testimony));
@@ -2210,6 +2304,166 @@ mod tests {
                 .expect_err("a malformed filter must be refused");
             assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
         }
+    }
+
+    /// **Mail comes back in the one list, and unmistakably as mail.** A message
+    /// hit says which box, which state, who sent it, and the id `read_message`
+    /// takes — without those it is an anonymous paragraph and a reader cannot
+    /// tell a live task from an archived report. The body is a snippet: taking
+    /// the whole message is `read_message`'s job, and that is a deliberate act.
+    #[tokio::test]
+    async fn a_message_hit_arrives_with_its_whole_envelope() {
+        let spy = Arc::new(SpySearch::answering(vec![Hit::Message {
+            message: Message {
+                id: MessageId("42".into()),
+                mailbox: MailboxName("pm".into()),
+                body: "The kiln rebuild landed; the damper is still hand-cut.".into(),
+                subject: Some("the kiln slice".into()),
+                sender: "dev (implementer)".into(),
+                sent_at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
+                state: mailbox::MessageState::Processed,
+                notes: Some("filed".into()),
+            },
+            snippet: "…the damper is still hand-cut…".into(),
+        }]));
+
+        let body = json_of(
+            &handler_with(spy)
+                .search(Parameters(SearchArgs {
+                    query: Some("damper".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        let hit = &body["results"][0];
+        assert_eq!(hit["hit"], "message", "a caller must not have to guess from the shape");
+        assert_eq!(hit["id"], "42", "the id read_message takes");
+        assert_eq!(hit["mailbox"], "pm");
+        assert_eq!(hit["state"], "processed", "an archive reads as one");
+        assert_eq!(hit["sender"], "dev (implementer)");
+        assert_eq!(hit["subject"], "the kiln slice");
+        assert_eq!(hit["notes"], "filed");
+        assert!(hit["sent_at"].is_string());
+        assert_eq!(hit["snippet"], "…the damper is still hand-cut…");
+        assert!(
+            hit["body"].is_null(),
+            "the whole body is read_message's to hand over, not a hit's: {hit}"
+        );
+        assert_eq!(body["mail"]["searched"], true);
+    }
+
+    /// **A search that could not see mail says so.** Coming back without mail
+    /// hits and without a word reads as "no message says that", which is a
+    /// different claim from "jojobot has read no messages" — and it is the one a
+    /// caller acts on. The memory half is unaffected: degrade, don't error.
+    #[tokio::test]
+    async fn a_search_says_when_no_message_was_searched_at_all() {
+        let body = json_of(
+            &handler_with(Arc::new(SpySearch::with_no_mail_indexed()))
+                .search(Parameters(SearchArgs {
+                    query: Some("damper".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("a down mailbox world must not break search"),
+        );
+        assert_eq!(body["mail"]["searched"], false);
+        let note = body["mail"]["note"].as_str().expect("an absence says why");
+        assert!(
+            note.contains("not 'nothing matched'"),
+            "the note has to draw the distinction it exists for: {note}"
+        );
+
+        // The caller's own exclusion is a different absence, and says so.
+        let excluded = json_of(
+            &handler_with(Arc::new(SpySearch::default()))
+                .search(Parameters(SearchArgs {
+                    query: Some("damper".into()),
+                    include_mail: Some(false),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(excluded["mail"]["searched"], false);
+        assert!(
+            excluded["mail"]["note"]
+                .as_str()
+                .expect("a note")
+                .contains("include_mail"),
+            "an exclusion the caller asked for must not read as an outage: {excluded}"
+        );
+
+        // …and so is a query that is about facts to begin with.
+        let fact_scoped = json_of(
+            &handler_with(Arc::new(SpySearch::default()))
+                .search(Parameters(SearchArgs {
+                    query: Some("damper".into()),
+                    provenance: Some("testimony".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(fact_scoped["mail"]["searched"], false);
+        assert!(
+            fact_scoped["mail"]["note"]
+                .as_str()
+                .expect("a note")
+                .contains("only a fact has"),
+            "got {fact_scoped}"
+        );
+    }
+
+    /// **The one claim `search`'s description is not allowed to keep making.**
+    /// It used to disclose that mail was unreachable from here; that is now
+    /// false, and a description that says so sends a caller to a second verb
+    /// that does not exist. Pinned rather than fixed once, because the sentence
+    /// is exactly the kind that survives a rewrite by being plausible.
+    #[test]
+    fn the_search_description_no_longer_says_mail_is_unsearchable() {
+        let tools = Jojobot::tool_router().list_all();
+        let search = tools
+            .iter()
+            .find(|t| t.name == "search")
+            .expect("search is a tool");
+
+        // **All three surfaces, not the one that was noticed.** The claim was
+        // written down in three places — the tool description, the orientation
+        // `start_here`/`boot_bot` hand over, and the server instructions every
+        // client loads before it calls anything — and fixing one leaves a
+        // session reading either of the others exactly as misinformed as before.
+        let instructions = handler().get_info().instructions.unwrap_or_default();
+        for (surface, text) in [
+            ("the search description", search.description.as_deref().unwrap_or_default()),
+            ("the orientation", ORIENTATION),
+            ("the server instructions", instructions.as_str()),
+        ] {
+            for stale in [
+                "Messages and mailboxes are not searchable",
+                "not searchable here",
+                "sees memory only",
+                "never messages",
+            ] {
+                assert!(
+                    !text.contains(stale),
+                    "{surface} still claims mail is out of reach ({stale:?})"
+                );
+            }
+            assert!(
+                text.contains("searchable") || text.contains("include_mail"),
+                "{surface} has to say that mail IS reachable — silence reads as the old claim"
+            );
+        }
+        assert!(
+            search
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .contains("include_mail"),
+            "…and the description has to name the parameter that takes mail back out"
+        );
     }
 
     /// **One list, every hit typed — and none of them bare.** An entity, a fact
@@ -4030,6 +4284,9 @@ mod tests {
                 &self,
                 _: &mailbox::MailboxName,
             ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
+                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
+            }
+            async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
                 Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
             }
             async fn read_message(
