@@ -144,6 +144,15 @@ impl Scope {
     }
 }
 
+/// What one pass over the board yields: the readable messages, and the cards
+/// wearing a mailbox label that could not be read as messages — quarantined,
+/// surfaced by `list_mailboxes`, acted on by nothing.
+struct BoardRead {
+    messages: Vec<(TaskRec, Message)>,
+    /// `(box, card id)` per unreadable card.
+    quarantined: Vec<(MailboxName, u64)>,
+}
+
 // --- the store --------------------------------------------------------------
 
 /// The real Mailboxes adapter, fronting a Vikunja project it manages by name.
@@ -361,23 +370,21 @@ impl VikunjaStore {
     /// path, so counts, deliveries and lookups can never disagree about what is
     /// where.
     ///
-    /// A card that carries no machine block is **not a message**: it is
-    /// something a human put on the board, and jojobot neither delivers it nor
-    /// counts it as mail. A card whose label is not a mailbox label is skipped
-    /// for the same reason.
-    async fn messages(&self, scope: &Scope) -> Result<Vec<(TaskRec, Message)>, MailboxError> {
+    /// A card that carries no mailbox label is **not a message**: it is
+    /// something a human put on the board (or another store's), and jojobot
+    /// neither delivers it nor counts it as mail. A card that DOES wear a
+    /// mailbox label but cannot be read as a message — its description no
+    /// longer parses, or it sits in a column that is no state — is
+    /// **quarantined**: never delivered, never invented a reading for, but
+    /// surfaced by `list_mailboxes` as unreadable, because a real message
+    /// silently skipped is invisible to every verb at once.
+    async fn board_read(&self, scope: &Scope) -> Result<BoardRead, MailboxError> {
         let prefix = self.label_prefix();
         let mut found = Vec::new();
+        let mut quarantined = Vec::new();
         for bucket in self.board(scope).await? {
-            let Some(state) = MessageState::from_token(&bucket.title) else {
-                continue;
-            };
+            let state = MessageState::from_token(&bucket.title);
             for task in bucket.tasks {
-                // The one choke point for the write-scope invariant: every card
-                // jojobot ever writes to arrives either from here or from a
-                // `create_task` in its own project, so checking here covers
-                // every verb at once.
-                scope.verify(&task)?;
                 let Some(mailbox) = task
                     .labels
                     .iter()
@@ -386,12 +393,28 @@ impl VikunjaStore {
                 else {
                     continue;
                 };
+                let Some(state) = state else {
+                    tracing::warn!(
+                        card = task.id,
+                        column = %bucket.title,
+                        "a card wearing a mailbox label sits in a column that is no state — \
+                         quarantined, not delivered"
+                    );
+                    quarantined.push((mailbox, task.id));
+                    continue;
+                };
+                // The one choke point for the write-scope invariant: every card
+                // jojobot ever writes to arrives either from here or from a
+                // `create_task` in its own project, so checking here covers
+                // every verb at once.
+                scope.verify(&task)?;
                 let Some((body, envelope)) = parse_description(&task.description) else {
                     tracing::warn!(
                         card = task.id,
-                        "a card in jojobot's mailbox project carries no machine block — \
-                         not delivering it as a message"
+                        "a card wearing a mailbox label carries no readable machine block — \
+                         quarantined, not delivered"
                     );
+                    quarantined.push((mailbox, task.id));
                     continue;
                 };
                 let message = Message {
@@ -413,7 +436,18 @@ impl VikunjaStore {
                 .cmp(&b.1.sent_at)
                 .then_with(|| a.0.id.cmp(&b.0.id))
         });
-        Ok(found)
+        quarantined.sort_by_key(|(_, id)| *id);
+        Ok(BoardRead {
+            messages: found,
+            quarantined,
+        })
+    }
+
+    /// The readable messages alone — what every verb but `list_mailboxes`
+    /// consumes. Quarantined cards are deliberately absent: they are surfaced,
+    /// never acted on.
+    async fn messages(&self, scope: &Scope) -> Result<Vec<(TaskRec, Message)>, MailboxError> {
+        Ok(self.board_read(scope).await?.messages)
     }
 
     /// Read one message back through the read path — the verification half of
@@ -601,22 +635,33 @@ impl Mailboxes for VikunjaStore {
         Ok(Guarded::Written(Mailbox {
             name: name.clone(),
             counts: StateCounts::default(),
+            quarantined: Vec::new(),
         }))
     }
 
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
         let scope = self.resolve_scope().await?;
-        let messages = self.messages(&scope).await?;
+        let board = self.board_read(&scope).await?;
         Ok(self
             .mailbox_names()
             .await?
             .into_iter()
             .map(|name| {
                 let mut counts = StateCounts::default();
-                for (_, message) in messages.iter().filter(|(_, m)| m.mailbox == name) {
+                for (_, message) in board.messages.iter().filter(|(_, m)| m.mailbox == name) {
                     counts.add(message.state);
                 }
-                Mailbox { name, counts }
+                let quarantined = board
+                    .quarantined
+                    .iter()
+                    .filter(|(mailbox, _)| mailbox == &name)
+                    .map(|(_, id)| MessageId(id.to_string()))
+                    .collect();
+                Mailbox {
+                    name,
+                    counts,
+                    quarantined,
+                }
             })
             .collect())
     }
@@ -1713,6 +1758,65 @@ mod tests {
             fake.tasks_in(project).len(),
             1,
             "…and it is left exactly where the human put it"
+        );
+    }
+
+    /// **An unreadable message is surfaced, never silently skipped.** A card
+    /// wearing jojobot's mailbox label whose description was hand-edited past
+    /// parsing is invisible to every verb — not counted, not delivered, not
+    /// processable — so `list_mailboxes` must say "1 unreadable" with the card
+    /// id, instead of nothing.
+    #[tokio::test]
+    async fn an_unreadable_card_wearing_the_label_is_quarantined_and_surfaced() {
+        let fake = FakeVikunja::new();
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+        let label = fake.labels.lock().unwrap()[0].id;
+        // A real message whose description someone garbled in the UI.
+        let garbled = fake.seed_task(project, "alpha: hello", "hand-edited past parsing", &[label]);
+        fake.seed_placement(project, garbled, "new");
+
+        let boxes = store.list_mailboxes().await.expect("list ok");
+        let inbox = boxes.iter().find(|m| m.name.as_str() == "inbox").expect("inbox");
+        assert_eq!(
+            inbox.quarantined,
+            vec![MessageId(garbled.to_string())],
+            "the unreadable card is surfaced with its id"
+        );
+        assert_eq!(inbox.counts.total(), 0, "…but never counted as a readable message");
+        assert!(
+            contract::read(&store, "inbox").await.messages.is_empty(),
+            "…and never delivered"
+        );
+    }
+
+    /// The sibling path: a card wearing the label but sitting in a column whose
+    /// title is no state token. It has no state to read, so it is quarantined —
+    /// and surfaced — rather than silently skipped with not even a log line.
+    #[tokio::test]
+    async fn a_labelled_card_in_an_unknown_column_is_quarantined_and_surfaced() {
+        let fake = FakeVikunja::new();
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let posted = contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
+        let card: u64 = posted.id.as_str().parse().expect("a numeric card id");
+        let project = fake.projects_titled(PROJECT)[0].id;
+        // The operator drags the card into Vikunja's own default column.
+        fake.seed_placement(project, card, DEFAULT_COLUMN);
+
+        let boxes = store.list_mailboxes().await.expect("list ok");
+        let inbox = boxes.iter().find(|m| m.name.as_str() == "inbox").expect("inbox");
+        assert_eq!(
+            inbox.quarantined,
+            vec![posted.id.clone()],
+            "a message stranded outside the funnel is surfaced, not lost"
+        );
+        assert_eq!(inbox.counts.total(), 0);
+        assert!(contract::read(&store, "inbox").await.messages.is_empty());
+        // Every verb still refuses to guess a state for it.
+        let err = store.mark_processed(&posted.id, None).await;
+        assert!(
+            matches!(err, Err(MailboxError::UnknownMessage { .. })),
+            "a quarantined card is not processable: {err:?}"
         );
     }
 

@@ -271,6 +271,13 @@ pub struct Mailbox {
     pub name: MailboxName,
     /// How many messages sit in each state.
     pub counts: StateCounts,
+    /// Cards wearing this box's label that could not be read as messages — a
+    /// description hand-edited past parsing, or a card sitting in a column that
+    /// is no state. Such a card is invisible to every other verb (not counted,
+    /// not delivered, not processable), so this is where its existence is
+    /// surfaced: "N unreadable" instead of nothing.
+    #[serde(default)]
+    pub quarantined: Vec<MessageId>,
 }
 
 /// Per-state message counts for one mailbox.

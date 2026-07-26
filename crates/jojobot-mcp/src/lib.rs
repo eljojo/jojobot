@@ -572,7 +572,10 @@ impl Jojobot {
     #[tool(
         description = "List every mailbox with its per-state counts: new (left, never delivered) \
                        · read (delivered, not yet acted on) · processed (handled — terminal, and \
-                       an archive, so nothing is ever deleted)."
+                       an archive, so nothing is ever deleted). Each box also reports its \
+                       quarantined cards — cards wearing the box's label that could not be read \
+                       as messages (e.g. hand-edited past parsing); they are surfaced here and \
+                       delivered nowhere."
     )]
     async fn list_mailboxes(&self) -> Result<CallToolResult, McpError> {
         let boxes = self
@@ -907,7 +910,9 @@ fn blocked_result(
 
 // --- mailboxes on the wire ---------------------------------------------------
 
-/// A mailbox on the wire: its name and what is in it, per state.
+/// A mailbox on the wire: its name, what is in it per state, and what is in it
+/// that could not be read — a caller must see "N unreadable" rather than
+/// nothing, because a quarantined card is invisible to every other verb.
 fn mailbox_json(mailbox: &Mailbox) -> serde_json::Value {
     serde_json::json!({
         "name": mailbox.name.as_str(),
@@ -916,6 +921,10 @@ fn mailbox_json(mailbox: &Mailbox) -> serde_json::Value {
             "read": mailbox.counts.read,
             "processed": mailbox.counts.processed,
             "total": mailbox.counts.total(),
+        },
+        "quarantined": {
+            "count": mailbox.quarantined.len(),
+            "card_ids": mailbox.quarantined.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
         },
     })
 }

@@ -69,6 +69,7 @@ impl Mailboxes for InMemoryMailboxes {
         Ok(Guarded::Written(Mailbox {
             name: name.clone(),
             counts: StateCounts::default(),
+            quarantined: Vec::new(),
         }))
     }
 
@@ -82,7 +83,13 @@ impl Mailboxes for InMemoryMailboxes {
                 for message in messages.iter().filter(|m| m.mailbox == name) {
                     counts.add(message.state);
                 }
-                Mailbox { name, counts }
+                // The fake can hold nothing unreadable: every message in it
+                // passed validation on the way in.
+                Mailbox {
+                    name,
+                    counts,
+                    quarantined: Vec::new(),
+                }
             })
             .collect())
     }
