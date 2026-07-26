@@ -196,6 +196,36 @@ pub fn validate_body(body: &str) -> Result<(), MailboxError> {
     Ok(())
 }
 
+/// Validate a message's subject — the one-line title a poster gives it.
+///
+/// **Optional, and blank is absent.** The convention it replaces was "put a
+/// title on the first line of the body", which nothing enforced and nothing
+/// could read back: every message already had a first line, so a reader could
+/// not tell a title from a sentence. A declared subject can be shown as one; a
+/// message without one is ordinary, and inventing a title for it would be the
+/// same guess in the other direction.
+///
+/// One plain line, for the reason `sender` is: it rides in the machine block
+/// *and* in the card's title.
+pub fn validate_subject(subject: Option<&str>) -> Result<(), MailboxError> {
+    let Some(subject) = subject else { return Ok(()) };
+    if subject.trim().is_empty() {
+        return Ok(());
+    }
+    if breaks_the_line(subject)
+        || subject.contains('`')
+        || subject.chars().any(char::is_control)
+    {
+        return Err(MailboxError::InvalidMessage(
+            "subject must be one plain line (no newline, no backtick)".into(),
+        ));
+    }
+    if subject.chars().count() > 120 {
+        return Err(MailboxError::InvalidMessage("subject is too long".into()));
+    }
+    Ok(())
+}
+
 /// Validate the outcome notes a consumer records when it marks a message
 /// processed. One plain line: notes ride in the machine block beside `sender`.
 pub fn validate_notes(notes: Option<&str>) -> Result<(), MailboxError> {
@@ -217,13 +247,18 @@ pub fn validate_notes(notes: Option<&str>) -> Result<(), MailboxError> {
 /// How much of the body rides in the card's title, in characters.
 const TITLE_BODY_BUDGET: usize = 60;
 
-/// The human-visible half of a message card: `"<sender>: <first words of body>"`.
+/// The human-visible half of a message card: `"<sender>: <subject>"`, or the
+/// opening of the body when the message declares no subject.
+///
+/// The subject wins because it is the title the poster actually wrote; the body
+/// head is the fallback that existed before there was anywhere to write one.
 ///
 /// Truncation is on a **word** boundary with an ellipsis, so a title never ends
 /// mid-word and never implies the message says less than it does. Newlines in
 /// the body collapse to spaces — a title is one line.
-pub fn message_title(sender: &str, body: &str) -> String {
-    let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+pub fn message_title(sender: &str, subject: Option<&str>, body: &str) -> String {
+    let head = normalize_subject(subject).unwrap_or_else(|| body.to_string());
+    let flat = head.split_whitespace().collect::<Vec<_>>().join(" ");
     let head = if flat.chars().count() <= TITLE_BODY_BUDGET {
         flat
     } else {
@@ -269,6 +304,13 @@ pub fn normalize_notes(notes: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|n| !n.is_empty())
         .map(str::to_string)
+}
+
+/// Normalize an optional subject — blank is no subject, exactly as blank notes
+/// are no notes. A store that kept `Some("")` would render an empty title line
+/// and read back as a message that has a subject nobody wrote.
+pub fn normalize_subject(subject: Option<&str>) -> Option<String> {
+    normalize_notes(subject)
 }
 
 /// A mailbox and what is in it. The counts are the whole point of
@@ -323,6 +365,8 @@ pub struct NewMessage {
     pub mailbox: MailboxName,
     /// The message itself.
     pub body: String,
+    /// What it is about, in one line. Optional — see [`validate_subject`].
+    pub subject: Option<String>,
     /// Who is sending — caller-declared. Persona resolution is a later
     /// milestone; jojobot records what the caller claims, and says so.
     pub sender: String,
@@ -340,6 +384,11 @@ pub struct Message {
     pub mailbox: MailboxName,
     /// The message body.
     pub body: String,
+    /// What it is about, in one line, when the poster gave one. `None` is the
+    /// ordinary case — every message written before there was a field for it
+    /// has none, and none of them is broken.
+    #[serde(default)]
+    pub subject: Option<String>,
     /// Who sent it, as the poster declared.
     pub sender: String,
     /// When it was sent.
@@ -543,6 +592,22 @@ pub trait Mailboxes: Send + Sync {
     /// mail, which is the double-processing this context exists to prevent.
     async fn read_mailbox(&self, name: &MailboxName) -> Result<Guarded<Delivery>, MailboxError>;
 
+    /// Take delivery of **one** message by id, moving that one `new → read` and
+    /// leaving the rest of its box exactly where it is.
+    ///
+    /// The selective half of [`read_mailbox`](Mailboxes::read_mailbox), with the
+    /// same envelope: a consumer that wants one filed message — the one a
+    /// `search` hit named — should not have to take delivery of, and thereby
+    /// own, everything else in the box.
+    ///
+    /// **A `processed` message comes back unchanged.** Processed is terminal, so
+    /// reading one is reading an archive, not taking delivery; it is handed over
+    /// in the state it is in, flagged `seen_before`. An id that names nothing is
+    /// [`MailboxError::UnknownMessage`] and an id naming an unreadable card is
+    /// [`MailboxError::Quarantined`] — the same two answers `mark_processed`
+    /// gives, because they are the same two conditions.
+    async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError>;
+
     /// Move a message to `processed`, optionally recording the outcome.
     /// Terminal: nothing is deleted, and nothing moves out of `processed`.
     async fn mark_processed(
@@ -624,17 +689,17 @@ mod tests {
     #[test]
     fn a_title_is_the_sender_and_the_opening_of_the_body() {
         assert_eq!(
-            message_title("alpha", "the shipment landed"),
+            message_title("alpha", None, "the shipment landed"),
             "alpha: the shipment landed"
         );
         assert_eq!(
-            message_title("  alpha  ", "  the shipment\n  landed  "),
+            message_title("  alpha  ", None, "  the shipment\n  landed  "),
             "alpha: the shipment landed",
             "a title is one line, whatever the body's shape"
         );
 
         let long = "the shipment landed this morning and the crates are stacked by the north door";
-        let title = message_title("alpha", long);
+        let title = message_title("alpha", None, long);
         assert!(title.starts_with("alpha: the shipment landed this morning"));
         assert!(title.ends_with('…'), "a cut title says it was cut: {title:?}");
         assert!(
@@ -655,9 +720,54 @@ mod tests {
     /// it is still cut, because a title is a title.
     #[test]
     fn a_title_cuts_an_unbroken_word_rather_than_running_forever() {
-        let title = message_title("alpha", &"x".repeat(200));
+        let title = message_title("alpha", None, &"x".repeat(200));
         assert!(title.chars().count() < 100, "got {}", title.chars().count());
         assert!(title.ends_with('…'));
+    }
+
+    /// **A declared subject is the title.** That is the whole point of having
+    /// the field: the convention it replaces — "put a title on the first line"
+    /// — was unenforceable and unreadable, because every body has a first line
+    /// and nothing said whether it was meant as one. A blank subject is no
+    /// subject, so the body head is still the fallback.
+    #[test]
+    fn a_subject_becomes_the_title_and_a_blank_one_does_not() {
+        assert_eq!(
+            message_title("alpha", Some("the shipment"), "it landed at dawn and is stacked"),
+            "alpha: the shipment"
+        );
+        assert_eq!(
+            message_title("alpha", Some("  "), "it landed at dawn"),
+            "alpha: it landed at dawn",
+            "a blank subject is no subject — the body head still stands in"
+        );
+        // A subject is cut on a word boundary exactly as a body head is: it is
+        // caller text, and the title budget does not care where it came from.
+        let long = message_title("alpha", Some(&"word ".repeat(40)), "body");
+        assert!(long.ends_with('…'), "got {long:?}");
+        assert!(long.chars().count() < 100, "got {}", long.chars().count());
+    }
+
+    /// A subject rides in the machine block and in the card title, so it obeys
+    /// the one-plain-line rule every other block field obeys. Absent and blank
+    /// are both fine — a message without a subject is ordinary.
+    #[test]
+    fn a_subject_is_optional_and_one_plain_line() {
+        assert!(validate_subject(None).is_ok());
+        assert!(validate_subject(Some("")).is_ok(), "blank is no subject");
+        assert!(validate_subject(Some("the shipment landed")).is_ok());
+        for bad in ["two\nlines", "carriage\rreturn", "back`tick"] {
+            assert!(
+                validate_subject(Some(bad)).is_err(),
+                "must refuse the subject {bad:?}"
+            );
+        }
+        assert!(validate_subject(Some(&"x".repeat(120))).is_ok());
+        assert!(validate_subject(Some(&"x".repeat(121))).is_err(), "and it is capped");
+
+        assert_eq!(normalize_subject(Some("  the shipment  ")), Some("the shipment".into()));
+        assert_eq!(normalize_subject(Some("   ")), None);
+        assert_eq!(normalize_subject(None), None);
     }
 
     /// Every field that rides in the machine block is one plain line, for the

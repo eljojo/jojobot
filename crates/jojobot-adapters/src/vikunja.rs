@@ -36,8 +36,8 @@ use async_trait::async_trait;
 use jojobot_domain::mailbox::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
     MessageId, MessageState, NewMessage, StateCounts, guard::{self, Decision},
-    message_title, normalize_body, normalize_notes, validate_body, validate_mailbox_name,
-    validate_message_id, validate_notes, validate_sender,
+    message_title, normalize_body, normalize_notes, normalize_subject, validate_body,
+    validate_mailbox_name, validate_message_id, validate_notes, validate_sender, validate_subject,
 };
 
 use api::{BoardBucket, HttpVikunja, LabelRec, ProjectRec, TaskRec, Unconfigured, VikunjaApi};
@@ -577,6 +577,7 @@ impl VikunjaStore {
                     id: MessageId(task.id.to_string()),
                     mailbox,
                     body,
+                    subject: envelope.subject,
                     sender: envelope.sender,
                     sent_at: envelope.sent_at,
                     state,
@@ -604,6 +605,42 @@ impl VikunjaStore {
     /// never acted on.
     async fn messages(&self, scope: &Scope) -> Result<Vec<(TaskRec, Message)>, MailboxError> {
         Ok(self.board_read(scope).await?.messages)
+    }
+
+    /// The card and message an id addresses, or the refusal it earns.
+    ///
+    /// The card is found by walking jojobot's OWN board. An id that is not on it
+    /// is a miss — never a lookup by raw id, which in Vikunja would reach any
+    /// card the token can see, the operator's boards included.
+    ///
+    /// …but an id that IS on it and cannot be read is not a miss. It is a card
+    /// `list_mailboxes` publishes by this very id, so answering "no such
+    /// message" would be a false statement about jojobot's own output, and it
+    /// would send the caller hunting for a lost message rather than at the card
+    /// sitting on the board.
+    ///
+    /// Shared by every verb that addresses one message by id, so the two
+    /// refusals cannot come to mean different things depending on which verb
+    /// was called.
+    async fn addressed(
+        &self,
+        scope: &Scope,
+        id: &MessageId,
+    ) -> Result<(TaskRec, Message), MailboxError> {
+        let board = self.board_read(scope).await?;
+        if let Some(quarantined) = board.quarantined.iter().find(|q| q.card.to_string() == id.0) {
+            return Err(MailboxError::Quarantined {
+                attempted: id.to_string(),
+                reason: quarantined.why.to_string(),
+            });
+        }
+        board
+            .messages
+            .into_iter()
+            .find(|(_, m)| &m.id == id)
+            .ok_or_else(|| MailboxError::UnknownMessage {
+                attempted: id.to_string(),
+            })
     }
 
     /// Read one message back through the read path — the verification half of
@@ -877,7 +914,9 @@ const PARKED_COLUMN: &str = "parked";
 /// the write and its verification; that is delivery working, not corruption,
 /// and rolling it back would destroy a message a consumer already has. Notes
 /// are not compared once the state advanced: they belong to whichever consumer
-/// moved the card.
+/// moved the card. **The subject is** — it is the poster's, and no consumer has
+/// any business rewriting it, so a changed one is corruption exactly as a
+/// changed body is.
 fn read_back_confirms(expected: &Message, seen: &Message) -> bool {
     if seen == expected {
         return true;
@@ -886,6 +925,7 @@ fn read_back_confirms(expected: &Message, seen: &Message) -> bool {
         && seen.id == expected.id
         && seen.mailbox == expected.mailbox
         && seen.body == expected.body
+        && seen.subject == expected.subject
         && seen.sender == expected.sender
         && seen.sent_at == expected.sent_at
 }
@@ -975,6 +1015,7 @@ impl Mailboxes for VikunjaStore {
         validate_mailbox_name(&message.mailbox)?;
         validate_sender(&message.sender)?;
         validate_body(&message.body)?;
+        validate_subject(message.subject.as_deref())?;
         let scope = self.resolve_scope().await?;
 
         // The mailbox must already exist — this verb never provisions one. A
@@ -1001,16 +1042,18 @@ impl Mailboxes for VikunjaStore {
 
         let body = normalize_body(&message.body);
         let sender = message.sender.trim().to_string();
+        let subject = normalize_subject(message.subject.as_deref());
         let envelope = Envelope {
             sender: sender.clone(),
             sent_at: message.sent_at,
+            subject: subject.clone(),
             notes: None,
         };
         let card = self
             .api
             .create_task(
                 scope.project(),
-                &message_title(&sender, &body),
+                &message_title(&sender, subject.as_deref(), &body),
                 &render_description(&body, &envelope),
             )
             .await?;
@@ -1063,6 +1106,7 @@ impl Mailboxes for VikunjaStore {
             id: MessageId(card.id.to_string()),
             mailbox: message.mailbox,
             body,
+            subject,
             sender,
             sent_at: message.sent_at,
             state: MessageState::New,
@@ -1223,6 +1267,91 @@ impl Mailboxes for VikunjaStore {
         }))
     }
 
+    async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
+        let _serialized = self.lock.lock().await;
+        validate_message_id(id)?;
+        let scope = self.resolve_scope().await?;
+        let (card, message) = self.addressed(&scope, id).await?;
+
+        // Only a message nobody has taken moves. A `read` one is a leftover and
+        // a `processed` one is an archive; writing either would be a column move
+        // that says something untrue about who holds the message — and for
+        // `processed`, it would walk a handled message back into the delivery
+        // set, which is the one thing terminal means it cannot do.
+        let seen_before = message.state != MessageState::New;
+        if seen_before {
+            return Ok(Delivered { message, seen_before });
+        }
+
+        let read_column = self.column(&scope, MessageState::Read).await?;
+        if let Err(e) = self
+            .api
+            .move_task(scope.project(), scope.view, read_column, card.id)
+            .await
+        {
+            return Err(self
+                .restore(&scope, &card, message.state)
+                .await
+                .err()
+                .map_or_else(
+                    || MailboxError::Store(e.to_string()),
+                    |rollback| {
+                        Rollback::of(vec![(card.id, rollback)])
+                            .into_error("read_message", e.to_string())
+                    },
+                ));
+        }
+
+        // Read-back, exactly as a box delivery does it: a message reported as
+        // delivered but still sitting in `new` is the next consumer's fresh
+        // mail, which is the duplicate delivery this context exists to prevent.
+        let expected = Message {
+            state: MessageState::Read,
+            ..message.clone()
+        };
+        match self.read_back(&scope, id).await {
+            Ok(seen) if seen == expected => Ok(Delivered {
+                message: seen,
+                seen_before,
+            }),
+            // Advanced past `read` while this call was in flight — somebody on
+            // the board handled it. Dropped from a box delivery; here there is
+            // nothing else to hand over, so it is handed back as it now stands,
+            // flagged, rather than rolled back over their outcome.
+            Ok(seen) if read_back_confirms(&expected, &seen) => {
+                tracing::warn!(
+                    card = %id,
+                    state = %seen.state,
+                    "a message advanced past `read` while it was being taken by id — handed \
+                     back as it now stands, not rolled back"
+                );
+                Ok(Delivered {
+                    message: seen,
+                    seen_before: true,
+                })
+            }
+            outcome => {
+                let restored = Rollback::of(
+                    self.restore(&scope, &card, message.state)
+                        .await
+                        .err()
+                        .map(|e| vec![(card.id, e)])
+                        .unwrap_or_default(),
+                );
+                Err(restored.into_error(
+                    "read_message",
+                    match outcome {
+                        Ok(seen) => format!(
+                            "message {id} did not read back as delivered: expected \
+                             {expected:?}, read {seen:?}"
+                        ),
+                        Err(e) => e.to_string(),
+                    },
+                ))
+            }
+        }
+    }
+
     async fn mark_processed(
         &self,
         id: &MessageId,
@@ -1232,34 +1361,13 @@ impl Mailboxes for VikunjaStore {
         validate_message_id(id)?;
         validate_notes(notes)?;
         let scope = self.resolve_scope().await?;
-
-        // The card is found by walking jojobot's OWN board. An id that is not on
-        // it is a miss — never a lookup by raw id, which in Vikunja would reach
-        // any card the token can see, the operator's boards included.
-        let board = self.board_read(&scope).await?;
-        // …but an id that IS on it and cannot be read is not a miss. It is a
-        // card `list_mailboxes` publishes by this very id, so answering "no
-        // such message" would be a false statement about jojobot's own output,
-        // and it would send the caller hunting for a lost message rather than
-        // at the card sitting on the board.
-        if let Some(quarantined) = board.quarantined.iter().find(|q| q.card.to_string() == id.0) {
-            return Err(MailboxError::Quarantined {
-                attempted: id.to_string(),
-                reason: quarantined.why.to_string(),
-            });
-        }
-        let (card, message) = board
-            .messages
-            .into_iter()
-            .find(|(_, m)| &m.id == id)
-            .ok_or_else(|| MailboxError::UnknownMessage {
-                attempted: id.to_string(),
-            })?;
+        let (card, message) = self.addressed(&scope, id).await?;
 
         let notes = normalize_notes(notes).or(message.notes.clone());
         let envelope = Envelope {
             sender: message.sender.clone(),
             sent_at: message.sent_at,
+            subject: message.subject.clone(),
             notes: notes.clone(),
         };
         // The outcome is written first, then the column moves. A `?` between the
@@ -2476,6 +2584,7 @@ mod tests {
             .post_message(NewMessage {
                 mailbox: MailboxName("inbox".into()),
                 body: "the shipment landed".into(),
+                subject: None,
                 sender: "alpha".into(),
                 sent_at: at(1_780_000_000),
             })
@@ -2622,7 +2731,7 @@ mod tests {
             "alpha: looks like a message",
             &render_description(
                 "looks like a message",
-                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), notes: None },
+                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), subject: None, notes: None },
             ),
             &[label],
         );
@@ -2645,7 +2754,7 @@ mod tests {
             fake.tasks_in(theirs)[0].description,
             render_description(
                 "looks like a message",
-                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), notes: None },
+                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), subject: None, notes: None },
             ),
             "…and the card is untouched"
         );
@@ -2811,6 +2920,7 @@ mod tests {
                 .post_message(NewMessage {
                     mailbox: MailboxName("inbox".into()),
                     body: "the shipment landed".into(),
+                    subject: None,
                     sender: "alpha".into(),
                     sent_at: at(1_780_000_000),
                 })
@@ -2879,6 +2989,7 @@ mod tests {
             .post_message(NewMessage {
                 mailbox: MailboxName("unlabelled-probe".into()),
                 body: "the shipment landed".into(),
+                subject: None,
                 sender: "alpha".into(),
                 sent_at: at(1_780_000_000),
             })
@@ -2971,6 +3082,7 @@ mod tests {
                 .post_message(NewMessage {
                     mailbox: MailboxName("inbox".into()),
                     body: "the shipment landed".into(),
+                    subject: None,
                     sender: "alpha".into(),
                     sent_at: at(1_780_000_000),
                 })
@@ -3022,6 +3134,7 @@ mod tests {
             .post_message(NewMessage {
                 mailbox: MailboxName("inbox".into()),
                 body: "the shipment landed".into(),
+                subject: None,
                 sender: "alpha".into(),
                 sent_at: at(1_780_000_000),
             })
@@ -3550,7 +3663,7 @@ mod tests {
             fake.placement.lock().unwrap().insert(card, processed);
             let swapped = render_description(
                 "a different message entirely",
-                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), notes: None },
+                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), subject: None, notes: None },
             );
             let mut tasks = fake.tasks.lock().unwrap();
             let held = tasks.iter_mut().find(|t| t.id == card).expect("the card");
@@ -3602,6 +3715,7 @@ mod tests {
             .post_message(NewMessage {
                 mailbox: MailboxName("inbox".into()),
                 body: "the shipment landed".into(),
+                subject: None,
                 sender: "alpha".into(),
                 sent_at: at(1_780_000_000),
             })
@@ -3722,6 +3836,7 @@ mod tests {
             id: MessageId("13".into()),
             mailbox: MailboxName("inbox".into()),
             body: "the shipment landed".into(),
+            subject: None,
             sender: "alpha".into(),
             sent_at: at(1_780_000_000),
             state: MessageState::New,
@@ -3737,6 +3852,7 @@ mod tests {
             ("the id", Message { id: MessageId("14".into()), ..advanced.clone() }),
             ("the box", Message { mailbox: MailboxName("errands".into()), ..advanced.clone() }),
             ("the body", Message { body: "a different message".into(), ..advanced.clone() }),
+            ("the subject", Message { subject: Some("a title nobody wrote".into()), ..advanced.clone() }),
             ("the sender", Message { sender: "milhouse".into(), ..advanced.clone() }),
             ("the instant", Message { sent_at: at(1_770_000_000), ..advanced.clone() }),
         ] {
@@ -3769,6 +3885,7 @@ mod tests {
         let posted = Envelope {
             sender: "alpha".into(),
             sent_at: at(1_780_000_000),
+            subject: None,
             notes: None,
         };
         let swapped_body = ("the body", "a different message entirely".to_string(), posted.clone());
@@ -3812,6 +3929,7 @@ mod tests {
                 .post_message(NewMessage {
                     mailbox: MailboxName("inbox".into()),
                     body: "the shipment landed".into(),
+                    subject: None,
                     sender: "alpha".into(),
                     sent_at: at(1_780_000_000),
                 })

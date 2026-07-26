@@ -7,7 +7,14 @@
 //! for, where a doc's declared id and its rows' subject cells disagreed and the
 //! entity became readable under one name and writable under another. What is
 //! left is what no Vikunja field can hold: the declared **sender**, the
-//! **sent-at** instant, and the **outcome notes** a consumer records.
+//! **sent-at** instant, the **subject** the poster gave it, and the **outcome
+//! notes** a consumer records.
+//!
+//! The subject rides here rather than being read off the card's title, even
+//! though the title is rendered from it. A title is one line of display text a
+//! person may retype at any moment, and it also carries the sender; reading the
+//! subject back out of it would mean guessing where one ends and the other
+//! begins, on text nobody promised to leave alone.
 //!
 //! ```text
 //! the shipment landed
@@ -15,6 +22,7 @@
 //! ```yaml
 //! sender: alpha
 //! sent-at: 2026-05-28T20:26:40Z
+//! subject: the shipment
 //! notes: filed under shipments
 //! ```
 //! ```
@@ -26,6 +34,7 @@ use jiff::Timestamp;
 pub(super) struct Envelope {
     pub sender: String,
     pub sent_at: Timestamp,
+    pub subject: Option<String>,
     pub notes: Option<String>,
 }
 
@@ -40,6 +49,11 @@ pub(super) fn render_description(body: &str, envelope: &Envelope) -> String {
         envelope.sender.trim(),
         envelope.sent_at
     );
+    // Absent, not blank, for the same reason `notes` is: a blank `subject:`
+    // reads as a title somebody wrote and left empty.
+    if let Some(subject) = envelope.subject.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        block.push_str(&format!("{SUBJECT}: {subject}\n"));
+    }
     // The line is absent, not blank, when there is no outcome yet: a blank
     // `notes:` reads as "handled, nothing to say", which is a different claim.
     if let Some(notes) = envelope.notes.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
@@ -75,6 +89,8 @@ const SENDER: &str = "sender";
 const SENT_AT: &str = "sent-at";
 /// The field carrying a consumer's recorded outcome.
 const NOTES: &str = "notes";
+/// The field carrying the subject the poster gave the message.
+const SUBJECT: &str = "subject";
 
 /// The value of a `key: value` line, if this line is one.
 fn field_of(line: &str, key: &str) -> Option<String> {
@@ -130,6 +146,9 @@ fn read(description: &str) -> Option<(String, Envelope)> {
     let envelope = Envelope {
         sender: field(SENDER)?,
         sent_at: field(SENT_AT)?.parse().ok()?,
+        // Absent on every card written before there was a field for it, and
+        // that is not a defect — those messages have no subject.
+        subject: field(SUBJECT),
         notes: field(NOTES),
     };
     let body = lines
@@ -206,6 +225,7 @@ mod tests {
         Envelope {
             sender: "alpha".into(),
             sent_at: at(1_780_000_000),
+            subject: None,
             notes: None,
         }
     }
@@ -256,6 +276,36 @@ mod tests {
         );
         let (_, read) = parse_description(&with).expect("a message card");
         assert_eq!(read.notes.as_deref(), Some("filed under shipments"));
+    }
+
+    /// A subject is written only when the poster gave one, and **a card written
+    /// before the field existed still reads** — its absence is a message with no
+    /// subject, not a card that fails to parse. That back-compatibility is the
+    /// whole reason this field is optional rather than required: the operator's
+    /// board is full of cards jojobot wrote last milestone.
+    #[test]
+    fn a_subject_is_optional_and_an_older_card_still_reads() {
+        let without = render_description("the shipment landed", &envelope());
+        assert!(!without.contains("subject:"), "got {without:?}");
+        let (_, read) = parse_description(&without).expect("a message card");
+        assert_eq!(read.subject, None);
+
+        let with = render_description(
+            "it landed at dawn",
+            &Envelope { subject: Some("the shipment".into()), ..envelope() },
+        );
+        let (body, read) = parse_description(&with).expect("a message card");
+        assert_eq!(read.subject.as_deref(), Some("the shipment"));
+        assert_eq!(body, "it landed at dawn", "the subject is not carved out of the body");
+
+        // Verbatim, as a card jojobot wrote before this field existed: no
+        // subject line at all, and every other field where it always was.
+        let legacy = "the shipment landed\n\n```yaml\nsender: alpha\nsent-at: \
+                      2026-05-28T20:26:40Z\nnotes: filed\n```";
+        let (legacy_body, legacy_read) = parse_description(legacy).expect("an older message card");
+        assert_eq!(legacy_body, "the shipment landed");
+        assert_eq!(legacy_read.subject, None);
+        assert_eq!(legacy_read.notes.as_deref(), Some("filed"));
     }
 
     /// A card a human added to the board by hand is not a message. It has no

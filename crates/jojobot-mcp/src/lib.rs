@@ -316,6 +316,12 @@ pub struct PostMessageArgs {
     pub mailbox: String,
     /// The message itself. Prose: paragraphs are fine.
     pub body: String,
+    /// What this message is about, in one line — a title, not a summary.
+    /// Optional, and worth giving: it is what a reader sees on the card and on
+    /// a search hit before they open anything. Do NOT also repeat it as the
+    /// body's first line.
+    #[serde(default)]
+    pub subject: Option<String>,
     /// Who is sending, as you declare it. Recorded as claimed — jojobot does not
     /// resolve or verify identity — name yourself specifically enough that a
     /// reply can find you.
@@ -327,6 +333,14 @@ pub struct PostMessageArgs {
 pub struct ReadMailboxArgs {
     /// The box to read.
     pub mailbox: String,
+}
+
+/// Arguments to `read_message`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReadMessageArgs {
+    /// The message's id, exactly as a search hit, a delivery or `post_message`
+    /// returned it.
+    pub message_id: String,
 }
 
 /// Arguments to `mark_processed`.
@@ -1018,7 +1032,10 @@ impl Jojobot {
                        must ALREADY EXIST — an unknown name comes back status: blocked with \
                        candidates and nothing is written; call create_mailbox first if it is \
                        genuinely new. Returns the stored message, including the id that \
-                       mark_processed later targets. The `state` you get back is the state as \
+                       read_message and mark_processed later target. Give it a `subject`: one \
+                       line saying what the message is about, which is what a reader sees on the \
+                       card and on a search hit before opening anything — put it there rather \
+                       than on the body's first line. The `state` you get back is the state as \
                        it stands — it can already say `read` if a person picked the message up \
                        in between, and that is success, not a problem: the message exists and \
                        someone has it. `sender` is recorded exactly as you declare it — \
@@ -1032,6 +1049,7 @@ impl Jojobot {
         let new = NewMessage {
             mailbox: MailboxName(args.mailbox.trim().to_string()),
             body: args.body,
+            subject: args.subject,
             sender: args.sender,
             // Stamped here, at the edge, for the same reason `capture` stamps a
             // date here: the domain stays clock-free, and a caller does not get
@@ -1066,7 +1084,8 @@ impl Jojobot {
                        delivery was in flight is left out, so a delivery can be smaller than \
                        counts you saw a moment ago. An unknown box comes back status: blocked \
                        with candidates and delivers nothing. Act on what you receive, then call \
-                       mark_processed for each."
+                       mark_processed for each. Draining a whole box makes every message in it \
+                       yours to finish — use read_message when you want only one."
     )]
     async fn read_mailbox(
         &self,
@@ -1088,6 +1107,32 @@ impl Jojobot {
                 &candidates,
                 BlockedBox::MustExist("read_mailbox"),
             )),
+        }
+    }
+
+    /// Take delivery of one message by id, leaving the rest of its box alone.
+    #[tool(
+        description = "Take delivery of ONE message by id — the selective half of read_mailbox, \
+                       for when you want a single message (the one a search hit named) and have \
+                       no business owning the rest of the box. That one moves `new` to `read`; \
+                       nothing else in the box is touched. Same envelope a delivery hands over, \
+                       seen_before and all: true means somebody had already taken this message, \
+                       so it is a leftover rather than fresh mail. A `processed` message comes \
+                       back unchanged and flagged — processed is a terminal archive, and reading \
+                       one is reading history, not taking it on. Taking delivery is NOT handling: \
+                       call mark_processed once you have acted, and only then. Two refusals wear \
+                       the status: blocked shape — an id that names nothing at all, and an id \
+                       naming an item jojobot cannot read, which comes with a `reason` and needs \
+                       a person, not a retry."
+    )]
+    async fn read_message(
+        &self,
+        Parameters(args): Parameters<ReadMessageArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let id = MessageId(args.message_id.trim().to_string());
+        match self.mailboxes.read_message(&id).await {
+            Ok(delivered) => json_result(&delivered_json(&delivered)),
+            Err(e) => mailbox_declined(e),
         }
     }
 
@@ -1418,6 +1463,10 @@ fn message_json(message: &Message) -> serde_json::Value {
         "mailbox": message.mailbox.as_str(),
         "sender": message.sender,
         "sent_at": message.sent_at.to_string(),
+        // Null for every message posted before there was a field for one, and
+        // for every one posted without it since. Absent-as-null rather than an
+        // omitted key: a reader must not have to branch on whether it is there.
+        "subject": message.subject,
         "body": message.body,
         "state": message.state.as_token(),
         "notes": message.notes,
@@ -3302,10 +3351,21 @@ mod tests {
     }
 
     async fn send(jojobot: &Jojobot, mailbox: &str, sender: &str, body: &str) -> serde_json::Value {
+        send_titled(jojobot, mailbox, sender, None, body).await
+    }
+
+    async fn send_titled(
+        jojobot: &Jojobot,
+        mailbox: &str,
+        sender: &str,
+        subject: Option<&str>,
+        body: &str,
+    ) -> serde_json::Value {
         let result = jojobot
             .post_message(Parameters(PostMessageArgs {
                 mailbox: mailbox.into(),
                 sender: sender.into(),
+                subject: subject.map(str::to_string),
                 body: body.into(),
             }))
             .await
@@ -3363,6 +3423,10 @@ mod tests {
         );
         assert_eq!(processed["state"], "processed");
         assert_eq!(processed["notes"], "filed under shipments");
+        assert!(
+            processed["subject"].is_null(),
+            "a message posted without a subject has none, on every verb that renders it"
+        );
 
         let after = json_of(
             &jojobot
@@ -3395,6 +3459,134 @@ mod tests {
         assert_eq!(again["messages"][0]["seen_before"], true);
     }
 
+    /// **A subject travels the whole surface.** It goes in on the post and comes
+    /// back on the post, the delivery and the archive — a title only the poster
+    /// ever sees is not a title.
+    #[tokio::test]
+    async fn a_subject_is_carried_by_every_verb_that_renders_a_message() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let posted = send_titled(
+            &jojobot,
+            "inbox",
+            "alpha",
+            Some("the shipment"),
+            "it landed at dawn; the crates are by the north door",
+        )
+        .await;
+        assert_eq!(posted["subject"], "the shipment");
+        assert_eq!(
+            posted["body"], "it landed at dawn; the crates are by the north door",
+            "the subject sits beside the body, never carved out of it"
+        );
+        let id = posted["id"].as_str().expect("an id").to_string();
+
+        let delivery = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into() }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(delivery["messages"][0]["subject"], "the shipment");
+
+        let processed = json_of(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs { message_id: id, notes: None }))
+                .await
+                .expect("mark_processed ok"),
+        );
+        assert_eq!(processed["subject"], "the shipment", "the archive keeps the title");
+    }
+
+    /// **One message, taken by id.** The named message is delivered and the rest
+    /// of the box is left where it was — the point of the verb: a session that
+    /// wants one filed finding must not have to own everything beside it.
+    #[tokio::test]
+    async fn read_message_delivers_one_and_leaves_the_box_alone() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let wanted = send(&jojobot, "inbox", "alpha", "the one worth reading").await;
+        send(&jojobot, "inbox", "milhouse", "the rest of the box").await;
+        let id = wanted["id"].as_str().expect("an id").to_string();
+
+        let delivered = json_of(
+            &jojobot
+                .read_message(Parameters(ReadMessageArgs { message_id: id.clone() }))
+                .await
+                .expect("read_message ok"),
+        );
+        assert_eq!(delivered["id"], id.as_str());
+        assert_eq!(delivered["body"], "the one worth reading");
+        assert_eq!(delivered["state"], "read", "taking one message moves its column");
+        assert_eq!(delivered["seen_before"], false);
+
+        let listed = json_of(&jojobot.list_mailboxes().await.expect("list ok"));
+        assert_eq!(listed["mailboxes"][0]["counts"]["read"], 1);
+        assert_eq!(
+            listed["mailboxes"][0]["counts"]["new"], 1,
+            "the rest of the box was not delivered with it"
+        );
+
+        // Taken again: a leftover, not a second delivery.
+        let again = json_of(
+            &jojobot
+                .read_message(Parameters(ReadMessageArgs { message_id: id }))
+                .await
+                .expect("read_message ok"),
+        );
+        assert_eq!(again["seen_before"], true);
+    }
+
+    /// **An id that names nothing is blocked, not an error** — the same answer
+    /// `mark_processed` gives, so one client branch handles both.
+    #[tokio::test]
+    async fn reading_an_unknown_message_is_blocked_not_an_error() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+
+        let result = jojobot
+            .read_message(Parameters(ReadMessageArgs { message_id: "999999".into() }))
+            .await
+            .expect("a blocked read is a successful call");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "999999");
+        assert!(
+            body["candidates"].as_array().expect("candidates key").is_empty(),
+            "nothing resembles a message id: {body}"
+        );
+    }
+
+    /// A quarantined card addressed by `read_message` gets the quarantine's own
+    /// words, not "no such message" — the distinction `mark_processed` draws,
+    /// drawn by every verb that addresses a card by id.
+    #[tokio::test]
+    async fn reading_a_quarantined_card_is_blocked_with_its_own_words() {
+        let store = Arc::new(InMemoryMailboxes::new());
+        let jojobot = with_mailboxes(store.clone());
+        make_box(&jojobot, "inbox").await;
+        let posted = send(&jojobot, "inbox", "alpha", "the shipment landed").await;
+        let id = posted["id"].as_str().expect("an id").to_string();
+        store.quarantine(
+            &MailboxName("inbox".into()),
+            &MessageId(id.clone()),
+            "its description no longer carries a readable machine block",
+        );
+
+        let result = jojobot
+            .read_message(Parameters(ReadMessageArgs { message_id: id.clone() }))
+            .await
+            .expect("a quarantined card is a successful, refusing call");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], id.as_str());
+        let reason = body["reason"].as_str().expect("a quarantined card says why");
+        assert!(reason.contains("machine block"), "got {reason}");
+        let advice = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            advice.contains("PERSON"),
+            "retrying does not help — a person must repair it: {advice}"
+        );
+    }
+
     /// **Blocked is a result, not a protocol error** — the same shape the Memory
     /// verbs use, so one client-side branch handles both contexts.
     #[tokio::test]
@@ -3407,6 +3599,7 @@ mod tests {
                 mailbox: "inbx".into(),
                 sender: "alpha".into(),
                 body: "the shipment landed".into(),
+                subject: None,
             }))
             .await
             .expect("a blocked post is a successful call");
@@ -3524,6 +3717,7 @@ mod tests {
                 mailbox: "inbox".into(),
                 sender: "  ".into(),
                 body: "the shipment landed".into(),
+                subject: None,
             }))
             .await
             .expect_err("a message with no sender has no provenance");
@@ -3666,8 +3860,9 @@ mod tests {
         // Sorted, so the list is stable and a diff to it is legible — which
         // means it is NOT grouped by context, and any comment here claiming
         // otherwise would be describing a different list than the one below.
-        // The five mailbox verbs in it are create_mailbox, list_mailboxes,
-        // post_message, read_mailbox and mark_processed; the rest are Memory's.
+        // The six mailbox verbs in it are create_mailbox, list_mailboxes,
+        // post_message, read_mailbox, read_message and mark_processed; the rest
+        // are Memory's.
         assert_eq!(
             names,
             [
@@ -3681,6 +3876,7 @@ mod tests {
                 "ping",
                 "post_message",
                 "read_mailbox",
+                "read_message",
                 "recall",
                 "search",
                 "set_charter",
@@ -3708,6 +3904,7 @@ mod tests {
             "update_entity",
             "update_fact",
             "mark_processed",
+            "read_message",
             "set_charter",
             "boot_bot",
         ] {
@@ -3833,6 +4030,12 @@ mod tests {
                 &self,
                 _: &mailbox::MailboxName,
             ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
+                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
+            }
+            async fn read_message(
+                &self,
+                _: &mailbox::MessageId,
+            ) -> Result<mailbox::Delivered, mailbox::MailboxError> {
                 Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
             }
             async fn mark_processed(

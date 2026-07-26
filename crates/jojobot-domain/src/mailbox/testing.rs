@@ -16,8 +16,8 @@ use jiff::Timestamp;
 use super::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
     MessageId, MessageState, NewMessage, StateCounts, guard,
-    normalize_body, normalize_notes, validate_body, validate_mailbox_name, validate_message_id,
-    validate_notes, validate_sender,
+    normalize_body, normalize_notes, normalize_subject, validate_body, validate_mailbox_name,
+    validate_message_id, validate_notes, validate_sender, validate_subject,
 };
 
 /// The in-memory [`Mailboxes`] fake — a real store that holds a write, with no
@@ -75,6 +75,26 @@ impl InMemoryMailboxes {
         let mut next = self.next_id.lock().expect("id lock");
         *next += 1;
         MessageId(next.to_string())
+    }
+
+    /// The refusal every verb that addresses a card by id owes: a quarantined
+    /// id is on the board and cannot be read, which is a different answer from
+    /// "no such message" and has to stay one.
+    fn refuse_if_quarantined(&self, id: &MessageId) -> Result<(), MailboxError> {
+        let reason = self
+            .quarantined
+            .lock()
+            .expect("quarantine lock")
+            .iter()
+            .find(|(_, card, _)| card == id)
+            .map(|(_, _, reason)| reason.clone());
+        match reason {
+            Some(reason) => Err(MailboxError::Quarantined {
+                attempted: id.to_string(),
+                reason,
+            }),
+            None => Ok(()),
+        }
     }
 }
 
@@ -134,6 +154,7 @@ impl Mailboxes for InMemoryMailboxes {
         validate_mailbox_name(&message.mailbox)?;
         validate_sender(&message.sender)?;
         validate_body(&message.body)?;
+        validate_subject(message.subject.as_deref())?;
 
         let names = self.names();
         if let guard::Decision::Block(candidates) = guard::decide_existing(&message.mailbox, &names)
@@ -148,6 +169,7 @@ impl Mailboxes for InMemoryMailboxes {
             id: self.mint_id(),
             mailbox: message.mailbox,
             body: normalize_body(&message.body),
+            subject: normalize_subject(message.subject.as_deref()),
             sender: message.sender.trim().to_string(),
             sent_at: message.sent_at,
             state: MessageState::New,
@@ -204,6 +226,29 @@ impl Mailboxes for InMemoryMailboxes {
         }))
     }
 
+    async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
+        validate_message_id(id)?;
+        self.refuse_if_quarantined(id)?;
+
+        let mut messages = self.messages.lock().expect("message lock");
+        let message = messages
+            .iter_mut()
+            .find(|m| &m.id == id)
+            .ok_or_else(|| MailboxError::UnknownMessage {
+                attempted: id.to_string(),
+            })?;
+        // Anything but `new` has been handed over or handled already — the one
+        // state this verb advances is the one nobody has taken.
+        let seen_before = message.state != MessageState::New;
+        if !seen_before {
+            message.state = MessageState::Read;
+        }
+        Ok(Delivered {
+            message: message.clone(),
+            seen_before,
+        })
+    }
+
     async fn mark_processed(
         &self,
         id: &MessageId,
@@ -211,20 +256,7 @@ impl Mailboxes for InMemoryMailboxes {
     ) -> Result<Message, MailboxError> {
         validate_message_id(id)?;
         validate_notes(notes)?;
-
-        let quarantined = self
-            .quarantined
-            .lock()
-            .expect("quarantine lock")
-            .iter()
-            .find(|(_, card, _)| card == id)
-            .map(|(_, _, reason)| reason.clone());
-        if let Some(reason) = quarantined {
-            return Err(MailboxError::Quarantined {
-                attempted: id.to_string(),
-                reason,
-            });
-        }
+        self.refuse_if_quarantined(id)?;
 
         let mut messages = self.messages.lock().expect("message lock");
         let message = messages
@@ -272,12 +304,26 @@ pub mod contract {
             .unwrap_or_else(|| panic!("the guard must not block creating '{n}'"))
     }
 
-    /// Post a message, asserting the guard waved it through.
+    /// Post a message with no subject — the ordinary case, and every message
+    /// written before there was a field for one.
     pub async fn post(store: &dyn Mailboxes, mailbox: &str, sender: &str, body: &str, at_offset: i64) -> Message {
+        titled(store, mailbox, sender, None, body, at_offset).await
+    }
+
+    /// Post a message, subject and all, asserting the guard waved it through.
+    pub async fn titled(
+        store: &dyn Mailboxes,
+        mailbox: &str,
+        sender: &str,
+        subject: Option<&str>,
+        body: &str,
+        at_offset: i64,
+    ) -> Message {
         store
             .post_message(NewMessage {
                 mailbox: name(mailbox),
                 body: body.to_string(),
+                subject: subject.map(str::to_string),
                 sender: sender.to_string(),
                 sent_at: at(at_offset),
             })
@@ -389,6 +435,7 @@ pub mod contract {
         assert_eq!(posted.sent_at, at(0));
         assert_eq!(posted.state, MessageState::New, "a posted message is new");
         assert_eq!(posted.notes, None);
+        assert_eq!(posted.subject, None, "a message without a subject has none");
         assert!(!posted.id.as_str().is_empty(), "the store mints an id");
 
         let counts = counts(store, "inbox").await.expect("the box is on the board");
@@ -449,6 +496,143 @@ pub mod contract {
         assert_eq!(delivered.messages[0].message.body, body, "…and on the way back out");
     }
 
+    /// **A subject survives every path a message travels.** It is written on
+    /// the way in, comes back on the posted record, and is still there on the
+    /// delivery and on the processed archive — a title that only existed at the
+    /// moment of posting would be a title no reader ever sees.
+    pub async fn a_subject_rides_with_the_message(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let posted = titled(
+            store,
+            "inbox",
+            "alpha",
+            Some("the shipment"),
+            "it landed at dawn; the crates are stacked by the north door",
+            0,
+        )
+        .await;
+        assert_eq!(posted.subject.as_deref(), Some("the shipment"));
+        assert_eq!(
+            posted.body, "it landed at dawn; the crates are stacked by the north door",
+            "the subject is beside the body, never carved out of it"
+        );
+
+        let delivered = read(store, "inbox").await;
+        assert_eq!(
+            delivered.messages[0].message.subject.as_deref(),
+            Some("the shipment"),
+            "…and on the way back out"
+        );
+
+        let processed = store.mark_processed(&posted.id, None).await.expect("ok");
+        assert_eq!(
+            processed.subject.as_deref(),
+            Some("the shipment"),
+            "processing rewrites the outcome, not the title"
+        );
+    }
+
+    /// A blank subject is no subject, and one carrying a line break is refused
+    /// — it rides in a one-line field, exactly as `sender` does. Nothing
+    /// malformed reaches the board.
+    pub async fn a_blank_subject_is_absent_and_a_broken_one_is_refused(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let blank = titled(store, "inbox", "alpha", Some("   "), "the shipment landed", 0).await;
+        assert_eq!(blank.subject, None, "a blank subject is absent, not empty");
+
+        let broken = store
+            .post_message(NewMessage {
+                mailbox: name("inbox"),
+                body: "the shipment landed".into(),
+                subject: Some("two\nlines".into()),
+                sender: "alpha".into(),
+                sent_at: at(30),
+            })
+            .await;
+        assert!(broken.is_err(), "a subject is one plain line");
+        assert_eq!(
+            counts(store, "inbox").await.expect("inbox exists").total(),
+            1,
+            "the refused post never reached the board"
+        );
+    }
+
+    /// **One message, taken by id.** A consumer that wants a single filed
+    /// message must not have to take delivery of — and own — the whole box: the
+    /// named message moves `new → read` and everything else stays exactly where
+    /// it was.
+    pub async fn read_message_takes_one_and_leaves_the_rest(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let wanted = post(store, "inbox", "alpha", "the one worth reading", 0).await;
+        post(store, "inbox", "milhouse", "the rest of the box", 60).await;
+
+        let delivered = store.read_message(&wanted.id).await.expect("read_message ok");
+        assert_eq!(delivered.message.id, wanted.id);
+        assert_eq!(delivered.message.body, "the one worth reading");
+        assert_eq!(delivered.message.state, MessageState::Read, "delivery moves the column");
+        assert!(!delivered.seen_before, "a first delivery is nobody's leftover");
+
+        let after_one = counts(store, "inbox").await.expect("inbox exists");
+        assert_eq!(after_one.read, 1, "exactly one message was taken");
+        assert_eq!(after_one.new, 1, "…and the rest of the box was left alone");
+
+        // Taking it twice is the leftover case, not a second delivery.
+        let again = store.read_message(&wanted.id).await.expect("read_message ok");
+        assert!(
+            again.seen_before,
+            "a message already delivered comes back flagged, exactly as a box read flags it"
+        );
+        let after_two = counts(store, "inbox").await.expect("inbox exists");
+        assert_eq!(after_two.read, 1, "…and nothing else moved with it");
+        assert_eq!(after_two.new, 1);
+    }
+
+    /// **Reading an archive does not reopen it.** `processed` is terminal, so a
+    /// processed message named by id is handed back in the state it is in —
+    /// walking it back to `read` would put a handled message into the next
+    /// delivery as owed work.
+    pub async fn read_message_leaves_a_processed_message_terminal(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let posted = post(store, "inbox", "alpha", "the shipment landed", 0).await;
+        store
+            .mark_processed(&posted.id, Some("filed under shipments"))
+            .await
+            .expect("mark_processed ok");
+
+        let delivered = store.read_message(&posted.id).await.expect("read_message ok");
+        assert_eq!(
+            delivered.message.state,
+            MessageState::Processed,
+            "nothing moves out of processed"
+        );
+        assert_eq!(delivered.message.notes.as_deref(), Some("filed under shipments"));
+        assert!(delivered.seen_before, "an archive read is nobody's fresh mail");
+        assert_eq!(
+            counts(store, "inbox").await.expect("inbox exists").processed,
+            1,
+            "the counts agree: it is still processed"
+        );
+        assert!(
+            read(store, "inbox").await.messages.is_empty(),
+            "…and it is still out of the delivery set"
+        );
+    }
+
+    /// An id nothing answers to is a miss here for the same reason it is one
+    /// for `mark_processed` — and it is the same answer, so one client branch
+    /// handles both.
+    pub async fn reading_an_unknown_message_is_a_miss(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let err = store
+            .read_message(&MessageId("999999".into()))
+            .await
+            .expect_err("an unknown id must not report success");
+        assert!(
+            matches!(err, MailboxError::UnknownMessage { .. }),
+            "got {err:?}"
+        );
+    }
+
     /// **A typo must never silently mint a box.** Posting into a name jojobot
     /// doesn't know comes back blocked, with the box it suspects — and creates
     /// nothing.
@@ -459,6 +643,7 @@ pub mod contract {
             .post_message(NewMessage {
                 mailbox: name("inbx"),
                 body: "the shipment landed".into(),
+                subject: None,
                 sender: "alpha".into(),
                 sent_at: at(0),
             })
@@ -670,6 +855,7 @@ pub mod contract {
             .post_message(NewMessage {
                 mailbox: name("inbox"),
                 body: "   ".into(),
+                subject: None,
                 sender: "alpha".into(),
                 sent_at: at(0),
             })
@@ -680,6 +866,7 @@ pub mod contract {
             .post_message(NewMessage {
                 mailbox: name("inbox"),
                 body: "the shipment landed".into(),
+                subject: None,
                 sender: "  ".into(),
                 sent_at: at(0),
             })
@@ -700,6 +887,11 @@ pub mod contract {
         creating_a_near_miss_is_blocked_and_writes_nothing(&fresh()).await;
         a_confirmed_near_miss_creates_the_sibling_box(&fresh()).await;
         a_posted_message_lands_in_new(&fresh()).await;
+        a_subject_rides_with_the_message(&fresh()).await;
+        a_blank_subject_is_absent_and_a_broken_one_is_refused(&fresh()).await;
+        read_message_takes_one_and_leaves_the_rest(&fresh()).await;
+        read_message_leaves_a_processed_message_terminal(&fresh()).await;
+        reading_an_unknown_message_is_a_miss(&fresh()).await;
         a_body_survives_the_round_trip(&fresh()).await;
         a_crlf_body_normalizes_to_plain_newlines(&fresh()).await;
         a_body_of_markup_and_a_loose_fence_survives(&fresh()).await;
