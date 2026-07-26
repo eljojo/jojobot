@@ -492,14 +492,35 @@ impl VikunjaStore {
     /// undo **all** of them: restoring only the one that failed leaves the rest
     /// marked delivered, to a caller that was told the call failed and never
     /// received them.
+    ///
+    /// With one exception — **the same later-state-wins rule the read-back
+    /// applies**: a card that advanced PAST the state this call wrote
+    /// (`written`) was taken and consumed by someone in the meantime, and that
+    /// consumer's `mark_processed` was already told success. Restoring it would
+    /// erase their recorded outcome and redeliver a handled message, so it is
+    /// skipped. If the board cannot be re-read, everything is restored: a card
+    /// wrongly put back is redelivered flagged as a leftover, never lost.
     async fn restore_all(
         &self,
         scope: &Scope,
         cards: &[(TaskRec, MessageState)],
+        written: MessageState,
         verb: &str,
     ) -> String {
+        let advanced: std::collections::HashSet<u64> = match self.board_read(scope).await {
+            Ok(board) => board
+                .messages
+                .iter()
+                .filter(|(_, m)| m.state > written)
+                .map(|(task, _)| task.id)
+                .collect(),
+            Err(_) => Default::default(),
+        };
         let mut failures = Vec::new();
         for (card, state) in cards {
+            if advanced.contains(&card.id) {
+                continue;
+            }
             if let Err(failure) = self.restore(scope, card, *state).await {
                 failures.push(format!("card {}: {failure}", card.id));
             }
@@ -826,7 +847,7 @@ impl Mailboxes for VikunjaStore {
                     .move_task(scope.project(), scope.view, read_column, card.id)
                     .await
                 {
-                    let restored = self.restore_all(&scope, &moved, "read_mailbox").await;
+                    let restored = self.restore_all(&scope, &moved, MessageState::Read, "read_mailbox").await;
                     return Err(MailboxError::Store(format!("{e}; {restored}")));
                 }
                 moved.push((card.clone(), message.state));
@@ -861,7 +882,7 @@ impl Mailboxes for VikunjaStore {
                     // is being told the call failed, so nothing in it may stay
                     // marked delivered.
                     let _ = &card;
-                    let restored = self.restore_all(&scope, &moved, "read_mailbox").await;
+                    let restored = self.restore_all(&scope, &moved, MessageState::Read, "read_mailbox").await;
                     return Err(MailboxError::Store(format!(
                         "message {} did not read back as delivered: expected {expected_read:?}, \
                          read {seen:?}; {restored}",
@@ -2359,6 +2380,60 @@ mod tests {
         let again = contract::read(&store, "inbox").await;
         let bodies: Vec<&str> = again.messages.iter().map(|d| d.message.body.as_str()).collect();
         assert_eq!(bodies, vec!["message one", "message two"], "nothing stays garbled");
+    }
+
+    /// **A batch rollback must not undo another consumer's confirmed work.**
+    /// The read-back accepts a card that advanced (a concurrent
+    /// `mark_processed` was told SUCCESS) — but when a different card in the
+    /// batch genuinely fails, `restore_all` used to put back EVERY moved card,
+    /// including the processed one: its recorded outcome erased, the handled
+    /// message moved back to `new` and delivered again. The rollback now
+    /// applies the same later-state-wins rule the read-back does, and skips
+    /// cards that advanced past the state this delivery wrote.
+    #[tokio::test]
+    async fn a_batch_rollback_skips_a_card_a_concurrent_consumer_already_processed() {
+        let fake = FakeVikunja::new();
+        let api = Interleaved::new(fake.clone());
+        let store = VikunjaStore::from_api(api.clone(), PROJECT);
+        contract::create(&store, "inbox").await;
+        let handled = contract::post(&store, "inbox", "alpha", "message one", 0).await;
+        let garbled = contract::post(&store, "inbox", "milhouse", "message two", 60).await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+        let handled_card: u64 = handled.id.as_str().parse().expect("a numeric card id");
+        let garbled_card: u64 = garbled.id.as_str().parse().expect("a numeric card id");
+
+        // Between the delivery's moves and its verification read: a concurrent
+        // consumer finishes mark_processed on the first card (and was told
+        // success), while the second card is garbled.
+        api.before_board(3, move |fake| {
+            let processed = fake.bucket_titled(project, "processed");
+            fake.placement.lock().unwrap().insert(handled_card, processed);
+            let mut tasks = fake.tasks.lock().unwrap();
+            let card = tasks.iter_mut().find(|t| t.id == garbled_card).expect("the card");
+            card.description = "hand-garbled mid-delivery".into();
+            card.raw["description"] = "hand-garbled mid-delivery".into();
+        });
+
+        let outcome = store.read_mailbox(&MailboxName("inbox".into())).await;
+        assert!(outcome.is_err(), "a garbled batch must not report success: {outcome:?}");
+
+        assert_eq!(
+            fake.column_of(handled_card).as_deref(),
+            Some("processed"),
+            "the card a consumer already processed must NOT be dragged back into delivery"
+        );
+        assert_eq!(
+            fake.column_of(garbled_card).as_deref(),
+            Some("new"),
+            "…while the genuinely failed card goes back with its description restored"
+        );
+        let again = contract::read(&store, "inbox").await;
+        let bodies: Vec<&str> = again.messages.iter().map(|d| d.message.body.as_str()).collect();
+        assert_eq!(
+            bodies,
+            vec!["message two"],
+            "only the restored message is owed delivery; the processed one is done"
+        );
     }
 
     // --- rollback never deletes -----------------------------------------------
