@@ -51,6 +51,13 @@ and has burned this project three times. When in doubt, it doesn't cross.
   one task. When done, `mark_processed(message, notes)` and post your report
   as a message to the **`pm`** mailbox. A failure the coordinator must know
   about is also a message to `pm` — failure is data, not silence.
+- **Audience discipline — the user is not the report channel.** Two different
+  readers: the **user** dispatched you; the **coordinator (`pm`)** reviews
+  you. Detail — commits, deviations, test output, design notes — goes to the
+  `pm` mailbox in full. The user gets the close-out only: done or blocked, in
+  a line or two, plus "report posted to pm." Don't narrate the work to the
+  user as you go; if something needs a decision mid-slice, ask it as one
+  crisp question.
 - Merging advances `main` only. **Deploy and push are the user's verbs** —
   never deploy; never push unless asked.
 
