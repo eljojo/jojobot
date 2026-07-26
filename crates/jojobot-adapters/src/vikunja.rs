@@ -1044,11 +1044,44 @@ impl Mailboxes for VikunjaStore {
             .collect();
 
         let read_column = self.column(&scope, MessageState::Read).await?;
+
+        // **The owed set is a snapshot, and a card can move under it.** Between
+        // the read that decided what is owed and the move that takes delivery
+        // of it, somebody working the board can handle a message — and moving
+        // it anyway walks a card back out of `processed`, the one state the
+        // domain calls terminal, into a column the verification read cannot
+        // tell apart from a legitimate delivery. It then goes out as fresh
+        // mail, to a second consumer, for a message that was already handled:
+        // the same harm the read-back's drop arm exists to prevent, one window
+        // earlier and invisible to it.
+        //
+        // So the board is read again here, as late as this verb can read it,
+        // and a card whose state no longer matches the snapshot is left exactly
+        // where it is. **This narrows the window; it cannot close it** —
+        // Vikunja has no compare-and-set, so no read-then-write in this adapter
+        // is atomic. What the verb lock guarantees is that the only actor left
+        // inside it is a person on the board, not another jojobot verb.
+        let fresh = self.messages(&scope).await?;
+
         let mut delivered = Vec::with_capacity(owed.len());
         // Every card this call actually moved, with the column it came from —
         // so a failure anywhere in the batch can put all of them back.
         let mut moved: Vec<(TaskRec, MessageState)> = Vec::new();
         for (card, message) in owed {
+            let current = fresh
+                .iter()
+                .find(|(_, m)| m.id == message.id)
+                .map(|(_, m)| m.state);
+            if current != Some(message.state) {
+                tracing::warn!(
+                    card = %message.id,
+                    was = %message.state,
+                    now = ?current,
+                    "a message moved under this delivery between the read that decided what was \
+                     owed and the move that would have taken it — left where it is, not delivered"
+                );
+                continue;
+            }
             let seen_before = message.state == MessageState::Read;
             if !seen_before {
                 if let Err(e) = self
@@ -2947,7 +2980,7 @@ mod tests {
         // A delivery reads the board (two paged calls) to find what is owed,
         // moves the batch, and reads again to verify. The corruption lands
         // right before the verification read — board call 3.
-        api.before_board(3, move |fake| {
+        api.before_board(5, move |fake| {
             let mut tasks = fake.tasks.lock().unwrap();
             let card = tasks
                 .iter_mut()
@@ -3027,7 +3060,7 @@ mod tests {
         // Between the delivery's moves and its verification read: a concurrent
         // consumer finishes mark_processed on the first card (and was told
         // success), while the second card is garbled.
-        api.before_board(3, move |fake| {
+        api.before_board(5, move |fake| {
             let processed = fake.bucket_titled(project, "processed");
             fake.placement.lock().unwrap().insert(handled_card, processed);
             let mut tasks = fake.tasks.lock().unwrap();
@@ -3065,6 +3098,46 @@ mod tests {
         );
     }
 
+    /// **`processed` is terminal, and a delivery may not walk a card back out
+    /// of it.** The read-back arm below catches a card that advances AFTER the
+    /// move. This is the same harm one window earlier: the owed set is a
+    /// snapshot, and a card handled between that snapshot and the move is moved
+    /// to `read` anyway — out of the one state the domain calls terminal. The
+    /// read-back then cannot see anything wrong, because the card jojobot just
+    /// dragged into `read` looks exactly like a card that was legitimately
+    /// delivered, so it goes out with `seen_before: false`: fresh mail, to a
+    /// second consumer, for a message somebody already handled.
+    #[tokio::test]
+    async fn a_message_handled_before_the_move_is_never_dragged_back_out_of_processed() {
+        let fake = FakeVikunja::new();
+        let api = Interleaved::new(fake.clone());
+        let store = VikunjaStore::from_api(api.clone(), PROJECT);
+        contract::create(&store, "inbox").await;
+        let posted = contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+        let card: u64 = posted.id.as_str().parse().expect("a numeric card id");
+
+        // Board call 2 is the snapshot's second page: the card has already been
+        // read off page 1 as `new`, and the operator handles it before the move
+        // lands.
+        api.before_board(2, move |fake| {
+            let processed = fake.bucket_titled(project, "processed");
+            fake.placement.lock().unwrap().insert(card, processed);
+        });
+
+        let delivery = contract::read(&store, "inbox").await;
+        assert_eq!(
+            fake.column_of(card).as_deref(),
+            Some("processed"),
+            "a processed card must never leave processed"
+        );
+        assert!(
+            delivery.messages.is_empty(),
+            "…and a message somebody handled is not fresh mail: {:?}",
+            delivery.messages
+        );
+    }
+
     /// **A delivery must never hand over a message somebody already handled.**
     /// The read-back tolerates a card that advanced past the state the write
     /// wrote — which is right for a post (a message that was consumed still
@@ -3088,7 +3161,7 @@ mod tests {
         // A delivery reads the board to find what it is owed, moves the batch,
         // and reads again to verify — board call 3. Right before that, the
         // operator handles the first message and drags it to `processed`.
-        api.before_board(3, move |fake| {
+        api.before_board(5, move |fake| {
             let processed = fake.bucket_titled(project, "processed");
             fake.placement.lock().unwrap().insert(handled_card, processed);
         });
@@ -3134,7 +3207,7 @@ mod tests {
 
         // Before the verification read: a person handles the first message and
         // edits the second, failing this delivery.
-        api.before_board(3, move |fake| {
+        api.before_board(5, move |fake| {
             let processed = fake.bucket_titled(project, "processed");
             fake.placement.lock().unwrap().insert(handled_card, processed);
             let mut tasks = fake.tasks.lock().unwrap();
@@ -3145,7 +3218,7 @@ mod tests {
         // …and the rollback's own board read never lands. (A delivery reads the
         // board twice to find what it is owed and twice to verify, so the
         // rollback's is the fifth.)
-        fake.fail_from("board", 5);
+        fake.fail_from("board", 7);
 
         let err = store
             .read_mailbox(&MailboxName("inbox".into()))
@@ -3279,7 +3352,7 @@ mod tests {
         let garbled = contract::post(&store, "inbox", "milhouse", "message two", 60).await;
         let garbled_card: u64 = garbled.id.as_str().parse().expect("a numeric card id");
 
-        api.before_board(3, move |fake| {
+        api.before_board(5, move |fake| {
             let mut tasks = fake.tasks.lock().unwrap();
             let card = tasks.iter_mut().find(|t| t.id == garbled_card).expect("the card");
             card.description = "hand-garbled mid-delivery".into();
@@ -3324,7 +3397,7 @@ mod tests {
         let card: u64 = rewritten.id.as_str().parse().expect("a numeric card id");
 
         // The card lands in `processed` — but carrying a different message.
-        api.before_board(3, move |fake| {
+        api.before_board(5, move |fake| {
             let processed = fake.bucket_titled(project, "processed");
             fake.placement.lock().unwrap().insert(card, processed);
             let swapped = render_description(
