@@ -48,7 +48,8 @@ pub struct AddEntityArgs {
     /// `topic`.
     pub kind: String,
     /// The slug half of the handle (`[a-z0-9-]+`), or a full `kind:slug` id
-    /// whose kind must match `kind`. The handle is permanent in this milestone.
+    /// whose kind must match `kind`. The handle is permanent — choose one that
+    /// will still be right in a year.
     pub handle: String,
     /// Display name, as a human would write it.
     pub name: String,
@@ -60,10 +61,13 @@ pub struct AddEntityArgs {
     /// Where this entity came from — **never invented**: the user named it, or
     /// a real source produced it (e.g. `user-named`, `crm-card`, `calendar`).
     pub source: String,
-    /// The kanban token this entity mirrors, as `card:N`.
+    /// Optional cross-link to this entity's card in the user's task system,
+    /// written `card:N`.
     #[serde(default)]
     pub crm: Option<String>,
-    /// `always` to read this entity's doc every boot; defaults to `on-demand`.
+    /// `always` marks this entity as part of the core an assistant loads at
+    /// the start of every session; the default `on-demand` is fetched when the
+    /// conversation reaches for it. Only the exact token `always` counts.
     #[serde(default)]
     pub boot: Option<String>,
     /// Set only after a previous call came back with candidates and you judged
@@ -80,7 +84,7 @@ pub struct CaptureArgs {
     /// comes back with candidates and nothing is written. Create it with
     /// `add_entity` first if it is genuinely new.
     pub subject: String,
-    /// The crisp claim to remember (one line; no raw newline).
+    /// The crisp claim to remember — single line, no line breaks.
     pub content: String,
     /// Nuance, the why, merge notes — the description under the claim.
     #[serde(default)]
@@ -202,7 +206,7 @@ pub struct SearchArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct UpdateEntityArgs {
     /// The entity's handle. Not editable — renaming a handle is a separate
-    /// operation that does not exist yet.
+    /// operation.
     pub handle: String,
     /// New display name.
     #[serde(default)]
@@ -214,7 +218,7 @@ pub struct UpdateEntityArgs {
     /// New source.
     #[serde(default)]
     pub source: Option<String>,
-    /// New kanban token, as `card:N`.
+    /// New cross-link to the entity's card in the user's task system, `card:N`.
     #[serde(default)]
     pub crm: Option<String>,
     /// Set only after a previous call reported candidates for a name or alias
@@ -249,7 +253,8 @@ pub struct PostMessageArgs {
     /// The message itself. Prose: paragraphs are fine.
     pub body: String,
     /// Who is sending, as you declare it. Recorded as claimed — jojobot does not
-    /// resolve or verify identity yet.
+    /// resolve or verify identity — name yourself specifically enough that a
+    /// reply can find you.
     pub sender: String,
 }
 
@@ -305,7 +310,10 @@ impl Jojobot {
 
     /// Liveness probe: returns jojobot's identity and its current wall-clock
     /// time. Proves an MCP client can reach the server and get a real response.
-    #[tool(description = "Ping jojobot — returns server identity and current time")]
+    #[tool(
+        description = "Check that jojobot is reachable: returns its identity, version and \
+                       current time. No side effects."
+    )]
     async fn ping(&self) -> Result<CallToolResult, McpError> {
         let now = jiff::Timestamp::now();
         let body = serde_json::json!({
@@ -323,9 +331,14 @@ impl Jojobot {
     /// or name that looks like one jojobot already knows comes back as
     /// candidates instead of a second record.
     #[tool(
-        description = "Create an entity (person/project/place/event/work/thing/org/topic). \
-                       If it looks like one that already exists, returns candidates to \
-                       confirm instead of writing."
+        description = "Bring a new entity into existence (person/project/place/event/work/\
+                       thing/org/topic) — the required first step before any other write may \
+                       name it. Returns the stored entity. If its handle or any of its names \
+                       resembles something jojobot already knows, NOTHING is written: the \
+                       result says status: blocked with candidates and how_to_proceed. Use the \
+                       candidate you meant, or re-call with create_new: true if this genuinely \
+                       is a different thing sharing a name. An exact handle collision can never \
+                       be forced — a handle has exactly one owner."
     )]
     async fn add_entity(
         &self,
@@ -355,19 +368,20 @@ impl Jojobot {
 
     /// The front door: one ranked list over entities, facts and prose.
     #[tool(
-        description = "Search everything jojobot knows — entities, facts, and the prose of \
-                       documents — as ONE ranked list of typed hits. `query` is free text (all \
-                       words must match) and is optional when a filter narrows it: kind · \
-                       status (default active; superseded is excluded unless named) · provenance · \
-                       subject · edge {shape, object}. kind + edge answers a cross-entity \
-                       question in one call (\"which people are in X\"): it walks the typed \
-                       edges, so a doc that merely mentions X is not an answer. Every fact hit \
-                       carries its whole row and its address, so you can edit what you find. \
-                       No hit comes back bare: a fact also names who it is `about` and whose \
-                       page it is `home`d on (handle, type, name and alternateName — a null name \
-                       means that handle resolves to no entity), and an entity or prose hit \
-                       carries that entity's names and the `edges` its facts draw. \
-                       No pagination — raise `limit` or ask a better question."
+        description = "The front door — use it first, and any time you do not already hold the \
+                       exact handle or address. One ranked list over entities, facts and free \
+                       prose at once. `query` is free text (ALL words must match) and is \
+                       optional when a filter narrows it: kind · status (default active; \
+                       superseded is excluded unless named) · provenance · subject · edge \
+                       {shape, object}; a call with neither query nor filter is refused. kind + \
+                       edge answers a cross-entity question in one call (\"which people are in \
+                       X\") by walking typed edges — prose that merely mentions X is not an \
+                       answer. No hit comes back bare: a fact carries its whole row, its \
+                       address (feed that to update_fact), and who it is `about` and where it \
+                       is `home`d (a null name there means the handle names nothing — a real \
+                       defect worth reporting); an entity or prose hit carries that entity's \
+                       names and the edges its facts draw. No pagination — raise `limit` or \
+                       ask a better question. Messages and mailboxes are not searchable here."
     )]
     async fn search(
         &self,
@@ -404,7 +418,12 @@ impl Jojobot {
     }
 
     /// Every entity jojobot knows, optionally narrowed to one kind.
-    #[tool(description = "List the entities jojobot knows, optionally filtered by kind.")]
+    #[tool(
+        description = "List the entities jojobot knows, optionally narrowed to one kind — the \
+                       inventory. Use it to orient, or as the cheap existence check before a \
+                       write that must name an entity; use search when you are looking for \
+                       something. Metadata only — no facts, no ordering guarantee."
+    )]
     async fn list_entities(
         &self,
         Parameters(args): Parameters<ListEntitiesArgs>,
@@ -422,14 +441,14 @@ impl Jojobot {
     /// any change to what it is CALLED — name or aliases — is screened by the
     /// write guard just as a creation is.
     #[tool(
-        description = "Edit an entity's metadata (name/aliases/source/crm) in place. The handle \
-                       is immutable. Any change to what it is CALLED — its name or its aliases \
-                       — is screened by the write guard, so it can come back status: blocked \
-                       with candidates to confirm; aliases are names, so claiming one another \
-                       entity already answers to is the same collision a rename is. Passing \
-                       `aliases` REPLACES the whole set ([] clears it). source/crm edits are \
-                       never screened. An unknown handle errors with near misses — it never \
-                       creates."
+        description = "Edit what an entity is called or where it came from (name/aliases/\
+                       source/crm), in place. The handle never changes — there is no rename. \
+                       Any change to what it is CALLED — name or aliases — is screened exactly \
+                       as a creation is, because an alias is a name: it can come back status: \
+                       blocked with candidates, and create_new: true is how you confirm a \
+                       genuinely shared name. Passing `aliases` REPLACES the whole set ([] \
+                       clears it). source/crm edits are never screened. An unknown handle \
+                       errors with near misses — it never creates."
     )]
     async fn update_entity(
         &self,
@@ -460,10 +479,13 @@ impl Jojobot {
     /// Remember a fact about an entity. Returns the stored fact including the
     /// address a later `update_fact` can edit it through.
     #[tool(
-        description = "Capture a fact about an entity of any kind. Returns the stored fact and \
-                       its address. Every entity it names — the subject, and an edge's object — \
-                       must ALREADY EXIST: one jojobot doesn't know comes back status: blocked \
-                       with candidates and nothing is written. A genuinely new entity is two \
+        description = "Remember one fact about an entity: the claim, when it became true, and \
+                       whether it is testimony or inference (default inference — a hypothesis, \
+                       not a finding). It may also draw one typed edge at another entity. \
+                       Returns the stored fact with the address you later edit it through. \
+                       Every entity it names — the subject, and an edge's object — must \
+                       ALREADY EXIST: one jojobot doesn't know comes back status: blocked with \
+                       candidates and nothing is written. A genuinely new entity is two \
                        deliberate steps — add_entity, then capture."
     )]
     async fn capture(
@@ -495,8 +517,15 @@ impl Jojobot {
 
     /// Read back every fact about an entity, each with its address.
     #[tool(
-        description = "Recall all facts about an entity. Every fact carries its address — pass \
-                       that address to update_fact to edit it."
+        description = "Read every fact about one entity, each with the address that makes it \
+                       editable through update_fact. Use it when you already hold the handle \
+                       and want the whole picture; use search when you don't. Unlike search, \
+                       this returns claims of every status, superseded included. An entity that \
+                       exists with nothing recorded comes back as an empty list; a handle that \
+                       names nothing is an error naming the nearest handles, never an empty \
+                       page. Rows filed here that claim to be about someone else come back too \
+                       — that mismatch is worth surfacing, and the address is how it gets \
+                       repaired."
     )]
     async fn recall(
         &self,
@@ -578,12 +607,14 @@ impl Jojobot {
 
     /// Every mailbox, with what is new, seen, and handled in each.
     #[tool(
-        description = "List every mailbox with its per-state counts: new (left, never delivered) \
-                       · read (delivered, not yet acted on) · processed (handled — terminal, and \
-                       an archive, so nothing is ever deleted). Each box also reports its \
-                       quarantined cards — cards wearing the box's label that could not be read \
-                       as messages (e.g. hand-edited past parsing); they are surfaced here and \
-                       delivered nowhere."
+        description = "Every mailbox and what is waiting in it: new (left, never delivered) · \
+                       read (delivered, nobody has finished with it) · processed (acted on — \
+                       terminal, an archive; nothing is ever deleted). Each box also reports \
+                       any items that could NOT be read as messages: they are counted nowhere, \
+                       delivered nowhere, and cannot be processed, so this is the only place \
+                       their existence shows — their ids are listed, and repairing one takes a \
+                       person. If a message somebody expected is missing, look here before \
+                       concluding it was never sent, and say what you find."
     )]
     async fn list_mailboxes(&self) -> Result<CallToolResult, McpError> {
         let boxes = self
@@ -600,15 +631,16 @@ impl Jojobot {
 
     /// Leave a message in a box.
     #[tool(
-        description = "Leave a message in a mailbox. It is filed in `new`, and the `state` in the \
-                       reply is the one jojobot read back off the board — so it can already say \
-                       `read` if somebody working the board picked the message up in between. \
-                       That is success, not a problem: the message exists and someone has it. \
-                       (It will not be another of your tool calls: jojobot's own verbs run one at \
-                       a time.) The mailbox must ALREADY \
-                       EXIST: an unknown name comes back status: blocked with candidates and \
-                       nothing is written — call create_mailbox first if the box is genuinely \
-                       new. `sender` is recorded as you declare it."
+        description = "Leave a message for someone who is not in this conversation. The box \
+                       must ALREADY EXIST — an unknown name comes back status: blocked with \
+                       candidates and nothing is written; call create_mailbox first if it is \
+                       genuinely new. Returns the stored message, including the id that \
+                       mark_processed later targets. The `state` you get back is the state as \
+                       it stands — it can already say `read` if a person picked the message up \
+                       in between, and that is success, not a problem: the message exists and \
+                       someone has it. `sender` is recorded exactly as you declare it — \
+                       identity is not verified, so name yourself specifically enough that a \
+                       reply can find you."
     )]
     async fn post_message(
         &self,
@@ -643,11 +675,15 @@ impl Jojobot {
 
     /// Take delivery of everything unprocessed in a box.
     #[tool(
-        description = "Take delivery of every unprocessed message in a mailbox, oldest first, and \
-                       move each from `new` to `read`. There is no peek: reading IS taking \
-                       delivery. Messages a previous read already handed over come back too, \
-                       flagged seen_before: true — those are a crashed consumer's leftovers, not \
-                       fresh mail. Act on what you receive, then call mark_processed."
+        description = "Take delivery of everything unprocessed in a mailbox, oldest first, \
+                       moving each message from `new` to `read`. There is no peek: reading IS \
+                       taking delivery. Messages a previous read already handed over come back \
+                       too, flagged seen_before: true — leftovers from an interrupted earlier \
+                       read, not fresh mail. A message somebody else finished while this \
+                       delivery was in flight is left out, so a delivery can be smaller than \
+                       counts you saw a moment ago. An unknown box comes back status: blocked \
+                       with candidates and delivers nothing. Act on what you receive, then call \
+                       mark_processed for each."
     )]
     async fn read_mailbox(
         &self,
@@ -674,16 +710,20 @@ impl Jojobot {
 
     /// Retire a message once it has actually been acted on.
     #[tool(
-        description = "Move a message to `processed` — terminal, an archive, never a deletion — \
-                       and optionally record the outcome in `notes`. \
+        description = "Retire a message once it has been handled — terminal, an archive, never \
+                       a deletion — optionally recording the outcome in `notes`. \
                        THE CRASH CONTRACT: call this ONLY AFTER you have acted on the message. \
-                       If you mark first and then fail, the message is gone from every future \
-                       delivery and nobody will ever know it was dropped; if you act first and \
-                       crash before marking, the next read_mailbox hands it back flagged as a \
-                       leftover, which is recoverable. A FAILURE IS DATA, NOT A STATE: record it \
-                       in notes (and reply with a new message if someone needs to know) — there \
-                       is no failed column, because a message whose handling failed has still \
-                       been handled."
+                       Mark first and then fail, and the message is gone from every future \
+                       delivery with nobody the wiser; act first and crash before marking, and \
+                       the next read_mailbox hands it back as a leftover — recoverable. A \
+                       FAILURE IS DATA, NOT A STATE: record it in notes (and reply with a new \
+                       message if someone needs to know) — there is no failed status, because a \
+                       message whose handling failed has still been handled. A message can be \
+                       processed straight from `new`, no delivery first. An id that names \
+                       nothing is an error; an id naming an item jojobot cannot read comes back \
+                       status: blocked with a reason and no candidates — retrying will not \
+                       help, a person has to repair it, and until then treat whatever it \
+                       carried as unhandled and say so."
     )]
     async fn mark_processed(
         &self,
@@ -1261,43 +1301,41 @@ impl ServerHandler for Jojobot {
             .with_server_info(Implementation::from_build_env())
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
-                "jojobot — a personal-assistant server. Everything it knows is an **entity** \
-                 (person/project/place/event/work/thing/org/topic, handled `kind:slug`) or a \
-                 **fact** about one (addressed `kind:slug#local-id`). **Start with `search`** — \
-                 it is the front door: one ranked list over entities, facts and document prose \
-                 at once, so you do not have to know where something was filed — and every hit \
-                 arrives with its surroundings, so a result is readable without a second call. \
-                 Tools: `search` \
-                 · `ping` (connectivity) · `add_entity` · `capture` (remember a fact) · `recall` \
-                 (every fact about one entity) · `update_fact` (edit in place; to refute a \
-                 claim, rewrite its content to state the negative truth — there is no negated \
-                 status) · `update_entity` (metadata only) · `list_entities`. A fact may \
-                 also draw one typed **edge** — pass `shape` (location · membership · \
-                 attendance · about) with `object`, the entity it points at; that is what \
-                 makes cross-entity questions answerable. Three rules to expect: **every entity \
-                 a write NAMES must already exist** — a capture's subject and an edge's object \
-                 are never created for you, so a new one is add_entity and then the write, two \
-                 deliberate steps; a **creation or rename** that looks like an entity jojobot \
-                 already knows comes back with candidates and writes nothing until you confirm \
-                 or pass create_new; and promoting a claim from inference to testimony needs the \
-                 user's explicit confirmation. A guarded write is a SUCCESSFUL result whose body \
-                 says `status: blocked`, `wrote: false` — read how_to_proceed, do not retry it \
-                 unchanged. Responses name types the schema.org way \
-                 (`Person`, `CreativeWork`, `memberOf`); input stays lowercase `kind:slug`. \
-                 \n\nSeparately, jojobot carries **mailboxes** — a place to leave a message for \
-                 a consumer that is not in this conversation. A mailbox is a named box \
-                 (`[a-z0-9-]+`) and a message moves through three states, which are columns: \
-                 `new` → `read` → `processed`, with `processed` terminal and an archive — \
-                 nothing is ever deleted. Tools: `create_mailbox` · `list_mailboxes` (per-state \
-                 counts) · `post_message` · `read_mailbox` · `mark_processed`. The same \
-                 must-already-exist rule applies: posting into a box jojobot doesn't know comes \
-                 back blocked with candidates, because a typo that mints a box is a message \
-                 posted where nobody is listening. `read_mailbox` IS taking delivery — there is \
-                 no peek — and it re-delivers anything a previous read handed over, flagged \
-                 `seen_before`. **Mark a message processed only AFTER acting on it**: marking \
-                 first and then failing drops it from every future delivery with nobody the \
-                 wiser. \
-                 More domain verbs arrive later."
+                "jojobot — a personal-assistant server. Two worlds live here.\
+                 \n\n**MEMORY.** What jojobot knows is **entities** — a person, project, place, \
+                 event, work, thing, org or topic, each with a permanent typed handle, \
+                 `kind:slug` — and **facts** about them: single dated claims, each carrying an \
+                 **address** (`kind:slug#local-id`) it can be edited through and a \
+                 **provenance** — `testimony` (the user said or confirmed it) or `inference` \
+                 (you derived it). **Inference is the default and reads back as a hypothesis, \
+                 never as truth**; only the user's explicit confirmation promotes a claim. A \
+                 fact may also draw one typed **edge** at another entity — `location` · \
+                 `membership` · `attendance` · `about` — and edges are what make cross-entity \
+                 questions (\"which people are in X\") answerable without reading everything. \
+                 **Start with `search`**: one ranked list over entities, facts and free prose \
+                 at once, every hit arriving with its surroundings.\
+                 \n\n**MAILBOXES.** A place to leave a message for someone who is not in this \
+                 conversation. A mailbox is a named box (`[a-z0-9-]+`); a message in one is \
+                 `new` → `read` → `processed`. **Read is not processed, and processed is not \
+                 deleted**: reading takes delivery, processing means you acted, and `processed` \
+                 is a terminal archive. Messages are not searchable — `search` sees memory only.\
+                 \n\n**Three rules of engagement.** 1. **Everything a write NAMES must already \
+                 exist.** jojobot never brings an entity or a box into being as a side effect — \
+                 not a capture's subject, not an edge's object, not the box you post into. \
+                 Something genuinely new is two deliberate steps: create it, then write. \
+                 2. **Confirm, don't guess.** A creation, or a change to what something is \
+                 CALLED, that resembles something jojobot already knows comes back as a \
+                 SUCCESSFUL result whose body says `status: blocked`, `wrote: false`, with \
+                 `candidates` and `how_to_proceed` — nothing was written; use the candidate you \
+                 meant, or re-call with `create_new: true` if it truly is a different thing \
+                 sharing a name. Never retry unchanged. A plain error is different: a malformed \
+                 call, or an id/address that names nothing at all. Nothing on this surface \
+                 deletes anything. 3. **Mark a message processed only AFTER acting on it**: \
+                 mark first and then fail, and it is gone from every future delivery with \
+                 nobody the wiser; act first and crash, and the next read hands it back, \
+                 flagged `seen_before` — recoverable.\
+                 \n\nResponses name types the schema.org way (`Person`, `CreativeWork`, \
+                 `memberOf`); input stays lowercase (`person`, `membership`, `kind:slug`)."
                     .to_string(),
             )
     }
