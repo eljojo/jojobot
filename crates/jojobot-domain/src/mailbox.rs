@@ -483,6 +483,11 @@ pub trait Mailboxes: Send + Sync {
     /// Deliver everything unprocessed in a box — messages in `new` and messages
     /// a previous read already handed over — and move `new → read`. There is no
     /// peek/take split: reading IS taking delivery, and the state moves with it.
+    ///
+    /// **A message that reaches `processed` while the delivery is in flight is
+    /// dropped from it.** Somebody handled it; handing it over anyway would put
+    /// an already-processed message into a consumer's batch flagged as fresh
+    /// mail, which is the double-processing this context exists to prevent.
     async fn read_mailbox(&self, name: &MailboxName) -> Result<Guarded<Delivery>, MailboxError>;
 
     /// Move a message to `processed`, optionally recording the outcome.

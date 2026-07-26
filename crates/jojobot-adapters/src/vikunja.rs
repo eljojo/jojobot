@@ -892,7 +892,8 @@ impl Mailboxes for VikunjaStore {
         // Read-back: a delivery is only a delivery once the column moved. A
         // message reported as delivered but still sitting in `new` would be
         // handed to the next consumer as fresh mail — the duplicate-delivery
-        // bug, reported as success.
+        // bug, reported as success. A message that moved the *other* way, into
+        // `processed`, is dropped from the batch: see the arm below.
         let after = self.messages(&scope).await?;
         let mut messages = Vec::with_capacity(delivered.len());
         for (card, expected, seen_before) in delivered {
@@ -905,11 +906,27 @@ impl Mailboxes for VikunjaStore {
                 ..expected.clone()
             };
             match seen {
+                Some(seen) if seen == expected_read => messages.push(Delivered {
+                    message: seen,
+                    seen_before,
+                }),
+                // **Advanced past `read` — dropped, not delivered.** The
+                // read-back's later-state tolerance is right for a post: a
+                // message that was consumed still exists, so the post
+                // succeeded. Here it is the opposite. Under the verb lock a
+                // card can only reach `processed` between this delivery's move
+                // and its verification by a hand on the board, which means
+                // somebody handled it — and handing it to a consumer as fresh
+                // mail is exactly the double-processing this whole context
+                // exists to prevent. It is not rolled back either: the outcome
+                // that handler recorded stands.
                 Some(seen) if read_back_confirms(&expected_read, &seen) => {
-                    messages.push(Delivered {
-                        message: seen,
-                        seen_before,
-                    })
+                    tracing::warn!(
+                        card = %expected.id,
+                        state = %seen.state,
+                        "a message advanced past `read` while this delivery was in flight — \
+                         somebody handled it, so it is dropped from the delivery, not handed over"
+                    );
                 }
                 seen => {
                     // The whole batch goes back, not just this card: the caller
@@ -2498,6 +2515,49 @@ mod tests {
             bodies,
             vec!["message two"],
             "only the restored message is owed delivery; the processed one is done"
+        );
+    }
+
+    /// **A delivery must never hand over a message somebody already handled.**
+    /// The read-back tolerates a card that advanced past the state the write
+    /// wrote — which is right for a post (a message that was consumed still
+    /// exists). For a delivery it is not: a card found in `processed` at
+    /// verification time was handled between the move and the read, and
+    /// handing it to a consumer as `seen_before: false` is the
+    /// double-processing bug, reported as success. It is dropped from the
+    /// delivery instead — never handed over, and never rolled back either: the
+    /// outcome the handler recorded on it stands.
+    #[tokio::test]
+    async fn a_message_handled_under_a_delivery_is_dropped_not_handed_over() {
+        let fake = FakeVikunja::new();
+        let api = Interleaved::new(fake.clone());
+        let store = VikunjaStore::from_api(api.clone(), PROJECT);
+        contract::create(&store, "inbox").await;
+        let handled = contract::post(&store, "inbox", "alpha", "message one", 0).await;
+        let owed = contract::post(&store, "inbox", "milhouse", "message two", 60).await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+        let handled_card: u64 = handled.id.as_str().parse().expect("a numeric card id");
+
+        // A delivery reads the board to find what it is owed, moves the batch,
+        // and reads again to verify — board call 3. Right before that, the
+        // operator handles the first message and drags it to `processed`.
+        api.before_board(3, move |fake| {
+            let processed = fake.bucket_titled(project, "processed");
+            fake.placement.lock().unwrap().insert(handled_card, processed);
+        });
+
+        let delivery = contract::read(&store, "inbox").await;
+        let ids: Vec<&str> = delivery.messages.iter().map(|d| d.message.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![owed.id.as_str()],
+            "a message someone already handled must not be delivered as mail: {:?}",
+            delivery.messages
+        );
+        assert_eq!(
+            fake.column_of(handled_card).as_deref(),
+            Some("processed"),
+            "…and it is left where the handler put it, not rolled back into the funnel"
         );
     }
 
