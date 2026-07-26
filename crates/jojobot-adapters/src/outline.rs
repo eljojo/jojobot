@@ -632,11 +632,13 @@ impl Memory for OutlineStore {
 
         let stored = normalize_prose(prose);
         let updated = with_prose_replaced(&doc.text, &stored).ok_or_else(|| {
-            MemoryError::InvalidEntity(
-                "prose carries a line reserved for the fact table's header; every fact below such \
-                 a line would stop being read as a fact"
-                    .into(),
-            )
+            MemoryError::InvalidEntity(format!(
+                "the prose could not be written to {entity}. Either it carries a line reserved \
+                 for the fact table's header — every fact below such a line would stop being \
+                 read as a fact — or this page was written by hand and is not yet in the shape \
+                 jojobot rewrites, in which case any ordinary metadata edit (update_entity) puts \
+                 it right and the prose can then be set"
+            ))
         })?;
         self.api.update_document(&doc.id, &updated).await?;
 

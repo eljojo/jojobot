@@ -654,37 +654,44 @@ pub(super) fn with_frontmatter_replaced(doc: &str, entity: &Entity) -> String {
 /// well-formed `id:`, so prose above the real block is a standing offer to
 /// hijack the doc's identity.
 ///
-/// The one refusal is the table's own header. The reader finds the table by the
+/// Two refusals, both returning `None`.
+///
+/// **Prose carrying the table's own header.** The reader finds the table by the
 /// first header line, so prose carrying one moves the boundary — every fact
 /// below it stops being read as a fact. Refused rather than escaped: silently
 /// mangling somebody's charter is worse than declining to write it.
+///
+/// **A doc with no machine block.** The reader accepts a bare `id:` line above
+/// the fact table, so a hand-written page can be an entity without one — and a
+/// bare marker line is prose by every structural rule here, so replacing prose
+/// whole would delete the line that says whose page this is and orphan every
+/// fact on it. Read-back would catch that and restore the page, but a write
+/// that has to be undone is a write that should never have been attempted. An
+/// ordinary metadata edit gives such a page a block; then it is writable.
 pub(super) fn with_prose_replaced(doc: &str, prose: &str) -> Option<String> {
     if prose.lines().any(|l| l.trim() == FACTS_HEADER) {
         return None;
     }
     let lines: Vec<&str> = doc.lines().collect();
-    let machine = machine_block(&lines);
+    let (open, close) = machine_block(&lines)?;
     let header = lines.iter().position(|l| l.trim() == FACTS_HEADER);
     let table = facts_region(&lines).filter(|(start, end)| start < end);
     let within = |span: Option<(usize, usize)>, i: usize| {
         span.is_some_and(|(start, end)| i >= start && i < end)
     };
 
-    // Kept lines, in order, with the prose spliced in after the machine block —
-    // or at the very top when the doc has none to sit under.
+    // Everything structural, in order, with the prose spliced in directly under
+    // the machine block; every other line was prose and is gone.
     let mut out: Vec<String> = Vec::with_capacity(lines.len() + 4);
-    if machine.is_none() {
-        out.push(prose.to_string());
-        out.push(String::new());
-    }
     for (i, line) in lines.iter().enumerate() {
-        if within(machine, i) || within(table, i) || Some(i) == header {
-            out.push(line.to_string());
-            if machine.is_some_and(|(_, close)| i + 1 == close) {
-                out.push(String::new());
-                out.push(prose.to_string());
-                out.push(String::new());
-            }
+        if !(within(Some((open, close)), i) || within(table, i) || Some(i) == header) {
+            continue;
+        }
+        out.push(line.to_string());
+        if i + 1 == close {
+            out.push(String::new());
+            out.push(prose.to_string());
+            out.push(String::new());
         }
     }
     Some(out.join("\n"))
@@ -1205,6 +1212,39 @@ mod tests {
             with_prose_replaced(&doc, "the facts table is at the bottom").is_some(),
             "an ordinary sentence mentioning facts is prose"
         );
+    }
+
+    /// **A page whose marker is not inside a fenced block is not rewritten.**
+    ///
+    /// The reader accepts a bare `id:` line above the fact table, so a
+    /// hand-written page really can be an entity without a machine block — and
+    /// a bare marker line is *prose* by every structural rule here. Replacing
+    /// prose whole would therefore delete the one line that says whose page
+    /// this is, orphaning every fact on it. Read-back would catch it and the
+    /// page would be restored, but a write that has to be undone is a write
+    /// that should never have been attempted.
+    #[test]
+    fn a_page_with_no_machine_block_is_not_rewritten_out_of_its_identity() {
+        let hand_written = "id: bot:gamma\nkind: bot\nname: Gamma\n\nSome notes.\n";
+        assert_eq!(
+            parse_id_marker(hand_written).as_deref(),
+            Some("bot:gamma"),
+            "the reader does accept this page, which is exactly the hazard"
+        );
+        assert!(
+            with_prose_replaced(hand_written, "a charter").is_none(),
+            "refused up front rather than written and rolled back"
+        );
+
+        // …and once an ordinary metadata write has given it a block, it takes
+        // a charter like any other page.
+        let repaired = with_frontmatter_replaced(
+            hand_written,
+            &parse_entity(hand_written).expect("it is an entity"),
+        );
+        let written = with_prose_replaced(&repaired, "a charter").expect("now writable");
+        assert_eq!(parse_prose(&written), "a charter");
+        assert_eq!(parse_id_marker(&written).as_deref(), Some("bot:gamma"));
     }
 
     /// **The box an identity owns is written on its own doc.** One line in the
