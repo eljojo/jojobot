@@ -13,8 +13,17 @@
 //!   cargo test -p jojobot-adapters --test vikunja_integration -- --ignored
 //! ```
 //!
-//! **The operator's real task boards live on this Vikunja.** Four things keep
-//! this test away from them:
+//! Once explicitly invoked (`--ignored`), absent credentials **panic**: a gate
+//! that prints "skipping" and exits green is a run that verified nothing while
+//! reading as if it had. The tests also **serialize themselves** on a shared
+//! lock — green must not depend on the invoker remembering `--test-threads=1`,
+//! and real Vikunja 500s under concurrent writes (SQLite-lock class).
+//!
+//! **The operator's real task boards live on this Vikunja.** Five things keep
+//! this test away from them — starting with a **disposability probe**: the
+//! suite's first act is to create and delete a canary project, and an instance
+//! that refuses the delete is not a disposable test server, so the run panics
+//! before any contract case exists. Then:
 //!
 //! * every project it uses is named with the [`TEST_PREFIX`] and stamped with
 //!   jojobot's owner tag, and teardown deletes **only** what matches both — a
@@ -25,8 +34,11 @@
 //! * each *test* owns a sub-prefix and tears down only that, because the two
 //!   run in parallel in one binary;
 //! * the run fingerprints every project and label it does not own, before and
-//!   after, and asserts the set is unchanged.
+//!   after, and asserts the set is unchanged. The fingerprint is a **hash**: a
+//!   mismatch must fail the run without dumping the operator's board names
+//!   into a log.
 
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -52,16 +64,81 @@ const ADOPT_PREFIX: &str = "jojobot-mailboxes-itest-a";
 /// not be enough to delete a real board.
 const OWNER_TAG: &str = "[jojobot:owned]";
 
+/// The gate's shared lock. The two tests live in one binary and the harness
+/// runs them in parallel by default; real Vikunja (SQLite) answers concurrent
+/// writes with 500s, so each test holds this for its whole body — green never
+/// depends on the invoker passing `--test-threads=1`.
+static GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 struct Creds {
     url: String,
     token: String,
 }
 
-fn creds() -> Option<Creds> {
-    Some(Creds {
-        url: std::env::var("JOJOBOT_VIKUNJA_URL").ok().filter(|s| !s.is_empty())?,
-        token: std::env::var("JOJOBOT_VIKUNJA_TOKEN").ok().filter(|s| !s.is_empty())?,
-    })
+/// The credentials, or a **panic**. This test only runs when explicitly asked
+/// for (`--ignored`); if the credentials are then absent, printing "skipping"
+/// and exiting green would report a verification that never happened.
+fn creds() -> Creds {
+    let require = |key: &str| {
+        std::env::var(key)
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                panic!(
+                    "{key} is not set. This gate was explicitly invoked, and a skipped gate \
+                     must never read as green — set JOJOBOT_VIKUNJA_URL and \
+                     JOJOBOT_VIKUNJA_TOKEN to the DISPOSABLE test instance."
+                )
+            })
+    };
+    Creds {
+        url: require("JOJOBOT_VIKUNJA_URL"),
+        token: require("JOJOBOT_VIKUNJA_TOKEN"),
+    }
+}
+
+/// **The disposability probe — the suite's first act.** Create a canary
+/// project and immediately delete it. An instance whose token cannot delete is
+/// the operator's production instance (its tokens cannot delete by design), or
+/// otherwise not a server this suite may litter — either way the run stops
+/// before a single contract case exists, making the real instance mechanically
+/// unreachable by the destructive path.
+async fn assert_disposable(http: &reqwest::Client, c: &Creds) {
+    let resp = http
+        .put(format!("{}/api/v1/projects", c.url.trim_end_matches('/')))
+        .bearer_auth(&c.token)
+        .json(&serde_json::json!({
+            "title": format!("{TEST_PREFIX}canary"),
+            "description": format!("disposability probe — safe to delete. {OWNER_TAG}"),
+        }))
+        .send()
+        .await
+        .unwrap_or_else(|e| panic!("disposability probe: creating the canary failed: {e}"));
+    assert!(
+        resp.status().is_success(),
+        "disposability probe: creating the canary returned {}",
+        resp.status()
+    );
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .unwrap_or_else(|e| panic!("disposability probe: canary body: {e}"));
+    let id = body["id"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("disposability probe: the canary came back with no id"));
+
+    let deleted = http
+        .delete(format!("{}/api/v1/projects/{id}", c.url.trim_end_matches('/')))
+        .bearer_auth(&c.token)
+        .send()
+        .await
+        .unwrap_or_else(|e| panic!("disposability probe: deleting the canary failed: {e}"));
+    assert!(
+        deleted.status().is_success(),
+        "this instance is not disposable — the canary project could not be deleted \
+         (HTTP {}). Point the gate at the test server.",
+        deleted.status()
+    );
 }
 
 async fn get(http: &reqwest::Client, c: &Creds, path: &str) -> serde_json::Value {
@@ -143,7 +220,11 @@ async fn all_labels(http: &reqwest::Client, c: &Creds) -> Vec<(u64, String, Stri
 /// their boards would not show up here. That case is covered where it can
 /// actually be proven — the unit-level invariant test, against a fake that
 /// records every project and every card any call touched.
-async fn foreign_fingerprint(http: &reqwest::Client, c: &Creds) -> Vec<String> {
+///
+/// Returned as a **hash**, deliberately: a mismatch must fail the run without
+/// printing every project and label title on the instance — a gate failure is
+/// not a licence to dump an operator's board names into a log.
+async fn foreign_fingerprint(http: &reqwest::Client, c: &Creds) -> u64 {
     let mut seen: Vec<String> = all_projects(http, c)
         .await
         .into_iter()
@@ -158,7 +239,9 @@ async fn foreign_fingerprint(http: &reqwest::Client, c: &Creds) -> Vec<String> {
         )
         .collect();
     seen.sort();
-    seen
+    let mut hasher = DefaultHasher::new();
+    seen.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Delete every project and label this test created — and **nothing else**.
@@ -179,12 +262,11 @@ async fn teardown(http: &reqwest::Client, c: &Creds, prefix: &str) {
 #[tokio::test]
 #[ignore = "hits real Vikunja; set JOJOBOT_VIKUNJA_URL and JOJOBOT_VIKUNJA_TOKEN"]
 async fn real_vikunja_satisfies_the_contract() {
-    let Some(c) = creds() else {
-        eprintln!("skipping: set JOJOBOT_VIKUNJA_URL and JOJOBOT_VIKUNJA_TOKEN");
-        return;
-    };
+    let _serialized = GATE.lock().await;
+    let c = creds();
 
     let http = reqwest::Client::new();
+    assert_disposable(&http, &c).await;
     // Clean slate, in case a prior run aborted before teardown.
     teardown(&http, &c, CONTRACT_PREFIX).await;
 
@@ -218,7 +300,9 @@ async fn real_vikunja_satisfies_the_contract() {
     let after = foreign_fingerprint(&http, &c).await;
     assert_eq!(
         before, after,
-        "every project and label this test does not own must be untouched"
+        "the set of projects and labels this test does not own changed \
+         (fingerprint {before:x} → {after:x}). Inspect the instance directly; \
+         titles are deliberately not printed here."
     );
 
     let leftovers: Vec<String> = all_labels(&http, &c)
@@ -245,11 +329,10 @@ async fn real_vikunja_satisfies_the_contract() {
 #[tokio::test]
 #[ignore = "hits real Vikunja; set JOJOBOT_VIKUNJA_URL and JOJOBOT_VIKUNJA_TOKEN"]
 async fn a_store_never_adopts_a_board_it_did_not_create() {
-    let Some(c) = creds() else {
-        eprintln!("skipping: set JOJOBOT_VIKUNJA_URL and JOJOBOT_VIKUNJA_TOKEN");
-        return;
-    };
+    let _serialized = GATE.lock().await;
+    let c = creds();
     let http = reqwest::Client::new();
+    assert_disposable(&http, &c).await;
     teardown(&http, &c, ADOPT_PREFIX).await;
 
     let store = Arc::new(VikunjaStore::with_project(
