@@ -587,8 +587,15 @@ impl VikunjaStore {
     ///   is where it belongs and where it is surfaced; a rollback has no
     ///   business reaching into it.
     ///
-    /// If the board cannot be re-read, everything is restored: a card wrongly
-    /// put back is redelivered flagged as a leftover, never lost.
+    /// **If the board cannot be re-read, NOTHING is put back.** Both exclusions
+    /// are read off that board, so without it there is no way to tell a card
+    /// somebody moved on or edited from one this verb owes a restore — and
+    /// restoring anyway is the worst of the three options: it returns a handled
+    /// card to the column it came from, which for a delivery is `new`, and the
+    /// next read hands it over as fresh mail. Leaving them puts them nowhere
+    /// new: they sit in the state this verb wrote, which the next delivery
+    /// hands back flagged as a leftover — visible, recoverable, never
+    /// duplicated. The caller is told they were left, by type.
     async fn restore_all(
         &self,
         scope: &Scope,
@@ -603,7 +610,23 @@ impl VikunjaStore {
                 .map(|(task, _)| task.id)
                 .chain(board.quarantined.iter().map(|q| q.card))
                 .collect(),
-            Err(_) => Default::default(),
+            Err(blind) => {
+                return Rollback::Stranded(
+                    cards
+                        .iter()
+                        .map(|(card, _)| {
+                            (
+                                card.id,
+                                MailboxError::Store(format!(
+                                    "the board could not be re-read, so nothing was put back \
+                                     rather than risk restoring a card somebody else has since \
+                                     moved on or edited: {blind}"
+                                )),
+                            )
+                        })
+                        .collect(),
+                );
+            }
         };
         let mut failures = Vec::new();
         for (card, state) in cards {
@@ -3016,6 +3039,71 @@ mod tests {
             fake.column_of(handled_card).as_deref(),
             Some("processed"),
             "…and it is left where the handler put it, not rolled back into the funnel"
+        );
+    }
+
+    /// **A rollback that cannot see the board puts NOTHING back.** The
+    /// exclusions that keep a rollback off a card somebody else moved on, or
+    /// edited, are read off a fresh board — and when that read failed, the code
+    /// fell back to restoring everything, which is the one thing it must never
+    /// do: a card a person had already dragged to `processed` went back to the
+    /// column it came from, `new`, and the next delivery handed it over with
+    /// `seen_before: false` — the double-processing this context exists to
+    /// prevent, reintroduced through the degraded path.
+    ///
+    /// Left alone, those cards sit in the state this verb wrote, which the next
+    /// delivery hands back flagged as a leftover: visible, recoverable, and
+    /// never handed to a second consumer as fresh mail.
+    #[tokio::test]
+    async fn a_rollback_that_cannot_re_read_the_board_puts_nothing_back() {
+        let fake = FakeVikunja::new();
+        let api = Interleaved::new(fake.clone());
+        let store = VikunjaStore::from_api(api.clone(), PROJECT);
+        contract::create(&store, "inbox").await;
+        let handled = contract::post(&store, "inbox", "alpha", "message one", 0).await;
+        let garbled = contract::post(&store, "inbox", "milhouse", "message two", 60).await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+        let handled_card: u64 = handled.id.as_str().parse().expect("a numeric card id");
+        let garbled_card: u64 = garbled.id.as_str().parse().expect("a numeric card id");
+
+        // Before the verification read: a person handles the first message and
+        // edits the second, failing this delivery.
+        api.before_board(3, move |fake| {
+            let processed = fake.bucket_titled(project, "processed");
+            fake.placement.lock().unwrap().insert(handled_card, processed);
+            let mut tasks = fake.tasks.lock().unwrap();
+            let card = tasks.iter_mut().find(|t| t.id == garbled_card).expect("the card");
+            card.description = "hand-garbled mid-delivery".into();
+            card.raw["description"] = "hand-garbled mid-delivery".into();
+        });
+        // …and the rollback's own board read never lands. (A delivery reads the
+        // board twice to find what it is owed and twice to verify, so the
+        // rollback's is the fifth.)
+        fake.fail_from("board", 5);
+
+        let err = store
+            .read_mailbox(&MailboxName("inbox".into()))
+            .await
+            .expect_err("a delivery that could not verify must not report success");
+
+        assert_ne!(
+            fake.column_of(handled_card).as_deref(),
+            Some("new"),
+            "a message somebody already handled must not be resurrected into new and \
+             delivered again as fresh mail"
+        );
+        let stored = fake
+            .tasks_in(project)
+            .into_iter()
+            .find(|t| t.id == garbled_card)
+            .expect("the card is still there");
+        assert_eq!(
+            stored.description, "hand-garbled mid-delivery",
+            "…and a rollback flying blind must not write over a person's edit either"
+        );
+        assert!(
+            matches!(err, MailboxError::Stranded { .. }),
+            "a rollback that put nothing back says so, by type: {err:?}"
         );
     }
 
