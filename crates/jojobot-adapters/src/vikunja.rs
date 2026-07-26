@@ -399,9 +399,10 @@ impl VikunjaStore {
                     continue;
                 };
                 let Some(state) = state else {
+                    // The card id only: a non-state column title is operator- or
+                    // Vikunja-authored text, and no log prints operator text.
                     tracing::warn!(
                         card = task.id,
-                        column = %bucket.title,
                         "a card wearing a mailbox label sits in a column that is no state — \
                          quarantined, not delivered"
                     );
@@ -550,26 +551,50 @@ impl VikunjaStore {
         }
     }
 
+    /// The `parked` column's id, creating the column on demand. Deliberately
+    /// **not a state token**: a card here has no place in the funnel, so the
+    /// board read quarantines it — surfaced by `list_mailboxes`, counted as
+    /// nothing, delivered to nobody.
+    async fn parking_column(&self, scope: &Scope) -> Result<u64, MailboxError> {
+        if let Some(bucket) = self
+            .api
+            .list_buckets(scope.project(), scope.view)
+            .await?
+            .into_iter()
+            .find(|b| b.title == PARKED_COLUMN)
+        {
+            return Ok(bucket.id);
+        }
+        Ok(self
+            .api
+            .create_bucket(scope.project(), scope.view, PARKED_COLUMN)
+            .await?
+            .id)
+    }
+
     /// Park a card jojobot created seconds ago that a failed write cannot vouch
-    /// for: move it to the `processed` column — terminal, never delivered — so
-    /// the next `read_mailbox` cannot hand a half-written message to a
-    /// consumer. **Nothing is ever deleted**: jojobot has no delete capability
-    /// at all, so a rollback's only moves are restore and park. A create has no
-    /// prior state to restore to — its prior state is absence — which is why
-    /// parking is what stands in.
-    async fn park_create(&self, scope: &Scope, task_id: u64, verb: &str) -> String {
-        let parked = match self.column(scope, MessageState::Processed).await {
-            Ok(bucket) => {
-                self.api
-                    .move_task(scope.project(), scope.view, bucket, task_id)
-                    .await
-            }
-            Err(e) => Err(e),
-        };
+    /// for. Two best-effort moves: make sure the card wears its mailbox label —
+    /// so the board read can surface it rather than losing it — then move it to
+    /// the [`PARKED_COLUMN`], where it is quarantined: never delivered as mail,
+    /// and never counted either. Parking it in `processed` instead would
+    /// fabricate handled mail nobody ever received; leaving it in `new` would
+    /// deliver a message the caller was told failed. **Nothing is ever
+    /// deleted**: jojobot has no delete capability at all, so a rollback's only
+    /// moves are restore and park. A create has no prior state to restore to —
+    /// its prior state is absence — which is why parking is what stands in.
+    async fn park_create(&self, scope: &Scope, task_id: u64, label: u64, verb: &str) -> String {
+        let parked = async {
+            self.api.set_task_labels(task_id, &[label]).await?;
+            let bucket = self.parking_column(scope).await?;
+            self.api
+                .move_task(scope.project(), scope.view, bucket, task_id)
+                .await
+        }
+        .await;
         match parked {
             Ok(()) => format!(
-                "the card this {verb} created was parked in '{}' — nothing is deleted",
-                MessageState::Processed
+                "the card this {verb} created was parked in '{PARKED_COLUMN}' — quarantined and \
+                 surfaced by list_mailboxes; nothing is deleted"
             ),
             Err(e) => format!(
                 "AND parking the card this {verb} created failed ({e}) — card {task_id} is left \
@@ -578,6 +603,11 @@ impl VikunjaStore {
         }
     }
 }
+
+/// Where a failed write's card is parked. **Not a state on purpose** — a card
+/// here is quarantined, outside the funnel, and the board read surfaces it as
+/// unreadable instead of counting it as mail.
+const PARKED_COLUMN: &str = "parked";
 
 /// Whether a read-back vouches for a write: it returned exactly what was
 /// written — or the same message **further down the funnel**. A card that
@@ -736,7 +766,7 @@ impl Mailboxes for VikunjaStore {
         }
         .await;
         if let Err(e) = placed {
-            let parked = self.park_create(&scope, card.id, "post_message").await;
+            let parked = self.park_create(&scope, card.id, label, "post_message").await;
             return Err(MailboxError::Store(format!("{e}; {parked}")));
         }
 
@@ -752,7 +782,7 @@ impl Mailboxes for VikunjaStore {
         match self.read_back(&scope, &expected.id).await {
             Ok(seen) if read_back_confirms(&expected, &seen) => Ok(Guarded::Written(seen)),
             outcome => {
-                let parked = self.park_create(&scope, card.id, "post_message").await;
+                let parked = self.park_create(&scope, card.id, label, "post_message").await;
                 Err(MailboxError::Store(match outcome {
                     Ok(seen) => format!(
                         "message {} read back changed: wrote {expected:?}, read {seen:?}; {parked}",
@@ -1861,12 +1891,14 @@ mod tests {
     // --- read-back, and what a failed write leaves behind ----------------------
 
     /// A post whose read-back mismatches leaves **no deliverable card** — but
-    /// deletes nothing. A half-written message card is not inert: left in
-    /// `new`, the next read would hand it to a consumer as mail. So the
-    /// rollback parks it in `processed`, the terminal column no read ever
-    /// delivers, and the card itself survives: jojobot never deletes.
+    /// deletes nothing, and fabricates nothing. A half-written message card is
+    /// not inert: left in `new`, the next read would hand it to a consumer as
+    /// mail; parked in `processed`, it would read back as handled mail nobody
+    /// ever received. So the rollback parks it in the `parked` column — not a
+    /// state — where the board read quarantines it: surfaced, counted as
+    /// nothing, delivered to nobody.
     #[tokio::test]
-    async fn a_failed_post_parks_the_card_out_of_delivery_without_deleting_it() {
+    async fn a_failed_post_parks_the_card_into_quarantine_without_deleting_it() {
         let fake = FakeVikunja::new();
         let store = store_with_box(fake.clone(), "inbox").await;
         let project = fake.projects_titled(PROJECT)[0].id;
@@ -1882,12 +1914,17 @@ mod tests {
             .await;
         assert!(outcome.is_err(), "a mangled write must not report success: {outcome:?}");
 
+        assert_eq!(
+            MessageState::from_token(PARKED_COLUMN),
+            None,
+            "the whole design rests on 'parked' never being a state"
+        );
         let left = fake.tasks_in(project);
         assert_eq!(left.len(), 1, "nothing is deleted, ever: {left:?}");
         assert_eq!(
             fake.column_of(left[0].id).as_deref(),
-            Some("processed"),
-            "the card is parked in the terminal column"
+            Some("parked"),
+            "the card is parked outside the funnel, not in a state column"
         );
         let delivery = contract::read(&store, "inbox").await;
         assert!(
@@ -1895,10 +1932,22 @@ mod tests {
             "a parked card is never handed to a consumer as mail: {:?}",
             delivery.messages
         );
+        let inbox = store
+            .list_mailboxes()
+            .await
+            .expect("list ok")
+            .into_iter()
+            .find(|m| m.name.as_str() == "inbox")
+            .expect("inbox");
         assert_eq!(
-            contract::counts(&store, "inbox").await.expect("inbox").new,
+            inbox.counts.total(),
             0,
-            "…and it is not counted as pending mail either"
+            "a failed post leaves NOTHING readable — especially not phantom processed mail"
+        );
+        assert_eq!(
+            inbox.quarantined,
+            vec![MessageId(left[0].id.to_string())],
+            "…and the parked card is surfaced, not lost"
         );
     }
 
@@ -2111,10 +2160,12 @@ mod tests {
     /// **The rollback has to cover the whole write, not just its last step.**
     /// A post is four calls — create the card, label it, find the column, move
     /// it — and a failure at any of them must leave nothing a consumer could
-    /// receive: the created card is parked in the terminal column, never
-    /// deleted, and never delivered.
+    /// receive and nothing that reads back as handled: the created card is
+    /// parked into quarantine — labelled (so it is surfaced, not invisible),
+    /// in the `parked` column (so it is no state, and counts as nothing) —
+    /// and never deleted.
     #[tokio::test]
-    async fn a_post_that_fails_midway_parks_the_card_out_of_delivery() {
+    async fn a_post_that_fails_midway_parks_the_card_into_quarantine() {
         for step in ["set_task_labels", "move_task"] {
             let fake = FakeVikunja::new();
             let store = store_with_box(fake.clone(), "inbox").await;
@@ -2134,8 +2185,8 @@ mod tests {
             assert_eq!(left.len(), 1, "a failed {step} deletes nothing: {left:?}");
             assert_eq!(
                 fake.column_of(left[0].id).as_deref(),
-                Some("processed"),
-                "a failed {step} parks the card in the terminal column"
+                Some("parked"),
+                "a failed {step} parks the card outside the funnel"
             );
             let delivery = contract::read(&store, "inbox").await;
             assert!(
@@ -2143,10 +2194,22 @@ mod tests {
                 "a card stranded by a failed {step} must never be delivered as mail: {:?}",
                 delivery.messages
             );
+            let inbox = store
+                .list_mailboxes()
+                .await
+                .expect("list ok")
+                .into_iter()
+                .find(|m| m.name.as_str() == "inbox")
+                .expect("inbox");
             assert_eq!(
-                contract::counts(&store, "inbox").await.expect("inbox").new,
+                inbox.counts.total(),
                 0,
-                "…and never counted as pending mail (failed step: {step})"
+                "nothing readable is left behind by a failed {step} — no phantom archive"
+            );
+            assert_eq!(
+                inbox.quarantined,
+                vec![MessageId(left[0].id.to_string())],
+                "the parked card is surfaced even when {step} was what failed"
             );
         }
     }
