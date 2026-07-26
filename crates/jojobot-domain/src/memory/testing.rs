@@ -698,6 +698,43 @@ pub mod contract {
             "a blocked claim writes nothing at all"
         );
 
+        // **The two-step walk around, closed.** A rival that could not claim the
+        // box at creation must not be able to create itself bare and then move
+        // the claim on afterwards — the update side of the gate. A verifier
+        // deleted this check from both stores and the whole suite stayed green,
+        // so it is pinned here, in the contract both stores run.
+        add(store, NewEntity::new(rival.clone(), "Contract Sigma", "contract-fixture")).await;
+        let stolen = store
+            .update_entity(
+                &rival,
+                EntityPatch {
+                    mailbox: Some(claimed.into()),
+                    // Same signal that clears a name collision — it must not
+                    // clear this one.
+                    create_new: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("a claimed box is an answer, not a failure");
+        let Guarded::Blocked { candidates, .. } = stolen else {
+            panic!("a box another identity owns must not be claimable by an update either");
+        };
+        assert!(
+            candidates.iter().any(|c| c.handle == owner),
+            "the answer must name who owns it: {candidates:?}"
+        );
+        assert_eq!(
+            read_entity(store, &rival).await.mailbox,
+            None,
+            "a blocked claim leaves the rival exactly as it was"
+        );
+        assert_eq!(
+            read_entity(store, &owner).await.mailbox.as_deref(),
+            Some(claimed),
+            "…and the owner keeps its box"
+        );
+
         // The same claim reasserted by its own owner is not a collision.
         let reasserted = store
             .update_entity(

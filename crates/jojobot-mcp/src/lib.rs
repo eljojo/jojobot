@@ -2302,6 +2302,72 @@ mod tests {
         );
     }
 
+    /// **The two-step walk around, over the wire.** A rival blocked from
+    /// claiming a box at creation must not be able to arrive bare and move the
+    /// claim on afterwards — and the refusal has to reach the caller as the
+    /// blocked envelope naming the owner, not as some other shape. The store
+    /// side of this was implemented and tested by nothing: a verifier deleted
+    /// the check from both stores and every test stayed green.
+    #[tokio::test]
+    async fn a_rival_cannot_take_an_owned_box_by_updating_onto_it() {
+        let jojobot = handler();
+        make_box(&jojobot, "gamma-inbox").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                mailbox: Some("gamma-inbox".into()),
+                ..add_args("bot", "gamma", "Gamma")
+            }))
+            .await
+            .expect("add ok");
+        make_bot(&jojobot, "delta", None).await;
+
+        let result = jojobot
+            .update_entity(Parameters(UpdateEntityArgs {
+                handle: "bot:delta".into(),
+                name: None,
+                aliases: None,
+                source: None,
+                crm: None,
+                mailbox: Some("gamma-inbox".into()),
+                // The signal that clears a shared name must not clear this.
+                create_new: Some(true),
+            }))
+            .await
+            .expect("a claimed box is an answer, not a protocol failure");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "bot:delta");
+        assert_eq!(body["candidates"][0]["handle"], "bot:gamma");
+        assert_eq!(body["candidates"][0]["reason"], "mailbox-claimed");
+        let advice = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            advice.contains("gamma-inbox") && advice.contains("bot:gamma"),
+            "the advice names the box and who holds it: {advice}"
+        );
+        assert!(
+            !advice.contains("create_new"),
+            "an override that cannot clear this gate must not be offered: {advice}"
+        );
+
+        // Nothing moved: the rival is still bare, the owner still owns.
+        let listed = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs { kind: Some("bot".into()) }))
+                .await
+                .expect("list ok"),
+        );
+        let of = |handle: &str| {
+            listed["entities"]
+                .as_array()
+                .expect("entities")
+                .iter()
+                .find(|e| e["id"] == handle)
+                .expect("both bots are listed")
+                .clone()
+        };
+        assert!(of("bot:delta")["mailbox"].is_null(), "got {listed}");
+        assert_eq!(of("bot:gamma")["mailbox"], "gamma-inbox");
+    }
+
     // --- the entity verbs -----------------------------------------------------
 
     /// `add_entity` creates any kind, and `list_entities` reads it back — the
