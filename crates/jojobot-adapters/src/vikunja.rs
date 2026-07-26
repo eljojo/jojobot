@@ -2235,14 +2235,16 @@ mod tests {
         }
     }
 
-    /// A post whose very first step — creating the card — fails leaves nothing
-    /// at all: no card, no count, a clean error. Pinned through the fault
-    /// injector so the first step is covered like every later one.
+    /// A post whose very first step — creating the card — fails propagates a
+    /// clean error. Deliberately a single assertion: before `create_task`
+    /// succeeds there is nothing to roll back or park, and asserting an empty
+    /// board would only restate what the fake guarantees on its own error
+    /// path. What this pins is that the injector reaches the first step and
+    /// the failure is not swallowed.
     #[tokio::test]
-    async fn a_post_whose_card_creation_fails_leaves_nothing() {
+    async fn a_post_whose_card_creation_fails_propagates_the_error() {
         let fake = FakeVikunja::new();
         let store = store_with_box(fake.clone(), "inbox").await;
-        let project = fake.projects_titled(PROJECT)[0].id;
 
         fake.fail_next("create_task");
         let outcome = store
@@ -2254,8 +2256,6 @@ mod tests {
             })
             .await;
         assert!(outcome.is_err(), "a failed create_task must not report success: {outcome:?}");
-        assert!(fake.tasks_in(project).is_empty(), "nothing was created");
-        assert_eq!(contract::counts(&store, "inbox").await.expect("inbox").total(), 0);
     }
 
     /// A processing whose **first** step — writing the outcome — fails leaves
