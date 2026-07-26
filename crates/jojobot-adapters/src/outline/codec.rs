@@ -639,6 +639,57 @@ pub(super) fn with_frontmatter_replaced(doc: &str, entity: &Entity) -> String {
     }
 }
 
+/// Return `doc` with its prose replaced by `prose`, or `None` if `prose`
+/// carries a line this doc schema reserves.
+///
+/// **Whole, and in one place.** [`parse_prose`] reads prose as every line that
+/// is neither the machine block nor the fact table, wherever it sits — so a
+/// write that added text in one spot while old paragraphs sat in another would
+/// read back as the concatenation of both, and could never be verified. Every
+/// other prose line is therefore dropped and the new text lands in a single
+/// canonical spot: **below the machine block, above the fact table.**
+///
+/// Below rather than above, because prose is free text that may well contain a
+/// fenced example: [`machine_block`] takes the first fence carrying a
+/// well-formed `id:`, so prose above the real block is a standing offer to
+/// hijack the doc's identity.
+///
+/// The one refusal is the table's own header. The reader finds the table by the
+/// first header line, so prose carrying one moves the boundary — every fact
+/// below it stops being read as a fact. Refused rather than escaped: silently
+/// mangling somebody's charter is worse than declining to write it.
+pub(super) fn with_prose_replaced(doc: &str, prose: &str) -> Option<String> {
+    if prose.lines().any(|l| l.trim() == FACTS_HEADER) {
+        return None;
+    }
+    let lines: Vec<&str> = doc.lines().collect();
+    let machine = machine_block(&lines);
+    let header = lines.iter().position(|l| l.trim() == FACTS_HEADER);
+    let table = facts_region(&lines).filter(|(start, end)| start < end);
+    let within = |span: Option<(usize, usize)>, i: usize| {
+        span.is_some_and(|(start, end)| i >= start && i < end)
+    };
+
+    // Kept lines, in order, with the prose spliced in after the machine block —
+    // or at the very top when the doc has none to sit under.
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 4);
+    if machine.is_none() {
+        out.push(prose.to_string());
+        out.push(String::new());
+    }
+    for (i, line) in lines.iter().enumerate() {
+        if within(machine, i) || within(table, i) || Some(i) == header {
+            out.push(line.to_string());
+            if machine.is_some_and(|(_, close)| i + 1 == close) {
+                out.push(String::new());
+                out.push(prose.to_string());
+                out.push(String::new());
+            }
+        }
+    }
+    Some(out.join("\n"))
+}
+
 /// The markdown a freshly-created entity doc is seeded with: a note for the
 /// human, the entity's frontmatter (durable identity + metadata), and an empty
 /// fact table for jojobot to append to.
@@ -1080,6 +1131,79 @@ mod tests {
         assert_eq!(
             parse_aliases("```yaml\nid: person:alpha\naliases: Al, , Alph ,\n```"),
             vec!["Al".to_string(), "Alph".to_string()]
+        );
+    }
+
+    /// **Prose is replaced whole, and it lands in one canonical place** —
+    /// between the machine block and the fact table. Whole, because
+    /// [`parse_prose`] reads every line that is neither block nor table: prose
+    /// written in one spot while an old paragraph sat in another would read
+    /// back as both, and no write could ever be verified.
+    ///
+    /// Below the block, not above it, on purpose. A charter is free text and may
+    /// well contain a fenced example; [`machine_block`] takes the FIRST fence
+    /// carrying a well-formed `id:`, so prose placed above the real block is a
+    /// standing offer to hijack the doc's identity.
+    #[test]
+    fn prose_is_replaced_whole_and_sits_between_the_block_and_the_table() {
+        let doc = seeded_doc(&alpha());
+        assert!(
+            !parse_prose(&doc).is_empty(),
+            "the seeded doc opens with a note, so this really is a replacement"
+        );
+
+        let charter = "Keeps the schedule.\n\nHard line: never writes to the ledger.";
+        let written = with_prose_replaced(&doc, charter).expect("plain prose is writable");
+        assert_eq!(parse_prose(&written), charter, "read back whole: {written}");
+
+        let block = written.find("```yaml").expect("the machine block survives");
+        let table = written.find(FACTS_HEADER).expect("the table survives");
+        let at = written.find("Keeps the schedule").expect("the prose is there");
+        assert!(block < at && at < table, "prose sits between the two: {written}");
+        assert_eq!(
+            parse_entity(&written).expect("the doc is still an entity"),
+            alpha(),
+            "identity and metadata are untouched"
+        );
+
+        // A second write replaces rather than accumulates.
+        let rewritten = with_prose_replaced(&written, "Nothing else.").expect("writable");
+        assert_eq!(parse_prose(&rewritten), "Nothing else.");
+        assert!(!rewritten.contains("ledger"), "the old prose is gone: {rewritten}");
+
+        // …and a fenced example in the charter does NOT become the doc's
+        // identity: the real block is still the first one.
+        let fenced = with_prose_replaced(&doc, "For example:\n\n```yaml\nid: person:ghost\n```")
+            .expect("a fenced example is ordinary prose");
+        assert_eq!(
+            parse_id_marker(&fenced).as_deref(),
+            Some("person:alpha"),
+            "the doc keeps its own identity: {fenced}"
+        );
+    }
+
+    /// **Prose that would forge the table's header is refused.** The reader
+    /// finds the fact table by the FIRST header line, so a charter carrying one
+    /// moves the boundary: every real fact below it stops being a fact and the
+    /// prose above it stops being prose. Refused outright rather than escaped —
+    /// silently mangling somebody's charter is worse than declining it.
+    #[test]
+    fn prose_carrying_the_tables_own_header_is_refused() {
+        let doc = seeded_doc(&alpha());
+        for forged in [
+            format!("a charter\n\n{FACTS_HEADER}\n\n| id | subject |"),
+            FACTS_HEADER.to_string(),
+            format!("   {FACTS_HEADER}   "),
+        ] {
+            assert!(
+                with_prose_replaced(&doc, &forged).is_none(),
+                "must refuse prose carrying the table header: {forged:?}"
+            );
+        }
+        // The words on their own, not on a line of their own, are just words.
+        assert!(
+            with_prose_replaced(&doc, "the facts table is at the bottom").is_some(),
+            "an ordinary sentence mentioning facts is prose"
         );
     }
 

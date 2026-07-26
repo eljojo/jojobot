@@ -26,8 +26,8 @@ use async_trait::async_trait;
 
 use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, Memory, MemoryError,
-    NewEntity, NewFact, apply_entity_patch, apply_fact_patch, normalize_content, normalize_details,
-    screen_entity_patch, validate_content, validate_details, validate_edge, validate_entity,
+    NewEntity, NewFact, apply_entity_patch, apply_fact_patch, normalize_content, normalize_details, normalize_prose,
+    screen_entity_patch, validate_content, validate_details, validate_edge, validate_entity, validate_prose,
     validate_subject,
     guard::{self, Decision},
     search::DocScan,
@@ -36,7 +36,8 @@ use jojobot_domain::memory::{
 use api::{CollectionRec, DocRec, HttpOutline, OutlineApi, Unconfigured};
 use codec::{
     next_fact_id, parse_entity, parse_facts_table, parse_id_marker, parse_prose, render_fact_row,
-    seeded_doc, with_fact_appended, with_frontmatter_replaced, with_row_replaced,
+    seeded_doc, with_fact_appended, with_frontmatter_replaced, with_prose_replaced,
+    with_row_replaced,
 };
 
 /// Outline's page cap for list endpoints. The store pages until a short page, so
@@ -612,6 +613,47 @@ impl Memory for OutlineStore {
             )));
         }
         Ok(Guarded::Written(seen))
+    }
+
+    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+        validate_subject(entity)?;
+        validate_prose(prose)?;
+        let collection_id = self.resolve_collection().await?;
+
+        // Never creates a doc to hold the text: an unknown handle is a miss
+        // with its near candidates, the rule every verb here follows.
+        let Some(doc) = self.entity_doc(&collection_id, entity).await? else {
+            let index = self.entity_index(&collection_id).await?;
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        };
+
+        let stored = normalize_prose(prose);
+        let updated = with_prose_replaced(&doc.text, &stored).ok_or_else(|| {
+            MemoryError::InvalidEntity(
+                "prose carries a line reserved for the fact table's header; every fact below such \
+                 a line would stop being read as a fact"
+                    .into(),
+            )
+        })?;
+        self.api.update_document(&doc.id, &updated).await?;
+
+        // Read-back: the prose is only written once the read path returns it,
+        // byte-identical — the same invariant a fact write carries.
+        let seen = self
+            .entity_doc(&collection_id, entity)
+            .await?
+            .map(|d| parse_prose(&d.text))
+            .ok_or_else(|| MemoryError::Store(format!("entity {entity} lost its doc mid-write")))?;
+        if seen != stored {
+            let restored = self.restore(&doc, "set_prose").await;
+            return Err(MemoryError::Store(format!(
+                "prose on {entity} read back changed: wrote {stored:?}, read {seen:?}; {restored}"
+            )));
+        }
+        Ok(seen)
     }
 
     /// Every doc in the collection, whole — including docs that are **not**

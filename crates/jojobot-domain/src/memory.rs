@@ -684,6 +684,32 @@ pub fn validate_crm(crm: &str) -> Result<(), MemoryError> {
     }
 }
 
+/// Validate an entity's prose — the human half of its doc, where a bot's
+/// charter lives. Prose is deliberately permissive: paragraphs are the point,
+/// so only emptiness is refused here. What an individual store additionally
+/// cannot carry — a line that would forge one of its own structural markers —
+/// is that store's rule, refused in its own codec where the marker is known.
+pub fn validate_prose(prose: &str) -> Result<(), MemoryError> {
+    if prose.trim().is_empty() {
+        return Err(MemoryError::InvalidEntity(
+            "prose is empty; a page with nothing on it is not a charter".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Normalize prose to the form that survives a round-trip: edge whitespace is
+/// not significant and no store preserves it, and CRLF folds to `\n` because a
+/// store that rebuilds text line by line strips the `\r`s. Both adapters call
+/// this, which is what makes the returned prose identical to a later read's.
+pub fn normalize_prose(prose: &str) -> String {
+    let mut out = prose.to_string();
+    while out.contains("\r\n") {
+        out = out.replace("\r\n", "\n");
+    }
+    out.trim().to_string()
+}
+
 /// Validate an owned-mailbox claim. The value is a **mailbox name**, and the
 /// grammar is the Mailboxes context's own — restated here rather than imported,
 /// because the two contexts share no types, and pinned against it by test: a
@@ -1130,6 +1156,18 @@ pub trait Memory: Send + Sync {
         address: &FactAddress,
         patch: FactPatch,
     ) -> Result<Guarded<Fact>, MemoryError>;
+
+    /// Replace an entity's **prose** — the human half of its doc, everything
+    /// that is neither jojobot's metadata nor its facts. A bot's charter is
+    /// prose; so is a portrait, later. Returns the stored text, which a
+    /// subsequent [`scan_entity`](Memory::scan_entity) must return unchanged.
+    ///
+    /// **Replaced whole, never appended**: prose is what is so now, and a page
+    /// that accumulated every past version could not be read back. The facts
+    /// sharing the doc are untouched. An unknown handle is
+    /// [`MemoryError::UnknownEntity`] — this verb never creates a doc to hold
+    /// the text, exactly as no other verb here creates on a miss.
+    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError>;
 
     /// Every document in the store, whole: its prose, the entity it is, and the
     /// facts in its table. This is the **index's boot scan** — the search

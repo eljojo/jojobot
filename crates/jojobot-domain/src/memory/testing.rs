@@ -16,8 +16,9 @@ use std::sync::Mutex;
 use super::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, Guarded,
     Memory, MemoryError, NewEntity, NewFact, apply_entity_patch, apply_fact_patch,
-    normalize_content, normalize_details, screen_entity_patch, search, validate_content,
-    validate_details, validate_edge, validate_entity, validate_subject,
+    normalize_content, normalize_details, normalize_prose, screen_entity_patch, search,
+    validate_content, validate_details, validate_edge, validate_entity, validate_prose,
+    validate_subject,
     guard::{self, Decision},
 };
 
@@ -28,6 +29,9 @@ use super::{
 pub struct InMemoryMemory {
     entities: Mutex<Vec<Entity>>,
     facts: Mutex<Vec<Fact>>,
+    /// The human half of each entity's doc, keyed by handle — replaced whole by
+    /// `set_prose`, exactly as the real store replaces the region.
+    prose: Mutex<std::collections::HashMap<EntityId, String>>,
 }
 
 impl InMemoryMemory {
@@ -255,19 +259,42 @@ impl Memory for InMemoryMemory {
         Ok(Guarded::Written(fact.clone()))
     }
 
-    /// The fake holds no prose — no verb writes any yet, so a doc here is its
-    /// frontmatter plus its facts. The **handle doubles as the doc id**: in the
-    /// fake an entity's handle IS the key its facts are filed under, so it is the
-    /// honest answer to "which document is this".
+    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+        validate_subject(entity)?;
+        validate_prose(prose)?;
+        // Never creates: a handle that names nothing is a miss with its near
+        // candidates, exactly as it is for every other verb here.
+        let index = self.index();
+        if !index.iter().any(|e| &e.id == entity) {
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        }
+        // Normalized here as the real store normalizes it, so the fake cannot
+        // preserve whitespace a markdown round-trip would drop.
+        let stored = normalize_prose(prose);
+        self.prose
+            .lock()
+            .expect("fake mutex poisoned")
+            .insert(entity.clone(), stored.clone());
+        Ok(stored)
+    }
+
+    /// A doc here is its frontmatter, whatever prose was written onto it, and
+    /// its facts. The **handle doubles as the doc id**: in the fake an entity's
+    /// handle IS the key its facts are filed under, so it is the honest answer
+    /// to "which document is this".
     async fn scan(&self) -> Result<Vec<search::DocScan>, MemoryError> {
         let facts = self.facts.lock().expect("fake mutex poisoned").clone();
+        let prose = self.prose.lock().expect("fake mutex poisoned").clone();
         Ok(self
             .index()
             .into_iter()
             .map(|entity| search::DocScan {
                 doc_id: entity.id.to_string(),
                 title: entity.name.clone(),
-                prose: String::new(),
+                prose: prose.get(&entity.id).cloned().unwrap_or_default(),
                 facts: facts.iter().filter(|f| f.home == entity.id).cloned().collect(),
                 entity: Some(entity),
             })
@@ -685,6 +712,85 @@ pub mod contract {
             .written()
             .expect("an entity is not a rival claimant to its own box");
         assert_eq!(reasserted.mailbox.as_deref(), Some(claimed));
+    }
+
+    /// **An entity's prose is writable, and it is replaced whole.** The prose
+    /// layer is the human half of a doc — a bot's charter lives there — and
+    /// this is the one mechanism that writes it, so a later portrait verb
+    /// generalizes this rather than growing a second one beside it.
+    ///
+    /// Three things bind: the write reads back through the ordinary read path
+    /// (an entity's own scan), a second write REPLACES rather than appends, and
+    /// the facts on the same page survive both — prose and facts share a doc,
+    /// and a writer that rebuilt the page from what it believed would take the
+    /// other half with it.
+    pub async fn prose_is_replaced_whole_and_reads_back<M: Memory>(store: &M) {
+        let bot = EntityId::new(EntityKind::Bot, "contract-epsilon");
+        add(store, NewEntity::new(bot.clone(), "Contract Epsilon", "contract-fixture")).await;
+        let fact = capture(
+            store,
+            NewFact::about(bot.clone(), "answers before noon", date(2026, 7, 25)),
+        )
+        .await;
+
+        let charter = "Keeps the schedule.\n\nHard line: never writes to the ledger.";
+        let stored = store.set_prose(&bot, charter).await.expect("set_prose ok");
+        assert_eq!(stored, charter, "the verb returns what a read will return");
+        let scanned = store
+            .scan_entity(&bot)
+            .await
+            .expect("scan_entity ok")
+            .expect("an entity that exists has a doc");
+        assert_eq!(scanned.prose, charter, "the read path returns it");
+
+        // Replaced, never appended: a charter is what is so now, not a trail.
+        let rewritten = "Keeps the schedule. Nothing else.";
+        store.set_prose(&bot, rewritten).await.expect("set_prose ok");
+        let scanned = store
+            .scan_entity(&bot)
+            .await
+            .expect("scan_entity ok")
+            .expect("an entity that exists has a doc");
+        assert_eq!(scanned.prose, rewritten);
+        assert!(
+            !scanned.prose.contains("ledger"),
+            "the old prose is gone, not buried under the new: {}",
+            scanned.prose
+        );
+
+        // …and the facts sharing the page are untouched by any of it.
+        let facts = store.recall(&bot).await.expect("recall ok");
+        assert!(
+            facts.iter().any(|f| f.id == fact.id && f.content == "answers before noon"),
+            "a prose write must not disturb the facts beside it: {facts:?}"
+        );
+
+        // An empty charter is not a charter.
+        assert!(
+            store.set_prose(&bot, "   ").await.is_err(),
+            "blank prose is refused rather than silently clearing the page"
+        );
+
+        // And a handle that names nothing is a miss — never a doc conjured to
+        // hold the prose, the same rule every other verb here follows.
+        let ghost = EntityId::new(EntityKind::Bot, "contract-ghost-bot");
+        let err = store
+            .set_prose(&ghost, "a charter for nobody")
+            .await
+            .expect_err("an unknown entity must miss");
+        assert!(
+            matches!(err, MemoryError::UnknownEntity { .. }),
+            "expected an entity miss, got {err:?}"
+        );
+        assert!(
+            !store
+                .list_entities(None)
+                .await
+                .expect("list")
+                .iter()
+                .any(|e| e.id == ghost),
+            "nothing was created along the way"
+        );
     }
 
     /// `list_entities(kind)` narrows to one kind and never leaks another's.
@@ -2114,6 +2220,7 @@ pub mod contract {
 
         every_kind_holds_facts(store).await;
         an_entity_claims_a_mailbox_and_only_one_may(store).await;
+        prose_is_replaced_whole_and_reads_back(store).await;
         add_entity_reads_back(store).await;
         list_entities_filters_by_kind(store).await;
         update_entity_edits_metadata_in_place(store).await;

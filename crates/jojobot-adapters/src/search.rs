@@ -874,6 +874,16 @@ impl Memory for IndexedMemory {
         Ok(written)
     }
 
+    /// Prose is indexed material, so a charter written here is findable on the
+    /// next call — the same "reindex the doc the store just wrote" step every
+    /// other write takes, and for the same reason: without it, the one part of
+    /// a bot that is pure prose would be the one part search could not see.
+    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+        let stored = self.inner.set_prose(entity, prose).await?;
+        self.reindex(entity).await?;
+        Ok(stored)
+    }
+
     async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
         self.inner.scan().await
     }
@@ -1633,6 +1643,17 @@ mod tests {
         }
         async fn recall(&self, _: &EntityId) -> Result<Vec<Fact>, MemoryError> {
             unimplemented!("this double only scans")
+        }
+        /// Replace the prose on the page that declares this entity. **No
+        /// guard**, for the reason `capture` has none.
+        async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+            let mut docs = self.docs.write().expect("docs poisoned");
+            let doc = docs
+                .iter_mut()
+                .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == entity))
+                .ok_or_else(|| MemoryError::Store("this double edits pages it holds".into()))?;
+            doc.prose = prose.trim().to_string();
+            Ok(doc.prose.clone())
         }
         async fn update_fact(
             &self,
