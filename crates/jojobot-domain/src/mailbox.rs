@@ -456,7 +456,14 @@ pub enum MailboxError {
 pub trait Mailboxes: Send + Sync {
     /// Create a mailbox. Screened against the existing names, so one that looks
     /// like a box already there comes back [`Guarded::Blocked`] with candidates.
-    async fn create_mailbox(&self, name: &MailboxName) -> Result<Guarded<Mailbox>, MailboxError>;
+    /// `create_new` is the caller's explicit "I know, it's a sibling" signal:
+    /// it overrides the near/containment screen (so `worker-2` is creatable
+    /// beside `worker-1`), and never an exact name — that box already exists.
+    async fn create_mailbox(
+        &self,
+        name: &MailboxName,
+        create_new: bool,
+    ) -> Result<Guarded<Mailbox>, MailboxError>;
 
     /// Every mailbox jojobot manages, with per-state counts.
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError>;

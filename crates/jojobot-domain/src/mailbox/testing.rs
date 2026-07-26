@@ -56,10 +56,14 @@ impl InMemoryMailboxes {
 
 #[async_trait::async_trait]
 impl Mailboxes for InMemoryMailboxes {
-    async fn create_mailbox(&self, name: &MailboxName) -> Result<Guarded<Mailbox>, MailboxError> {
+    async fn create_mailbox(
+        &self,
+        name: &MailboxName,
+        create_new: bool,
+    ) -> Result<Guarded<Mailbox>, MailboxError> {
         validate_mailbox_name(name)?;
         let mut boxes = self.boxes.lock().expect("mailbox lock");
-        if let guard::Decision::Block(candidates) = guard::decide_create(name, &boxes) {
+        if let guard::Decision::Block(candidates) = guard::decide_create(name, &boxes, create_new) {
             return Ok(Guarded::Blocked {
                 attempted: name.clone(),
                 candidates,
@@ -206,7 +210,7 @@ pub mod contract {
     /// Create a box, asserting the guard waved it through.
     pub async fn create(store: &dyn Mailboxes, n: &str) -> Mailbox {
         store
-            .create_mailbox(&name(n))
+            .create_mailbox(&name(n), false)
             .await
             .expect("create_mailbox should succeed")
             .written()
@@ -270,7 +274,7 @@ pub mod contract {
         let before = store.list_mailboxes().await.expect("list ok").len();
 
         let Guarded::Blocked { attempted, candidates } = store
-            .create_mailbox(&name("inbx"))
+            .create_mailbox(&name("inbx"), false)
             .await
             .expect("a blocked create is a result, not a failure")
         else {
@@ -283,6 +287,40 @@ pub mod contract {
             before,
             "a blocked create writes nothing"
         );
+    }
+
+    /// **A sibling fleet is deliberate — and creatable.** `worker-2` beside
+    /// `worker-1` blocks as a near miss until the caller passes `create_new`,
+    /// which overrides the similarity screen. An exact name stays blocked
+    /// regardless: that box already exists.
+    pub async fn a_confirmed_near_miss_creates_the_sibling_box(store: &dyn Mailboxes) {
+        create(store, "worker-1").await;
+
+        let Guarded::Blocked { candidates, .. } = store
+            .create_mailbox(&name("worker-2"), false)
+            .await
+            .expect("a blocked create is a result, not a failure")
+        else {
+            panic!("without the signal, a near-miss name must block");
+        };
+        assert_eq!(candidates[0].name.as_str(), "worker-1");
+
+        let created = store
+            .create_mailbox(&name("worker-2"), true)
+            .await
+            .expect("create_mailbox should succeed")
+            .written()
+            .expect("create_new must override the near-miss screen");
+        assert_eq!(created.name.as_str(), "worker-2");
+
+        let Guarded::Blocked { candidates, .. } = store
+            .create_mailbox(&name("worker-1"), true)
+            .await
+            .expect("a blocked create is a result, not a failure")
+        else {
+            panic!("an exact name stays blocked, create_new or not: the box exists");
+        };
+        assert_eq!(candidates[0].reason, guard::MatchReason::Exact);
     }
 
     /// A posted message lands in `new`, carrying exactly what was posted.
@@ -557,7 +595,7 @@ pub mod contract {
     /// Malformed input is refused before anything is written.
     pub async fn malformed_input_is_refused(store: &dyn Mailboxes) {
         assert!(
-            store.create_mailbox(&name("Inbox")).await.is_err(),
+            store.create_mailbox(&name("Inbox"), false).await.is_err(),
             "a name outside the grammar is refused"
         );
         create(store, "inbox").await;
@@ -594,6 +632,7 @@ pub mod contract {
     pub async fn run_all<S: Mailboxes, F: Fn() -> S>(fresh: F) {
         create_then_list(&fresh()).await;
         creating_a_near_miss_is_blocked_and_writes_nothing(&fresh()).await;
+        a_confirmed_near_miss_creates_the_sibling_box(&fresh()).await;
         a_posted_message_lands_in_new(&fresh()).await;
         a_body_survives_the_round_trip(&fresh()).await;
         a_crlf_body_normalizes_to_plain_newlines(&fresh()).await;

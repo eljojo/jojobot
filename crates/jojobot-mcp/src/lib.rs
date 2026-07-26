@@ -232,6 +232,12 @@ pub struct CreateMailboxArgs {
     /// The box's name: `[a-z0-9-]+`, starting and ending alphanumeric. One
     /// spelling per box, so two callers cannot create `Inbox` and `inbox`.
     pub name: String,
+    /// Set only after a previous call reported candidates for this name and
+    /// you judged the resemblance deliberate — sibling boxes like `worker-2`
+    /// beside `worker-1`. Overrides the similarity screen. An exact name is
+    /// never overridden: that box already exists.
+    #[serde(default)]
+    pub create_new: Option<bool>,
 }
 
 /// Arguments to `post_message`.
@@ -547,7 +553,9 @@ impl Jojobot {
         description = "Create a mailbox. The name is [a-z0-9-]+ and has exactly one spelling. \
                        If it looks like a box that already exists, returns candidates to confirm \
                        instead of creating one — a typo that mints a box is a message posted \
-                       where nobody is listening."
+                       where nobody is listening. If the resemblance is deliberate (sibling \
+                       boxes like worker-2 beside worker-1), re-call with create_new: true; an \
+                       exact name is never overridden, because that box already exists."
     )]
     async fn create_mailbox(
         &self,
@@ -556,7 +564,7 @@ impl Jojobot {
         let name = MailboxName(args.name.trim().to_string());
         match self
             .mailboxes
-            .create_mailbox(&name)
+            .create_mailbox(&name, args.create_new.unwrap_or(false))
             .await
             .map_err(mailbox_error)?
         {
@@ -997,10 +1005,10 @@ fn mailbox_blocked(
     let how_to_proceed = match gate {
         BlockedBox::Creating => format!(
             "Nothing was created. '{attempted}' is the same as, or a near miss of, a mailbox \
-             that already exists. If one of the boxes above is the one you meant, use its name; \
-             otherwise pick a name that is not confusable with it. Two boxes with names a typo \
-             apart cannot both be right: the whole value of a box is that a sender can name it \
-             without checking.",
+             that already exists. If one of the boxes above is the one you meant, use its name. \
+             If the resemblance is deliberate — sibling boxes like worker-2 beside worker-1 — \
+             re-call create_mailbox with create_new: true to override the similarity screen. \
+             An exact match cannot be overridden: that box already exists.",
         ),
         BlockedBox::MustExist(verb) if candidates.is_empty() => format!(
             "Nothing was written. '{attempted}' is not a mailbox jojobot knows, and nothing \
@@ -2514,7 +2522,10 @@ mod tests {
 
     async fn make_box(jojobot: &Jojobot, name: &str) -> serde_json::Value {
         let result = jojobot
-            .create_mailbox(Parameters(CreateMailboxArgs { name: name.into() }))
+            .create_mailbox(Parameters(CreateMailboxArgs {
+                name: name.into(),
+                create_new: None,
+            }))
             .await
             .expect("create_mailbox call ok");
         let body = json_of(&result);
@@ -2642,23 +2653,72 @@ mod tests {
         );
     }
 
-    /// Creating a box that looks like one already there is blocked too — and its
-    /// advice is a different one, because the way out is different.
+    /// Creating a box that looks like one already there is blocked too — and
+    /// its advice names the way out: `create_new`, for the case where the
+    /// resemblance is deliberate.
     #[tokio::test]
-    async fn creating_a_near_miss_box_is_blocked_with_its_own_advice() {
+    async fn creating_a_near_miss_box_is_blocked_with_the_create_new_escape_named() {
         let jojobot = mailbox_handler();
         make_box(&jojobot, "inbox").await;
 
         let result = jojobot
-            .create_mailbox(Parameters(CreateMailboxArgs { name: "inbx".into() }))
+            .create_mailbox(Parameters(CreateMailboxArgs {
+                name: "inbx".into(),
+                create_new: None,
+            }))
             .await
             .expect("a blocked create is a successful call");
         let body = blocked(&result);
         assert_eq!(body["candidates"][0]["name"], "inbox");
         let advice = body["how_to_proceed"].as_str().expect("advice");
         assert!(
-            !advice.contains("create_mailbox"),
-            "telling a create to call create is advice that goes in a circle: {advice}"
+            advice.contains("create_new"),
+            "the way out of this gate is the parameter that opens it: {advice}"
+        );
+    }
+
+    /// **The operator's escape hatch works end to end.** A sibling box blocked
+    /// as a near miss is created on the second, confirmed call — and an exact
+    /// name stays blocked however hard the caller confirms.
+    #[tokio::test]
+    async fn a_deliberate_sibling_box_is_created_with_create_new() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "worker-1").await;
+
+        let refused = json_of(
+            &jojobot
+                .create_mailbox(Parameters(CreateMailboxArgs {
+                    name: "worker-2".into(),
+                    create_new: None,
+                }))
+                .await
+                .expect("a blocked create is a successful call"),
+        );
+        assert_eq!(refused["status"], "blocked", "without the signal: {refused}");
+
+        let created = json_of(
+            &jojobot
+                .create_mailbox(Parameters(CreateMailboxArgs {
+                    name: "worker-2".into(),
+                    create_new: Some(true),
+                }))
+                .await
+                .expect("create ok"),
+        );
+        assert_eq!(created["name"], "worker-2", "the signal creates the sibling: {created}");
+
+        let exact = json_of(
+            &jojobot
+                .create_mailbox(Parameters(CreateMailboxArgs {
+                    name: "worker-1".into(),
+                    create_new: Some(true),
+                }))
+                .await
+                .expect("a blocked create is a successful call"),
+        );
+        assert_eq!(
+            exact["status"], "blocked",
+            "an exact name is never overridden: {exact}"
         );
     }
 
@@ -2682,7 +2742,10 @@ mod tests {
     async fn malformed_mailbox_input_is_a_client_error() {
         let jojobot = mailbox_handler();
         let err = jojobot
-            .create_mailbox(Parameters(CreateMailboxArgs { name: "Inbox".into() }))
+            .create_mailbox(Parameters(CreateMailboxArgs {
+                name: "Inbox".into(),
+                create_new: None,
+            }))
             .await
             .expect_err("a name outside the grammar must be refused");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);

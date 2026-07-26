@@ -602,7 +602,11 @@ fn oldest<T>(mut items: Vec<T>, key: impl Fn(&T) -> (&str, u64)) -> Option<T> {
 
 #[async_trait]
 impl Mailboxes for VikunjaStore {
-    async fn create_mailbox(&self, name: &MailboxName) -> Result<Guarded<Mailbox>, MailboxError> {
+    async fn create_mailbox(
+        &self,
+        name: &MailboxName,
+        create_new: bool,
+    ) -> Result<Guarded<Mailbox>, MailboxError> {
         validate_mailbox_name(name)?;
         // Resolving the scope first is what makes the very first call to a bare
         // Vikunja work: the project and its columns are provisioned before the
@@ -610,7 +614,7 @@ impl Mailboxes for VikunjaStore {
         self.resolve_scope().await?;
 
         let existing = self.mailbox_names().await?;
-        if let Decision::Block(candidates) = guard::decide_create(name, &existing) {
+        if let Decision::Block(candidates) = guard::decide_create(name, &existing, create_new) {
             return Ok(Guarded::Blocked {
                 attempted: name.clone(),
                 candidates,
