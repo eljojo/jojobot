@@ -6,11 +6,17 @@
 use jiff::civil::Date;
 
 use jojobot_domain::memory::{
-    Boot, Edge, EdgeShape, Entity, EntityId, Fact, FactId, FactStatus, Provenance, validate_subject,
+    Boot, Edge, EdgeShape, Entity, EntityId, Fact, FactId, FactStatus, Provenance, validate_prose,
+    validate_subject,
 };
 
-/// The header that marks the machine-readable fact table at the bottom of a doc.
-pub(super) const FACTS_HEADER: &str = "### ⚙ facts";
+/// The header that marks the machine-readable fact table at the bottom of a
+/// doc. **Re-exported from the domain, never re-declared here**: it is part of
+/// jojobot's document schema, and the one rule that turns on it
+/// ([`validate_prose`]) has to bind the fake as hard as it binds this store.
+/// A private copy would be a second literal for one idea, and the copy this
+/// store enforced would be the only one anybody checked.
+pub(super) use jojobot_domain::memory::FACTS_HEADER;
 /// The table's column header row.
 pub(super) const TABLE_HEADER: &str =
     "| id | subject | content | details | provenance | status | date | edges |";
@@ -656,10 +662,10 @@ pub(super) fn with_frontmatter_replaced(doc: &str, entity: &Entity) -> String {
 ///
 /// Two refusals, both returning `None`.
 ///
-/// **Prose carrying the table's own header.** The reader finds the table by the
-/// first header line, so prose carrying one moves the boundary — every fact
-/// below it stops being read as a fact. Refused rather than escaped: silently
-/// mangling somebody's charter is worse than declining to write it.
+/// **Prose the domain will not have written anywhere** — empty, or carrying a
+/// line the document schema reserves. Checked through [`validate_prose`] rather
+/// than restated here, so this pure function and the port's contract cannot
+/// come to disagree about what prose is.
 ///
 /// **A doc with no machine block.** The reader accepts a bare `id:` line above
 /// the fact table, so a hand-written page can be an entity without one — and a
@@ -669,9 +675,7 @@ pub(super) fn with_frontmatter_replaced(doc: &str, entity: &Entity) -> String {
 /// that has to be undone is a write that should never have been attempted. An
 /// ordinary metadata edit gives such a page a block; then it is writable.
 pub(super) fn with_prose_replaced(doc: &str, prose: &str) -> Option<String> {
-    if prose.lines().any(|l| l.trim() == FACTS_HEADER) {
-        return None;
-    }
+    validate_prose(prose).ok()?;
     let lines: Vec<&str> = doc.lines().collect();
     let (open, close) = machine_block(&lines)?;
     let header = lines.iter().position(|l| l.trim() == FACTS_HEADER);
@@ -1194,6 +1198,10 @@ mod tests {
     /// moves the boundary: every real fact below it stops being a fact and the
     /// prose above it stops being prose. Refused outright rather than escaped —
     /// silently mangling somebody's charter is worse than declining it.
+    ///
+    /// The rule itself lives in the domain, where it binds every adapter; what
+    /// this pins is that **this rewriter refuses rather than mangles**, which a
+    /// caller reaching the pure function directly still depends on.
     #[test]
     fn prose_carrying_the_tables_own_header_is_refused() {
         let doc = seeded_doc(&alpha());

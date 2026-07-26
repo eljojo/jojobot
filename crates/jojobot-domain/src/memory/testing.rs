@@ -315,7 +315,7 @@ impl Memory for InMemoryMemory {
 pub mod contract {
     use super::*;
     use crate::memory::search::{EdgeFilter, Hit, Search, SearchQuery};
-    use crate::memory::{Boot, Edge, EdgeShape, FactStatus, Provenance};
+    use crate::memory::{Boot, Edge, EdgeShape, FACTS_HEADER, FactStatus, Provenance};
     use jiff::civil::{Date, date};
 
     /// Make sure `id` exists, so the write guard's **existence gate** is not
@@ -769,6 +769,42 @@ pub mod contract {
         assert!(
             store.set_prose(&bot, "   ").await.is_err(),
             "blank prose is refused rather than silently clearing the page"
+        );
+
+        // **And prose that would forge a document's own structure is refused by
+        // EVERY store, not only the one that would be corrupted by it.** A
+        // charter carrying the fact-table header moves the boundary between
+        // prose and facts, and every fact below it stops being read as a fact.
+        // Held here rather than in one adapter's own tests because a fake that
+        // waves it through is how a green suite ships a store-corrupting write.
+        for forged in [
+            format!("a charter\n\n{FACTS_HEADER}\n\n| id | subject |"),
+            FACTS_HEADER.to_string(),
+            format!("   {FACTS_HEADER}   "),
+        ] {
+            let err = store
+                .set_prose(&bot, &forged)
+                .await
+                .expect_err("prose carrying a reserved line must be refused");
+            assert!(
+                matches!(err, MemoryError::InvalidEntity(_)),
+                "expected a refusal naming the prose, got {err:?} for {forged:?}"
+            );
+        }
+        // …and the charter that was there is untouched by any refusal.
+        let scanned = store
+            .scan_entity(&bot)
+            .await
+            .expect("scan_entity ok")
+            .expect("an entity that exists has a doc");
+        assert_eq!(scanned.prose, rewritten, "a refused write changes nothing");
+
+        // The words on their own, not on a line of their own, are just words.
+        let mentioning = "the facts table is at the bottom of this page";
+        assert_eq!(
+            store.set_prose(&bot, mentioning).await.expect("ordinary prose"),
+            mentioning,
+            "a sentence that merely mentions facts is prose"
         );
 
         // And a handle that names nothing is a miss — never a doc conjured to

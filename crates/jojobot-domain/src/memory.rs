@@ -684,16 +684,57 @@ pub fn validate_crm(crm: &str) -> Result<(), MemoryError> {
     }
 }
 
+/// The line that opens a document's machine-readable fact table.
+///
+/// **jojobot's document schema is jojobot's, not a store's.** A store decides
+/// how a document is fetched and saved; the shape *inside* it — a metadata
+/// block, a prose half, a fact table under this header — is this domain's, and
+/// it has been all along: a fact's content is one line here because a table
+/// cell is, and a field carries no backtick because it sits inside a fenced
+/// block. Naming the header here makes that ownership explicit, and it is what
+/// lets [`validate_prose`] bind every adapter equally instead of one of them
+/// keeping a private copy the others could not enforce.
+pub const FACTS_HEADER: &str = "### ⚙ facts";
+
+/// The lines a document reserves for its own structure. Prose may not carry
+/// one, whatever store it is bound for — see [`validate_prose`].
+///
+/// A list rather than the single constant: this is the seam. When the schema
+/// grows a second structural line, it is added here once and every adapter,
+/// the fake included, refuses it from that moment.
+pub const RESERVED_PROSE_LINES: &[&str] = &[FACTS_HEADER];
+
 /// Validate an entity's prose — the human half of its doc, where a bot's
-/// charter lives. Prose is deliberately permissive: paragraphs are the point,
-/// so only emptiness is refused here. What an individual store additionally
-/// cannot carry — a line that would forge one of its own structural markers —
-/// is that store's rule, refused in its own codec where the marker is known.
+/// charter lives.
+///
+/// Permissive by design: paragraphs are the point, so only two things are
+/// refused. **Emptiness**, because a page with nothing on it is not a charter.
+/// And **a line the document schema reserves** ([`RESERVED_PROSE_LINES`]),
+/// because the reader finds the fact table by the first such line: prose
+/// carrying one moves the boundary, and every fact below it stops being read as
+/// a fact. Refused rather than escaped — silently mangling somebody's charter
+/// is worse than declining to write it.
+///
+/// The second rule lives here, not in the one adapter whose documents it would
+/// corrupt, because a fake that waves it through is how a green suite ships a
+/// store-corrupting write. Every adapter validates through this, so none can be
+/// the lenient one.
 pub fn validate_prose(prose: &str) -> Result<(), MemoryError> {
     if prose.trim().is_empty() {
         return Err(MemoryError::InvalidEntity(
             "prose is empty; a page with nothing on it is not a charter".into(),
         ));
+    }
+    if let Some(reserved) = prose
+        .lines()
+        .map(str::trim)
+        .find(|line| RESERVED_PROSE_LINES.contains(line))
+    {
+        return Err(MemoryError::InvalidEntity(format!(
+            "prose carries the line '{reserved}', which a document reserves for its own \
+             structure; every fact below such a line would stop being read as a fact. Say it \
+             some other way — the words on their own, not on a line of their own, are fine"
+        )));
     }
     Ok(())
 }
