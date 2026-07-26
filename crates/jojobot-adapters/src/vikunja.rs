@@ -463,7 +463,20 @@ impl VikunjaStore {
                 // below them** — a foreign card must be refused outright, never
                 // classified, or its id gets published under one of jojobot's
                 // mailboxes as if jojobot had a claim on it.
-                scope.verify(&task)?;
+                //
+                // Refusal is for a card that CLAIMS to be jojobot's mail: it
+                // wears jojobot's mailbox label while declaring another
+                // project, which is an integrity violation and not routine
+                // noise. An unlabelled card claims nothing. Refusing that one
+                // would take down every verb over a card that was never
+                // jojobot's — and a post, which only meets it at its read-back,
+                // would park its own good message on the way out and leak
+                // another card on every retry.
+                if mailbox.is_some() {
+                    scope.verify(&task)?;
+                } else if task.project_id != scope.project() {
+                    continue;
+                }
                 let (Some(state), Some(box_of)) = (state, mailbox.clone()) else {
                     // The card id only: a non-state column title is operator- or
                     // Vikunja-authored text, and no log prints operator text.
@@ -963,8 +976,14 @@ impl Mailboxes for VikunjaStore {
                     // `list_mailboxes` cannot file it under one. The card id is
                     // said here instead, at error level, because a card only a
                     // log knows about is one a human has to be told about.
+                    // **The box goes in the line.** It is the one place that
+                    // answer survives: the card carries nothing saying which
+                    // mailbox it belongs to — that IS the defect — so without
+                    // it here, "a message was lost" comes with no way to know
+                    // whose.
                     tracing::error!(
                         card = card.id,
+                        mailbox = %message.mailbox,
                         "a card this post_message created could not be labelled — it is \
                          quarantined, but no box can claim it and list_mailboxes cannot show it"
                     );
@@ -2480,6 +2499,44 @@ mod tests {
         );
     }
 
+    /// **Somebody else's unlabelled card is still nobody's business — wherever
+    /// it sits.** Refusing a foreign card is right when the card wears
+    /// jojobot's mailbox label, because then it is claiming to be jojobot's
+    /// mail. An unlabelled one claims nothing: before quarantine went
+    /// positional it was skipped in every column, and it has to stay skipped
+    /// outside the funnel too. Refusing it instead takes down every verb until
+    /// a person intervenes — and `post_message`, which only meets it at its
+    /// read-back, would park its own perfectly good message on the way out and
+    /// leak another card on every retry.
+    #[tokio::test]
+    async fn an_unlabelled_card_from_another_project_is_skipped_not_refused() {
+        let fake = FakeVikunja::new();
+        let theirs = fake.seed_project("their-own-board", "not jojobot's");
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let ours = fake.projects_titled(PROJECT)[0].id;
+
+        // Their card, no jojobot label, sitting in a column that is no state.
+        let stray = fake.seed_task(theirs, "milhouse's own card", "not a message", &[]);
+        fake.seed_placement(ours, stray, DEFAULT_COLUMN);
+
+        let boxes = store.list_mailboxes().await.expect("a card that is not jojobot's must not break every verb");
+        let inbox = boxes.iter().find(|m| m.name.as_str() == "inbox").expect("inbox");
+        assert!(
+            inbox.quarantined.is_empty(),
+            "…and it is certainly not quarantined under one of jojobot's boxes: {:?}",
+            inbox.quarantined
+        );
+
+        // …and a post still works, rather than creating a card and parking it.
+        let posted = contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
+        let card: u64 = posted.id.as_str().parse().expect("a numeric card id");
+        assert_eq!(
+            fake.column_of(card).as_deref(),
+            Some("new"),
+            "a post must not park its own message because of somebody else's card"
+        );
+    }
+
     /// **Mailbox labels are namespaced by the project that owns them.** Vikunja
     /// labels are global, so without this a throwaway store — the gated
     /// integration test's, say — would see, screen against, and be blocked by
@@ -2630,13 +2687,18 @@ mod tests {
     async fn a_card_that_could_not_be_labelled_is_quarantined_but_names_no_box() {
         let logged = crate::log_capture::log_sink();
         let fake = FakeVikunja::new();
-        let store = store_with_box(fake.clone(), "inbox").await;
+        // A box of its own: the sink is shared by every test in this binary,
+        // card ids restart at the same number in each, and the other tests that
+        // strand a card emit the same sentence — so without something in the
+        // line that belongs to this test, the assertion can pass on somebody
+        // else's event.
+        let store = store_with_box(fake.clone(), "unlabelled-probe").await;
         let project = fake.projects_titled(PROJECT)[0].id;
 
         fake.fail_all("set_task_labels");
         let outcome = store
             .post_message(NewMessage {
-                mailbox: MailboxName("inbox".into()),
+                mailbox: MailboxName("unlabelled-probe".into()),
                 body: "the shipment landed".into(),
                 sender: "alpha".into(),
                 sent_at: at(1_780_000_000),
@@ -2663,18 +2725,22 @@ mod tests {
             .await
             .expect("list ok")
             .into_iter()
-            .find(|m| m.name.as_str() == "inbox")
-            .expect("inbox");
+            .find(|m| m.name.as_str() == "unlabelled-probe")
+            .expect("the box");
         assert!(
             inbox.quarantined.is_empty(),
             "a box must not be made to claim a card that carries nothing saying it is theirs"
         );
 
         let line = logged
-            .line_with("could not be labelled")
+            .line_with("mailbox=unlabelled-probe")
             .expect("the residue is reported, not swallowed");
         assert!(line.contains("ERROR"), "…at error level: {line}");
         assert!(line.contains(&format!("card={card}")), "…naming the card: {line}");
+        assert!(
+            line.contains("could not be labelled"),
+            "…and saying what happened to it: {line}"
+        );
     }
 
     /// **A card jojobot created is never invisible to every verb.** The
@@ -3239,6 +3305,46 @@ mod tests {
         );
     }
 
+    /// **Dropping a handled message is not the same as dropping any card that
+    /// ends up in `processed`.** The delivery's drop arm exists so a message
+    /// somebody handled is never served to a second consumer — and it leans on
+    /// the same same-message clauses the post's read-back uses. Weaken it to
+    /// "the state advanced" and a card whose CONTENTS were replaced while it
+    /// moved gets quietly dropped from the batch instead: the caller is told
+    /// the delivery succeeded, and a message that was corrupted rather than
+    /// handled disappears from every future delivery with nobody told.
+    #[tokio::test]
+    async fn a_delivery_drops_a_handled_message_but_not_a_rewritten_one() {
+        let fake = FakeVikunja::new();
+        let api = Interleaved::new(fake.clone());
+        let store = VikunjaStore::from_api(api.clone(), PROJECT);
+        contract::create(&store, "inbox").await;
+        let rewritten = contract::post(&store, "inbox", "alpha", "message one", 0).await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+        let card: u64 = rewritten.id.as_str().parse().expect("a numeric card id");
+
+        // The card lands in `processed` — but carrying a different message.
+        api.before_board(3, move |fake| {
+            let processed = fake.bucket_titled(project, "processed");
+            fake.placement.lock().unwrap().insert(card, processed);
+            let swapped = render_description(
+                "a different message entirely",
+                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), notes: None },
+            );
+            let mut tasks = fake.tasks.lock().unwrap();
+            let held = tasks.iter_mut().find(|t| t.id == card).expect("the card");
+            held.description = swapped.clone();
+            held.raw["description"] = swapped.into();
+        });
+
+        let outcome = store.read_mailbox(&MailboxName("inbox".into())).await;
+        assert!(
+            outcome.is_err(),
+            "a card that advanced with its message replaced must fail the delivery, not be \
+             silently dropped from it: {outcome:?}"
+        );
+    }
+
     // --- rollback never deletes -----------------------------------------------
 
     /// **A consumed message is a delivered message, not a failed post.** The
@@ -3304,6 +3410,41 @@ mod tests {
 
     // --- jojobot never races jojobot -----------------------------------------
 
+    /// **Two creations of one box must not mint two labels for it.** A mailbox
+    /// IS its label, so two creates that each read the box list before either
+    /// writes leave one name answering to two labels — and which one a later
+    /// post lands on is then decided by whichever the label list sorts first.
+    /// Under the lock the second create sees the first and comes back blocked
+    /// on an exact name, which is what "that box already exists" means.
+    ///
+    /// This and the delivery race below are what stop the lock from being
+    /// deleted a verb at a time with the suite still green.
+    #[tokio::test]
+    async fn two_concurrent_creates_of_one_box_leave_one_label() {
+        let fake = FakeVikunja::new();
+        let store = VikunjaStore::from_api(Interleaved::new(fake.clone()), PROJECT);
+        // Provision the board first, so what races here is the box, not the
+        // three columns underneath it.
+        contract::create(&store, "errands").await;
+
+        let name = MailboxName("inbox".into());
+        let (first, second) = tokio::join!(
+            store.create_mailbox(&name, false),
+            store.create_mailbox(&name, false)
+        );
+        first.expect("create_mailbox ok");
+        second.expect("create_mailbox ok");
+
+        let minted = fake
+            .labels
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.title.ends_with("/inbox"))
+            .count();
+        assert_eq!(minted, 1, "one box, one label — the second create must find the first");
+    }
+
     /// **Two deliveries of one message must not both call it fresh mail.**
     /// Every verb is a read-modify-verify sequence, so two of them running at
     /// once over one board interleave: both reads see the message in `new`,
@@ -3346,58 +3487,80 @@ mod tests {
 
     /// **Advancing is not a licence to change the message.** The read-back
     /// tolerates a card that moved further down the funnel — that is delivery
-    /// working — but only for the SAME message: id, box, body, sender and
-    /// instant all have to still be what was written. Without that, "the state
-    /// advanced" would wave through a card whose body somebody rewrote, and
-    /// `post_message` would report success for a message it did not send.
+    /// working — but only for the SAME message: body, sender and instant all
+    /// have to still be what was written. Without those clauses, "the state
+    /// advanced" waves through a card whose contents somebody replaced, and
+    /// `post_message` reports success for a message it did not send.
+    ///
+    /// **One case per clause**, because they are independent: a test that only
+    /// ever rewrites the body leaves the sender and sent-at comparisons free to
+    /// be deleted with the suite green.
     #[tokio::test]
     async fn a_card_that_advanced_and_changed_is_not_confirmed_by_the_read_back() {
-        let fake = FakeVikunja::new();
-        let api = Interleaved::new(fake.clone());
-        let store = VikunjaStore::from_api(api.clone(), PROJECT);
-        contract::create(&store, "inbox").await;
-        let project = fake.projects_titled(PROJECT)[0].id;
+        let posted = Envelope {
+            sender: "alpha".into(),
+            sent_at: at(1_780_000_000),
+            notes: None,
+        };
+        let swapped_body = ("the body", "a different message entirely".to_string(), posted.clone());
+        let swapped_sender = (
+            "the sender",
+            "the shipment landed".to_string(),
+            Envelope { sender: "milhouse".into(), ..posted.clone() },
+        );
+        let swapped_instant = (
+            "the instant it was sent",
+            "the shipment landed".to_string(),
+            Envelope { sent_at: at(1_770_000_000), ..posted.clone() },
+        );
 
-        // Right before the post's read-back: the card is taken (new → read)
-        // AND its body is rewritten — still a perfectly readable message, just
-        // not the one that was posted.
-        api.before_board(1, move |fake| {
-            let new = fake.bucket_titled(project, "new");
-            let read = fake.bucket_titled(project, "read");
-            for bucket in fake.placement.lock().unwrap().values_mut() {
-                if *bucket == new {
-                    *bucket = read;
+        for (clause, body, envelope) in [swapped_body, swapped_sender, swapped_instant] {
+            let fake = FakeVikunja::new();
+            let api = Interleaved::new(fake.clone());
+            let store = VikunjaStore::from_api(api.clone(), PROJECT);
+            contract::create(&store, "inbox").await;
+            let project = fake.projects_titled(PROJECT)[0].id;
+
+            // Right before the post's read-back: the card is taken (new → read)
+            // AND rewritten — still a perfectly readable message, just not the
+            // one that was posted.
+            api.before_board(1, move |fake| {
+                let new = fake.bucket_titled(project, "new");
+                let read = fake.bucket_titled(project, "read");
+                for bucket in fake.placement.lock().unwrap().values_mut() {
+                    if *bucket == new {
+                        *bucket = read;
+                    }
                 }
-            }
-            let rewritten = render_description(
-                "a different message entirely",
-                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), notes: None },
-            );
-            let mut tasks = fake.tasks.lock().unwrap();
-            let card = tasks.last_mut().expect("the card this post just created");
-            card.description = rewritten.clone();
-            card.raw["description"] = rewritten.into();
-        });
+                let rewritten = render_description(&body, &envelope);
+                let mut tasks = fake.tasks.lock().unwrap();
+                let card = tasks.last_mut().expect("the card this post just created");
+                card.description = rewritten.clone();
+                card.raw["description"] = rewritten.into();
+            });
 
-        let outcome = store
-            .post_message(NewMessage {
-                mailbox: MailboxName("inbox".into()),
-                body: "the shipment landed".into(),
-                sender: "alpha".into(),
-                sent_at: at(1_780_000_000),
-            })
-            .await;
-        assert!(
-            outcome.is_err(),
-            "a card that advanced AND changed is corruption, not delivery: {outcome:?}"
-        );
-        let left = fake.tasks_in(project);
-        assert_eq!(left.len(), 1, "nothing is deleted");
-        assert_eq!(
-            fake.column_of(left[0].id).as_deref(),
-            Some("parked"),
-            "…and the card jojobot cannot vouch for is parked, not left in the funnel"
-        );
+            let outcome = store
+                .post_message(NewMessage {
+                    mailbox: MailboxName("inbox".into()),
+                    body: "the shipment landed".into(),
+                    sender: "alpha".into(),
+                    sent_at: at(1_780_000_000),
+                })
+                .await;
+            assert!(
+                outcome.is_err(),
+                "a card that advanced with {clause} replaced is corruption, not delivery: \
+                 {outcome:?}"
+            );
+            let left = fake.tasks_in(project);
+            assert_eq!(left.len(), 1, "nothing is deleted ({clause})");
+            assert_eq!(
+                fake.column_of(left[0].id).as_deref(),
+                Some("parked"),
+                "…and the card jojobot cannot vouch for is parked, not left in the funnel \
+                 ({clause})"
+            );
+        }
     }
 
     /// **A card update must not blank the rest of the card.** Vikunja's task
