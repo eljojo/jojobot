@@ -211,20 +211,25 @@ impl VikunjaStore {
 
     /// Every project that is both named ours AND carries the ownership tag —
     /// paged in full.
+    ///
+    /// **Stop on an empty page, never on a short one.** Vikunja serves the
+    /// page size *it* decides (`maxitemsperpage`), not the one requested — so
+    /// "fewer than I asked for" is true on every page when the server's cap is
+    /// below the request, and a loop that stops there reads page one and
+    /// concludes the project is absent. Same rule as [`Self::board`].
     async fn owned_projects(&self) -> Result<Vec<ProjectRec>, MailboxError> {
         let mut owned = Vec::new();
         let mut page = 1;
         loop {
             let batch = self.api.list_projects(page, PAGE).await?;
-            let count = batch.len() as u64;
+            if batch.is_empty() {
+                break;
+            }
             owned.extend(
                 batch
                     .into_iter()
                     .filter(|p| p.title == self.project && p.description.contains(OWNER_TAG)),
             );
-            if count < PAGE {
-                break;
-            }
             page += 1;
         }
         Ok(owned)
@@ -303,15 +308,15 @@ impl VikunjaStore {
         let prefix = self.label_prefix();
         let mut owned: Vec<LabelRec> = Vec::new();
         let mut page = 1;
+        // Stop on an empty page, never on a short one — see `owned_projects`.
         loop {
             let batch = self.api.list_labels(page, PAGE).await?;
-            let count = batch.len() as u64;
+            if batch.is_empty() {
+                break;
+            }
             owned.extend(batch.into_iter().filter(|l| {
                 l.title.starts_with(&prefix) && l.description.contains(OWNER_TAG)
             }));
-            if count < PAGE {
-                break;
-            }
             page += 1;
         }
         // Oldest wins, so a concurrent double-create of one mailbox converges
@@ -494,9 +499,8 @@ impl VikunjaStore {
     ) -> String {
         let mut failures = Vec::new();
         for (card, state) in cards {
-            let restored = self.restore(scope, card, *state, verb).await;
-            if !restored.starts_with("the card was restored") {
-                failures.push(format!("card {}: {restored}", card.id));
+            if let Err(failure) = self.restore(scope, card, *state).await {
+                failures.push(format!("card {}: {failure}", card.id));
             }
         }
         if failures.is_empty() {
@@ -509,15 +513,15 @@ impl VikunjaStore {
     /// Put a card back the way a failed write found it. A read-back mismatch
     /// means the store transformed what was written; leaving the transformed
     /// card behind hands a garbled message to the next consumer. Best-effort:
-    /// the returned clause lands in the error, so the caller knows which state
-    /// the card is actually in.
+    /// the outcome is typed — a caller reports it, never string-matches it —
+    /// and an `Err` carries the first thing that failed, so the error can say
+    /// which state the card is actually in.
     async fn restore(
         &self,
         scope: &Scope,
         task: &TaskRec,
         state: MessageState,
-        verb: &str,
-    ) -> String {
+    ) -> Result<(), MailboxError> {
         let description = self
             .api
             .update_task(
@@ -533,14 +537,16 @@ impl VikunjaStore {
             Err(e) => Err(e),
         };
         match (description, column) {
-            (Ok(()), Ok(())) => format!("the card was restored to its state before this {verb}"),
-            (d, c) => {
-                let failure = d.err().map(|e| e.to_string()).or(c.err().map(|e| e.to_string()));
-                format!(
-                    "AND restoring the card failed ({}) — it may be left mid-{verb}",
-                    failure.unwrap_or_default()
-                )
-            }
+            (Ok(()), Ok(())) => Ok(()),
+            (d, c) => Err(d.err().or(c.err()).expect("at least one side failed")),
+        }
+    }
+
+    /// The clause a failed verb appends about its restore attempt.
+    fn restore_clause(outcome: Result<(), MailboxError>, verb: &str) -> String {
+        match outcome {
+            Ok(()) => format!("the card was restored to its state before this {verb}"),
+            Err(e) => format!("AND restoring the card failed ({e}) — it may be left mid-{verb}"),
         }
     }
 
@@ -889,9 +895,10 @@ impl Mailboxes for VikunjaStore {
         }
         .await;
         if let Err(e) = retired {
-            let restored = self
-                .restore(&scope, &card, message.state, "mark_processed")
-                .await;
+            let restored = Self::restore_clause(
+                self.restore(&scope, &card, message.state).await,
+                "mark_processed",
+            );
             return Err(MailboxError::Store(format!("{e}; {restored}")));
         }
 
@@ -903,9 +910,10 @@ impl Mailboxes for VikunjaStore {
         match self.read_back(&scope, id).await {
             Ok(seen) if seen == expected => Ok(seen),
             outcome => {
-                let restored = self
-                    .restore(&scope, &card, message.state, "mark_processed")
-                    .await;
+                let restored = Self::restore_clause(
+                    self.restore(&scope, &card, message.state).await,
+                    "mark_processed",
+                );
                 Err(MailboxError::Store(match outcome {
                     Ok(seen) => format!(
                         "message {id} read back changed: wrote {expected:?}, read {seen:?}; \
@@ -973,6 +981,9 @@ mod tests {
         /// than one step, and a store that only rolls back the *last* one leaves
         /// damage on every other.
         fail_next: Mutex<Option<(&'static str, u64)>>,
+        /// The server-side `maxitemsperpage` this fake enforces. See
+        /// [`DEFAULT_PAGE_CAP`].
+        page_cap: AtomicU64,
     }
 
     /// The column Vikunja gives a fresh kanban view. Deliberately not one of
@@ -982,17 +993,27 @@ mod tests {
     /// **Vikunja clamps `per_page` server-side** to its `maxitemsperpage`
     /// setting — 50 by default — in the read-all handler every list route
     /// shares, and the cap reaches the board endpoint as a limit on the cards
-    /// returned *per column*. Asking for more does not get more: it gets 50,
-    /// with nothing in the body to say there was more.
+    /// returned *per column*. Asking for more does not get more: it gets the
+    /// cap, with nothing in the body to say there was more.
     ///
-    /// The fake enforces it, because a fake that honoured the requested page
-    /// size is precisely what let a paging loop whose continuation test compared
-    /// against the **requested** size look correct.
-    const SERVER_PAGE_CAP: u64 = 50;
+    /// The fake enforces it, and the cap is **configurable per test**: with the
+    /// cap equal to the store's own page size, a paging loop that compares the
+    /// count it got against the size it *requested* can never take its broken
+    /// branch — the tests that could not fail. Paging tests drop the cap below
+    /// the requested size so the broken stop condition actually stops early.
+    const DEFAULT_PAGE_CAP: u64 = 50;
 
-    /// The page size the server will actually serve for a requested one.
-    fn served(per_page: u64) -> usize {
-        per_page.min(SERVER_PAGE_CAP) as usize
+    impl FakeVikunja {
+        /// Clamp list responses to `cap` items per page (per column, on the
+        /// board endpoint), as a Vikunja with `maxitemsperpage = cap` would.
+        fn cap_pages_at(&self, cap: u64) {
+            self.page_cap.store(cap, Ordering::SeqCst);
+        }
+
+        /// The page size the server will actually serve for a requested one.
+        fn served(&self, per_page: u64) -> usize {
+            per_page.min(self.page_cap.load(Ordering::SeqCst)) as usize
+        }
     }
 
     impl FakeVikunja {
@@ -1007,7 +1028,9 @@ mod tests {
         }
 
         fn new() -> Arc<Self> {
-            Arc::new(Self::default())
+            let fake = Self::default();
+            fake.cap_pages_at(DEFAULT_PAGE_CAP);
+            Arc::new(fake)
         }
 
         fn stamp(&self) -> String {
@@ -1253,8 +1276,8 @@ mod tests {
             let all = self.projects.lock().unwrap();
             Ok(all
                 .iter()
-                .skip((page as usize - 1) * served(per_page))
-                .take(served(per_page))
+                .skip((page as usize - 1) * self.served(per_page))
+                .take(self.served(per_page))
                 .cloned()
                 .collect())
         }
@@ -1292,6 +1315,7 @@ mod tests {
             project_id: u64,
             view_id: u64,
         ) -> Result<Vec<BucketRec>, MailboxError> {
+            self.maybe_fail("list_buckets")?;
             self.named(project_id);
             Ok(self
                 .buckets
@@ -1309,6 +1333,7 @@ mod tests {
             view_id: u64,
             title: &str,
         ) -> Result<BucketRec, MailboxError> {
+            self.maybe_fail("create_bucket")?;
             self.named(project_id);
             let bucket = BucketRec { id: self.next_id(), title: title.into() };
             self.buckets
@@ -1343,8 +1368,8 @@ mod tests {
                         .iter()
                         .filter(|t| placement.get(&t.id) == Some(&b.id))
                         .map(|t| self.rendered(t))
-                        .skip((page as usize - 1) * served(per_page))
-                        .take(served(per_page))
+                        .skip((page as usize - 1) * self.served(per_page))
+                        .take(self.served(per_page))
                         .collect();
                     BoardBucket { id: b.id, title: b.title, tasks: in_bucket }
                 })
@@ -1357,6 +1382,7 @@ mod tests {
             title: &str,
             description: &str,
         ) -> Result<TaskRec, MailboxError> {
+            self.maybe_fail("create_task")?;
             self.named(project_id);
             let id = self.next_id();
             let description = self.mangle(description);
@@ -1439,8 +1465,8 @@ mod tests {
             let all = self.labels.lock().unwrap();
             Ok(all
                 .iter()
-                .skip((page as usize - 1) * served(per_page))
-                .take(served(per_page))
+                .skip((page as usize - 1) * self.served(per_page))
+                .take(self.served(per_page))
                 .cloned()
                 .collect())
         }
@@ -1450,6 +1476,7 @@ mod tests {
             title: &str,
             description: &str,
         ) -> Result<LabelRec, MailboxError> {
+            self.maybe_fail("create_label")?;
             let label = LabelRec {
                 id: self.next_id(),
                 title: title.into(),
@@ -1687,6 +1714,11 @@ mod tests {
     #[tokio::test]
     async fn pages_beyond_the_first_page_of_projects_before_concluding_absent() {
         let fake = FakeVikunja::new();
+        // The server's cap sits BELOW the page size the store requests. With
+        // the two equal, a loop that stops on "fewer than I requested" can
+        // never take its broken branch — so this test used to pass against
+        // exactly the stop-at-one-page bug it describes.
+        fake.cap_pages_at(25);
         for i in 0..(PAGE + 20) {
             fake.seed_project(&format!("other-{i}"), "unrelated");
         }
@@ -1706,6 +1738,8 @@ mod tests {
     #[tokio::test]
     async fn pages_beyond_the_first_page_of_labels() {
         let fake = FakeVikunja::new();
+        // Below the requested page size — see the projects sibling above.
+        fake.cap_pages_at(25);
         let store = store(fake.clone());
         for i in 0..(PAGE + 20) {
             fake.create_label(&format!("facet-{i}"), "the operator's own")
@@ -2037,10 +2071,17 @@ mod tests {
     #[tokio::test]
     async fn the_board_is_read_whole_even_when_a_column_outruns_a_page() {
         let fake = FakeVikunja::new();
+        // The cap sits BELOW the page size the store requests (BOARD_PAGE):
+        // with the two equal, "fewer than I requested" is only ever true on the
+        // genuinely-last page and the broken stop condition is unreachable.
+        // Below it, every page is short of the request, and the broken loop
+        // reads page one of each column and calls it the board.
+        let cap = 25;
+        fake.cap_pages_at(cap);
         let store = store_with_box(fake.clone(), "inbox").await;
 
         // Comfortably past the server's cap, in one column.
-        let posted = SERVER_PAGE_CAP + 7;
+        let posted = cap + 7;
         for i in 0..posted {
             contract::post(&store, "inbox", "alpha", &format!("message {i}"), i as i64).await;
         }
@@ -2110,6 +2151,54 @@ mod tests {
         }
     }
 
+    /// A post whose very first step — creating the card — fails leaves nothing
+    /// at all: no card, no count, a clean error. Pinned through the fault
+    /// injector so the first step is covered like every later one.
+    #[tokio::test]
+    async fn a_post_whose_card_creation_fails_leaves_nothing() {
+        let fake = FakeVikunja::new();
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+
+        fake.fail_next("create_task");
+        let outcome = store
+            .post_message(NewMessage {
+                mailbox: MailboxName("inbox".into()),
+                body: "the shipment landed".into(),
+                sender: "alpha".into(),
+                sent_at: at(1_780_000_000),
+            })
+            .await;
+        assert!(outcome.is_err(), "a failed create_task must not report success: {outcome:?}");
+        assert!(fake.tasks_in(project).is_empty(), "nothing was created");
+        assert_eq!(contract::counts(&store, "inbox").await.expect("inbox").total(), 0);
+    }
+
+    /// A processing whose **first** step — writing the outcome — fails leaves
+    /// the message exactly as it was: still in its column, still deliverable,
+    /// no half-written outcome. The suite covered the second step (the column
+    /// move) and never the first.
+    #[tokio::test]
+    async fn a_processing_whose_first_step_fails_leaves_the_message_untouched() {
+        let fake = FakeVikunja::new();
+        let store = store_with_box(fake.clone(), "inbox").await;
+        let posted = contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
+        contract::read(&store, "inbox").await;
+        let card: u64 = posted.id.as_str().parse().expect("a numeric card id");
+
+        fake.fail_next("update_task");
+        let outcome = store.mark_processed(&posted.id, Some("filed")).await;
+        assert!(outcome.is_err(), "a failed outcome write must not report success: {outcome:?}");
+
+        assert_eq!(fake.column_of(card).as_deref(), Some("read"), "the column is unchanged");
+        let again = contract::read(&store, "inbox").await;
+        assert_eq!(again.messages.len(), 1, "still deliverable");
+        assert_eq!(
+            again.messages[0].message.notes, None,
+            "no outcome is left on a message that was not processed"
+        );
+    }
+
     /// A processing that fails after the outcome was written must put the card
     /// back — otherwise the message is redelivered as unprocessed while already
     /// carrying a recorded outcome, and the consumer acts on it twice.
@@ -2161,6 +2250,52 @@ mod tests {
                 "every message in the batch goes back to new, not just the failing one"
             );
         }
+    }
+
+    /// **The read-back mismatch branch of a delivery is live code.** Nothing in
+    /// the suite ever corrupted a card between a delivery's moves and its
+    /// verification read, so `restore_all` on a changed batch was dead code. A
+    /// card garbled mid-delivery is a genuine corruption — unlike a state
+    /// advance, which the read-back rightly tolerates — and the whole batch
+    /// must go back, the garbled description restored from the card the first
+    /// read handed over.
+    #[tokio::test]
+    async fn a_delivery_whose_read_back_finds_a_garbled_card_restores_the_whole_batch() {
+        let fake = FakeVikunja::new();
+        let api = Interleaved::new(fake.clone());
+        let store = VikunjaStore::from_api(api.clone(), PROJECT);
+        contract::create(&store, "inbox").await;
+        let first = contract::post(&store, "inbox", "alpha", "message one", 0).await;
+        let second = contract::post(&store, "inbox", "milhouse", "message two", 60).await;
+        let garbled: u64 = second.id.as_str().parse().expect("a numeric card id");
+
+        // A delivery reads the board (two paged calls) to find what is owed,
+        // moves the batch, and reads again to verify. The corruption lands
+        // right before the verification read — board call 3.
+        api.before_board(3, move |fake| {
+            let mut tasks = fake.tasks.lock().unwrap();
+            let card = tasks.iter_mut().find(|t| t.id == garbled).expect("the card exists");
+            card.description = "hand-garbled mid-delivery".into();
+            card.raw["description"] = "hand-garbled mid-delivery".into();
+        });
+
+        let outcome = store.read_mailbox(&MailboxName("inbox".into())).await;
+        assert!(outcome.is_err(), "a garbled batch must not report success: {outcome:?}");
+
+        // The whole batch goes back to `new` — including the card that was fine.
+        for id in [&first.id, &second.id] {
+            let card: u64 = id.as_str().parse().expect("a numeric card id");
+            assert_eq!(
+                fake.column_of(card).as_deref(),
+                Some("new"),
+                "card {id} goes back with the rest of its batch"
+            );
+        }
+        // The restore rewrote the garbled description from the card the first
+        // read handed over, so both messages are deliverable again.
+        let again = contract::read(&store, "inbox").await;
+        let bodies: Vec<&str> = again.messages.iter().map(|d| d.message.body.as_str()).collect();
+        assert_eq!(bodies, vec!["message one", "message two"], "nothing stays garbled");
     }
 
     // --- rollback never deletes -----------------------------------------------
