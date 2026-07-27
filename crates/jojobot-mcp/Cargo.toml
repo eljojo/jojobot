@@ -15,6 +15,10 @@ serde.workspace = true
 serde_json.workspace = true
 jiff.workspace = true
 tracing.workspace = true
+# The session gate: one connection's session state is read, awaited across and
+# written back, and rmcp runs one task per request — so that span is serialized.
+tokio = { workspace = true }
+
 
 [dev-dependencies]
 tokio = { workspace = true }

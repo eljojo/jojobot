@@ -33,7 +33,7 @@ use jojobot_domain::session::{
 };
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
-    FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance,
+    FactStatus, Guarded, JOURNAL_TITLE, Memory, MemoryError, NewEntity, NewFact, Provenance,
     guard::{self, EntityMatch},
     search::{DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, MailCoverage, Search, SearchQuery},
     validate_edge,
@@ -447,6 +447,10 @@ pub struct Jojobot {
     /// Shared across clones through the `Arc`, because the router clones the
     /// handler per call and a binding held by value would vanish between verbs.
     bound: Arc<std::sync::RwLock<Option<Bound>>>,
+    /// **Serializes the read-await-write span over `bound`.** rmcp runs one task
+    /// per request, so two tool calls in flight on one connection would
+    /// otherwise both read "no session yet" and both materialize a card.
+    session_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// What a booted connection knows about itself.
@@ -458,6 +462,11 @@ struct Bound {
     /// first write. **A boot that never works leaves no card**, so a session
     /// with nothing to say is a session that never existed.
     session: Option<SessionId>,
+    /// **Whether jojobot actually read the board for this bot.** False when the
+    /// session world was down at boot: the connection knows its identity but not
+    /// whether a session is in flight, so the first write retries the attach
+    /// rather than beginning one that would fork a running session.
+    attached: bool,
     /// One entry per verb class jojobot has already written a beat for, so the
     /// second call of a class corrects the first beat instead of adding one.
     beats: std::collections::HashMap<&'static str, Beat>,
@@ -493,6 +502,7 @@ impl Jojobot {
             mailboxes,
             sessions,
             bound: Arc::new(std::sync::RwLock::new(None)),
+            session_gate: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -583,7 +593,7 @@ impl Jojobot {
             Ok(stored) => stored,
             Err(e) => return memory_declined("set_charter", e),
         };
-        self.beat("set_charter", "wrote charters for", bot.as_str()).await;
+        self.beat("set_charter", bot.as_str()).await;
         json_result(&serde_json::json!({
             "bot": bot.as_str(),
             "charter": stored,
@@ -777,48 +787,30 @@ impl Jojobot {
     /// world does: the boot still lands, and the block says jojobot does not
     /// know rather than guessing.
     async fn attach(&self, bot: &EntityId) -> serde_json::Value {
-        let now = jiff::Timestamp::now();
-        let existing = match self.sessions.sessions_of(bot).await {
-            Ok(sessions) => sessions,
+        let (live, swept) = match self.sweep_and_find(bot).await {
+            Ok(found) => found,
             Err(e) => {
                 tracing::warn!(error = %e, bot = %bot, "the session world is not reachable");
+                // Bound, but NOT attached: jojobot has not read the board, so it
+                // does not know whether this bot has a session in flight. The
+                // first write retries the attach rather than beginning one, or a
+                // boot during an outage would fork a session that is running.
                 *self.bound.write().expect("binding poisoned") = Some(Bound {
                     bot: bot.clone(),
                     session: None,
+                    attached: false,
                     beats: Default::default(),
                 });
                 return serde_json::json!({
                     "available": false,
                     "note": "the session world is not reachable right now, so jojobot cannot say \
-                             whether you have a session in flight or start one. Everything else \
-                             here is unaffected; the session verbs will say why.",
+                             whether you have a session in flight, and has not started one — a \
+                             fresh session here could fork one that is already running. It will \
+                             try again on your first write. Everything else here is unaffected; \
+                             the session verbs will say why.",
                 });
             }
         };
-
-        let mut swept = Vec::new();
-        for stale in existing.iter().filter(|s| s.is_stale(now)) {
-            match self.sessions.close(&stale.id, SessionState::Abandoned).await {
-                Ok(_) => swept.push(stale.id.to_string()),
-                // A sweep that cannot close one session must not stop a boot:
-                // the session is left active and the next boot tries again.
-                Err(e) => tracing::warn!(
-                    error = %e, session = %stale.id,
-                    "a stale session could not be swept — left active for the next boot"
-                ),
-            }
-        }
-
-        // Newest first already, so the first live one is the one to resume.
-        let live = existing
-            .iter()
-            .find(|s| !s.state.is_terminal() && !s.is_stale(now))
-            .cloned();
-        *self.bound.write().expect("binding poisoned") = Some(Bound {
-            bot: bot.clone(),
-            session: live.as_ref().map(|s| s.id.clone()),
-            beats: Default::default(),
-        });
 
         let mut block = match &live {
             Some(session) => serde_json::json!({
@@ -844,6 +836,68 @@ impl Jojobot {
         block
     }
 
+    /// The Journal entry a story is already recorded in, if a previous attempt
+    /// at this wrap got that far — the other half of making a retry finish
+    /// rather than repeat.
+    ///
+    /// Reads the Journal through the ordinary scan, because that is the only
+    /// read there is: the Journal is nobody's entity, so there is no handle to
+    /// fetch it by. A scan that fails answers "not there" and the wrap writes
+    /// the entry — a duplicate line in the Journal is a cost worth paying to
+    /// avoid dropping the story of a session that is about to close for good.
+    async fn journal_entry_for(&self, story: &str) -> Option<String> {
+        self.memory
+            .scan()
+            .await
+            .ok()?
+            .into_iter()
+            .find(|doc| doc.title.trim() == JOURNAL_TITLE && doc.prose.contains(story))
+            .map(|_| story.to_string())
+    }
+
+    /// Sweep this bot's stale sessions and hand back the live one, if any —
+    /// **the half of attaching that reads and writes the board**, shared by the
+    /// boot and by the first write that retries an attach a boot could not make.
+    ///
+    /// Binding is the caller's job: this returns what it found, and the two call
+    /// sites differ in what they do with it.
+    async fn sweep_and_find(
+        &self,
+        bot: &EntityId,
+    ) -> Result<(Option<Session>, Vec<String>), SessionError> {
+        let now = jiff::Timestamp::now();
+        let existing = self.sessions.sessions_of(bot).await?;
+
+        let mut swept = Vec::new();
+        for stale in existing.iter().filter(|s| s.is_stale(now)) {
+            match self.sessions.close(&stale.id, SessionState::Abandoned).await {
+                Ok(_) => swept.push(stale.id.to_string()),
+                // A sweep that cannot close one session must not stop a boot:
+                // the session is left active and the next boot tries again.
+                Err(e) => tracing::warn!(
+                    error = %e, session = %stale.id,
+                    "a stale session could not be swept — left active for the next boot"
+                ),
+            }
+        }
+
+        // Newest first already, so the first live one is the one to resume.
+        let live = existing
+            .into_iter()
+            .find(|s| !s.state.is_terminal() && !s.is_stale(now));
+        *self.bound.write().expect("binding poisoned") = Some(Bound {
+            bot: bot.clone(),
+            session: live.as_ref().map(|s| s.id.clone()),
+            attached: true,
+            // **Read back off the resumed session, not started empty.** The
+            // tally belongs to the session; a connection is only holding it. An
+            // empty map here made the first verb of each class after every
+            // reconnect append a second beat for that class — and a reconnect is
+            // the ordinary case, so the duplicate was the ordinary shape.
+            beats: live.as_ref().map(beats_of).unwrap_or_default(),
+        });
+        Ok((live, swept))
+    }
     /// The session a verb should write to: the one named outright, else the one
     /// this connection is bound to — **beginning it lazily** if the connection
     /// booted but has not written anything yet.
@@ -851,10 +905,19 @@ impl Jojobot {
     /// An explicit id wins over the binding, always: a caller that names a
     /// session means that session, and silently writing somewhere else would be
     /// the worst kind of helpfulness.
-    async fn working_session(
+    async fn working_session_locked(
         &self,
+        // **Proof the session gate is held.** This function reads the binding,
+        // awaits a store call, and writes the binding back; rmcp runs one task
+        // per request, so two in-flight calls on one connection would otherwise
+        // both see "no session yet" and both materialize a card — two cards for
+        // one session, and a duplicate beat besides. Taking the guard by
+        // reference makes the requirement impossible to forget rather than a
+        // comment somebody has to read.
+        _serialized: &tokio::sync::MutexGuard<'_, ()>,
         explicit: Option<&str>,
-        focus: Option<&str>,
+        explicit_focus: Option<&str>,
+        derive_from: Option<&str>,
     ) -> Result<Result<SessionId, CallToolResult>, McpError> {
         if let Some(id) = explicit.map(str::trim).filter(|i| !i.is_empty()) {
             return Ok(Ok(SessionId(id.to_string())));
@@ -866,13 +929,30 @@ impl Jojobot {
         if let Some(id) = bound.session {
             return Ok(Ok(id));
         }
+        // **A boot that could not read the board has not attached to anything**,
+        // so beginning a session here would fork one that is already running.
+        // The attach is retried at the first write instead, which is the next
+        // moment the store might be up.
+        if !bound.attached
+            && let Ok((Some(live), _)) = self.sweep_and_find(&bound.bot).await
+        {
+            return Ok(Ok(live.id));
+        }
 
         // The card materializes here, on the first write and never before.
-        let focus = focus
-            .map(str::trim)
-            .filter(|f| !f.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| first_line(FRESH_FOCUS));
+        //
+        // **The focus is DERIVED, and the entry is not touched.** A first write
+        // is prose — a multi-line entry, a story, a line naming code in
+        // backticks — and a focus is one line of display text. Feeding the one
+        // to the other applied the focus's rules to text nobody offered as a
+        // focus: the write failed with `invalid entry`, naming a parameter the
+        // caller never passed, and the entry it was carrying was dropped.
+        let focus = match explicit_focus.map(str::trim).filter(|f| !f.is_empty()) {
+            // A focus the caller passed is theirs, and stays theirs — held to
+            // the focus rules, refused in their own words if it breaks them.
+            Some(theirs) => theirs.to_string(),
+            None => display_line(derive_from.unwrap_or(FRESH_FOCUS)),
+        };
         let begun = self
             .sessions
             .begin(NewSession {
@@ -897,11 +977,20 @@ impl Jojobot {
     /// write. **A beat never fails the verb it is about.** A capture that landed
     /// did land; reporting it as failed because its footnote could not be
     /// written would make the record wrong in the more damaging direction.
-    async fn beat(&self, class: &'static str, phrase: &'static str, example: &str) {
+    async fn beat(&self, class: &'static str, example: &str) {
         if self.bound.read().expect("binding poisoned").is_none() {
             return;
         }
-        let session = match self.working_session(None, Some(phrase)).await {
+        let Some((_, phrase)) = BEAT_CLASSES.iter().find(|(known, _)| *known == class) else {
+            // A class with no phrase would render a beat nothing can read back,
+            // so it writes none at all rather than one that breaks the tally on
+            // the next reconnect.
+            tracing::warn!(class, "no beat phrase for this verb class — no beat written");
+            return;
+        };
+        let _serialized = self.session_gate.lock().await;
+        let session = match self.working_session_locked(&_serialized, None, None, Some(phrase)).await
+        {
             Ok(Ok(session)) => session,
             _ => return,
         };
@@ -1047,7 +1136,7 @@ impl Jojobot {
         };
         match self.memory.add_entity(new).await.map_err(memory_error)? {
             Guarded::Written(entity) => {
-                self.beat("add_entity", "brought entities into being", entity.id.as_str()).await;
+                self.beat("add_entity", entity.id.as_str()).await;
                 json_result(&entity_json(&entity))
             }
             Guarded::Blocked {
@@ -1192,7 +1281,7 @@ impl Jojobot {
         };
         match written {
             Guarded::Written(entity) => {
-                self.beat("update_entity", "edited entities", entity.id.as_str()).await;
+                self.beat("update_entity", entity.id.as_str()).await;
                 json_result(&entity_json(&entity))
             }
             Guarded::Blocked {
@@ -1239,7 +1328,7 @@ impl Jojobot {
         };
         match self.memory.capture(new).await.map_err(memory_error)? {
             Guarded::Written(fact) => {
-                self.beat("capture", "captured facts about", fact.subject.as_str()).await;
+                self.beat("capture", fact.subject.as_str()).await;
                 json_result(&fact_json(&fact))
             }
             Guarded::Blocked {
@@ -1310,7 +1399,7 @@ impl Jojobot {
         };
         match written {
             Guarded::Written(fact) => {
-                self.beat("update_fact", "edited facts", &fact.address().to_string()).await;
+                self.beat("update_fact", &fact.address().to_string()).await;
                 json_result(&fact_json(&fact))
             }
             Guarded::Blocked {
@@ -1347,7 +1436,7 @@ impl Jojobot {
             .map_err(mailbox_error)?
         {
             mailbox::Guarded::Written(created) => {
-                self.beat("create_mailbox", "opened mailboxes", created.name.as_str()).await;
+                self.beat("create_mailbox", created.name.as_str()).await;
                 json_result(&mailbox_json(&created))
             }
             mailbox::Guarded::Blocked {
@@ -1418,7 +1507,7 @@ impl Jojobot {
             .map_err(mailbox_error)?
         {
             mailbox::Guarded::Written(message) => {
-                self.beat("post_message", "posted to mailboxes", message.mailbox.as_str()).await;
+                self.beat("post_message", message.mailbox.as_str()).await;
                 json_result(&message_json(&message))
             }
             mailbox::Guarded::Blocked {
@@ -1489,8 +1578,14 @@ impl Jojobot {
         Parameters(args): Parameters<JournalArgs>,
     ) -> Result<CallToolResult, McpError> {
         let focus = args.focus.as_deref();
+        let _serialized = self.session_gate.lock().await;
         let session = match self
-            .working_session(args.session.as_deref(), focus.or(Some(&args.entry)))
+            .working_session_locked(
+                &_serialized,
+                args.session.as_deref(),
+                focus,
+                Some(&args.entry),
+            )
             .await?
         {
             Ok(session) => session,
@@ -1536,15 +1631,33 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<AmendJournalArgs>,
     ) -> Result<CallToolResult, McpError> {
+        let _serialized = self.session_gate.lock().await;
         // No lazy begin: there is nothing to amend in a session that does not
         // exist yet, and creating one to hold a correction would be a card
         // minted by a verb whose whole job is to not add anything.
+        //
+        // **But the triage is the same triage.** A connection that never booted
+        // gets told to boot, not told there is nothing to amend — those are
+        // different facts — and a connection whose boot could not read the board
+        // retries the attach here rather than answering "no entries" about a
+        // session it never looked for. Unknown is not false.
         let session = match args.session.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             Some(id) => SessionId(id.to_string()),
             None => {
                 let bound = self.bound.read().expect("binding poisoned").clone();
-                match bound.and_then(|b| b.session) {
+                let Some(bound) = bound else {
+                    return Ok(session_unbound());
+                };
+                match bound.session {
                     Some(id) => id,
+                    None if !bound.attached => {
+                        match self.sweep_and_find(&bound.bot).await {
+                            Ok((Some(live), _)) => live.id,
+                            // Still unreadable, or genuinely nothing in flight.
+                            Ok((None, _)) => return Ok(session_nothing_to_amend()),
+                            Err(e) => return Err(session_error(e)),
+                        }
+                    }
                     None => return Ok(session_nothing_to_amend()),
                 }
             }
@@ -1576,35 +1689,64 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<WrapSessionArgs>,
     ) -> Result<CallToolResult, McpError> {
+        let _serialized = self.session_gate.lock().await;
         let session = match self
-            .working_session(args.session.as_deref(), Some(&args.story))
+            .working_session_locked(&_serialized, args.session.as_deref(), None, Some(&args.story))
             .await?
         {
             Ok(session) => session,
             Err(refused) => return Ok(refused),
         };
-        // The final entry first: if the Journal write or the close fails, the
-        // story is at least on the session's own record, and the session is
-        // still open so the wrap can be retried.
-        let entry = match self
-            .sessions
-            .append(&session, NewEntry::manual(&args.story, jiff::Timestamp::now()))
-            .await
-        {
-            Ok(entry) => entry,
-            Err(e) => return session_declined(e),
+
+        // **A retry must not tell the story twice.** The order below is the
+        // right one — the story reaches the session's own record before
+        // anything else, so a failure anywhere after it leaves the story safe
+        // and the session open — but the step most likely to fail transiently is
+        // the LAST one, the close. After that failure the story is already in
+        // both places and the only move left is to wrap again, which without
+        // this would append it to both a second time. So each write is guarded
+        // by whether its own half is already done, and a retry finishes what the
+        // first attempt started rather than repeating it.
+        let story = jojobot_domain::session::normalize_entry(&args.story);
+        let already = match self.sessions.read_session(&session).await {
+            Ok(read) => read.entries.last().filter(|e| e.text == story).cloned(),
+            // Not fatal: an unreadable session fails the append below, in that
+            // verb's own words rather than this guard's.
+            Err(_) => None,
         };
+        let entry = match already {
+            Some(told) => told,
+            None => match self
+                .sessions
+                .append(&session, NewEntry::manual(&story, jiff::Timestamp::now()))
+                .await
+            {
+                Ok(entry) => entry,
+                Err(e) => return session_declined(e),
+            },
+        };
+
         let today = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date();
-        let journalled = self
-            .memory
-            .append_journal(today, &args.story)
-            .await
-            .map_err(memory_error)?;
+        let journalled = match self.journal_entry_for(&story).await {
+            Some(told) => told,
+            None => self
+                .memory
+                .append_journal(today, &story)
+                .await
+                .map_err(memory_error)?,
+        };
+
         let wrapped = match self.sessions.close(&session, SessionState::Wrapped).await {
             Ok(wrapped) => wrapped,
             Err(e) => return session_declined(e),
         };
-        if let Some(held) = self.bound.write().expect("binding poisoned").as_mut() {
+        if let Some(held) = self.bound.write().expect("binding poisoned").as_mut()
+            // **Only when it is this connection's own session.** Wrapping
+            // somebody else's by id used to clear the binding anyway, orphaning
+            // the live session, losing its tally, and making the next write mint
+            // a second card for a session that was already running.
+            && held.session.as_ref() == Some(&session)
+        {
             // The connection keeps its identity and loses its session: a bot
             // that wraps and keeps working starts a new one, rather than
             // writing into an archive.
@@ -1669,7 +1811,7 @@ impl Jojobot {
         let id = MessageId(args.message_id.trim().to_string());
         match self.mailboxes.mark_processed(&id, args.notes.as_deref()).await {
             Ok(processed) => {
-                self.beat("mark_processed", "retired messages", processed.id.as_str()).await;
+                self.beat("mark_processed", processed.id.as_str()).await;
                 json_result(&message_json(&processed))
             }
             // Both misses here are answers, not failures: an id that names
@@ -1772,12 +1914,32 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
 /// path passes the entry or the story instead.
 const FRESH_FOCUS: &str = "working";
 
-/// One line of a possibly-multi-line string, trimmed to what a focus allows.
-/// A focus is a glance, so an entry standing in for one is cut, not rejected.
-fn first_line(text: &str) -> String {
-    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+/// Prose reduced to one line a display field can carry.
+///
+/// **A cut, never a refusal.** This is what a focus is derived from when the
+/// caller offered none, and the text it is derived from is the record: an
+/// entry, a story. Refusing prose because a *display* field cannot hold it
+/// would throw away the thing worth keeping to protect the thing that is only a
+/// glance — which is exactly what it did.
+///
+/// Three things go, and each is a rule of the field rather than a judgement
+/// about the text: line breaks (a focus is one line), backticks and control
+/// characters (they can close the fence around the machine block under it), and
+/// length past the cap (cut on a word boundary, with an ellipsis that says so).
+fn display_line(text: &str) -> String {
+    let flat: String = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .filter(|c| *c != '`' && !c.is_control())
+        .collect();
+    let flat = flat.trim();
+    if flat.is_empty() {
+        return FRESH_FOCUS.to_string();
+    }
     if flat.chars().count() <= 200 {
-        return flat;
+        return flat.to_string();
     }
     let mut kept = String::new();
     for word in flat.split(' ') {
@@ -1796,16 +1958,78 @@ fn first_line(text: &str) -> String {
 }
 
 /// A running tally, as one line of chronology.
+///
+/// **One shape, always, including at a count of one** — because this line is
+/// where the tally LIVES. The handler's copy is per connection and a session
+/// outlives connections, so a resumed session's counts are read back out of the
+/// entries by [`parse_beat`], and a rendering that dropped the count for the
+/// first occurrence would make the two disagree the moment somebody reconnects.
 fn beat_text(phrase: &str, beat: &Beat) -> String {
-    let named = beat.examples.join(", ");
-    if beat.count <= 1 {
-        format!("{phrase}: {named}")
-    } else if beat.examples.len() < beat.count {
-        format!("{phrase}: {named}, … ({} in all)", beat.count)
-    } else {
-        format!("{phrase}: {named} ({})", beat.count)
+    let mut named = beat.examples.join(", ");
+    // Said out loud when the examples stop naming everything, so the line does
+    // not read as a complete list that happens to be short.
+    if beat.examples.len() < beat.count {
+        named.push_str(", …");
     }
+    format!("{phrase}: {named} ({})", beat.count)
 }
+
+/// Read a tally back out of the line it was rendered as — the inverse of
+/// [`beat_text`], and the reason a resumed session keeps counting rather than
+/// starting over.
+///
+/// `None` for a line this did not write: a beat whose text a person edited by
+/// hand is left exactly as they left it, and the class starts a fresh tally
+/// rather than jojobot rewriting their words into its own format.
+fn parse_beat(phrase: &str, entry: &JournalEntry) -> Option<Beat> {
+    let rest = entry.text.strip_prefix(phrase)?.strip_prefix(": ")?;
+    let (named, count) = rest.rsplit_once(" (")?;
+    let count: usize = count.strip_suffix(')')?.parse().ok()?;
+    let examples: Vec<String> = named
+        .trim_end_matches(", …")
+        .split(", ")
+        .filter(|e| !e.is_empty())
+        .map(str::to_string)
+        .collect();
+    Some(Beat {
+        entry: entry.id.clone(),
+        count,
+        examples,
+    })
+}
+
+/// The tally this session already has, read off its chronology — what makes the
+/// one-beat-per-class rule belong to the SESSION rather than to whichever
+/// connection happens to be holding it.
+fn beats_of(session: &Session) -> std::collections::HashMap<&'static str, Beat> {
+    let mut found = std::collections::HashMap::new();
+    for entry in &session.entries {
+        let Some(class) = entry.beat.as_deref() else { continue };
+        let Some((class, phrase)) = BEAT_CLASSES.iter().find(|(known, _)| *known == class) else {
+            continue;
+        };
+        if let Some(beat) = parse_beat(phrase, entry) {
+            found.insert(*class, beat);
+        }
+    }
+    found
+}
+
+/// Every verb class jojobot beats, and the phrase its tally is written with.
+///
+/// **One table, because the phrase is half the parse.** A beat is rendered from
+/// it and read back through it, so a class whose phrase lived only at its call
+/// site would render fine and come back unparseable on the next reconnect.
+const BEAT_CLASSES: &[(&str, &str)] = &[
+    ("add_entity", "brought entities into being"),
+    ("update_entity", "edited entities"),
+    ("capture", "captured facts about"),
+    ("update_fact", "edited facts"),
+    ("set_charter", "wrote charters for"),
+    ("create_mailbox", "opened mailboxes"),
+    ("post_message", "posted to mailboxes"),
+    ("mark_processed", "retired messages"),
+];
 
 /// One session on the wire — the record, its chronology, and where it sits.
 fn session_json(session: &Session) -> serde_json::Value {
@@ -5241,6 +5465,124 @@ mod tests {
         );
     }
 
+    /// **THE BLOCKER: a first write is prose, and prose is not a focus.** The
+    /// card materializes with a focus derived from the entry, so the focus's
+    /// rules — one line, 200 characters, no backtick — were being applied to
+    /// text nobody offered as a focus. A multi-line entry, a long story, or a
+    /// one-liner naming code in backticks failed with `invalid entry` naming a
+    /// `focus` parameter the caller never passed; the entry was dropped and no
+    /// card appeared at all.
+    ///
+    /// The entry reaches the chronology **whole**. The focus is a glance, so it
+    /// is derived: flattened, cut, and stripped of what a one-line display field
+    /// cannot carry.
+    #[tokio::test]
+    async fn a_first_entry_is_prose_and_still_lands_whole() {
+        let backticked = "started on `working_session`, which was the wrong shape";
+        let long = "x".repeat(400);
+        let cases: [(&str, &str); 3] = [
+            ("multi-line", "read the hand-off\n\nthen scoped the slice"),
+            ("backticked", backticked),
+            ("over-long", &long),
+        ];
+        for (shape, entry) in cases {
+            let store = Arc::new(InMemorySessions::new());
+            let jojobot = with_sessions(store.clone());
+            make_bot(&jojobot, "gamma", None).await;
+            boot(&jojobot, "gamma").await;
+
+            let body = json_of(
+                &jojobot
+                    .journal(Parameters(JournalArgs {
+                        entry: entry.into(),
+                        focus: None,
+                        session: None,
+                    }))
+                    .await
+                    .unwrap_or_else(|e| panic!("a {shape} first entry must not error: {e:?}")),
+            );
+            assert_ne!(body["status"], "blocked", "{shape}: {body}");
+
+            let live = store
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok");
+            assert_eq!(live.len(), 1, "{shape}: the card must materialize");
+            assert_eq!(
+                live[0].entries[0].text,
+                jojobot_domain::session::normalize_entry(entry),
+                "{shape}: the entry reaches the chronology whole"
+            );
+            assert!(
+                !live[0].focus.contains('\n') && !live[0].focus.contains('`'),
+                "{shape}: the derived focus is display text: {:?}",
+                live[0].focus
+            );
+            assert!(
+                live[0].focus.chars().count() <= 200,
+                "{shape}: …and it is cut to fit: {:?}",
+                live[0].focus
+            );
+        }
+    }
+
+    /// **A wrap as a first write is the same bug, and it is always prose.** A
+    /// story written for somebody with none of your context is never one short
+    /// line, so this path was broken for every caller who wrapped without
+    /// journalling first.
+    #[tokio::test]
+    async fn a_wrap_can_be_a_first_write_and_the_story_is_prose() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        boot(&jojobot, "gamma").await;
+
+        let story = "read the hand-off and found nothing to do.\n\nWrapping without a beat: the \
+                     `dev` box was empty and there was no slice to build.";
+        let body = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: story.into(),
+                    session: None,
+                }))
+                .await
+                .expect("a wrap as a first write must not error"),
+        );
+        assert_eq!(body["session"]["state"], "wrapped");
+
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(live.len(), 1);
+        assert_eq!(
+            live[0].entries[0].text,
+            jojobot_domain::session::normalize_entry(story),
+            "the story is the record — it must not be cut to fit a display field"
+        );
+    }
+
+    /// A focus the caller passed IS validated as a focus — the rules were never
+    /// wrong, only misapplied. Its refusal names the parameter they actually
+    /// sent.
+    #[tokio::test]
+    async fn an_explicit_focus_is_still_held_to_the_focus_rules() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        boot(&jojobot, "gamma").await;
+
+        let err = jojobot
+            .journal(Parameters(JournalArgs {
+                entry: "read the hand-off".into(),
+                focus: Some("two\nlines".into()),
+                session: None,
+            }))
+            .await
+            .expect_err("a focus that is not one line must be refused");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    }
+
     /// **A reconnect resumes the work in flight.** A session is the unit of
     /// work, not of connection, so a second boot of the same identity attaches
     /// to the live session and hands back its chronology rather than forking a
@@ -5567,6 +5909,360 @@ mod tests {
                 .iter()
                 .any(|e| !e.is_auto() && e.text == "captured a couple of things"),
             "the session's own entry is not a beat: {entries:?}"
+        );
+    }
+
+    /// **The tally belongs to the session, not to the connection.** Resuming
+    /// rebuilt an empty beat map, so the first verb of each class after every
+    /// reconnect appended a SECOND beat for that class — and a reconnect is the
+    /// headline case this milestone exists for, so the duplicate would have been
+    /// the normal shape rather than the rare one.
+    ///
+    /// The chronology already says which class each beat is about, so the tally
+    /// is re-derivable: attaching reads it back off the entries.
+    #[tokio::test]
+    async fn the_beat_tally_survives_a_reconnect() {
+        let store = Arc::new(InMemorySessions::new());
+        let memory = Arc::new(InMemoryMemory::new());
+        let first = connection(memory.clone(), store.clone());
+        make_bot(&first, "gamma", None).await;
+        boot(&first, "gamma").await;
+        ensure(&first, "alpha").await;
+        capture_ok(&first, capture_args("alpha", "plays go")).await;
+
+        // A reconnect, then another capture.
+        let second = connection(memory, store.clone());
+        boot(&second, "gamma").await;
+        ensure(&second, "milhouse").await;
+        capture_ok(&second, capture_args("milhouse", "plays chess")).await;
+
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        let captures: Vec<&str> = live[0]
+            .entries
+            .iter()
+            .filter(|e| e.beat.as_deref() == Some("capture"))
+            .map(|e| e.text.as_str())
+            .collect();
+        assert_eq!(
+            captures.len(),
+            1,
+            "one beat for the class across both connections: {:?}",
+            live[0].entries
+        );
+        assert!(
+            captures[0].contains("(2)"),
+            "…and the count carried across the reconnect: {}",
+            captures[0]
+        );
+        assert!(
+            captures[0].contains("person:alpha") && captures[0].contains("person:milhouse"),
+            "…along with what it touched on both sides: {}",
+            captures[0]
+        );
+    }
+
+    /// **A retried wrap finishes what the first one started.** The close is the
+    /// step most likely to fail transiently, and by then the story is already in
+    /// the chronology AND the operator's Journal — so the only move left, wrap
+    /// again, told the story twice in both places.
+    ///
+    /// The ordering is deliberately unchanged: the story reaches the session's
+    /// own record first, so a failure after it loses nothing. What changed is
+    /// that each write asks whether its own half is already done.
+    #[tokio::test]
+    async fn a_wrap_retried_after_a_failed_close_tells_the_story_once() {
+        let store = Arc::new(RefusingClose::new());
+        let memory = Arc::new(InMemoryMemory::new());
+        let jojobot = Jojobot::new(
+            memory.clone(),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::new()),
+            store.clone(),
+        );
+        make_bot(&jojobot, "gamma", None).await;
+        boot(&jojobot, "gamma").await;
+        journal_entry(&jojobot, "read the hand-off").await;
+
+        let story = "built the thing; the close is what failed";
+        let wrap = || {
+            jojobot.wrap_session(Parameters(WrapSessionArgs {
+                story: story.into(),
+                session: None,
+            }))
+        };
+        assert!(wrap().await.is_err(), "the close refused, so the wrap failed");
+
+        // The retry, with the close working this time.
+        store.allow_close();
+        let second = json_of(&wrap().await.expect("the retry must land"));
+        assert_eq!(second["session"]["state"], "wrapped");
+
+        let live = store.inner.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
+        assert_eq!(
+            live[0].entries.iter().filter(|e| e.text == story).count(),
+            1,
+            "the story is told once in the chronology: {:?}",
+            live[0].entries
+        );
+        let journal: String = memory
+            .scan()
+            .await
+            .expect("scan ok")
+            .into_iter()
+            .map(|d| d.prose)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            journal.matches(story).count(),
+            1,
+            "…and once in the operator's Journal: {journal}"
+        );
+    }
+
+    /// A session store whose `close` refuses until it is told not to — the
+    /// transient failure a wrap is most likely to meet, and the only one that
+    /// leaves both writes already done.
+    struct RefusingClose {
+        inner: InMemorySessions,
+        refuse: std::sync::atomic::AtomicBool,
+    }
+
+    impl RefusingClose {
+        fn new() -> Self {
+            RefusingClose {
+                inner: InMemorySessions::new(),
+                refuse: std::sync::atomic::AtomicBool::new(true),
+            }
+        }
+        fn allow_close(&self) {
+            self.refuse.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl Sessions for RefusingClose {
+        async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+            self.inner.sessions_of(bot).await
+        }
+        async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+            self.inner.read_session(id).await
+        }
+        async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+            self.inner.begin(new).await
+        }
+        async fn append(
+            &self,
+            id: &SessionId,
+            entry: NewEntry,
+        ) -> Result<JournalEntry, SessionError> {
+            self.inner.append(id, entry).await
+        }
+        async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+            self.inner.amend_last(id, text).await
+        }
+        async fn amend_beat(
+            &self,
+            id: &SessionId,
+            entry: &EntryId,
+            text: &str,
+        ) -> Result<JournalEntry, SessionError> {
+            self.inner.amend_beat(id, entry, text).await
+        }
+        async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
+            self.inner.set_focus(id, focus).await
+        }
+        async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
+            if self.refuse.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(SessionError::Store("the close failed in flight".into()));
+            }
+            self.inner.close(id, to).await
+        }
+    }
+
+    /// **Wrapping somebody else's session by id leaves your own alone.** It used
+    /// to clear the binding regardless, orphaning the live session, losing its
+    /// tally, and making the next write mint a second card for a session that
+    /// was already running.
+    #[tokio::test]
+    async fn wrapping_another_session_by_id_leaves_this_connections_own_intact() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+
+        // Somebody else's session, on the same board.
+        let theirs = store
+            .begin(NewSession {
+                bot: EntityId("bot:delta".into()),
+                focus: "their run".into(),
+                started_at: jiff::Timestamp::now(),
+            })
+            .await
+            .expect("begin ok");
+        store
+            .append(&theirs.id, NewEntry::manual("their beat", jiff::Timestamp::now()))
+            .await
+            .expect("append ok");
+
+        boot(&jojobot, "gamma").await;
+        let mine = journal_entry(&jojobot, "my first beat").await;
+        let my_id = mine["session"].as_str().expect("a session id").to_string();
+
+        jojobot
+            .wrap_session(Parameters(WrapSessionArgs {
+                story: "wrapping theirs".into(),
+                session: Some(theirs.id.to_string()),
+            }))
+            .await
+            .expect("wrap ok");
+
+        // My next beat continues MY session rather than minting a second card.
+        journal_entry(&jojobot, "my second beat").await;
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(live.len(), 1, "one card for this connection, not two: {live:?}");
+        assert_eq!(live[0].id.as_str(), my_id);
+        assert_eq!(live[0].entries.len(), 2, "…and it kept accruing: {:?}", live[0].entries);
+    }
+
+    /// A session store that hands the runtime a chance to run the other task at
+    /// every call — what an HTTP round trip does, and what the in-memory fake
+    /// never does on its own.
+    ///
+    /// **Without this the concurrency cases below prove nothing**: a fake that
+    /// never yields runs one whole verb before the other starts, so the two
+    /// futures never interleave and the race under test cannot happen.
+    struct Yielding(Arc<InMemorySessions>);
+
+    impl Yielding {
+        async fn pause(&self) {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[async_trait]
+    impl Sessions for Yielding {
+        async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+            self.pause().await;
+            self.0.sessions_of(bot).await
+        }
+        async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+            self.pause().await;
+            self.0.read_session(id).await
+        }
+        async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+            self.pause().await;
+            self.0.begin(new).await
+        }
+        async fn append(
+            &self,
+            id: &SessionId,
+            entry: NewEntry,
+        ) -> Result<JournalEntry, SessionError> {
+            self.pause().await;
+            self.0.append(id, entry).await
+        }
+        async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+            self.pause().await;
+            self.0.amend_last(id, text).await
+        }
+        async fn amend_beat(
+            &self,
+            id: &SessionId,
+            entry: &EntryId,
+            text: &str,
+        ) -> Result<JournalEntry, SessionError> {
+            self.pause().await;
+            self.0.amend_beat(id, entry, text).await
+        }
+        async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
+            self.pause().await;
+            self.0.set_focus(id, focus).await
+        }
+        async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
+            self.pause().await;
+            self.0.close(id, to).await
+        }
+    }
+
+    /// A handler whose session store yields at every call — see [`Yielding`].
+    fn racing(store: Arc<InMemorySessions>) -> Jojobot {
+        Jojobot::new(
+            Arc::new(InMemoryMemory::new()),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::new()),
+            Arc::new(Yielding(store)),
+        )
+    }
+
+    /// **Two tool calls in flight on one connection must not fork the session.**
+    /// rmcp runs one task per request, and the binding is read, awaited across,
+    /// and written back — so without a gate both calls see "no session yet" and
+    /// both materialize a card, and two same-class verbs both append a beat.
+    #[tokio::test]
+    async fn concurrent_first_writes_materialize_exactly_one_card() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = racing(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        boot(&jojobot, "gamma").await;
+
+        let one = jojobot.journal(Parameters(JournalArgs {
+            entry: "first".into(),
+            focus: None,
+            session: None,
+        }));
+        let two = jojobot.journal(Parameters(JournalArgs {
+            entry: "second".into(),
+            focus: None,
+            session: None,
+        }));
+        let (a, b) = tokio::join!(one, two);
+        a.expect("journal ok");
+        b.expect("journal ok");
+
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(live.len(), 1, "one session, not one per racing call: {live:?}");
+        assert_eq!(live[0].entries.len(), 2, "…carrying both entries");
+    }
+
+    /// The same race, one class down: two concurrent captures must leave one
+    /// beat, not two.
+    #[tokio::test]
+    async fn concurrent_same_class_verbs_leave_exactly_one_beat() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = racing(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        boot(&jojobot, "gamma").await;
+        ensure(&jojobot, "alpha").await;
+        ensure(&jojobot, "milhouse").await;
+
+        let (a, b) = tokio::join!(
+            jojobot.capture(Parameters(capture_args("alpha", "plays go"))),
+            jojobot.capture(Parameters(capture_args("milhouse", "plays chess"))),
+        );
+        a.expect("capture ok");
+        b.expect("capture ok");
+
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(
+            live[0]
+                .entries
+                .iter()
+                .filter(|e| e.beat.as_deref() == Some("capture"))
+                .count(),
+            1,
+            "one beat for the class, whatever raced: {:?}",
+            live[0].entries
         );
     }
 
