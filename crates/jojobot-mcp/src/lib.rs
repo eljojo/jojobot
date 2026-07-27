@@ -748,6 +748,11 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<SetCharterArgs>,
     ) -> Result<CallToolResult, McpError> {
+        // Refused here, before anything is written — see
+        // [`Jojobot::attributable`].
+        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+            return Ok(refused);
+        }
         let bot = bot_id(&args.bot)?;
         let stored = match self.memory.set_prose(&bot, &args.prose).await {
             Ok(stored) => stored,
@@ -1254,6 +1259,25 @@ impl Jojobot {
         }))
     }
 
+    /// **A handle that is present must be good, even where carrying one is
+    /// optional.**
+    ///
+    /// The write verbs outside the session surface take an optional `sid`:
+    /// carrying none is legitimate — a reader, a poster that never booted — and
+    /// costs only the automatic beat. Carrying a DEAD one is a different thing
+    /// and used to cost nothing at all, because [`Jojobot::beat`] was the only
+    /// place those verbs looked at the handle, and `beat` is silent by design.
+    /// The refusal went out with the silence: the write landed, the caller's
+    /// chronology stopped, and it found out at wrap or never.
+    ///
+    /// Called BEFORE the write, never after. `beat` runs once the store has
+    /// already answered, and `blocked` means `wrote: false` everywhere on this
+    /// surface — one handed back over a write that landed would be a worse lie
+    /// than the silence it replaced.
+    fn attributable(&self, sid: Option<&str>) -> Result<(), CallToolResult> {
+        self.caller(sid).map(|_| ())
+    }
+
     /// The caller, required — for the verbs that write to a session.
     fn identified(&self, sid: Option<&str>) -> Result<Caller, CallToolResult> {
         match self.caller(sid)? {
@@ -1547,8 +1571,9 @@ impl Jojobot {
     /// tidy is the worse trade.
     ///
     /// Silent by design in three cases, all of them "there is nobody to record
-    /// this for": an unbound connection (jojobot will not guess which identity
-    /// made a call), a session store that refuses, and a beat that fails to
+    /// this for": a caller carrying no handle (jojobot will not guess which
+    /// identity made a call), a session store that refuses, and a beat that
+    /// fails to
     /// write. **A beat never fails the verb it is about.** A capture that landed
     /// did land; reporting it as failed because its footnote could not be
     /// written would make the record wrong in the more damaging direction.
@@ -1562,6 +1587,13 @@ impl Jojobot {
     /// it is beaten about wherever it writes, whatever its client does with
     /// connections. What is left in the first case is a caller carrying no
     /// `sid`, which is a caller that has not asked to be recorded anywhere.
+    ///
+    /// **A handle that is DEAD is not one of the silent cases**, and this used
+    /// to swallow it along with them — the verb wrote, the chronology stopped,
+    /// and nothing said so. That refusal is made before the write now, by
+    /// [`Jojobot::attributable`]. What is left here is the sliver where a
+    /// handle died between that check and this call, and silence is right for
+    /// it: the write has already landed.
     async fn beat(&self, class: &'static str, example: &str, sid: Option<&str>) {
         // **No caller, no beat.** jojobot does not guess which identity made a
         // call, and an anonymous one is legitimate — a reader, a poster who
@@ -1716,6 +1748,11 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<AddEntityArgs>,
     ) -> Result<CallToolResult, McpError> {
+        // Refused here, before anything is written — see
+        // [`Jojobot::attributable`].
+        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+            return Ok(refused);
+        }
         let id = entity_id(&args.kind, &args.handle)?;
         let claimed = args.mailbox.clone();
         // Screened before anything is written, so a blocked claim costs the
@@ -1871,6 +1908,11 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<UpdateEntityArgs>,
     ) -> Result<CallToolResult, McpError> {
+        // Refused here, before anything is written — see
+        // [`Jojobot::attributable`].
+        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+            return Ok(refused);
+        }
         let handle = EntityId::person(&args.handle);
         let claimed = args.mailbox.clone();
         // A claim moved onto an entity later is screened exactly as one written
@@ -1928,6 +1970,11 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<CaptureArgs>,
     ) -> Result<CallToolResult, McpError> {
+        // Refused here, before anything is written — see
+        // [`Jojobot::attributable`].
+        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+            return Ok(refused);
+        }
         let subject = EntityId::person(&args.subject);
         let provenance = parse_provenance(args.provenance.as_deref())?;
         let date = parse_date(args.date.as_deref())?;
@@ -2001,6 +2048,11 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<UpdateFactArgs>,
     ) -> Result<CallToolResult, McpError> {
+        // Refused here, before anything is written — see
+        // [`Jojobot::attributable`].
+        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+            return Ok(refused);
+        }
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
         let patch = FactPatch {
             content: args.content,
@@ -2054,6 +2106,11 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<CreateMailboxArgs>,
     ) -> Result<CallToolResult, McpError> {
+        // Refused here, before anything is written — see
+        // [`Jojobot::attributable`].
+        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+            return Ok(refused);
+        }
         let name = MailboxName(args.name.trim().to_string());
         match self
             .mailboxes
@@ -2759,6 +2816,11 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<MarkProcessedArgs>,
     ) -> Result<CallToolResult, McpError> {
+        // Refused here, before anything is written — see
+        // [`Jojobot::attributable`].
+        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+            return Ok(refused);
+        }
         let id = MessageId(args.message_id.trim().to_string());
         // What the caller asked to record, blank-is-absent.
         let asked = args
@@ -10777,6 +10839,199 @@ mod tests {
         assert!(
             !how.contains("no entries"),
             "…and it does not answer about a session nobody looked for: {how}"
+        );
+    }
+
+    /// **A handle jojobot is not holding is refused by the write verbs, not
+    /// quietly ignored.**
+    ///
+    /// These seven verbs take an optional `sid`, and `beat` was the only place
+    /// any of them looked at it. `beat` is silent by design — three cases where
+    /// there is nobody to record for — and it swallowed the refusal along with
+    /// them, because it read `caller()` as "some caller or none" when that
+    /// method distinguishes THREE answers: nobody (fine), a handle that is not
+    /// a handle, and a handle whose session is gone.
+    ///
+    /// So a caller holding a dead sid wrote successfully, its chronology
+    /// silently stopped, and it found out at wrap or never — which is the
+    /// failure mode a handle exists to prevent, arriving in the one shape
+    /// nothing reports.
+    ///
+    /// **Refused BEFORE the write, not propagated out of `beat`**, which runs
+    /// after it: `blocked` means `wrote: false` everywhere on this surface, and
+    /// one handed back over a write that already landed would be a worse lie
+    /// than the silence.
+    #[tokio::test]
+    async fn a_dead_sid_is_refused_by_the_write_verbs_rather_than_swallowed() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        ensure(&jojobot, "alpha").await;
+        make_bot(&jojobot, "gamma", None).await;
+        make_box(&jojobot, "somewhere").await;
+        let posted = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    mailbox: "somewhere".into(),
+                    body: "something to retire later".into(),
+                    sid: booted(&jojobot, "gamma").await,
+                    subject: None,
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("post ok"),
+        );
+        let message = posted["id"].as_str().expect("an id").to_string();
+
+        // Well-formed and never minted: the shape a handle takes after a
+        // restart, or after the run it named was swept.
+        let dead = "2gf7".to_string();
+        assert!(sid::is_readable(&dead));
+
+        let refusals: Vec<(&str, serde_json::Value)> = vec![
+            (
+                "capture",
+                blocked(
+                    &jojobot
+                        .capture(Parameters(CaptureArgs {
+                            sid: Some(dead.clone()),
+                            ..capture_args("alpha", "plays go")
+                        }))
+                        .await
+                        .expect("call ok"),
+                ),
+            ),
+            (
+                "add_entity",
+                blocked(
+                    &jojobot
+                        .add_entity(Parameters(AddEntityArgs {
+                            kind: "person".into(),
+                            handle: "milhouse".into(),
+                            name: "Milhouse".into(),
+                            aliases: None,
+                            source: "test-fixture".into(),
+                            crm: None,
+                            boot: None,
+                            mailbox: None,
+                            create_new: None,
+                            sid: Some(dead.clone()),
+                        }))
+                        .await
+                        .expect("call ok"),
+                ),
+            ),
+            (
+                "update_entity",
+                blocked(
+                    &jojobot
+                        .update_entity(Parameters(UpdateEntityArgs {
+                            handle: "person:alpha".into(),
+                            name: Some("Alpha".into()),
+                            aliases: None,
+                            source: None,
+                            crm: None,
+                            mailbox: None,
+                            create_new: None,
+                            sid: Some(dead.clone()),
+                        }))
+                        .await
+                        .expect("call ok"),
+                ),
+            ),
+            (
+                "update_fact",
+                blocked(
+                    &jojobot
+                        .update_fact(Parameters(UpdateFactArgs {
+                            sid: Some(dead.clone()),
+                            ..update_args("person:alpha#1")
+                        }))
+                        .await
+                        .expect("call ok"),
+                ),
+            ),
+            (
+                "set_charter",
+                blocked(
+                    &jojobot
+                        .set_charter(Parameters(SetCharterArgs {
+                            bot: "gamma".into(),
+                            prose: "a charter nobody asked for".into(),
+                            sid: Some(dead.clone()),
+                        }))
+                        .await
+                        .expect("call ok"),
+                ),
+            ),
+            (
+                "create_mailbox",
+                blocked(
+                    &jojobot
+                        .create_mailbox(Parameters(CreateMailboxArgs {
+                            name: "nowhere".into(),
+                            create_new: None,
+                            sid: Some(dead.clone()),
+                        }))
+                        .await
+                        .expect("call ok"),
+                ),
+            ),
+            (
+                "mark_processed",
+                blocked(
+                    &jojobot
+                        .mark_processed(Parameters(MarkProcessedArgs {
+                            message_id: message.clone(),
+                            notes: None,
+                            sid: Some(dead.clone()),
+                        }))
+                        .await
+                        .expect("call ok"),
+                ),
+            ),
+        ];
+        for (verb, body) in &refusals {
+            assert_eq!(
+                body["attempted"], dead,
+                "{verb} must name the handle it refused: {body}"
+            );
+            let how = body["how_to_proceed"].as_str().expect("advice");
+            assert!(
+                how.contains("gone") && how.contains("start_here"),
+                "{verb} must say the session is gone and where to get another: {how}"
+            );
+        }
+
+        // …and every one of them wrote nothing, which is what `wrote: false`
+        // above is claiming.
+        assert!(
+            !jojobot
+                .memory
+                .list_entities(None)
+                .await
+                .expect("list ok")
+                .iter()
+                .any(|e| e.id.as_str() == "person:milhouse"),
+            "add_entity wrote an entity behind a refusal"
+        );
+        assert!(
+            jojobot
+                .memory
+                .recall(&EntityId("person:alpha".into()))
+                .await
+                .expect("recall ok")
+                .is_empty(),
+            "capture wrote a fact behind a refusal"
+        );
+        assert!(
+            !jojobot
+                .mailboxes
+                .list_mailboxes()
+                .await
+                .expect("list ok")
+                .iter()
+                .any(|b| b.name.as_str() == "nowhere"),
+            "create_mailbox opened a box behind a refusal"
         );
     }
 
