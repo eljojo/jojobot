@@ -56,7 +56,7 @@ use rmcp::{
 /// session holding a boot-surface token budget can pay for the essay ONCE and
 /// afterwards ask only whether it moved. **Bump it whenever [`ORIENTATION`]
 /// changes**, or a session that has read the old one will believe it is current.
-const ORIENTATION_VERSION: u32 = 1;
+const ORIENTATION_VERSION: u32 = 2;
 
 const ORIENTATION: &str = r#"# jojobot — start here
 
@@ -104,6 +104,22 @@ A session has two halves that answer different questions. Its **focus** is what 
 - *End* → `wrap_session` with the story, written for somebody with none of your context. It becomes your final entry AND one dated entry in the operator's Journal, and the session goes `wrapped` — terminal both ways.
 
 jojobot also writes **its own beats** into your chronology: one per verb class you use, its count kept current as you go. They are marked apart (`beat` names the class) because what you said you were doing and what jojobot noticed you doing are different kinds of evidence.
+
+### The two endings, and they are not interchangeable
+
+**WRAP when the work is over.** Your run finished what it was for; the story is told and the card closes clean. Nothing appends to it afterwards.
+
+**CLEAR AND RESUME when the work continues on another agent.** You are stopping, the job is not done, and somebody — a later run of you, on another device, after a context reset — picks it up. Then **journal a resume note and do NOT wrap**: the next boot of this identity attaches to the session you left open and reads your chronology. Wrapping here would tell the story of something that has not happened yet and force the next run to start from nothing.
+
+The resume note is **the one sanctioned exception to journal leanness**. Everywhere else a beat is high-level; here, be dense and specific — where you got to, what you already ruled out, the exact next step, the thing that will bite whoever picks this up. Its only reader is somebody with your job and none of your context.
+
+`abandoned` is neither of these. It is the **failure path**: a session that stopped without telling its story, swept a day later by the next boot. Its chronology survives and is still worth reading, but nobody decided anything — the difference between `wrapped` and `abandoned` is whether a run ended or merely stopped.
+
+### Your box is yours; the others are not
+
+**Read your OWN mailbox, full stop.** `boot_bot` tells you which box you own. Reading somebody else's is not a permission you happen to have — it is the wrong move: reading IS delivery, so a look moves their mail out of `new` and makes it yours to finish, and a message you took but cannot act on is one its real consumer will never see as fresh.
+
+`list_mailboxes` reports every box on the server: that is a fact about the board and **not an invitation**. A box showing `new: 1` is not addressed to you unless it is yours. If you need something from another box, ask its owner or leave a message in it — `post_message` writes without reading, which is exactly the shape of a request.
 "#;
 
 /// Arguments to `add_entity`.
@@ -6065,6 +6081,56 @@ mod tests {
             Arc::new(DownMailboxes),
             Arc::new(InMemorySessions::new()),
         )
+    }
+
+    /// **The norms a session cannot derive from the tool list are taught.**
+    /// Each of these was a real session getting it wrong or having no way to
+    /// know: wrapping a session whose work continues (so the next run started
+    /// from nothing), treating `abandoned` as an ordinary ending, and reading a
+    /// flat box listing as an invitation to survey a shared namespace.
+    ///
+    /// Deliberately **engine-generic**: how long a given role's session should
+    /// run, or which box a particular bot drains, is that bot's charter at
+    /// seeding — not prose compiled into a user-agnostic server.
+    #[test]
+    fn the_orientation_teaches_the_two_endings_and_the_own_box_norm() {
+        // The two endings, and that they are a choice about the WORK.
+        assert!(ORIENTATION.contains("CLEAR AND RESUME"), "the continuing case is named");
+        assert!(
+            ORIENTATION.contains("do NOT wrap"),
+            "…and says which verb NOT to reach for, since wrapping is the tempting default"
+        );
+        assert!(
+            ORIENTATION.contains("resume note"),
+            "…and names the thing you leave for whoever picks it up"
+        );
+        assert!(
+            ORIENTATION.contains("exception to journal leanness"),
+            "…and exempts it from the leanness rule, or the rule suppresses it"
+        );
+        assert!(
+            ORIENTATION.contains("failure path"),
+            "abandoned is not a third ordinary ending"
+        );
+
+        // The own-box norm, and the affordance that tempted otherwise.
+        assert!(ORIENTATION.contains("Read your OWN mailbox"));
+        assert!(
+            ORIENTATION.contains("not an invitation"),
+            "the flat listing is what posed the access question, so it is what gets answered"
+        );
+        assert!(
+            ORIENTATION.contains("post_message"),
+            "…and there is a sanctioned way to reach another box: write to it"
+        );
+
+        // **Engine-generic**: no per-bot granularity compiled in.
+        for specific in ["every 20 minutes", "hourly", "each night"] {
+            assert!(
+                !ORIENTATION.contains(specific),
+                "how often a role runs belongs to its charter, not to the engine: {specific:?}"
+            );
+        }
     }
 
     /// **A returning session pays for the essay once.** The orientation prose
