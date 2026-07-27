@@ -23,7 +23,12 @@ never runs inference of its own — the assistant is the only mind.
 > has is not shipped back**: the two verbs that echoed a body now answer with a
 > receipt, a poll can ask for news only, and orientation can be skipped by a
 > session that has read it — always with a marker saying what was left out and
-> how to get it. **`search` spans both**: one ranked list over entities, facts, prose and
+> how to get it. **A queue belongs to whoever drains it**: every box is listed
+> by name, and its per-state counts go to the bot that owns it (or to anyone,
+> when nobody does), so a sender sees that a box exists without being handed
+> somebody else's workload — while an unreadable card is reported to everyone,
+> because that is a fault on the board rather than a queue.
+> **`search` spans both**: one ranked list over entities, facts, prose and
 > messages, mail included by default and in every state (`processed` archives
 > too), each mail hit carrying its box, state, sender and id — and an answer
 > that could not see the board says so rather than reading as "nothing
