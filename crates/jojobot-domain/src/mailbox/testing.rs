@@ -15,9 +15,9 @@ use jiff::Timestamp;
 
 use super::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
-    MessageId, MessageState, NOTES_BUDGET, NewMessage, StateCounts, guard,
-    normalize_body, normalize_notes, normalize_subject, validate_body, validate_mailbox_name,
-    validate_message_id, validate_notes, validate_sender, validate_subject,
+    MessageId, MessageState, NOTES_BUDGET, NewMessage, StateCounts, guard, normalize_body,
+    normalize_notes, normalize_subject, validate_body, validate_mailbox_name, validate_message_id,
+    validate_notes, validate_sender, validate_subject,
 };
 
 /// The in-memory [`Mailboxes`] fake — a real store that holds a write, with no
@@ -57,7 +57,6 @@ impl InMemoryMailboxes {
             reason.to_string(),
         ));
     }
-
 
     /// The names currently on the board, in creation order.
     fn names(&self) -> Vec<MailboxName> {
@@ -192,7 +191,10 @@ impl Mailboxes for InMemoryMailboxes {
             notes: None,
             in_reply_to: message.in_reply_to,
         };
-        self.messages.lock().expect("message lock").push(stored.clone());
+        self.messages
+            .lock()
+            .expect("message lock")
+            .push(stored.clone());
         Ok(Guarded::Written(stored))
     }
 
@@ -260,12 +262,11 @@ impl Mailboxes for InMemoryMailboxes {
         self.refuse_if_quarantined(id)?;
 
         let mut messages = self.messages.lock().expect("message lock");
-        let message = messages
-            .iter_mut()
-            .find(|m| &m.id == id)
-            .ok_or_else(|| MailboxError::UnknownMessage {
+        let message = messages.iter_mut().find(|m| &m.id == id).ok_or_else(|| {
+            MailboxError::UnknownMessage {
                 attempted: id.to_string(),
-            })?;
+            }
+        })?;
         // Anything but `new` has been handed over or handled already — the one
         // state this verb advances is the one nobody has taken.
         let seen_before = message.state != MessageState::New;
@@ -288,12 +289,11 @@ impl Mailboxes for InMemoryMailboxes {
         self.refuse_if_quarantined(id)?;
 
         let mut messages = self.messages.lock().expect("message lock");
-        let message = messages
-            .iter_mut()
-            .find(|m| &m.id == id)
-            .ok_or_else(|| MailboxError::UnknownMessage {
+        let message = messages.iter_mut().find(|m| &m.id == id).ok_or_else(|| {
+            MailboxError::UnknownMessage {
                 attempted: id.to_string(),
-            })?;
+            }
+        })?;
         message.state = MessageState::Processed;
         if let Some(notes) = normalize_notes(notes) {
             message.notes = Some(notes);
@@ -335,7 +335,13 @@ pub mod contract {
 
     /// Post a message with no subject — the ordinary case, and every message
     /// written before there was a field for one.
-    pub async fn post(store: &dyn Mailboxes, mailbox: &str, sender: &str, body: &str, at_offset: i64) -> Message {
+    pub async fn post(
+        store: &dyn Mailboxes,
+        mailbox: &str,
+        sender: &str,
+        body: &str,
+        at_offset: i64,
+    ) -> Message {
         titled(store, mailbox, sender, None, body, at_offset).await
     }
 
@@ -404,7 +410,10 @@ pub mod contract {
         create(store, "inbox").await;
         let before = store.list_mailboxes().await.expect("list ok").len();
 
-        let Guarded::Blocked { attempted, candidates } = store
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = store
             .create_mailbox(&name("inbx"), false)
             .await
             .expect("a blocked create is a result, not a failure")
@@ -468,7 +477,9 @@ pub mod contract {
         assert_eq!(posted.subject, None, "a message without a subject has none");
         assert!(!posted.id.as_str().is_empty(), "the store mints an id");
 
-        let counts = counts(store, "inbox").await.expect("the box is on the board");
+        let counts = counts(store, "inbox")
+            .await
+            .expect("the box is on the board");
         assert_eq!(counts.new, 1);
         assert_eq!(counts.total(), 1);
     }
@@ -481,7 +492,10 @@ pub mod contract {
         assert_eq!(posted.body, body);
 
         let delivered = read(store, "inbox").await;
-        assert_eq!(delivered.messages[0].message.body, body, "…and on the way back out");
+        assert_eq!(
+            delivered.messages[0].message.body, body,
+            "…and on the way back out"
+        );
     }
 
     /// A body written on a CRLF platform reads back the same in every store.
@@ -509,7 +523,10 @@ pub mod contract {
             "no \\r may sit before a \\n after normalization: {:?}",
             stacked.body
         );
-        assert_eq!(stacked.body, "line one\nline two", "normalized to a fixpoint");
+        assert_eq!(
+            stacked.body, "line one\nline two",
+            "normalized to a fixpoint"
+        );
     }
 
     /// A body full of HTML-significant characters and an unterminated fence
@@ -523,7 +540,10 @@ pub mod contract {
         assert_eq!(posted.body, body);
 
         let delivered = read(store, "inbox").await;
-        assert_eq!(delivered.messages[0].message.body, body, "…and on the way back out");
+        assert_eq!(
+            delivered.messages[0].message.body, body,
+            "…and on the way back out"
+        );
     }
 
     /// **A subject survives every path a message travels.** It is written on
@@ -567,7 +587,15 @@ pub mod contract {
     /// malformed reaches the board.
     pub async fn a_blank_subject_is_absent_and_a_broken_one_is_refused(store: &dyn Mailboxes) {
         create(store, "inbox").await;
-        let blank = titled(store, "inbox", "alpha", Some("   "), "the shipment landed", 0).await;
+        let blank = titled(
+            store,
+            "inbox",
+            "alpha",
+            Some("   "),
+            "the shipment landed",
+            0,
+        )
+        .await;
         assert_eq!(blank.subject, None, "a blank subject is absent, not empty");
 
         let broken = store
@@ -597,18 +625,31 @@ pub mod contract {
         let wanted = post(store, "inbox", "alpha", "the one worth reading", 0).await;
         post(store, "inbox", "milhouse", "the rest of the box", 60).await;
 
-        let delivered = store.read_message(&wanted.id).await.expect("read_message ok");
+        let delivered = store
+            .read_message(&wanted.id)
+            .await
+            .expect("read_message ok");
         assert_eq!(delivered.message.id, wanted.id);
         assert_eq!(delivered.message.body, "the one worth reading");
-        assert_eq!(delivered.message.state, MessageState::Read, "delivery moves the column");
-        assert!(!delivered.seen_before, "a first delivery is nobody's leftover");
+        assert_eq!(
+            delivered.message.state,
+            MessageState::Read,
+            "delivery moves the column"
+        );
+        assert!(
+            !delivered.seen_before,
+            "a first delivery is nobody's leftover"
+        );
 
         let after_one = counts(store, "inbox").await.expect("inbox exists");
         assert_eq!(after_one.read, 1, "exactly one message was taken");
         assert_eq!(after_one.new, 1, "…and the rest of the box was left alone");
 
         // Taking it twice is the leftover case, not a second delivery.
-        let again = store.read_message(&wanted.id).await.expect("read_message ok");
+        let again = store
+            .read_message(&wanted.id)
+            .await
+            .expect("read_message ok");
         assert!(
             again.seen_before,
             "a message already delivered comes back flagged, exactly as a box read flags it"
@@ -630,16 +671,28 @@ pub mod contract {
             .await
             .expect("mark_processed ok");
 
-        let delivered = store.read_message(&posted.id).await.expect("read_message ok");
+        let delivered = store
+            .read_message(&posted.id)
+            .await
+            .expect("read_message ok");
         assert_eq!(
             delivered.message.state,
             MessageState::Processed,
             "nothing moves out of processed"
         );
-        assert_eq!(delivered.message.notes.as_deref(), Some("filed under shipments"));
-        assert!(delivered.seen_before, "an archive read is nobody's fresh mail");
         assert_eq!(
-            counts(store, "inbox").await.expect("inbox exists").processed,
+            delivered.message.notes.as_deref(),
+            Some("filed under shipments")
+        );
+        assert!(
+            delivered.seen_before,
+            "an archive read is nobody's fresh mail"
+        );
+        assert_eq!(
+            counts(store, "inbox")
+                .await
+                .expect("inbox exists")
+                .processed,
             1,
             "the counts agree: it is still processed"
         );
@@ -660,8 +713,14 @@ pub mod contract {
         let fresh = post(store, "inbox", "alpha", "still new", 0).await;
         let taken = post(store, "inbox", "milhouse", "already taken", 60).await;
         let done = post(store, "errands", "otto", "long since handled", 120).await;
-        store.read_message(&taken.id).await.expect("read_message ok");
-        store.mark_processed(&done.id, Some("filed")).await.expect("ok");
+        store
+            .read_message(&taken.id)
+            .await
+            .expect("read_message ok");
+        store
+            .mark_processed(&done.id, Some("filed"))
+            .await
+            .expect("ok");
 
         let scanned = store.scan_messages().await.expect("scan_messages ok");
         let mut seen: Vec<(&str, &str, &str)> = scanned
@@ -709,7 +768,10 @@ pub mod contract {
     pub async fn posting_into_an_unknown_mailbox_is_blocked(store: &dyn Mailboxes) {
         create(store, "inbox").await;
 
-        let Guarded::Blocked { attempted, candidates } = store
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = store
             .post_message(NewMessage {
                 mailbox: name("inbx"),
                 body: "the shipment landed".into(),
@@ -750,14 +812,21 @@ pub mod contract {
 
         let delivery = read(store, "inbox").await;
         assert_eq!(delivery.mailbox.as_str(), "inbox");
-        let bodies: Vec<&str> = delivery.messages.iter().map(|d| d.message.body.as_str()).collect();
+        let bodies: Vec<&str> = delivery
+            .messages
+            .iter()
+            .map(|d| d.message.body.as_str())
+            .collect();
         assert_eq!(bodies, vec!["first", "second"], "oldest first");
         assert!(
             delivery.messages.iter().all(|d| !d.seen_before),
             "a first delivery is nobody's leftover"
         );
         assert!(
-            delivery.messages.iter().all(|d| d.message.state == MessageState::Read),
+            delivery
+                .messages
+                .iter()
+                .all(|d| d.message.state == MessageState::Read),
             "delivery moves the column: {:?}",
             delivery.messages
         );
@@ -781,17 +850,18 @@ pub mod contract {
         post(store, "inbox", "otto", "later", 60).await;
         let again = read(store, "inbox").await;
         assert_eq!(again.messages.len(), 3, "the leftover and both fresh ones");
-        let bodies: Vec<&str> = again.messages.iter().map(|d| d.message.body.as_str()).collect();
+        let bodies: Vec<&str> = again
+            .messages
+            .iter()
+            .map(|d| d.message.body.as_str())
+            .collect();
         assert_eq!(
             bodies,
             vec!["earlier", "first", "later"],
             "oldest first spans the columns: a leftover is not automatically first"
         );
 
-        let leftovers: Vec<&str> = again
-            .leftovers()
-            .map(|d| d.message.body.as_str())
-            .collect();
+        let leftovers: Vec<&str> = again.leftovers().map(|d| d.message.body.as_str()).collect();
         assert_eq!(leftovers, vec!["first"], "the leftover is flagged apart");
         let fresh: Vec<&str> = again
             .messages
@@ -816,7 +886,10 @@ pub mod contract {
         assert_eq!(processed.id, posted.id);
         assert_eq!(processed.state, MessageState::Processed);
         assert_eq!(processed.notes.as_deref(), Some("filed under shipments"));
-        assert_eq!(processed.body, posted.body, "processing does not rewrite the message");
+        assert_eq!(
+            processed.body, posted.body,
+            "processing does not rewrite the message"
+        );
         assert_eq!(processed.sender, posted.sender);
         assert_eq!(processed.sent_at, posted.sent_at);
 
@@ -843,7 +916,12 @@ pub mod contract {
             .await
             .expect("mark_processed ok");
         assert_eq!(processed.state, MessageState::Processed);
-        assert!(processed.notes.as_deref().is_some_and(|n| n.contains("FAILED")));
+        assert!(
+            processed
+                .notes
+                .as_deref()
+                .is_some_and(|n| n.contains("FAILED"))
+        );
     }
 
     /// **A reply says what it is replying to, and the link must resolve.** A
@@ -872,7 +950,10 @@ pub mod contract {
 
         // …and it survives the round trip, which is the whole point of a link
         // nobody is going to re-derive from prose later.
-        let seen = store.read_message(&reply.id).await.expect("read_message ok");
+        let seen = store
+            .read_message(&reply.id)
+            .await
+            .expect("read_message ok");
         assert_eq!(seen.message.in_reply_to.as_ref(), Some(&original.id));
 
         // The message it answers is untouched — a reply is not a delivery.
@@ -905,14 +986,21 @@ pub mod contract {
             .expect("post ok")
             .written()
             .expect("a reply across boxes is written");
-        assert_eq!(report.mailbox, name("pm"), "the reply is in the box it was posted to");
+        assert_eq!(
+            report.mailbox,
+            name("pm"),
+            "the reply is in the box it was posted to"
+        );
         assert_eq!(
             report.in_reply_to.as_ref(),
             Some(&handoff.id),
             "…and it answers the message in the other one"
         );
 
-        let seen = store.read_message(&report.id).await.expect("read_message ok");
+        let seen = store
+            .read_message(&report.id)
+            .await
+            .expect("read_message ok");
         assert_eq!(seen.message.in_reply_to.as_ref(), Some(&handoff.id));
     }
 
@@ -979,10 +1067,18 @@ pub mod contract {
             .mark_processed(&posted.id, Some(&long))
             .await
             .expect("a long outcome record must not fail the verb");
-        assert_eq!(processed.state, MessageState::Processed, "the message WAS handled");
+        assert_eq!(
+            processed.state,
+            MessageState::Processed,
+            "the message WAS handled"
+        );
 
         let kept = processed.notes.as_deref().expect("the outcome is recorded");
-        assert!(kept.chars().count() <= NOTES_BUDGET, "cut to fit: {} chars", kept.chars().count());
+        assert!(
+            kept.chars().count() <= NOTES_BUDGET,
+            "cut to fit: {} chars",
+            kept.chars().count()
+        );
         assert!(kept.ends_with('…'), "…and it says it was cut: {kept:?}");
         assert!(
             kept.starts_with("counted the crates"),
@@ -991,7 +1087,10 @@ pub mod contract {
 
         // Read back through the ordinary path: what the verb returned is what
         // the store holds, cut and all.
-        let seen = store.read_message(&posted.id).await.expect("read_message ok");
+        let seen = store
+            .read_message(&posted.id)
+            .await
+            .expect("read_message ok");
         assert_eq!(seen.message.notes.as_deref(), Some(kept));
     }
 
@@ -1001,7 +1100,10 @@ pub mod contract {
         create(store, "inbox").await;
         let posted = post(store, "inbox", "alpha", "the shipment landed", 0).await;
         let notes = "x".repeat(NOTES_BUDGET);
-        let processed = store.mark_processed(&posted.id, Some(&notes)).await.expect("ok");
+        let processed = store
+            .mark_processed(&posted.id, Some(&notes))
+            .await
+            .expect("ok");
         assert_eq!(
             processed.notes.as_deref(),
             Some(notes.as_str()),
@@ -1037,7 +1139,11 @@ pub mod contract {
         post(store, "errands", "milhouse", "for the errands box", 0).await;
 
         let delivery = read(store, "inbox").await;
-        let bodies: Vec<&str> = delivery.messages.iter().map(|d| d.message.body.as_str()).collect();
+        let bodies: Vec<&str> = delivery
+            .messages
+            .iter()
+            .map(|d| d.message.body.as_str())
+            .collect();
         assert_eq!(bodies, vec!["for the inbox"]);
 
         assert_eq!(
@@ -1052,7 +1158,10 @@ pub mod contract {
     /// does not exist.
     pub async fn reading_an_unknown_mailbox_is_blocked(store: &dyn Mailboxes) {
         create(store, "inbox").await;
-        let Guarded::Blocked { attempted, candidates } = store
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = store
             .read_mailbox(&name("inbx"))
             .await
             .expect("a blocked read is a result, not a failure")
@@ -1107,7 +1216,10 @@ pub mod contract {
                 in_reply_to: None,
             })
             .await;
-        assert!(bad_sender.is_err(), "a message with no sender has no provenance");
+        assert!(
+            bad_sender.is_err(),
+            "a message with no sender has no provenance"
+        );
 
         assert_eq!(
             counts(store, "inbox").await.expect("inbox exists").total(),

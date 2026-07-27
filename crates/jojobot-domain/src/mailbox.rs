@@ -212,14 +212,13 @@ pub fn validate_body(body: &str) -> Result<(), MailboxError> {
 /// One plain line, for the reason `sender` is: it rides in the machine block
 /// *and* in the card's title.
 pub fn validate_subject(subject: Option<&str>) -> Result<(), MailboxError> {
-    let Some(subject) = subject else { return Ok(()) };
+    let Some(subject) = subject else {
+        return Ok(());
+    };
     if subject.trim().is_empty() {
         return Ok(());
     }
-    if breaks_the_line(subject)
-        || subject.contains('`')
-        || subject.chars().any(char::is_control)
-    {
+    if breaks_the_line(subject) || subject.contains('`') || subject.chars().any(char::is_control) {
         return Err(MailboxError::InvalidMessage(
             "subject must be one plain line (no newline, no backtick)".into(),
         ));
@@ -319,7 +318,6 @@ fn blank_is_absent(text: Option<&str>) -> Option<String> {
         .filter(|t| !t.is_empty())
         .map(str::to_string)
 }
-
 
 /// A mailbox and what is in it. The counts are the whole point of
 /// `list_mailboxes`: what's new, what's seen, what's handled, per box.
@@ -674,14 +672,14 @@ mod tests {
             );
         }
         for bad in [
-            "",           // empty
-            "Inbox",      // uppercase would give one box two spellings
-            "in box",     // space
-            "in_box",     // underscore is out of the charset
-            "-inbox",     // leading separator
-            "inbox-",     // trailing separator
-            "in`box",     // could close a fence in a card
-            "in\nbox",    // could forge a machine-block field
+            "",        // empty
+            "Inbox",   // uppercase would give one box two spellings
+            "in box",  // space
+            "in_box",  // underscore is out of the charset
+            "-inbox",  // leading separator
+            "inbox-",  // trailing separator
+            "in`box",  // could close a fence in a card
+            "in\nbox", // could forge a machine-block field
         ] {
             assert!(
                 validate_mailbox_name(&MailboxName(bad.into())).is_err(),
@@ -739,17 +737,16 @@ mod tests {
         let long = "the shipment landed this morning and the crates are stacked by the north door";
         let title = message_title("alpha", None, long);
         assert!(title.starts_with("alpha: the shipment landed this morning"));
-        assert!(title.ends_with('…'), "a cut title says it was cut: {title:?}");
+        assert!(
+            title.ends_with('…'),
+            "a cut title says it was cut: {title:?}"
+        );
         assert!(
             !title.trim_end_matches('…').ends_with(' '),
             "the cut lands on a word, not on the space after it: {title:?}"
         );
         assert!(
-            long.starts_with(
-                title
-                    .trim_start_matches("alpha: ")
-                    .trim_end_matches('…')
-            ),
+            long.starts_with(title.trim_start_matches("alpha: ").trim_end_matches('…')),
             "the kept part is a prefix of the body, never a mangled word: {title:?}"
         );
     }
@@ -775,8 +772,14 @@ mod tests {
                 "started on `working_session`, which was the wrong shape",
                 "alpha: started on `working_session`, which was the wrong shape",
             ),
-            (&"w".repeat(60), "alpha: wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"),
-            (&"w".repeat(59), "alpha: wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"),
+            (
+                &"w".repeat(60),
+                "alpha: wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+            ),
+            (
+                &"w".repeat(59),
+                "alpha: wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+            ),
             (
                 "counted the crates and reconciled them against the manifest twice over",
                 "alpha: counted the crates and reconciled them against the manifest…",
@@ -813,7 +816,11 @@ mod tests {
     #[test]
     fn a_subject_becomes_the_title_and_a_blank_one_does_not() {
         assert_eq!(
-            message_title("alpha", Some("the shipment"), "it landed at dawn and is stacked"),
+            message_title(
+                "alpha",
+                Some("the shipment"),
+                "it landed at dawn and is stacked"
+            ),
             "alpha: the shipment"
         );
         assert_eq!(
@@ -843,9 +850,15 @@ mod tests {
             );
         }
         assert!(validate_subject(Some(&"x".repeat(120))).is_ok());
-        assert!(validate_subject(Some(&"x".repeat(121))).is_err(), "and it is capped");
+        assert!(
+            validate_subject(Some(&"x".repeat(121))).is_err(),
+            "and it is capped"
+        );
 
-        assert_eq!(normalize_subject(Some("  the shipment  ")), Some("the shipment".into()));
+        assert_eq!(
+            normalize_subject(Some("  the shipment  ")),
+            Some("the shipment".into())
+        );
         assert_eq!(normalize_subject(Some("   ")), None);
         assert_eq!(normalize_subject(None), None);
     }
@@ -858,11 +871,17 @@ mod tests {
     fn machine_block_fields_are_one_line_but_a_body_is_prose() {
         assert!(validate_sender("alpha").is_ok());
         for bad in ["", "   ", "two\nlines", "carriage\rreturn", "back`tick"] {
-            assert!(validate_sender(bad).is_err(), "must refuse the sender {bad:?}");
+            assert!(
+                validate_sender(bad).is_err(),
+                "must refuse the sender {bad:?}"
+            );
         }
 
         assert!(validate_body("a message\n\nwith paragraphs").is_ok());
-        assert!(validate_body("   ").is_err(), "an empty body is not a message");
+        assert!(
+            validate_body("   ").is_err(),
+            "an empty body is not a message"
+        );
 
         assert!(validate_notes(None).is_ok());
         assert!(validate_notes(Some("drained into the journal")).is_ok());

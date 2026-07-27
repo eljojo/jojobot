@@ -149,7 +149,10 @@ async fn assert_disposable(http: &reqwest::Client, c: &Creds, prefix: &str) {
         .unwrap_or_else(|| panic!("disposability probe: the canary came back with no id"));
 
     let deleted = http
-        .delete(format!("{}/api/v1/projects/{id}", c.url.trim_end_matches('/')))
+        .delete(format!(
+            "{}/api/v1/projects/{id}",
+            c.url.trim_end_matches('/')
+        ))
         .bearer_auth(&c.token)
         .send()
         .await
@@ -221,7 +224,11 @@ async fn delete(http: &reqwest::Client, c: &Creds, path: &str) {
         .send()
         .await
         .unwrap_or_else(|e| panic!("DELETE {path}: {e}"));
-    assert!(resp.status().is_success(), "DELETE {path} → {}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "DELETE {path} → {}",
+        resp.status()
+    );
 }
 
 /// Every project, paged in full, as `(id, title, description)`.

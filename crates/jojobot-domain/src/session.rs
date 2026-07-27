@@ -567,7 +567,11 @@ mod tests {
         }
         assert_eq!(SessionState::ALL.len(), 3, "three columns, no more");
         for unknown in ["done", "Active", "", "open", "closed"] {
-            assert_eq!(SessionState::from_token(unknown), None, "{unknown:?} is no state");
+            assert_eq!(
+                SessionState::from_token(unknown),
+                None,
+                "{unknown:?} is no state"
+            );
         }
         // The funnel order is the column order a board carries, in the order it
         // carries them — each adapter names its own, so this is what they are
@@ -608,10 +612,16 @@ mod tests {
 
         assert!(validate_focus("building the session context").is_ok());
         for bad in ["", "  ", "two\nlines", "carriage\rreturn", "back`tick"] {
-            assert!(validate_focus(bad).is_err(), "must refuse the focus {bad:?}");
+            assert!(
+                validate_focus(bad).is_err(),
+                "must refuse the focus {bad:?}"
+            );
         }
         assert!(validate_focus(&"x".repeat(200)).is_ok());
-        assert!(validate_focus(&"x".repeat(201)).is_err(), "and it is capped");
+        assert!(
+            validate_focus(&"x".repeat(201)).is_err(),
+            "and it is capped"
+        );
     }
 
     /// The sweep measures the newest thing a session has to show for itself —
@@ -629,9 +639,16 @@ mod tests {
             state: SessionState::Active,
             entries: Vec::new(),
         };
-        assert_eq!(bare.last_beat(), start, "no entries: the start is the last beat");
+        assert_eq!(
+            bare.last_beat(),
+            start,
+            "no entries: the start is the last beat"
+        );
         assert!(!bare.is_stale(start + jiff::SignedDuration::from_hours(23)));
-        assert!(bare.is_stale(start + ABANDONED_AFTER), "the threshold is inclusive");
+        assert!(
+            bare.is_stale(start + ABANDONED_AFTER),
+            "the threshold is inclusive"
+        );
 
         let hour = jiff::SignedDuration::from_hours(1);
         let busy = Session {
@@ -644,14 +661,21 @@ mod tests {
             }],
             ..bare.clone()
         };
-        assert_eq!(busy.last_beat(), start + hour, "an entry moves the clock forward");
+        assert_eq!(
+            busy.last_beat(),
+            start + hour,
+            "an entry moves the clock forward"
+        );
         assert!(
             !busy.is_stale(start + ABANDONED_AFTER),
             "…so the same instant that swept the bare one leaves this one alone"
         );
 
         // A closed session is never swept: it is already at an end.
-        let closed = Session { state: SessionState::Wrapped, ..bare };
+        let closed = Session {
+            state: SessionState::Wrapped,
+            ..bare
+        };
         assert!(!closed.is_stale(start + ABANDONED_AFTER + hour));
     }
 
@@ -671,7 +695,10 @@ mod tests {
         };
 
         let day = jiff::SignedDuration::from_hours(24);
-        assert!(run.is_offerable(start + day), "yesterday's run is the one to offer");
+        assert!(
+            run.is_offerable(start + day),
+            "yesterday's run is the one to offer"
+        );
         assert!(
             run.is_offerable(start + OFFER_ABANDONED_WITHIN - day),
             "…and so is one from inside the window"
@@ -687,7 +714,10 @@ mod tests {
 
         // The other two states are never offered, whatever their age.
         for state in [SessionState::Active, SessionState::Wrapped] {
-            let other = Session { state, ..run.clone() };
+            let other = Session {
+                state,
+                ..run.clone()
+            };
             assert!(
                 !other.is_offerable(start + day),
                 "{state} is not an abandoned run to offer back"
@@ -727,7 +757,13 @@ mod tests {
     /// rebuilds text line by line and one that keeps bytes must agree.
     #[test]
     fn an_entry_normalizes_its_line_endings_to_a_fixpoint() {
-        assert_eq!(normalize_entry("  line one\r\nline two  "), "line one\nline two");
-        assert_eq!(normalize_entry("line one\r\r\nline two"), "line one\nline two");
+        assert_eq!(
+            normalize_entry("  line one\r\nline two  "),
+            "line one\nline two"
+        );
+        assert_eq!(
+            normalize_entry("line one\r\r\nline two"),
+            "line one\nline two"
+        );
     }
 }

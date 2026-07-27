@@ -17,7 +17,9 @@ use super::{Entity, EntityId, EntityKind};
 
 /// Why an existing entity is a candidate for the incoming write, strongest
 /// first. The order is the reporting order — the caller reads the top one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum MatchReason {
     /// The very same handle already exists. Never overridable.
@@ -136,8 +138,7 @@ fn folded(labels: &[&str]) -> Vec<String> {
 pub fn screen(handle: &EntityId, labels: &[&str], index: &[Entity]) -> Vec<EntityMatch> {
     let incoming_slug = handle.slug();
     let incoming_names = folded(labels);
-    let incoming_name_slugs: Vec<String> =
-        incoming_names.iter().map(|n| slugify(n)).collect();
+    let incoming_name_slugs: Vec<String> = incoming_names.iter().map(|n| slugify(n)).collect();
 
     let mut matches: Vec<EntityMatch> = index
         .iter()
@@ -158,7 +159,11 @@ pub fn screen(handle: &EntityId, labels: &[&str], index: &[Entity]) -> Vec<Entit
             })
         })
         .collect();
-    matches.sort_by(|a, b| a.reason.cmp(&b.reason).then_with(|| a.handle.cmp(&b.handle)));
+    matches.sort_by(|a, b| {
+        a.reason
+            .cmp(&b.reason)
+            .then_with(|| a.handle.cmp(&b.handle))
+    });
     matches
 }
 
@@ -173,25 +178,31 @@ pub fn screen(handle: &EntityId, labels: &[&str], index: &[Entity]) -> Vec<Entit
 /// kind of claim — "this is what it is called" — and screening only the
 /// preferred one leaves the alias channel as an open door onto every collision
 /// the other channel refuses.
-pub fn screen_labels(kind: Option<EntityKind>, labels: &[&str], index: &[Entity]) -> Vec<EntityMatch> {
+pub fn screen_labels(
+    kind: Option<EntityKind>,
+    labels: &[&str],
+    index: &[Entity],
+) -> Vec<EntityMatch> {
     let incoming = folded(labels);
     let incoming_slugs: Vec<String> = incoming.iter().map(|n| slugify(n)).collect();
 
     let mut matches: Vec<EntityMatch> = index
         .iter()
         .filter_map(|e| {
-            name_reason(kind, &incoming, &incoming_slugs, e).map(|reason| {
-                EntityMatch {
-                    handle: e.id.clone(),
-                    kind: e.kind,
-                    name: e.name.clone(),
-                    source: e.source.clone(),
-                    reason,
-                }
+            name_reason(kind, &incoming, &incoming_slugs, e).map(|reason| EntityMatch {
+                handle: e.id.clone(),
+                kind: e.kind,
+                name: e.name.clone(),
+                source: e.source.clone(),
+                reason,
             })
         })
         .collect();
-    matches.sort_by(|a, b| a.reason.cmp(&b.reason).then_with(|| a.handle.cmp(&b.handle)));
+    matches.sort_by(|a, b| {
+        a.reason
+            .cmp(&b.reason)
+            .then_with(|| a.handle.cmp(&b.handle))
+    });
     matches
 }
 
@@ -212,7 +223,10 @@ fn reason_for(
     // labels spells out the incoming handle ("Alpha One" already there,
     // `person:alpha-one` arriving; or an alias "Cosme Fulanito" and `person:cosme-fulanito`) — the
     // same collision wearing a different hat.
-    if folded(&existing.labels()).iter().any(|n| slugify(n) == incoming_slug) {
+    if folded(&existing.labels())
+        .iter()
+        .any(|n| slugify(n) == incoming_slug)
+    {
         return Some(if same_kind {
             MatchReason::SameName
         } else {
@@ -257,7 +271,9 @@ fn name_reason(
     let same_kind = kind == Some(existing.kind);
     let existing_names = folded(&existing.labels());
 
-    let agree = incoming.iter().any(|a| existing_names.iter().any(|b| a == b))
+    let agree = incoming
+        .iter()
+        .any(|a| existing_names.iter().any(|b| a == b))
         || incoming_slugs.iter().any(|s| s == existing.id.slug());
     if agree {
         return Some(if same_kind {
@@ -280,12 +296,7 @@ fn name_reason(
 /// `create_new` is the caller's explicit "I know, they're different" signal — it
 /// clears fuzzy suspicion but **never an exact handle collision**: two entities
 /// cannot share a handle, so that case is re-slug-or-confirm, always.
-pub fn decide(
-    handle: &EntityId,
-    labels: &[&str],
-    index: &[Entity],
-    create_new: bool,
-) -> Decision {
+pub fn decide(handle: &EntityId, labels: &[&str], index: &[Entity], create_new: bool) -> Decision {
     let matches = screen(handle, labels, index);
     let exact = matches.iter().any(|m| m.reason == MatchReason::ExactHandle);
     if matches.is_empty() || (create_new && !exact) {
@@ -432,10 +443,14 @@ mod tests {
     }
 
     fn reasons(handle: &str, name: Option<&str>) -> Vec<MatchReason> {
-        screen(&EntityId(handle.into()), &name.into_iter().collect::<Vec<_>>(), &index())
-            .into_iter()
-            .map(|m| m.reason)
-            .collect()
+        screen(
+            &EntityId(handle.into()),
+            &name.into_iter().collect::<Vec<_>>(),
+            &index(),
+        )
+        .into_iter()
+        .map(|m| m.reason)
+        .collect()
     }
 
     // --- the golden case: two same-named people cannot merge silently --------
@@ -447,14 +462,16 @@ mod tests {
     fn a_second_person_at_the_same_handle_can_never_be_forced_through() {
         let taken = EntityId("person:alpha".into());
         for create_new in [false, true] {
-            let Decision::Block(candidates) =
-                decide(&taken, &["Alpha Two"], &index(), create_new)
+            let Decision::Block(candidates) = decide(&taken, &["Alpha Two"], &index(), create_new)
             else {
                 panic!("a colliding handle must block (create_new={create_new})");
             };
             assert_eq!(candidates[0].reason, MatchReason::ExactHandle);
             assert_eq!(candidates[0].handle.as_str(), "person:alpha");
-            assert_eq!(candidates[0].source, "crm-card", "the caller decides on the source");
+            assert_eq!(
+                candidates[0].source, "crm-card",
+                "the caller decides on the source"
+            );
         }
     }
 
@@ -478,7 +495,10 @@ mod tests {
 
     #[test]
     fn case_and_whitespace_are_folded_before_comparing() {
-        assert_eq!(reasons("person:alpha-2", Some("  ALPHA  ")), vec![MatchReason::SameName]);
+        assert_eq!(
+            reasons("person:alpha-2", Some("  ALPHA  ")),
+            vec![MatchReason::SameName]
+        );
         assert_eq!(normalize_name("  Alpha   One "), "alpha one");
     }
 
@@ -490,7 +510,10 @@ mod tests {
             vec![MatchReason::SameName]
         );
         // …and an incoming handle that spells out an existing entity's name.
-        assert_eq!(reasons("place:north-trail-2", None), vec![MatchReason::NearSlug]);
+        assert_eq!(
+            reasons("place:north-trail-2", None),
+            vec![MatchReason::NearSlug]
+        );
     }
 
     #[test]
@@ -503,7 +526,10 @@ mod tests {
 
     #[test]
     fn a_typo_in_the_name_is_caught_within_two_edits() {
-        assert_eq!(reasons("person:otto", Some("Bet")), vec![MatchReason::NearName]);
+        assert_eq!(
+            reasons("person:otto", Some("Bet")),
+            vec![MatchReason::NearName]
+        );
     }
 
     #[test]
@@ -526,10 +552,18 @@ mod tests {
     #[test]
     fn an_unrelated_entity_proceeds() {
         assert_eq!(
-            decide(&EntityId("person:zenith".into()), &["Zenith"], &index(), false),
+            decide(
+                &EntityId("person:zenith".into()),
+                &["Zenith"],
+                &index(),
+                false
+            ),
             Decision::Proceed
         );
-        assert_eq!(decide(&EntityId("topic:widgets".into()), &[], &[], false), Decision::Proceed);
+        assert_eq!(
+            decide(&EntityId("topic:widgets".into()), &[], &[], false),
+            Decision::Proceed
+        );
     }
 
     /// Several candidates come back strongest-first, then by handle — a stable
@@ -591,11 +625,18 @@ mod tests {
     /// on half the facts live on each.
     #[test]
     fn a_write_under_an_alias_is_recognized_as_the_entity_that_wears_it() {
-        let idx = vec![also_known_as("person:homer-simpson", "Homer Simpson", &["Cosme Fulanito"])];
+        let idx = vec![also_known_as(
+            "person:homer-simpson",
+            "Homer Simpson",
+            &["Cosme Fulanito"],
+        )];
 
-        let Decision::Block(candidates) =
-            decide(&EntityId("person:cosme-fulanito".into()), &["Cosme Fulanito"], &idx, false)
-        else {
+        let Decision::Block(candidates) = decide(
+            &EntityId("person:cosme-fulanito".into()),
+            &["Cosme Fulanito"],
+            &idx,
+            false,
+        ) else {
             panic!("a name the entity already answers to must block");
         };
         assert_eq!(candidates[0].handle.as_str(), "person:homer-simpson");
@@ -619,10 +660,17 @@ mod tests {
     /// belongs to someone already here is the same collision read backwards.
     #[test]
     fn an_incoming_alias_collides_with_an_existing_name() {
-        let idx = vec![entity("person:homer-simpson", "Homer Simpson", "user-named")];
-        let Decision::Block(candidates) =
-            decide(&EntityId("person:barney-gumble".into()), &["Barney Gumble", "Homer Simpson"], &idx, false)
-        else {
+        let idx = vec![entity(
+            "person:homer-simpson",
+            "Homer Simpson",
+            "user-named",
+        )];
+        let Decision::Block(candidates) = decide(
+            &EntityId("person:barney-gumble".into()),
+            &["Barney Gumble", "Homer Simpson"],
+            &idx,
+            false,
+        ) else {
             panic!("an incoming alias that names someone here must block");
         };
         assert_eq!(candidates[0].handle.as_str(), "person:homer-simpson");
@@ -637,9 +685,13 @@ mod tests {
             also_known_as("person:homer-simpson", "Homer Simpson", &["Cosme Fulanito"]),
             entity("person:zenith", "Zenith", "user-named"),
         ];
-        let Decision::Block(candidates) =
-            rename(&EntityId("person:zenith".into()), "Cosme Fulanito", "Zenith", &idx, false)
-        else {
+        let Decision::Block(candidates) = rename(
+            &EntityId("person:zenith".into()),
+            "Cosme Fulanito",
+            "Zenith",
+            &idx,
+            false,
+        ) else {
             panic!("renaming onto an alias must block");
         };
         assert_eq!(candidates[0].handle.as_str(), "person:homer-simpson");
@@ -651,8 +703,13 @@ mod tests {
     /// mean Homer Simpson" when what was typed was Cosme Fulanito.
     #[test]
     fn a_must_exist_miss_suggests_by_alias() {
-        let idx = vec![also_known_as("person:homer-simpson", "Homer Simpson", &["Cosme Fulanito"])];
-        let Decision::Block(candidates) = decide_existing(&EntityId("person:cosme-fulanito".into()), &idx)
+        let idx = vec![also_known_as(
+            "person:homer-simpson",
+            "Homer Simpson",
+            &["Cosme Fulanito"],
+        )];
+        let Decision::Block(candidates) =
+            decide_existing(&EntityId("person:cosme-fulanito".into()), &idx)
         else {
             panic!("an unknown handle blocks");
         };
@@ -691,7 +748,10 @@ mod tests {
         let Decision::Block(none) = decide_existing(&EntityId("person:zenith".into()), &idx) else {
             panic!("a handle that resolves to nothing must block, not proceed");
         };
-        assert!(none.is_empty(), "nothing to suggest, and nothing invented: {none:?}");
+        assert!(
+            none.is_empty(),
+            "nothing to suggest, and nothing invented: {none:?}"
+        );
     }
 
     // --- relabelling goes through the same gate ------------------------------
@@ -713,8 +773,7 @@ mod tests {
     #[test]
     fn a_rename_onto_an_existing_name_is_blocked_and_create_new_clears_it() {
         let renamer = EntityId("person:zenith".into());
-        let Decision::Block(candidates) =
-            rename(&renamer, "Alpha", "Zenith", &index(), false)
+        let Decision::Block(candidates) = rename(&renamer, "Alpha", "Zenith", &index(), false)
         else {
             panic!("a rename onto an existing name must block");
         };
@@ -762,9 +821,7 @@ mod tests {
     #[test]
     fn a_rename_onto_a_near_name_is_blocked() {
         let renamer = EntityId("person:zenith".into());
-        let Decision::Block(candidates) =
-            rename(&renamer, "Bet", "Zenith", &index(), false)
-        else {
+        let Decision::Block(candidates) = rename(&renamer, "Bet", "Zenith", &index(), false) else {
             panic!("a name within a typo of an existing one must block");
         };
         assert_eq!(candidates[0].handle.as_str(), "person:beta");
@@ -794,9 +851,13 @@ mod tests {
             entity("person:zenith", "Zenith", "user-named"),
         ];
         let borrower = EntityId("person:zenith".into());
-        let Decision::Block(candidates) =
-            decide_relabel(&borrower, &["Zenith", "Cosme Fulanito"], &["Zenith"], &idx, false)
-        else {
+        let Decision::Block(candidates) = decide_relabel(
+            &borrower,
+            &["Zenith", "Cosme Fulanito"],
+            &["Zenith"],
+            &idx,
+            false,
+        ) else {
             panic!("an alias onto a name another entity wears must block");
         };
         assert_eq!(candidates[0].handle.as_str(), "person:homer-simpson");
@@ -804,7 +865,13 @@ mod tests {
 
         // Names are not unique; handles are. The same signal clears it.
         assert_eq!(
-            decide_relabel(&borrower, &["Zenith", "Cosme Fulanito"], &["Zenith"], &idx, true),
+            decide_relabel(
+                &borrower,
+                &["Zenith", "Cosme Fulanito"],
+                &["Zenith"],
+                &idx,
+                true
+            ),
             Decision::Proceed
         );
     }
@@ -815,7 +882,11 @@ mod tests {
     #[test]
     fn a_label_already_worn_is_not_a_new_claim() {
         let mut idx = index();
-        idx.push(also_known_as("person:alpha-two", "Second Alpha", &["Alpha"]));
+        idx.push(also_known_as(
+            "person:alpha-two",
+            "Second Alpha",
+            &["Alpha"],
+        ));
         let settled = EntityId("person:alpha-two".into());
 
         assert_eq!(
@@ -830,7 +901,13 @@ mod tests {
             "re-sending the labels it already wears is not a collision with anyone"
         );
         assert_eq!(
-            decide_relabel(&settled, &["  SECOND   alpha ", "alpha"], &["Second Alpha", "Alpha"], &idx, false),
+            decide_relabel(
+                &settled,
+                &["  SECOND   alpha ", "alpha"],
+                &["Second Alpha", "Alpha"],
+                &idx,
+                false
+            ),
             Decision::Proceed,
             "case and spacing folded on both sides"
         );
@@ -918,7 +995,11 @@ mod tests {
         assert_eq!(edit_distance("", "abc"), 3);
         assert_eq!(edit_distance("abc", ""), 3);
         assert_eq!(edit_distance("kitten", "sitting"), 3);
-        assert_eq!(edit_distance("café", "cafe"), 1, "compares chars, not bytes");
+        assert_eq!(
+            edit_distance("café", "cafe"),
+            1,
+            "compares chars, not bytes"
+        );
     }
 
     #[test]

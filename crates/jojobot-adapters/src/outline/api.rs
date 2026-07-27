@@ -44,8 +44,11 @@ pub(super) struct DocRec {
 /// ([`HttpOutline`]); a test double lives in the store's test module.
 #[async_trait]
 pub(super) trait OutlineApi: Send + Sync {
-    async fn list_collections(&self, offset: u64, limit: u64)
-    -> Result<Vec<CollectionRec>, MemoryError>;
+    async fn list_collections(
+        &self,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<CollectionRec>, MemoryError>;
     async fn create_collection(
         &self,
         name: &str,
@@ -137,7 +140,10 @@ impl OutlineApi for HttpOutline {
         limit: u64,
     ) -> Result<Vec<CollectionRec>, MemoryError> {
         let v = self
-            .post("collections.list", json!({ "offset": offset, "limit": limit }))
+            .post(
+                "collections.list",
+                json!({ "offset": offset, "limit": limit }),
+            )
             .await?;
         Ok(Self::data_array(&v, "collections.list")?
             .iter()

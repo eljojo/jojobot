@@ -43,12 +43,11 @@ impl InMemorySessions {
     /// takes nothing more. One helper, so the three write verbs cannot come to
     /// disagree about what closed means.
     fn writable(sessions: &mut [Session], id: &SessionId) -> Result<usize, SessionError> {
-        let at = sessions
-            .iter()
-            .position(|s| &s.id == id)
-            .ok_or_else(|| SessionError::UnknownSession {
+        let at = sessions.iter().position(|s| &s.id == id).ok_or_else(|| {
+            SessionError::UnknownSession {
                 attempted: id.to_string(),
-            })?;
+            }
+        })?;
         if sessions[at].state.is_terminal() {
             return Err(SessionError::Closed {
                 attempted: id.to_string(),
@@ -191,12 +190,11 @@ impl Sessions for InMemorySessions {
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         validate_session_id(id)?;
         let mut sessions = self.sessions.lock().expect("session lock");
-        let at = sessions
-            .iter()
-            .position(|s| &s.id == id)
-            .ok_or_else(|| SessionError::UnknownSession {
+        let at = sessions.iter().position(|s| &s.id == id).ok_or_else(|| {
+            SessionError::UnknownSession {
                 attempted: id.to_string(),
-            })?;
+            }
+        })?;
         if sessions[at].state.is_final() {
             return Err(SessionError::Closed {
                 attempted: id.to_string(),
@@ -261,11 +259,17 @@ pub mod contract {
         assert_eq!(session.focus, "reading the hand-off");
         assert_eq!(session.started_at, at(0));
         assert_eq!(session.state, SessionState::Active);
-        assert!(session.entries.is_empty(), "a fresh session has no chronology");
+        assert!(
+            session.entries.is_empty(),
+            "a fresh session has no chronology"
+        );
         assert!(!session.id.as_str().is_empty(), "the store mints an id");
 
         let read = store.read_session(&session.id).await.expect("read ok");
-        assert_eq!(read, session, "…and it reads back exactly as it was written");
+        assert_eq!(
+            read, session,
+            "…and it reads back exactly as it was written"
+        );
     }
 
     /// **The chronology is append-only and ordered.** Entries come back oldest
@@ -281,7 +285,11 @@ pub mod contract {
         let texts: Vec<&str> = read.entries.iter().map(|e| e.text.as_str()).collect();
         assert_eq!(
             texts,
-            vec!["read the task", "wrote the domain module", "watched the contract fail"],
+            vec![
+                "read the task",
+                "wrote the domain module",
+                "watched the contract fail"
+            ],
             "oldest first"
         );
         assert!(
@@ -375,7 +383,10 @@ pub mod contract {
         let texts: Vec<&str> = read.entries.iter().map(|e| e.text.as_str()).collect();
         assert_eq!(
             texts,
-            vec!["captured facts: person:milhouse, person:otto (2)", "read the task"],
+            vec![
+                "captured facts: person:milhouse, person:otto (2)",
+                "read the task"
+            ],
             "two entries, in the same order — a growing tally is not a new beat"
         );
 
@@ -387,7 +398,10 @@ pub mod contract {
             .expect_err("a session's own entry is append-only");
         assert!(matches!(err, SessionError::NotABeat { .. }), "got {err:?}");
         let read = store.read_session(&session.id).await.expect("read ok");
-        assert_eq!(read.entries[1].text, "read the task", "…and it is unchanged");
+        assert_eq!(
+            read.entries[1].text, "read the task",
+            "…and it is unchanged"
+        );
     }
 
     /// **A session that is working is not idle.** A beat correction is a write,
@@ -428,7 +442,10 @@ pub mod contract {
         let texts: Vec<&str> = read.entries.iter().map(|e| e.text.as_str()).collect();
         assert_eq!(
             texts,
-            vec!["captured facts: person:milhouse, person:otto (2)", "read the task"],
+            vec![
+                "captured facts: person:milhouse, person:otto (2)",
+                "read the task"
+            ],
             "the correction does not move the beat to the end of the record"
         );
         assert_eq!(
@@ -449,7 +466,11 @@ pub mod contract {
         assert!(matches!(err, SessionError::NoEntries { .. }), "got {err:?}");
 
         let read = store.read_session(&session.id).await.expect("read ok");
-        assert!(read.entries.is_empty(), "…and it wrote nothing: {:?}", read.entries);
+        assert!(
+            read.entries.is_empty(),
+            "…and it wrote nothing: {:?}",
+            read.entries
+        );
     }
 
     /// **Focus is current truth, rewritten in place** — and rewriting it leaves
@@ -467,7 +488,11 @@ pub mod contract {
 
         let read = store.read_session(&session.id).await.expect("read ok");
         assert_eq!(read.focus, "building the session context", "current truth");
-        assert_eq!(read.entries.len(), 1, "a focus change is not a chronology entry");
+        assert_eq!(
+            read.entries.len(),
+            1,
+            "a focus change is not a chronology entry"
+        );
     }
 
     /// **The two ends stop being the same at exactly one point: reopening.**
@@ -493,7 +518,10 @@ pub mod contract {
             .await
             .expect("close ok");
 
-        let reopened = store.reopen(&abandoned.id).await.expect("an abandoned run reopens");
+        let reopened = store
+            .reopen(&abandoned.id)
+            .await
+            .expect("an abandoned run reopens");
         assert_eq!(reopened.state, SessionState::Active, "it is running again");
         assert_eq!(
             reopened.entries.len(),
@@ -502,7 +530,10 @@ pub mod contract {
             reopened.entries
         );
         assert_eq!(reopened.entries[0].text, "got half way");
-        assert_eq!(reopened.focus, "reading the hand-off", "and so is the focus");
+        assert_eq!(
+            reopened.focus, "reading the hand-off",
+            "and so is the focus"
+        );
 
         // The proof that reopening MEANT something: the verb that was refused a
         // moment ago now lands, and lands on the same record.
@@ -511,7 +542,12 @@ pub mod contract {
             .await
             .expect("a reopened session takes entries");
         let read = store.read_session(&abandoned.id).await.expect("read ok");
-        assert_eq!(read.entries.len(), 2, "one record, continued: {:?}", read.entries);
+        assert_eq!(
+            read.entries.len(),
+            2,
+            "one record, continued: {:?}",
+            read.entries
+        );
         assert_eq!(read.state, SessionState::Active);
 
         // Reopening what is already open is not an error — a caller resuming
@@ -526,7 +562,10 @@ pub mod contract {
         // rather than pretending the id is unknown.
         let wrapped = begin(store, "delta", "chasing the flaky test", 200).await;
         journal(store, &wrapped.id, "found it", 240).await;
-        store.close(&wrapped.id, SessionState::Wrapped).await.expect("close ok");
+        store
+            .close(&wrapped.id, SessionState::Wrapped)
+            .await
+            .expect("close ok");
         let refused = store
             .reopen(&wrapped.id)
             .await
@@ -551,7 +590,10 @@ pub mod contract {
         for end in [SessionState::Wrapped, SessionState::Abandoned] {
             let session = begin(store, "gamma", "reading the hand-off", 0).await;
             let beat = store
-                .append(&session.id, NewEntry::beat("capture", "captured facts: x (1)", at(30)))
+                .append(
+                    &session.id,
+                    NewEntry::beat("capture", "captured facts: x (1)", at(30)),
+                )
                 .await
                 .expect("append ok");
             journal(store, &session.id, "read the task", 60).await;
@@ -631,7 +673,11 @@ pub mod contract {
         );
 
         let theirs = store.sessions_of(&bot("delta")).await.expect("list ok");
-        assert_eq!(theirs.len(), 1, "boxes of one bot never leak into another's");
+        assert_eq!(
+            theirs.len(),
+            1,
+            "boxes of one bot never leak into another's"
+        );
         assert_eq!(theirs[0].focus, "somebody else's run");
     }
 
@@ -662,19 +708,31 @@ pub mod contract {
         begin(store, "gamma", "the first run", 0).await;
         let missing = SessionId("999999".into());
         for err in [
-            store.read_session(&missing).await.expect_err("read must miss"),
+            store
+                .read_session(&missing)
+                .await
+                .expect_err("read must miss"),
             store
                 .append(&missing, NewEntry::manual("a beat", at(60)))
                 .await
                 .expect_err("append must miss"),
-            store.amend_last(&missing, "a beat").await.expect_err("amend must miss"),
-            store.set_focus(&missing, "a focus").await.expect_err("focus must miss"),
+            store
+                .amend_last(&missing, "a beat")
+                .await
+                .expect_err("amend must miss"),
+            store
+                .set_focus(&missing, "a focus")
+                .await
+                .expect_err("focus must miss"),
             store
                 .close(&missing, SessionState::Wrapped)
                 .await
                 .expect_err("close must miss"),
         ] {
-            assert!(matches!(err, SessionError::UnknownSession { .. }), "got {err:?}");
+            assert!(
+                matches!(err, SessionError::UnknownSession { .. }),
+                "got {err:?}"
+            );
         }
     }
 
@@ -705,7 +763,10 @@ pub mod contract {
         );
 
         let read = store.read_session(&session.id).await.expect("read ok");
-        assert!(read.entries.is_empty(), "nothing malformed reached the store");
+        assert!(
+            read.entries.is_empty(),
+            "nothing malformed reached the store"
+        );
         assert_eq!(read.focus, "the first run");
     }
 
@@ -716,13 +777,19 @@ pub mod contract {
         let text = "found the cause\n\nthe rollback wrote a description it never wrote";
         journal(store, &session.id, text, 60).await;
         store
-            .append(&session.id, NewEntry::manual("line one\r\nline two", at(120)))
+            .append(
+                &session.id,
+                NewEntry::manual("line one\r\nline two", at(120)),
+            )
             .await
             .expect("append ok");
 
         let read = store.read_session(&session.id).await.expect("read ok");
         assert_eq!(read.entries[0].text, text, "paragraphs survive verbatim");
-        assert_eq!(read.entries[1].text, "line one\nline two", "CRLF normalizes");
+        assert_eq!(
+            read.entries[1].text, "line one\nline two",
+            "CRLF normalizes"
+        );
     }
 
     /// The whole spec, against one store. Each case runs on a **fresh** store,

@@ -3,11 +3,11 @@
 //! guards `/mcp`.
 
 use axum::{
+    Json,
     extract::{Request, State},
     http::{HeaderValue, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 

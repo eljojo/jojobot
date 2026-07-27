@@ -15,12 +15,11 @@ use std::sync::Mutex;
 
 use super::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, Guarded,
-    JOURNAL_TITLE,
-    Memory, MemoryError, NewEntity, NewFact, apply_entity_patch, apply_fact_patch,
+    JOURNAL_TITLE, Memory, MemoryError, NewEntity, NewFact, apply_entity_patch, apply_fact_patch,
+    guard::{self, Decision},
     normalize_content, normalize_details, normalize_prose, screen_entity_patch, search,
     validate_content, validate_details, validate_edge, validate_entity, validate_prose,
     validate_subject,
-    guard::{self, Decision},
 };
 
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
@@ -47,7 +46,6 @@ impl InMemoryMemory {
     fn index(&self) -> Vec<Entity> {
         self.entities.lock().expect("fake mutex poisoned").clone()
     }
-
 }
 
 #[async_trait::async_trait]
@@ -135,7 +133,8 @@ impl Memory for InMemoryMemory {
         // A claim moved onto an entity is screened exactly as one written at
         // creation — otherwise ownership is stealable in two steps.
         if let Some(mailbox) = patch.mailbox.as_deref()
-            && let Decision::Block(candidates) = guard::decide_mailbox_claim(handle, mailbox, &index)
+            && let Decision::Block(candidates) =
+                guard::decide_mailbox_claim(handle, mailbox, &index)
         {
             return Ok(Guarded::Blocked {
                 attempted: handle.clone(),
@@ -319,17 +318,22 @@ impl Memory for InMemoryMemory {
         });
         Ok(journal_doc
             .into_iter()
-            .chain(self.index().into_iter().map(|entity| search::DocScan {
-                doc_id: entity.id.to_string(),
-                title: entity.name.clone(),
-                prose: prose.get(&entity.id).cloned().unwrap_or_default(),
-                facts: facts.iter().filter(|f| f.home == entity.id).cloned().collect(),
-                entity: Some(entity),
+            .chain(self.index().into_iter().map(|entity| {
+                search::DocScan {
+                    doc_id: entity.id.to_string(),
+                    title: entity.name.clone(),
+                    prose: prose.get(&entity.id).cloned().unwrap_or_default(),
+                    facts: facts
+                        .iter()
+                        .filter(|f| f.home == entity.id)
+                        .cloned()
+                        .collect(),
+                    entity: Some(entity),
+                }
             }))
             .collect())
     }
 }
-
 
 /// The behavioural contract every [`Memory`] adapter must satisfy. Each function
 /// is a self-contained spec run against a live store. Assertions are
@@ -354,11 +358,18 @@ pub mod contract {
     /// The gate itself has its own specs below; everywhere else, provisioning is
     /// setup, not the subject under test.
     async fn ensure<M: Memory>(store: &M, id: &EntityId) {
-        let known = store.list_entities(None).await.expect("list_entities should succeed");
+        let known = store
+            .list_entities(None)
+            .await
+            .expect("list_entities should succeed");
         if known.iter().any(|e| &e.id == id) {
             return;
         }
-        add(store, NewEntity::new(id.clone(), id.slug(), "contract-fixture")).await;
+        add(
+            store,
+            NewEntity::new(id.clone(), id.slug(), "contract-fixture"),
+        )
+        .await;
     }
 
     /// Capture a fact the guard is expected to wave through — provisioning its
@@ -470,7 +481,11 @@ pub mod contract {
             store,
             NewFact {
                 details: Some("noted a|b in the margin".into()),
-                ..NewFact::about(subject.clone(), "reads a|b|c pipe notation", date(2026, 7, 24))
+                ..NewFact::about(
+                    subject.clone(),
+                    "reads a|b|c pipe notation",
+                    date(2026, 7, 24),
+                )
             },
         )
         .await;
@@ -498,7 +513,11 @@ pub mod contract {
                 // Content that ends in the human ❓ glyph must NOT be read as
                 // inference-by-marker — provenance is its own column now.
                 provenance: Provenance::Inference,
-                ..NewFact::about(subject.clone(), "might prefer mornings ❓", date(2026, 1, 2))
+                ..NewFact::about(
+                    subject.clone(),
+                    "might prefer mornings ❓",
+                    date(2026, 1, 2),
+                )
             },
         )
         .await;
@@ -531,7 +550,11 @@ pub mod contract {
     /// Two distinct captures are both recallable, each under its own id.
     pub async fn multiple_facts_all_recallable<M: Memory>(store: &M) {
         let subject = EntityId::person("contract-multi");
-        let a = capture(store, NewFact::about(subject.clone(), "plays go", date(2026, 7, 1))).await;
+        let a = capture(
+            store,
+            NewFact::about(subject.clone(), "plays go", date(2026, 7, 1)),
+        )
+        .await;
         let b = capture(
             store,
             NewFact::about(subject.clone(), "learning Rust", date(2026, 7, 2)),
@@ -539,7 +562,10 @@ pub mod contract {
         .await;
         assert_ne!(a.id, b.id, "each fact must get its own id");
         assert_eq!(read_back(store, &subject, &a.id).await.content, "plays go");
-        assert_eq!(read_back(store, &subject, &b.id).await.content, "learning Rust");
+        assert_eq!(
+            read_back(store, &subject, &b.id).await.content,
+            "learning Rust"
+        );
     }
 
     /// Facts about one entity never leak into another's recall — each subject's
@@ -547,8 +573,16 @@ pub mod contract {
     pub async fn subjects_are_isolated<M: Memory>(store: &M) {
         let solo = EntityId::person("contract-solo");
         let duet = EntityId::person("contract-duet");
-        capture(store, NewFact::about(solo.clone(), "solo fact", date(2026, 7, 1))).await;
-        capture(store, NewFact::about(duet.clone(), "duet fact", date(2026, 7, 1))).await;
+        capture(
+            store,
+            NewFact::about(solo.clone(), "solo fact", date(2026, 7, 1)),
+        )
+        .await;
+        capture(
+            store,
+            NewFact::about(duet.clone(), "duet fact", date(2026, 7, 1)),
+        )
+        .await;
 
         let solo_facts = store.recall(&solo).await.expect("recall solo");
         assert!(
@@ -614,7 +648,10 @@ pub mod contract {
         let real = EntityId::person("contract-orient");
         ensure(store, &real).await;
         let typo = EntityId::person("contract-orjent");
-        let err = store.recall(&typo).await.expect_err("a typo'd handle is a miss");
+        let err = store
+            .recall(&typo)
+            .await
+            .expect_err("a typo'd handle is a miss");
         match &err {
             MemoryError::UnknownEntity { nearest, .. } => {
                 assert!(
@@ -626,8 +663,14 @@ pub mod contract {
         }
 
         // Exists-but-empty is the OTHER case, and it still reads fine.
-        let facts = store.recall(&real).await.expect("an existing entity's empty page reads");
-        assert!(facts.is_empty(), "no facts were created along the way: {facts:?}");
+        let facts = store
+            .recall(&real)
+            .await
+            .expect("an existing entity's empty page reads");
+        assert!(
+            facts.is_empty(),
+            "no facts were created along the way: {facts:?}"
+        );
     }
 
     // --- the entity model ----------------------------------------------------
@@ -732,7 +775,11 @@ pub mod contract {
         // the claim on afterwards — the update side of the gate. A verifier
         // deleted this check from both stores and the whole suite stayed green,
         // so it is pinned here, in the contract both stores run.
-        add(store, NewEntity::new(rival.clone(), "Contract Sigma", "contract-fixture")).await;
+        add(
+            store,
+            NewEntity::new(rival.clone(), "Contract Sigma", "contract-fixture"),
+        )
+        .await;
         let stolen = store
             .update_entity(
                 &rival,
@@ -850,12 +897,21 @@ pub mod contract {
     /// line in it says a session wrapped and had nothing to say, which is a
     /// claim nobody made.
     pub async fn an_empty_journal_entry_is_refused<M: Memory>(store: &M) {
-        assert!(store.append_journal(date(2026, 7, 26), "   ").await.is_err());
+        assert!(
+            store
+                .append_journal(date(2026, 7, 26), "   ")
+                .await
+                .is_err()
+        );
     }
 
     pub async fn prose_is_replaced_whole_and_reads_back<M: Memory>(store: &M) {
         let bot = EntityId::new(EntityKind::Bot, "contract-epsilon");
-        add(store, NewEntity::new(bot.clone(), "Contract Epsilon", "contract-fixture")).await;
+        add(
+            store,
+            NewEntity::new(bot.clone(), "Contract Epsilon", "contract-fixture"),
+        )
+        .await;
         let fact = capture(
             store,
             NewFact::about(bot.clone(), "answers before noon", date(2026, 7, 25)),
@@ -874,7 +930,10 @@ pub mod contract {
 
         // Replaced, never appended: a charter is what is so now, not a trail.
         let rewritten = "Keeps the schedule. Nothing else.";
-        store.set_prose(&bot, rewritten).await.expect("set_prose ok");
+        store
+            .set_prose(&bot, rewritten)
+            .await
+            .expect("set_prose ok");
         let scanned = store
             .scan_entity(&bot)
             .await
@@ -890,7 +949,9 @@ pub mod contract {
         // …and the facts sharing the page are untouched by any of it.
         let facts = store.recall(&bot).await.expect("recall ok");
         assert!(
-            facts.iter().any(|f| f.id == fact.id && f.content == "answers before noon"),
+            facts
+                .iter()
+                .any(|f| f.id == fact.id && f.content == "answers before noon"),
             "a prose write must not disturb the facts beside it: {facts:?}"
         );
 
@@ -931,7 +992,10 @@ pub mod contract {
         // The words on their own, not on a line of their own, are just words.
         let mentioning = "the facts table is at the bottom of this page";
         assert_eq!(
-            store.set_prose(&bot, mentioning).await.expect("ordinary prose"),
+            store
+                .set_prose(&bot, mentioning)
+                .await
+                .expect("ordinary prose"),
             mentioning,
             "a sentence that merely mentions facts is prose"
         );
@@ -962,8 +1026,16 @@ pub mod contract {
     pub async fn list_entities_filters_by_kind<M: Memory>(store: &M) {
         let place = EntityId::new(EntityKind::Place, "contract-north-trail");
         let topic = EntityId::new(EntityKind::Topic, "contract-widgets");
-        add(store, NewEntity::new(place.clone(), "North Trail", "user-named")).await;
-        add(store, NewEntity::new(topic.clone(), "Widgets", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(place.clone(), "North Trail", "user-named"),
+        )
+        .await;
+        add(
+            store,
+            NewEntity::new(topic.clone(), "Widgets", "user-named"),
+        )
+        .await;
 
         let places = store
             .list_entities(Some(EntityKind::Place))
@@ -996,7 +1068,10 @@ pub mod contract {
             .written()
             .expect("the guard must not block an uncontested rename");
         assert_eq!(updated.id, id, "the handle is immutable");
-        assert_eq!(updated.source, "user-named", "an omitted field is left alone");
+        assert_eq!(
+            updated.source, "user-named",
+            "an omitted field is left alone"
+        );
 
         let seen = read_entity(store, &id).await;
         assert_eq!(seen.name, "Red Bike (the gravel one)");
@@ -1010,13 +1085,24 @@ pub mod contract {
     pub async fn update_entity_screens_a_colliding_rename<M: Memory>(store: &M) {
         let first = EntityId::person("contract-renamed-onto");
         let second = EntityId::person("contract-renamer");
-        add(store, NewEntity::new(first.clone(), "Renamed Onto", "user-named")).await;
-        add(store, NewEntity::new(second.clone(), "Renamer", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(first.clone(), "Renamed Onto", "user-named"),
+        )
+        .await;
+        add(
+            store,
+            NewEntity::new(second.clone(), "Renamer", "user-named"),
+        )
+        .await;
 
         let outcome = store
             .update_entity(
                 &second,
-                EntityPatch { name: Some("Renamed Onto".into()), ..Default::default() },
+                EntityPatch {
+                    name: Some("Renamed Onto".into()),
+                    ..Default::default()
+                },
             )
             .await
             .expect("the call itself succeeds; the guard answers in the result");
@@ -1079,7 +1165,10 @@ pub mod contract {
         let renamed = store
             .update_entity(
                 &neighbour,
-                EntityPatch { name: Some("Quite Another Three".into()), ..Default::default() },
+                EntityPatch {
+                    name: Some("Quite Another Three".into()),
+                    ..Default::default()
+                },
             )
             .await
             .expect("update_entity should succeed")
@@ -1097,9 +1186,17 @@ pub mod contract {
     /// and search then indexed two entities answering to one word.
     pub async fn update_entity_screens_a_colliding_alias<M: Memory>(store: &M) {
         let owner = EntityId::person("contract-alias-owner");
-        add(store, NewEntity::new(owner.clone(), "Contract Alias Owner", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(owner.clone(), "Contract Alias Owner", "user-named"),
+        )
+        .await;
         let borrower = EntityId::person("contract-alias-borrower");
-        add(store, NewEntity::new(borrower.clone(), "Contract Alias Borrower", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(borrower.clone(), "Contract Alias Borrower", "user-named"),
+        )
+        .await;
 
         let outcome = store
             .update_entity(
@@ -1185,7 +1282,11 @@ pub mod contract {
     /// permanently uneditable in every other field.
     pub async fn update_entity_without_a_rename_is_not_screened<M: Memory>(store: &M) {
         let first = EntityId::new(EntityKind::Org, "contract-unscreened");
-        add(store, NewEntity::new(first.clone(), "Unscreened Org", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(first.clone(), "Unscreened Org", "user-named"),
+        )
+        .await;
         // A second entity that legitimately shares the name — settled once, at
         // creation, with the explicit signal. That settlement must not be
         // re-litigated by a patch that touches no label at all.
@@ -1202,14 +1303,20 @@ pub mod contract {
         let metadata_only = store
             .update_entity(
                 &twin,
-                EntityPatch { source: Some("crm-card".into()), ..Default::default() },
+                EntityPatch {
+                    source: Some("crm-card".into()),
+                    ..Default::default()
+                },
             )
             .await
             .expect("update should succeed")
             .written()
             .expect("a patch that renames nothing is not a rename");
         assert_eq!(metadata_only.source, "crm-card");
-        assert_eq!(metadata_only.name, "Unscreened Org", "and it left the name alone");
+        assert_eq!(
+            metadata_only.name, "Unscreened Org",
+            "and it left the name alone"
+        );
     }
 
     /// Updating an entity that doesn't exist errors with the nearest candidates
@@ -1217,14 +1324,22 @@ pub mod contract {
     pub async fn update_entity_unknown_handle_never_creates<M: Memory>(store: &M) {
         let ghost = EntityId::new(EntityKind::Thing, "contract-red-bikee");
         let err = store
-            .update_entity(&ghost, EntityPatch { name: Some("nope".into()), ..Default::default() })
+            .update_entity(
+                &ghost,
+                EntityPatch {
+                    name: Some("nope".into()),
+                    ..Default::default()
+                },
+            )
             .await
             .expect_err("an unknown handle must error");
         let MemoryError::UnknownEntity { nearest, .. } = &err else {
             panic!("expected UnknownEntity, got {err:?}");
         };
         assert!(
-            nearest.iter().any(|m| m.handle.slug() == "contract-red-bike"),
+            nearest
+                .iter()
+                .any(|m| m.handle.slug() == "contract-red-bike"),
             "the error must name the near miss: {nearest:?}"
         );
         assert!(
@@ -1252,7 +1367,10 @@ pub mod contract {
         .await;
         let seen = read_back(store, &subject, &captured.id).await;
         let address = seen.address();
-        assert_eq!(address.home, subject, "a fact's home is the doc it lives in");
+        assert_eq!(
+            address.home, subject,
+            "a fact's home is the doc it lives in"
+        );
         assert_eq!(
             FactAddress::parse(&address.to_string()).expect("the address must round-trip"),
             address
@@ -1261,7 +1379,10 @@ pub mod contract {
         let updated = edit(
             store,
             &address,
-            FactPatch { content: Some("addressed and edited".into()), ..Default::default() },
+            FactPatch {
+                content: Some("addressed and edited".into()),
+                ..Default::default()
+            },
         )
         .await;
         assert_eq!(updated.content, "addressed and edited");
@@ -1315,7 +1436,11 @@ pub mod contract {
         let subject = EntityId::person("contract-refutable");
         let captured = capture(
             store,
-            NewFact::about(subject.clone(), "a close contact of the user", date(2026, 7, 1)),
+            NewFact::about(
+                subject.clone(),
+                "a close contact of the user",
+                date(2026, 7, 1),
+            ),
         )
         .await;
         let refuted = edit(
@@ -1327,15 +1452,24 @@ pub mod contract {
             },
         )
         .await;
-        assert_eq!(refuted.id, captured.id, "the row is rewritten, not replaced");
+        assert_eq!(
+            refuted.id, captured.id,
+            "the row is rewritten, not replaced"
+        );
 
         let seen = read_back(store, &subject, &captured.id).await;
-        assert_eq!(seen.status, FactStatus::Active, "the negative truth is the truth");
+        assert_eq!(
+            seen.status,
+            FactStatus::Active,
+            "the negative truth is the truth"
+        );
         assert!(seen.content.starts_with("NOT a close contact"));
 
         let facts = store.recall(&subject).await.expect("recall");
         assert!(
-            !facts.iter().any(|f| f.content == "a close contact of the user"),
+            !facts
+                .iter()
+                .any(|f| f.content == "a close contact of the user"),
             "the refuted claim is gone from the page, not flagged beside it: {facts:?}"
         );
     }
@@ -1354,7 +1488,10 @@ pub mod contract {
         let err = store
             .update_fact(
                 &captured.address(),
-                FactPatch { provenance: Some(Provenance::Testimony), ..Default::default() },
+                FactPatch {
+                    provenance: Some(Provenance::Testimony),
+                    ..Default::default()
+                },
             )
             .await
             .expect_err("an unconfirmed promotion must be refused");
@@ -1399,7 +1536,10 @@ pub mod contract {
         let demoted = edit(
             store,
             &captured.address(),
-            FactPatch { provenance: Some(Provenance::Inference), ..Default::default() },
+            FactPatch {
+                provenance: Some(Provenance::Inference),
+                ..Default::default()
+            },
         )
         .await;
         assert_eq!(demoted.provenance, Provenance::Inference);
@@ -1416,7 +1556,13 @@ pub mod contract {
         .await;
         let ghost = FactAddress::new(subject.clone(), FactId("f999".into()));
         let err = store
-            .update_fact(&ghost, FactPatch { content: Some("nope".into()), ..Default::default() })
+            .update_fact(
+                &ghost,
+                FactPatch {
+                    content: Some("nope".into()),
+                    ..Default::default()
+                },
+            )
             .await
             .expect_err("an unknown address must error");
         let MemoryError::UnknownFact { nearest, .. } = &err else {
@@ -1441,9 +1587,16 @@ pub mod contract {
     /// does, and a known entity that simply holds no rows says so plainly.
     pub async fn update_fact_tells_an_unknown_handle_from_an_empty_entity<M: Memory>(store: &M) {
         let known = EntityId::person("contract-addressee");
-        add(store, NewEntity::new(known.clone(), "Addressee", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(known.clone(), "Addressee", "user-named"),
+        )
+        .await;
 
-        let nudge = || FactPatch { content: Some("nope".into()), ..Default::default() };
+        let nudge = || FactPatch {
+            content: Some("nope".into()),
+            ..Default::default()
+        };
 
         let typo = EntityId::person("contract-addresse");
         let err = store
@@ -1460,13 +1613,19 @@ pub mod contract {
 
         // The entity is real; it just has nothing in it yet.
         let err = store
-            .update_fact(&FactAddress::new(known.clone(), FactId("f1".into())), nudge())
+            .update_fact(
+                &FactAddress::new(known.clone(), FactId("f1".into())),
+                nudge(),
+            )
             .await
             .expect_err("an address on an entity with no facts must error");
         let MemoryError::UnknownFact { nearest, .. } = &err else {
             panic!("a real entity with no rows is a fact miss, got {err:?}");
         };
-        assert!(nearest.is_empty(), "there are no addresses to list: {nearest:?}");
+        assert!(
+            nearest.is_empty(),
+            "there are no addresses to list: {nearest:?}"
+        );
         assert!(
             !err.to_string().trim_end().ends_with(':'),
             "the message must not trail off into an empty list: {err}"
@@ -1485,7 +1644,10 @@ pub mod contract {
         let MemoryError::UnknownFact { nearest, .. } = &err else {
             panic!("expected UnknownFact, got {err:?}");
         };
-        assert!(nearest.contains(&real.address().to_string()), "got {nearest:?}");
+        assert!(
+            nearest.contains(&real.address().to_string()),
+            "got {nearest:?}"
+        );
     }
 
     // --- structured edges at capture -----------------------------------------
@@ -1495,19 +1657,29 @@ pub mod contract {
     /// prose, so it is bound by the same read-back invariant as the row itself.
     pub async fn capture_writes_an_edge_that_reads_back<M: Memory>(store: &M) {
         let subject = EntityId::person("contract-edged");
-        let edge = Edge::new(EdgeShape::Location, EntityId::new(EntityKind::Place, "contract-far-country"));
+        let edge = Edge::new(
+            EdgeShape::Location,
+            EntityId::new(EntityKind::Place, "contract-far-country"),
+        );
         let captured = capture(
             store,
             NewFact {
                 edge: Some(edge.clone()),
-                ..NewFact::about(subject.clone(), "spending the winter away", date(2026, 7, 1))
+                ..NewFact::about(
+                    subject.clone(),
+                    "spending the winter away",
+                    date(2026, 7, 1),
+                )
             },
         )
         .await;
         assert_eq!(captured.edge.as_ref(), Some(&edge));
 
         let seen = read_back(store, &subject, &captured.id).await;
-        assert_eq!(seen, captured, "the edge must survive read-back byte-identical");
+        assert_eq!(
+            seen, captured,
+            "the edge must survive read-back byte-identical"
+        );
         assert_eq!(seen.edge.map(|e| e.object), Some(edge.object));
     }
 
@@ -1526,7 +1698,11 @@ pub mod contract {
                 store,
                 NewFact {
                     edge: Some(Edge::new(shape, object.clone())),
-                    ..NewFact::about(subject.clone(), format!("a {shape} claim"), date(2026, 7, 1))
+                    ..NewFact::about(
+                        subject.clone(),
+                        format!("a {shape} claim"),
+                        date(2026, 7, 1),
+                    )
                 },
             )
             .await;
@@ -1558,7 +1734,10 @@ pub mod contract {
         let err = store
             .capture(NewFact {
                 // A `location` must point at a place; this one points at a person.
-                edge: Some(Edge::new(EdgeShape::Location, EntityId::person("contract-alpha"))),
+                edge: Some(Edge::new(
+                    EdgeShape::Location,
+                    EntityId::person("contract-alpha"),
+                )),
                 ..NewFact::about(subject.clone(), "should never be stored", date(2026, 7, 1))
             })
             .await
@@ -1573,12 +1752,20 @@ pub mod contract {
     /// wrong. It comes back as candidates instead, and nothing is written.
     pub async fn an_edge_object_is_screened_by_the_guard<M: Memory>(store: &M) {
         let object = EntityId::new(EntityKind::Place, "contract-riverbend");
-        add(store, NewEntity::new(object.clone(), "Riverbend", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(object.clone(), "Riverbend", "user-named"),
+        )
+        .await;
 
         let subject = EntityId::person("contract-edge-guarded");
         // The subject faces the gate too, so it is provisioned first: this spec
         // is about the object, and the guard reports the first handle it stops.
-        add(store, NewEntity::new(subject.clone(), "Edge Guarded", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(subject.clone(), "Edge Guarded", "user-named"),
+        )
+        .await;
 
         let typo = EntityId::new(EntityKind::Place, "contract-riverbnd");
         let outcome = store
@@ -1588,7 +1775,11 @@ pub mod contract {
             })
             .await
             .expect("the call itself succeeds; the guard answers in the result");
-        let Guarded::Blocked { attempted, candidates } = outcome else {
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = outcome
+        else {
             panic!("a near-miss edge object must be reported");
         };
         assert_eq!(attempted, typo, "the guard names the handle it stopped");
@@ -1628,7 +1819,10 @@ pub mod contract {
         let updated = edit(
             store,
             &captured.address(),
-            FactPatch { edge: Some(edge.clone()), ..Default::default() },
+            FactPatch {
+                edge: Some(edge.clone()),
+                ..Default::default()
+            },
         )
         .await;
         assert_eq!(updated.edge.as_ref(), Some(&edge));
@@ -1660,18 +1854,28 @@ pub mod contract {
                 panic!("a colliding handle must be blocked (create_new={create_new})");
             };
             assert_eq!(candidates[0].reason, guard::MatchReason::ExactHandle);
-            assert_eq!(candidates[0].source, "crm-card", "the caller decides on the source");
+            assert_eq!(
+                candidates[0].source, "crm-card",
+                "the caller decides on the source"
+            );
         }
 
         let seen = read_entity(store, &id).await;
-        assert_eq!(seen.name, "Alpha", "the blocked write must not have overwritten anything");
+        assert_eq!(
+            seen.name, "Alpha",
+            "the blocked write must not have overwritten anything"
+        );
     }
 
     /// A near-miss handle is reported, and the explicit create-new signal is
     /// what lets a genuinely different entity through.
     pub async fn add_entity_reports_a_near_miss_then_accepts_create_new<M: Memory>(store: &M) {
         let first = EntityId::new(EntityKind::Org, "contract-riverside");
-        add(store, NewEntity::new(first.clone(), "Riverside", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(first.clone(), "Riverside", "user-named"),
+        )
+        .await;
 
         let typo = EntityId::new(EntityKind::Org, "contract-riversid");
         let outcome = store
@@ -1694,7 +1898,10 @@ pub mod contract {
 
         let forced = add(
             store,
-            NewEntity { create_new: true, ..NewEntity::new(typo.clone(), "Riversid", "user-named") },
+            NewEntity {
+                create_new: true,
+                ..NewEntity::new(typo.clone(), "Riversid", "user-named")
+            },
         )
         .await;
         assert_eq!(forced.id, typo);
@@ -1715,31 +1922,53 @@ pub mod contract {
 
         // A fact about an entity that exists: waved straight through, always —
         // otherwise every second fact about someone would need confirming.
-        capture(store, NewFact::about(known.clone(), "likes long walks", date(2026, 7, 1))).await;
+        capture(
+            store,
+            NewFact::about(known.clone(), "likes long walks", date(2026, 7, 1)),
+        )
+        .await;
 
         // A near miss comes back with the candidate that explains it…
         let typo = EntityId::person("contract-zenit");
         let outcome = store
-            .capture(NewFact::about(typo.clone(), "should not land", date(2026, 7, 1)))
+            .capture(NewFact::about(
+                typo.clone(),
+                "should not land",
+                date(2026, 7, 1),
+            ))
             .await
             .expect("the call itself succeeds; the guard answers in the result");
         let Guarded::Blocked { candidates, .. } = outcome else {
             panic!("a near-miss subject must be reported, never provisioned");
         };
-        assert!(candidates.iter().any(|m| m.handle == known), "got {candidates:?}");
+        assert!(
+            candidates.iter().any(|m| m.handle == known),
+            "got {candidates:?}"
+        );
 
         // …and a handle nothing resembles blocks just the same, with nothing to
         // suggest. This is the case that used to sail through and provision.
         let stranger = EntityId::new(EntityKind::Work, "contract-first-mix");
         let outcome = store
-            .capture(NewFact::about(stranger.clone(), "32 tracks", date(2026, 7, 1)))
+            .capture(NewFact::about(
+                stranger.clone(),
+                "32 tracks",
+                date(2026, 7, 1),
+            ))
             .await
             .expect("the call itself succeeds; the guard answers in the result");
-        let Guarded::Blocked { attempted, candidates } = outcome else {
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = outcome
+        else {
             panic!("an unknown subject must block even with no near match");
         };
         assert_eq!(attempted, stranger, "the guard names the handle it stopped");
-        assert!(candidates.is_empty(), "nothing resembles it: {candidates:?}");
+        assert!(
+            candidates.is_empty(),
+            "nothing resembles it: {candidates:?}"
+        );
 
         for blocked in [&typo, &stranger] {
             assert_nothing_recorded(store, blocked).await;
@@ -1758,14 +1987,21 @@ pub mod contract {
         }
 
         // The way through is to mean it: add the entity, then capture.
-        add(store, NewEntity::new(stranger.clone(), "First Mix", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(stranger.clone(), "First Mix", "user-named"),
+        )
+        .await;
         let landed = capture(
             store,
             NewFact::about(stranger.clone(), "32 tracks", date(2026, 7, 1)),
         )
         .await;
         assert_eq!(landed.subject, stranger);
-        assert_eq!(read_back(store, &stranger, &landed.id).await.content, "32 tracks");
+        assert_eq!(
+            read_back(store, &stranger, &landed.id).await.content,
+            "32 tracks"
+        );
         assert_eq!(
             read_entity(store, &stranger).await.source,
             "user-named",
@@ -1779,7 +2015,11 @@ pub mod contract {
     /// walk comes back empty, and nothing looks wrong.
     pub async fn capture_requires_an_existing_edge_object<M: Memory>(store: &M) {
         let subject = EntityId::person("contract-edge-stranger");
-        add(store, NewEntity::new(subject.clone(), "Edge Stranger", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(subject.clone(), "Edge Stranger", "user-named"),
+        )
+        .await;
 
         let stranger = EntityId::new(EntityKind::Event, "contract-unheard-of-fest");
         let outcome = store
@@ -1789,11 +2029,18 @@ pub mod contract {
             })
             .await
             .expect("the call itself succeeds; the guard answers in the result");
-        let Guarded::Blocked { attempted, candidates } = outcome else {
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = outcome
+        else {
             panic!("an unknown edge object must block even with no near match");
         };
         assert_eq!(attempted, stranger);
-        assert!(candidates.is_empty(), "nothing resembles it: {candidates:?}");
+        assert!(
+            candidates.is_empty(),
+            "nothing resembles it: {candidates:?}"
+        );
         assert_nothing_recorded(store, &subject).await;
         assert!(
             store
@@ -1805,7 +2052,11 @@ pub mod contract {
             "…and must not have provisioned the object either"
         );
 
-        add(store, NewEntity::new(stranger.clone(), "Unheard-of Fest", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(stranger.clone(), "Unheard-of Fest", "user-named"),
+        )
+        .await;
         let landed = capture(
             store,
             NewFact {
@@ -1841,11 +2092,18 @@ pub mod contract {
             )
             .await
             .expect("the call itself succeeds; the guard answers in the result");
-        let Guarded::Blocked { attempted, candidates } = outcome else {
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = outcome
+        else {
             panic!("an edge object that names no entity must block the edit");
         };
         assert_eq!(attempted, stranger, "the guard names the handle it stopped");
-        assert!(candidates.is_empty(), "nothing resembles it: {candidates:?}");
+        assert!(
+            candidates.is_empty(),
+            "nothing resembles it: {candidates:?}"
+        );
 
         assert_eq!(
             read_back(store, &subject, &captured.id).await.edge,
@@ -1863,7 +2121,11 @@ pub mod contract {
         );
 
         // Two deliberate steps, here as everywhere: add the entity, then write.
-        add(store, NewEntity::new(stranger.clone(), "Nowhere In Particular", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(stranger.clone(), "Nowhere In Particular", "user-named"),
+        )
+        .await;
         let landed = edit(
             store,
             &captured.address(),
@@ -1890,21 +2152,37 @@ pub mod contract {
         )
         .await;
         assert_eq!(added.aliases, vec!["Contract Nickname", "C.M.N."]);
-        assert_eq!(read_entity(store, &id).await, added, "…on the read path too");
+        assert_eq!(
+            read_entity(store, &id).await,
+            added,
+            "…on the read path too"
+        );
 
         // The set is replaced whole, and an omitted field is left alone.
         let renamed = store
-            .update_entity(&id, EntityPatch { source: Some("crm-card".into()), ..Default::default() })
+            .update_entity(
+                &id,
+                EntityPatch {
+                    source: Some("crm-card".into()),
+                    ..Default::default()
+                },
+            )
             .await
             .expect("update ok")
             .written()
             .expect("not blocked");
-        assert_eq!(renamed.aliases, added.aliases, "an omitted alias set is untouched");
+        assert_eq!(
+            renamed.aliases, added.aliases,
+            "an omitted alias set is untouched"
+        );
 
         let replaced = store
             .update_entity(
                 &id,
-                EntityPatch { aliases: Some(vec!["Only This One".into()]), ..Default::default() },
+                EntityPatch {
+                    aliases: Some(vec!["Only This One".into()]),
+                    ..Default::default()
+                },
             )
             .await
             .expect("update ok")
@@ -1921,7 +2199,10 @@ pub mod contract {
         let err = store
             .update_entity(
                 &id,
-                EntityPatch { aliases: Some(vec!["one, two".into()]), ..Default::default() },
+                EntityPatch {
+                    aliases: Some(vec!["one, two".into()]),
+                    ..Default::default()
+                },
             )
             .await
             .expect_err("an alias with a comma in it must be refused");
@@ -2027,12 +2308,19 @@ pub mod contract {
         let subject = EntityId::person("contract-searchable");
         let captured = capture(
             store,
-            NewFact::about(subject.clone(), "keeps a zamboni in the garage", date(2026, 7, 1)),
+            NewFact::about(
+                subject.clone(),
+                "keeps a zamboni in the garage",
+                date(2026, 7, 1),
+            ),
         )
         .await;
 
         let hits = found(store, SearchQuery::text("zamboni"));
-        let addresses: Vec<String> = fact_hits(&hits).iter().map(|f| f.address().to_string()).collect();
+        let addresses: Vec<String> = fact_hits(&hits)
+            .iter()
+            .map(|f| f.address().to_string())
+            .collect();
         assert!(
             addresses.contains(&captured.address().to_string()),
             "the fact just captured must be findable without a restart: {hits:?}"
@@ -2062,7 +2350,11 @@ pub mod contract {
             .unwrap_or_else(|| panic!("the captured fact must come back: {hits:?}"));
         assert_eq!(found_fact.provenance, Provenance::Testimony);
         assert_eq!(found_fact.details.as_deref(), Some("said so twice"));
-        assert_eq!(found_fact.address().home, subject, "the address names its home doc");
+        assert_eq!(
+            found_fact.address().home,
+            subject,
+            "the address names its home doc"
+        );
         assert_eq!(found_fact.address().local, found_fact.id);
     }
 
@@ -2073,7 +2365,9 @@ pub mod contract {
     ///
     /// This is the default-exclusion contract; only the negated variant had one
     /// before, and that variant is gone.
-    pub async fn search_excludes_superseded_by_default_and_lists_it_on_request<S: Memory + Search>(
+    pub async fn search_excludes_superseded_by_default_and_lists_it_on_request<
+        S: Memory + Search,
+    >(
         store: &S,
     ) {
         let subject = EntityId::person("contract-search-superseded");
@@ -2084,18 +2378,28 @@ pub mod contract {
         .await;
         let retired = capture(
             store,
-            NewFact::about(subject.clone(), "plays the theremin on Tuesdays", date(2026, 7, 2)),
+            NewFact::about(
+                subject.clone(),
+                "plays the theremin on Tuesdays",
+                date(2026, 7, 2),
+            ),
         )
         .await;
         edit(
             store,
             &retired.address(),
-            FactPatch { status: Some(FactStatus::Superseded), ..Default::default() },
+            FactPatch {
+                status: Some(FactStatus::Superseded),
+                ..Default::default()
+            },
         )
         .await;
 
         let default = found(store, SearchQuery::text("theremin"));
-        let addresses: Vec<String> = fact_hits(&default).iter().map(|f| f.address().to_string()).collect();
+        let addresses: Vec<String> = fact_hits(&default)
+            .iter()
+            .map(|f| f.address().to_string())
+            .collect();
         assert!(
             addresses.contains(&live.address().to_string()),
             "the active fact must be found: {default:?}"
@@ -2112,7 +2416,10 @@ pub mod contract {
                 ..SearchQuery::text("theremin")
             },
         );
-        let asked_addresses: Vec<String> = fact_hits(&asked).iter().map(|f| f.address().to_string()).collect();
+        let asked_addresses: Vec<String> = fact_hits(&asked)
+            .iter()
+            .map(|f| f.address().to_string())
+            .collect();
         assert!(
             asked_addresses.contains(&retired.address().to_string()),
             "asking for it by name is how a superseded fact is reached: {asked:?}"
@@ -2136,7 +2443,11 @@ pub mod contract {
         let talker = EntityId::person("contract-away-talker");
         capture(
             store,
-            NewFact::about(talker.clone(), "keeps talking about contract-faraway", date(2026, 7, 3)),
+            NewFact::about(
+                talker.clone(),
+                "keeps talking about contract-faraway",
+                date(2026, 7, 3),
+            ),
         )
         .await;
         // …and a place that is edged there but is not a person.
@@ -2145,7 +2456,11 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Location, far.clone())),
-                ..NewFact::about(project.clone(), "runs out of contract-faraway", date(2026, 7, 4))
+                ..NewFact::about(
+                    project.clone(),
+                    "runs out of contract-faraway",
+                    date(2026, 7, 4),
+                )
             },
         )
         .await;
@@ -2183,7 +2498,11 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Attendance, fest.clone())),
-                ..NewFact::about(EntityId::person("contract-conn-one"), "went both nights", date(2026, 7, 1))
+                ..NewFact::about(
+                    EntityId::person("contract-conn-one"),
+                    "went both nights",
+                    date(2026, 7, 1),
+                )
             },
         )
         .await;
@@ -2210,7 +2529,11 @@ pub mod contract {
                     EdgeShape::Attendance,
                     EntityId::new(EntityKind::Event, "contract-connected-other"),
                 )),
-                ..NewFact::about(EntityId::person("contract-conn-two"), "went to the other one", date(2026, 7, 3))
+                ..NewFact::about(
+                    EntityId::person("contract-conn-two"),
+                    "went to the other one",
+                    date(2026, 7, 3),
+                )
             },
         )
         .await;
@@ -2218,11 +2541,17 @@ pub mod contract {
         let hits = found(
             store,
             SearchQuery {
-                edge: Some(EdgeFilter { shape: None, object: fest }),
+                edge: Some(EdgeFilter {
+                    shape: None,
+                    object: fest,
+                }),
                 ..Default::default()
             },
         );
-        let addresses: Vec<String> = fact_hits(&hits).iter().map(|f| f.address().to_string()).collect();
+        let addresses: Vec<String> = fact_hits(&hits)
+            .iter()
+            .map(|f| f.address().to_string())
+            .collect();
         for expected in [attendee.address(), about.address()] {
             assert!(
                 addresses.contains(&expected.to_string()),
@@ -2240,11 +2569,19 @@ pub mod contract {
     /// disagree about what counts as the same thing.
     pub async fn search_pins_a_named_entity_first<S: Memory + Search>(store: &S) {
         let handle = EntityId::new(EntityKind::Org, "contract-pinnable-guild");
-        add(store, NewEntity::new(handle.clone(), "Pinnable Guild", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(handle.clone(), "Pinnable Guild", "user-named"),
+        )
+        .await;
         // Facts that also match the query text, so the pin has something to beat.
         capture(
             store,
-            NewFact::about(handle.clone(), "meets at the contract-pinnable-guild hall", date(2026, 7, 1)),
+            NewFact::about(
+                handle.clone(),
+                "meets at the contract-pinnable-guild hall",
+                date(2026, 7, 1),
+            ),
         )
         .await;
 
@@ -2281,9 +2618,11 @@ pub mod contract {
         let (fact_subject, fact_home) = hits
             .iter()
             .find_map(|h| match h {
-                Hit::Fact { fact, subject: s, home } if fact.subject == subject => {
-                    Some((s.clone(), home.clone()))
-                }
+                Hit::Fact {
+                    fact,
+                    subject: s,
+                    home,
+                } if fact.subject == subject => Some((s.clone(), home.clone())),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("the captured fact must come back: {hits:?}"));
@@ -2318,12 +2657,20 @@ pub mod contract {
     pub async fn search_entity_hits_carry_their_edges<S: Memory + Search>(store: &S) {
         let handle = EntityId::new(EntityKind::Org, "contract-orient-guild");
         let hall = EntityId::new(EntityKind::Place, "contract-orient-hall");
-        add(store, NewEntity::new(handle.clone(), "Orienting Guild", "user-named")).await;
+        add(
+            store,
+            NewEntity::new(handle.clone(), "Orienting Guild", "user-named"),
+        )
+        .await;
         capture(
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Location, hall.clone())),
-                ..NewFact::about(handle.clone(), "meets on the first Sunday", date(2026, 7, 1))
+                ..NewFact::about(
+                    handle.clone(),
+                    "meets on the first Sunday",
+                    date(2026, 7, 1),
+                )
             },
         )
         .await;

@@ -53,7 +53,10 @@ async fn main() -> anyhow::Result<()> {
                 %allowlist,
                 "resource-server auth enabled"
             );
-            (Some(std::sync::Arc::new(validator)), Some(auth_cfg.issuer.clone()))
+            (
+                Some(std::sync::Arc::new(validator)),
+                Some(auth_cfg.issuer.clone()),
+            )
         }
         None => {
             tracing::warn!(
@@ -223,8 +226,7 @@ fn vikunja_from_env() -> Option<VikunjaConfig> {
 fn init_tracing() {
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();

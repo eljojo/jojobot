@@ -100,14 +100,19 @@ impl Provisioner<'_> {
                     "project {project} has no kanban view — columns are where state lives"
                 ))
             })?;
-        let scope = Scope { project, view: view.id };
+        let scope = Scope {
+            project,
+            view: view.id,
+        };
         self.ensure_columns(&scope).await?;
         // A fresh board ships the done flag pointing at its default column, so
         // this cannot be skipped on the assumption it starts unset.
         if let Some(done) = self.done {
             let bucket = self.column(&scope, done).await?;
             if view.done_bucket_id != bucket {
-                self.api.set_view_done_bucket(project, &view, bucket).await?;
+                self.api
+                    .set_view_done_bucket(project, &view, bucket)
+                    .await?;
             }
         }
         Ok(scope)
@@ -172,7 +177,11 @@ impl Provisioner<'_> {
         }
         let created = self
             .api
-            .create_project(PARENT_PROJECT, &format!("jojobot's home. {OWNER_TAG}"), None)
+            .create_project(
+                PARENT_PROJECT,
+                &format!("jojobot's home. {OWNER_TAG}"),
+                None,
+            )
             .await?;
         Ok(Some(created.id))
     }

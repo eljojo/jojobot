@@ -29,16 +29,16 @@ use jojobot_domain::mailbox::{
     self, Delivered, Delivery, Mailbox, MailboxError, MailboxName, Mailboxes, Message, MessageId,
     NewMessage, guard::MailboxMatch,
 };
-use jojobot_domain::session::{
-    EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionState,
-    Sessions,
-};
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
     FactStatus, Guarded, JOURNAL_TITLE, Memory, MemoryError, NewEntity, NewFact, Provenance,
     guard::{self, EntityMatch},
     search::{DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, MailCoverage, Search, SearchQuery},
     validate_edge,
+};
+use jojobot_domain::session::{
+    EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionState,
+    Sessions,
 };
 use jojobot_domain::text::{self, FRESH_FOCUS};
 use rmcp::{
@@ -687,7 +687,11 @@ impl Jojobot {
         Parameters(args): Parameters<OrientArgs>,
     ) -> Result<CallToolResult, McpError> {
         let bot = named_bot(args.bot.as_deref())?;
-        let resume = args.resume.as_deref().map(str::trim).filter(|r| !r.is_empty());
+        let resume = args
+            .resume
+            .as_deref()
+            .map(str::trim)
+            .filter(|r| !r.is_empty());
         // **An answer with nobody to answer for.** `resume` responds to an
         // offer only a named boot makes, so carrying one without a bot is a
         // malformed call rather than an absence — there is no session it could
@@ -1009,7 +1013,11 @@ impl Jojobot {
         // Taken here rather than in `sweep_and_find`, which the first-write
         // retry calls with the gate already held — the mutex is not reentrant.
         let _serialized = self.session_gate.lock().await;
-        let Board { live, offerable, swept } = match self.sweep_and_find(bot).await {
+        let Board {
+            live,
+            offerable,
+            swept,
+        } = match self.sweep_and_find(bot).await {
             Ok(found) => found,
             Err(e) => {
                 tracing::warn!(error = %e, bot = %bot, "the session world is not reachable");
@@ -1355,7 +1363,11 @@ impl Jojobot {
 
         let mut swept = Vec::new();
         for stale in existing.iter().filter(|s| s.is_stale(now)) {
-            match self.sessions.close(&stale.id, SessionState::Abandoned).await {
+            match self
+                .sessions
+                .close(&stale.id, SessionState::Abandoned)
+                .await
+            {
                 Ok(_) => swept.push(stale.id.to_string()),
                 // A sweep that cannot close one session must not stop a boot:
                 // the session is left active and the next boot tries again.
@@ -1379,11 +1391,18 @@ impl Jojobot {
         let offerable = existing
             .into_iter()
             .map(|s| match swept.contains(&s.id.to_string()) {
-                true => Session { state: SessionState::Abandoned, ..s },
+                true => Session {
+                    state: SessionState::Abandoned,
+                    ..s
+                },
                 false => s,
             })
             .find(|s| s.is_offerable(now));
-        Ok(Board { live, offerable, swept })
+        Ok(Board {
+            live,
+            offerable,
+            swept,
+        })
     }
 
     /// Record what a sweep found on this connection — **only when it is this
@@ -1632,7 +1651,10 @@ impl Jojobot {
             // A class with no phrase would render a beat nothing can read back,
             // so it writes none at all rather than one that breaks the tally on
             // the next reconnect.
-            tracing::warn!(class, "no beat phrase for this verb class — no beat written");
+            tracing::warn!(
+                class,
+                "no beat phrase for this verb class — no beat written"
+            );
             return;
         };
         let _serialized = self.session_gate.lock().await;
@@ -1653,7 +1675,8 @@ impl Jojobot {
         let outcome = match held {
             Some(mut beat) => {
                 beat.count += 1;
-                if beat.examples.len() < BEAT_EXAMPLES && !beat.examples.iter().any(|e| e == example)
+                if beat.examples.len() < BEAT_EXAMPLES
+                    && !beat.examples.iter().any(|e| e == example)
                 {
                     beat.examples.push(example.to_string());
                 }
@@ -1672,9 +1695,20 @@ impl Jojobot {
                 };
                 let text = beat_text(phrase, &beat);
                 self.sessions
-                    .append(&session, NewEntry::beat(class, text, jiff::Timestamp::now()))
+                    .append(
+                        &session,
+                        NewEntry::beat(class, text, jiff::Timestamp::now()),
+                    )
                     .await
-                    .map(|entry| (class, Beat { entry: entry.id, ..beat }))
+                    .map(|entry| {
+                        (
+                            class,
+                            Beat {
+                                entry: entry.id,
+                                ..beat
+                            },
+                        )
+                    })
             }
         };
         match outcome {
@@ -1850,7 +1884,11 @@ impl Jojobot {
             text: args.query,
             kind: args.kind.as_deref().map(parse_kind).transpose()?,
             status: args.status.as_deref().map(parse_status).transpose()?,
-            provenance: args.provenance.as_deref().map(parse_one_provenance).transpose()?,
+            provenance: args
+                .provenance
+                .as_deref()
+                .map(parse_one_provenance)
+                .transpose()?,
             subject: args.subject.as_deref().map(EntityId::person),
             edge,
             include_mail: args.include_mail.unwrap_or(true),
@@ -1880,7 +1918,11 @@ impl Jojobot {
         Parameters(args): Parameters<ListEntitiesArgs>,
     ) -> Result<CallToolResult, McpError> {
         let kind = args.kind.as_deref().map(parse_kind).transpose()?;
-        let entities = self.memory.list_entities(kind).await.map_err(memory_error)?;
+        let entities = self
+            .memory
+            .list_entities(kind)
+            .await
+            .map_err(memory_error)?;
         let body = serde_json::json!({
             "count": entities.len(),
             "entities": entities.iter().map(entity_json).collect::<Vec<_>>(),
@@ -2041,7 +2083,11 @@ impl Jojobot {
             content: args.content,
             details: args.details,
             status: args.status.as_deref().map(parse_status).transpose()?,
-            provenance: args.provenance.as_deref().map(parse_one_provenance).transpose()?,
+            provenance: args
+                .provenance
+                .as_deref()
+                .map(parse_one_provenance)
+                .transpose()?,
             confirmed_by_user: args.confirmed_by_user.unwrap_or(false),
             edge: parse_edge(args.shape.as_deref(), args.object.as_deref())?,
         };
@@ -2094,7 +2140,11 @@ impl Jojobot {
             mailbox::Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(mailbox_blocked(&attempted, &candidates, BlockedBox::Creating)),
+            } => Ok(mailbox_blocked(
+                &attempted,
+                &candidates,
+                BlockedBox::Creating,
+            )),
         }
     }
 
@@ -2169,7 +2219,11 @@ impl Jojobot {
     /// `Err` here carries the guards' own blocked shape, so a caller branches
     /// once on `status` whichever door they came through.
     async fn known_bot(&self, bot: &EntityId) -> Result<Result<(), CallToolResult>, McpError> {
-        let index = self.memory.list_entities(None).await.map_err(memory_error)?;
+        let index = self
+            .memory
+            .list_entities(None)
+            .await
+            .map_err(memory_error)?;
         if index.iter().any(|e| &e.id == bot) {
             return Ok(Ok(()));
         }
@@ -2205,7 +2259,12 @@ impl Jojobot {
     fn ownership_of(&self, index: &[Entity], named: Option<&EntityId>) -> Ownership {
         let bot = match named {
             Some(bot) => Some(bot.clone()),
-            None => self.bound.read().expect("binding poisoned").as_ref().map(|b| b.bot.clone()),
+            None => self
+                .bound
+                .read()
+                .expect("binding poisoned")
+                .as_ref()
+                .map(|b| b.bot.clone()),
         };
         // **An unclaimed box has no queue to protect.** The scoping shields a
         // DRAINER's workload from everybody else; a box nobody owns has no
@@ -2328,9 +2387,7 @@ impl Jojobot {
             .await
             .map_err(mailbox_error)?
         {
-            mailbox::Guarded::Written(delivery) => {
-                json_result(&delivery_json(&delivery, new_only))
-            }
+            mailbox::Guarded::Written(delivery) => json_result(&delivery_json(&delivery, new_only)),
             mailbox::Guarded::Blocked {
                 attempted,
                 candidates,
@@ -2386,7 +2443,10 @@ impl Jojobot {
         };
         let entry = match self
             .sessions
-            .append(&session, NewEntry::manual(args.entry, jiff::Timestamp::now()))
+            .append(
+                &session,
+                NewEntry::manual(args.entry, jiff::Timestamp::now()),
+            )
             .await
         {
             Ok(entry) => entry,
@@ -2438,7 +2498,12 @@ impl Jojobot {
         // retries the attach here rather than answering "no entries" about a
         // session it never looked for. Unknown is not false.
         let named = named_bot(args.bot.as_deref())?;
-        let session = match args.session.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let session = match args
+            .session
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             Some(id) => SessionId(id.to_string()),
             // A named identity is resolved from the board, exactly as the other
             // two verbs resolve it — the caller may have no connection carrying
@@ -2552,7 +2617,12 @@ impl Jojobot {
         // the two is a beat saying the wrap failed — which made the story no
         // longer the newest entry, and the retry told it again.
         let already = match self.sessions.read_session(&session).await {
-            Ok(read) => read.entries.iter().rev().find(|e| !e.is_auto() && e.text == story).cloned(),
+            Ok(read) => read
+                .entries
+                .iter()
+                .rev()
+                .find(|e| !e.is_auto() && e.text == story)
+                .cloned(),
             // Not fatal: an unreadable session fails the append below, in that
             // verb's own words rather than this guard's.
             Err(_) => None,
@@ -2569,7 +2639,9 @@ impl Jojobot {
             },
         };
 
-        let today = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date();
+        let today = jiff::Timestamp::now()
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .date();
         // The entry carries the session's mark, which is what a retry looks for.
         // It is also the one thing a reader of the Journal cannot recover
         // otherwise: which run of which bot wrote this.
@@ -2636,7 +2708,11 @@ impl Jojobot {
         Parameters(args): Parameters<ListSentArgs>,
     ) -> Result<CallToolResult, McpError> {
         let sender = args.sender.trim();
-        let only = args.mailbox.as_deref().map(str::trim).filter(|m| !m.is_empty());
+        let only = args
+            .mailbox
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty());
         let bodies = args.include_bodies.unwrap_or(false);
 
         // **A named box must exist, exactly as it must for every other verb
@@ -2646,7 +2722,11 @@ impl Jojobot {
         // read-side twin of "a typo must never mint a box".
         if let Some(name) = only {
             let name = MailboxName(name.to_string());
-            let known = self.mailboxes.list_mailboxes().await.map_err(mailbox_error)?;
+            let known = self
+                .mailboxes
+                .list_mailboxes()
+                .await
+                .map_err(mailbox_error)?;
             let names: Vec<MailboxName> = known.iter().map(|b| b.name.clone()).collect();
             if let mailbox::guard::Decision::Block(candidates) =
                 mailbox::guard::decide_existing(&name, &names)
@@ -2676,7 +2756,9 @@ impl Jojobot {
         // board read and the fake both avoid deliberately.
         let minted = |id: &MessageId| id.as_str().parse::<u64>().unwrap_or(u64::MAX);
         sent.sort_by(|a, b| {
-            b.sent_at.cmp(&a.sent_at).then_with(|| minted(&b.id).cmp(&minted(&a.id)))
+            b.sent_at
+                .cmp(&a.sent_at)
+                .then_with(|| minted(&b.id).cmp(&minted(&a.id)))
         });
 
         // **A card jojobot cannot read is not a message that was never sent.**
@@ -2786,8 +2868,16 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         let id = MessageId(args.message_id.trim().to_string());
         // What the caller asked to record, blank-is-absent.
-        let asked = args.notes.as_deref().map(str::trim).filter(|n| !n.is_empty());
-        match self.mailboxes.mark_processed(&id, args.notes.as_deref()).await {
+        let asked = args
+            .notes
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty());
+        match self
+            .mailboxes
+            .mark_processed(&id, args.notes.as_deref())
+            .await
+        {
             Ok(processed) => {
                 self.beat("mark_processed", processed.id.as_str()).await;
                 let mut body = message_receipt_json(
@@ -2809,7 +2899,9 @@ impl Jojobot {
                     // pointing the other way.
                     obj.insert(
                         "notes_truncated".into(),
-                        asked.is_some_and(|asked| processed.notes.as_deref() != Some(asked)).into(),
+                        asked
+                            .is_some_and(|asked| processed.notes.as_deref() != Some(asked))
+                            .into(),
                     );
                 }
                 json_result(&body)
@@ -2858,7 +2950,11 @@ fn fact_json(fact: &Fact) -> serde_json::Value {
 /// here as in `recall`, so one record has one spelling across every verb.
 fn hit_json(hit: &Hit) -> serde_json::Value {
     match hit {
-        Hit::Entity { entity, doc_id, edges } => {
+        Hit::Entity {
+            entity,
+            doc_id,
+            edges,
+        } => {
             let mut body = entity_json(entity);
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("hit".into(), "entity".into());
@@ -2867,7 +2963,11 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
             }
             body
         }
-        Hit::Fact { fact, subject, home } => {
+        Hit::Fact {
+            fact,
+            subject,
+            home,
+        } => {
             let mut body = fact_json(fact);
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("hit".into(), "fact".into());
@@ -2988,7 +3088,9 @@ fn parse_beat(phrase: &str, entry: &JournalEntry) -> Option<Beat> {
 fn beats_of(session: &Session) -> std::collections::HashMap<&'static str, Beat> {
     let mut found = std::collections::HashMap::new();
     for entry in &session.entries {
-        let Some(class) = entry.beat.as_deref() else { continue };
+        let Some(class) = entry.beat.as_deref() else {
+            continue;
+        };
         let Some((class, phrase)) = BEAT_CLASSES.iter().find(|(known, _)| *known == class) else {
             continue;
         };
@@ -3106,7 +3208,9 @@ fn session_declined(e: SessionError) -> Result<CallToolResult, McpError> {
             "wrote": false,
             "how_to_proceed": how,
         });
-        Ok(CallToolResult::success(vec![ContentBlock::text(body.to_string())]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            body.to_string(),
+        )]))
     };
     match e {
         SessionError::UnknownSession { attempted } => blocked(
@@ -3179,7 +3283,9 @@ fn session_error(e: SessionError) -> McpError {
 fn mail_coverage(query: &SearchQuery, coverage: MailCoverage) -> serde_json::Value {
     let excluded = |note: &str| serde_json::json!({ "searched": false, "note": note });
     if !query.include_mail {
-        return excluded("you passed include_mail: false, so messages were left out of this answer.");
+        return excluded(
+            "you passed include_mail: false, so messages were left out of this answer.",
+        );
     }
     if query.is_fact_scoped() {
         return excluded(
@@ -3618,7 +3724,10 @@ fn message_receipt_json(message: &Message, how_to_read: &str) -> serde_json::Val
         obj.insert("body".into(), serde_json::Value::Null);
         obj.insert("body_elided".into(), true.into());
         obj.insert("body_bytes".into(), message.body.len().into());
-        obj.insert("body_head".into(), text::BODY_DIGEST.render(&message.body).into());
+        obj.insert(
+            "body_head".into(),
+            text::BODY_DIGEST.render(&message.body).into(),
+        );
         obj.insert("how_to_read".into(), how_to_read.into());
     }
     body
@@ -3809,7 +3918,10 @@ fn memory_declined(verb: &'static str, e: MemoryError) -> Result<CallToolResult,
                  capture one first."
                     .to_string()
             } else {
-                format!("The addresses that do exist here are: {}.", nearest.join(", "))
+                format!(
+                    "The addresses that do exist here are: {}.",
+                    nearest.join(", ")
+                )
             };
             Ok(blocked_body(
                 &EntityId(attempted.clone()),
@@ -3956,7 +4068,10 @@ fn parse_shape(raw: &str) -> Result<EdgeShape, McpError> {
 /// no shape has no meaning — either way the caller meant an edge and did not get
 /// one, which is exactly the silence ask-across dies of.
 fn parse_edge(shape: Option<&str>, object: Option<&str>) -> Result<Option<Edge>, McpError> {
-    match (shape.map(str::trim).filter(|s| !s.is_empty()), object.map(str::trim).filter(|s| !s.is_empty())) {
+    match (
+        shape.map(str::trim).filter(|s| !s.is_empty()),
+        object.map(str::trim).filter(|s| !s.is_empty()),
+    ) {
         (None, None) => Ok(None),
         (Some(shape), Some(object)) => {
             let shape = parse_shape(shape)?;
@@ -4124,9 +4239,9 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use jojobot_domain::mailbox::testing::InMemoryMailboxes;
-    use jojobot_domain::session::testing::InMemorySessions;
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{Boot, Edge, EdgeShape, EntityKind, FactId};
+    use jojobot_domain::session::testing::InMemorySessions;
 
     /// A [`Search`] double: it records the query it was handed and answers with
     /// canned hits. On this path the MCP layer's whole job is translating
@@ -4304,7 +4419,10 @@ mod tests {
         );
         let body = json_of(result);
         assert_eq!(body["status"], "blocked", "got {body}");
-        assert_eq!(body["wrote"], false, "a blocked write says so in the body: {body}");
+        assert_eq!(
+            body["wrote"], false,
+            "a blocked write says so in the body: {body}"
+        );
         body
     }
 
@@ -4370,12 +4488,20 @@ mod tests {
 
         let query = spy.query();
         assert_eq!(query.terms(), Some("winter"));
-        assert!(!query.include_mail, "the caller's exclusion must reach the port");
+        assert!(
+            !query.include_mail,
+            "the caller's exclusion must reach the port"
+        );
         assert_eq!(query.kind, Some(EntityKind::Person));
         assert_eq!(query.status, Some(FactStatus::Superseded));
         assert_eq!(query.provenance, Some(Provenance::Testimony));
-        assert_eq!(query.subject.as_ref().map(|s| s.as_str()), Some("person:alpha"));
-        let edge = query.edge.expect("the edge filter must survive translation");
+        assert_eq!(
+            query.subject.as_ref().map(|s| s.as_str()),
+            Some("person:alpha")
+        );
+        let edge = query
+            .edge
+            .expect("the edge filter must survive translation");
         assert_eq!(edge.shape, Some(EdgeShape::Location));
         assert_eq!(edge.object.as_str(), "place:shelbyville");
         assert_eq!(query.limit, 5);
@@ -4423,23 +4549,47 @@ mod tests {
     #[tokio::test]
     async fn malformed_search_filters_are_client_errors() {
         let jojobot = handler();
-        let searching = || SearchArgs { query: Some("winter".into()), ..search_args() };
+        let searching = || SearchArgs {
+            query: Some("winter".into()),
+            ..search_args()
+        };
         let bad = [
-            SearchArgs { kind: Some("receipt".into()), ..searching() },
-            SearchArgs { status: Some("retired".into()), ..searching() },
-            SearchArgs { provenance: Some("maybe".into()), ..searching() },
+            SearchArgs {
+                kind: Some("receipt".into()),
+                ..searching()
+            },
+            SearchArgs {
+                status: Some("retired".into()),
+                ..searching()
+            },
+            SearchArgs {
+                provenance: Some("maybe".into()),
+                ..searching()
+            },
             // A *bare* subject is read as a person, as everywhere else — so the
             // malformed case is one that can't be an id at all.
-            SearchArgs { subject: Some("person:a|b".into()), ..searching() },
             SearchArgs {
-                edge: Some(EdgeFilterArgs { shape: Some("knows".into()), object: "place:x".into() }),
+                subject: Some("person:a|b".into()),
                 ..searching()
             },
             SearchArgs {
-                edge: Some(EdgeFilterArgs { shape: None, object: "place:a|b".into() }),
+                edge: Some(EdgeFilterArgs {
+                    shape: Some("knows".into()),
+                    object: "place:x".into(),
+                }),
                 ..searching()
             },
-            SearchArgs { limit: Some(0), ..searching() },
+            SearchArgs {
+                edge: Some(EdgeFilterArgs {
+                    shape: None,
+                    object: "place:a|b".into(),
+                }),
+                ..searching()
+            },
+            SearchArgs {
+                limit: Some(0),
+                ..searching()
+            },
         ];
         for args in bad {
             let err = jojobot
@@ -4482,7 +4632,10 @@ mod tests {
                 .expect("search ok"),
         );
         let hit = &body["results"][0];
-        assert_eq!(hit["hit"], "message", "a caller must not have to guess from the shape");
+        assert_eq!(
+            hit["hit"], "message",
+            "a caller must not have to guess from the shape"
+        );
         assert_eq!(hit["id"], "42", "the id read_message takes");
         assert_eq!(hit["mailbox"], "pm");
         assert_eq!(hit["state"], "processed", "an archive reads as one");
@@ -4602,7 +4755,11 @@ mod tests {
                     .expect("search ok"),
             );
             assert!(
-                body["results"].as_array().expect("results").iter().any(|h| h["hit"] == "message"),
+                body["results"]
+                    .as_array()
+                    .expect("results")
+                    .iter()
+                    .any(|h| h["hit"] == "message"),
                 "the double answered with a message: {body}"
             );
             assert_eq!(
@@ -4616,7 +4773,10 @@ mod tests {
         // partial answer over mail as a complete one.
         let partial = json_of(
             &handler_with(Arc::new(SpySearch::covering(MailCoverage::Partial, hit())))
-                .search(Parameters(SearchArgs { query: Some("damper".into()), ..search_args() }))
+                .search(Parameters(SearchArgs {
+                    query: Some("damper".into()),
+                    ..search_args()
+                }))
                 .await
                 .expect("search ok"),
         );
@@ -4693,7 +4853,10 @@ mod tests {
         // session reading either of the others exactly as misinformed as before.
         let instructions = handler().get_info().instructions.unwrap_or_default();
         for (surface, text) in [
-            ("the search description", search.description.as_deref().unwrap_or_default()),
+            (
+                "the search description",
+                search.description.as_deref().unwrap_or_default(),
+            ),
             ("the orientation", ORIENTATION),
             ("the server instructions", instructions.as_str()),
         ] {
@@ -4749,7 +4912,10 @@ mod tests {
             provenance: Provenance::Testimony,
             status: FactStatus::Active,
             date: jiff::civil::date(2026, 7, 1),
-            edge: Some(Edge::new(EdgeShape::Membership, EntityId("org:guild".into()))),
+            edge: Some(Edge::new(
+                EdgeShape::Membership,
+                EntityId("org:guild".into()),
+            )),
         };
         let alpha = Entity {
             id: EntityId::person("alpha"),
@@ -4798,11 +4964,17 @@ mod tests {
         assert_eq!(results[0]["id"], "work:first-mix");
         assert_eq!(results[0]["type"], "CreativeWork", "the schema.org name");
         assert_eq!(results[0]["doc"], "doc-9");
-        assert_eq!(results[0]["edges"][0]["type"], "memberOf", "where it sits in the graph");
+        assert_eq!(
+            results[0]["edges"][0]["type"], "memberOf",
+            "where it sits in the graph"
+        );
         assert_eq!(results[0]["edges"][0]["object"], "org:guild");
 
         assert_eq!(results[1]["hit"], "fact");
-        assert_eq!(results[1]["address"], "person:alpha#f3", "a fact hit is editable");
+        assert_eq!(
+            results[1]["address"], "person:alpha#f3",
+            "a fact hit is editable"
+        );
         assert_eq!(
             results[1]["subject"], "person:alpha",
             "the row keeps one spelling across capture, recall and search"
@@ -4862,7 +5034,10 @@ mod tests {
         let body = json_of(&owner);
         assert_eq!(body["id"], "bot:gamma");
         assert_eq!(body["type"], "SoftwareApplication");
-        assert_eq!(body["mailbox"], "gamma-inbox", "the claim reads back: {body}");
+        assert_eq!(
+            body["mailbox"], "gamma-inbox",
+            "the claim reads back: {body}"
+        );
 
         let result = jojobot
             .add_entity(Parameters(AddEntityArgs {
@@ -4935,7 +5110,9 @@ mod tests {
         // Nothing moved: the rival is still bare, the owner still owns.
         let listed = json_of(
             &jojobot
-                .list_entities(Parameters(ListEntitiesArgs { kind: Some("bot".into()) }))
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: Some("bot".into()),
+                }))
                 .await
                 .expect("list ok"),
         );
@@ -4967,12 +5144,20 @@ mod tests {
             .await
             .expect("add ok");
         let body = json_of(&added);
-        assert_eq!(body["id"], "project:atlas", "the handle keeps its lowercase kind token");
-        assert_eq!(body["type"], "Project", "responses name the type, schema.org-flavored");
+        assert_eq!(
+            body["id"], "project:atlas",
+            "the handle keeps its lowercase kind token"
+        );
+        assert_eq!(
+            body["type"], "Project",
+            "responses name the type, schema.org-flavored"
+        );
         assert_eq!(body["crm"], "card:874");
 
         let listed = jojobot
-            .list_entities(Parameters(ListEntitiesArgs { kind: Some("project".into()) }))
+            .list_entities(Parameters(ListEntitiesArgs {
+                kind: Some("project".into()),
+            }))
             .await
             .expect("list ok");
         let body = json_of(&listed);
@@ -4984,7 +5169,11 @@ mod tests {
     #[tokio::test]
     async fn a_fact_can_be_about_any_kind() {
         let jojobot = handler();
-        let captured = capture_ok(&jojobot, capture_args("place:north-trail", "swimmable in August")).await;
+        let captured = capture_ok(
+            &jojobot,
+            capture_args("place:north-trail", "swimmable in August"),
+        )
+        .await;
         assert_eq!(captured["subject"], "place:north-trail");
     }
 
@@ -5007,7 +5196,11 @@ mod tests {
             (EntityKind::Project, "project", "Project"),
             (EntityKind::Bot, "bot", "SoftwareApplication"),
         ];
-        assert_eq!(table.len(), EntityKind::ALL.len(), "every kind must be named here");
+        assert_eq!(
+            table.len(),
+            EntityKind::ALL.len(),
+            "every kind must be named here"
+        );
         for (kind, token, name) in table {
             assert_eq!(kind.as_token(), token, "the input token stays lowercase");
             assert_eq!(type_name(kind), name);
@@ -5016,7 +5209,10 @@ mod tests {
                 assert!(parse_kind(name).is_err(), "{name} must not parse as a kind");
             }
         }
-        assert!(parse_kind("Person").is_err(), "a capitalized kind stays rejected");
+        assert!(
+            parse_kind("Person").is_err(),
+            "a capitalized kind stays rejected"
+        );
     }
 
     /// An unknown kind is a client error that names the closed set, rather than
@@ -5024,11 +5220,19 @@ mod tests {
     #[tokio::test]
     async fn an_unknown_kind_is_a_client_error() {
         let err = handler()
-            .add_entity(Parameters(add_args("receipt", "some-slug", "An unknown kind")))
+            .add_entity(Parameters(add_args(
+                "receipt",
+                "some-slug",
+                "An unknown kind",
+            )))
             .await
             .expect_err("must reject an unknown kind");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("person"), "the error must name the kinds: {}", err.message);
+        assert!(
+            err.message.contains("person"),
+            "the error must name the kinds: {}",
+            err.message
+        );
     }
 
     /// `update_entity` edits metadata and leaves the handle alone.
@@ -5054,7 +5258,10 @@ mod tests {
         let body = json_of(&updated);
         assert_eq!(body["id"], "thing:red-bike", "the handle is immutable");
         assert_eq!(body["name"], "Red Bike (the gravel one)");
-        assert_eq!(body["source"], "user-named", "an omitted field is left alone");
+        assert_eq!(
+            body["source"], "user-named",
+            "an omitted field is left alone"
+        );
     }
 
     /// A rename onto a name the index already holds comes back as the same
@@ -5093,7 +5300,9 @@ mod tests {
         // …and the name did not move.
         let listed = json_of(
             &jojobot
-                .list_entities(Parameters(ListEntitiesArgs { kind: Some("person".into()) }))
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: Some("person".into()),
+                }))
                 .await
                 .expect("list ok"),
         );
@@ -5156,7 +5365,9 @@ mod tests {
         // …and the alias did not land.
         let listed = json_of(
             &jojobot
-                .list_entities(Parameters(ListEntitiesArgs { kind: Some("person".into()) }))
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: Some("person".into()),
+                }))
                 .await
                 .expect("list ok"),
         );
@@ -5219,7 +5430,12 @@ mod tests {
                 .await
                 .expect("update ok"),
         );
-        assert!(cleared["alternateName"].as_array().expect("a list").is_empty());
+        assert!(
+            cleared["alternateName"]
+                .as_array()
+                .expect("a list")
+                .is_empty()
+        );
 
         // An alias carrying the separator is a client error, not a silent split.
         let err = jojobot
@@ -5289,7 +5505,9 @@ mod tests {
         // And nothing was written.
         let listed = json_of(
             &jojobot
-                .list_entities(Parameters(ListEntitiesArgs { kind: Some("person".into()) }))
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: Some("person".into()),
+                }))
                 .await
                 .expect("list ok"),
         );
@@ -5324,7 +5542,10 @@ mod tests {
             advice.contains("above"),
             "with candidates in hand, the advice must point at them: {advice}"
         );
-        assert!(advice.contains("add_entity"), "…and still name the way through: {advice}");
+        assert!(
+            advice.contains("add_entity"),
+            "…and still name the way through: {advice}"
+        );
         assert!(
             !advice.contains("nothing resembles it"),
             "something does resemble it — that is what the candidates are: {advice}"
@@ -5341,9 +5562,15 @@ mod tests {
             .expect("call ok");
         let body = blocked(&stranger);
         assert_eq!(body["attempted"], "work:first-mix");
-        assert!(body["candidates"].as_array().unwrap().is_empty(), "got {body}");
+        assert!(
+            body["candidates"].as_array().unwrap().is_empty(),
+            "got {body}"
+        );
         let advice = body["how_to_proceed"].as_str().expect("advice");
-        assert!(advice.contains("add_entity"), "must name the way through: {advice}");
+        assert!(
+            advice.contains("add_entity"),
+            "must name the way through: {advice}"
+        );
         assert!(
             !advice.contains("create_new: true"),
             "capture has no create_new; advising it sends the caller round a loop \
@@ -5385,7 +5612,9 @@ mod tests {
 
         let recalled = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs { subject: "alpha".into() }))
+                .recall(Parameters(RecallArgs {
+                    subject: "alpha".into(),
+                }))
                 .await
                 .expect("recall ok"),
         );
@@ -5398,10 +5627,7 @@ mod tests {
     #[tokio::test]
     async fn half_an_edge_is_a_client_error() {
         let jojobot = handler();
-        let halves = [
-            (Some("location"), None),
-            (None, Some("place:north-trail")),
-        ];
+        let halves = [(Some("location"), None), (None, Some("place:north-trail"))];
         for (shape, object) in halves {
             let err = jojobot
                 .capture(Parameters(CaptureArgs {
@@ -5411,7 +5637,11 @@ mod tests {
                 }))
                 .await
                 .expect_err("half an edge must be refused");
-            assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "for {shape:?}/{object:?}");
+            assert_eq!(
+                err.code,
+                ErrorCode::INVALID_PARAMS,
+                "for {shape:?}/{object:?}"
+            );
         }
     }
 
@@ -5451,7 +5681,11 @@ mod tests {
             .await
             .expect_err("a wrong-kind object must be refused");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("place"), "must say what it wanted: {}", err.message);
+        assert!(
+            err.message.contains("place"),
+            "must say what it wanted: {}",
+            err.message
+        );
     }
 
     /// A typo'd edge object comes back as the guard's candidates — the same
@@ -5482,7 +5716,9 @@ mod tests {
 
         let recalled = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs { subject: "alpha".into() }))
+                .recall(Parameters(RecallArgs {
+                    subject: "alpha".into(),
+                }))
                 .await
                 .expect("recall ok"),
         );
@@ -5525,11 +5761,15 @@ mod tests {
 
         let body = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs { subject: "alpha".into() }))
+                .recall(Parameters(RecallArgs {
+                    subject: "alpha".into(),
+                }))
                 .await
                 .expect("recall ok"),
         );
-        let address = body["facts"][0]["address"].as_str().expect("every fact carries an address");
+        let address = body["facts"][0]["address"]
+            .as_str()
+            .expect("every fact carries an address");
         assert_eq!(address, "person:alpha#f1");
 
         let updated = json_of(
@@ -5555,7 +5795,11 @@ mod tests {
     #[tokio::test]
     async fn a_refutation_is_a_content_edit_and_negated_is_refused() {
         let jojobot = handler();
-        let captured = capture_ok(&jojobot, capture_args("alpha", "a close contact of the user")).await;
+        let captured = capture_ok(
+            &jojobot,
+            capture_args("alpha", "a close contact of the user"),
+        )
+        .await;
 
         let err = jojobot
             .update_fact(Parameters(UpdateFactArgs {
@@ -5580,9 +5824,15 @@ mod tests {
                 .await
                 .expect("the refutation is an ordinary edit"),
         );
-        assert_eq!(updated["status"], "active", "the negative truth is the truth");
+        assert_eq!(
+            updated["status"], "active",
+            "the negative truth is the truth"
+        );
         assert_eq!(updated["content"], "NOT a close contact — do not re-infer");
-        assert_eq!(updated["address"], "person:alpha#f1", "the row keeps its address");
+        assert_eq!(
+            updated["address"], "person:alpha#f1",
+            "the row keeps its address"
+        );
     }
 
     /// Promotion to testimony needs the explicit confirmation flag.
@@ -5648,11 +5898,17 @@ mod tests {
         );
         let body = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs { subject: "alpha".into() }))
+                .recall(Parameters(RecallArgs {
+                    subject: "alpha".into(),
+                }))
                 .await
                 .expect("recall ok"),
         );
-        assert_eq!(body["facts"].as_array().unwrap().len(), 1, "nothing was created");
+        assert_eq!(
+            body["facts"].as_array().unwrap().len(),
+            1,
+            "nothing was created"
+        );
     }
 
     /// An unknown status token is a client error, not a silently-active fact.
@@ -5680,7 +5936,9 @@ mod tests {
 
         let body = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs { subject: "alpha".into() }))
+                .recall(Parameters(RecallArgs {
+                    subject: "alpha".into(),
+                }))
                 .await
                 .expect("recall ok"),
         );
@@ -5709,7 +5967,9 @@ mod tests {
 
         let missed = blocked(
             &jojobot
-                .recall(Parameters(RecallArgs { subject: "person:zenit".into() }))
+                .recall(Parameters(RecallArgs {
+                    subject: "person:zenit".into(),
+                }))
                 .await
                 .expect("a handle that names nothing is an answer, not a protocol failure"),
         );
@@ -5721,7 +5981,9 @@ mod tests {
 
         let body = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs { subject: "person:zenith".into() }))
+                .recall(Parameters(RecallArgs {
+                    subject: "person:zenith".into(),
+                }))
                 .await
                 .expect("an existing entity's empty page still reads"),
         );
@@ -5751,7 +6013,9 @@ mod tests {
 
         let body = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs { subject: "alpha".into() }))
+                .recall(Parameters(RecallArgs {
+                    subject: "alpha".into(),
+                }))
                 .await
                 .expect("recall ok"),
         );
@@ -5777,7 +6041,9 @@ mod tests {
     #[tokio::test]
     async fn date_defaults_to_today_utc() {
         let jojobot = handler();
-        let today = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date();
+        let today = jiff::Timestamp::now()
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .date();
         let captured = capture_ok(&jojobot, capture_args("alpha", "dated today")).await;
         assert_eq!(captured["date"], today.to_string());
     }
@@ -5919,8 +6185,14 @@ mod tests {
         // `a_post_is_receipted_without_shipping_the_body_back`.
         assert!(posted["body"].is_null());
         assert_eq!(posted["body_bytes"], "the shipment landed".len());
-        assert!(posted["sent_at"].is_string(), "a message says when it was sent");
-        let id = posted["id"].as_str().expect("a message carries its id").to_string();
+        assert!(
+            posted["sent_at"].is_string(),
+            "a message says when it was sent"
+        );
+        let id = posted["id"]
+            .as_str()
+            .expect("a message carries its id")
+            .to_string();
 
         make_bot(&jojobot, "gamma", Some("inbox")).await;
         let listed = drains(&jojobot, "gamma").await;
@@ -5940,7 +6212,10 @@ mod tests {
         assert_eq!(delivery["mailbox"], "inbox");
         assert_eq!(delivery["count"], 1);
         assert_eq!(delivery["messages"][0]["id"], id);
-        assert_eq!(delivery["messages"][0]["state"], "read", "delivery moves the column");
+        assert_eq!(
+            delivery["messages"][0]["state"], "read",
+            "delivery moves the column"
+        );
         assert_eq!(
             delivery["messages"][0]["seen_before"], false,
             "a first delivery is nobody's leftover"
@@ -5971,7 +6246,10 @@ mod tests {
                 .await
                 .expect("read ok"),
         );
-        assert_eq!(after["count"], 0, "a processed message is never delivered again");
+        assert_eq!(
+            after["count"], 0,
+            "a processed message is never delivered again"
+        );
     }
 
     /// **A crashed consumer's leftovers are visible as such.** A second read
@@ -5983,9 +6261,9 @@ mod tests {
         send(&jojobot, "inbox", "alpha", "the shipment landed").await;
         jojobot
             .read_mailbox(Parameters(ReadMailboxArgs {
-                    mailbox: "inbox".into(),
-                    new_only: None,
-                }))
+                mailbox: "inbox".into(),
+                new_only: None,
+            }))
             .await
             .expect("read ok");
 
@@ -6037,11 +6315,17 @@ mod tests {
 
         let processed = json_of(
             &jojobot
-                .mark_processed(Parameters(MarkProcessedArgs { message_id: id, notes: None }))
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_id: id,
+                    notes: None,
+                }))
                 .await
                 .expect("mark_processed ok"),
         );
-        assert_eq!(processed["subject"], "the shipment", "the archive keeps the title");
+        assert_eq!(
+            processed["subject"], "the shipment",
+            "the archive keeps the title"
+        );
     }
 
     /// **One message, taken by id.** The named message is delivered and the rest
@@ -6057,13 +6341,18 @@ mod tests {
 
         let delivered = json_of(
             &jojobot
-                .read_message(Parameters(ReadMessageArgs { message_id: id.clone() }))
+                .read_message(Parameters(ReadMessageArgs {
+                    message_id: id.clone(),
+                }))
                 .await
                 .expect("read_message ok"),
         );
         assert_eq!(delivered["id"], id.as_str());
         assert_eq!(delivered["body"], "the one worth reading");
-        assert_eq!(delivered["state"], "read", "taking one message moves its column");
+        assert_eq!(
+            delivered["state"], "read",
+            "taking one message moves its column"
+        );
         assert_eq!(delivered["seen_before"], false);
 
         make_bot(&jojobot, "gamma", Some("inbox")).await;
@@ -6092,13 +6381,18 @@ mod tests {
         make_box(&jojobot, "inbox").await;
 
         let result = jojobot
-            .read_message(Parameters(ReadMessageArgs { message_id: "999999".into() }))
+            .read_message(Parameters(ReadMessageArgs {
+                message_id: "999999".into(),
+            }))
             .await
             .expect("a blocked read is a successful call");
         let body = blocked(&result);
         assert_eq!(body["attempted"], "999999");
         assert!(
-            body["candidates"].as_array().expect("candidates key").is_empty(),
+            body["candidates"]
+                .as_array()
+                .expect("candidates key")
+                .is_empty(),
             "nothing resembles a message id: {body}"
         );
     }
@@ -6120,12 +6414,16 @@ mod tests {
         );
 
         let result = jojobot
-            .read_message(Parameters(ReadMessageArgs { message_id: id.clone() }))
+            .read_message(Parameters(ReadMessageArgs {
+                message_id: id.clone(),
+            }))
             .await
             .expect("a quarantined card is a successful, refusing call");
         let body = blocked(&result);
         assert_eq!(body["attempted"], id.as_str());
-        let reason = body["reason"].as_str().expect("a quarantined card says why");
+        let reason = body["reason"]
+            .as_str()
+            .expect("a quarantined card says why");
         assert!(reason.contains("machine block"), "got {reason}");
         let advice = body["how_to_proceed"].as_str().expect("advice");
         assert!(
@@ -6203,7 +6501,10 @@ mod tests {
                 .await
                 .expect("a blocked create is a successful call"),
         );
-        assert_eq!(refused["status"], "blocked", "without the signal: {refused}");
+        assert_eq!(
+            refused["status"], "blocked",
+            "without the signal: {refused}"
+        );
 
         let created = json_of(
             &jojobot
@@ -6214,7 +6515,10 @@ mod tests {
                 .await
                 .expect("create ok"),
         );
-        assert_eq!(created["name"], "worker-2", "the signal creates the sibling: {created}");
+        assert_eq!(
+            created["name"], "worker-2",
+            "the signal creates the sibling: {created}"
+        );
 
         let exact = json_of(
             &jojobot
@@ -6238,7 +6542,10 @@ mod tests {
         let jojobot = mailbox_handler();
         make_box(&jojobot, "inbox").await;
         let result = jojobot
-            .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbx".into(), new_only: None }))
+            .read_mailbox(Parameters(ReadMailboxArgs {
+                mailbox: "inbx".into(),
+                new_only: None,
+            }))
             .await
             .expect("a blocked read is a successful call");
         let body = blocked(&result);
@@ -6316,10 +6623,20 @@ mod tests {
                 .await
                 .expect("read ok"),
         );
-        assert_eq!(first["messages"][0]["body"], held_body.trim(), "the first read is whole");
+        assert_eq!(
+            first["messages"][0]["body"],
+            held_body.trim(),
+            "the first read is whole"
+        );
 
         // Fresh mail arrives, and the poll asks for news only.
-        send(&jojobot, "dev", "coordinator (pm)", "and here is the next batch").await;
+        send(
+            &jojobot,
+            "dev",
+            "coordinator (pm)",
+            "and here is the next batch",
+        )
+        .await;
         let poll = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
@@ -6329,7 +6646,10 @@ mod tests {
                 .await
                 .expect("read ok"),
         );
-        assert_eq!(poll["count"], 2, "the leftover is STILL in the delivery: {poll}");
+        assert_eq!(
+            poll["count"], 2,
+            "the leftover is STILL in the delivery: {poll}"
+        );
         assert_eq!(poll["new_only"], true);
 
         let leftover = poll["messages"]
@@ -6338,8 +6658,14 @@ mod tests {
             .iter()
             .find(|m| m["id"] == held_id.as_str())
             .expect("the held message is still handed over");
-        assert_eq!(leftover["seen_before"], true, "…still flagged as owed: {leftover}");
-        assert!(leftover["body"].is_null(), "…and its body is what was dropped");
+        assert_eq!(
+            leftover["seen_before"], true,
+            "…still flagged as owed: {leftover}"
+        );
+        assert!(
+            leftover["body"].is_null(),
+            "…and its body is what was dropped"
+        );
         assert_eq!(leftover["body_elided"], true);
         assert_eq!(leftover["body_bytes"], held_body.trim().len());
 
@@ -6407,13 +6733,27 @@ mod tests {
         assert!(posted["body"].is_null());
         assert_eq!(posted["body_elided"], true);
         assert_eq!(posted["body_bytes"], long.trim().len());
-        assert!(posted["body_head"].as_str().expect("a head").starts_with("counted the crates"));
         assert!(
-            posted["body_head"].as_str().expect("a head").chars().count()
+            posted["body_head"]
+                .as_str()
+                .expect("a head")
+                .starts_with("counted the crates")
+        );
+        assert!(
+            posted["body_head"]
+                .as_str()
+                .expect("a head")
+                .chars()
+                .count()
                 < long.chars().count() / 4,
             "the head is a head, not the body under another key"
         );
-        assert!(posted["how_to_read"].as_str().expect("a pointer").contains("list_sent"));
+        assert!(
+            posted["how_to_read"]
+                .as_str()
+                .expect("a pointer")
+                .contains("list_sent")
+        );
     }
 
     /// The same, for the terminal verb — whose caller got the body from the
@@ -6433,12 +6773,23 @@ mod tests {
                 .await
                 .expect("mark_processed ok"),
         );
-        assert_eq!(body["state"], "processed", "the proof that matters: it moved");
-        assert_eq!(body["notes"], "filed under shipments", "…and what was recorded");
+        assert_eq!(
+            body["state"], "processed",
+            "the proof that matters: it moved"
+        );
+        assert_eq!(
+            body["notes"], "filed under shipments",
+            "…and what was recorded"
+        );
         assert!(body["body"].is_null());
         assert_eq!(body["body_elided"], true);
         assert_eq!(body["body_bytes"], "the shipment landed at dawn".len());
-        assert!(body["how_to_read"].as_str().expect("a pointer").contains("read_message"));
+        assert!(
+            body["how_to_read"]
+                .as_str()
+                .expect("a pointer")
+                .contains("read_message")
+        );
     }
 
     /// **The delivery verbs still ship bodies.** The elision is for the caller
@@ -6459,8 +6810,14 @@ mod tests {
                 .await
                 .expect("read ok"),
         );
-        assert_eq!(delivery["messages"][0]["body"], "the shipment landed at dawn");
-        assert!(delivery["messages"][0]["body_elided"].is_null(), "nothing was withheld");
+        assert_eq!(
+            delivery["messages"][0]["body"],
+            "the shipment landed at dawn"
+        );
+        assert!(
+            delivery["messages"][0]["body_elided"].is_null(),
+            "nothing was withheld"
+        );
     }
 
     /// **Existence is public; what is waiting in somebody's queue is not.**
@@ -6509,9 +6866,15 @@ mod tests {
         assert_eq!(mine["counts"]["new"], 1, "my own queue, in full: {mine}");
 
         let theirs = by_name("pm");
-        assert_eq!(theirs["name"], "pm", "it EXISTS — post_message needs the name");
+        assert_eq!(
+            theirs["name"], "pm",
+            "it EXISTS — post_message needs the name"
+        );
         assert_eq!(theirs["yours"], false);
-        assert!(theirs["counts"].is_null(), "…and its queue is not mine to weigh: {theirs}");
+        assert!(
+            theirs["counts"].is_null(),
+            "…and its queue is not mine to weigh: {theirs}"
+        );
         assert_eq!(theirs["counts_elided"], true, "elided, never silently");
     }
 
@@ -6532,11 +6895,20 @@ mod tests {
             .as_array()
             .expect("boxes")
             .clone();
-        let find = |name: &str| boxes.iter().find(|b| b["name"] == name).expect("the box").clone();
+        let find = |name: &str| {
+            boxes
+                .iter()
+                .find(|b| b["name"] == name)
+                .expect("the box")
+                .clone()
+        };
 
         assert_eq!(find("dev")["counts"]["new"], 1, "my box, counted: {booted}");
         assert_eq!(find("dev")["yours"], true);
-        assert!(find("pm")["counts"].is_null(), "somebody else's, name only: {booted}");
+        assert!(
+            find("pm")["counts"].is_null(),
+            "somebody else's, name only: {booted}"
+        );
         assert_eq!(find("pm")["yours"], false);
 
         // The bot's own box still comes back in full under `identity`, which is
@@ -6555,8 +6927,20 @@ mod tests {
         let jojobot = mailbox_handler();
         make_box(&jojobot, "pm").await;
         make_box(&jojobot, "inbox").await;
-        send(&jojobot, "pm", "dev (implementer)", "the kiln slice is done").await;
-        send(&jojobot, "inbox", "dev (implementer)", "a note for somebody else").await;
+        send(
+            &jojobot,
+            "pm",
+            "dev (implementer)",
+            "the kiln slice is done",
+        )
+        .await;
+        send(
+            &jojobot,
+            "inbox",
+            "dev (implementer)",
+            "a note for somebody else",
+        )
+        .await;
         let theirs = send(&jojobot, "pm", "coordinator (pm)", "not yours to see").await;
 
         let sent = json_of(
@@ -6583,8 +6967,18 @@ mod tests {
         assert!(first["body"].is_null(), "{first}");
         assert_eq!(first["body_elided"], true);
         assert!(first["body_bytes"].as_u64().expect("a size") > 0);
-        assert!(first["body_head"].as_str().expect("a head").contains("note for somebody else"));
-        assert!(first["how_to_read"].as_str().expect("a pointer").contains("include_bodies"));
+        assert!(
+            first["body_head"]
+                .as_str()
+                .expect("a head")
+                .contains("note for somebody else")
+        );
+        assert!(
+            first["how_to_read"]
+                .as_str()
+                .expect("a pointer")
+                .contains("include_bodies")
+        );
 
         // **Nothing moved — read from the STORE, not from the verb.** Asserting
         // `state == "new"` on `list_sent`'s own response lets the verb grade
@@ -6603,7 +6997,10 @@ mod tests {
             pm["counts"]["read"], 0,
             "looking at your own outbox is not a delivery: {pm}"
         );
-        assert_eq!(pm["counts"]["new"], 2, "…and everything is still waiting: {pm}");
+        assert_eq!(
+            pm["counts"]["new"], 2,
+            "…and everything is still waiting: {pm}"
+        );
         assert!(
             !json_of(
                 &jojobot
@@ -6628,7 +7025,13 @@ mod tests {
     async fn a_mistyped_box_is_blocked_with_candidates_rather_than_answering_empty() {
         let jojobot = mailbox_handler();
         make_box(&jojobot, "handoffs").await;
-        send(&jojobot, "handoffs", "dev (implementer)", "the kiln slice is done").await;
+        send(
+            &jojobot,
+            "handoffs",
+            "dev (implementer)",
+            "the kiln slice is done",
+        )
+        .await;
 
         let body = json_of(
             &jojobot
@@ -6648,7 +7051,10 @@ mod tests {
             .iter()
             .map(|c| c["name"].as_str().expect("a name"))
             .collect();
-        assert!(names.contains(&"handoffs"), "the box they meant is named: {body}");
+        assert!(
+            names.contains(&"handoffs"),
+            "the box they meant is named: {body}"
+        );
     }
 
     /// **A card jojobot cannot read is not a message that was never sent.** The
@@ -6683,7 +7089,9 @@ mod tests {
         );
         assert_eq!(body["unreadable"][0]["card_ids"][0], "4212");
         assert!(
-            body["unreadable_note"].as_str().is_some_and(|n| n.contains("repair")),
+            body["unreadable_note"]
+                .as_str()
+                .is_some_and(|n| n.contains("repair")),
             "…and it says what fixes it: {body}"
         );
     }
@@ -6733,7 +7141,13 @@ mod tests {
     async fn a_sender_can_ask_for_the_bodies_of_their_own_mail() {
         let jojobot = mailbox_handler();
         make_box(&jojobot, "pm").await;
-        send(&jojobot, "pm", "dev (implementer)", "the kiln slice is done").await;
+        send(
+            &jojobot,
+            "pm",
+            "dev (implementer)",
+            "the kiln slice is done",
+        )
+        .await;
 
         let sent = json_of(
             &jojobot
@@ -6746,7 +7160,10 @@ mod tests {
                 .expect("list_sent ok"),
         );
         assert_eq!(sent["messages"][0]["body"], "the kiln slice is done");
-        assert!(sent["messages"][0]["body_elided"].is_null(), "nothing was elided to announce");
+        assert!(
+            sent["messages"][0]["body_elided"].is_null(),
+            "nothing was elided to announce"
+        );
     }
 
     /// **A reply names what it answers, and a dangling link is blocked.** The
@@ -6760,7 +7177,10 @@ mod tests {
         make_box(&jojobot, "pm").await;
         let original = send(&jojobot, "pm", "coordinator (pm)", "build the kiln slice").await;
         let original_id = original["id"].as_str().expect("an id").to_string();
-        assert!(original["in_reply_to"].is_null(), "a message answering nothing says so");
+        assert!(
+            original["in_reply_to"].is_null(),
+            "a message answering nothing says so"
+        );
 
         let reply = json_of(
             &jojobot
@@ -6821,7 +7241,10 @@ mod tests {
                 .expect("a blank link is not a malformed call"),
         );
         assert_ne!(unlinked["status"], "blocked", "{unlinked}");
-        assert!(unlinked["in_reply_to"].is_null(), "blank is absent, not empty: {unlinked}");
+        assert!(
+            unlinked["in_reply_to"].is_null(),
+            "blank is absent, not empty: {unlinked}"
+        );
     }
 
     /// **A long outcome record is cut, and the caller is told it was cut.** The
@@ -6848,10 +7271,19 @@ mod tests {
                 .await
                 .expect("a long note must not fail the terminal verb"),
         );
-        assert_eq!(body["state"], "processed", "the message WAS handled: {body}");
-        assert_eq!(body["notes_truncated"], true, "…and the cut is said out loud: {body}");
+        assert_eq!(
+            body["state"], "processed",
+            "the message WAS handled: {body}"
+        );
+        assert_eq!(
+            body["notes_truncated"], true,
+            "…and the cut is said out loud: {body}"
+        );
         let kept = body["notes"].as_str().expect("the outcome is recorded");
-        assert!(kept.ends_with('…'), "the record itself says it was cut: {kept:?}");
+        assert!(
+            kept.ends_with('…'),
+            "the record itself says it was cut: {kept:?}"
+        );
         assert!(kept.chars().count() < long.chars().count());
     }
 
@@ -6890,7 +7322,10 @@ mod tests {
 
         // Again, recording nothing. The store keeps the earlier note.
         let again = processed(None).await;
-        assert_eq!(again["notes"], "filed under shipments", "the record stands: {again}");
+        assert_eq!(
+            again["notes"], "filed under shipments",
+            "the record stands: {again}"
+        );
         assert_eq!(
             again["notes_truncated"], false,
             "no record was offered, so none was cut: {again}"
@@ -7027,7 +7462,10 @@ mod tests {
             "there is no card to explain — that field belongs to the quarantine answer: {unknown}"
         );
         assert!(
-            !unknown["how_to_proceed"].as_str().expect("advice").contains("PERSON"),
+            !unknown["how_to_proceed"]
+                .as_str()
+                .expect("advice")
+                .contains("PERSON"),
             "and its way out is not a human on the board: {unknown}"
         );
     }
@@ -7110,7 +7548,11 @@ mod tests {
 
         for (what, marker, expected) in [
             ("entry points into orientation", "self.orient(", 1),
-            ("verbs taking the door's arguments", "Parameters<OrientArgs>", 1),
+            (
+                "verbs taking the door's arguments",
+                "Parameters<OrientArgs>",
+                1,
+            ),
             // Defined once, read once. A door that reimplemented the answer
             // rather than calling `orient` would still have to reach for the
             // essay, and this is where that shows.
@@ -7248,9 +7690,13 @@ mod tests {
         send(&jojobot, "inbox", "alpha", "the shipment landed").await;
 
         let out = jojobot
-                .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
-                .await
-                .expect("start_here ok");
+            .start_here(Parameters(OrientArgs {
+                bot: None,
+                brief: None,
+                resume: None,
+            }))
+            .await
+            .expect("start_here ok");
         let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
         let orientation = body["orientation"].as_str().expect("orientation prose");
         // The orientation must teach the load-bearing vocabulary, not assume it.
@@ -7290,7 +7736,10 @@ mod tests {
         // queue to shield. That is the distinction the scoping actually draws:
         // it protects a drainer's workload, not the board's contents.
         assert_eq!(boxes[0]["name"], "inbox");
-        assert_eq!(boxes[0]["yours"], false, "an anonymous caller drains nothing");
+        assert_eq!(
+            boxes[0]["yours"], false,
+            "an anonymous caller drains nothing"
+        );
         assert_eq!(
             boxes[0]["counts"]["new"], 1,
             "…and an unclaimed box is still countable: {:?}",
@@ -7335,45 +7784,57 @@ mod tests {
 
     #[async_trait]
     impl mailbox::Mailboxes for DownMailboxes {
-            async fn create_mailbox(
-                &self,
-                _: &mailbox::MailboxName,
-                _: bool,
-            ) -> Result<mailbox::Guarded<mailbox::Mailbox>, mailbox::MailboxError> {
-                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
-            }
-            async fn list_mailboxes(
-                &self,
-            ) -> Result<Vec<mailbox::Mailbox>, mailbox::MailboxError> {
-                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
-            }
-            async fn post_message(
-                &self,
-                _: mailbox::NewMessage,
-            ) -> Result<mailbox::Guarded<mailbox::Message>, mailbox::MailboxError> {
-                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
-            }
-            async fn read_mailbox(
-                &self,
-                _: &mailbox::MailboxName,
-            ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
-                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
-            }
-            async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
-                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
-            }
-            async fn read_message(
-                &self,
-                _: &mailbox::MessageId,
-            ) -> Result<mailbox::Delivered, mailbox::MailboxError> {
-                Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
-            }
-            async fn mark_processed(
-                &self,
-                _: &mailbox::MessageId,
-                _: Option<&str>,
+        async fn create_mailbox(
+            &self,
+            _: &mailbox::MailboxName,
+            _: bool,
+        ) -> Result<mailbox::Guarded<mailbox::Mailbox>, mailbox::MailboxError> {
+            Err(mailbox::MailboxError::NotConfigured(
+                "the mailbox world is down".into(),
+            ))
+        }
+        async fn list_mailboxes(&self) -> Result<Vec<mailbox::Mailbox>, mailbox::MailboxError> {
+            Err(mailbox::MailboxError::NotConfigured(
+                "the mailbox world is down".into(),
+            ))
+        }
+        async fn post_message(
+            &self,
+            _: mailbox::NewMessage,
+        ) -> Result<mailbox::Guarded<mailbox::Message>, mailbox::MailboxError> {
+            Err(mailbox::MailboxError::NotConfigured(
+                "the mailbox world is down".into(),
+            ))
+        }
+        async fn read_mailbox(
+            &self,
+            _: &mailbox::MailboxName,
+        ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
+            Err(mailbox::MailboxError::NotConfigured(
+                "the mailbox world is down".into(),
+            ))
+        }
+        async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
+            Err(mailbox::MailboxError::NotConfigured(
+                "the mailbox world is down".into(),
+            ))
+        }
+        async fn read_message(
+            &self,
+            _: &mailbox::MessageId,
+        ) -> Result<mailbox::Delivered, mailbox::MailboxError> {
+            Err(mailbox::MailboxError::NotConfigured(
+                "the mailbox world is down".into(),
+            ))
+        }
+        async fn mark_processed(
+            &self,
+            _: &mailbox::MessageId,
+            _: Option<&str>,
         ) -> Result<mailbox::Message, mailbox::MailboxError> {
-            Err(mailbox::MailboxError::NotConfigured("the mailbox world is down".into()))
+            Err(mailbox::MailboxError::NotConfigured(
+                "the mailbox world is down".into(),
+            ))
         }
     }
 
@@ -7422,9 +7883,7 @@ mod tests {
         ) -> Result<String, MemoryError> {
             self.0.append_journal(on, entry).await
         }
-        async fn scan(
-            &self,
-        ) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
+        async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
             self.0.scan().await
         }
     }
@@ -7460,7 +7919,10 @@ mod tests {
 
         assert_eq!(listed["ownership_known"], false, "{listed}");
         assert!(
-            listed["note"].as_str().expect("a note").contains("OWNERSHIP IS UNKNOWN"),
+            listed["note"]
+                .as_str()
+                .expect("a note")
+                .contains("OWNERSHIP IS UNKNOWN"),
             "…and the note says so rather than asserting whose the counts are: {listed}"
         );
         assert_eq!(
@@ -7492,7 +7954,10 @@ mod tests {
     #[test]
     fn the_orientation_teaches_the_two_endings_and_the_own_box_norm() {
         // The two endings, and that they are a choice about the WORK.
-        assert!(ORIENTATION.contains("CLEAR AND RESUME"), "the continuing case is named");
+        assert!(
+            ORIENTATION.contains("CLEAR AND RESUME"),
+            "the continuing case is named"
+        );
         assert!(
             ORIENTATION.contains("do NOT wrap"),
             "…and says which verb NOT to reach for, since wrapping is the tempting default"
@@ -7613,7 +8078,11 @@ mod tests {
 
         let full = json_of(
             &jojobot
-                .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
+                .start_here(Parameters(OrientArgs {
+                    bot: None,
+                    brief: None,
+                    resume: None,
+                }))
                 .await
                 .expect("start_here ok"),
         );
@@ -7622,11 +8091,18 @@ mod tests {
 
         let brief = json_of(
             &jojobot
-                .start_here(Parameters(OrientArgs { bot: None, brief: Some(true), resume: None }))
+                .start_here(Parameters(OrientArgs {
+                    bot: None,
+                    brief: Some(true),
+                    resume: None,
+                }))
                 .await
                 .expect("start_here ok"),
         );
-        assert!(brief["orientation"].is_null(), "the essay is what was dropped: {brief}");
+        assert!(
+            brief["orientation"].is_null(),
+            "the essay is what was dropped: {brief}"
+        );
         assert_eq!(brief["orientation_elided"], true);
         assert_eq!(
             full["orientation_elided"], false,
@@ -7674,7 +8150,11 @@ mod tests {
         let answers = [
             json_of(
                 &jojobot
-                    .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
+                    .start_here(Parameters(OrientArgs {
+                        bot: None,
+                        brief: None,
+                        resume: None,
+                    }))
                     .await
                     .expect("start_here ok"),
             ),
@@ -7744,7 +8224,11 @@ mod tests {
     #[tokio::test]
     async fn start_here_survives_a_world_that_is_down() {
         let out = handler_with_mailboxes_down(Arc::new(InMemoryMemory::new()))
-            .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
+            .start_here(Parameters(OrientArgs {
+                bot: None,
+                brief: None,
+                resume: None,
+            }))
             .await
             .expect("orientation still lands");
         let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
@@ -7820,12 +8304,22 @@ mod tests {
 
         let body = json_of(
             &jojobot
-                .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
+                .start_here(Parameters(OrientArgs {
+                    bot: None,
+                    brief: None,
+                    resume: None,
+                }))
                 .await
                 .expect("start_here ok"),
         );
-        assert!(body["identity"].is_null(), "no identity was claimed: {body}");
-        assert!(body["session"].is_null(), "and no session was begun: {body}");
+        assert!(
+            body["identity"].is_null(),
+            "no identity was claimed: {body}"
+        );
+        assert!(
+            body["session"].is_null(),
+            "and no session was begun: {body}"
+        );
         // Asserted over the whole payload, not over the one key it would sit
         // on: a handle smuggled anywhere in this answer is a handle a caller
         // will try to use.
@@ -7846,9 +8340,15 @@ mod tests {
 
         let body = boot(&jojobot, "gamma").await;
         let handle = sid_of(&body).unwrap_or_else(|| panic!("a handle comes back: {body}"));
-        assert!(sid::is_readable(&handle), "…and it is a readable one: {handle}");
+        assert!(
+            sid::is_readable(&handle),
+            "…and it is a readable one: {handle}"
+        );
         assert_eq!(body["session"]["resumed"], false);
-        assert!(body["session"]["choices"].is_null(), "there was nothing to choose: {body}");
+        assert!(
+            body["session"]["choices"].is_null(),
+            "there was nothing to choose: {body}"
+        );
 
         // **The card stays lazy.** A boot that does nothing leaves nothing
         // behind, handle or no handle.
@@ -7889,17 +8389,29 @@ mod tests {
             "the handle arrives with the answer, not before it: {body}"
         );
 
-        let choices = body["session"]["choices"].as_array().expect("the offer is a list");
-        assert_eq!(choices.len(), 2, "a bot may have several runs at once: {body}");
+        let choices = body["session"]["choices"]
+            .as_array()
+            .expect("the offer is a list");
+        assert_eq!(
+            choices.len(),
+            2,
+            "a bot may have several runs at once: {body}"
+        );
         let mut working_on: Vec<&str> = choices
             .iter()
             .map(|c| c["working_on"].as_str().expect("what it was working on"))
             .collect();
         working_on.sort_unstable();
-        assert_eq!(working_on, ["chasing the flaky test", "reading the hand-off"]);
+        assert_eq!(
+            working_on,
+            ["chasing the flaky test", "reading the hand-off"]
+        );
         for choice in choices {
             let handle = choice["sid"].as_str().expect("each option is addressable");
-            assert!(sid::is_readable(handle), "{handle} is not a readable handle");
+            assert!(
+                sid::is_readable(handle),
+                "{handle} is not a readable handle"
+            );
         }
         assert!(
             body["session"]["how_to_proceed"]
@@ -7932,7 +8444,11 @@ mod tests {
             .to_string();
 
         let resumed = boot_answering(&jojobot, "gamma", &offer).await;
-        assert_eq!(sid_of(&resumed).as_deref(), Some(offer.as_str()), "{resumed}");
+        assert_eq!(
+            sid_of(&resumed).as_deref(),
+            Some(offer.as_str()),
+            "{resumed}"
+        );
         assert_eq!(resumed["session"]["resumed"], true);
         assert_eq!(
             resumed["session"]["session"]["focus"], "reading the hand-off",
@@ -7949,7 +8465,10 @@ mod tests {
 
         let fresh = boot_answering(&jojobot, "gamma", sid::NEW).await;
         let minted = sid_of(&fresh).unwrap_or_else(|| panic!("new mints one: {fresh}"));
-        assert_ne!(minted, offer, "choosing new is a different session: {fresh}");
+        assert_ne!(
+            minted, offer,
+            "choosing new is a different session: {fresh}"
+        );
         assert_eq!(fresh["session"]["resumed"], false);
 
         // **Nothing auto-wrapped.** A new session never closes an old one.
@@ -7959,7 +8478,11 @@ mod tests {
             .expect("list ok");
         assert_eq!(all.len(), 1, "and new stays lazy until it writes: {all:?}");
         assert_eq!(all[0].id, begun.id);
-        assert_eq!(all[0].state, SessionState::Active, "the old run is untouched");
+        assert_eq!(
+            all[0].state,
+            SessionState::Active,
+            "the old run is untouched"
+        );
     }
 
     /// **A handle from before a restart is gone, and says so.** Not a 404 from
@@ -8125,7 +8648,10 @@ mod tests {
         let stopped = abandoned_run(&store, "gamma", "reading the hand-off", 30).await;
 
         let offered = boot(&jojobot, "gamma").await;
-        assert!(sid_of(&offered).is_none(), "there is something to choose: {offered}");
+        assert!(
+            sid_of(&offered).is_none(),
+            "there is something to choose: {offered}"
+        );
         let choice = &offered["session"]["choices"][0];
         assert_eq!(choice["working_on"], "reading the hand-off");
         assert_eq!(
@@ -8151,7 +8677,10 @@ mod tests {
         journal_entry(&jojobot, "picked it back up").await;
         let read = store.read_session(&stopped.id).await.expect("read ok");
         assert_eq!(read.state, SessionState::Active);
-        assert_eq!(read.entries.last().expect("an entry").text, "picked it back up");
+        assert_eq!(
+            read.entries.last().expect("an entry").text,
+            "picked it back up"
+        );
         let all = store
             .sessions_of(&EntityId("bot:gamma".into()))
             .await
@@ -8166,8 +8695,11 @@ mod tests {
     async fn an_old_abandoned_run_is_not_offered_and_is_still_resumable() {
         let store = Arc::new(InMemorySessions::new());
         let registry = Arc::new(sid::SessionRegistry::new());
-        let jojobot =
-            connection_sharing(Arc::new(InMemoryMemory::new()), store.clone(), registry.clone());
+        let jojobot = connection_sharing(
+            Arc::new(InMemoryMemory::new()),
+            store.clone(),
+            registry.clone(),
+        );
         make_bot(&jojobot, "gamma", None).await;
         let ancient = abandoned_run(&store, "gamma", "something from last winter", 24 * 240).await;
 
@@ -8237,8 +8769,11 @@ mod tests {
     async fn a_wrapped_run_is_never_offered_and_never_reopens() {
         let store = Arc::new(InMemorySessions::new());
         let registry = Arc::new(sid::SessionRegistry::new());
-        let jojobot =
-            connection_sharing(Arc::new(InMemoryMemory::new()), store.clone(), registry.clone());
+        let jojobot = connection_sharing(
+            Arc::new(InMemoryMemory::new()),
+            store.clone(),
+            registry.clone(),
+        );
         make_bot(&jojobot, "gamma", None).await;
 
         let told = store
@@ -8393,14 +8928,21 @@ mod tests {
                 .await
                 .expect("journal call ok"),
         );
-        assert_ne!(body["status"], "blocked", "naming the bot is enough: {body}");
+        assert_ne!(
+            body["status"], "blocked",
+            "naming the bot is enough: {body}"
+        );
 
         let live = client
             .sessions
             .sessions_of(&EntityId("bot:gamma".into()))
             .await
             .expect("list ok");
-        assert_eq!(live.len(), 1, "one session, minted by the first write: {live:?}");
+        assert_eq!(
+            live.len(),
+            1,
+            "one session, minted by the first write: {live:?}"
+        );
         assert_eq!(live[0].entries[0].text, "read the hand-off");
 
         // Call 3: another fresh connection ATTACHES to that session rather than
@@ -8422,8 +8964,17 @@ mod tests {
             .sessions_of(&EntityId("bot:gamma".into()))
             .await
             .expect("list ok");
-        assert_eq!(live.len(), 1, "still one session, not one per call: {live:?}");
-        assert_eq!(live[0].entries.len(), 2, "…and it accrued: {:?}", live[0].entries);
+        assert_eq!(
+            live.len(),
+            1,
+            "still one session, not one per call: {live:?}"
+        );
+        assert_eq!(
+            live[0].entries.len(),
+            2,
+            "…and it accrued: {:?}",
+            live[0].entries
+        );
     }
 
     /// The two edges of reading an identity off a parameter: blank is absent,
@@ -8479,7 +9030,10 @@ mod tests {
                 .await
                 .expect("wrap ok"),
         );
-        let closed = wrapped["session"]["id"].as_str().expect("an id").to_string();
+        let closed = wrapped["session"]["id"]
+            .as_str()
+            .expect("an id")
+            .to_string();
 
         // Naming THAT session is blocked — you meant that record.
         let named = json_of(
@@ -8494,7 +9048,10 @@ mod tests {
                 .await
                 .expect("call ok"),
         );
-        assert_eq!(named["status"], "blocked", "a closed session takes no more entries: {named}");
+        assert_eq!(
+            named["status"], "blocked",
+            "a closed session takes no more entries: {named}"
+        );
 
         // Naming the BOT starts its next run, exactly as booting would.
         let next = json_of(
@@ -8509,7 +9066,11 @@ mod tests {
                 .await
                 .expect("journal ok"),
         );
-        assert_ne!(next["session"], closed.as_str(), "a new run, not the closed one: {next}");
+        assert_ne!(
+            next["session"],
+            closed.as_str(),
+            "a new run, not the closed one: {next}"
+        );
 
         let all = client
             .sessions
@@ -8557,16 +9118,30 @@ mod tests {
                 .await
                 .expect("journal ok"),
         );
-        assert_ne!(theirs["session"], my_session.as_str(), "it landed in delta's session");
+        assert_ne!(
+            theirs["session"],
+            my_session.as_str(),
+            "it landed in delta's session"
+        );
 
         // …and I am still gamma.
         let after = journal_entry(&jojobot, "my second beat").await;
-        assert_eq!(after["session"], my_session.as_str(), "the connection is still gamma's");
+        assert_eq!(
+            after["session"],
+            my_session.as_str(),
+            "the connection is still gamma's"
+        );
 
-        let gamma = store.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
+        let gamma = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
         assert_eq!(gamma.len(), 1, "one session for gamma: {gamma:?}");
         assert_eq!(gamma[0].entries.len(), 2, "…carrying both of my beats");
-        let delta = store.sessions_of(&EntityId("bot:delta".into())).await.expect("list ok");
+        let delta = store
+            .sessions_of(&EntityId("bot:delta".into()))
+            .await
+            .expect("list ok");
         assert_eq!(delta.len(), 1, "and one for delta");
         assert_eq!(delta[0].entries.len(), 1);
     }
@@ -8601,7 +9176,8 @@ mod tests {
                 .expect("journal ok"),
         );
         assert_eq!(
-            named["session"], my_session.as_str(),
+            named["session"],
+            my_session.as_str(),
             "naming the bot I am bound to is the same session, not another: {named}"
         );
 
@@ -8618,7 +9194,8 @@ mod tests {
                 .expect("journal ok"),
         );
         assert_ne!(
-            other["session"], my_session.as_str(),
+            other["session"],
+            my_session.as_str(),
             "the cached session belongs to gamma and must not answer for delta: {other}"
         );
     }
@@ -8685,12 +9262,20 @@ mod tests {
                 ),
             ),
         ] {
-            assert_eq!(body["status"], "blocked", "{verb} minted for a typo: {body}");
+            assert_eq!(
+                body["status"], "blocked",
+                "{verb} minted for a typo: {body}"
+            );
             let names: Vec<&str> = body["candidates"]
                 .as_array()
                 .expect("candidates")
                 .iter()
-                .map(|c| c["handle"].as_str().or(c["name"].as_str()).expect("a handle"))
+                .map(|c| {
+                    c["handle"]
+                        .as_str()
+                        .or(c["name"].as_str())
+                        .expect("a handle")
+                })
                 .collect();
             assert!(
                 names.iter().any(|n| n.contains("gamma")),
@@ -8717,7 +9302,10 @@ mod tests {
             .map(|d| d.prose)
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(!journal.contains("a story for nobody"), "the Journal is untouched: {journal}");
+        assert!(
+            !journal.contains("a story for nobody"),
+            "the Journal is untouched: {journal}"
+        );
     }
 
     /// The other two session verbs address by bot name too — a stateless client
@@ -8739,7 +9327,10 @@ mod tests {
                 .await
                 .expect("call ok"),
         );
-        assert_eq!(nothing["status"], "blocked", "nothing to amend, and nothing begun: {nothing}");
+        assert_eq!(
+            nothing["status"], "blocked",
+            "nothing to amend, and nothing begun: {nothing}"
+        );
         assert!(
             client
                 .sessions
@@ -8792,7 +9383,11 @@ mod tests {
             .sessions_of(&EntityId("bot:gamma".into()))
             .await
             .expect("list ok");
-        assert_eq!(live.len(), 1, "one session across five connections: {live:?}");
+        assert_eq!(
+            live.len(),
+            1,
+            "one session across five connections: {live:?}"
+        );
         assert_eq!(
             live[0].entries[0].text, "read the hand-off, and scoped it",
             "the amend landed in place: {:?}",
@@ -8819,7 +9414,11 @@ mod tests {
 
         // …and the next write is still mine.
         let after = journal_entry(&jojobot, "my second beat").await;
-        assert_eq!(after["session"], my_id.as_str(), "the binding survived the miss");
+        assert_eq!(
+            after["session"],
+            my_id.as_str(),
+            "the binding survived the miss"
+        );
         let live = store
             .sessions_of(&EntityId("bot:gamma".into()))
             .await
@@ -8875,7 +9474,11 @@ mod tests {
             ("bell\u{7}char", "bellchar".into()),
         ];
         for (input, expected) in cases {
-            assert_eq!(display_line(input), expected, "the stored focus changed for {input:?}");
+            assert_eq!(
+                display_line(input),
+                expected,
+                "the stored focus changed for {input:?}"
+            );
         }
     }
 
@@ -8891,7 +9494,10 @@ mod tests {
         let booted = boot(&jojobot, "gamma").await;
         assert_eq!(booted["session"]["available"], true);
         assert_eq!(booted["session"]["resumed"], false, "nothing was in flight");
-        assert!(booted["session"]["session"].is_null(), "…and no card was written");
+        assert!(
+            booted["session"]["session"].is_null(),
+            "…and no card was written"
+        );
         assert!(
             store
                 .sessions_of(&EntityId("bot:gamma".into()))
@@ -9073,7 +9679,10 @@ mod tests {
         // builds one — a fresh binding, so anything it knows it read.
         let second = connection_sharing(memory, store.clone(), registry);
         let offered = boot(&second, "gamma").await;
-        assert!(sid_of(&offered).is_none(), "the choice comes first: {offered}");
+        assert!(
+            sid_of(&offered).is_none(),
+            "the choice comes first: {offered}"
+        );
         let choice = &offered["session"]["choices"][0];
         assert_eq!(choice["working_on"], "read the hand-off");
 
@@ -9147,8 +9756,14 @@ mod tests {
         // stopped the day before yesterday, which is exactly the run a
         // returning agent means by "resume last session".
         let choice = &booted["session"]["choices"][0];
-        assert_eq!(choice["state"], "abandoned", "offered, and marked: {booted}");
-        assert_eq!(choice["working_on"], "something from the day before yesterday");
+        assert_eq!(
+            choice["state"], "abandoned",
+            "offered, and marked: {booted}"
+        );
+        assert_eq!(
+            choice["working_on"],
+            "something from the day before yesterday"
+        );
 
         let resumed = boot_answering(
             &jojobot,
@@ -9186,7 +9801,9 @@ mod tests {
         let resumed = boot_answering(
             &jojobot,
             "gamma",
-            booted["session"]["choices"][0]["sid"].as_str().expect("an option"),
+            booted["session"]["choices"][0]["sid"]
+                .as_str()
+                .expect("an option"),
         )
         .await;
         assert_eq!(resumed["session"]["resumed"], true);
@@ -9215,7 +9832,10 @@ mod tests {
                 .expect("journal ok"),
         );
         assert_eq!(first["focus"], "building the session context");
-        assert!(first["entry"]["beat"].is_null(), "a session's own entry is not a beat");
+        assert!(
+            first["entry"]["beat"].is_null(),
+            "a session's own entry is not a beat"
+        );
 
         let amended = json_of(
             &jojobot
@@ -9274,7 +9894,10 @@ mod tests {
         make_bot(&jojobot, "gamma", None).await;
         boot(&jojobot, "gamma").await;
         let started = journal_entry(&jojobot, "read the hand-off").await;
-        let id = started["session"].as_str().expect("a session id").to_string();
+        let id = started["session"]
+            .as_str()
+            .expect("a session id")
+            .to_string();
         jojobot
             .wrap_session(Parameters(WrapSessionArgs {
                 story: "done".into(),
@@ -9357,7 +9980,10 @@ mod tests {
         // used to say "call boot_bot" — a verb that bound a connection most clients
         // do not keep, so the very next call landed back here. `bot` is the
         // address that survives, and this is the message that has to say so.
-        assert!(how.contains("`bot`"), "the way out names the parameter: {how}");
+        assert!(
+            how.contains("`bot`"),
+            "the way out names the parameter: {how}"
+        );
     }
 
     /// **Amending a session that has not begun is refused, not turned into a
@@ -9418,7 +10044,10 @@ mod tests {
             .filter_map(|e| e.beat.as_deref().map(|b| (b, e.text.as_str())))
             .collect();
         assert_eq!(
-            beats.iter().filter(|(class, _)| *class == "capture").count(),
+            beats
+                .iter()
+                .filter(|(class, _)| *class == "capture")
+                .count(),
             1,
             "one beat for the class, however many captures: {entries:?}"
         );
@@ -9426,8 +10055,14 @@ mod tests {
             .iter()
             .find(|(class, _)| *class == "capture")
             .expect("a capture beat");
-        assert!(tally.contains("(2)"), "…with its count kept current: {tally}");
-        assert!(tally.contains("person:alpha"), "…and what it touched: {tally}");
+        assert!(
+            tally.contains("(2)"),
+            "…with its count kept current: {tally}"
+        );
+        assert!(
+            tally.contains("person:alpha"),
+            "…and what it touched: {tally}"
+        );
         assert!(tally.contains("person:milhouse"), "…both of them: {tally}");
 
         // The classes stay apart, and so do jojobot's words and the session's.
@@ -9512,7 +10147,10 @@ mod tests {
         ensure(&first, "alpha").await;
         capture_ok(&first, capture_args("alpha", "plays go")).await;
 
-        let live = store.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
         let beat = live[0]
             .entries
             .iter()
@@ -9534,7 +10172,10 @@ mod tests {
         ensure(&second, "milhouse").await;
         capture_ok(&second, capture_args("milhouse", "plays chess")).await;
 
-        let live = store.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
         let captures: Vec<&str> = live[0]
             .entries
             .iter()
@@ -9603,7 +10244,11 @@ mod tests {
         ) -> Result<JournalEntry, SessionError> {
             self.inner.append(id, entry).await
         }
-        async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+        async fn amend_last(
+            &self,
+            id: &SessionId,
+            text: &str,
+        ) -> Result<JournalEntry, SessionError> {
             self.inner.amend_last(id, text).await
         }
         async fn amend_beat(
@@ -9641,7 +10286,10 @@ mod tests {
             .expect("begin ok");
         store
             .inner
-            .append(&live.id, NewEntry::manual("what it was doing", jiff::Timestamp::now()))
+            .append(
+                &live.id,
+                NewEntry::manual("what it was doing", jiff::Timestamp::now()),
+            )
             .await
             .expect("append ok");
 
@@ -9673,13 +10321,23 @@ mod tests {
         store.comes_back();
         let journalled = journal_entry(&jojobot, "picked it back up").await;
         assert_eq!(
-            journalled["session"], live.id.as_str(),
+            journalled["session"],
+            live.id.as_str(),
             "the write joined the session in flight: {journalled}"
         );
 
-        let all = store.inner.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
+        let all = store
+            .inner
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
         assert_eq!(all.len(), 1, "no second card beside it: {all:?}");
-        assert_eq!(all[0].entries.len(), 2, "…and it kept accruing: {:?}", all[0].entries);
+        assert_eq!(
+            all[0].entries.len(),
+            2,
+            "…and it kept accruing: {:?}",
+            all[0].entries
+        );
     }
 
     /// **amend_journal triages the same way the other two do.** A connection
@@ -9704,7 +10362,10 @@ mod tests {
         // stateless caller sees, and `bot` is optional, so omitting it is the
         // DEFAULT failure — the advice pointing at boot_bot pointed straight
         // back into the loop this round exists to close.
-        assert!(how.contains("`bot`"), "the way out names the parameter: {how}");
+        assert!(
+            how.contains("`bot`"),
+            "the way out names the parameter: {how}"
+        );
         assert!(
             !how.contains("Call boot_bot"),
             "…and does not send them round the loop again: {how}"
@@ -9734,7 +10395,10 @@ mod tests {
                 .await
                 .expect("call ok"),
         );
-        assert_ne!(body["status"], "blocked", "the session was there to be found: {body}");
+        assert_ne!(
+            body["status"], "blocked",
+            "the session was there to be found: {body}"
+        );
         assert_eq!(body["session"], live.id.as_str());
 
         let read = store.inner.read_session(&live.id).await.expect("read ok");
@@ -9766,7 +10430,11 @@ mod tests {
         ) -> Result<JournalEntry, SessionError> {
             self.0.append(id, entry).await
         }
-        async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+        async fn amend_last(
+            &self,
+            id: &SessionId,
+            text: &str,
+        ) -> Result<JournalEntry, SessionError> {
             self.0.amend_last(id, text).await
         }
         async fn amend_beat(
@@ -9834,8 +10502,15 @@ mod tests {
             .expect_err("a write against an unreadable board must say so");
         assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
 
-        let all = inner.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
-        assert_eq!(all.len(), 1, "no second card was minted beside the live one: {all:?}");
+        let all = inner
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(
+            all.len(),
+            1,
+            "no second card was minted beside the live one: {all:?}"
+        );
         assert_eq!(all[0].id, live.id);
     }
 
@@ -9889,7 +10564,10 @@ mod tests {
         make_bot(&jojobot, "gamma", None).await;
         boot(&jojobot, "gamma").await;
         let started = journal_entry(&jojobot, "read the hand-off").await;
-        let session = started["session"].as_str().expect("a session id").to_string();
+        let session = started["session"]
+            .as_str()
+            .expect("a session id")
+            .to_string();
 
         // An entry already on the page that mentions this session's mark in
         // passing — its own line, so nothing but a substring match sees it.
@@ -9997,7 +10675,10 @@ mod tests {
                 bot: None,
             }))
         };
-        assert!(wrap().await.is_err(), "the close refused, so the wrap failed");
+        assert!(
+            wrap().await.is_err(),
+            "the close refused, so the wrap failed"
+        );
 
         // The natural next beat: saying so. It is now the tail, not the story.
         journal_entry(&jojobot, "the wrap failed at the close — retrying").await;
@@ -10006,7 +10687,11 @@ mod tests {
         let second = json_of(&wrap().await.expect("the retry must land"));
         assert_eq!(second["session"]["state"], "wrapped");
 
-        let live = store.inner.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
+        let live = store
+            .inner
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
         assert_eq!(
             live[0].entries.iter().filter(|e| e.text == story).count(),
             1,
@@ -10052,14 +10737,21 @@ mod tests {
                 bot: None,
             }))
         };
-        assert!(wrap().await.is_err(), "the close refused, so the wrap failed");
+        assert!(
+            wrap().await.is_err(),
+            "the close refused, so the wrap failed"
+        );
 
         // The retry, with the close working this time.
         store.allow_close();
         let second = json_of(&wrap().await.expect("the retry must land"));
         assert_eq!(second["session"]["state"], "wrapped");
 
-        let live = store.inner.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
+        let live = store
+            .inner
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
         assert_eq!(
             live[0].entries.iter().filter(|e| e.text == story).count(),
             1,
@@ -10097,7 +10789,8 @@ mod tests {
             }
         }
         fn allow_close(&self) {
-            self.refuse.store(false, std::sync::atomic::Ordering::SeqCst);
+            self.refuse
+                .store(false, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -10119,7 +10812,11 @@ mod tests {
         ) -> Result<JournalEntry, SessionError> {
             self.inner.append(id, entry).await
         }
-        async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+        async fn amend_last(
+            &self,
+            id: &SessionId,
+            text: &str,
+        ) -> Result<JournalEntry, SessionError> {
             self.inner.amend_last(id, text).await
         }
         async fn amend_beat(
@@ -10165,7 +10862,10 @@ mod tests {
             .await
             .expect("begin ok");
         store
-            .append(&theirs.id, NewEntry::manual("their beat", jiff::Timestamp::now()))
+            .append(
+                &theirs.id,
+                NewEntry::manual("their beat", jiff::Timestamp::now()),
+            )
             .await
             .expect("append ok");
 
@@ -10188,9 +10888,18 @@ mod tests {
             .sessions_of(&EntityId("bot:gamma".into()))
             .await
             .expect("list ok");
-        assert_eq!(live.len(), 1, "one card for this connection, not two: {live:?}");
+        assert_eq!(
+            live.len(),
+            1,
+            "one card for this connection, not two: {live:?}"
+        );
         assert_eq!(live[0].id.as_str(), my_id);
-        assert_eq!(live[0].entries.len(), 2, "…and it kept accruing: {:?}", live[0].entries);
+        assert_eq!(
+            live[0].entries.len(),
+            2,
+            "…and it kept accruing: {:?}",
+            live[0].entries
+        );
     }
 
     /// A session store that hands the runtime a chance to run the other task at
@@ -10230,7 +10939,11 @@ mod tests {
             self.pause().await;
             self.0.append(id, entry).await
         }
-        async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+        async fn amend_last(
+            &self,
+            id: &SessionId,
+            text: &str,
+        ) -> Result<JournalEntry, SessionError> {
             self.pause().await;
             self.0.amend_last(id, text).await
         }
@@ -10300,7 +11013,11 @@ mod tests {
             .sessions_of(&EntityId("bot:gamma".into()))
             .await
             .expect("list ok");
-        assert_eq!(live.len(), 1, "one session, not one per racing call: {live:?}");
+        assert_eq!(
+            live.len(),
+            1,
+            "one session, not one per racing call: {live:?}"
+        );
         assert_eq!(live[0].entries.len(), 2, "…carrying both entries");
     }
 
@@ -10463,7 +11180,10 @@ mod tests {
             Arc::new(sid::SessionRegistry::new()),
         );
         let booted = boot(&down, "gamma").await;
-        assert_eq!(booted["identity"]["bot"]["id"], "bot:gamma", "the boot still lands");
+        assert_eq!(
+            booted["identity"]["bot"]["id"], "bot:gamma",
+            "the boot still lands"
+        );
         assert_eq!(booted["session"]["available"], false);
         assert!(
             booted["session"]["note"]
@@ -10480,23 +11200,29 @@ mod tests {
     #[async_trait]
     impl Sessions for DownSessions {
         async fn sessions_of(&self, _: &EntityId) -> Result<Vec<Session>, SessionError> {
-            Err(SessionError::NotConfigured("the session world is down".into()))
+            Err(SessionError::NotConfigured(
+                "the session world is down".into(),
+            ))
         }
         async fn read_session(&self, _: &SessionId) -> Result<Session, SessionError> {
-            Err(SessionError::NotConfigured("the session world is down".into()))
+            Err(SessionError::NotConfigured(
+                "the session world is down".into(),
+            ))
         }
         async fn begin(&self, _: NewSession) -> Result<Session, SessionError> {
-            Err(SessionError::NotConfigured("the session world is down".into()))
+            Err(SessionError::NotConfigured(
+                "the session world is down".into(),
+            ))
         }
-        async fn append(
-            &self,
-            _: &SessionId,
-            _: NewEntry,
-        ) -> Result<JournalEntry, SessionError> {
-            Err(SessionError::NotConfigured("the session world is down".into()))
+        async fn append(&self, _: &SessionId, _: NewEntry) -> Result<JournalEntry, SessionError> {
+            Err(SessionError::NotConfigured(
+                "the session world is down".into(),
+            ))
         }
         async fn amend_last(&self, _: &SessionId, _: &str) -> Result<JournalEntry, SessionError> {
-            Err(SessionError::NotConfigured("the session world is down".into()))
+            Err(SessionError::NotConfigured(
+                "the session world is down".into(),
+            ))
         }
         async fn amend_beat(
             &self,
@@ -10505,16 +11231,24 @@ mod tests {
             _: &str,
             _: jiff::Timestamp,
         ) -> Result<JournalEntry, SessionError> {
-            Err(SessionError::NotConfigured("the session world is down".into()))
+            Err(SessionError::NotConfigured(
+                "the session world is down".into(),
+            ))
         }
         async fn set_focus(&self, _: &SessionId, _: &str) -> Result<Session, SessionError> {
-            Err(SessionError::NotConfigured("the session world is down".into()))
+            Err(SessionError::NotConfigured(
+                "the session world is down".into(),
+            ))
         }
         async fn close(&self, _: &SessionId, _: SessionState) -> Result<Session, SessionError> {
-            Err(SessionError::NotConfigured("the session world is down".into()))
+            Err(SessionError::NotConfigured(
+                "the session world is down".into(),
+            ))
         }
         async fn reopen(&self, _: &SessionId) -> Result<Session, SessionError> {
-            Err(SessionError::NotConfigured("the session world is down".into()))
+            Err(SessionError::NotConfigured(
+                "the session world is down".into(),
+            ))
         }
     }
 
@@ -10554,14 +11288,20 @@ mod tests {
         assert_ne!(body["status"], "blocked", "a bot that exists boots: {body}");
 
         // The world, and what is in it — everything start_here hands over.
-        assert!(body["orientation"].as_str().is_some_and(|o| o.contains("provenance")));
+        assert!(
+            body["orientation"]
+                .as_str()
+                .is_some_and(|o| o.contains("provenance"))
+        );
         assert_eq!(body["snapshot"]["entities"]["by_kind"]["bot"], 1);
 
         let me = &body["identity"];
         assert_eq!(me["bot"]["id"], "bot:otto");
         assert_eq!(me["bot"]["type"], "SoftwareApplication");
         assert!(
-            me["charter"].as_str().is_some_and(|c| c.contains("never writes to the ledger")),
+            me["charter"]
+                .as_str()
+                .is_some_and(|c| c.contains("never writes to the ledger")),
             "the charter is the orienting text, and it arrives: {me}"
         );
 
@@ -10572,11 +11312,17 @@ mod tests {
             rules[0]["provenance"], "testimony",
             "a rule arrives with its provenance showing, or it reads as settled when it is a guess"
         );
-        assert!(rules[0]["address"].as_str().is_some(), "and with the address that edits it");
+        assert!(
+            rules[0]["address"].as_str().is_some(),
+            "and with the address that edits it"
+        );
 
         let owned = &me["owned_mailbox"];
         assert_eq!(owned["name"], "otto-inbox");
-        assert_eq!(owned["counts"]["new"], 1, "the state of its own box: {owned}");
+        assert_eq!(
+            owned["counts"]["new"], 1,
+            "the state of its own box: {owned}"
+        );
         assert_eq!(owned["exists"], true, "the box is there and says so");
     }
 
@@ -10594,11 +11340,19 @@ mod tests {
         let body = boot(&jojobot, "sigma").await;
         let owned = &body["identity"]["owned_mailbox"];
         assert_eq!(owned["name"], "sigma-inbox");
-        assert_eq!(owned["available"], true, "the world is up; the box is not there");
+        assert_eq!(
+            owned["available"], true,
+            "the world is up; the box is not there"
+        );
         assert_eq!(owned["exists"], false, "said plainly: {owned}");
-        assert!(owned["counts"].is_null(), "there are no counts for a box that is not there");
         assert!(
-            owned["how_to_proceed"].as_str().is_some_and(|a| a.contains("create_mailbox")),
+            owned["counts"].is_null(),
+            "there are no counts for a box that is not there"
+        );
+        assert!(
+            owned["how_to_proceed"]
+                .as_str()
+                .is_some_and(|a| a.contains("create_mailbox")),
             "the way forward is the deliberate verb: {owned}"
         );
 
@@ -10606,9 +11360,12 @@ mod tests {
         for _ in 0..2 {
             boot(&jojobot, "sigma").await;
         }
-        let listed = json_of(&jojobot.list_mailboxes(Parameters(ListMailboxesArgs { bot: None }))
+        let listed = json_of(
+            &jojobot
+                .list_mailboxes(Parameters(ListMailboxesArgs { bot: None }))
                 .await
-                .expect("list ok"));
+                .expect("list ok"),
+        );
         assert_eq!(
             listed["count"], 0,
             "booting must not put a box on the board: {listed}"
@@ -10620,7 +11377,10 @@ mod tests {
     async fn booting_reports_the_box_once_it_has_been_opened_deliberately() {
         let jojobot = handler();
         make_bot(&jojobot, "sigma", Some("sigma-inbox")).await;
-        assert_eq!(boot(&jojobot, "sigma").await["identity"]["owned_mailbox"]["exists"], false);
+        assert_eq!(
+            boot(&jojobot, "sigma").await["identity"]["owned_mailbox"]["exists"],
+            false
+        );
 
         make_box(&jojobot, "sigma-inbox").await;
         send(&jojobot, "sigma-inbox", "alpha", "the shipment landed").await;
@@ -10629,7 +11389,10 @@ mod tests {
         assert_eq!(owned["available"], true);
         assert_eq!(owned["exists"], true);
         assert_eq!(owned["counts"]["new"], 1, "got {owned}");
-        assert!(owned["how_to_proceed"].is_null(), "nothing to advise: {owned}");
+        assert!(
+            owned["how_to_proceed"].is_null(),
+            "nothing to advise: {owned}"
+        );
     }
 
     /// **A claim is screened against the boxes that exist.** The review's hole:
@@ -10649,18 +11412,26 @@ mod tests {
             .await
             .expect("a near-miss claim is an answer, not a protocol failure");
         let body = blocked(&result);
-        assert_eq!(body["attempted"], "gamma-inbo", "the suspicious thing is the box name");
+        assert_eq!(
+            body["attempted"], "gamma-inbo",
+            "the suspicious thing is the box name"
+        );
         assert_eq!(body["candidates"][0]["name"], "gamma-inbox");
         assert_eq!(body["candidates"][0]["reason"], "near");
 
         // Nothing was written — not the claim, and not the entity carrying it.
         let listed = json_of(
             &jojobot
-                .list_entities(Parameters(ListEntitiesArgs { kind: Some("bot".into()) }))
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: Some("bot".into()),
+                }))
                 .await
                 .expect("list ok"),
         );
-        assert_eq!(listed["count"], 0, "a blocked claim writes no entity: {listed}");
+        assert_eq!(
+            listed["count"], 0,
+            "a blocked claim writes no entity: {listed}"
+        );
     }
 
     /// The same signal a deliberate sibling box is created with clears it — and
@@ -10680,7 +11451,10 @@ mod tests {
                 .await
                 .expect("add ok"),
         );
-        assert_eq!(sibling["mailbox"], "gamma-inbo", "the signal clears it: {sibling}");
+        assert_eq!(
+            sibling["mailbox"], "gamma-inbo",
+            "the signal clears it: {sibling}"
+        );
 
         let exact = json_of(
             &jojobot
@@ -10723,7 +11497,9 @@ mod tests {
 
         let listed = json_of(
             &jojobot
-                .list_entities(Parameters(ListEntitiesArgs { kind: Some("bot".into()) }))
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: Some("bot".into()),
+                }))
                 .await
                 .expect("list ok"),
         );
@@ -10744,9 +11520,12 @@ mod tests {
         assert_eq!(body["identity"]["bot"]["id"], "bot:epsilon");
         assert!(body["identity"]["owned_mailbox"].is_null(), "got {body}");
         assert!(
-            json_of(&jojobot.list_mailboxes(Parameters(ListMailboxesArgs { bot: None }))
-                .await
-                .expect("list ok"))["mailboxes"]
+            json_of(
+                &jojobot
+                    .list_mailboxes(Parameters(ListMailboxesArgs { bot: None }))
+                    .await
+                    .expect("list ok")
+            )["mailboxes"]
                 .as_array()
                 .expect("boxes")
                 .is_empty(),
@@ -10797,7 +11576,10 @@ mod tests {
                 .expect("an unknown bot is an answer, not a protocol failure"),
         );
         assert!(
-            stranger["candidates"].as_array().expect("a list").is_empty(),
+            stranger["candidates"]
+                .as_array()
+                .expect("a list")
+                .is_empty(),
             "nothing resembles this name, which is exactly the case: {stranger}"
         );
 
@@ -10810,7 +11592,10 @@ mod tests {
                 .collect();
             assert_eq!(roster, ["bot:gamma", "bot:delta"], "who exists: {body}");
             let how = body["how_to_proceed"].as_str().expect("advice");
-            assert!(how.contains("bot:gamma"), "the roster is in the words too: {how}");
+            assert!(
+                how.contains("bot:gamma"),
+                "the roster is in the words too: {how}"
+            );
             assert!(
                 how.contains("Boot as one of these") && how.contains("from inside that session"),
                 "the offer is the way out: {how}"
@@ -10824,11 +11609,16 @@ mod tests {
         // **Nothing was written.** Not the identity, not a session, not a box.
         let listed = json_of(
             &jojobot
-                .list_entities(Parameters(ListEntitiesArgs { kind: Some("bot".into()) }))
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: Some("bot".into()),
+                }))
                 .await
                 .expect("list ok"),
         );
-        assert_eq!(listed["count"], 2, "a refused boot mints no identity: {listed}");
+        assert_eq!(
+            listed["count"], 2,
+            "a refused boot mints no identity: {listed}"
+        );
     }
 
     /// The empty board says something different, because "boot as one of these"
@@ -10877,7 +11667,11 @@ mod tests {
             .await
             .expect_err("another kind must be refused");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("bot"), "the error says what this door takes: {}", err.message);
+        assert!(
+            err.message.contains("bot"),
+            "the error says what this door takes: {}",
+            err.message
+        );
     }
 
     /// **Both halves of the door make the same promise, so both keep it.** `orient` says
@@ -10916,10 +11710,16 @@ mod tests {
 
         let me = &body["identity"];
         assert_eq!(me["bot"]["id"], "bot:gamma");
-        assert_eq!(me["charter"], "Holds the plan.", "the half that is up arrives whole");
+        assert_eq!(
+            me["charter"], "Holds the plan.",
+            "the half that is up arrives whole"
+        );
 
         let owned = &me["owned_mailbox"];
-        assert_eq!(owned["name"], "gamma-inbox", "the claim is Memory's and is still known");
+        assert_eq!(
+            owned["name"], "gamma-inbox",
+            "the claim is Memory's and is still known"
+        );
         assert_eq!(owned["available"], false, "got {owned}");
         assert!(
             owned["exists"].is_null(),
@@ -10954,7 +11754,10 @@ mod tests {
 
         let before = boot(&jojobot, "sigma").await;
         assert_eq!(before["identity"]["owned_mailbox"]["exists"], false);
-        assert!(!listed(&before), "the snapshot must agree it is absent: {before}");
+        assert!(
+            !listed(&before),
+            "the snapshot must agree it is absent: {before}"
+        );
 
         make_box(&jojobot, "sigma-inbox").await;
 
@@ -10970,10 +11773,16 @@ mod tests {
         let jojobot = handler();
         make_bot(&jojobot, "gamma", None).await;
 
-        let anonymous = json_of(&jojobot
-                .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
+        let anonymous = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    bot: None,
+                    brief: None,
+                    resume: None,
+                }))
                 .await
-                .expect("start_here ok"));
+                .expect("start_here ok"),
+        );
         let identified = boot(&jojobot, "gamma").await;
         assert_eq!(
             anonymous["orientation"], identified["orientation"],
@@ -11002,7 +11811,10 @@ mod tests {
             names(&identified),
             "both doors see the same board; they differ only in whose queue is theirs to read"
         );
-        assert!(anonymous["identity"].is_null(), "an anonymous session claims no identity");
+        assert!(
+            anonymous["identity"].is_null(),
+            "an anonymous session claims no identity"
+        );
     }
 
     /// …and the difference the previous test carves out, asserted directly: the
@@ -11027,7 +11839,11 @@ mod tests {
 
         let anonymous = json_of(
             &jojobot
-                .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
+                .start_here(Parameters(OrientArgs {
+                    bot: None,
+                    brief: None,
+                    resume: None,
+                }))
                 .await
                 .expect("start_here ok"),
         );
@@ -11078,7 +11894,9 @@ mod tests {
         );
         assert_eq!(missed["attempted"], "bot:nobody");
         assert!(
-            missed["how_to_proceed"].as_str().is_some_and(|a| a.contains("add_entity")),
+            missed["how_to_proceed"]
+                .as_str()
+                .is_some_and(|a| a.contains("add_entity")),
             "the way out names the verb that opens it: {missed}"
         );
     }

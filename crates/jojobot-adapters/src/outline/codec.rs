@@ -79,18 +79,42 @@ struct Layout {
 /// reserved either way ([`row_id`] is deliberately wider than this), so an
 /// unread row is inert rather than destroyed.
 fn layout_of(cells: &[String]) -> Option<Layout> {
-    let is_date = |i: usize| cells.get(i).is_some_and(|c| c.trim().parse::<Date>().is_ok());
+    let is_date = |i: usize| {
+        cells
+            .get(i)
+            .is_some_and(|c| c.trim().parse::<Date>().is_ok())
+    };
     match cells.len() {
-        8 => Some(Layout { details: Some(3), provenance: Some(4), status: 5, date: 6, edges: Some(7) }),
-        7 => Some(Layout { details: Some(3), provenance: Some(4), status: 5, date: 6, edges: None }),
+        8 => Some(Layout {
+            details: Some(3),
+            provenance: Some(4),
+            status: 5,
+            date: 6,
+            edges: Some(7),
+        }),
+        7 => Some(Layout {
+            details: Some(3),
+            provenance: Some(4),
+            status: 5,
+            date: 6,
+            edges: None,
+        }),
         // Pre-`details`: … | provenance | status | date
-        6 if is_date(5) && !is_date(4) => {
-            Some(Layout { details: None, provenance: Some(3), status: 4, date: 5, edges: None })
-        }
+        6 if is_date(5) && !is_date(4) => Some(Layout {
+            details: None,
+            provenance: Some(3),
+            status: 4,
+            date: 5,
+            edges: None,
+        }),
         // Slice 1: … | status | date | edges
-        6 if is_date(4) && !is_date(5) => {
-            Some(Layout { details: None, provenance: None, status: 3, date: 4, edges: Some(5) })
-        }
+        6 if is_date(4) && !is_date(5) => Some(Layout {
+            details: None,
+            provenance: None,
+            status: 3,
+            date: 4,
+            edges: Some(5),
+        }),
         _ => None,
     }
 }
@@ -101,10 +125,34 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
 /// read but never lose a row.
 fn era_layout(version: u32, width: usize) -> Option<Layout> {
     match (version, width) {
-        (3, 8) => Some(Layout { details: Some(3), provenance: Some(4), status: 5, date: 6, edges: Some(7) }),
-        (2, 7) => Some(Layout { details: Some(3), provenance: Some(4), status: 5, date: 6, edges: None }),
-        (1, 6) => Some(Layout { details: None, provenance: Some(3), status: 4, date: 5, edges: None }),
-        (0, 6) => Some(Layout { details: None, provenance: None, status: 3, date: 4, edges: Some(5) }),
+        (3, 8) => Some(Layout {
+            details: Some(3),
+            provenance: Some(4),
+            status: 5,
+            date: 6,
+            edges: Some(7),
+        }),
+        (2, 7) => Some(Layout {
+            details: Some(3),
+            provenance: Some(4),
+            status: 5,
+            date: 6,
+            edges: None,
+        }),
+        (1, 6) => Some(Layout {
+            details: None,
+            provenance: Some(3),
+            status: 4,
+            date: 5,
+            edges: None,
+        }),
+        (0, 6) => Some(Layout {
+            details: None,
+            provenance: None,
+            status: 3,
+            date: 4,
+            edges: Some(5),
+        }),
         _ => None,
     }
 }
@@ -221,7 +269,9 @@ fn parse_fact_row_in(row: &str, home: &EntityId, declared: Option<u32>) -> Optio
         .map(str::to_string);
     // A row from before the provenance column reads as inference: absent is the
     // less-trusted side, and a read never promotes a claim it cannot vouch for.
-    let provenance = at.provenance.map_or(Provenance::default(), |i| Provenance::from_token(cell(i)));
+    let provenance = at
+        .provenance
+        .map_or(Provenance::default(), |i| Provenance::from_token(cell(i)));
     let status = FactStatus::from_token(cell(at.status));
     let date: Date = cells[at.date].trim().parse().ok()?;
     let edge = at.edges.and_then(|i| parse_edge(cell(i)));
@@ -315,7 +365,11 @@ fn migrated_row(line: &str, home: &EntityId) -> Option<String> {
 /// just the touched row: any write heals the doc it lands in.
 fn migrated_region(lines: &[&str], start: usize, end: usize, home: &EntityId) -> Vec<String> {
     let mut out = vec![TABLE_HEADER.to_string(), TABLE_SEP.to_string()];
-    out.extend(lines[start..end].iter().filter_map(|l| migrated_row(l, home)));
+    out.extend(
+        lines[start..end]
+            .iter()
+            .filter_map(|l| migrated_row(l, home)),
+    );
     out
 }
 
@@ -609,9 +663,7 @@ fn parse_aliases(doc: &str) -> Vec<String> {
 fn frontmatter(e: &Entity) -> String {
     let mut out = format!(
         "```yaml\nid: {}\nschema: {SCHEMA_CURRENT}\nkind: {}\nname: {}\n",
-        e.id,
-        e.kind,
-        e.name,
+        e.id, e.kind, e.name,
     );
     if !e.aliases.is_empty() {
         out.push_str(&format!("aliases: {}\n", e.aliases.join(", ")));
@@ -792,8 +844,13 @@ mod tests {
             "| f1 | person:alpha | allergic to penicillin |  | testimony | active | July 1, 2026 |",
         );
         assert!(
-            with_row_replaced(&doc, &EntityId::person("alpha"), &FactId("f1".into()), "| f1 | x |")
-                .is_none(),
+            with_row_replaced(
+                &doc,
+                &EntityId::person("alpha"),
+                &FactId("f1".into()),
+                "| f1 | x |"
+            )
+            .is_none(),
             "a row the reader skipped must not be rewritten"
         );
     }
@@ -807,10 +864,19 @@ mod tests {
             &seeded_doc(&alpha()),
             "| f1 | person:alpha | allergic to penicillin |  | testimony | active | July 1, 2026 |",
         );
-        let good = fact("f2", "person:alpha", "takes the 8am train", Provenance::Testimony, date(2026, 7, 2));
+        let good = fact(
+            "f2",
+            "person:alpha",
+            "takes the 8am train",
+            Provenance::Testimony,
+            date(2026, 7, 2),
+        );
         doc = with_fact_appended(&doc, &render_fact_row(&good));
 
-        let edited = Fact { content: "takes the 7am train".into(), ..good };
+        let edited = Fact {
+            content: "takes the 7am train".into(),
+            ..good
+        };
         let updated = with_row_replaced(
             &doc,
             &EntityId::person("alpha"),
@@ -839,9 +905,19 @@ mod tests {
              {TABLE_HEADER}\n{TABLE_SEP}\n\
              | f1 | person:alpha | plays chess |  | testimony | active | 2026-07-01 |\n"
         );
-        assert_eq!(parse_facts_table(&doc).len(), 1, "the table is still readable");
+        assert_eq!(
+            parse_facts_table(&doc).len(),
+            1,
+            "the table is still readable"
+        );
 
-        let f2 = fact("f2", "person:alpha", "learning Rust", Provenance::Inference, date(2026, 7, 2));
+        let f2 = fact(
+            "f2",
+            "person:alpha",
+            "learning Rust",
+            Provenance::Inference,
+            date(2026, 7, 2),
+        );
         let updated = with_fact_appended(&doc, &render_fact_row(&f2));
         assert_eq!(
             updated.matches(TABLE_HEADER).count(),
@@ -849,7 +925,10 @@ mod tests {
             "one table, not a second one above the note: {updated}"
         );
         assert_eq!(parse_facts_table(&updated).len(), 2, "both facts readable");
-        assert!(updated.contains("note: do not edit below"), "the note survives");
+        assert!(
+            updated.contains("note: do not edit below"),
+            "the note survives"
+        );
     }
 
     // --- the frontmatter block is the one carrying the marker -----------------
@@ -863,7 +942,10 @@ mod tests {
             "Prose about this entity.\n\n```\nimportant snippet the user wrote\n```\n\n{}\n\n{FACTS_HEADER}\n",
             frontmatter(&alpha())
         );
-        let renamed = Entity { name: "Alpha Renamed".into(), ..alpha() };
+        let renamed = Entity {
+            name: "Alpha Renamed".into(),
+            ..alpha()
+        };
         let updated = with_frontmatter_replaced(&doc, &renamed);
 
         assert!(
@@ -898,8 +980,15 @@ mod tests {
             Some("person:alpha"),
             "the decoy's `id:` is not an entity id, so it is not a marker"
         );
-        assert_eq!(parse_entity(&doc).map(|e| e.id), Some(EntityId::person("alpha")));
-        assert_eq!(parse_facts_table(&doc).len(), 1, "the doc's facts stay reachable");
+        assert_eq!(
+            parse_entity(&doc).map(|e| e.id),
+            Some(EntityId::person("alpha"))
+        );
+        assert_eq!(
+            parse_facts_table(&doc).len(),
+            1,
+            "the doc's facts stay reachable"
+        );
     }
 
     /// The same predicate protects the write path: an entity edit rewrites
@@ -910,10 +999,16 @@ mod tests {
             "```yaml\nid: my-service\nversion: 2\n```\n\n{}\n\n{FACTS_HEADER}\n",
             frontmatter(&alpha())
         );
-        let renamed = Entity { name: "Alpha Renamed".into(), ..alpha() };
+        let renamed = Entity {
+            name: "Alpha Renamed".into(),
+            ..alpha()
+        };
         let updated = with_frontmatter_replaced(&doc, &renamed);
 
-        assert!(updated.contains("id: my-service"), "the decoy survives: {updated}");
+        assert!(
+            updated.contains("id: my-service"),
+            "the decoy survives: {updated}"
+        );
         assert!(updated.contains("version: 2"));
         assert_eq!(
             updated.matches("id: person:alpha").count(),
@@ -932,7 +1027,11 @@ mod tests {
             frontmatter(&alpha())
         );
         let e = parse_entity(&doc).expect("the machine block identifies the entity");
-        assert_eq!(e.id, EntityId::person("alpha"), "prose must not forge the marker");
+        assert_eq!(
+            e.id,
+            EntityId::person("alpha"),
+            "prose must not forge the marker"
+        );
         assert_eq!(e.name, "Alpha", "prose must not forge a field");
     }
 
@@ -943,7 +1042,13 @@ mod tests {
     fn details_round_trip_in_their_own_cell() {
         let f = Fact {
             details: Some("changed jobs in July; a|b in the margin".into()),
-            ..fact("f1", "person:alpha", "works somewhere new", Provenance::Testimony, date(2026, 7, 24))
+            ..fact(
+                "f1",
+                "person:alpha",
+                "works somewhere new",
+                Provenance::Testimony,
+                date(2026, 7, 24),
+            )
         };
         let row = render_fact_row(&f);
         assert!(row.contains("a\\|b"), "details must be escaped too: {row}");
@@ -956,7 +1061,8 @@ mod tests {
     #[test]
     fn a_legacy_six_column_row_still_parses() {
         let legacy = "| f1 | person:alpha | plays go | testimony | active | 2026-07-01 |";
-        let parsed = parse_fact_row(legacy, &EntityId::person("alpha")).expect("legacy row must parse");
+        let parsed =
+            parse_fact_row(legacy, &EntityId::person("alpha")).expect("legacy row must parse");
         assert_eq!(parsed.content, "plays go");
         assert_eq!(parsed.details, None);
         assert_eq!(parsed.provenance, Provenance::Testimony);
@@ -986,7 +1092,10 @@ mod tests {
             &home,
         )
         .expect("a slice-1 row must parse");
-        assert_eq!(slice1.content, "plays go ❓", "the ❓ is content now; nothing invents a column");
+        assert_eq!(
+            slice1.content, "plays go ❓",
+            "the ❓ is content now; nothing invents a column"
+        );
         assert_eq!(slice1.details, None);
         assert_eq!(slice1.status, FactStatus::Active);
         assert_eq!(slice1.date, date(2026, 7, 1));
@@ -1016,9 +1125,11 @@ mod tests {
         assert_eq!(retired.status, FactStatus::Superseded);
 
         // The shape that replaced it is untouched: same width, other meaning.
-        let no_details =
-            parse_fact_row("| f1 | person:alpha | plays go | testimony | active | 2026-07-01 |", &home)
-                .expect("the pre-details row must still parse");
+        let no_details = parse_fact_row(
+            "| f1 | person:alpha | plays go | testimony | active | 2026-07-01 |",
+            &home,
+        )
+        .expect("the pre-details row must still parse");
         assert_eq!(no_details.provenance, Provenance::Testimony);
         assert_eq!(no_details.status, FactStatus::Active);
         assert_eq!(no_details.date, date(2026, 7, 1));
@@ -1055,8 +1166,15 @@ mod tests {
         // taken, readable or not, or the next capture hands it out twice.
         for row in [two_dates, no_date] {
             let doc = with_fact_appended(&seeded_doc(&alpha()), row);
-            assert!(parse_facts_table(&doc).is_empty(), "no reader sees it: {row}");
-            assert_eq!(next_fact_id(&doc), FactId("f2".into()), "…and its id is spent: {row}");
+            assert!(
+                parse_facts_table(&doc).is_empty(),
+                "no reader sees it: {row}"
+            );
+            assert_eq!(
+                next_fact_id(&doc),
+                FactId("f2".into()),
+                "…and its id is spent: {row}"
+            );
         }
     }
 
@@ -1081,13 +1199,22 @@ mod tests {
         // A capture lands beside them, and everything still reads.
         let fresh = Fact {
             details: Some("mentioned twice".into()),
-            ..fact("f3", "person:alpha", "learning Rust", Provenance::Testimony, date(2026, 7, 3))
+            ..fact(
+                "f3",
+                "person:alpha",
+                "learning Rust",
+                Provenance::Testimony,
+                date(2026, 7, 3),
+            )
         };
         let appended = with_fact_appended(doc, &render_fact_row(&fresh));
         let parsed = parse_facts_table(&appended);
         assert_eq!(parsed.len(), 3, "old rows and new one together: {parsed:?}");
         assert_eq!(parsed[2], fresh);
-        assert!(appended.contains("Some prose."), "prose above the table is untouched");
+        assert!(
+            appended.contains("Some prose."),
+            "prose above the table is untouched"
+        );
 
         // …and touching a slice-1 row rewrites it in the current eight-cell form.
         let touched = with_row_replaced(
@@ -1098,7 +1225,9 @@ mod tests {
         )
         .expect("a slice-1 row is addressable");
         assert!(
-            touched.contains("| f1 | person:alpha | plays go ❓ |  | inference | active | 2026-07-01 |  |"),
+            touched.contains(
+                "| f1 | person:alpha | plays go ❓ |  | inference | active | 2026-07-01 |  |"
+            ),
             "the touched row carries every current column: {touched}"
         );
     }
@@ -1114,21 +1243,42 @@ mod tests {
     /// what is true.
     #[test]
     fn alternate_names_round_trip_and_a_doc_without_them_still_reads() {
-        let named = Entity { aliases: vec!["Al".into(), "A. One".into()], ..alpha() };
+        let named = Entity {
+            aliases: vec!["Al".into(), "A. One".into()],
+            ..alpha()
+        };
         let doc = seeded_doc(&named);
-        assert!(doc.contains("aliases: Al, A. One"), "one legible line: {doc}");
+        assert!(
+            doc.contains("aliases: Al, A. One"),
+            "one legible line: {doc}"
+        );
         assert_eq!(parse_entity(&doc).expect("the doc is an entity"), named);
 
         // A doc written before the field existed: no line, no aliases, no drama.
         let legacy = "```yaml\nid: person:alpha\nkind: person\nname: Alpha\n\
                       source: crm-card\ncrm: card:554\nboot: on-demand\n```\n";
         let read = parse_entity(legacy).expect("a legacy doc still identifies its entity");
-        assert!(read.aliases.is_empty(), "an absent field is none, not a failure");
-        assert_eq!(read.name, "Alpha", "…and everything else reads as it always did");
+        assert!(
+            read.aliases.is_empty(),
+            "an absent field is none, not a failure"
+        );
+        assert_eq!(
+            read.name, "Alpha",
+            "…and everything else reads as it always did"
+        );
 
         // …and it gains the line on the next write that touches the block.
-        let touched = with_frontmatter_replaced(legacy, &Entity { aliases: vec!["Al".into()], ..read });
-        assert!(touched.contains("aliases: Al"), "gained on touch: {touched}");
+        let touched = with_frontmatter_replaced(
+            legacy,
+            &Entity {
+                aliases: vec!["Al".into()],
+                ..read
+            },
+        );
+        assert!(
+            touched.contains("aliases: Al"),
+            "gained on touch: {touched}"
+        );
         assert_eq!(parse_aliases(&touched), vec!["Al".to_string()]);
 
         // An entity with none writes no line — the block says only what is true.
@@ -1169,8 +1319,13 @@ mod tests {
 
         let block = written.find("```yaml").expect("the machine block survives");
         let table = written.find(FACTS_HEADER).expect("the table survives");
-        let at = written.find("Keeps the schedule").expect("the prose is there");
-        assert!(block < at && at < table, "prose sits between the two: {written}");
+        let at = written
+            .find("Keeps the schedule")
+            .expect("the prose is there");
+        assert!(
+            block < at && at < table,
+            "prose sits between the two: {written}"
+        );
         assert_eq!(
             parse_entity(&written).expect("the doc is still an entity"),
             alpha(),
@@ -1180,7 +1335,10 @@ mod tests {
         // A second write replaces rather than accumulates.
         let rewritten = with_prose_replaced(&written, "Nothing else.").expect("writable");
         assert_eq!(parse_prose(&rewritten), "Nothing else.");
-        assert!(!rewritten.contains("ledger"), "the old prose is gone: {rewritten}");
+        assert!(
+            !rewritten.contains("ledger"),
+            "the old prose is gone: {rewritten}"
+        );
 
         // …and a fenced example in the charter does NOT become the doc's
         // identity: the real block is still the first one.
@@ -1269,7 +1427,10 @@ mod tests {
             ..alpha()
         };
         let doc = seeded_doc(&owner);
-        assert!(doc.contains("mailbox: gamma-inbox"), "one legible line: {doc}");
+        assert!(
+            doc.contains("mailbox: gamma-inbox"),
+            "one legible line: {doc}"
+        );
         assert_eq!(parse_entity(&doc).expect("the doc is an entity"), owner);
 
         assert!(
@@ -1284,12 +1445,21 @@ mod tests {
         let legacy = "```yaml\nid: bot:gamma\nkind: bot\nname: Gamma\nsource: user-named\n\
                       boot: on-demand\n```\n";
         let read = parse_entity(legacy).expect("a legacy doc still identifies its entity");
-        assert_eq!(read.mailbox, None, "an absent field is no claim, not a failure");
+        assert_eq!(
+            read.mailbox, None,
+            "an absent field is no claim, not a failure"
+        );
         let touched = with_frontmatter_replaced(
             legacy,
-            &Entity { mailbox: Some("gamma-inbox".into()), ..read },
+            &Entity {
+                mailbox: Some("gamma-inbox".into()),
+                ..read
+            },
         );
-        assert!(touched.contains("mailbox: gamma-inbox"), "gained on touch: {touched}");
+        assert!(
+            touched.contains("mailbox: gamma-inbox"),
+            "gained on touch: {touched}"
+        );
     }
 
     // --- the prose half of a doc ----------------------------------------------
@@ -1305,11 +1475,20 @@ mod tests {
                  {TABLE_HEADER}\n{TABLE_SEP}\n",
                 frontmatter(&alpha())
             ),
-            &render_fact_row(&fact("f1", "person:alpha", "plays go", Provenance::Testimony, date(2026, 7, 1))),
+            &render_fact_row(&fact(
+                "f1",
+                "person:alpha",
+                "plays go",
+                Provenance::Testimony,
+                date(2026, 7, 1),
+            )),
         );
         let prose = parse_prose(&doc);
         assert_eq!(prose, "Alpha keeps a paper notebook and hates phone calls.");
-        assert!(!prose.contains("id: person:alpha"), "the machine block is not prose");
+        assert!(
+            !prose.contains("id: person:alpha"),
+            "the machine block is not prose"
+        );
         assert!(!prose.contains("plays go"), "a fact row is not prose");
     }
 
@@ -1338,9 +1517,18 @@ mod tests {
             prose.contains("trailing note under the table"),
             "…and so must one below the table: {prose}"
         );
-        assert!(!prose.contains(FACTS_HEADER), "jojobot's own header is not prose: {prose}");
-        assert!(!prose.contains("plays go"), "a fact row is not prose: {prose}");
-        assert!(!prose.contains("id: person:alpha"), "the machine block is not prose: {prose}");
+        assert!(
+            !prose.contains(FACTS_HEADER),
+            "jojobot's own header is not prose: {prose}"
+        );
+        assert!(
+            !prose.contains("plays go"),
+            "a fact row is not prose: {prose}"
+        );
+        assert!(
+            !prose.contains("id: person:alpha"),
+            "the machine block is not prose: {prose}"
+        );
         // …and the note is still just a note: it neither hides nor forks the table.
         assert_eq!(parse_facts_table(&doc).len(), 1);
     }
@@ -1362,8 +1550,14 @@ mod tests {
             frontmatter(&alpha())
         );
         let prose = parse_prose(&doc);
-        assert!(prose.contains("important snippet the user wrote"), "got: {prose}");
-        assert!(!prose.contains("source: crm-card"), "jojobot's block is stripped: {prose}");
+        assert!(
+            prose.contains("important snippet the user wrote"),
+            "got: {prose}"
+        );
+        assert!(
+            !prose.contains("source: crm-card"),
+            "jojobot's block is stripped: {prose}"
+        );
     }
 
     // --- the edges column -----------------------------------------------------
@@ -1380,7 +1574,13 @@ mod tests {
         for (shape, object) in objects {
             let f = Fact {
                 edge: Some(Edge::new(shape, EntityId(object.into()))),
-                ..fact("f1", "person:alpha", "a claim", Provenance::Inference, date(2026, 7, 1))
+                ..fact(
+                    "f1",
+                    "person:alpha",
+                    "a claim",
+                    Provenance::Inference,
+                    date(2026, 7, 1),
+                )
             };
             let parsed = parse_fact_row(&render_fact_row(&f), &EntityId::person("alpha")).unwrap();
             assert_eq!(parsed, f, "the {shape} edge must survive the row");
@@ -1398,7 +1598,13 @@ mod tests {
                 EdgeShape::Membership,
                 EntityId("org:north-trail-club".into()),
             )),
-            ..fact("f2", "person:alpha", "rides with the club", Provenance::Testimony, date(2026, 7, 24))
+            ..fact(
+                "f2",
+                "person:alpha",
+                "rides with the club",
+                Provenance::Testimony,
+                date(2026, 7, 24),
+            )
         };
         assert_eq!(
             render_fact_row(&f),
@@ -1414,8 +1620,8 @@ mod tests {
     fn a_row_without_the_edges_column_still_parses() {
         let previous =
             "| f1 | person:alpha | plays go | twice a week | testimony | active | 2026-07-01 |";
-        let parsed =
-            parse_fact_row(previous, &EntityId::person("alpha")).expect("the 7-cell row must parse");
+        let parsed = parse_fact_row(previous, &EntityId::person("alpha"))
+            .expect("the 7-cell row must parse");
         assert_eq!(parsed.content, "plays go");
         assert_eq!(parsed.details.as_deref(), Some("twice a week"));
         assert_eq!(parsed.date, date(2026, 7, 1));
@@ -1427,14 +1633,23 @@ mod tests {
     /// claim off the page.
     #[test]
     fn a_garbled_edges_cell_costs_the_edge_not_the_fact() {
-        for cell in ["knows=person:beta", "location", "=place:x", "location=nope:x", "location="] {
+        for cell in [
+            "knows=person:beta",
+            "location",
+            "=place:x",
+            "location=nope:x",
+            "location=",
+        ] {
             let row = format!(
                 "| f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 | {cell} |"
             );
             let parsed = parse_fact_row(&row, &EntityId::person("alpha"))
                 .unwrap_or_else(|| panic!("the fact must still read with cell {cell:?}"));
             assert_eq!(parsed.content, "plays go");
-            assert_eq!(parsed.edge, None, "an unreadable edge is dropped, not guessed: {cell:?}");
+            assert_eq!(
+                parsed.edge, None,
+                "an unreadable edge is dropped, not guessed: {cell:?}"
+            );
         }
     }
 
@@ -1448,11 +1663,24 @@ mod tests {
              | f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |\n"
         );
         let f2 = Fact {
-            edge: Some(Edge::new(EdgeShape::Location, EntityId("place:shelbyville".into()))),
-            ..fact("f2", "person:alpha", "spending the winter away", Provenance::Testimony, date(2026, 7, 2))
+            edge: Some(Edge::new(
+                EdgeShape::Location,
+                EntityId("place:shelbyville".into()),
+            )),
+            ..fact(
+                "f2",
+                "person:alpha",
+                "spending the winter away",
+                Provenance::Testimony,
+                date(2026, 7, 2),
+            )
         };
         let parsed = parse_facts_table(&with_fact_appended(&doc, &render_fact_row(&f2)));
-        assert_eq!(parsed.len(), 2, "the pre-edges row and the new one both read");
+        assert_eq!(
+            parsed.len(),
+            2,
+            "the pre-edges row and the new one both read"
+        );
         assert_eq!(parsed[0].edge, None);
         assert_eq!(parsed[1], f2);
     }
@@ -1474,18 +1702,33 @@ mod tests {
              | not-a-fact-row |\n"
         );
         let f3 = Fact {
-            edge: Some(Edge::new(EdgeShape::Location, EntityId("place:shelbyville".into()))),
-            ..fact("f3", "person:alpha", "spending the winter away", Provenance::Testimony, date(2026, 7, 3))
+            edge: Some(Edge::new(
+                EdgeShape::Location,
+                EntityId("place:shelbyville".into()),
+            )),
+            ..fact(
+                "f3",
+                "person:alpha",
+                "spending the winter away",
+                Provenance::Testimony,
+                date(2026, 7, 3),
+            )
         };
         let out = with_fact_appended(&doc, &render_fact_row(&f3));
 
-        assert!(out.contains(TABLE_HEADER), "the header is rewritten to the current layout");
+        assert!(
+            out.contains(TABLE_HEADER),
+            "the header is rewritten to the current layout"
+        );
         assert!(out.contains(TABLE_SEP), "so is the separator");
         assert!(
             !out.contains("| id | subject | content | details | provenance | status | date |\n"),
             "the narrow header is gone"
         );
-        assert!(out.contains("| not-a-fact-row |"), "an unreadable line is kept verbatim, never dropped");
+        assert!(
+            out.contains("| not-a-fact-row |"),
+            "an unreadable line is kept verbatim, never dropped"
+        );
         for line in out.lines().filter(|l| l.trim_start().starts_with('|')) {
             if line.contains("not-a-fact-row") {
                 continue;
@@ -1499,11 +1742,18 @@ mod tests {
         }
 
         let parsed = parse_facts_table(&out);
-        assert_eq!(parsed.len(), 3, "both legacy rows and the appended one read");
+        assert_eq!(
+            parsed.len(),
+            3,
+            "both legacy rows and the appended one read"
+        );
         assert_eq!(parsed[0].edge, None);
         assert_eq!(
             parsed[1].edge,
-            Some(Edge::new(EdgeShape::Membership, EntityId("org:guild".into()))),
+            Some(Edge::new(
+                EdgeShape::Membership,
+                EntityId("org:guild".into())
+            )),
             "a slice-1 row's edge survives the migration into the full-width shape"
         );
         assert_eq!(parsed[2], f3);
@@ -1530,13 +1780,18 @@ mod tests {
             "without a stamp the ambiguous row is no evidence, and stays unread"
         );
 
-        let stamped = unstamped.replace(
-            "id: person:alpha\n",
-            "id: person:alpha\nschema: 0\n",
-        );
+        let stamped = unstamped.replace("id: person:alpha\n", "id: person:alpha\nschema: 0\n");
         let parsed = parse_facts_table(&stamped);
-        assert_eq!(parsed.len(), 1, "the declared era resolves what sniffing cannot");
-        assert_eq!(parsed[0].date, date(2026, 7, 1), "slice-1's date column, by testimony");
+        assert_eq!(
+            parsed.len(),
+            1,
+            "the declared era resolves what sniffing cannot"
+        );
+        assert_eq!(
+            parsed[0].date,
+            date(2026, 7, 1),
+            "slice-1's date column, by testimony"
+        );
         assert_eq!(parsed[0].status, FactStatus::Active);
     }
 
@@ -1580,8 +1835,17 @@ mod tests {
              | f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |\n"
         );
         let edited = Fact {
-            edge: Some(Edge::new(EdgeShape::Location, EntityId("place:shelbyville".into()))),
-            ..fact("f1", "person:alpha", "plays go", Provenance::Testimony, date(2026, 7, 1))
+            edge: Some(Edge::new(
+                EdgeShape::Location,
+                EntityId("place:shelbyville".into()),
+            )),
+            ..fact(
+                "f1",
+                "person:alpha",
+                "plays go",
+                Provenance::Testimony,
+                date(2026, 7, 1),
+            )
         };
         let out = with_row_replaced(
             &doc,
@@ -1591,7 +1855,10 @@ mod tests {
         )
         .expect("f1 is a readable target");
 
-        assert!(out.contains(TABLE_HEADER), "the header is rewritten to the current layout");
+        assert!(
+            out.contains(TABLE_HEADER),
+            "the header is rewritten to the current layout"
+        );
         let parsed = parse_facts_table(&out);
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0], edited);
@@ -1613,7 +1880,10 @@ mod tests {
         let facts = parse_facts_table(&legacy);
         assert_eq!(facts.len(), 1, "the row must still read");
         assert_eq!(facts[0].status, FactStatus::Superseded);
-        assert_eq!(facts[0].content, "does NOT play the theremin", "content is untouched");
+        assert_eq!(
+            facts[0].content, "does NOT play the theremin",
+            "content is untouched"
+        );
 
         let touched = with_row_replaced(
             &legacy,
@@ -1622,8 +1892,14 @@ mod tests {
             &render_fact_row(&facts[0]),
         )
         .expect("the legacy row is addressable");
-        assert!(!touched.contains("negated"), "the retired token is gone on touch: {touched}");
-        assert!(touched.contains("| superseded |"), "…rewritten as superseded: {touched}");
+        assert!(
+            !touched.contains("negated"),
+            "the retired token is gone on touch: {touched}"
+        );
+        assert!(
+            touched.contains("| superseded |"),
+            "…rewritten as superseded: {touched}"
+        );
     }
 
     /// Both lifecycle states survive the row, so a superseded fact reads back
@@ -1633,7 +1909,13 @@ mod tests {
         for status in [FactStatus::Active, FactStatus::Superseded] {
             let f = Fact {
                 status,
-                ..fact("f1", "person:alpha", "a claim", Provenance::Inference, date(2026, 7, 1))
+                ..fact(
+                    "f1",
+                    "person:alpha",
+                    "a claim",
+                    Provenance::Inference,
+                    date(2026, 7, 1),
+                )
             };
             let parsed = parse_fact_row(&render_fact_row(&f), &EntityId::person("alpha")).unwrap();
             assert_eq!(parsed.status, status, "status must survive the row");
@@ -1648,7 +1930,13 @@ mod tests {
     fn parsed_facts_carry_their_home_from_the_docs_marker() {
         let doc = with_fact_appended(
             &seeded_doc(&alpha()),
-            &render_fact_row(&fact("f1", "person:alpha", "plays go", Provenance::Testimony, date(2026, 7, 1))),
+            &render_fact_row(&fact(
+                "f1",
+                "person:alpha",
+                "plays go",
+                Provenance::Testimony,
+                date(2026, 7, 1),
+            )),
         );
         let facts = parse_facts_table(&doc);
         assert_eq!(facts.len(), 1);
@@ -1664,16 +1952,33 @@ mod tests {
     fn replacing_a_row_edits_in_place_and_leaves_the_rest_alone() {
         let mut doc = seeded_doc(&alpha());
         for (id, content) in [("f1", "first"), ("f2", "second"), ("f3", "third")] {
-            let row = render_fact_row(&fact(id, "person:alpha", content, Provenance::Inference, date(2026, 7, 1)));
+            let row = render_fact_row(&fact(
+                id,
+                "person:alpha",
+                content,
+                Provenance::Inference,
+                date(2026, 7, 1),
+            ));
             doc = with_fact_appended(&doc, &row);
         }
         let edited = Fact {
             content: "second, corrected".into(),
             status: FactStatus::Superseded,
-            ..fact("f2", "person:alpha", "", Provenance::Inference, date(2026, 7, 2))
+            ..fact(
+                "f2",
+                "person:alpha",
+                "",
+                Provenance::Inference,
+                date(2026, 7, 2),
+            )
         };
-        let updated = with_row_replaced(&doc, &EntityId::person("alpha"), &FactId("f2".into()), &render_fact_row(&edited))
-            .expect("the row exists");
+        let updated = with_row_replaced(
+            &doc,
+            &EntityId::person("alpha"),
+            &FactId("f2".into()),
+            &render_fact_row(&edited),
+        )
+        .expect("the row exists");
 
         let facts = parse_facts_table(&updated);
         assert_eq!(facts.len(), 3, "no row gained or lost");
@@ -1681,7 +1986,10 @@ mod tests {
         assert_eq!(facts[1].status, FactStatus::Superseded);
         assert_eq!(facts[0].content, "first");
         assert_eq!(facts[2].content, "third");
-        assert!(!updated.contains("| second |"), "the old row is gone, not left beside");
+        assert!(
+            !updated.contains("| second |"),
+            "the old row is gone, not left beside"
+        );
     }
 
     /// Replacing a row that isn't there changes nothing and says so — the store
@@ -1689,7 +1997,15 @@ mod tests {
     #[test]
     fn replacing_a_missing_row_reports_rather_than_appends() {
         let doc = seeded_doc(&alpha());
-        assert!(with_row_replaced(&doc, &EntityId::person("alpha"), &FactId("f9".into()), "| f9 | x |").is_none());
+        assert!(
+            with_row_replaced(
+                &doc,
+                &EntityId::person("alpha"),
+                &FactId("f9".into()),
+                "| f9 | x |"
+            )
+            .is_none()
+        );
     }
 
     // --- entity frontmatter ---------------------------------------------------
@@ -1699,14 +2015,20 @@ mod tests {
     #[test]
     fn entity_frontmatter_round_trips() {
         let doc = seeded_doc(&alpha());
-        assert_eq!(parse_entity(&doc).expect("a seeded doc is an entity"), alpha());
+        assert_eq!(
+            parse_entity(&doc).expect("a seeded doc is an entity"),
+            alpha()
+        );
         assert_eq!(parse_id_marker(&doc).as_deref(), Some("person:alpha"));
     }
 
     /// An entity with no `crm` link writes no `crm` line — absent, not blank.
     #[test]
     fn an_absent_crm_link_is_not_written() {
-        let doc = seeded_doc(&Entity { crm: None, ..alpha() });
+        let doc = seeded_doc(&Entity {
+            crm: None,
+            ..alpha()
+        });
         assert!(!doc.contains("crm:"), "no empty crm line: {doc}");
         assert_eq!(parse_entity(&doc).unwrap().crm, None);
     }
@@ -1736,14 +2058,30 @@ mod tests {
     fn replacing_the_frontmatter_leaves_prose_and_facts_alone() {
         let doc = with_fact_appended(
             &format!("Some prose about the entity.\n\n{}", seeded_doc(&alpha())),
-            &render_fact_row(&fact("f1", "person:alpha", "plays go", Provenance::Testimony, date(2026, 7, 1))),
+            &render_fact_row(&fact(
+                "f1",
+                "person:alpha",
+                "plays go",
+                Provenance::Testimony,
+                date(2026, 7, 1),
+            )),
         );
-        let renamed = Entity { name: "Alpha Renamed".into(), ..alpha() };
+        let renamed = Entity {
+            name: "Alpha Renamed".into(),
+            ..alpha()
+        };
         let updated = with_frontmatter_replaced(&doc, &renamed);
 
         assert_eq!(parse_entity(&updated).unwrap(), renamed);
-        assert!(updated.contains("Some prose about the entity."), "prose survives");
-        assert_eq!(parse_facts_table(&updated).len(), 1, "the fact table survives");
+        assert!(
+            updated.contains("Some prose about the entity."),
+            "prose survives"
+        );
+        assert_eq!(
+            parse_facts_table(&updated).len(),
+            1,
+            "the fact table survives"
+        );
         assert!(!updated.contains("name: Alpha\n"), "the old name is gone");
     }
 
@@ -1759,7 +2097,13 @@ mod tests {
     fn renders_the_exact_pinned_row() {
         // Pin the literal wire format — a symmetric round-trip alone can't catch
         // a schema drift both sides share.
-        let f = fact("f1", "person:alpha", "keeps a paper notebook", Provenance::Inference, date(2026, 7, 24));
+        let f = fact(
+            "f1",
+            "person:alpha",
+            "keeps a paper notebook",
+            Provenance::Inference,
+            date(2026, 7, 24),
+        );
         assert_eq!(
             render_fact_row(&f),
             "| f1 | person:alpha | keeps a paper notebook |  | inference | active | 2026-07-24 |  |"
@@ -1769,25 +2113,61 @@ mod tests {
     #[test]
     fn both_provenances_round_trip_via_their_own_column() {
         let home = EntityId::person("alpha");
-        let testi = fact("f1", "person:alpha", "speaks two languages", Provenance::Testimony, date(2026, 1, 1));
-        let infer = fact("f2", "person:alpha", "prefers mornings ❓", Provenance::Inference, date(2026, 1, 2));
-        assert_eq!(parse_fact_row(&render_fact_row(&testi), &home).unwrap(), testi);
-        assert_eq!(parse_fact_row(&render_fact_row(&infer), &home).unwrap(), infer);
+        let testi = fact(
+            "f1",
+            "person:alpha",
+            "speaks two languages",
+            Provenance::Testimony,
+            date(2026, 1, 1),
+        );
+        let infer = fact(
+            "f2",
+            "person:alpha",
+            "prefers mornings ❓",
+            Provenance::Inference,
+            date(2026, 1, 2),
+        );
+        assert_eq!(
+            parse_fact_row(&render_fact_row(&testi), &home).unwrap(),
+            testi
+        );
+        assert_eq!(
+            parse_fact_row(&render_fact_row(&infer), &home).unwrap(),
+            infer
+        );
     }
 
     #[test]
     fn subject_with_a_pipe_is_escaped_and_round_trips() {
-        let f = fact("f1", "person:a|b", "x", Provenance::Testimony, date(2026, 7, 24));
+        let f = fact(
+            "f1",
+            "person:a|b",
+            "x",
+            Provenance::Testimony,
+            date(2026, 7, 24),
+        );
         let row = render_fact_row(&f);
-        assert!(row.contains("person:a\\|b"), "subject pipe must be escaped: {row}");
+        assert!(
+            row.contains("person:a\\|b"),
+            "subject pipe must be escaped: {row}"
+        );
         assert_eq!(parse_fact_row(&row, &f.home).unwrap(), f);
     }
 
     #[test]
     fn content_with_a_pipe_is_escaped_and_round_trips() {
-        let f = fact("f1", "person:alpha", "reads a|b|c notation", Provenance::Testimony, date(2026, 7, 24));
+        let f = fact(
+            "f1",
+            "person:alpha",
+            "reads a|b|c notation",
+            Provenance::Testimony,
+            date(2026, 7, 24),
+        );
         let row = render_fact_row(&f);
-        assert!(row.contains("a\\|b\\|c"), "pipes must be escaped in the row: {row}");
+        assert!(
+            row.contains("a\\|b\\|c"),
+            "pipes must be escaped in the row: {row}"
+        );
         assert_eq!(parse_fact_row(&row, &f.home).unwrap(), f);
     }
 
@@ -1803,7 +2183,13 @@ mod tests {
         let mut doc = seeded_doc(&alpha());
         assert_eq!(next_fact_id(&doc), FactId("f1".into()));
         for id in ["f1", "f3"] {
-            let row = render_fact_row(&fact(id, "person:alpha", "a", Provenance::Testimony, date(2026, 1, 1)));
+            let row = render_fact_row(&fact(
+                id,
+                "person:alpha",
+                "a",
+                Provenance::Testimony,
+                date(2026, 1, 1),
+            ));
             doc = with_fact_appended(&doc, &row);
         }
         assert_eq!(next_fact_id(&doc), FactId("f4".into()));
@@ -1815,22 +2201,41 @@ mod tests {
     #[test]
     fn append_into_a_legacy_table_then_parse_finds_both() {
         let doc = "# About\n\nSome prose.\n\n```yaml\nid: person:alpha\n```\n\n### ⚙ facts\n\n| id | subject | content | provenance | status | date |\n| --- | --- | --- | --- | --- | --- |\n| f1 | person:alpha | plays go | testimony | active | 2026-07-01 |\n";
-        let f = fact("f2", "person:alpha", "learning Rust", Provenance::Inference, date(2026, 7, 2));
+        let f = fact(
+            "f2",
+            "person:alpha",
+            "learning Rust",
+            Provenance::Inference,
+            date(2026, 7, 2),
+        );
         let updated = with_fact_appended(doc, &render_fact_row(&f));
         let parsed = parse_facts_table(&updated);
         assert_eq!(parsed.len(), 2, "the legacy row and the new one both read");
         assert_eq!(parsed[0].content, "plays go");
         assert_eq!(parsed[1], f);
-        assert!(updated.contains("Some prose."), "prose above the table is untouched");
+        assert!(
+            updated.contains("Some prose."),
+            "prose above the table is untouched"
+        );
     }
 
     #[test]
     fn seeded_doc_has_a_marker_and_an_empty_parseable_table() {
-        let home = Entity { id: EntityId::person("alpha"), name: "Alpha".into(), ..alpha() };
+        let home = Entity {
+            id: EntityId::person("alpha"),
+            name: "Alpha".into(),
+            ..alpha()
+        };
         let doc = seeded_doc(&home);
         assert_eq!(parse_id_marker(&doc).as_deref(), Some("person:alpha"));
         assert!(parse_facts_table(&doc).is_empty());
-        let f = fact("f1", "person:alpha", "first fact", Provenance::Testimony, date(2026, 7, 24));
+        let f = fact(
+            "f1",
+            "person:alpha",
+            "first fact",
+            Provenance::Testimony,
+            date(2026, 7, 24),
+        );
         let updated = with_fact_appended(&doc, &render_fact_row(&f));
         assert_eq!(parse_facts_table(&updated), vec![f]);
         // A fact's own `id` (below the table) must not be mistaken for the marker.
@@ -1839,7 +2244,10 @@ mod tests {
 
     #[test]
     fn marker_is_absent_when_there_is_no_machine_block() {
-        assert_eq!(parse_id_marker("# just prose\n\nnothing structured here"), None);
+        assert_eq!(
+            parse_id_marker("# just prose\n\nnothing structured here"),
+            None
+        );
     }
 }
 
@@ -1874,7 +2282,12 @@ mod bare_cr {
         let mut doc = format!(
             "```yaml\nid: person:alpha\n```\n\n{FACTS_HEADER}\n\n{TABLE_HEADER}\n{TABLE_SEP}\n"
         );
-        for (id, content) in [("f1", "hello\rworld"), ("f2", "b"), ("f3", "c"), ("f4", "d")] {
+        for (id, content) in [
+            ("f1", "hello\rworld"),
+            ("f2", "b"),
+            ("f3", "c"),
+            ("f4", "d"),
+        ] {
             doc = with_fact_appended(&doc, &render_fact_row(&fact(id, content)));
         }
         doc

@@ -180,7 +180,11 @@ impl SessionRegistry {
     /// What this handle addresses, or `None` for one this process never issued
     /// — a typo, or a handle from before a restart.
     pub fn lookup(&self, sid: &str) -> Option<Handle> {
-        self.held.read().expect("the registry is poisoned").get(sid).cloned()
+        self.held
+            .read()
+            .expect("the registry is poisoned")
+            .get(sid)
+            .cloned()
     }
 
     /// **One handle per card.** A session that is offered back on two
@@ -268,7 +272,9 @@ mod tests {
     #[test]
     fn an_unreadable_handle_is_refused_rather_than_corrected() {
         assert!(is_readable("k3f9"));
-        for bad in ["", "k3f", "k3f9a", "k3fo", "k3fi", "k3fl", "k3fu", "K3F9", "k3f-", "k3f "] {
+        for bad in [
+            "", "k3f", "k3f9a", "k3fo", "k3fi", "k3fl", "k3fu", "K3F9", "k3f-", "k3f ",
+        ] {
             assert!(!is_readable(bad), "{bad:?} must not read as a handle");
         }
     }
@@ -293,7 +299,11 @@ mod tests {
                 drawn.next().expect("a candidate").to_string()
             })
             .expect("a free handle is found");
-        assert_eq!(next.as_str(), "bbbb", "the taken handle must not be re-issued");
+        assert_eq!(
+            next.as_str(),
+            "bbbb",
+            "the taken handle must not be re-issued"
+        );
         assert_eq!(calls, 3, "…and it drew again for each collision");
 
         assert_eq!(

@@ -307,7 +307,12 @@ mod tests {
         let e = b64.encode(pub_key.e().to_bytes_be());
         let decoding = DecodingKey::from_rsa_components(&n, &e).unwrap();
 
-        KeyPair { enc, decoding, n, e }
+        KeyPair {
+            enc,
+            decoding,
+            n,
+            e,
+        }
     }
 
     fn jwk_for(kp: &KeyPair, kid: &str, use_: Option<&str>) -> Jwk {
@@ -364,7 +369,10 @@ mod tests {
         let token = sign(&kp.enc, KID, &c);
         let v = allow_validator(kp.decoding, &["sub-abc", "sub-other"]);
         let claims = v.validate(&token).expect("token is valid");
-        assert!(v.authorize(&claims).is_ok(), "a listed subject must be authorized");
+        assert!(
+            v.authorize(&claims).is_ok(),
+            "a listed subject must be authorized"
+        );
     }
 
     #[test]
@@ -390,7 +398,10 @@ mod tests {
         let token = sign(&kp.enc, KID, &c);
         let v = validator(kp.decoding); // no allowlist
         let claims = v.validate(&token).expect("token is valid");
-        assert!(v.authorize(&claims).is_ok(), "no allowlist must authorize any principal");
+        assert!(
+            v.authorize(&claims).is_ok(),
+            "no allowlist must authorize any principal"
+        );
     }
 
     #[test]
@@ -418,7 +429,10 @@ mod tests {
         let token = sign(&kp.enc, KID, &c);
         let v = allow_validator(kp.decoding, &["  sub-abc  "]);
         let claims = v.validate(&token).expect("token is valid");
-        assert!(v.authorize(&claims).is_ok(), "a padded config entry must still match");
+        assert!(
+            v.authorize(&claims).is_ok(),
+            "a padded config entry must still match"
+        );
     }
 
     #[test]
@@ -479,7 +493,10 @@ mod tests {
             jwk_for(&enc, "enc-kid", Some("enc")),
         ];
         let keys = keyset_from_jwks(jwks).expect("keyset builds");
-        assert!(keys.contains_key("sig-kid"), "the signing key must be usable");
+        assert!(
+            keys.contains_key("sig-kid"),
+            "the signing key must be usable"
+        );
         assert!(
             !keys.contains_key("enc-kid"),
             "an encryption-use key must not be trusted for verification"
@@ -490,7 +507,9 @@ mod tests {
     fn accepts_a_well_formed_token() {
         let kp = gen_keypair();
         let token = sign(&kp.enc, KID, &good_claims());
-        let claims = validator(kp.decoding).validate(&token).expect("should accept");
+        let claims = validator(kp.decoding)
+            .validate(&token)
+            .expect("should accept");
         assert_eq!(claims.sub, "user-1");
     }
 
@@ -569,7 +588,10 @@ mod tests {
 
     #[test]
     fn parses_bearer_header() {
-        assert_eq!(bearer_from_header(Some("Bearer abc.def.ghi")).unwrap(), "abc.def.ghi");
+        assert_eq!(
+            bearer_from_header(Some("Bearer abc.def.ghi")).unwrap(),
+            "abc.def.ghi"
+        );
         assert_eq!(bearer_from_header(Some("bearer abc")).unwrap(), "abc");
         assert!(bearer_from_header(None).is_err());
         assert!(bearer_from_header(Some("Basic xyz")).is_err());

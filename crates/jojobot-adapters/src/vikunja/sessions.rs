@@ -29,10 +29,10 @@ use jojobot_domain::session::{
     Sessions, normalize_entry, validate_entry, validate_focus, validate_session_id,
 };
 
+use super::VikunjaConfig;
 use super::api::{CommentRec, HttpVikunja, TaskRec, Unconfigured, VikunjaApi};
 use super::board::{PAGE, Provisioner, Scope};
 use super::codec::{field, render_block, split_description};
-use super::VikunjaConfig;
 
 /// The board endpoint pages the cards inside each column, so the board read
 /// pages too — `wrapped` is an archive that never drains.
@@ -50,7 +50,6 @@ const BEAT: &str = "beat";
 /// The machine-block field carrying when an entry was last rewritten. Absent on
 /// one nobody has corrected — see `JournalEntry::touched`.
 const TOUCHED: &str = "touched";
-
 
 /// The real Sessions adapter. Stateless as far as Vikunja goes: it holds an API
 /// client and the project *name*, never an id.
@@ -385,11 +384,10 @@ impl VikunjaSessions {
         text: &str,
     ) -> Result<JournalEntry, SessionError> {
         let _ = scope;
-        let comment: u64 = held
-            .id
-            .as_str()
-            .parse()
-            .map_err(|_| SessionError::Store(format!("entry id {} is not a comment", held.id)))?;
+        let comment: u64 =
+            held.id.as_str().parse().map_err(|_| {
+                SessionError::Store(format!("entry id {} is not a comment", held.id))
+            })?;
         let put_back = |body: String| async move {
             self.api
                 .update_comment(card.id, comment, &body)
@@ -401,7 +399,10 @@ impl VikunjaSessions {
             .update_comment(
                 card.id,
                 comment,
-                &render_entry(&JournalEntry { text: text.to_string(), ..held.clone() }),
+                &render_entry(&JournalEntry {
+                    text: text.to_string(),
+                    ..held.clone()
+                }),
             )
             .await
             .map_err(store)?;
@@ -416,11 +417,13 @@ impl VikunjaSessions {
                 Ok(seen)
             }
             other => {
-                let restored =
-                    put_back(render_entry(held)).await;
+                let restored = put_back(render_entry(held)).await;
                 Err(stranded(
                     "amend_journal",
-                    format!("entry {} did not read back amended: read {other:?}", held.id),
+                    format!(
+                        "entry {} did not read back amended: read {other:?}",
+                        held.id
+                    ),
                     restored,
                 ))
             }
@@ -536,7 +539,10 @@ fn render_session(focus: &str, bot: &EntityId, started_at: Timestamp) -> String 
 /// How the focus is fitted is [`jojobot_domain::text::SESSION_TITLE`], which is
 /// where the budget lives and what the golden test pins.
 fn session_title(bot: &EntityId, focus: &str) -> String {
-    format!("{bot}: {}", jojobot_domain::text::SESSION_TITLE.render(focus))
+    format!(
+        "{bot}: {}",
+        jojobot_domain::text::SESSION_TITLE.render(focus)
+    )
 }
 
 #[cfg(test)]
@@ -600,7 +606,6 @@ fn field_line(line: &str, key: &str) -> Option<String> {
 fn numeric(id: &SessionId) -> u64 {
     id.as_str().parse().unwrap_or(u64::MAX)
 }
-
 
 #[async_trait]
 impl Sessions for VikunjaSessions {
@@ -783,7 +788,10 @@ impl Sessions for VikunjaSessions {
         // The beat keeps its place in the chronology and records that it moved —
         // so the sweep sees a session still working, without the correction
         // jumping to the end of the record.
-        let touched = JournalEntry { touched: Some(at), ..held };
+        let touched = JournalEntry {
+            touched: Some(at),
+            ..held
+        };
         self.rewrite_entry(&scope, &card, &touched, &normalize_entry(text))
             .await
     }
@@ -822,7 +830,9 @@ impl Sessions for VikunjaSessions {
                     "journal",
                     match outcome {
                         Ok(seen) => {
-                            format!("session {id} did not read back: wrote {expected:?}, read {seen:?}")
+                            format!(
+                                "session {id} did not read back: wrote {expected:?}, read {seen:?}"
+                            )
                         }
                         Err(e) => e.to_string(),
                     },
@@ -908,7 +918,10 @@ impl Sessions for VikunjaSessions {
             return Err(stranded("wrap_session", e.to_string(), restored));
         }
 
-        let expected = Session { state: to, ..session.clone() };
+        let expected = Session {
+            state: to,
+            ..session.clone()
+        };
         match self.read_back(&scope, id).await {
             Ok(seen) if seen == expected => Ok(seen),
             outcome => {
@@ -933,8 +946,8 @@ mod tests {
     use jojobot_domain::session::testing::contract;
 
     use super::super::tests::{FakeVikunja, Interleaved};
-    use jojobot_domain::mailbox::Mailboxes;
     use super::*;
+    use jojobot_domain::mailbox::Mailboxes;
 
     /// A throwaway board title, deliberately not the default one.
     const PROJECT: &str = "jojobot-sessions-test";
@@ -968,7 +981,11 @@ mod tests {
         let store = store(fake.clone());
         contract::begin(&store, "gamma", "reading the hand-off", 0).await;
 
-        assert_eq!(fake.owned_titled(PROJECT), 1, "one board, tagged as jojobot's");
+        assert_eq!(
+            fake.owned_titled(PROJECT),
+            1,
+            "one board, tagged as jojobot's"
+        );
         let project = fake.projects_titled(PROJECT)[0].id;
         let home = fake.projects_titled("jojobot");
         assert_eq!(home.len(), 1, "jojobot's home is created if absent");
@@ -1011,7 +1028,8 @@ mod tests {
     async fn the_session_board_is_a_different_project_from_the_mailbox_board() {
         let fake = FakeVikunja::new();
         let sessions = store(fake.clone());
-        let mailboxes = super::super::VikunjaStore::from_api(fake.clone(), "jojobot-mailboxes-test");
+        let mailboxes =
+            super::super::VikunjaStore::from_api(fake.clone(), "jojobot-mailboxes-test");
         contract::begin(&sessions, "gamma", "reading the hand-off", 0).await;
         jojobot_domain::mailbox::testing::contract::create(&mailboxes, "inbox").await;
         jojobot_domain::mailbox::testing::contract::post(
@@ -1058,7 +1076,11 @@ mod tests {
 
         let listed = store.sessions_of(&bot("gamma")).await.expect("list ok");
         let ids: Vec<&str> = listed.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, vec![begun.id.as_str()], "the hand-written card is not a session");
+        assert_eq!(
+            ids,
+            vec![begun.id.as_str()],
+            "the hand-written card is not a session"
+        );
     }
 
     /// **A comment jojobot cannot read is not a beat.** An operator commenting
@@ -1096,7 +1118,11 @@ mod tests {
 
         let read = store.read_session(&session.id).await.expect("read ok");
         let texts: Vec<&str> = read.entries.iter().map(|e| e.text.as_str()).collect();
-        assert_eq!(texts, vec!["first", "second"], "oldest first, by the instant");
+        assert_eq!(
+            texts,
+            vec!["first", "second"],
+            "oldest first, by the instant"
+        );
     }
 
     /// **A store that mangles a comment must not report the entry as recorded.**
@@ -1215,7 +1241,10 @@ mod tests {
             }
 
             let outcome = store.close(&session.id, SessionState::Abandoned).await;
-            assert!(outcome.is_err(), "blind={blind}: an unverifiable close must not succeed");
+            assert!(
+                outcome.is_err(),
+                "blind={blind}: an unverifiable close must not succeed"
+            );
             assert_ne!(
                 fake.column_of(card).as_deref(),
                 Some("active"),

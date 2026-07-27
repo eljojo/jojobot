@@ -34,8 +34,12 @@ struct Creds {
 
 fn creds() -> Option<Creds> {
     Some(Creds {
-        url: std::env::var("JOJOBOT_OUTLINE_URL").ok().filter(|s| !s.is_empty())?,
-        token: std::env::var("JOJOBOT_OUTLINE_TOKEN").ok().filter(|s| !s.is_empty())?,
+        url: std::env::var("JOJOBOT_OUTLINE_URL")
+            .ok()
+            .filter(|s| !s.is_empty())?,
+        token: std::env::var("JOJOBOT_OUTLINE_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty())?,
     })
 }
 
@@ -85,7 +89,11 @@ async fn doc_id_fingerprint(http: &reqwest::Client, c: &Creds, name: &str) -> Ve
             .expect("documents.list body");
         let items = page["data"].as_array().cloned().unwrap_or_default();
         let n = items.len();
-        ids.extend(items.iter().filter_map(|d| d["id"].as_str().map(str::to_string)));
+        ids.extend(
+            items
+                .iter()
+                .filter_map(|d| d["id"].as_str().map(str::to_string)),
+        );
         if n < 100 {
             break;
         }
@@ -105,7 +113,11 @@ async fn drop_test_collection(http: &reqwest::Client, c: &Creds) {
             .send()
             .await
             .expect("collections.delete");
-        assert!(resp.status().is_success(), "teardown failed: {}", resp.status());
+        assert!(
+            resp.status().is_success(),
+            "teardown failed: {}",
+            resp.status()
+        );
     }
 }
 

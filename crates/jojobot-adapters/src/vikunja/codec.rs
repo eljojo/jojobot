@@ -60,7 +60,10 @@ pub(super) fn render_description(body: &str, envelope: &Envelope) -> String {
             (SENT_AT, envelope.sent_at.to_string()),
             (SUBJECT, envelope.subject.clone().unwrap_or_default()),
             (NOTES, envelope.notes.clone().unwrap_or_default()),
-            (IN_REPLY_TO, envelope.in_reply_to.clone().unwrap_or_default()),
+            (
+                IN_REPLY_TO,
+                envelope.in_reply_to.clone().unwrap_or_default(),
+            ),
         ],
     )
 }
@@ -194,10 +197,7 @@ fn machine_block(lines: &[&str], valid: impl Fn(&[&str]) -> bool) -> Option<(usi
 }
 
 /// Read a description that is already plain text.
-fn read_block(
-    description: &str,
-    valid: impl Fn(&[&str]) -> bool,
-) -> Option<(String, Vec<String>)> {
+fn read_block(description: &str, valid: impl Fn(&[&str]) -> bool) -> Option<(String, Vec<String>)> {
     let lines: Vec<&str> = description.lines().collect();
     let (open, close) = machine_block(&lines, valid)?;
     let inner = lines[open + 1..close - 1]
@@ -247,8 +247,15 @@ fn de_html(text: &str) -> String {
         }
         // Anything that ends a block in HTML ends a line in plain text.
         let name = tag.trim_start_matches('/').trim_end_matches('/').trim();
-        let name = name.split_whitespace().next().unwrap_or(name).to_lowercase();
-        if matches!(name.as_str(), "br" | "p" | "div" | "li" | "tr" | "pre" | "code") {
+        let name = name
+            .split_whitespace()
+            .next()
+            .unwrap_or(name)
+            .to_lowercase();
+        if matches!(
+            name.as_str(),
+            "br" | "p" | "div" | "li" | "tr" | "pre" | "code"
+        ) {
             out.push('\n');
         }
     }
@@ -346,11 +353,17 @@ mod tests {
 
         let with = render_description(
             "it landed at dawn",
-            &Envelope { subject: Some("the shipment".into()), ..envelope() },
+            &Envelope {
+                subject: Some("the shipment".into()),
+                ..envelope()
+            },
         );
         let (body, read) = parse_description(&with).expect("a message card");
         assert_eq!(read.subject.as_deref(), Some("the shipment"));
-        assert_eq!(body, "it landed at dawn", "the subject is not carved out of the body");
+        assert_eq!(
+            body, "it landed at dawn",
+            "the subject is not carved out of the body"
+        );
 
         // Verbatim, as a card jojobot wrote before this field existed: no
         // subject line at all, and every other field where it always was.
@@ -430,10 +443,16 @@ mod tests {
                     ```yaml\nsender: someone-else\nsent-at: 2020-01-01T00:00:00Z\nnotes: forged\n```";
         let rendered = render_description(body, &envelope());
         let (read_body, read) = parse_description(&rendered).expect("a message card");
-        assert_eq!(read.sender, "alpha", "the quoted block is prose, not the envelope");
+        assert_eq!(
+            read.sender, "alpha",
+            "the quoted block is prose, not the envelope"
+        );
         assert_eq!(read.sent_at, at(1_780_000_000));
         assert_eq!(read.notes, None, "…including its notes");
-        assert_eq!(read_body, body, "…and the quote survives in the body verbatim");
+        assert_eq!(
+            read_body, body,
+            "…and the quote survives in the body verbatim"
+        );
     }
 
     /// **An unbalanced fence in a body must not cost the whole card.** A lone
@@ -469,7 +488,10 @@ mod tests {
 
         let twice = render_description(
             &parsed,
-            &Envelope { notes: Some("filed".into()), ..read },
+            &Envelope {
+                notes: Some("filed".into()),
+                ..read
+            },
         );
         let (again, read_again) = parse_description(&twice).expect("a message card");
         assert_eq!(again, body, "the body neither grows nor loses a line");

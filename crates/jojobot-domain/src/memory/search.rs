@@ -180,7 +180,10 @@ impl SearchQuery {
 
     /// The trimmed text, or `None` if there is none worth matching.
     pub fn terms(&self) -> Option<&str> {
-        self.text.as_deref().map(str::trim).filter(|t| !t.is_empty())
+        self.text
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
     }
 
     /// Is this query scoped to **facts alone**? `status`, `provenance`, `subject`
@@ -216,10 +219,14 @@ impl SearchQuery {
         // filter combination no write could ever produce must read as the
         // caller's mistake, not as an honest empty answer.
         match &self.edge {
-            Some(EdgeFilter { shape: Some(shape), object }) => {
-                validate_edge(&Edge::new(*shape, object.clone()))?
-            }
-            Some(EdgeFilter { shape: None, object }) => validate_subject(object)?,
+            Some(EdgeFilter {
+                shape: Some(shape),
+                object,
+            }) => validate_edge(&Edge::new(*shape, object.clone()))?,
+            Some(EdgeFilter {
+                shape: None,
+                object,
+            }) => validate_subject(object)?,
             None => {}
         }
         Ok(())
@@ -418,19 +425,38 @@ mod tests {
     fn only_the_fact_properties_scope_a_query_to_facts() {
         assert!(!SearchQuery::text("shelbyville").is_fact_scoped());
         assert!(
-            !SearchQuery { kind: Some(EntityKind::Person), ..Default::default() }.is_fact_scoped(),
+            !SearchQuery {
+                kind: Some(EntityKind::Person),
+                ..Default::default()
+            }
+            .is_fact_scoped(),
             "a kind filter applies to entities and prose too"
         );
         for scoped in [
-            SearchQuery { status: Some(FactStatus::Superseded), ..Default::default() },
-            SearchQuery { provenance: Some(Provenance::Testimony), ..Default::default() },
-            SearchQuery { subject: Some(EntityId::person("alpha")), ..Default::default() },
             SearchQuery {
-                edge: Some(EdgeFilter { shape: None, object: EntityId("place:x".into()) }),
+                status: Some(FactStatus::Superseded),
+                ..Default::default()
+            },
+            SearchQuery {
+                provenance: Some(Provenance::Testimony),
+                ..Default::default()
+            },
+            SearchQuery {
+                subject: Some(EntityId::person("alpha")),
+                ..Default::default()
+            },
+            SearchQuery {
+                edge: Some(EdgeFilter {
+                    shape: None,
+                    object: EntityId("place:x".into()),
+                }),
                 ..Default::default()
             },
         ] {
-            assert!(scoped.is_fact_scoped(), "{scoped:?} names a fact-only property");
+            assert!(
+                scoped.is_fact_scoped(),
+                "{scoped:?} names a fact-only property"
+            );
         }
     }
 
@@ -447,7 +473,10 @@ mod tests {
             Err(MemoryError::InvalidSubject(_))
         ));
         let bad_object = SearchQuery {
-            edge: Some(EdgeFilter { shape: None, object: EntityId("place:a|b".into()) }),
+            edge: Some(EdgeFilter {
+                shape: None,
+                object: EntityId("place:a|b".into()),
+            }),
             ..Default::default()
         };
         assert!(matches!(
@@ -476,7 +505,10 @@ mod tests {
         );
         // A shapeless filter is "what's connected to X" — every kind is fair game.
         let any_shape = SearchQuery {
-            edge: Some(EdgeFilter { shape: None, object: EntityId::person("alpha") }),
+            edge: Some(EdgeFilter {
+                shape: None,
+                object: EntityId::person("alpha"),
+            }),
             ..Default::default()
         };
         assert!(any_shape.validate().is_ok());
@@ -502,7 +534,9 @@ mod tests {
 
         let entity = |id: &str| Entity {
             id: EntityId(id.into()),
-            kind: EntityId(id.into()).kind().expect("test ids are well-formed"),
+            kind: EntityId(id.into())
+                .kind()
+                .expect("test ids are well-formed"),
             name: String::new(),
             aliases: Vec::new(),
             source: "test".into(),
@@ -528,14 +562,15 @@ mod tests {
             prose: String::new(),
             entity: Some(entity("person:alpha")),
             facts: vec![
-                row("f1", "person:alpha"),   // its own entity
-                row("f2", "person:beta"),    // another doc's entity, legitimately
-                row("f3", "person:alphaa"),  // names nothing — the hand-edit tell
-                row("f4", "person:alphaa"),  // …twice, reported once
+                row("f1", "person:alpha"),  // its own entity
+                row("f2", "person:beta"),   // another doc's entity, legitimately
+                row("f3", "person:alphaa"), // names nothing — the hand-edit tell
+                row("f4", "person:alphaa"), // …twice, reported once
             ],
         };
-        let known: HashSet<EntityId> =
-            [EntityId::person("alpha"), EntityId::person("beta")].into_iter().collect();
+        let known: HashSet<EntityId> = [EntityId::person("alpha"), EntityId::person("beta")]
+            .into_iter()
+            .collect();
 
         assert_eq!(
             orphan_subjects(&doc, &known),
@@ -544,7 +579,9 @@ mod tests {
         );
         assert_eq!(
             known_entities(std::slice::from_ref(&doc)),
-            [EntityId::person("alpha")].into_iter().collect::<HashSet<_>>(),
+            [EntityId::person("alpha")]
+                .into_iter()
+                .collect::<HashSet<_>>(),
             "a scan's known set is the entities its docs declare"
         );
     }
@@ -562,7 +599,9 @@ mod tests {
 
         let entity = |id: &str| Entity {
             id: EntityId(id.into()),
-            kind: EntityId(id.into()).kind().expect("test ids are well-formed"),
+            kind: EntityId(id.into())
+                .kind()
+                .expect("test ids are well-formed"),
             name: String::new(),
             aliases: Vec::new(),
             source: "test".into(),
@@ -593,8 +632,9 @@ mod tests {
                 row("f4", "person:alphaa"), // names nothing: an orphan, not this
             ],
         };
-        let known: HashSet<EntityId> =
-            [EntityId::person("alpha"), EntityId::person("beta")].into_iter().collect();
+        let known: HashSet<EntityId> = [EntityId::person("alpha"), EntityId::person("beta")]
+            .into_iter()
+            .collect();
 
         assert_eq!(
             foreign_subjects(&doc, &known),
@@ -608,14 +648,22 @@ mod tests {
         );
 
         // A doc that declares no entity has no id to disagree with.
-        let loose = DocScan { entity: None, ..doc };
+        let loose = DocScan {
+            entity: None,
+            ..doc
+        };
         assert!(foreign_subjects(&loose, &known).is_empty());
     }
 
     #[test]
     fn a_zero_limit_is_refused() {
-        let query = SearchQuery { limit: 0, ..SearchQuery::text("shelbyville") };
-        assert!(matches!(query.validate(), Err(MemoryError::InvalidQuery(_))));
+        let query = SearchQuery {
+            limit: 0,
+            ..SearchQuery::text("shelbyville")
+        };
+        assert!(matches!(
+            query.validate(),
+            Err(MemoryError::InvalidQuery(_))
+        ));
     }
-
 }

@@ -22,7 +22,9 @@ use super::MailboxName;
 
 /// Why an existing mailbox is a candidate for the incoming name, strongest
 /// first. The order is the reporting order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum MatchReason {
     /// The very same name already exists.
@@ -212,7 +214,10 @@ mod tests {
     fn create_new_overrides_similarity_but_never_an_exact_name() {
         let existing = boxes(&["worker-1"]);
         assert!(
-            matches!(decide_create(&name("worker-2"), &existing, false), Decision::Block(_)),
+            matches!(
+                decide_create(&name("worker-2"), &existing, false),
+                Decision::Block(_)
+            ),
             "without the signal a near miss blocks"
         );
         assert_eq!(
@@ -291,7 +296,10 @@ mod tests {
         let Decision::Block(none) = decide_existing(&name("shipments"), &existing) else {
             panic!("an unknown name must block, not proceed");
         };
-        assert!(none.is_empty(), "nothing to suggest, nothing invented: {none:?}");
+        assert!(
+            none.is_empty(),
+            "nothing to suggest, nothing invented: {none:?}"
+        );
     }
 
     // --- claiming a box by name ----------------------------------------------
@@ -348,7 +356,10 @@ mod tests {
 
         // Containment is the other confusion, and it screens the same way.
         assert!(
-            matches!(decide_claim(&name("dev-inbox"), &existing, false), Decision::Block(_)),
+            matches!(
+                decide_claim(&name("dev-inbox"), &existing, false),
+                Decision::Block(_)
+            ),
             "one name inside another is the confusion this gate exists for"
         );
     }

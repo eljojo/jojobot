@@ -124,7 +124,11 @@ pub(super) struct LabelRec {
 /// mailbox project. That is the seam the write-scope invariant is checked at.
 #[async_trait]
 pub(super) trait VikunjaApi: Send + Sync {
-    async fn list_projects(&self, page: u64, per_page: u64) -> Result<Vec<ProjectRec>, MailboxError>;
+    async fn list_projects(
+        &self,
+        page: u64,
+        per_page: u64,
+    ) -> Result<Vec<ProjectRec>, MailboxError>;
     /// `parent` nests the new project under an existing one; `None` = top level.
     async fn create_project(
         &self,
@@ -185,14 +189,12 @@ pub(super) trait VikunjaApi: Send + Sync {
         task_id: u64,
     ) -> Result<(), MailboxError>;
     async fn list_labels(&self, page: u64, per_page: u64) -> Result<Vec<LabelRec>, MailboxError>;
-    async fn create_label(&self, title: &str, description: &str)
-    -> Result<LabelRec, MailboxError>;
+    async fn create_label(&self, title: &str, description: &str) -> Result<LabelRec, MailboxError>;
     /// Replace the whole label set on a card.
     async fn set_task_labels(&self, task_id: u64, labels: &[u64]) -> Result<(), MailboxError>;
     /// A card's comments, oldest first.
     async fn list_comments(&self, task_id: u64) -> Result<Vec<CommentRec>, MailboxError>;
-    async fn create_comment(&self, task_id: u64, text: &str)
-    -> Result<CommentRec, MailboxError>;
+    async fn create_comment(&self, task_id: u64, text: &str) -> Result<CommentRec, MailboxError>;
     /// Rewrite one comment. **Only ever used on the most recent** — the domain
     /// keeps everything older append-only; nothing here enforces that, which is
     /// why the rule lives on the port above rather than in this transport.
@@ -346,8 +348,7 @@ impl HttpVikunja {
         if raw.trim().is_empty() {
             return Ok(Value::Null);
         }
-        serde_json::from_str(&raw)
-            .map_err(|e| MailboxError::Store(format!("{path} body: {e}")))
+        serde_json::from_str(&raw).map_err(|e| MailboxError::Store(format!("{path} body: {e}")))
     }
 
     async fn get(&self, path: &str, query: &[(&str, String)]) -> Result<Value, MailboxError> {
@@ -359,7 +360,8 @@ impl HttpVikunja {
     }
 
     async fn post(&self, path: &str, body: Value) -> Result<Value, MailboxError> {
-        self.send(reqwest::Method::POST, path, &[], Some(body)).await
+        self.send(reqwest::Method::POST, path, &[], Some(body))
+            .await
     }
 
     fn array<'a>(v: &'a Value, path: &str) -> Result<&'a Vec<Value>, MailboxError> {
@@ -403,11 +405,13 @@ impl VikunjaApi for HttpVikunja {
         project_rec(&v).ok_or_else(|| MailboxError::Store("projects.create: malformed".into()))
     }
 
-
     async fn list_views(&self, project_id: u64) -> Result<Vec<ViewRec>, MailboxError> {
         let path = format!("/projects/{project_id}/views");
         let v = self.get(&path, &[]).await?;
-        Ok(Self::array(&v, &path)?.iter().filter_map(view_rec).collect())
+        Ok(Self::array(&v, &path)?
+            .iter()
+            .filter_map(view_rec)
+            .collect())
     }
 
     async fn set_view_done_bucket(
@@ -434,7 +438,10 @@ impl VikunjaApi for HttpVikunja {
     ) -> Result<Vec<BucketRec>, MailboxError> {
         let path = format!("/projects/{project_id}/views/{view_id}/buckets");
         let v = self.get(&path, &[]).await?;
-        Ok(Self::array(&v, &path)?.iter().filter_map(bucket_rec).collect())
+        Ok(Self::array(&v, &path)?
+            .iter()
+            .filter_map(bucket_rec)
+            .collect())
     }
 
     async fn create_bucket(
@@ -512,13 +519,12 @@ impl VikunjaApi for HttpVikunja {
             .collect())
     }
 
-    async fn create_label(
-        &self,
-        title: &str,
-        description: &str,
-    ) -> Result<LabelRec, MailboxError> {
+    async fn create_label(&self, title: &str, description: &str) -> Result<LabelRec, MailboxError> {
         let v = self
-            .put("/labels", json!({ "title": title, "description": description }))
+            .put(
+                "/labels",
+                json!({ "title": title, "description": description }),
+            )
             .await?;
         label_rec(&v).ok_or_else(|| MailboxError::Store("labels.create: malformed".into()))
     }
@@ -535,14 +541,13 @@ impl VikunjaApi for HttpVikunja {
     async fn list_comments(&self, task_id: u64) -> Result<Vec<CommentRec>, MailboxError> {
         let path = format!("/tasks/{task_id}/comments");
         let v = self.get(&path, &[]).await?;
-        Ok(Self::array(&v, &path)?.iter().filter_map(comment_rec).collect())
+        Ok(Self::array(&v, &path)?
+            .iter()
+            .filter_map(comment_rec)
+            .collect())
     }
 
-    async fn create_comment(
-        &self,
-        task_id: u64,
-        text: &str,
-    ) -> Result<CommentRec, MailboxError> {
+    async fn create_comment(&self, task_id: u64, text: &str) -> Result<CommentRec, MailboxError> {
         let v = self
             .put(
                 &format!("/tasks/{task_id}/comments"),
@@ -605,7 +610,13 @@ impl VikunjaApi for Unconfigured {
     async fn create_bucket(&self, _: u64, _: u64, _: &str) -> Result<BucketRec, MailboxError> {
         Self::refuse()
     }
-    async fn board(&self, _: u64, _: u64, _: u64, _: u64) -> Result<Vec<BoardBucket>, MailboxError> {
+    async fn board(
+        &self,
+        _: u64,
+        _: u64,
+        _: u64,
+        _: u64,
+    ) -> Result<Vec<BoardBucket>, MailboxError> {
         Self::refuse()
     }
     async fn create_task(&self, _: u64, _: &str, _: &str) -> Result<TaskRec, MailboxError> {

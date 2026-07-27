@@ -75,7 +75,9 @@ impl Fitted {
             text.to_string()
         };
         let flat: String = if self.strip_unprintable {
-            flat.chars().filter(|c| *c != '`' && !c.is_control()).collect()
+            flat.chars()
+                .filter(|c| *c != '`' && !c.is_control())
+                .collect()
         } else {
             flat
         };
@@ -199,14 +201,22 @@ mod tests {
     #[test]
     fn text_that_fits_is_returned_whole() {
         assert_eq!(MESSAGE_TITLE.render("short"), "short");
-        assert_eq!(MESSAGE_TITLE.render(&"w".repeat(60)), "w".repeat(60), "to the last character");
+        assert_eq!(
+            MESSAGE_TITLE.render(&"w".repeat(60)),
+            "w".repeat(60),
+            "to the last character"
+        );
     }
 
     #[test]
     fn a_cut_lands_on_a_word_and_says_it_cut() {
-        let cut = MESSAGE_TITLE.render("counted the crates and reconciled them against the manifest twice over");
+        let cut = MESSAGE_TITLE
+            .render("counted the crates and reconciled them against the manifest twice over");
         assert!(cut.ends_with('…'));
-        assert!(!cut.trim_end_matches('…').ends_with(' '), "on the word, not the space after it");
+        assert!(
+            !cut.trim_end_matches('…').ends_with(' '),
+            "on the word, not the space after it"
+        );
     }
 
     /// **Where the ellipsis is counted from is the difference the strategies
@@ -218,9 +228,15 @@ mod tests {
     /// rather than at whatever word boundary happens to precede it.
     #[test]
     fn the_two_ellipsis_conventions_differ_by_the_ellipsis() {
-        let within = Fitted { ellipsis: Ellipsis::WithinBudget, ..MESSAGE_TITLE };
+        let within = Fitted {
+            ellipsis: Ellipsis::WithinBudget,
+            ..MESSAGE_TITLE
+        };
         let text = "x".repeat(200);
-        assert_eq!(MESSAGE_TITLE.render(&text).chars().count(), MESSAGE_TITLE.budget + 1);
+        assert_eq!(
+            MESSAGE_TITLE.render(&text).chars().count(),
+            MESSAGE_TITLE.budget + 1
+        );
         assert_eq!(within.render(&text).chars().count(), within.budget);
     }
 
@@ -235,7 +251,10 @@ mod tests {
     /// Only the fenced-block neighbour strips, and only it falls back.
     #[test]
     fn stripping_and_the_empty_fallback_belong_to_the_strategy() {
-        assert_eq!(FOCUS_LINE.render("a `fence` and a \u{7}bell"), "a fence and a bell");
+        assert_eq!(
+            FOCUS_LINE.render("a `fence` and a \u{7}bell"),
+            "a fence and a bell"
+        );
         assert_eq!(MESSAGE_TITLE.render("a `fence`"), "a `fence`");
         assert_eq!(FOCUS_LINE.render("   "), FRESH_FOCUS);
         assert_eq!(MESSAGE_TITLE.render("   "), "");
@@ -246,7 +265,10 @@ mod tests {
     /// call site to pin it at.
     #[test]
     fn the_body_digest_golden() {
-        assert_eq!(BODY_DIGEST.render("the shipment landed"), "the shipment landed");
+        assert_eq!(
+            BODY_DIGEST.render("the shipment landed"),
+            "the shipment landed"
+        );
         assert_eq!(
             BODY_DIGEST.render("the shipment landed\n\nand the crates are stacked"),
             "the shipment landed and the crates are stacked",
@@ -258,14 +280,21 @@ mod tests {
             "…and a long one is cut inside the budget"
         );
         assert!(BODY_DIGEST.render(&"x".repeat(500)).chars().count() <= BODY_DIGEST.budget);
-        assert_eq!(BODY_DIGEST.render("   "), "", "an empty body previews as nothing");
+        assert_eq!(
+            BODY_DIGEST.render("   "),
+            "",
+            "an empty body previews as nothing"
+        );
     }
 
     /// A budget of zero is no strategy declared here, and a public type with
     /// public fields must still not panic on one.
     #[test]
     fn a_zero_budget_cuts_rather_than_underflowing() {
-        let nothing = Fitted { budget: 0, ..BODY_DIGEST };
+        let nothing = Fitted {
+            budget: 0,
+            ..BODY_DIGEST
+        };
         assert_eq!(nothing.render("anything at all"), "…");
     }
 
@@ -273,7 +302,13 @@ mod tests {
     /// already, and collapsing it would be an edit nobody asked for.
     #[test]
     fn an_outcome_record_is_not_reflowed() {
-        assert_eq!(OUTCOME_NOTES.render("filed  under   shipments"), "filed  under   shipments");
-        assert_eq!(MESSAGE_TITLE.render("filed  under   shipments"), "filed under shipments");
+        assert_eq!(
+            OUTCOME_NOTES.render("filed  under   shipments"),
+            "filed  under   shipments"
+        );
+        assert_eq!(
+            MESSAGE_TITLE.render("filed  under   shipments"),
+            "filed under shipments"
+        );
     }
 }

@@ -56,7 +56,10 @@ impl Config {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| format!("http://{bind}/mcp"));
 
-        let allowlist_set = raw.allowed_subjects.as_deref().is_some_and(|s| !s.is_empty());
+        let allowlist_set = raw
+            .allowed_subjects
+            .as_deref()
+            .is_some_and(|s| !s.is_empty());
 
         let auth = match raw.issuer.filter(|s| !s.is_empty()) {
             Some(issuer) => Some(AuthConfig {
@@ -250,7 +253,10 @@ mod tests {
     #[test]
     fn accepts_a_valid_allowlist() {
         let cfg = Config::build(raw_subjects(Some("sub-1"))).expect("valid allowlist");
-        assert_eq!(cfg.auth.unwrap().allowed_subjects, vec!["sub-1".to_string()]);
+        assert_eq!(
+            cfg.auth.unwrap().allowed_subjects,
+            vec!["sub-1".to_string()]
+        );
     }
 
     #[test]
@@ -316,7 +322,10 @@ mod tests {
             origin_of("https://a.example:8443/mcp/x?y=1"),
             "https://a.example:8443"
         );
-        assert_eq!(origin_of("http://127.0.0.1:8080/mcp"), "http://127.0.0.1:8080");
+        assert_eq!(
+            origin_of("http://127.0.0.1:8080/mcp"),
+            "http://127.0.0.1:8080"
+        );
     }
 
     #[test]

@@ -14,10 +14,10 @@ use jojobot_adapters::search::IndexedMemory;
 use jojobot_adapters::vikunja::VikunjaStore;
 use jojobot_adapters::vikunja::sessions::VikunjaSessions;
 use jojobot_domain::mailbox::Mailboxes;
-use jojobot_domain::session::Sessions;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::memory::testing::InMemoryMemory;
+use jojobot_domain::session::Sessions;
 use tokio_util::sync::CancellationToken;
 
 mod support;
@@ -105,7 +105,9 @@ fn auth_state(addr: SocketAddr) -> AppState {
 #[tokio::test]
 async fn health_endpoint_is_public_and_ok() {
     let (addr, ct) = spawn_server(no_auth_state).await;
-    let resp = reqwest::get(format!("http://{addr}/healthz")).await.unwrap();
+    let resp = reqwest::get(format!("http://{addr}/healthz"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.text().await.unwrap(), "ok");
     ct.cancel();
@@ -114,13 +116,14 @@ async fn health_endpoint_is_public_and_ok() {
 #[tokio::test]
 async fn metadata_advertises_the_issuer() {
     let (addr, ct) = spawn_server(auth_state).await;
-    let body: serde_json::Value =
-        reqwest::get(format!("http://{addr}/.well-known/oauth-protected-resource"))
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+    let body: serde_json::Value = reqwest::get(format!(
+        "http://{addr}/.well-known/oauth-protected-resource"
+    ))
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
     assert_eq!(body["resource"], format!("http://{addr}/mcp"));
     assert_eq!(body["authorization_servers"][0], "https://issuer.example");
     assert_eq!(body["bearer_methods_supported"][0], "header");
@@ -144,7 +147,10 @@ async fn mcp_rejects_unauthenticated_when_auth_enabled() {
         .expect("401 must carry a WWW-Authenticate challenge")
         .to_str()
         .unwrap();
-    assert!(challenge.contains("resource_metadata="), "challenge: {challenge}");
+    assert!(
+        challenge.contains("resource_metadata="),
+        "challenge: {challenge}"
+    );
     ct.cancel();
 }
 
@@ -154,7 +160,14 @@ async fn mcp_guard_covers_path_and_method_variants() {
     // bypass via trailing slash, sub-path, traversal, encoded slash, or //.
     let (addr, ct) = spawn_server(auth_state).await;
     let client = reqwest::Client::new();
-    let paths = ["/mcp", "/mcp/", "/mcp/anything", "/mcp/../mcp", "/mcp%2f", "//mcp"];
+    let paths = [
+        "/mcp",
+        "/mcp/",
+        "/mcp/anything",
+        "/mcp/../mcp",
+        "/mcp%2f",
+        "//mcp",
+    ];
     let methods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
     for p in paths {
         for m in methods {
@@ -230,7 +243,11 @@ async fn allowlist_admits_a_listed_token_to_the_handler() {
         .send()
         .await
         .unwrap();
-    assert_ne!(resp.status(), 401, "a listed token must pass authentication");
+    assert_ne!(
+        resp.status(),
+        401,
+        "a listed token must pass authentication"
+    );
     assert_ne!(resp.status(), 403, "a listed token must pass authorization");
     ct.cancel();
 }
@@ -296,7 +313,11 @@ async fn mcp_accepts_public_host_but_still_guards_dns_rebinding() {
         .send()
         .await
         .unwrap();
-    assert_eq!(spoofed.status(), 403, "an unknown Host must still be forbidden");
+    assert_eq!(
+        spoofed.status(),
+        403,
+        "an unknown Host must still be forbidden"
+    );
 
     ct.cancel();
 }
@@ -372,38 +393,48 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
     // A subject must exist before a fact about it can land, so the probe is the
     // two deliberate steps a new entity takes — end to end, through the wire.
     let added = client
-        .call_tool(CallToolRequestParams::new("add_entity").with_arguments(
-            serde_json::json!({
-                "kind": "person",
-                "handle": "frontdoor-probe",
-                "name": "Frontdoor Probe",
-                "source": "user-named",
-            })
-            .as_object()
-            .unwrap()
-            .clone(),
-        ))
+        .call_tool(
+            CallToolRequestParams::new("add_entity").with_arguments(
+                serde_json::json!({
+                    "kind": "person",
+                    "handle": "frontdoor-probe",
+                    "name": "Frontdoor Probe",
+                    "source": "user-named",
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        )
         .await
         .unwrap();
     let added = serde_json::to_string(&added).unwrap();
-    assert!(!added.contains("\"status\":\"blocked\""), "add_entity must land: {added}");
+    assert!(
+        !added.contains("\"status\":\"blocked\""),
+        "add_entity must land: {added}"
+    );
 
     let captured = client
-        .call_tool(CallToolRequestParams::new("capture").with_arguments(
-            serde_json::json!({
-                "subject": "person:frontdoor-probe",
-                "content": "keeps a zamboni in the garage",
-                "provenance": "testimony",
-                "date": "2026-07-01",
-            })
-            .as_object()
-            .unwrap()
-            .clone(),
-        ))
+        .call_tool(
+            CallToolRequestParams::new("capture").with_arguments(
+                serde_json::json!({
+                    "subject": "person:frontdoor-probe",
+                    "content": "keeps a zamboni in the garage",
+                    "provenance": "testimony",
+                    "date": "2026-07-01",
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        )
         .await
         .unwrap();
     let captured = serde_json::to_string(&captured).unwrap();
-    assert!(!captured.contains("\"isError\":true"), "capture must succeed: {captured}");
+    assert!(
+        !captured.contains("\"isError\":true"),
+        "capture must succeed: {captured}"
+    );
     // A blocked write is a *successful* result now, so isError alone no longer
     // catches one — the body is what says whether anything was written.
     assert!(
@@ -463,7 +494,10 @@ async fn ping_tool_round_trips_end_to_end() {
         .await
         .unwrap();
     let json = serde_json::to_string(&result).unwrap();
-    assert!(json.contains("jojobot"), "ping result should name the server: {json}");
+    assert!(
+        json.contains("jojobot"),
+        "ping result should name the server: {json}"
+    );
     assert!(json.contains("ok"), "ping result should report ok: {json}");
 
     // **The boot verb, called the way a client with nothing to say calls it —

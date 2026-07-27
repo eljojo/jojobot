@@ -25,13 +25,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use jojobot_domain::memory::{
-    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, JOURNAL_TITLE,
-    Memory, MemoryError,
-    NewEntity, NewFact, apply_entity_patch, apply_fact_patch, normalize_content, normalize_details, normalize_prose,
-    screen_entity_patch, validate_content, validate_details, validate_edge, validate_entity, validate_prose,
-    validate_subject,
+    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded,
+    JOURNAL_TITLE, Memory, MemoryError, NewEntity, NewFact, apply_entity_patch, apply_fact_patch,
     guard::{self, Decision},
+    normalize_content, normalize_details, normalize_prose, screen_entity_patch,
     search::DocScan,
+    validate_content, validate_details, validate_edge, validate_entity, validate_prose,
+    validate_subject,
 };
 
 use api::{CollectionRec, DocRec, HttpOutline, OutlineApi, Unconfigured};
@@ -164,15 +164,23 @@ impl OutlineStore {
     /// re-lists and picks the canonical (oldest) owned collection, so a
     /// concurrent double-create converges to one rather than forking.
     async fn resolve_collection(&self) -> Result<String, MemoryError> {
-        if let Some(c) = pick_oldest(self.owned_collections().await?, |c| &c.created_at, |c| &c.id) {
+        if let Some(c) = pick_oldest(
+            self.owned_collections().await?,
+            |c| &c.created_at,
+            |c| &c.id,
+        ) {
             return Ok(c.id);
         }
         self.api
             .create_collection(&self.collection, &self.owner_description())
             .await?;
-        pick_oldest(self.owned_collections().await?, |c| &c.created_at, |c| &c.id)
-            .map(|c| c.id)
-            .ok_or_else(|| MemoryError::Store("collection missing after create".into()))
+        pick_oldest(
+            self.owned_collections().await?,
+            |c| &c.created_at,
+            |c| &c.id,
+        )
+        .map(|c| c.id)
+        .ok_or_else(|| MemoryError::Store("collection missing after create".into()))
     }
 
     /// Every doc in the collection — paged in full. A match past the first page
@@ -211,7 +219,11 @@ impl OutlineStore {
     /// the canonical (oldest) doc winning where a double-create left two.
     async fn entity_index(&self, collection_id: &str) -> Result<Vec<Entity>, MemoryError> {
         let mut docs = self.all_docs(collection_id).await?;
-        docs.sort_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
+        docs.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
         let mut seen = std::collections::HashSet::new();
         Ok(docs
             .iter()
@@ -299,11 +311,7 @@ impl OutlineStore {
 
     /// Read an entity back through the read path — the verification half of
     /// every entity write.
-    async fn read_entity(
-        &self,
-        collection_id: &str,
-        id: &EntityId,
-    ) -> Result<Entity, MemoryError> {
+    async fn read_entity(&self, collection_id: &str, id: &EntityId) -> Result<Entity, MemoryError> {
         self.entity_doc(collection_id, id)
             .await?
             .and_then(|d| parse_entity(&d.text))
@@ -318,7 +326,11 @@ fn pick_oldest<T>(
     created_at: impl Fn(&T) -> &String,
     id: impl Fn(&T) -> &String,
 ) -> Option<T> {
-    items.sort_by(|a, b| created_at(a).cmp(created_at(b)).then_with(|| id(a).cmp(id(b))));
+    items.sort_by(|a, b| {
+        created_at(a)
+            .cmp(created_at(b))
+            .then_with(|| id(a).cmp(id(b)))
+    });
     items.into_iter().next()
 }
 
@@ -421,7 +433,8 @@ impl Memory for OutlineStore {
         // A claim moved onto an entity is screened exactly as one written at
         // creation — otherwise ownership is stealable in two steps.
         if let Some(mailbox) = patch.mailbox.as_deref()
-            && let Decision::Block(candidates) = guard::decide_mailbox_claim(handle, mailbox, &index)
+            && let Decision::Block(candidates) =
+                guard::decide_mailbox_claim(handle, mailbox, &index)
         {
             return Ok(Guarded::Blocked {
                 attempted: handle.clone(),
@@ -737,7 +750,11 @@ impl Memory for OutlineStore {
         let collection_id = self.resolve_collection().await?;
         let mut docs = self.all_docs(&collection_id).await?;
         // Canonical-first, so a double-created doc's twin can't shadow it.
-        docs.sort_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
+        docs.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
 
         let mut seen = std::collections::HashSet::new();
         Ok(docs
@@ -785,8 +802,8 @@ mod tests {
     use jojobot_domain::memory::testing::contract;
     use jojobot_domain::memory::{Edge, EdgeShape, FactStatus, Provenance};
 
-    use super::*;
     use super::codec::{TABLE_HEADER, TABLE_SEP, escape_cell, split_cells};
+    use super::*;
     use crate::search::IndexedMemory;
 
     /// In-memory [`OutlineApi`] double. Ids/`created_at` are a monotonic counter
@@ -839,7 +856,10 @@ mod tests {
                     return l.to_string();
                 }
                 let mut cells = split_cells(l);
-                let first = cells.first().map(|c| c.trim().to_string()).unwrap_or_default();
+                let first = cells
+                    .first()
+                    .map(|c| c.trim().to_string())
+                    .unwrap_or_default();
                 let is_header = first.eq_ignore_ascii_case("id");
                 let is_sep = !first.is_empty() && first.chars().all(|c| c == '-');
                 if is_header || is_sep {
@@ -898,7 +918,10 @@ mod tests {
 
         fn rename_document(&self, id: &str, new_title: &str) {
             let mut docs = self.documents.lock().unwrap();
-            let d = docs.iter_mut().find(|(_, d)| d.id == id).expect("doc exists");
+            let d = docs
+                .iter_mut()
+                .find(|(_, d)| d.id == id)
+                .expect("doc exists");
             d.1.title = new_title.into();
         }
 
@@ -1094,7 +1117,11 @@ mod tests {
         .await
         .expect("update ok");
 
-        let doc = fake.docs_in(&coll).into_iter().find(|d| d.id == id).expect("doc");
+        let doc = fake
+            .docs_in(&coll)
+            .into_iter()
+            .find(|d| d.id == id)
+            .expect("doc");
         let lines: Vec<&str> = doc.text.lines().collect();
         assert!(
             !lines[2].contains("EXTRA"),
@@ -1154,18 +1181,32 @@ mod tests {
             .expect("capture succeeds against the hostile store")
             .written()
             .expect("not blocked");
-        assert_eq!(written.edge, Some(edge.clone()), "the edge survives the save");
+        assert_eq!(
+            written.edge,
+            Some(edge.clone()),
+            "the edge survives the save"
+        );
 
-        let facts = store.recall(&EntityId::person("alpha")).await.expect("recall ok");
+        let facts = store
+            .recall(&EntityId::person("alpha"))
+            .await
+            .expect("recall ok");
         assert_eq!(facts.len(), 2, "the legacy row and the new one both read");
-        assert_eq!(facts[1].edge, Some(edge), "the edge is on the page, not just in the reply");
+        assert_eq!(
+            facts[1].edge,
+            Some(edge),
+            "the edge is on the page, not just in the reply"
+        );
 
         let doc = fake
             .docs_in(&coll)
             .into_iter()
             .find(|d| d.text.contains("id: person:alpha"))
             .expect("alpha doc");
-        assert!(doc.text.contains(TABLE_HEADER), "the narrow header was migrated on write");
+        assert!(
+            doc.text.contains(TABLE_HEADER),
+            "the narrow header was migrated on write"
+        );
     }
 
     /// A write whose read-back mismatches restores the page it found. The
@@ -1200,10 +1241,16 @@ mod tests {
                 provenance: Provenance::Testimony,
                 status: FactStatus::Active,
                 date: date(2026, 7, 2),
-                edge: Some(Edge::new(EdgeShape::Location, EntityId("place:shelbyville".into()))),
+                edge: Some(Edge::new(
+                    EdgeShape::Location,
+                    EntityId("place:shelbyville".into()),
+                )),
             })
             .await;
-        assert!(outcome.is_err(), "a mangled write must not report success: {outcome:?}");
+        assert!(
+            outcome.is_err(),
+            "a mangled write must not report success: {outcome:?}"
+        );
 
         let after = fake
             .docs_in(&coll)
@@ -1212,8 +1259,15 @@ mod tests {
             .expect("alpha doc")
             .text;
         assert_eq!(after, before, "the page is restored to its pre-write state");
-        let facts = store.recall(&EntityId::person("alpha")).await.expect("recall ok");
-        assert_eq!(facts.len(), 1, "no half-written row remains for a retry to duplicate");
+        let facts = store
+            .recall(&EntityId::person("alpha"))
+            .await
+            .expect("recall ok");
+        assert_eq!(
+            facts.len(),
+            1,
+            "no half-written row remains for a retry to duplicate"
+        );
     }
 
     /// **The read-side leak, through the real reader.** A doc where the answer
@@ -1235,14 +1289,24 @@ mod tests {
         fake.seed_document(&coll, "Alpha", &doc);
 
         let indexed = IndexedMemory::new(Arc::new(store(fake))).expect("index opens");
-        assert_eq!(indexed.rebuild().await.expect("rebuild"), 1, "one doc scanned");
+        assert_eq!(
+            indexed.rebuild().await.expect("rebuild"),
+            1,
+            "one doc scanned"
+        );
 
         let hits = indexed
             .search(&SearchQuery::text("penicillin"))
             .expect("search ok");
-        let prose: Vec<&Hit> = hits.iter().filter(|h| matches!(h, Hit::Prose { .. })).collect();
+        let prose: Vec<&Hit> = hits
+            .iter()
+            .filter(|h| matches!(h, Hit::Prose { .. }))
+            .collect();
         assert_eq!(prose.len(), 1, "the prose match must be findable: {hits:?}");
-        let Some(Hit::Prose { entity, snippet, .. }) = prose.first().copied() else {
+        let Some(Hit::Prose {
+            entity, snippet, ..
+        }) = prose.first().copied()
+        else {
             unreachable!("filtered to prose");
         };
         assert_eq!(
@@ -1257,9 +1321,13 @@ mod tests {
         );
 
         // The fact in the same doc is still reachable by its own words.
-        let facts = indexed.search(&SearchQuery::text("chess")).expect("search ok");
+        let facts = indexed
+            .search(&SearchQuery::text("chess"))
+            .expect("search ok");
         assert!(
-            facts.iter().any(|h| matches!(h, Hit::Fact { fact, .. } if fact.content == "plays chess")),
+            facts
+                .iter()
+                .any(|h| matches!(h, Hit::Fact { fact, .. } if fact.content == "plays chess")),
             "got {facts:?}"
         );
     }
@@ -1284,15 +1352,23 @@ mod tests {
         let indexed = IndexedMemory::new(Arc::new(store(fake))).expect("index opens");
         indexed.rebuild().await.expect("rebuild");
 
-        let hits = indexed.search(&SearchQuery::text("pass closed")).expect("search ok");
+        let hits = indexed
+            .search(&SearchQuery::text("pass closed"))
+            .expect("search ok");
         assert!(
-            hits.iter().any(|h| matches!(h, Hit::Prose { snippet, .. } if snippet.contains("pass was closed"))),
+            hits.iter().any(
+                |h| matches!(h, Hit::Prose { snippet, .. } if snippet.contains("pass was closed"))
+            ),
             "the note must come back as a prose hit: {hits:?}"
         );
         // …and the fact beside it is untouched by the wider prose boundary.
-        let facts = indexed.search(&SearchQuery::text("chess")).expect("search ok");
+        let facts = indexed
+            .search(&SearchQuery::text("chess"))
+            .expect("search ok");
         assert!(
-            facts.iter().any(|h| matches!(h, Hit::Fact { fact, .. } if fact.content == "plays chess")),
+            facts
+                .iter()
+                .any(|h| matches!(h, Hit::Fact { fact, .. } if fact.content == "plays chess")),
             "got {facts:?}"
         );
     }
@@ -1319,9 +1395,15 @@ mod tests {
         fake.seed_document(&coll, "Ned Flanders", &doc);
 
         let indexed = IndexedMemory::new(Arc::new(store(fake))).expect("index opens");
-        assert_eq!(indexed.rebuild().await.expect("rebuild"), 1, "one doc scanned");
+        assert_eq!(
+            indexed.rebuild().await.expect("rebuild"),
+            1,
+            "one doc scanned"
+        );
 
-        let hits = indexed.search(&SearchQuery::text("flowerpot")).expect("search ok");
+        let hits = indexed
+            .search(&SearchQuery::text("flowerpot"))
+            .expect("search ok");
         let Some(Hit::Prose { entity, edges, .. }) =
             hits.iter().find(|h| matches!(h, Hit::Prose { .. }))
         else {
@@ -1333,7 +1415,10 @@ mod tests {
         );
         assert_eq!(
             edges,
-            &vec![Edge::new(EdgeShape::Location, EntityId("place:leftorium".into()))],
+            &vec![Edge::new(
+                EdgeShape::Location,
+                EntityId("place:leftorium".into())
+            )],
             "a prose hit carries the edges its doc's facts draw: {edges:?}"
         );
     }
@@ -1361,7 +1446,11 @@ mod tests {
         let alpha = EntityId::person("alpha");
 
         let facts = store.recall(&alpha).await.expect("recall");
-        assert_eq!(facts.len(), 1, "the doc's own row must be reachable: {facts:?}");
+        assert_eq!(
+            facts.len(),
+            1,
+            "the doc's own row must be reachable: {facts:?}"
+        );
         assert_eq!(facts[0].home, alpha, "the doc it lives in is its home");
         assert_eq!(
             facts[0].address().to_string(),
@@ -1373,7 +1462,10 @@ mod tests {
         store
             .update_fact(
                 &facts[0].address(),
-                FactPatch { content: Some("plays go".into()), ..Default::default() },
+                FactPatch {
+                    content: Some("plays go".into()),
+                    ..Default::default()
+                },
             )
             .await
             .expect("the row must be editable through the address recall gave")
@@ -1405,7 +1497,8 @@ mod tests {
             })
             .expect("search ok");
         assert!(
-            hits.iter().any(|h| matches!(h, Hit::Fact { fact, .. } if fact.content == "plays chess")),
+            hits.iter()
+                .any(|h| matches!(h, Hit::Fact { fact, .. } if fact.content == "plays chess")),
             "a row homed in alpha's doc must answer a subject filter for alpha: {hits:?}"
         );
     }
@@ -1424,7 +1517,10 @@ mod tests {
         assert_eq!(scanned[0].entity, None, "no marker, no entity");
         assert_eq!(scanned[0].prose, "The pass was closed on Tuesday.");
         assert!(scanned[0].facts.is_empty());
-        assert!(!scanned[0].doc_id.is_empty(), "a scan always says which doc");
+        assert!(
+            !scanned[0].doc_id.is_empty(),
+            "a scan always says which doc"
+        );
     }
 
     // --- hand-edited docs: the adversarial-review regressions -----------------
@@ -1463,7 +1559,10 @@ mod tests {
         store
             .update_fact(
                 &captured.address(),
-                FactPatch { content: Some("takes the 7am train".into()), ..Default::default() },
+                FactPatch {
+                    content: Some("takes the 7am train".into()),
+                    ..Default::default()
+                },
             )
             .await
             .expect("the addressed row updates");
@@ -1474,7 +1573,10 @@ mod tests {
             "the row the caller never saw must survive untouched: {text}"
         );
         assert!(text.contains("takes the 7am train"));
-        assert!(!text.contains("takes the 8am train"), "the edit rewrote its own row");
+        assert!(
+            !text.contains("takes the 8am train"),
+            "the edit rewrote its own row"
+        );
     }
 
     /// An address that no readable row answers to is a miss — never a silent
@@ -1491,14 +1593,25 @@ mod tests {
 
         let err = store(fake.clone())
             .update_fact(
-                &FactAddress::new(EntityId::person("alpha"), jojobot_domain::memory::FactId("f1".into())),
-                FactPatch { content: Some("should not land".into()), ..Default::default() },
+                &FactAddress::new(
+                    EntityId::person("alpha"),
+                    jojobot_domain::memory::FactId("f1".into()),
+                ),
+                FactPatch {
+                    content: Some("should not land".into()),
+                    ..Default::default()
+                },
             )
             .await
             .expect_err("an unreadable row is not addressable");
-        assert!(matches!(err, MemoryError::UnknownFact { .. }), "got {err:?}");
         assert!(
-            fake.docs_in(&coll)[0].text.contains("allergic to penicillin"),
+            matches!(err, MemoryError::UnknownFact { .. }),
+            "got {err:?}"
+        );
+        assert!(
+            fake.docs_in(&coll)[0]
+                .text
+                .contains("allergic to penicillin"),
             "a missed address must write nothing"
         );
     }
@@ -1526,11 +1639,23 @@ mod tests {
             1,
             "the note must not hide the existing fact"
         );
-        capture(&store, NewFact::about(subject.clone(), "learning Rust", date(2026, 7, 2))).await;
+        capture(
+            &store,
+            NewFact::about(subject.clone(), "learning Rust", date(2026, 7, 2)),
+        )
+        .await;
 
         let facts = store.recall(&subject).await.unwrap();
-        assert_eq!(facts.len(), 2, "both facts live in the one table: {facts:?}");
-        assert!(fake.docs_in(&coll)[0].text.contains("note: do not edit below"));
+        assert_eq!(
+            facts.len(),
+            2,
+            "both facts live in the one table: {facts:?}"
+        );
+        assert!(
+            fake.docs_in(&coll)[0]
+                .text
+                .contains("note: do not edit below")
+        );
     }
 
     /// Editing an entity must rewrite jojobot's own machine block — not a fenced
@@ -1548,7 +1673,10 @@ mod tests {
         let updated = store(fake.clone())
             .update_entity(
                 &EntityId::person("alpha"),
-                EntityPatch { name: Some("Alpha Renamed".into()), ..Default::default() },
+                EntityPatch {
+                    name: Some("Alpha Renamed".into()),
+                    ..Default::default()
+                },
             )
             .await
             .expect("update_entity should succeed")
@@ -1603,9 +1731,17 @@ mod tests {
             "the entity is still in the index"
         );
 
-        capture(&store, NewFact::about(subject.clone(), "learning Rust", date(2026, 7, 2))).await;
+        capture(
+            &store,
+            NewFact::about(subject.clone(), "learning Rust", date(2026, 7, 2)),
+        )
+        .await;
         assert_eq!(fake.docs_in(&coll).len(), 1, "no second doc was forked");
-        assert_eq!(store.recall(&subject).await.unwrap().len(), 2, "both facts reachable");
+        assert_eq!(
+            store.recall(&subject).await.unwrap().len(),
+            2,
+            "both facts reachable"
+        );
     }
 
     /// **A slice-1 page, through the real store.** Its table predates both the
@@ -1629,13 +1765,29 @@ mod tests {
         let subject = EntityId::person("alpha");
 
         let before = store.recall(&subject).await.expect("recall");
-        assert_eq!(before.len(), 2, "the page's own facts must be readable: {before:?}");
+        assert_eq!(
+            before.len(),
+            2,
+            "the page's own facts must be readable: {before:?}"
+        );
 
-        capture(&store, NewFact::about(subject.clone(), "learning Rust", date(2026, 7, 3))).await;
+        capture(
+            &store,
+            NewFact::about(subject.clone(), "learning Rust", date(2026, 7, 3)),
+        )
+        .await;
 
         let after = store.recall(&subject).await.expect("recall");
-        assert_eq!(after.len(), 3, "the new fact lands beside the old ones: {after:?}");
-        assert_eq!(after[2].id.as_str(), "f3", "the ids already on the page are taken");
+        assert_eq!(
+            after.len(),
+            3,
+            "the new fact lands beside the old ones: {after:?}"
+        );
+        assert_eq!(
+            after[2].id.as_str(),
+            "f3",
+            "the ids already on the page are taken"
+        );
         assert_eq!(fake.docs_in(&coll).len(), 1, "no second doc was forked");
     }
 
@@ -1662,7 +1814,11 @@ mod tests {
         )
         .await;
 
-        assert_eq!(fake.owned_named(COLL), 1, "jojobot made its own owned collection");
+        assert_eq!(
+            fake.owned_named(COLL),
+            1,
+            "jojobot made its own owned collection"
+        );
         assert!(
             fake.docs_in(&user_coll).is_empty(),
             "the user's collection must be left untouched"
@@ -1700,7 +1856,11 @@ mod tests {
         )
         .await;
 
-        assert_eq!(fake.owned_named(COLL), 1, "must find the paged-past match, not fork");
+        assert_eq!(
+            fake.owned_named(COLL),
+            1,
+            "must find the paged-past match, not fork"
+        );
         assert_eq!(fake.docs_in(&owned).len(), 1);
     }
 
@@ -1724,7 +1884,10 @@ mod tests {
         );
         fake.seed_document(&coll, "Totally Unrelated Title", &text);
 
-        let facts = store(fake).recall(&EntityId::person("alpha")).await.unwrap();
+        let facts = store(fake)
+            .recall(&EntityId::person("alpha"))
+            .await
+            .unwrap();
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].content, "plays go");
     }
@@ -1735,7 +1898,11 @@ mod tests {
         let subject = EntityId::person("alpha");
 
         // First capture creates the doc.
-        capture(&store(fake.clone()), NewFact::about(subject.clone(), "plays go", date(2026, 7, 1))).await;
+        capture(
+            &store(fake.clone()),
+            NewFact::about(subject.clone(), "plays go", date(2026, 7, 1)),
+        )
+        .await;
         let coll = fake.collections_named(COLL)[0].id.clone();
         let doc_id = fake.docs_in(&coll)[0].id.clone();
 
@@ -1749,7 +1916,11 @@ mod tests {
         )
         .await;
 
-        assert_eq!(fake.docs_in(&coll).len(), 1, "no duplicate doc spawned on rename");
+        assert_eq!(
+            fake.docs_in(&coll).len(),
+            1,
+            "no duplicate doc spawned on rename"
+        );
         let facts = store(fake).recall(&subject).await.unwrap();
         assert_eq!(facts.len(), 2, "both facts live in the one doc");
     }
@@ -1759,14 +1930,26 @@ mod tests {
         let fake = FakeOutline::new();
         let coll = fake.seed_collection(COLL, &owned_desc());
         let marker = &seeded_doc(&person("alpha"));
-        let older = with_fact_appended(marker, "| f1 | person:alpha | older fact |  | testimony | active | 2026-07-01 |");
-        let newer = with_fact_appended(marker, "| f1 | person:alpha | newer fact |  | testimony | active | 2026-07-02 |");
+        let older = with_fact_appended(
+            marker,
+            "| f1 | person:alpha | older fact |  | testimony | active | 2026-07-01 |",
+        );
+        let newer = with_fact_appended(
+            marker,
+            "| f1 | person:alpha | newer fact |  | testimony | active | 2026-07-02 |",
+        );
         fake.seed_document(&coll, "a", &older);
         fake.seed_document(&coll, "b", &newer);
 
-        let facts = store(fake).recall(&EntityId::person("alpha")).await.unwrap();
+        let facts = store(fake)
+            .recall(&EntityId::person("alpha"))
+            .await
+            .unwrap();
         assert_eq!(facts.len(), 1);
-        assert_eq!(facts[0].content, "older fact", "the oldest doc is canonical");
+        assert_eq!(
+            facts[0].content, "older fact",
+            "the oldest doc is canonical"
+        );
     }
 
     #[tokio::test]
@@ -1774,7 +1957,11 @@ mod tests {
         let fake = FakeOutline::new();
         let coll = fake.seed_collection(COLL, &owned_desc());
         for i in 0..120 {
-            fake.seed_document(&coll, &format!("other-{i}"), &seeded_doc(&person(&format!("other-{i}"))));
+            fake.seed_document(
+                &coll,
+                &format!("other-{i}"),
+                &seeded_doc(&person(&format!("other-{i}"))),
+            );
         }
         let target = with_fact_appended(
             &seeded_doc(&person("alpha")),
@@ -1784,7 +1971,10 @@ mod tests {
         );
         fake.seed_document(&coll, "entity doc", &target);
 
-        let facts = store(fake).recall(&EntityId::person("alpha")).await.unwrap();
+        let facts = store(fake)
+            .recall(&EntityId::person("alpha"))
+            .await
+            .unwrap();
         assert_eq!(facts.len(), 1, "must find the paged-past doc");
         assert_eq!(facts[0].content, "found me");
     }

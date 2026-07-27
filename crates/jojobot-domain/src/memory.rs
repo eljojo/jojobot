@@ -138,7 +138,9 @@ impl EntityId {
     /// The id's kind, or `None` if it doesn't parse — a read never panics on a
     /// hand-edited id.
     pub fn kind(&self) -> Option<EntityKind> {
-        self.0.split_once(':').and_then(|(k, _)| EntityKind::from_token(k))
+        self.0
+            .split_once(':')
+            .and_then(|(k, _)| EntityKind::from_token(k))
     }
 
     /// The id's slug — the part after the kind. Empty for a malformed id.
@@ -511,12 +513,12 @@ impl Edge {
 pub fn validate_edge(edge: &Edge) -> Result<(), MemoryError> {
     validate_subject(&edge.object)?;
     match edge.shape.object_kind() {
-        Some(required) if edge.object.kind() != Some(required) => Err(MemoryError::InvalidEdge(
-            format!(
+        Some(required) if edge.object.kind() != Some(required) => {
+            Err(MemoryError::InvalidEdge(format!(
                 "a '{}' edge points at a {required}, got '{}'",
                 edge.shape, edge.object
-            ),
-        )),
+            )))
+        }
         _ => Ok(()),
     }
 }
@@ -1252,10 +1254,7 @@ pub trait Memory: Send + Sync {
     ///
     /// Defaulted off [`scan`](Memory::scan), so an adapter that can do better
     /// overrides it and one that can't is still correct.
-    async fn scan_entity(
-        &self,
-        entity: &EntityId,
-    ) -> Result<Option<search::DocScan>, MemoryError> {
+    async fn scan_entity(&self, entity: &EntityId) -> Result<Option<search::DocScan>, MemoryError> {
         Ok(self
             .scan()
             .await?
@@ -1294,7 +1293,15 @@ mod tests {
         assert!(validate_subject(&EntityId::person("alpha")).is_ok());
         assert!(validate_subject(&EntityId("project:jojobot-server".into())).is_ok());
         // Injection vectors: newline, pipe, header, fence, space, uppercase, empty.
-        for bad in ["person:a|b", "a\nb", "### forged", "a`b", "a b", "Person:Alpha", ""] {
+        for bad in [
+            "person:a|b",
+            "a\nb",
+            "### forged",
+            "a`b",
+            "a b",
+            "Person:Alpha",
+            "",
+        ] {
             assert!(
                 validate_subject(&EntityId(bad.into())).is_err(),
                 "must reject {bad:?}"
@@ -1323,7 +1330,11 @@ mod tests {
         }
         assert_eq!(EntityKind::ALL.len(), 9, "nine kinds, no more");
         for unknown in ["receipt", "self", "Person", "", "peson"] {
-            assert_eq!(EntityKind::from_token(unknown), None, "{unknown:?} is not a kind");
+            assert_eq!(
+                EntityKind::from_token(unknown),
+                None,
+                "{unknown:?} is not a kind"
+            );
         }
     }
 
@@ -1356,16 +1367,24 @@ mod tests {
     /// missing kind, an underscore, or a second colon is not an entity id.
     #[test]
     fn validate_subject_enforces_the_kind_slug_grammar() {
-        for good in ["person:alpha", "topic:widgets", "org:north-trail-club", "thing:red-bike"] {
-            assert!(validate_subject(&EntityId(good.into())).is_ok(), "must accept {good:?}");
+        for good in [
+            "person:alpha",
+            "topic:widgets",
+            "org:north-trail-club",
+            "thing:red-bike",
+        ] {
+            assert!(
+                validate_subject(&EntityId(good.into())).is_ok(),
+                "must accept {good:?}"
+            );
         }
         for bad in [
-            "alpha",            // no kind
-            "receipt:il-2026",   // not one of the nine
-            "person:",           // empty slug
-            ":alpha",           // empty kind
-            "person:a_b",        // underscore is out of the slug charset
-            "person:a:b",        // one colon only
+            "alpha",           // no kind
+            "receipt:il-2026", // not one of the nine
+            "person:",         // empty slug
+            ":alpha",          // empty kind
+            "person:a_b",      // underscore is out of the slug charset
+            "person:a:b",      // one colon only
         ] {
             assert!(
                 validate_subject(&EntityId(bad.into())).is_err(),
@@ -1381,7 +1400,14 @@ mod tests {
         let addr = FactAddress::new(EntityId::person("alpha"), FactId("f3".into()));
         assert_eq!(addr.to_string(), "person:alpha#f3");
         assert_eq!(FactAddress::parse("person:alpha#f3").unwrap(), addr);
-        for bad in ["person:alpha", "#f3", "person:alpha#", "person:alpha#f 3", "nope:x#f1", ""] {
+        for bad in [
+            "person:alpha",
+            "#f3",
+            "person:alpha#",
+            "person:alpha#f 3",
+            "nope:x#f1",
+            "",
+        ] {
             assert!(FactAddress::parse(bad).is_err(), "must reject {bad:?}");
         }
     }
@@ -1428,7 +1454,11 @@ mod tests {
         assert_eq!(EdgeShape::ALL.len(), 4, "four shapes in M2, no more");
         // A response name is NOT an input token: the input grammar is unchanged.
         for unknown in ["memberOf", "attendee", "knows", "Location", "", "locaton"] {
-            assert_eq!(EdgeShape::from_token(unknown), None, "{unknown:?} is not a shape token");
+            assert_eq!(
+                EdgeShape::from_token(unknown),
+                None,
+                "{unknown:?} is not a shape token"
+            );
         }
     }
 
@@ -1502,7 +1532,10 @@ mod tests {
     #[test]
     fn an_alias_is_a_plain_label_and_never_carries_the_separator() {
         assert!(validate_aliases(&["Cosme Fulanito".into(), "H.".into()]).is_ok());
-        assert!(validate_aliases(&[]).is_ok(), "no aliases is the ordinary case");
+        assert!(
+            validate_aliases(&[]).is_ok(),
+            "no aliases is the ordinary case"
+        );
         for bad in ["", "   ", "one, two", "two\nlines", "back`tick"] {
             assert!(
                 validate_aliases(&[bad.into()]).is_err(),
@@ -1527,13 +1560,26 @@ mod tests {
             boot: Boot::OnDemand,
         };
 
-        apply_entity_patch(&mut entity, &EntityPatch { source: Some("crm-card".into()), ..Default::default() })
-            .expect("patch ok");
-        assert_eq!(entity.aliases, vec!["Al".to_string()], "an omitted field is left alone");
+        apply_entity_patch(
+            &mut entity,
+            &EntityPatch {
+                source: Some("crm-card".into()),
+                ..Default::default()
+            },
+        )
+        .expect("patch ok");
+        assert_eq!(
+            entity.aliases,
+            vec!["Al".to_string()],
+            "an omitted field is left alone"
+        );
 
         apply_entity_patch(
             &mut entity,
-            &EntityPatch { aliases: Some(vec!["  Al  ".into(), "Alph".into()]), ..Default::default() },
+            &EntityPatch {
+                aliases: Some(vec!["  Al  ".into(), "Alph".into()]),
+                ..Default::default()
+            },
         )
         .expect("patch ok");
         assert_eq!(
@@ -1542,14 +1588,26 @@ mod tests {
             "the set is replaced whole, and trimmed the way a name is"
         );
 
-        apply_entity_patch(&mut entity, &EntityPatch { aliases: Some(Vec::new()), ..Default::default() })
-            .expect("patch ok");
-        assert!(entity.aliases.is_empty(), "an empty set is a set, not an omission");
+        apply_entity_patch(
+            &mut entity,
+            &EntityPatch {
+                aliases: Some(Vec::new()),
+                ..Default::default()
+            },
+        )
+        .expect("patch ok");
+        assert!(
+            entity.aliases.is_empty(),
+            "an empty set is a set, not an omission"
+        );
 
         assert!(
             apply_entity_patch(
                 &mut entity,
-                &EntityPatch { aliases: Some(vec!["one, two".into()]), ..Default::default() }
+                &EntityPatch {
+                    aliases: Some(vec!["one, two".into()]),
+                    ..Default::default()
+                }
             )
             .is_err(),
             "a malformed alias is refused before anything is mutated"
@@ -1614,14 +1672,21 @@ mod tests {
         for value in samples {
             assert_eq!(
                 validate_mailbox(&value).is_ok(),
-                crate::mailbox::validate_mailbox_name(&crate::mailbox::MailboxName(value.clone())).is_ok(),
+                crate::mailbox::validate_mailbox_name(&crate::mailbox::MailboxName(value.clone()))
+                    .is_ok(),
                 "Memory and Mailboxes must agree on whether a {}-char name is a box name",
                 value.chars().count()
             );
         }
         // …and the pin only means something if the boundary is where it says.
-        assert!(validate_mailbox(&"a".repeat(64)).is_ok(), "64 is the last accepted");
-        assert!(validate_mailbox(&"a".repeat(65)).is_err(), "65 is the first refused");
+        assert!(
+            validate_mailbox(&"a".repeat(64)).is_ok(),
+            "64 is the last accepted"
+        );
+        assert!(
+            validate_mailbox(&"a".repeat(65)).is_err(),
+            "65 is the first refused"
+        );
     }
 
     #[test]

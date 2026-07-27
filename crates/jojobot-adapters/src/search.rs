@@ -51,15 +51,22 @@ fn candidate_depth(limit: usize) -> usize {
 /// hit carries only a snippet.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum Payload {
-    Entity { entity: Entity, doc_id: String },
-    Fact { fact: Fact },
+    Entity {
+        entity: Entity,
+        doc_id: String,
+    },
+    Fact {
+        fact: Fact,
+    },
     Prose {
         doc_id: String,
         title: String,
         entity: Option<EntityId>,
         body: String,
     },
-    Message { message: Message },
+    Message {
+        message: Message,
+    },
 }
 
 /// The hit-class token, indexed so a query can ask for one class of thing.
@@ -504,10 +511,7 @@ impl FullTextIndex {
         // The default is the whole point of the field: a superseded fact stays
         // out of an ordinary search, and `status: superseded` is how it is
         // reached deliberately.
-        clauses.push(self.must_term(
-            f.status,
-            query.status.unwrap_or_default().as_token(),
-        ));
+        clauses.push(self.must_term(f.status, query.status.unwrap_or_default().as_token()));
         if let Some(kind) = query.kind {
             clauses.push(self.must_term(f.kind, kind.as_token()));
         }
@@ -614,7 +618,9 @@ impl FullTextIndex {
             .filter(|m| {
                 matches!(
                     m.reason,
-                    MatchReason::ExactHandle | MatchReason::SameName | MatchReason::SameNameOtherKind
+                    MatchReason::ExactHandle
+                        | MatchReason::SameName
+                        | MatchReason::SameNameOtherKind
                 )
             })
             .filter(|m| query.kind.is_none_or(|k| k == m.kind))
@@ -758,7 +764,9 @@ impl Payload {
                         .cloned()
                 });
                 Hit::Prose {
-                    edges: owner.as_ref().map_or_else(Vec::new, |e| edges_of(mirror, &e.id)),
+                    edges: owner
+                        .as_ref()
+                        .map_or_else(Vec::new, |e| edges_of(mirror, &e.id)),
                     entity: owner,
                     doc_id,
                     title,
@@ -833,8 +841,7 @@ fn ceil_boundary(s: &str, mut at: usize) -> usize {
 }
 
 fn payload_json(payload: &Payload) -> Result<String, MemoryError> {
-    serde_json::to_string(payload)
-        .map_err(|e| MemoryError::Store(format!("indexing payload: {e}")))
+    serde_json::to_string(payload).map_err(|e| MemoryError::Store(format!("indexing payload: {e}")))
 }
 
 fn store_err(e: impl std::fmt::Display) -> MemoryError {
@@ -1109,9 +1116,7 @@ impl Mailboxes for IndexedMailboxes {
         self.inner.create_mailbox(name, create_new).await
     }
 
-    async fn list_mailboxes(
-        &self,
-    ) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+    async fn list_mailboxes(&self) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
         self.inner.list_mailboxes().await
     }
 
@@ -1171,9 +1176,7 @@ mod tests {
     use jojobot_domain::mailbox::{MailboxName, Message, MessageId, MessageState};
     use jojobot_domain::memory::search::{DEFAULT_LIMIT, EdgeFilter, EntityRef};
     use jojobot_domain::memory::testing::{InMemoryMemory, contract};
-    use jojobot_domain::memory::{
-        Boot, Edge, EdgeShape, FactStatus, Provenance, validate_subject,
-    };
+    use jojobot_domain::memory::{Boot, Edge, EdgeShape, FactStatus, Provenance, validate_subject};
 
     use super::*;
 
@@ -1244,7 +1247,12 @@ mod tests {
             "doc-1",
             Some(alpha.clone()),
             "Alpha is allergic to penicillin, which came up once and never got filed.",
-            vec![fact("person:alpha", "f1", "plays go on Tuesdays", date(2026, 7, 1))],
+            vec![fact(
+                "person:alpha",
+                "f1",
+                "plays go on Tuesdays",
+                date(2026, 7, 1),
+            )],
         )]);
 
         let hits = index
@@ -1255,7 +1263,13 @@ mod tests {
             .filter(|h| matches!(h, Hit::Prose { .. }))
             .collect();
         assert_eq!(prose.len(), 1, "the prose match must be a hit: {hits:?}");
-        let Some(Hit::Prose { doc_id, entity: owner, snippet, .. }) = prose.first().copied() else {
+        let Some(Hit::Prose {
+            doc_id,
+            entity: owner,
+            snippet,
+            ..
+        }) = prose.first().copied()
+        else {
             unreachable!("filtered to prose");
         };
         assert_eq!(doc_id, "doc-1", "a prose hit says which doc to open");
@@ -1270,9 +1284,17 @@ mod tests {
         );
 
         // …and the same query, in one list, still reaches the fact and the entity.
-        let mixed = index.search(&SearchQuery::text("alpha")).expect("search ok");
-        assert!(mixed.iter().any(|h| matches!(h, Hit::Entity { .. })), "{mixed:?}");
-        assert!(mixed.iter().any(|h| matches!(h, Hit::Prose { .. })), "{mixed:?}");
+        let mixed = index
+            .search(&SearchQuery::text("alpha"))
+            .expect("search ok");
+        assert!(
+            mixed.iter().any(|h| matches!(h, Hit::Entity { .. })),
+            "{mixed:?}"
+        );
+        assert!(
+            mixed.iter().any(|h| matches!(h, Hit::Prose { .. })),
+            "{mixed:?}"
+        );
     }
 
     /// Prose in a doc that is nobody's entity is still searchable — a page the
@@ -1285,7 +1307,9 @@ mod tests {
             "Notes from the trip: the pass was closed on Tuesday.",
             Vec::new(),
         )]);
-        let hits = index.search(&SearchQuery::text("pass closed")).expect("search ok");
+        let hits = index
+            .search(&SearchQuery::text("pass closed"))
+            .expect("search ok");
         assert!(
             matches!(hits.first(), Some(Hit::Prose { entity: None, doc_id, .. }) if doc_id == "doc-loose"),
             "{hits:?}"
@@ -1305,7 +1329,9 @@ mod tests {
                 fact("person:alpha", "f2", "kayak winter trip", date(2026, 1, 1)),
             ],
         )]);
-        let hits = index.search(&SearchQuery::text("kayak trip")).expect("search ok");
+        let hits = index
+            .search(&SearchQuery::text("kayak trip"))
+            .expect("search ok");
         let ids: Vec<String> = hits
             .iter()
             .filter_map(|h| match h {
@@ -1313,7 +1339,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(ids, vec!["f2", "f1"], "same words, same length — the newer one leads");
+        assert_eq!(
+            ids,
+            vec!["f2", "f1"],
+            "same words, same length — the newer one leads"
+        );
     }
 
     /// Every term has to match. A search that quietly ORs its words turns a
@@ -1325,7 +1355,12 @@ mod tests {
             Some(entity("person:alpha", "Alpha")),
             "",
             vec![
-                fact("person:alpha", "f1", "bakes sourdough bread", date(2026, 1, 1)),
+                fact(
+                    "person:alpha",
+                    "f1",
+                    "bakes sourdough bread",
+                    date(2026, 1, 1),
+                ),
                 fact("person:alpha", "f2", "bakes almond cake", date(2026, 1, 2)),
             ],
         )]);
@@ -1351,7 +1386,10 @@ mod tests {
     async fn naming_an_entity_pins_it_above_a_more_relevant_fact() {
         // A long name spreads the entity's relevance thin; a terse fact about it
         // concentrates the same words — so BM25 alone ranks the fact first.
-        let guild = entity("org:guild", "Guild of the Northern Riverside Makers and Menders");
+        let guild = entity(
+            "org:guild",
+            "Guild of the Northern Riverside Makers and Menders",
+        );
         let index = index_of(vec![scan(
             "doc-1",
             Some(guild.clone()),
@@ -1362,7 +1400,9 @@ mod tests {
             ],
         )]);
 
-        let hits = index.search(&SearchQuery::text("org:guild")).expect("search ok");
+        let hits = index
+            .search(&SearchQuery::text("org:guild"))
+            .expect("search ok");
         assert!(
             matches!(hits.first(), Some(Hit::Entity { entity, .. }) if entity.id == guild.id),
             "the named entity must lead, whatever the facts score: {hits:?}"
@@ -1391,16 +1431,24 @@ mod tests {
             "doc-1",
             Some(homer.clone()),
             "",
-            vec![fact("person:homer", "f1", "plays the bass", date(2026, 1, 1))],
+            vec![fact(
+                "person:homer",
+                "f1",
+                "plays the bass",
+                date(2026, 1, 1),
+            )],
         )]);
 
-        let hits = index.search(&SearchQuery::text("Cosme Fulanito")).expect("search ok");
+        let hits = index
+            .search(&SearchQuery::text("Cosme Fulanito"))
+            .expect("search ok");
         assert!(
             matches!(hits.first(), Some(Hit::Entity { entity, .. }) if entity.id == homer.id),
             "the entity that wears the nickname leads: {hits:?}"
         );
         assert!(
-            hits.iter().any(|h| matches!(h, Hit::Fact { fact, .. } if fact.content == "plays the bass")),
+            hits.iter()
+                .any(|h| matches!(h, Hit::Fact { fact, .. } if fact.content == "plays the bass")),
             "…and the facts on its page come with it: {hits:?}"
         );
 
@@ -1447,18 +1495,30 @@ mod tests {
         let beta = entity("person:beta", "Beta");
         let guest = Fact {
             subject: beta.id.clone(),
-            ..fact("person:alpha", "f1", "brought the sourdough", date(2026, 1, 1))
+            ..fact(
+                "person:alpha",
+                "f1",
+                "brought the sourdough",
+                date(2026, 1, 1),
+            )
         };
         let orphan = Fact {
             subject: EntityId("person:ghost".into()),
-            ..fact("person:alpha", "f2", "brought the sourdough too", date(2026, 1, 2))
+            ..fact(
+                "person:alpha",
+                "f2",
+                "brought the sourdough too",
+                date(2026, 1, 2),
+            )
         };
         let index = index_of(vec![
             scan("doc-1", Some(alpha.clone()), "", vec![guest, orphan]),
             scan("doc-2", Some(beta.clone()), "", vec![]),
         ]);
 
-        let hits = index.search(&SearchQuery::text("sourdough")).expect("search ok");
+        let hits = index
+            .search(&SearchQuery::text("sourdough"))
+            .expect("search ok");
         let refs: Vec<(&EntityRef, &EntityRef)> = hits
             .iter()
             .filter_map(|h| match h {
@@ -1479,7 +1539,11 @@ mod tests {
             .iter()
             .find(|(s, _)| s.id.as_str() == "person:ghost")
             .expect("the orphaned row is indexed, not dropped");
-        assert_eq!(ghost.0.kind, Some(EntityKind::Person), "the handle still declares a kind");
+        assert_eq!(
+            ghost.0.kind,
+            Some(EntityKind::Person),
+            "the handle still declares a kind"
+        );
         assert_eq!(
             ghost.0.name, None,
             "a subject that names nothing must read as unresolved, not as itself"
@@ -1489,7 +1553,11 @@ mod tests {
             "…and it answers to nothing either: an unresolvable handle reports no \
              names rather than inventing one from its own slug"
         );
-        assert_eq!(ghost.1.name.as_deref(), Some("Alpha"), "its home still resolves");
+        assert_eq!(
+            ghost.1.name.as_deref(),
+            Some("Alpha"),
+            "its home still resolves"
+        );
     }
 
     /// An entity's edges are the ones its **facts** draw, wherever those rows are
@@ -1507,7 +1575,10 @@ mod tests {
                 Some(alpha.clone()),
                 "",
                 vec![
-                    Fact { edge: Some(shelbyville.clone()), ..fact("person:alpha", "f1", "wintering", date(2026, 1, 1)) },
+                    Fact {
+                        edge: Some(shelbyville.clone()),
+                        ..fact("person:alpha", "f1", "wintering", date(2026, 1, 1))
+                    },
                     // Beta's row, homed on Alpha's page: Beta's edge, not Alpha's.
                     Fact {
                         subject: beta.id.clone(),
@@ -1525,13 +1596,19 @@ mod tests {
                 .expect("search ok")
                 .iter()
                 .find_map(|h| match h {
-                    Hit::Entity { entity, edges, .. } if &entity.id == handle => Some(edges.clone()),
+                    Hit::Entity { entity, edges, .. } if &entity.id == handle => {
+                        Some(edges.clone())
+                    }
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("{handle} must come back as an entity hit"))
         };
 
-        assert_eq!(edges_for(&alpha.id), vec![shelbyville], "its own claim's edge");
+        assert_eq!(
+            edges_for(&alpha.id),
+            vec![shelbyville],
+            "its own claim's edge"
+        );
         assert_eq!(
             edges_for(&beta.id),
             vec![guild],
@@ -1552,18 +1629,32 @@ mod tests {
             "Keeps a spare key under the third flowerpot; it came up once and never got filed.",
             vec![Fact {
                 edge: Some(shop.clone()),
-                ..fact("person:ned-flanders", "f1", "opens on the first Sunday", date(2026, 1, 1))
+                ..fact(
+                    "person:ned-flanders",
+                    "f1",
+                    "opens on the first Sunday",
+                    date(2026, 1, 1),
+                )
             }],
         )]);
 
-        let hits = index.search(&SearchQuery::text("flowerpot")).expect("search ok");
-        let Some(Hit::Prose { entity: owner, edges, .. }) =
-            hits.iter().find(|h| matches!(h, Hit::Prose { .. }))
+        let hits = index
+            .search(&SearchQuery::text("flowerpot"))
+            .expect("search ok");
+        let Some(Hit::Prose {
+            entity: owner,
+            edges,
+            ..
+        }) = hits.iter().find(|h| matches!(h, Hit::Prose { .. }))
         else {
             panic!("the prose match must come back: {hits:?}")
         };
         assert_eq!(owner.as_ref().map(|e| &e.id), Some(&neighbor.id));
-        assert_eq!(edges, &vec![shop], "a prose hit sits in the graph too: {edges:?}");
+        assert_eq!(
+            edges,
+            &vec![shop],
+            "a prose hit sits in the graph too: {edges:?}"
+        );
     }
 
     /// **A rename changes every hit that names the entity** — not only the hits
@@ -1580,10 +1671,20 @@ mod tests {
         let renamed = entity("person:milhouse", "Milhouse Van Houten");
         let guest = Fact {
             subject: renamed.id.clone(),
-            ..fact("person:alpha", "f1", "brought the sourdough", date(2026, 1, 1))
+            ..fact(
+                "person:alpha",
+                "f1",
+                "brought the sourdough",
+                date(2026, 1, 1),
+            )
         };
         let store = IndexedMemory::new(Scanned::new(vec![
-            scan("doc-alpha", Some(entity("person:alpha", "Alpha")), "", vec![guest]),
+            scan(
+                "doc-alpha",
+                Some(entity("person:alpha", "Alpha")),
+                "",
+                vec![guest],
+            ),
             scan("doc-milhouse", Some(renamed.clone()), "", Vec::new()),
         ]))
         .expect("index opens");
@@ -1607,7 +1708,10 @@ mod tests {
         store
             .update_entity(
                 &renamed.id,
-                EntityPatch { name: Some("Thrillhouse".into()), ..Default::default() },
+                EntityPatch {
+                    name: Some("Thrillhouse".into()),
+                    ..Default::default()
+                },
             )
             .await
             .expect("rename ok")
@@ -1667,7 +1771,14 @@ mod tests {
     #[tokio::test]
     async fn the_limit_caps_the_list_and_defaults_to_twenty() {
         let facts: Vec<Fact> = (1..=30)
-            .map(|n| fact("person:alpha", &format!("f{n}"), "repeated claim", date(2026, 1, 1)))
+            .map(|n| {
+                fact(
+                    "person:alpha",
+                    &format!("f{n}"),
+                    "repeated claim",
+                    date(2026, 1, 1),
+                )
+            })
             .collect();
         let index = index_of(vec![scan(
             "doc-1",
@@ -1676,12 +1787,18 @@ mod tests {
             facts,
         )]);
         assert_eq!(
-            index.search(&SearchQuery::text("repeated")).expect("search ok").len(),
+            index
+                .search(&SearchQuery::text("repeated"))
+                .expect("search ok")
+                .len(),
             DEFAULT_LIMIT
         );
         assert_eq!(
             index
-                .search(&SearchQuery { limit: 3, ..SearchQuery::text("repeated") })
+                .search(&SearchQuery {
+                    limit: 3,
+                    ..SearchQuery::text("repeated")
+                })
                 .expect("search ok")
                 .len(),
             3
@@ -1698,11 +1815,19 @@ mod tests {
             "doc-1",
             Some(entity("person:alpha", "Alpha")),
             "",
-            vec![fact("person:alpha", "f1", "keeps a ferret", date(2026, 1, 1))],
+            vec![fact(
+                "person:alpha",
+                "f1",
+                "keeps a ferret",
+                date(2026, 1, 1),
+            )],
         );
         index.ingest_all(&[before]).expect("ingest");
         assert_eq!(
-            index.search(&SearchQuery::text("ferret")).expect("search ok").len(),
+            index
+                .search(&SearchQuery::text("ferret"))
+                .expect("search ok")
+                .len(),
             1
         );
 
@@ -1710,15 +1835,26 @@ mod tests {
             "doc-1",
             Some(entity("person:alpha", "Alpha")),
             "",
-            vec![fact("person:alpha", "f1", "keeps a tortoise", date(2026, 1, 1))],
+            vec![fact(
+                "person:alpha",
+                "f1",
+                "keeps a tortoise",
+                date(2026, 1, 1),
+            )],
         );
         index.ingest_all(&[after]).expect("re-ingest");
         assert!(
-            index.search(&SearchQuery::text("ferret")).expect("search ok").is_empty(),
+            index
+                .search(&SearchQuery::text("ferret"))
+                .expect("search ok")
+                .is_empty(),
             "the old row must be gone from the index, not left beside the new one"
         );
         assert_eq!(
-            index.search(&SearchQuery::text("tortoise")).expect("search ok").len(),
+            index
+                .search(&SearchQuery::text("tortoise"))
+                .expect("search ok")
+                .len(),
             1
         );
     }
@@ -1729,7 +1865,11 @@ mod tests {
     async fn an_edit_leaves_one_indexed_copy_saying_the_new_thing() {
         let store = IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens");
         store
-            .add_entity(NewEntity::new(EntityId::person("alpha"), "Alpha", "user-named"))
+            .add_entity(NewEntity::new(
+                EntityId::person("alpha"),
+                "Alpha",
+                "user-named",
+            ))
             .await
             .expect("add ok")
             .written()
@@ -1759,11 +1899,17 @@ mod tests {
             .expect("not blocked");
 
         assert!(
-            store.search(&SearchQuery::text("old place")).expect("search ok").is_empty(),
+            store
+                .search(&SearchQuery::text("old place"))
+                .expect("search ok")
+                .is_empty(),
             "the superseded text must be gone from the index"
         );
         assert_eq!(
-            store.search(&SearchQuery::text("new place")).expect("search ok").len(),
+            store
+                .search(&SearchQuery::text("new place"))
+                .expect("search ok")
+                .len(),
             1
         );
     }
@@ -1774,7 +1920,11 @@ mod tests {
     async fn a_blocked_write_indexes_nothing() {
         let store = IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens");
         store
-            .add_entity(NewEntity::new(EntityId::person("zenith"), "Zenith", "user-named"))
+            .add_entity(NewEntity::new(
+                EntityId::person("zenith"),
+                "Zenith",
+                "user-named",
+            ))
             .await
             .expect("add ok")
             .written()
@@ -1803,7 +1953,11 @@ mod tests {
     async fn rebuild_indexes_a_store_that_was_already_full() {
         let inner = Arc::new(InMemoryMemory::new());
         inner
-            .add_entity(NewEntity::new(EntityId::person("alpha"), "Alpha", "user-named"))
+            .add_entity(NewEntity::new(
+                EntityId::person("alpha"),
+                "Alpha",
+                "user-named",
+            ))
             .await
             .expect("add ok");
         inner
@@ -1819,12 +1973,22 @@ mod tests {
 
         let store = IndexedMemory::new(inner).expect("index opens");
         assert!(
-            store.search(&SearchQuery::text("before")).expect("search ok").is_empty(),
+            store
+                .search(&SearchQuery::text("before"))
+                .expect("search ok")
+                .is_empty(),
             "nothing is indexed until the scan runs"
         );
-        assert_eq!(store.rebuild().await.expect("rebuild"), 1, "one doc scanned");
         assert_eq!(
-            store.search(&SearchQuery::text("before")).expect("search ok").len(),
+            store.rebuild().await.expect("rebuild"),
+            1,
+            "one doc scanned"
+        );
+        assert_eq!(
+            store
+                .search(&SearchQuery::text("before"))
+                .expect("search ok")
+                .len(),
             1
         );
     }
@@ -1845,7 +2009,9 @@ mod tests {
         const DOC_ID: &'static str = "outline-uuid-7f3a";
 
         fn new(docs: Vec<DocScan>) -> Arc<Self> {
-            Arc::new(Scanned { docs: RwLock::new(docs) })
+            Arc::new(Scanned {
+                docs: RwLock::new(docs),
+            })
         }
 
         /// The page is deleted in the wiki.
@@ -1951,14 +2117,31 @@ mod tests {
             title: "Alpha".into(),
             prose: "Alpha is allergic to penicillin.".into(),
             entity: Some(entity("person:alpha", "Alpha")),
-            facts: vec![fact("person:alpha", "f1", "keeps a ferret", date(2026, 1, 1))],
+            facts: vec![fact(
+                "person:alpha",
+                "f1",
+                "keeps a ferret",
+                date(2026, 1, 1),
+            )],
         }]);
         let store = IndexedMemory::new(inner.clone()).expect("index opens");
         store.rebuild().await.expect("rebuild");
 
         let alpha = EntityId::person("alpha");
-        assert_eq!(store.search(&SearchQuery::text("ferret")).expect("search ok").len(), 1);
-        assert_eq!(store.search(&SearchQuery::text("penicillin")).expect("search ok").len(), 1);
+        assert_eq!(
+            store
+                .search(&SearchQuery::text("ferret"))
+                .expect("search ok")
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .search(&SearchQuery::text("penicillin"))
+                .expect("search ok")
+                .len(),
+            1
+        );
         assert!(
             store
                 .search(&SearchQuery::text("person:alpha"))
@@ -1972,12 +2155,18 @@ mod tests {
 
         for gone in ["ferret", "penicillin"] {
             assert!(
-                store.search(&SearchQuery::text(gone)).expect("search ok").is_empty(),
+                store
+                    .search(&SearchQuery::text(gone))
+                    .expect("search ok")
+                    .is_empty(),
                 "{gone:?} must be gone from the index with its doc"
             );
         }
         assert!(
-            store.search(&SearchQuery::text("person:alpha")).expect("search ok").is_empty(),
+            store
+                .search(&SearchQuery::text("person:alpha"))
+                .expect("search ok")
+                .is_empty(),
             "…and so must the entity, pin and all"
         );
     }
@@ -2006,13 +2195,19 @@ mod tests {
             Scanned::DOC_ID,
             Some(entity("person:alpha", "Alpha")),
             "",
-            vec![orphan, fact("person:alpha", "f2", "plays go", date(2026, 1, 2))],
+            vec![
+                orphan,
+                fact("person:alpha", "f2", "plays go", date(2026, 1, 2)),
+            ],
         )]))
         .expect("index opens");
         store.rebuild().await.expect("rebuild");
 
         let text = logged.text();
-        assert!(text.contains(Scanned::DOC_ID), "the log must say which doc: {text}");
+        assert!(
+            text.contains(Scanned::DOC_ID),
+            "the log must say which doc: {text}"
+        );
         assert!(text.contains("person:alphaa"), "…and which subject: {text}");
         assert!(text.contains("count=1"), "…and how many: {text}");
         assert!(
@@ -2022,7 +2217,10 @@ mod tests {
 
         // …and the row is still there. Reporting it is not quarantining it.
         assert_eq!(
-            store.search(&SearchQuery::text("chess")).expect("search ok").len(),
+            store
+                .search(&SearchQuery::text("chess"))
+                .expect("search ok")
+                .len(),
             1,
             "a counted row is still indexed and still findable"
         );
@@ -2043,7 +2241,12 @@ mod tests {
 
         let hand_edited = Fact {
             subject: EntityId::person("ghostly"),
-            ..fact("person:alpha", "f1", "subject cell retyped by hand", date(2026, 1, 1))
+            ..fact(
+                "person:alpha",
+                "f1",
+                "subject cell retyped by hand",
+                date(2026, 1, 1),
+            )
         };
         let store = IndexedMemory::new(Scanned::new(vec![scan(
             DOC,
@@ -2066,11 +2269,17 @@ mod tests {
 
         let text = logged.text();
         assert!(text.contains(DOC), "the reindex must say which doc: {text}");
-        assert!(text.contains("person:ghostly"), "…and which subject: {text}");
+        assert!(
+            text.contains("person:ghostly"),
+            "…and which subject: {text}"
+        );
 
         // …and the write is findable, which is the reindex having run at all.
         assert_eq!(
-            store.search(&SearchQuery::text("ordinary")).expect("search ok").len(),
+            store
+                .search(&SearchQuery::text("ordinary"))
+                .expect("search ok")
+                .len(),
             1
         );
     }
@@ -2088,11 +2297,26 @@ mod tests {
 
         let elsewhere = Fact {
             subject: EntityId::person("kappa"),
-            ..fact("person:alpha", "f1", "subject cell retyped onto a live handle", date(2026, 1, 1))
+            ..fact(
+                "person:alpha",
+                "f1",
+                "subject cell retyped onto a live handle",
+                date(2026, 1, 1),
+            )
         };
         let store = IndexedMemory::new(Scanned::new(vec![
-            scan(DOC, Some(entity("person:alpha", "Alpha")), "", vec![elsewhere]),
-            scan("outline-uuid-kappa", Some(entity("person:kappa", "Kappa")), "", Vec::new()),
+            scan(
+                DOC,
+                Some(entity("person:alpha", "Alpha")),
+                "",
+                vec![elsewhere],
+            ),
+            scan(
+                "outline-uuid-kappa",
+                Some(entity("person:kappa", "Kappa")),
+                "",
+                Vec::new(),
+            ),
         ]))
         .expect("index opens");
 
@@ -2149,9 +2373,17 @@ mod tests {
                 DOC,
                 Some(entity("person:alpha", "Alpha")),
                 "",
-                vec![elsewhere, fact("person:alpha", "f2", "took the bus", date(2026, 1, 2))],
+                vec![
+                    elsewhere,
+                    fact("person:alpha", "f2", "took the bus", date(2026, 1, 2)),
+                ],
             ),
-            scan("outline-uuid-beta", Some(entity("person:beta", "Beta")), "", Vec::new()),
+            scan(
+                "outline-uuid-beta",
+                Some(entity("person:beta", "Beta")),
+                "",
+                Vec::new(),
+            ),
         ]))
         .expect("index opens");
         store.rebuild().await.expect("rebuild");
@@ -2166,14 +2398,24 @@ mod tests {
 
         // Counted is not quarantined: the row is still indexed and still found.
         assert_eq!(
-            store.search(&SearchQuery::text("ferry")).expect("search ok").len(),
+            store
+                .search(&SearchQuery::text("ferry"))
+                .expect("search ok")
+                .len(),
             1
         );
     }
 
     // --- mail in the one list -------------------------------------------------
 
-    fn message(id: &str, mailbox: &str, sender: &str, subject: Option<&str>, body: &str, state: MessageState) -> Message {
+    fn message(
+        id: &str,
+        mailbox: &str,
+        sender: &str,
+        subject: Option<&str>,
+        body: &str,
+        state: MessageState,
+    ) -> Message {
         Message {
             id: MessageId(id.into()),
             mailbox: MailboxName(mailbox.into()),
@@ -2198,7 +2440,12 @@ mod tests {
             "doc-1",
             Some(entity("person:alpha", "Alpha")),
             "",
-            vec![fact("person:alpha", "f1", "runs the kiln on Tuesdays", date(2026, 1, 1))],
+            vec![fact(
+                "person:alpha",
+                "f1",
+                "runs the kiln on Tuesdays",
+                date(2026, 1, 1),
+            )],
         )]);
         index
             .ingest_mail(&[message(
@@ -2211,23 +2458,39 @@ mod tests {
             )])
             .expect("ingest mail");
 
-        let hits = index.search(&SearchQuery::text("damper")).expect("search ok");
+        let hits = index
+            .search(&SearchQuery::text("damper"))
+            .expect("search ok");
         let Some(Hit::Message { message, snippet }) =
             hits.iter().find(|h| matches!(h, Hit::Message { .. }))
         else {
             panic!("the message must be a hit: {hits:?}")
         };
-        assert_eq!(message.id.as_str(), "42", "…carrying the id read_message takes");
+        assert_eq!(
+            message.id.as_str(),
+            "42",
+            "…carrying the id read_message takes"
+        );
         assert_eq!(message.mailbox.as_str(), "pm", "…and which box it is in");
-        assert_eq!(message.state, MessageState::Read, "…and what state it is in");
+        assert_eq!(
+            message.state,
+            MessageState::Read,
+            "…and what state it is in"
+        );
         assert_eq!(message.sender, "dev (implementer)");
         assert_eq!(message.subject.as_deref(), Some("the kiln slice"));
         assert!(snippet.to_lowercase().contains("damper"), "got {snippet:?}");
 
         // One list: the same query reaches mail and memory together.
         let mixed = index.search(&SearchQuery::text("kiln")).expect("search ok");
-        assert!(mixed.iter().any(|h| matches!(h, Hit::Fact { .. })), "{mixed:?}");
-        assert!(mixed.iter().any(|h| matches!(h, Hit::Message { .. })), "{mixed:?}");
+        assert!(
+            mixed.iter().any(|h| matches!(h, Hit::Fact { .. })),
+            "{mixed:?}"
+        );
+        assert!(
+            mixed.iter().any(|h| matches!(h, Hit::Message { .. })),
+            "{mixed:?}"
+        );
     }
 
     /// **Every state is searchable, `processed` included** — an archive is
@@ -2238,13 +2501,36 @@ mod tests {
         let index = index_of(Vec::new());
         index
             .ingest_mail(&[
-                message("1", "pm", "dev", None, "the crates are stacked", MessageState::New),
-                message("2", "pm", "dev", None, "the crates were counted", MessageState::Read),
-                message("3", "pm", "dev", None, "the crates went out", MessageState::Processed),
+                message(
+                    "1",
+                    "pm",
+                    "dev",
+                    None,
+                    "the crates are stacked",
+                    MessageState::New,
+                ),
+                message(
+                    "2",
+                    "pm",
+                    "dev",
+                    None,
+                    "the crates were counted",
+                    MessageState::Read,
+                ),
+                message(
+                    "3",
+                    "pm",
+                    "dev",
+                    None,
+                    "the crates went out",
+                    MessageState::Processed,
+                ),
             ])
             .expect("ingest mail");
 
-        let hits = index.search(&SearchQuery::text("crates")).expect("search ok");
+        let hits = index
+            .search(&SearchQuery::text("crates"))
+            .expect("search ok");
         let mut states: Vec<&str> = hits
             .iter()
             .filter_map(|h| match h {
@@ -2268,7 +2554,12 @@ mod tests {
             "doc-1",
             Some(entity("person:alpha", "Alpha")),
             "",
-            vec![fact("person:alpha", "f1", "the shipment is late", date(2026, 1, 1))],
+            vec![fact(
+                "person:alpha",
+                "f1",
+                "the shipment is late",
+                date(2026, 1, 1),
+            )],
         )]);
         index
             .ingest_mail(&[message(
@@ -2281,14 +2572,19 @@ mod tests {
             )])
             .expect("ingest mail");
 
-        let by_default = index.search(&SearchQuery::text("shipment")).expect("search ok");
+        let by_default = index
+            .search(&SearchQuery::text("shipment"))
+            .expect("search ok");
         assert!(
             by_default.iter().any(|h| matches!(h, Hit::Message { .. })),
             "mail is in by default — excluded-by-default rebuilds the blindness: {by_default:?}"
         );
 
         let excluded = index
-            .search(&SearchQuery { include_mail: false, ..SearchQuery::text("shipment") })
+            .search(&SearchQuery {
+                include_mail: false,
+                ..SearchQuery::text("shipment")
+            })
             .expect("search ok");
         assert!(
             !excluded.iter().any(|h| matches!(h, Hit::Message { .. })),
@@ -2309,10 +2605,22 @@ mod tests {
             "doc-1",
             Some(entity("person:alpha", "Alpha")),
             "Alpha wrote about the shipment.",
-            vec![fact("person:alpha", "f1", "the shipment is late", date(2026, 1, 1))],
+            vec![fact(
+                "person:alpha",
+                "f1",
+                "the shipment is late",
+                date(2026, 1, 1),
+            )],
         )]);
         index
-            .ingest_mail(&[message("7", "pm", "dev", None, "the shipment is late", MessageState::New)])
+            .ingest_mail(&[message(
+                "7",
+                "pm",
+                "dev",
+                None,
+                "the shipment is late",
+                MessageState::New,
+            )])
             .expect("ingest mail");
 
         let fact_scoped = index
@@ -2328,7 +2636,10 @@ mod tests {
         );
 
         let by_kind = index
-            .search(&SearchQuery { kind: Some(EntityKind::Person), ..SearchQuery::text("shipment") })
+            .search(&SearchQuery {
+                kind: Some(EntityKind::Person),
+                ..SearchQuery::text("shipment")
+            })
             .expect("search ok");
         assert!(
             !by_kind.iter().any(|h| matches!(h, Hit::Message { .. })),
@@ -2345,10 +2656,22 @@ mod tests {
             "doc-1",
             Some(entity("person:alpha", "Alpha")),
             "",
-            vec![fact("person:alpha", "f1", "keeps a ferret", date(2026, 1, 1))],
+            vec![fact(
+                "person:alpha",
+                "f1",
+                "keeps a ferret",
+                date(2026, 1, 1),
+            )],
         )]);
         index
-            .ingest_mail(&[message("1", "pm", "dev", None, "the shipment landed", MessageState::New)])
+            .ingest_mail(&[message(
+                "1",
+                "pm",
+                "dev",
+                None,
+                "the shipment landed",
+                MessageState::New,
+            )])
             .expect("ingest mail");
         index
             .ingest_mail(&[message(
@@ -2361,7 +2684,9 @@ mod tests {
             )])
             .expect("re-ingest mail");
 
-        let hits = index.search(&SearchQuery::text("shipment")).expect("search ok");
+        let hits = index
+            .search(&SearchQuery::text("shipment"))
+            .expect("search ok");
         let states: Vec<&str> = hits
             .iter()
             .filter_map(|h| match h {
@@ -2369,9 +2694,16 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(states, vec!["processed"], "one copy, saying the new thing: {hits:?}");
         assert_eq!(
-            index.search(&SearchQuery::text("ferret")).expect("search ok").len(),
+            states,
+            vec!["processed"],
+            "one copy, saying the new thing: {hits:?}"
+        );
+        assert_eq!(
+            index
+                .search(&SearchQuery::text("ferret"))
+                .expect("search ok")
+                .len(),
             1,
             "rebuilding the mail half must not evict memory"
         );
@@ -2383,7 +2715,14 @@ mod tests {
     async fn one_message_is_re_indexed_in_place() {
         let index = index_of(Vec::new());
         index
-            .ingest_mail(&[message("1", "pm", "dev", None, "the shipment landed", MessageState::New)])
+            .ingest_mail(&[message(
+                "1",
+                "pm",
+                "dev",
+                None,
+                "the shipment landed",
+                MessageState::New,
+            )])
             .expect("ingest mail");
         index
             .ingest_message(&message(
@@ -2396,7 +2735,9 @@ mod tests {
             ))
             .expect("ingest one");
 
-        let hits = index.search(&SearchQuery::text("shipment")).expect("search ok");
+        let hits = index
+            .search(&SearchQuery::text("shipment"))
+            .expect("search ok");
         assert_eq!(hits.len(), 1, "one copy, not two: {hits:?}");
         assert!(
             matches!(hits.first(), Some(Hit::Message { message, .. }) if message.state == MessageState::Processed)
@@ -2414,16 +2755,30 @@ mod tests {
             "doc-1",
             Some(entity("person:alpha", "Alpha")),
             "",
-            vec![fact("person:alpha", "f1", "keeps a ferret", date(2026, 1, 1))],
+            vec![fact(
+                "person:alpha",
+                "f1",
+                "keeps a ferret",
+                date(2026, 1, 1),
+            )],
         )]);
-        assert_eq!(index.mail_coverage(), MailCoverage::Unread, "nothing has loaded mail");
         assert_eq!(
-            index.search(&SearchQuery::text("ferret")).expect("search ok").len(),
+            index.mail_coverage(),
+            MailCoverage::Unread,
+            "nothing has loaded mail"
+        );
+        assert_eq!(
+            index
+                .search(&SearchQuery::text("ferret"))
+                .expect("search ok")
+                .len(),
             1,
             "the memory half still answers"
         );
 
-        index.ingest_mail(&[]).expect("an empty board is still a board");
+        index
+            .ingest_mail(&[])
+            .expect("an empty board is still a board");
         assert_eq!(
             index.mail_coverage(),
             MailCoverage::Loaded,
@@ -2443,7 +2798,14 @@ mod tests {
 
         // No ingest_mail — the boot read failed. A verb indexes one message.
         index
-            .ingest_message(&message("1", "pm", "dev", None, "the shipment landed", MessageState::New))
+            .ingest_message(&message(
+                "1",
+                "pm",
+                "dev",
+                None,
+                "the shipment landed",
+                MessageState::New,
+            ))
             .expect("ingest one");
 
         assert_eq!(
@@ -2452,7 +2814,10 @@ mod tests {
             "a message that IS findable must never be reported as no mail at all"
         );
         assert_eq!(
-            index.search(&SearchQuery::text("shipment")).expect("search ok").len(),
+            index
+                .search(&SearchQuery::text("shipment"))
+                .expect("search ok")
+                .len(),
             1,
             "…and it is findable, which is the whole reason the claim was wrong"
         );
@@ -2471,23 +2836,43 @@ mod tests {
     /// Both orders, because the bug is exactly an order-dependence.
     #[tokio::test]
     async fn rebuilding_either_half_leaves_the_other_alone() {
-        let mail = || message("1", "pm", "dev", None, "the shipment landed", MessageState::New);
+        let mail = || {
+            message(
+                "1",
+                "pm",
+                "dev",
+                None,
+                "the shipment landed",
+                MessageState::New,
+            )
+        };
         let docs = || {
             vec![scan(
                 "doc-1",
                 Some(entity("person:alpha", "Alpha")),
                 "",
-                vec![fact("person:alpha", "f1", "keeps a ferret", date(2026, 1, 1))],
+                vec![fact(
+                    "person:alpha",
+                    "f1",
+                    "keeps a ferret",
+                    date(2026, 1, 1),
+                )],
             )]
         };
         let both_survive = |index: &FullTextIndex, order: &str| {
             assert_eq!(
-                index.search(&SearchQuery::text("shipment")).expect("search ok").len(),
+                index
+                    .search(&SearchQuery::text("shipment"))
+                    .expect("search ok")
+                    .len(),
                 1,
                 "the mail half is gone after {order}"
             );
             assert_eq!(
-                index.search(&SearchQuery::text("ferret")).expect("search ok").len(),
+                index
+                    .search(&SearchQuery::text("ferret"))
+                    .expect("search ok")
+                    .len(),
                 1,
                 "the memory half is gone after {order}"
             );
@@ -2520,7 +2905,8 @@ mod tests {
         let store = IndexedMailboxes::new(Arc::new(InMemoryMailboxes::new()), index.clone());
         mail_contract::create(&store, "pm").await;
 
-        let posted = mail_contract::post(&store, "pm", "dev", "the damper is still hand-cut", 0).await;
+        let posted =
+            mail_contract::post(&store, "pm", "dev", "the damper is still hand-cut", 0).await;
         let state_of = |index: &FullTextIndex| -> Option<MessageState> {
             index
                 .search(&SearchQuery::text("damper"))
@@ -2554,18 +2940,30 @@ mod tests {
     async fn a_rebuild_loads_the_board_and_a_blocked_post_indexes_nothing() {
         let inner = Arc::new(InMemoryMailboxes::new());
         mail_contract::create(inner.as_ref(), "pm").await;
-        mail_contract::post(inner.as_ref(), "pm", "dev", "written before the server started", 0)
-            .await;
+        mail_contract::post(
+            inner.as_ref(),
+            "pm",
+            "dev",
+            "written before the server started",
+            0,
+        )
+        .await;
 
         let index = Arc::new(FullTextIndex::open().expect("index opens"));
         let store = IndexedMailboxes::new(inner, index.clone());
         assert!(
-            index.search(&SearchQuery::text("started")).expect("search ok").is_empty(),
+            index
+                .search(&SearchQuery::text("started"))
+                .expect("search ok")
+                .is_empty(),
             "nothing is indexed until the board is read"
         );
         assert_eq!(store.rebuild().await.expect("rebuild"), 1);
         assert_eq!(
-            index.search(&SearchQuery::text("started")).expect("search ok").len(),
+            index
+                .search(&SearchQuery::text("started"))
+                .expect("search ok")
+                .len(),
             1
         );
 
@@ -2580,7 +2978,10 @@ mod tests {
             })
             .await
             .expect("a blocked post is a result, not a failure");
-        assert!(matches!(blocked, jojobot_domain::mailbox::Guarded::Blocked { .. }));
+        assert!(matches!(
+            blocked,
+            jojobot_domain::mailbox::Guarded::Blocked { .. }
+        ));
         assert!(
             index
                 .search(&SearchQuery::text("should not be indexed"))
@@ -2595,8 +2996,16 @@ mod tests {
     #[tokio::test]
     async fn an_edge_filter_beats_a_prose_mention() {
         let edged = Fact {
-            edge: Some(Edge::new(EdgeShape::Location, EntityId("place:shelbyville".into()))),
-            ..fact("person:alpha", "f1", "spending the winter away", date(2026, 1, 1))
+            edge: Some(Edge::new(
+                EdgeShape::Location,
+                EntityId("place:shelbyville".into()),
+            )),
+            ..fact(
+                "person:alpha",
+                "f1",
+                "spending the winter away",
+                date(2026, 1, 1),
+            )
         };
         let index = index_of(vec![scan(
             "doc-1",
@@ -2604,7 +3013,12 @@ mod tests {
             "Alpha talks about shelbyville constantly and has never been.",
             vec![
                 edged.clone(),
-                fact("person:alpha", "f2", "wants to visit shelbyville someday", date(2026, 1, 2)),
+                fact(
+                    "person:alpha",
+                    "f2",
+                    "wants to visit shelbyville someday",
+                    date(2026, 1, 2),
+                ),
             ],
         )]);
 

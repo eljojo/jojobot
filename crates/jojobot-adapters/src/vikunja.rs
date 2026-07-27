@@ -37,14 +37,13 @@ use async_trait::async_trait;
 
 use jojobot_domain::mailbox::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
-    MessageId, MessageState, NewMessage, StateCounts, guard::{self, Decision},
+    MessageId, MessageState, NewMessage, StateCounts,
+    guard::{self, Decision},
     message_title, normalize_body, normalize_notes, normalize_subject, validate_body,
     validate_mailbox_name, validate_message_id, validate_notes, validate_sender, validate_subject,
 };
 
-use api::{
-    BoardBucket, HttpVikunja, LabelRec, TaskRec, Unconfigured, VikunjaApi,
-};
+use api::{BoardBucket, HttpVikunja, LabelRec, TaskRec, Unconfigured, VikunjaApi};
 use board::{OWNER_TAG, PAGE, Provisioner, Scope};
 use codec::{Envelope, parse_description, render_description};
 
@@ -271,9 +270,11 @@ impl VikunjaStore {
             if batch.is_empty() {
                 break;
             }
-            owned.extend(batch.into_iter().filter(|l| {
-                l.title.starts_with(&prefix) && l.description.contains(OWNER_TAG)
-            }));
+            owned.extend(
+                batch
+                    .into_iter()
+                    .filter(|l| l.title.starts_with(&prefix) && l.description.contains(OWNER_TAG)),
+            );
             page += 1;
         }
         // Oldest wins, so a concurrent double-create of one mailbox converges
@@ -291,7 +292,12 @@ impl VikunjaStore {
 
     /// Just the names — what the guard screens against.
     async fn mailbox_names(&self) -> Result<Vec<MailboxName>, MailboxError> {
-        Ok(self.mailbox_labels().await?.into_iter().map(|(n, _)| n).collect())
+        Ok(self
+            .mailbox_labels()
+            .await?
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect())
     }
 
     /// The whole board, paged until every column returns a short page. A column
@@ -301,7 +307,10 @@ impl VikunjaStore {
         let mut merged: Vec<BoardBucket> = Vec::new();
         let mut page = 1;
         loop {
-            let batch = self.api.board(scope.project(), scope.view, page, BOARD_PAGE).await?;
+            let batch = self
+                .api
+                .board(scope.project(), scope.view, page, BOARD_PAGE)
+                .await?;
             if batch.is_empty() {
                 break;
             }
@@ -477,7 +486,11 @@ impl VikunjaStore {
         id: &MessageId,
     ) -> Result<(TaskRec, Message), MailboxError> {
         let board = self.board_read(scope).await?;
-        if let Some(quarantined) = board.quarantined.iter().find(|q| q.card.to_string() == id.0) {
+        if let Some(quarantined) = board
+            .quarantined
+            .iter()
+            .find(|q| q.card.to_string() == id.0)
+        {
             return Err(MailboxError::Quarantined {
                 attempted: id.to_string(),
                 reason: quarantined.why.to_string(),
@@ -698,10 +711,11 @@ impl VikunjaStore {
             )
             .await;
         let column = match self.column(scope, state).await {
-            Ok(bucket) => self
-                .api
-                .move_task(scope.project(), scope.view, bucket, task.id)
-                .await,
+            Ok(bucket) => {
+                self.api
+                    .move_task(scope.project(), scope.view, bucket, task.id)
+                    .await
+            }
             Err(e) => Err(e),
         };
         match (description, column) {
@@ -709,7 +723,6 @@ impl VikunjaStore {
             (d, c) => Err(d.err().or(c.err()).expect("at least one side failed")),
         }
     }
-
 
     /// The `parked` column's id, creating the column on demand. Deliberately
     /// **not a state token**: a card here has no place in the funnel, so the
@@ -858,7 +871,6 @@ fn read_back_confirms(expected: &Message, seen: &Message) -> bool {
         && seen.sender == expected.sender
         && seen.sent_at == expected.sent_at
 }
-
 
 #[async_trait]
 impl Mailboxes for VikunjaStore {
@@ -1239,7 +1251,10 @@ impl Mailboxes for VikunjaStore {
         // set, which is the one thing terminal means it cannot do.
         let seen_before = message.state != MessageState::New;
         if seen_before {
-            return Ok(Delivered { message, seen_before });
+            return Ok(Delivered {
+                message,
+                seen_before,
+            });
         }
 
         let read_column = self.column(&scope, MessageState::Read).await?;
@@ -1365,7 +1380,12 @@ impl Mailboxes for VikunjaStore {
         // edit overwritten. An overwritten edit is recoverable by asking them;
         // a silently archived message is recoverable by nobody.
         let put_back = |outcome: Result<(), MailboxError>| {
-            Rollback::of(outcome.err().map(|e| vec![(card.id, e)]).unwrap_or_default())
+            Rollback::of(
+                outcome
+                    .err()
+                    .map(|e| vec![(card.id, e)])
+                    .unwrap_or_default(),
+            )
         };
         if let Err(e) = retired {
             let restored = put_back(self.restore(&scope, &card, message.state).await);
@@ -1385,7 +1405,9 @@ impl Mailboxes for VikunjaStore {
                     "mark_processed",
                     match outcome {
                         Ok(seen) => {
-                            format!("message {id} read back changed: wrote {expected:?}, read {seen:?}")
+                            format!(
+                                "message {id} read back changed: wrote {expected:?}, read {seen:?}"
+                            )
                         }
                         Err(e) => e.to_string(),
                     },
@@ -1627,7 +1649,10 @@ pub(super) mod tests {
                     self.buckets.lock().unwrap().push((
                         project,
                         id,
-                        BucketRec { id: bucket, title: DEFAULT_COLUMN.into() },
+                        BucketRec {
+                            id: bucket,
+                            title: DEFAULT_COLUMN.into(),
+                        },
                     ));
                     views.push((
                         project,
@@ -1717,7 +1742,10 @@ pub(super) mod tests {
         /// priority on a message card.
         fn set_field(&self, task: u64, key: &str, value: serde_json::Value) {
             let mut tasks = self.tasks.lock().unwrap();
-            let card = tasks.iter_mut().find(|t| t.id == task).expect("card exists");
+            let card = tasks
+                .iter_mut()
+                .find(|t| t.id == task)
+                .expect("card exists");
             card.raw[key] = value;
         }
 
@@ -1745,7 +1773,13 @@ pub(super) mod tests {
 
         /// Attach labels to a card directly, without going through the store —
         /// for seeding a board the way a hand edit would leave it.
-        pub(super) fn seed_task(&self, project: u64, title: &str, description: &str, labels: &[u64]) -> u64 {
+        pub(super) fn seed_task(
+            &self,
+            project: u64,
+            title: &str,
+            description: &str,
+            labels: &[u64],
+        ) -> u64 {
             let id = self.next_id();
             self.tasks.lock().unwrap().push(TaskRec {
                 id,
@@ -1810,7 +1844,10 @@ pub(super) mod tests {
                         .collect()
                 })
                 .unwrap_or_default();
-            TaskRec { labels: titles, ..task.clone() }
+            TaskRec {
+                labels: titles,
+                ..task.clone()
+            }
         }
     }
 
@@ -1852,7 +1889,6 @@ pub(super) mod tests {
                 .expect("just created"))
         }
 
-
         async fn list_views(&self, project_id: u64) -> Result<Vec<ViewRec>, MailboxError> {
             self.named(project_id);
             Ok(self
@@ -1890,7 +1926,10 @@ pub(super) mod tests {
         ) -> Result<BucketRec, MailboxError> {
             self.maybe_fail("create_bucket")?;
             self.named(project_id);
-            let bucket = BucketRec { id: self.next_id(), title: title.into() };
+            let bucket = BucketRec {
+                id: self.next_id(),
+                title: title.into(),
+            };
             self.buckets
                 .lock()
                 .unwrap()
@@ -1930,7 +1969,11 @@ pub(super) mod tests {
                         .skip((page as usize - 1) * self.served(per_page))
                         .take(self.served(per_page))
                         .collect();
-                    BoardBucket { id: b.id, title: b.title, tasks: in_bucket }
+                    BoardBucket {
+                        id: b.id,
+                        title: b.title,
+                        tasks: in_bucket,
+                    }
                 })
                 .collect())
         }
@@ -1997,7 +2040,9 @@ pub(super) mod tests {
                     stored.raw = payload;
                     Ok(())
                 }
-                None => Err(MailboxError::Store(format!("update_task: no card {task_id}"))),
+                None => Err(MailboxError::Store(format!(
+                    "update_task: no card {task_id}"
+                ))),
             }
         }
 
@@ -2014,12 +2059,10 @@ pub(super) mod tests {
             self.placement.lock().unwrap().insert(task_id, bucket_id);
             // Like real Vikunja (probed live): a card arriving in the view's
             // done bucket is marked done by the server itself.
-            let is_done_bucket = self
-                .views
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|(p, v)| *p == project_id && v.id == view_id && v.done_bucket_id == bucket_id);
+            let is_done_bucket =
+                self.views.lock().unwrap().iter().any(|(p, v)| {
+                    *p == project_id && v.id == view_id && v.done_bucket_id == bucket_id
+                });
             if is_done_bucket {
                 let mut tasks = self.tasks.lock().unwrap();
                 if let Some(card) = tasks.iter_mut().find(|t| t.id == task_id) {
@@ -2080,7 +2123,10 @@ pub(super) mod tests {
         async fn set_task_labels(&self, task_id: u64, labels: &[u64]) -> Result<(), MailboxError> {
             self.maybe_fail("set_task_labels")?;
             self.wrote(task_id);
-            self.task_labels.lock().unwrap().insert(task_id, labels.to_vec());
+            self.task_labels
+                .lock()
+                .unwrap()
+                .insert(task_id, labels.to_vec());
             Ok(())
         }
 
@@ -2114,7 +2160,10 @@ pub(super) mod tests {
                 text: self.mangle(text),
                 created: format!("{id:012}"),
             };
-            self.comments.lock().unwrap().push((task_id, comment.clone()));
+            self.comments
+                .lock()
+                .unwrap()
+                .push((task_id, comment.clone()));
             Ok(comment)
         }
 
@@ -2174,7 +2223,11 @@ pub(super) mod tests {
         }
 
         /// Arm `hook` to run right before the nth `board` call from now.
-        pub(super) fn before_board(&self, nth: u64, hook: impl FnOnce(&FakeVikunja) + Send + 'static) {
+        pub(super) fn before_board(
+            &self,
+            nth: u64,
+            hook: impl FnOnce(&FakeVikunja) + Send + 'static,
+        ) {
             *self.on_board.lock().unwrap() = Some((nth, Box::new(hook)));
         }
 
@@ -2221,7 +2274,9 @@ pub(super) mod tests {
             bucket_id: u64,
         ) -> Result<(), MailboxError> {
             self.pause().await;
-            self.inner.set_view_done_bucket(project_id, view, bucket_id).await
+            self.inner
+                .set_view_done_bucket(project_id, view, bucket_id)
+                .await
         }
         async fn list_buckets(
             &self,
@@ -2276,7 +2331,9 @@ pub(super) mod tests {
             task_id: u64,
         ) -> Result<(), MailboxError> {
             self.pause().await;
-            self.inner.move_task(project_id, view_id, bucket_id, task_id).await
+            self.inner
+                .move_task(project_id, view_id, bucket_id, task_id)
+                .await
         }
         async fn list_labels(
             &self,
@@ -2413,7 +2470,10 @@ pub(super) mod tests {
         let outcome = store
             .create_mailbox(&MailboxName("inbox".into()), false)
             .await;
-        assert!(outcome.is_err(), "a failed label creation must not report a box: {outcome:?}");
+        assert!(
+            outcome.is_err(),
+            "a failed label creation must not report a box: {outcome:?}"
+        );
         assert!(
             store.list_mailboxes().await.expect("list ok").is_empty(),
             "…and no box exists afterwards"
@@ -2429,10 +2489,20 @@ pub(super) mod tests {
         let theirs = fake.seed_project(PROJECT, "my own board");
         fake.seed_task(theirs, "buy stamps", "", &[]);
 
-        contract::post(&store_with_box(fake.clone(), "inbox").await, "inbox", "alpha", "hello", 0)
-            .await;
+        contract::post(
+            &store_with_box(fake.clone(), "inbox").await,
+            "inbox",
+            "alpha",
+            "hello",
+            0,
+        )
+        .await;
 
-        assert_eq!(fake.owned_titled(PROJECT), 1, "jojobot made its own project");
+        assert_eq!(
+            fake.owned_titled(PROJECT),
+            1,
+            "jojobot made its own project"
+        );
         assert_eq!(
             fake.tasks_in(theirs).len(),
             1,
@@ -2447,11 +2517,21 @@ pub(super) mod tests {
         let older = fake.seed_project(PROJECT, &owned_desc());
         let newer = fake.seed_project(PROJECT, &owned_desc());
 
-        contract::post(&store_with_box(fake.clone(), "inbox").await, "inbox", "alpha", "hello", 0)
-            .await;
+        contract::post(
+            &store_with_box(fake.clone(), "inbox").await,
+            "inbox",
+            "alpha",
+            "hello",
+            0,
+        )
+        .await;
 
         assert_eq!(fake.owned_titled(PROJECT), 2, "no third project created");
-        assert_eq!(fake.tasks_in(older).len(), 1, "the message went to the oldest");
+        assert_eq!(
+            fake.tasks_in(older).len(),
+            1,
+            "the message went to the oldest"
+        );
         assert!(fake.tasks_in(newer).is_empty());
     }
 
@@ -2469,10 +2549,20 @@ pub(super) mod tests {
         // The one owned match sits past the first page.
         let owned = fake.seed_project(PROJECT, &owned_desc());
 
-        contract::post(&store_with_box(fake.clone(), "inbox").await, "inbox", "alpha", "hello", 0)
-            .await;
+        contract::post(
+            &store_with_box(fake.clone(), "inbox").await,
+            "inbox",
+            "alpha",
+            "hello",
+            0,
+        )
+        .await;
 
-        assert_eq!(fake.owned_titled(PROJECT), 1, "must find the paged-past project, not fork");
+        assert_eq!(
+            fake.owned_titled(PROJECT),
+            1,
+            "must find the paged-past project, not fork"
+        );
         assert_eq!(fake.tasks_in(owned).len(), 1);
     }
 
@@ -2493,7 +2583,11 @@ pub(super) mod tests {
         contract::create(&store, "inbox").await;
 
         let names = store.mailbox_names().await.expect("names");
-        assert_eq!(names.len(), 1, "the operator's own labels are not mailboxes");
+        assert_eq!(
+            names.len(),
+            1,
+            "the operator's own labels are not mailboxes"
+        );
         assert_eq!(names[0].as_str(), "inbox");
     }
 
@@ -2522,7 +2616,12 @@ pub(super) mod tests {
         let store = store_with_box(fake.clone(), "inbox").await;
         let project = fake.projects_titled(PROJECT)[0].id;
         let label = fake.labels.lock().unwrap()[0].id;
-        let stray = fake.seed_task(project, "a note someone typed", "no machine block here", &[label]);
+        let stray = fake.seed_task(
+            project,
+            "a note someone typed",
+            "no machine block here",
+            &[label],
+        );
         fake.seed_placement(project, stray, "new");
 
         let delivery = contract::read(&store, "inbox").await;
@@ -2532,7 +2631,10 @@ pub(super) mod tests {
             delivery.messages
         );
         assert_eq!(
-            contract::counts(&store, "inbox").await.expect("inbox").total(),
+            contract::counts(&store, "inbox")
+                .await
+                .expect("inbox")
+                .total(),
             0,
             "…and it is not counted as mail either"
         );
@@ -2555,17 +2657,29 @@ pub(super) mod tests {
         let project = fake.projects_titled(PROJECT)[0].id;
         let label = fake.labels.lock().unwrap()[0].id;
         // A real message whose description someone garbled in the UI.
-        let garbled = fake.seed_task(project, "alpha: hello", "hand-edited past parsing", &[label]);
+        let garbled = fake.seed_task(
+            project,
+            "alpha: hello",
+            "hand-edited past parsing",
+            &[label],
+        );
         fake.seed_placement(project, garbled, "new");
 
         let boxes = store.list_mailboxes().await.expect("list ok");
-        let inbox = boxes.iter().find(|m| m.name.as_str() == "inbox").expect("inbox");
+        let inbox = boxes
+            .iter()
+            .find(|m| m.name.as_str() == "inbox")
+            .expect("inbox");
         assert_eq!(
             inbox.quarantined,
             vec![MessageId(garbled.to_string())],
             "the unreadable card is surfaced with its id"
         );
-        assert_eq!(inbox.counts.total(), 0, "…but never counted as a readable message");
+        assert_eq!(
+            inbox.counts.total(),
+            0,
+            "…but never counted as a readable message"
+        );
         assert!(
             contract::read(&store, "inbox").await.messages.is_empty(),
             "…and never delivered"
@@ -2586,7 +2700,10 @@ pub(super) mod tests {
         fake.seed_placement(project, card, DEFAULT_COLUMN);
 
         let boxes = store.list_mailboxes().await.expect("list ok");
-        let inbox = boxes.iter().find(|m| m.name.as_str() == "inbox").expect("inbox");
+        let inbox = boxes
+            .iter()
+            .find(|m| m.name.as_str() == "inbox")
+            .expect("inbox");
         assert_eq!(
             inbox.quarantined,
             vec![posted.id.clone()],
@@ -2602,7 +2719,11 @@ pub(super) mod tests {
         let Err(MailboxError::Quarantined { attempted, reason }) = err else {
             panic!("a quarantined card needs its own answer, not a miss: {err:?}");
         };
-        assert_eq!(attempted, posted.id.to_string(), "the answer names the id that was asked for");
+        assert_eq!(
+            attempted,
+            posted.id.to_string(),
+            "the answer names the id that was asked for"
+        );
         assert!(
             reason.contains("column"),
             "…and says why this card cannot be read: {reason}"
@@ -2635,7 +2756,10 @@ pub(super) mod tests {
                 in_reply_to: None,
             })
             .await;
-        assert!(outcome.is_err(), "a mangled write must not report success: {outcome:?}");
+        assert!(
+            outcome.is_err(),
+            "a mangled write must not report success: {outcome:?}"
+        );
 
         assert_eq!(
             MessageState::from_token(PARKED_COLUMN),
@@ -2687,7 +2811,10 @@ pub(super) mod tests {
 
         fake.poison_next_write();
         let outcome = store.mark_processed(&posted.id, Some("filed")).await;
-        assert!(outcome.is_err(), "a mangled write must not report success: {outcome:?}");
+        assert!(
+            outcome.is_err(),
+            "a mangled write must not report success: {outcome:?}"
+        );
 
         assert_eq!(
             fake.column_of(card).as_deref(),
@@ -2702,7 +2829,10 @@ pub(super) mod tests {
             again.messages
         );
         assert_eq!(again.messages[0].message.body, "the shipment landed");
-        assert_eq!(again.messages[0].message.notes, None, "no half-written outcome remains");
+        assert_eq!(
+            again.messages[0].message.notes, None,
+            "no half-written outcome remains"
+        );
     }
 
     // --- the write-scope invariant --------------------------------------------
@@ -2729,7 +2859,10 @@ pub(super) mod tests {
         let posted = contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
         store.list_mailboxes().await.expect("list ok");
         contract::read(&store, "inbox").await;
-        store.mark_processed(&posted.id, Some("filed")).await.expect("processed");
+        store
+            .mark_processed(&posted.id, Some("filed"))
+            .await
+            .expect("processed");
 
         let named = fake.named_projects.lock().unwrap().clone();
         assert_eq!(
@@ -2751,7 +2884,10 @@ pub(super) mod tests {
             "…and none was moved off it either"
         );
         assert_eq!(
-            (theirs_after[0].title.as_str(), theirs_after[0].description.as_str()),
+            (
+                theirs_after[0].title.as_str(),
+                theirs_after[0].description.as_str()
+            ),
             ("renew the passport", "due in March"),
             "the operator's card is exactly as they left it"
         );
@@ -2777,7 +2913,13 @@ pub(super) mod tests {
             "alpha: looks like a message",
             &render_description(
                 "looks like a message",
-                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), subject: None, notes: None, in_reply_to: None },
+                &Envelope {
+                    sender: "alpha".into(),
+                    sent_at: at(1_780_000_000),
+                    subject: None,
+                    notes: None,
+                    in_reply_to: None,
+                },
             ),
             &[label],
         );
@@ -2800,7 +2942,13 @@ pub(super) mod tests {
             fake.tasks_in(theirs)[0].description,
             render_description(
                 "looks like a message",
-                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), subject: None, notes: None, in_reply_to: None },
+                &Envelope {
+                    sender: "alpha".into(),
+                    sent_at: at(1_780_000_000),
+                    subject: None,
+                    notes: None,
+                    in_reply_to: None
+                },
             ),
             "…and the card is untouched"
         );
@@ -2853,8 +3001,14 @@ pub(super) mod tests {
         let stray = fake.seed_task(theirs, "milhouse's own card", "not a message", &[]);
         fake.seed_placement(ours, stray, DEFAULT_COLUMN);
 
-        let boxes = store.list_mailboxes().await.expect("a card that is not jojobot's must not break every verb");
-        let inbox = boxes.iter().find(|m| m.name.as_str() == "inbox").expect("inbox");
+        let boxes = store
+            .list_mailboxes()
+            .await
+            .expect("a card that is not jojobot's must not break every verb");
+        let inbox = boxes
+            .iter()
+            .find(|m| m.name.as_str() == "inbox")
+            .expect("inbox");
         assert!(
             inbox.quarantined.is_empty(),
             "…and it is certainly not quarantined under one of jojobot's boxes: {:?}",
@@ -2923,7 +3077,9 @@ pub(super) mod tests {
             contract::post(&store, "inbox", "alpha", &format!("message {i}"), i as i64).await;
         }
 
-        let counts = contract::counts(&store, "inbox").await.expect("inbox exists");
+        let counts = contract::counts(&store, "inbox")
+            .await
+            .expect("inbox exists");
         assert_eq!(
             counts.new, posted as usize,
             "every card in the column must be counted, not just the first page"
@@ -2938,8 +3094,17 @@ pub(super) mod tests {
 
         // …and the read-back path agrees, so a message past the cap can still be
         // retired rather than being unreachable forever.
-        let last = delivery.messages.last().expect("a message").message.id.clone();
-        let processed = store.mark_processed(&last, None).await.expect("mark_processed ok");
+        let last = delivery
+            .messages
+            .last()
+            .expect("a message")
+            .message
+            .id
+            .clone();
+        let processed = store
+            .mark_processed(&last, None)
+            .await
+            .expect("mark_processed ok");
         assert_eq!(processed.state, MessageState::Processed);
     }
 
@@ -3042,14 +3207,21 @@ pub(super) mod tests {
                 in_reply_to: None,
             })
             .await;
-        assert!(outcome.is_err(), "a failed labelling must not report success: {outcome:?}");
+        assert!(
+            outcome.is_err(),
+            "a failed labelling must not report success: {outcome:?}"
+        );
         let card = fake.tasks_in(project)[0].id;
 
         *fake.fail_next.lock().unwrap() = None;
         let scope = store.resolve_scope().await.expect("scope resolves");
         let board = store.board_read(&scope).await.expect("the board reads");
         assert_eq!(
-            board.quarantined.iter().map(|q| (q.mailbox.clone(), q.card)).collect::<Vec<_>>(),
+            board
+                .quarantined
+                .iter()
+                .map(|q| (q.mailbox.clone(), q.card))
+                .collect::<Vec<_>>(),
             vec![(None, card)],
             "the card is quarantined, and no box may be invented for it"
         );
@@ -3074,7 +3246,10 @@ pub(super) mod tests {
             .line_with("mailbox=unlabelled-probe")
             .expect("the residue is reported, not swallowed");
         assert!(line.contains("ERROR"), "…at error level: {line}");
-        assert!(line.contains(&format!("card={card}")), "…naming the card: {line}");
+        assert!(
+            line.contains(&format!("card={card}")),
+            "…naming the card: {line}"
+        );
         assert!(
             line.contains("could not be labelled"),
             "…and saying what happened to it: {line}"
@@ -3136,7 +3311,10 @@ pub(super) mod tests {
                     in_reply_to: None,
                 })
                 .await;
-            assert!(outcome.is_err(), "a failed {step} must not report success: {outcome:?}");
+            assert!(
+                outcome.is_err(),
+                "a failed {step} must not report success: {outcome:?}"
+            );
 
             // Read the board back through jojobot's own eyes, with the failure
             // disarmed — what the next session would see.
@@ -3189,7 +3367,10 @@ pub(super) mod tests {
                 in_reply_to: None,
             })
             .await;
-        assert!(outcome.is_err(), "a failed create_task must not report success: {outcome:?}");
+        assert!(
+            outcome.is_err(),
+            "a failed create_task must not report success: {outcome:?}"
+        );
     }
 
     /// A processing whose **first** step — writing the outcome — fails leaves
@@ -3206,9 +3387,16 @@ pub(super) mod tests {
 
         fake.fail_next("update_task");
         let outcome = store.mark_processed(&posted.id, Some("filed")).await;
-        assert!(outcome.is_err(), "a failed outcome write must not report success: {outcome:?}");
+        assert!(
+            outcome.is_err(),
+            "a failed outcome write must not report success: {outcome:?}"
+        );
 
-        assert_eq!(fake.column_of(card).as_deref(), Some("read"), "the column is unchanged");
+        assert_eq!(
+            fake.column_of(card).as_deref(),
+            Some("read"),
+            "the column is unchanged"
+        );
         let again = contract::read(&store, "inbox").await;
         assert_eq!(again.messages.len(), 1, "still deliverable");
         assert_eq!(
@@ -3231,9 +3419,16 @@ pub(super) mod tests {
         // The description write lands; the column move is what fails.
         fake.fail_next("move_task");
         let outcome = store.mark_processed(&posted.id, Some("filed")).await;
-        assert!(outcome.is_err(), "a failed move must not report success: {outcome:?}");
+        assert!(
+            outcome.is_err(),
+            "a failed move must not report success: {outcome:?}"
+        );
 
-        assert_eq!(fake.column_of(card).as_deref(), Some("read"), "the column is unchanged");
+        assert_eq!(
+            fake.column_of(card).as_deref(),
+            Some("read"),
+            "the column is unchanged"
+        );
         let again = contract::read(&store, "inbox").await;
         assert_eq!(again.messages.len(), 1, "still deliverable");
         assert_eq!(
@@ -3253,13 +3448,22 @@ pub(super) mod tests {
         let mut cards = Vec::new();
         for i in 0..3 {
             let posted = contract::post(&store, "inbox", "alpha", &format!("message {i}"), i).await;
-            cards.push(posted.id.as_str().parse::<u64>().expect("a numeric card id"));
+            cards.push(
+                posted
+                    .id
+                    .as_str()
+                    .parse::<u64>()
+                    .expect("a numeric card id"),
+            );
         }
 
         // The last move in the batch fails, after the first two have landed.
         fake.fail_nth("move_task", 3);
         let outcome = store.read_mailbox(&MailboxName("inbox".into())).await;
-        assert!(outcome.is_err(), "a partial delivery must not report success: {outcome:?}");
+        assert!(
+            outcome.is_err(),
+            "a partial delivery must not report success: {outcome:?}"
+        );
 
         for card in &cards {
             assert_eq!(
@@ -3302,7 +3506,10 @@ pub(super) mod tests {
         });
 
         let outcome = store.read_mailbox(&MailboxName("inbox".into())).await;
-        assert!(outcome.is_err(), "a garbled batch must not report success: {outcome:?}");
+        assert!(
+            outcome.is_err(),
+            "a garbled batch must not report success: {outcome:?}"
+        );
 
         // The card that was fine goes back to `new`, ready to be delivered again.
         let intact: u64 = first.id.as_str().parse().expect("a numeric card id");
@@ -3338,7 +3545,11 @@ pub(super) mod tests {
         );
 
         let again = contract::read(&store, "inbox").await;
-        let bodies: Vec<&str> = again.messages.iter().map(|d| d.message.body.as_str()).collect();
+        let bodies: Vec<&str> = again
+            .messages
+            .iter()
+            .map(|d| d.message.body.as_str())
+            .collect();
         assert_eq!(
             bodies,
             vec!["message one"],
@@ -3380,7 +3591,10 @@ pub(super) mod tests {
         });
 
         let outcome = store.read_mailbox(&MailboxName("inbox".into())).await;
-        assert!(outcome.is_err(), "a delivery that could not verify must not report success");
+        assert!(
+            outcome.is_err(),
+            "a delivery that could not verify must not report success"
+        );
 
         let stored = fake
             .tasks_in(project)
@@ -3430,15 +3644,24 @@ pub(super) mod tests {
         // success), while the second card is garbled.
         api.before_board(5, move |fake| {
             let processed = fake.bucket_titled(project, "processed");
-            fake.placement.lock().unwrap().insert(handled_card, processed);
+            fake.placement
+                .lock()
+                .unwrap()
+                .insert(handled_card, processed);
             let mut tasks = fake.tasks.lock().unwrap();
-            let card = tasks.iter_mut().find(|t| t.id == garbled_card).expect("the card");
+            let card = tasks
+                .iter_mut()
+                .find(|t| t.id == garbled_card)
+                .expect("the card");
             card.description = "hand-garbled mid-delivery".into();
             card.raw["description"] = "hand-garbled mid-delivery".into();
         });
 
         let outcome = store.read_mailbox(&MailboxName("inbox".into())).await;
-        assert!(outcome.is_err(), "a garbled batch must not report success: {outcome:?}");
+        assert!(
+            outcome.is_err(),
+            "a garbled batch must not report success: {outcome:?}"
+        );
 
         assert_eq!(
             fake.column_of(handled_card).as_deref(),
@@ -3531,11 +3754,18 @@ pub(super) mod tests {
         // operator handles the first message and drags it to `processed`.
         api.before_board(5, move |fake| {
             let processed = fake.bucket_titled(project, "processed");
-            fake.placement.lock().unwrap().insert(handled_card, processed);
+            fake.placement
+                .lock()
+                .unwrap()
+                .insert(handled_card, processed);
         });
 
         let delivery = contract::read(&store, "inbox").await;
-        let ids: Vec<&str> = delivery.messages.iter().map(|d| d.message.id.as_str()).collect();
+        let ids: Vec<&str> = delivery
+            .messages
+            .iter()
+            .map(|d| d.message.id.as_str())
+            .collect();
         assert_eq!(
             ids,
             vec![owed.id.as_str()],
@@ -3559,8 +3789,9 @@ pub(super) mod tests {
 
     /// A store, a box and one posted message, ready to be taken by id — with
     /// the API double the hostilities are armed on.
-    async fn taking_one(fake: Arc<FakeVikunja>) -> (Arc<Interleaved>, VikunjaStore, Message, u64, u64)
-    {
+    async fn taking_one(
+        fake: Arc<FakeVikunja>,
+    ) -> (Arc<Interleaved>, VikunjaStore, Message, u64, u64) {
         let api = Interleaved::new(fake.clone());
         let store = VikunjaStore::from_api(api.clone(), PROJECT);
         contract::create(&store, "inbox").await;
@@ -3710,13 +3941,18 @@ pub(super) mod tests {
 
         // Right before the verification read: the operator edits the card, and
         // the machine block does not survive it.
-        api.before_board(3, move |fake| hand_garble(fake, card, "hand-garbled mid-take"));
+        api.before_board(3, move |fake| {
+            hand_garble(fake, card, "hand-garbled mid-take")
+        });
 
         let err = store
             .read_message(&posted.id)
             .await
             .expect_err("a take that could not verify must not report success");
-        assert!(!matches!(err, MailboxError::UnknownMessage { .. }), "got {err:?}");
+        assert!(
+            !matches!(err, MailboxError::UnknownMessage { .. }),
+            "got {err:?}"
+        );
 
         let stored = fake
             .tasks_in(project)
@@ -3747,13 +3983,18 @@ pub(super) mod tests {
         // The move itself never lands, and by the time the rollback looks at
         // the board the operator has edited the card.
         fake.fail_all("move_task");
-        api.before_board(3, move |fake| hand_garble(fake, card, "hand-garbled mid-take"));
+        api.before_board(3, move |fake| {
+            hand_garble(fake, card, "hand-garbled mid-take")
+        });
 
         let err = store
             .read_message(&posted.id)
             .await
             .expect_err("a take whose move failed must not report success");
-        assert!(!matches!(err, MailboxError::UnknownMessage { .. }), "got {err:?}");
+        assert!(
+            !matches!(err, MailboxError::UnknownMessage { .. }),
+            "got {err:?}"
+        );
 
         let stored = fake
             .tasks_in(project)
@@ -3839,9 +4080,15 @@ pub(super) mod tests {
         // edits the second, failing this delivery.
         api.before_board(5, move |fake| {
             let processed = fake.bucket_titled(project, "processed");
-            fake.placement.lock().unwrap().insert(handled_card, processed);
+            fake.placement
+                .lock()
+                .unwrap()
+                .insert(handled_card, processed);
             let mut tasks = fake.tasks.lock().unwrap();
-            let card = tasks.iter_mut().find(|t| t.id == garbled_card).expect("the card");
+            let card = tasks
+                .iter_mut()
+                .find(|t| t.id == garbled_card)
+                .expect("the card");
             card.description = "hand-garbled mid-delivery".into();
             card.raw["description"] = "hand-garbled mid-delivery".into();
         });
@@ -3900,7 +4147,11 @@ pub(super) mod tests {
             panic!("a card left mid-write needs its own answer, not prose: {err:?}");
         };
         assert_eq!(verb, "mark_processed");
-        assert_eq!(cards, &vec![posted.id.to_string()], "the answer names the card");
+        assert_eq!(
+            cards,
+            &vec![posted.id.to_string()],
+            "the answer names the card"
+        );
     }
 
     /// **A processing repairs a card it can no longer read — and that costs a
@@ -3938,7 +4189,10 @@ pub(super) mod tests {
         });
 
         let outcome = store.mark_processed(&posted.id, Some("filed")).await;
-        assert!(outcome.is_err(), "an unverifiable processing must not report success");
+        assert!(
+            outcome.is_err(),
+            "an unverifiable processing must not report success"
+        );
 
         // The message survives, readable and owed to somebody — which is the
         // point of restoring at all.
@@ -3989,7 +4243,10 @@ pub(super) mod tests {
         // the only move left to fail is the rollback's, without counting them.
         api.before_board(5, move |fake| {
             let mut tasks = fake.tasks.lock().unwrap();
-            let card = tasks.iter_mut().find(|t| t.id == garbled_card).expect("the card");
+            let card = tasks
+                .iter_mut()
+                .find(|t| t.id == garbled_card)
+                .expect("the card");
             card.description = "hand-garbled mid-delivery".into();
             card.raw["description"] = "hand-garbled mid-delivery".into();
             drop(tasks);
@@ -4036,7 +4293,13 @@ pub(super) mod tests {
             fake.placement.lock().unwrap().insert(card, processed);
             let swapped = render_description(
                 "a different message entirely",
-                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), subject: None, notes: None, in_reply_to: None },
+                &Envelope {
+                    sender: "alpha".into(),
+                    sent_at: at(1_780_000_000),
+                    subject: None,
+                    notes: None,
+                    in_reply_to: None,
+                },
             );
             let mut tasks = fake.tasks.lock().unwrap();
             let held = tasks.iter_mut().find(|t| t.id == card).expect("the card");
@@ -4151,7 +4414,10 @@ pub(super) mod tests {
             .iter()
             .filter(|l| l.title.ends_with("/inbox"))
             .count();
-        assert_eq!(minted, 1, "one box, one label — the second create must find the first");
+        assert_eq!(
+            minted, 1,
+            "one box, one label — the second create must find the first"
+        );
     }
 
     /// **The scan takes the verb lock, and this is what would notice if it
@@ -4188,7 +4454,10 @@ pub(super) mod tests {
             .collect();
         for state in MessageState::ALL {
             assert_eq!(
-                columns.iter().filter(|t| t.as_str() == state.as_token()).count(),
+                columns
+                    .iter()
+                    .filter(|t| t.as_str() == state.as_token())
+                    .count(),
                 1,
                 "one `{state}` column, not two: {columns:?}"
             );
@@ -4227,7 +4496,11 @@ pub(super) mod tests {
         let mut flags = delivered(first);
         flags.extend(delivered(second));
 
-        assert_eq!(flags.len(), 2, "both reads still hand the message over: {flags:?}");
+        assert_eq!(
+            flags.len(),
+            2,
+            "both reads still hand the message over: {flags:?}"
+        );
         assert_eq!(
             flags.iter().filter(|fresh| !**fresh).count(),
             1,
@@ -4258,25 +4531,67 @@ pub(super) mod tests {
             notes: None,
             in_reply_to: None,
         };
-        let advanced = Message { state: MessageState::Read, ..wrote.clone() };
+        let advanced = Message {
+            state: MessageState::Read,
+            ..wrote.clone()
+        };
         assert!(
             read_back_confirms(&wrote, &advanced),
             "the same message, further down the funnel, is delivery working"
         );
 
         for (clause, seen) in [
-            ("the id", Message { id: MessageId("14".into()), ..advanced.clone() }),
-            ("the box", Message { mailbox: MailboxName("errands".into()), ..advanced.clone() }),
-            ("the body", Message { body: "a different message".into(), ..advanced.clone() }),
-            ("the subject", Message { subject: Some("a title nobody wrote".into()), ..advanced.clone() }),
-            ("the sender", Message { sender: "milhouse".into(), ..advanced.clone() }),
-            ("the instant", Message { sent_at: at(1_770_000_000), ..advanced.clone() }),
+            (
+                "the id",
+                Message {
+                    id: MessageId("14".into()),
+                    ..advanced.clone()
+                },
+            ),
+            (
+                "the box",
+                Message {
+                    mailbox: MailboxName("errands".into()),
+                    ..advanced.clone()
+                },
+            ),
+            (
+                "the body",
+                Message {
+                    body: "a different message".into(),
+                    ..advanced.clone()
+                },
+            ),
+            (
+                "the subject",
+                Message {
+                    subject: Some("a title nobody wrote".into()),
+                    ..advanced.clone()
+                },
+            ),
+            (
+                "the sender",
+                Message {
+                    sender: "milhouse".into(),
+                    ..advanced.clone()
+                },
+            ),
+            (
+                "the instant",
+                Message {
+                    sent_at: at(1_770_000_000),
+                    ..advanced.clone()
+                },
+            ),
             // The reply link is the POSTER'S, by the identical argument the
             // subject is included under — no consumer has any business
             // rewriting what a message says it answers.
             (
                 "the reply link",
-                Message { in_reply_to: Some(MessageId("99".into())), ..advanced.clone() },
+                Message {
+                    in_reply_to: Some(MessageId("99".into())),
+                    ..advanced.clone()
+                },
             ),
         ] {
             assert!(
@@ -4288,7 +4603,13 @@ pub(super) mod tests {
         // Notes are the one field deliberately not compared once the state has
         // advanced: they belong to whoever moved the card.
         assert!(
-            read_back_confirms(&wrote, &Message { notes: Some("filed".into()), ..advanced }),
+            read_back_confirms(
+                &wrote,
+                &Message {
+                    notes: Some("filed".into()),
+                    ..advanced
+                }
+            ),
             "an outcome recorded by whoever took the message is not a corruption"
         );
     }
@@ -4312,16 +4633,26 @@ pub(super) mod tests {
             notes: None,
             in_reply_to: None,
         };
-        let swapped_body = ("the body", "a different message entirely".to_string(), posted.clone());
+        let swapped_body = (
+            "the body",
+            "a different message entirely".to_string(),
+            posted.clone(),
+        );
         let swapped_sender = (
             "the sender",
             "the shipment landed".to_string(),
-            Envelope { sender: "milhouse".into(), ..posted.clone() },
+            Envelope {
+                sender: "milhouse".into(),
+                ..posted.clone()
+            },
         );
         let swapped_instant = (
             "the instant it was sent",
             "the shipment landed".to_string(),
-            Envelope { sent_at: at(1_770_000_000), ..posted.clone() },
+            Envelope {
+                sent_at: at(1_770_000_000),
+                ..posted.clone()
+            },
         );
 
         for (clause, body, envelope) in [swapped_body, swapped_sender, swapped_instant] {
@@ -4392,7 +4723,10 @@ pub(super) mod tests {
         fake.set_field(card, "priority", serde_json::json!(3));
         fake.set_field(card, "due_date", serde_json::json!("2026-08-01T00:00:00Z"));
 
-        store.mark_processed(&posted.id, Some("filed")).await.expect("mark_processed ok");
+        store
+            .mark_processed(&posted.id, Some("filed"))
+            .await
+            .expect("mark_processed ok");
 
         assert_eq!(fake.field(card, "priority"), serde_json::json!(3));
         assert_eq!(
@@ -4478,8 +4812,15 @@ pub(super) mod tests {
         let store = store(fake.clone());
         contract::create(&store, "inbox").await;
         contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
-        assert_eq!(fake.projects_titled("jojobot")[0], before, "the parent record is untouched");
-        assert!(fake.tasks_in(parent).is_empty(), "no card ever lands on the parent");
+        assert_eq!(
+            fake.projects_titled("jojobot")[0],
+            before,
+            "the parent record is untouched"
+        );
+        assert!(
+            fake.tasks_in(parent).is_empty(),
+            "no card ever lands on the parent"
+        );
     }
 
     #[tokio::test]
@@ -4500,7 +4841,9 @@ pub(super) mod tests {
         // The FIRST create_project call is the home; fail exactly that one.
         fake.fail_next("create_project");
         let store = store(fake.clone());
-        let outcome = store.create_mailbox(&MailboxName("inbox".into()), false).await;
+        let outcome = store
+            .create_mailbox(&MailboxName("inbox".into()), false)
+            .await;
         assert!(outcome.is_err(), "no home, no board: {outcome:?}");
         assert!(
             fake.projects_titled(PROJECT).is_empty(),
@@ -4532,7 +4875,10 @@ pub(super) mod tests {
         let fake = FakeVikunja::new();
         let store = store_with_box(fake.clone(), "inbox").await;
         let posted = contract::post(&store, "inbox", "alpha", "the shipment landed", 0).await;
-        store.read_mailbox(&MailboxName("inbox".into())).await.expect("read ok");
+        store
+            .read_mailbox(&MailboxName("inbox".into()))
+            .await
+            .expect("read ok");
         store
             .mark_processed(&posted.id, Some("crates stacked"))
             .await
@@ -4550,7 +4896,9 @@ pub(super) mod tests {
         let fake = FakeVikunja::new();
         fake.fail_all("set_view_done_bucket");
         let store = store(fake.clone());
-        let outcome = store.create_mailbox(&MailboxName("inbox".into()), false).await;
+        let outcome = store
+            .create_mailbox(&MailboxName("inbox".into()), false)
+            .await;
         assert!(
             outcome.is_err(),
             "a board whose done flag cannot be pointed at `processed` is not provisioned: {outcome:?}"
