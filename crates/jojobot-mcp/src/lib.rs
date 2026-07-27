@@ -27,6 +27,10 @@ use jojobot_domain::mailbox::{
     self, Delivered, Delivery, Mailbox, MailboxError, MailboxName, Mailboxes, Message, MessageId,
     NewMessage, guard::MailboxMatch,
 };
+use jojobot_domain::session::{
+    EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionState,
+    Sessions,
+};
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
     FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance,
@@ -75,6 +79,20 @@ A plain **error** is a malformed call — a token that is no kind, a string that
 ## Bots
 
 An **identity** is an entity of kind `bot`: a handle like `bot:gamma`, a **charter** (its prose — what this identity is, its hard lines, where its work lives), **rules** as ordinary facts about it (so each one carries its own provenance: an inferred rule is a hypothesis, not a policy), and optionally **one owned mailbox**. If you were told which identity you are, `boot_bot` is your first call instead of this one: it hands over everything here plus that identity. Nothing about a bot is built into jojobot — a bot is data somebody wrote, like every other entity.
+
+## Sessions
+
+A bot is a **role**; a **session is one mortal run of it** — the unit of work, not the unit of connection. It outlives a disconnect and a device hop, because what makes two connections the same session is the identity that booted them.
+
+**Booting an identity starts or resumes its session; there is no separate verb.** `boot_bot` sweeps that bot's stale sessions to `abandoned` (a day without a beat), resumes the live one if there is one — read its chronology before you start, somebody was part way through something — and otherwise begins a fresh one **lazily**: no card exists until your first write, so a boot that does nothing leaves nothing behind.
+
+A session has two halves that answer different questions. Its **focus** is what it is working on NOW, one line, rewritten in place. Its **chronology** is what happened: append-only, oldest first, with only the newest entry amendable.
+
+- *Record a beat* → `journal` — **a literal journal, not a log.** What you set out to do, what you found, what you decided, what went wrong. NOT every tool call and not every file: a reader months from now wants the story, and a firehose buries it. Pass `focus` when what you are working on changes.
+- *Fix the beat you just wrote* → `amend_journal`. Only the most recent one; everything older is what it was.
+- *End* → `wrap_session` with the story, written for somebody with none of your context. It becomes your final entry AND one dated entry in the operator's Journal, and the session goes `wrapped` — terminal both ways.
+
+jojobot also writes **its own beats** into your chronology: one per verb class you use, its count kept current as you go. They are marked apart (`beat` names the class) because what you said you were doing and what jojobot noticed you doing are different kinds of evidence.
 "#;
 
 /// Arguments to `add_entity`.
@@ -350,6 +368,48 @@ pub struct ReadMessageArgs {
     pub message_id: String,
 }
 
+// --- sessions ----------------------------------------------------------------
+
+/// Arguments to `journal`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct JournalArgs {
+    /// One high-level beat: what you set out to do, what you found, what you
+    /// decided, what went wrong. Prose — paragraphs are fine.
+    pub entry: String,
+    /// What you are working on NOW, in one line. Optional, and it **replaces**
+    /// the session's current focus rather than adding to it.
+    #[serde(default)]
+    pub focus: Option<String>,
+    /// The session to write to. Omit it: the connection is bound to the session
+    /// `boot_bot` started or resumed. Only name one to write to a different
+    /// session than the one you are in.
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
+/// Arguments to `amend_journal`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AmendJournalArgs {
+    /// What the most recent entry should say instead. It replaces that entry
+    /// whole.
+    pub entry: String,
+    /// The session whose newest entry to rewrite; omit for the one you are in.
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
+/// Arguments to `wrap_session`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct WrapSessionArgs {
+    /// The story of this session, for somebody with none of your context: what
+    /// it was for, what happened, what is left. It becomes the final chronology
+    /// entry AND one dated entry in the operator's Journal.
+    pub story: String,
+    /// The session to wrap; omit for the one you are in.
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
 /// Arguments to `mark_processed`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct MarkProcessedArgs {
@@ -376,7 +436,47 @@ pub struct Jojobot {
     /// (Vikunja) and its own vocabulary. It shares nothing with Memory but this
     /// handler.
     mailboxes: Arc<dyn Mailboxes>,
+    /// The Sessions port — a third context, on its own board.
+    sessions: Arc<dyn Sessions>,
+    /// **Which identity this connection is running as, and which session.**
+    ///
+    /// In-process and per connection: the transport builds one handler per MCP
+    /// session, so this map is born empty on every connect and evaporates on
+    /// restart. That is fine, and it is why the truth lives on the card: the
+    /// next `boot_bot` re-attaches to the same session by reading the board.
+    /// Shared across clones through the `Arc`, because the router clones the
+    /// handler per call and a binding held by value would vanish between verbs.
+    bound: Arc<std::sync::RwLock<Option<Bound>>>,
 }
+
+/// What a booted connection knows about itself.
+#[derive(Debug, Clone)]
+struct Bound {
+    /// The identity this connection booted as.
+    bot: EntityId,
+    /// The session it is working in — `None` until the card materializes on the
+    /// first write. **A boot that never works leaves no card**, so a session
+    /// with nothing to say is a session that never existed.
+    session: Option<SessionId>,
+    /// One entry per verb class jojobot has already written a beat for, so the
+    /// second call of a class corrects the first beat instead of adding one.
+    beats: std::collections::HashMap<&'static str, Beat>,
+}
+
+/// A running tally of one verb class, as one chronology entry.
+#[derive(Debug, Clone)]
+struct Beat {
+    /// The entry the tally lives in.
+    entry: EntryId,
+    /// How many calls of this class this session has made.
+    count: usize,
+    /// The first few things it named, so the beat says what it touched and not
+    /// only how often. Capped — a beat is a beat, not a log.
+    examples: Vec<String>,
+}
+
+/// How many examples a beat carries before it stops naming them.
+const BEAT_EXAMPLES: usize = 5;
 
 #[tool_router]
 impl Jojobot {
@@ -384,12 +484,15 @@ impl Jojobot {
         memory: Arc<dyn Memory>,
         search: Arc<dyn Search>,
         mailboxes: Arc<dyn Mailboxes>,
+        sessions: Arc<dyn Sessions>,
     ) -> Self {
         Self {
             tool_router: Self::tool_router(),
             memory,
             search,
             mailboxes,
+            sessions,
+            bound: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -440,9 +543,18 @@ impl Jojobot {
                        hypothesis — read them that way), and the per-state counts of the mailbox \
                        it owns. Call it first when you have been told which identity you are; \
                        call start_here when you have not. A name that is no bot comes back \
-                       status: blocked with candidates and boots nothing. If the bot owns a \
-                       mailbox nobody has opened yet, this opens it under that name and says so \
-                       in `provisioned`."
+                       status: blocked with candidates and boots nothing. A mailbox the bot \
+                       claims but nobody has opened is reported as missing, never created. \
+                       BOOTING ALSO STARTS OR RESUMES THIS BOT'S SESSION — there is no separate \
+                       start verb. It first sweeps that bot's sessions that have gone a day \
+                       without a beat to `abandoned`; then, if a live session remains, this \
+                       ATTACHES to it and returns it with its chronology (`session.resumed: \
+                       true`) — read that before you start, it is work already in flight, yours \
+                       from before a disconnect. Otherwise a fresh session begins lazily: no \
+                       card is written until your first journal entry or first write, so a boot \
+                       that does nothing leaves no trace. The connection is bound to that \
+                       identity and session afterwards, so journal/amend_journal/wrap_session \
+                       need no id."
     )]
     async fn boot_bot(
         &self,
@@ -471,6 +583,7 @@ impl Jojobot {
             Ok(stored) => stored,
             Err(e) => return memory_declined("set_charter", e),
         };
+        self.beat("set_charter", "wrote charters for", bot.as_str()).await;
         json_result(&serde_json::json!({
             "bot": bot.as_str(),
             "charter": stored,
@@ -528,10 +641,19 @@ impl Jojobot {
                 }
             },
         };
+        // **Only after the identity resolved.** A name that is no bot boots
+        // nothing, so it starts no session and sweeps nothing either — binding
+        // a connection to an identity jojobot just refused would be a session
+        // belonging to nobody.
+        let session = match bot {
+            None => serde_json::Value::Null,
+            Some(bot) => self.attach(bot).await,
+        };
         json_result(&serde_json::json!({
             "orientation": ORIENTATION,
             "snapshot": snapshot,
             "identity": identity,
+            "session": session,
         }))
     }
 
@@ -628,6 +750,203 @@ impl Jojobot {
             obj.insert("exists".into(), true.into());
         }
         Ok(body)
+    }
+
+    // ── sessions ────────────────────────────────────────────────────────────
+
+    /// Start or resume this bot's session, and bind the connection to it.
+    ///
+    /// **Booting an identity IS starting its session** — there is no separate
+    /// verb, because there is no moment between "I am gamma" and "gamma is
+    /// working" for one to sit in. Three things happen, in this order:
+    ///
+    /// 1. **the sweep.** Any `active` session of THIS bot whose last beat is
+    ///    older than [`ABANDONED_AFTER`] is closed as `abandoned` — lazily, at
+    ///    boot, because there is no background runtime until M8 and a session
+    ///    left open forever would make "resume where you left off" resume
+    ///    something from last month.
+    /// 2. **attach**, if a live session survives the sweep. That is what makes a
+    ///    reconnect or a device hop resume work in flight rather than fork it.
+    /// 3. **bind without a card otherwise.** A fresh session begins lazily: no
+    ///    card until the first write. A boot that never works leaves no trace,
+    ///    which is what keeps "creation is an intentional act" true for a verb
+    ///    whose whole job is to start something.
+    ///
+    /// Returns the session block for the boot payload, or the reason there
+    /// isn't one. A session store that is down degrades exactly as the mailbox
+    /// world does: the boot still lands, and the block says jojobot does not
+    /// know rather than guessing.
+    async fn attach(&self, bot: &EntityId) -> serde_json::Value {
+        let now = jiff::Timestamp::now();
+        let existing = match self.sessions.sessions_of(bot).await {
+            Ok(sessions) => sessions,
+            Err(e) => {
+                tracing::warn!(error = %e, bot = %bot, "the session world is not reachable");
+                *self.bound.write().expect("binding poisoned") = Some(Bound {
+                    bot: bot.clone(),
+                    session: None,
+                    beats: Default::default(),
+                });
+                return serde_json::json!({
+                    "available": false,
+                    "note": "the session world is not reachable right now, so jojobot cannot say \
+                             whether you have a session in flight or start one. Everything else \
+                             here is unaffected; the session verbs will say why.",
+                });
+            }
+        };
+
+        let mut swept = Vec::new();
+        for stale in existing.iter().filter(|s| s.is_stale(now)) {
+            match self.sessions.close(&stale.id, SessionState::Abandoned).await {
+                Ok(_) => swept.push(stale.id.to_string()),
+                // A sweep that cannot close one session must not stop a boot:
+                // the session is left active and the next boot tries again.
+                Err(e) => tracing::warn!(
+                    error = %e, session = %stale.id,
+                    "a stale session could not be swept — left active for the next boot"
+                ),
+            }
+        }
+
+        // Newest first already, so the first live one is the one to resume.
+        let live = existing
+            .iter()
+            .find(|s| !s.state.is_terminal() && !s.is_stale(now))
+            .cloned();
+        *self.bound.write().expect("binding poisoned") = Some(Bound {
+            bot: bot.clone(),
+            session: live.as_ref().map(|s| s.id.clone()),
+            beats: Default::default(),
+        });
+
+        let mut block = match &live {
+            Some(session) => serde_json::json!({
+                "available": true,
+                "resumed": true,
+                "session": session_json(session),
+                "note": "you are resuming a session already in flight — its chronology is above. \
+                         Read it before you start: somebody (you, before a disconnect) was part \
+                         way through something.",
+            }),
+            None => serde_json::json!({
+                "available": true,
+                "resumed": false,
+                "session": serde_json::Value::Null,
+                "note": "a fresh session. Nothing is written yet — the record begins on your \
+                         first journal entry or the first write you make, so a boot that does \
+                         nothing leaves nothing behind.",
+            }),
+        };
+        if let Some(obj) = block.as_object_mut() {
+            obj.insert("swept".into(), swept.into());
+        }
+        block
+    }
+
+    /// The session a verb should write to: the one named outright, else the one
+    /// this connection is bound to — **beginning it lazily** if the connection
+    /// booted but has not written anything yet.
+    ///
+    /// An explicit id wins over the binding, always: a caller that names a
+    /// session means that session, and silently writing somewhere else would be
+    /// the worst kind of helpfulness.
+    async fn working_session(
+        &self,
+        explicit: Option<&str>,
+        focus: Option<&str>,
+    ) -> Result<Result<SessionId, CallToolResult>, McpError> {
+        if let Some(id) = explicit.map(str::trim).filter(|i| !i.is_empty()) {
+            return Ok(Ok(SessionId(id.to_string())));
+        }
+        let bound = self.bound.read().expect("binding poisoned").clone();
+        let Some(bound) = bound else {
+            return Ok(Err(session_unbound()));
+        };
+        if let Some(id) = bound.session {
+            return Ok(Ok(id));
+        }
+
+        // The card materializes here, on the first write and never before.
+        let focus = focus
+            .map(str::trim)
+            .filter(|f| !f.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| first_line(FRESH_FOCUS));
+        let begun = self
+            .sessions
+            .begin(NewSession {
+                bot: bound.bot.clone(),
+                focus,
+                started_at: jiff::Timestamp::now(),
+            })
+            .await
+            .map_err(session_error)?;
+        if let Some(held) = self.bound.write().expect("binding poisoned").as_mut() {
+            held.session = Some(begun.id.clone());
+        }
+        Ok(Ok(begun.id))
+    }
+
+    /// Record one coarse beat for a verb class — **at most one per class per
+    /// session**, its count and examples corrected in place as the class repeats.
+    ///
+    /// Silent by design in three cases, all of them "there is nobody to record
+    /// this for": an unbound connection (jojobot will not guess which identity
+    /// made a call), a session store that refuses, and a beat that fails to
+    /// write. **A beat never fails the verb it is about.** A capture that landed
+    /// did land; reporting it as failed because its footnote could not be
+    /// written would make the record wrong in the more damaging direction.
+    async fn beat(&self, class: &'static str, phrase: &'static str, example: &str) {
+        if self.bound.read().expect("binding poisoned").is_none() {
+            return;
+        }
+        let session = match self.working_session(None, Some(phrase)).await {
+            Ok(Ok(session)) => session,
+            _ => return,
+        };
+
+        let held = self
+            .bound
+            .read()
+            .expect("binding poisoned")
+            .as_ref()
+            .and_then(|b| b.beats.get(class).cloned());
+        let outcome = match held {
+            Some(mut beat) => {
+                beat.count += 1;
+                if beat.examples.len() < BEAT_EXAMPLES && !beat.examples.iter().any(|e| e == example)
+                {
+                    beat.examples.push(example.to_string());
+                }
+                let text = beat_text(phrase, &beat);
+                let written = self.sessions.amend_beat(&session, &beat.entry, &text).await;
+                written.map(|_| (class, beat))
+            }
+            None => {
+                let beat = Beat {
+                    entry: EntryId(String::new()),
+                    count: 1,
+                    examples: vec![example.to_string()],
+                };
+                let text = beat_text(phrase, &beat);
+                self.sessions
+                    .append(&session, NewEntry::beat(class, text, jiff::Timestamp::now()))
+                    .await
+                    .map(|entry| (class, Beat { entry: entry.id, ..beat }))
+            }
+        };
+        match outcome {
+            Ok((class, beat)) => {
+                if let Some(held) = self.bound.write().expect("binding poisoned").as_mut() {
+                    held.beats.insert(class, beat);
+                }
+            }
+            Err(e) => tracing::warn!(
+                error = %e, class, session = %session,
+                "a session beat could not be written — the verb it is about still succeeded"
+            ),
+        }
     }
 
     /// Screen a mailbox claim against the boxes that exist, returning the
@@ -727,7 +1046,10 @@ impl Jojobot {
             create_new: args.create_new.unwrap_or(false),
         };
         match self.memory.add_entity(new).await.map_err(memory_error)? {
-            Guarded::Written(entity) => json_result(&entity_json(&entity)),
+            Guarded::Written(entity) => {
+                self.beat("add_entity", "brought entities into being", entity.id.as_str()).await;
+                json_result(&entity_json(&entity))
+            }
             Guarded::Blocked {
                 attempted,
                 candidates,
@@ -869,7 +1191,10 @@ impl Jojobot {
             Err(e) => return memory_declined("update_entity", e),
         };
         match written {
-            Guarded::Written(entity) => json_result(&entity_json(&entity)),
+            Guarded::Written(entity) => {
+                self.beat("update_entity", "edited entities", entity.id.as_str()).await;
+                json_result(&entity_json(&entity))
+            }
             Guarded::Blocked {
                 attempted,
                 candidates,
@@ -913,7 +1238,10 @@ impl Jojobot {
             edge,
         };
         match self.memory.capture(new).await.map_err(memory_error)? {
-            Guarded::Written(fact) => json_result(&fact_json(&fact)),
+            Guarded::Written(fact) => {
+                self.beat("capture", "captured facts about", fact.subject.as_str()).await;
+                json_result(&fact_json(&fact))
+            }
             Guarded::Blocked {
                 attempted,
                 candidates,
@@ -981,7 +1309,10 @@ impl Jojobot {
             Err(e) => return memory_declined("update_fact", e),
         };
         match written {
-            Guarded::Written(fact) => json_result(&fact_json(&fact)),
+            Guarded::Written(fact) => {
+                self.beat("update_fact", "edited facts", &fact.address().to_string()).await;
+                json_result(&fact_json(&fact))
+            }
             Guarded::Blocked {
                 attempted,
                 candidates,
@@ -1015,7 +1346,10 @@ impl Jojobot {
             .await
             .map_err(mailbox_error)?
         {
-            mailbox::Guarded::Written(created) => json_result(&mailbox_json(&created)),
+            mailbox::Guarded::Written(created) => {
+                self.beat("create_mailbox", "opened mailboxes", created.name.as_str()).await;
+                json_result(&mailbox_json(&created))
+            }
             mailbox::Guarded::Blocked {
                 attempted,
                 candidates,
@@ -1083,7 +1417,10 @@ impl Jojobot {
             .await
             .map_err(mailbox_error)?
         {
-            mailbox::Guarded::Written(message) => json_result(&message_json(&message)),
+            mailbox::Guarded::Written(message) => {
+                self.beat("post_message", "posted to mailboxes", message.mailbox.as_str()).await;
+                json_result(&message_json(&message))
+            }
             mailbox::Guarded::Blocked {
                 attempted,
                 candidates,
@@ -1129,6 +1466,156 @@ impl Jojobot {
                 BlockedBox::MustExist("read_mailbox"),
             )),
         }
+    }
+
+    /// Record one beat in this session's chronology, and optionally move what
+    /// it says it is working on.
+    #[tool(
+        description = "Record ONE beat in your session's chronology — a literal journal, not a \
+                       log. High-level: what you set out to do, what you found, what you \
+                       decided, what went wrong. Not every tool call, not every file: a reader \
+                       months from now wants the story, and a firehose buries it. `focus` \
+                       rewrites what your session says it is working on RIGHT NOW, in place — \
+                       the chronology is history, the focus is the present, and they answer \
+                       different questions. The first journal entry (or the first write of any \
+                       kind) is what brings your session card into being, so a boot that does \
+                       nothing leaves nothing behind. Bound to the identity you booted as, so \
+                       `session` is only needed to write to a different one. A session that is \
+                       already wrapped or abandoned comes back status: blocked — closed is \
+                       terminal both ways, and what is left to say belongs to a new session."
+    )]
+    async fn journal(
+        &self,
+        Parameters(args): Parameters<JournalArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let focus = args.focus.as_deref();
+        let session = match self
+            .working_session(args.session.as_deref(), focus.or(Some(&args.entry)))
+            .await?
+        {
+            Ok(session) => session,
+            Err(refused) => return Ok(refused),
+        };
+        let entry = match self
+            .sessions
+            .append(&session, NewEntry::manual(args.entry, jiff::Timestamp::now()))
+            .await
+        {
+            Ok(entry) => entry,
+            Err(e) => return session_declined(e),
+        };
+        // The focus moves only once the beat is recorded: a session whose focus
+        // says it is doing something its chronology never mentions is a record
+        // that disagrees with itself.
+        let moved = match focus {
+            None => None,
+            Some(focus) => match self.sessions.set_focus(&session, focus).await {
+                Ok(session) => Some(session),
+                Err(e) => return session_declined(e),
+            },
+        };
+        json_result(&serde_json::json!({
+            "session": session.as_str(),
+            "entry": entry_json(&entry),
+            "focus": moved.map(|s| s.focus),
+        }))
+    }
+
+    /// Rewrite the newest entry in place.
+    #[tool(
+        description = "Rewrite your session's MOST RECENT chronology entry, in place — for a \
+                       beat you got wrong or want to finish saying. Only the most recent one: \
+                       everything older is append-only, because a journal that can be rewritten \
+                       further back is not evidence of anything. A session with no entries yet \
+                       comes back status: blocked rather than quietly writing your text as a \
+                       first entry — an amend that silently became an append leaves a chronology \
+                       saying something you did not mean. A closed session comes back blocked \
+                       too."
+    )]
+    async fn amend_journal(
+        &self,
+        Parameters(args): Parameters<AmendJournalArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        // No lazy begin: there is nothing to amend in a session that does not
+        // exist yet, and creating one to hold a correction would be a card
+        // minted by a verb whose whole job is to not add anything.
+        let session = match args.session.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(id) => SessionId(id.to_string()),
+            None => {
+                let bound = self.bound.read().expect("binding poisoned").clone();
+                match bound.and_then(|b| b.session) {
+                    Some(id) => id,
+                    None => return Ok(session_nothing_to_amend()),
+                }
+            }
+        };
+        match self.sessions.amend_last(&session, &args.entry).await {
+            Ok(entry) => json_result(&serde_json::json!({
+                "session": session.as_str(),
+                "entry": entry_json(&entry),
+            })),
+            Err(e) => session_declined(e),
+        }
+    }
+
+    /// End the session, telling its story into the Journal.
+    #[tool(
+        description = "End your session and tell its story. Three things happen together: the \
+                       story is appended to your chronology as its final entry, it is written \
+                       through to the operator's Journal as one dated entry, and the session \
+                       moves to `wrapped` — terminal both ways, so nothing appends to it or \
+                       reopens it afterwards, and a later journal/amend_journal/wrap_session on \
+                       that id comes back status: blocked. Write the story for somebody with \
+                       none of your context: what this run was for, what actually happened, what \
+                       is left. A session that stops without wrapping is not lost — the next \
+                       boot of the same identity sweeps it to `abandoned` after a day, and its \
+                       chronology stays readable — but its story was never told, and that is the \
+                       difference between the two endings."
+    )]
+    async fn wrap_session(
+        &self,
+        Parameters(args): Parameters<WrapSessionArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let session = match self
+            .working_session(args.session.as_deref(), Some(&args.story))
+            .await?
+        {
+            Ok(session) => session,
+            Err(refused) => return Ok(refused),
+        };
+        // The final entry first: if the Journal write or the close fails, the
+        // story is at least on the session's own record, and the session is
+        // still open so the wrap can be retried.
+        let entry = match self
+            .sessions
+            .append(&session, NewEntry::manual(&args.story, jiff::Timestamp::now()))
+            .await
+        {
+            Ok(entry) => entry,
+            Err(e) => return session_declined(e),
+        };
+        let today = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date();
+        let journalled = self
+            .memory
+            .append_journal(today, &args.story)
+            .await
+            .map_err(memory_error)?;
+        let wrapped = match self.sessions.close(&session, SessionState::Wrapped).await {
+            Ok(wrapped) => wrapped,
+            Err(e) => return session_declined(e),
+        };
+        if let Some(held) = self.bound.write().expect("binding poisoned").as_mut() {
+            // The connection keeps its identity and loses its session: a bot
+            // that wraps and keeps working starts a new one, rather than
+            // writing into an archive.
+            held.session = None;
+            held.beats.clear();
+        }
+        json_result(&serde_json::json!({
+            "session": session_json(&wrapped),
+            "entry": entry_json(&entry),
+            "journal": journalled,
+        }))
     }
 
     /// Take delivery of one message by id, leaving the rest of its box alone.
@@ -1181,7 +1668,10 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         let id = MessageId(args.message_id.trim().to_string());
         match self.mailboxes.mark_processed(&id, args.notes.as_deref()).await {
-            Ok(processed) => json_result(&message_json(&processed)),
+            Ok(processed) => {
+                self.beat("mark_processed", "retired messages", processed.id.as_str()).await;
+                json_result(&message_json(&processed))
+            }
             // Both misses here are answers, not failures: an id that names
             // nothing, and an id naming a card jojobot cannot read. They stay
             // different answers — one is repairable by a better id, the other
@@ -1274,6 +1764,171 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
             "edges": edges.iter().map(edge_json).collect::<Vec<_>>(),
             "snippet": snippet,
         }),
+    }
+}
+
+/// The focus a session gets when it materializes with nothing better to say.
+/// Only reachable when a beat is what creates the card — every caller-facing
+/// path passes the entry or the story instead.
+const FRESH_FOCUS: &str = "working";
+
+/// One line of a possibly-multi-line string, trimmed to what a focus allows.
+/// A focus is a glance, so an entry standing in for one is cut, not rejected.
+fn first_line(text: &str) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= 200 {
+        return flat;
+    }
+    let mut kept = String::new();
+    for word in flat.split(' ') {
+        if kept.chars().count() + word.chars().count() + 1 > 199 {
+            break;
+        }
+        if !kept.is_empty() {
+            kept.push(' ');
+        }
+        kept.push_str(word);
+    }
+    if kept.is_empty() {
+        kept = flat.chars().take(199).collect();
+    }
+    format!("{kept}…")
+}
+
+/// A running tally, as one line of chronology.
+fn beat_text(phrase: &str, beat: &Beat) -> String {
+    let named = beat.examples.join(", ");
+    if beat.count <= 1 {
+        format!("{phrase}: {named}")
+    } else if beat.examples.len() < beat.count {
+        format!("{phrase}: {named}, … ({} in all)", beat.count)
+    } else {
+        format!("{phrase}: {named} ({})", beat.count)
+    }
+}
+
+/// One session on the wire — the record, its chronology, and where it sits.
+fn session_json(session: &Session) -> serde_json::Value {
+    serde_json::json!({
+        "id": session.id.as_str(),
+        "bot": session.bot.as_str(),
+        "focus": session.focus,
+        "started_at": session.started_at.to_string(),
+        "state": session.state.as_token(),
+        "entry_count": session.entries.len(),
+        "chronology": session.entries.iter().map(entry_json).collect::<Vec<_>>(),
+    })
+}
+
+/// One chronology entry. `beat` names the verb class for an entry **jojobot**
+/// wrote and is null for one the session wrote — a reader weighing a chronology
+/// has to tell an account of intent from a tally of calls.
+fn entry_json(entry: &JournalEntry) -> serde_json::Value {
+    serde_json::json!({
+        "id": entry.id.as_str(),
+        "at": entry.at.to_string(),
+        "text": entry.text,
+        "beat": entry.beat,
+    })
+}
+
+/// A session verb reached on a connection that never booted. Not an error: the
+/// caller did nothing malformed, they just have no identity yet.
+fn session_unbound() -> CallToolResult {
+    let body = serde_json::json!({
+        "status": "blocked",
+        "wrote": false,
+        "how_to_proceed": "Nothing was written. This connection is not running as any identity, \
+                           so there is no session to write to and jojobot will not guess which \
+                           one you meant. Call boot_bot with the identity you were told you are \
+                           — that starts or resumes its session — or name an existing `session` \
+                           outright if you are writing to somebody else's.",
+    });
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
+/// An amend on a session that has not begun. Refused rather than turned into a
+/// first entry.
+fn session_nothing_to_amend() -> CallToolResult {
+    let body = serde_json::json!({
+        "status": "blocked",
+        "wrote": false,
+        "how_to_proceed": "Nothing was written. Your session has no entries yet — it has not \
+                           even been written to disk, because a session's record begins on its \
+                           first beat. There is nothing to amend, so use journal to record the \
+                           first one.",
+    });
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
+/// The session context's half of "a miss is an answer, not a failure": an id
+/// that names nothing, a session that is closed, and an amend with nothing to
+/// amend all come back in the guards' one shape.
+fn session_declined(e: SessionError) -> Result<CallToolResult, McpError> {
+    let blocked = |attempted: &str, how: String| {
+        let body = serde_json::json!({
+            "status": "blocked",
+            "attempted": attempted,
+            "wrote": false,
+            "how_to_proceed": how,
+        });
+        Ok(CallToolResult::success(vec![ContentBlock::text(body.to_string())]))
+    };
+    match e {
+        SessionError::UnknownSession { attempted } => blocked(
+            &attempted.clone(),
+            format!(
+                "Nothing was written. No session on jojobot's board has the id '{attempted}'. \
+                 Ids are minted by jojobot and handed back by boot_bot — boot as the identity \
+                 you are and use the session it gives you, rather than composing an id."
+            ),
+        ),
+        SessionError::Closed { attempted, state } => blocked(
+            &attempted.clone(),
+            format!(
+                "Nothing was written. Session '{attempted}' is {state} — closed, and closed is \
+                 terminal both ways. Its chronology stands as the record of what happened; \
+                 nothing appends to it, amends it, or reopens it. If there is more to say, it \
+                 belongs to a new session: boot_bot starts one."
+            ),
+        ),
+        SessionError::NoEntries { attempted } => blocked(
+            &attempted.clone(),
+            format!(
+                "Nothing was written. Session '{attempted}' has no entries yet, so there is no \
+                 most-recent one to amend — journal it instead."
+            ),
+        ),
+        SessionError::NotABeat { attempted, session } => blocked(
+            &attempted.clone(),
+            format!(
+                "Nothing was written. Entry '{attempted}' on session '{session}' is one the \
+                 session recorded itself, and those are append-only wherever they sit. Only the \
+                 most recent entry can be amended, through amend_journal."
+            ),
+        ),
+        other => Err(session_error(other)),
+    }
+}
+
+/// Map a [`SessionError`] to an MCP error, splitting client mistakes from
+/// server-side failures — the same split the other two contexts make.
+fn session_error(e: SessionError) -> McpError {
+    match e {
+        SessionError::InvalidId(_) | SessionError::InvalidEntry(_) => {
+            McpError::invalid_params(e.to_string(), None)
+        }
+        // Reached only if a verb surfaces one without going through
+        // `session_declined` — kept as a client error rather than a 500 for the
+        // same reason the other contexts keep theirs.
+        SessionError::UnknownSession { .. }
+        | SessionError::Closed { .. }
+        | SessionError::NoEntries { .. }
+        | SessionError::NotABeat { .. } => McpError::invalid_params(e.to_string(), None),
+        SessionError::ForeignProject(_)
+        | SessionError::Stranded { .. }
+        | SessionError::Store(_)
+        | SessionError::NotConfigured(_) => McpError::internal_error(e.to_string(), None),
     }
 }
 
@@ -2025,6 +2680,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use jojobot_domain::mailbox::testing::InMemoryMailboxes;
+    use jojobot_domain::session::testing::InMemorySessions;
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{Boot, Edge, EdgeShape, EntityKind, FactId};
 
@@ -2101,6 +2757,7 @@ mod tests {
             Arc::new(InMemoryMemory::new()),
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::new()),
+            Arc::new(InMemorySessions::new()),
         )
     }
 
@@ -2110,6 +2767,7 @@ mod tests {
             Arc::new(InMemoryMemory::new()),
             spy,
             Arc::new(InMemoryMailboxes::new()),
+            Arc::new(InMemorySessions::new()),
         )
     }
 
@@ -3739,6 +4397,7 @@ mod tests {
             Arc::new(InMemoryMemory::new()),
             Arc::new(SpySearch::default()),
             mailboxes,
+            Arc::new(InMemorySessions::new()),
         )
     }
 
@@ -4266,15 +4925,19 @@ mod tests {
         // means it is NOT grouped by context, and any comment here claiming
         // otherwise would be describing a different list than the one below.
         // The six mailbox verbs in it are create_mailbox, list_mailboxes,
-        // post_message, read_mailbox, read_message and mark_processed; the rest
-        // are Memory's.
+        // post_message, read_mailbox, read_message and mark_processed; the
+        // three session verbs are journal, amend_journal and wrap_session
+        // (there is deliberately no start_session — booting an identity IS
+        // starting its session); the rest are Memory's.
         assert_eq!(
             names,
             [
                 "add_entity",
+                "amend_journal",
                 "boot_bot",
                 "capture",
                 "create_mailbox",
+                "journal",
                 "list_entities",
                 "list_mailboxes",
                 "mark_processed",
@@ -4288,6 +4951,7 @@ mod tests {
                 "start_here",
                 "update_entity",
                 "update_fact",
+                "wrap_session",
             ],
             "the tool surface changed — if that was deliberate, say so here"
         );
@@ -4309,6 +4973,9 @@ mod tests {
             "update_entity",
             "update_fact",
             "mark_processed",
+            "journal",
+            "amend_journal",
+            "wrap_session",
             "read_message",
             "set_charter",
             "boot_bot",
@@ -4459,7 +5126,12 @@ mod tests {
     /// may already have populated — a bot has to be stood up while the world is
     /// up, since a claim that cannot be screened is refused.
     fn handler_with_mailboxes_down(memory: Arc<InMemoryMemory>) -> Jojobot {
-        Jojobot::new(memory, Arc::new(SpySearch::default()), Arc::new(DownMailboxes))
+        Jojobot::new(
+            memory,
+            Arc::new(SpySearch::default()),
+            Arc::new(DownMailboxes),
+            Arc::new(InMemorySessions::new()),
+        )
     }
 
     /// One world being down must not take orientation with it: a fresh agent
@@ -4496,6 +5168,506 @@ mod tests {
                 .await
                 .expect("boot_bot call ok"),
         )
+    }
+
+    // ── sessions ────────────────────────────────────────────────────────────
+
+    /// A handler over a session store the test still holds a typed handle to.
+    fn with_sessions(sessions: Arc<InMemorySessions>) -> Jojobot {
+        connection(Arc::new(InMemoryMemory::new()), sessions)
+    }
+
+    /// A second connection to the same worlds — what a reconnect or a device hop
+    /// builds. The binding is per handler, so this is the only way to test that
+    /// resuming reads the board rather than remembering anything.
+    fn connection(memory: Arc<InMemoryMemory>, sessions: Arc<InMemorySessions>) -> Jojobot {
+        Jojobot::new(
+            memory,
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::new()),
+            sessions,
+        )
+    }
+
+    async fn journal_entry(jojobot: &Jojobot, entry: &str) -> serde_json::Value {
+        let result = jojobot
+            .journal(Parameters(JournalArgs {
+                entry: entry.into(),
+                focus: None,
+                session: None,
+            }))
+            .await
+            .expect("journal call ok");
+        let body = json_of(&result);
+        assert_ne!(body["status"], "blocked", "the guard blocked: {body}");
+        body
+    }
+
+    /// **A boot that does nothing leaves nothing behind.** The card materializes
+    /// on the first write and never before, which is what keeps "creation is an
+    /// intentional act" true for the one verb whose job is to start something.
+    #[tokio::test]
+    async fn booting_writes_no_session_card_until_the_first_write() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+
+        let booted = boot(&jojobot, "gamma").await;
+        assert_eq!(booted["session"]["available"], true);
+        assert_eq!(booted["session"]["resumed"], false, "nothing was in flight");
+        assert!(booted["session"]["session"].is_null(), "…and no card was written");
+        assert!(
+            store
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok")
+                .is_empty(),
+            "a boot that never works must leave no card at all"
+        );
+
+        // The first beat is what brings it into being.
+        let journalled = journal_entry(&jojobot, "read the hand-off").await;
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(live.len(), 1, "the first entry materializes the card");
+        assert_eq!(journalled["session"], live[0].id.as_str());
+        assert_eq!(live[0].entries.len(), 1);
+        assert_eq!(live[0].entries[0].text, "read the hand-off");
+        assert_eq!(
+            live[0].focus, "read the hand-off",
+            "with nothing else to go on, what it first recorded is what it is doing"
+        );
+    }
+
+    /// **A reconnect resumes the work in flight.** A session is the unit of
+    /// work, not of connection, so a second boot of the same identity attaches
+    /// to the live session and hands back its chronology rather than forking a
+    /// new one — which is the whole reason a device hop is survivable.
+    #[tokio::test]
+    async fn booting_again_resumes_the_session_in_flight() {
+        let store = Arc::new(InMemorySessions::new());
+        let memory = Arc::new(InMemoryMemory::new());
+        let first = connection(memory.clone(), store.clone());
+        make_bot(&first, "gamma", None).await;
+        boot(&first, "gamma").await;
+        let started = journal_entry(&first, "read the hand-off").await;
+
+        // A different connection over the same worlds, exactly as a reconnect
+        // builds one — a fresh binding, so anything it knows it read.
+        let second = connection(memory, store.clone());
+        let resumed = boot(&second, "gamma").await;
+        assert_eq!(resumed["session"]["resumed"], true);
+        assert_eq!(resumed["session"]["session"]["id"], started["session"]);
+        assert_eq!(
+            resumed["session"]["session"]["chronology"][0]["text"], "read the hand-off",
+            "the work in flight comes back with it: {resumed}"
+        );
+
+        // …and writing on the new connection continues the same session.
+        journal_entry(&second, "picked it back up").await;
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(live.len(), 1, "one session, not two: {live:?}");
+        assert_eq!(live[0].entries.len(), 2);
+    }
+
+    /// **The sweep, and what it is measured from.** A session that has gone a
+    /// day without a beat is closed as `abandoned` at the next boot of its bot —
+    /// never deleted, never wrapped, because its story was never told. A fresh
+    /// session begins beside it rather than resuming it.
+    #[tokio::test]
+    async fn a_stale_session_is_swept_to_abandoned_at_the_next_boot() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+
+        // Begun two days ago and never touched since.
+        let stale = store
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                focus: "something from the day before yesterday".into(),
+                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
+            })
+            .await
+            .expect("begin ok");
+
+        let booted = boot(&jojobot, "gamma").await;
+        assert_eq!(
+            booted["session"]["swept"],
+            serde_json::json!([stale.id.as_str()]),
+            "the boot says what it closed: {booted}"
+        );
+        assert_eq!(booted["session"]["resumed"], false, "a swept session is not resumed");
+
+        let read = store.read_session(&stale.id).await.expect("read ok");
+        assert_eq!(read.state, mailbox_state_abandoned(), "closed, not deleted");
+        assert_eq!(
+            read.focus, "something from the day before yesterday",
+            "…and its record is untouched"
+        );
+    }
+
+    /// A session that is merely quiet — an hour, not a day — is still yours, and
+    /// resuming it is the point.
+    #[tokio::test]
+    async fn a_recent_session_is_resumed_rather_than_swept() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        let recent = store
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                focus: "still going".into(),
+                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1),
+            })
+            .await
+            .expect("begin ok");
+
+        let booted = boot(&jojobot, "gamma").await;
+        assert_eq!(booted["session"]["resumed"], true);
+        assert_eq!(booted["session"]["session"]["id"], recent.id.as_str());
+        assert_eq!(booted["session"]["swept"], serde_json::json!([]));
+    }
+
+    /// **The whole arc through the surface:** boot, journal with a focus, amend
+    /// the beat, wrap. The focus is current truth and the chronology is history,
+    /// and the wrap writes the story to both the session and the Journal.
+    #[tokio::test]
+    async fn the_session_arc_through_the_handler() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        boot(&jojobot, "gamma").await;
+
+        let first = json_of(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: "read the hand-off and scoped the slice".into(),
+                    focus: Some("building the session context".into()),
+                    session: None,
+                }))
+                .await
+                .expect("journal ok"),
+        );
+        assert_eq!(first["focus"], "building the session context");
+        assert!(first["entry"]["beat"].is_null(), "a session's own entry is not a beat");
+
+        let amended = json_of(
+            &jojobot
+                .amend_journal(Parameters(AmendJournalArgs {
+                    entry: "read the hand-off and scoped the slice properly".into(),
+                    session: None,
+                }))
+                .await
+                .expect("amend ok"),
+        );
+        assert_eq!(amended["entry"]["id"], first["entry"]["id"], "in place");
+
+        let wrapped = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "built the session context; the sweep is lazy until M8".into(),
+                    session: None,
+                }))
+                .await
+                .expect("wrap ok"),
+        );
+        assert_eq!(wrapped["session"]["state"], "wrapped");
+        assert!(
+            wrapped["journal"]
+                .as_str()
+                .expect("the Journal entry as stored")
+                .contains("built the session context"),
+            "the story goes through to the operator's Journal: {wrapped}"
+        );
+
+        let read = store
+            .read_session(&SessionId(
+                first["session"].as_str().expect("a session id").to_string(),
+            ))
+            .await
+            .expect("read ok");
+        let texts: Vec<&str> = read.entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "read the hand-off and scoped the slice properly",
+                "built the session context; the sweep is lazy until M8",
+            ],
+            "two entries: the amended one and the story"
+        );
+    }
+
+    /// **Wrapped is terminal both ways, through the surface.** Every session
+    /// verb on a closed id comes back blocked, in the guards' one shape.
+    #[tokio::test]
+    async fn a_wrapped_session_refuses_every_further_write() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        boot(&jojobot, "gamma").await;
+        let started = journal_entry(&jojobot, "read the hand-off").await;
+        let id = started["session"].as_str().expect("a session id").to_string();
+        jojobot
+            .wrap_session(Parameters(WrapSessionArgs {
+                story: "done".into(),
+                session: None,
+            }))
+            .await
+            .expect("wrap ok");
+
+        let refused = |body: serde_json::Value, verb: &str| {
+            assert_eq!(body["status"], "blocked", "{verb} must be blocked: {body}");
+            assert_eq!(body["wrote"], false);
+            let how = body["how_to_proceed"].as_str().expect("advice");
+            assert!(
+                how.contains("terminal both ways"),
+                "{verb} has to say why: {how}"
+            );
+        };
+        refused(
+            json_of(
+                &jojobot
+                    .journal(Parameters(JournalArgs {
+                        entry: "one more thing".into(),
+                        focus: None,
+                        session: Some(id.clone()),
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "journal",
+        );
+        refused(
+            json_of(
+                &jojobot
+                    .amend_journal(Parameters(AmendJournalArgs {
+                        entry: "actually".into(),
+                        session: Some(id.clone()),
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "amend_journal",
+        );
+        refused(
+            json_of(
+                &jojobot
+                    .wrap_session(Parameters(WrapSessionArgs {
+                        story: "done again".into(),
+                        session: Some(id.clone()),
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "wrap_session",
+        );
+    }
+
+    /// A session verb on a connection that never booted is blocked with the way
+    /// forward — jojobot will not guess which identity made the call.
+    #[tokio::test]
+    async fn a_session_verb_without_a_boot_is_blocked_with_the_way_forward() {
+        let jojobot = with_sessions(Arc::new(InMemorySessions::new()));
+        let body = json_of(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: "who am i".into(),
+                    focus: None,
+                    session: None,
+                }))
+                .await
+                .expect("call ok"),
+        );
+        assert_eq!(body["status"], "blocked");
+        let how = body["how_to_proceed"].as_str().expect("advice");
+        assert!(how.contains("boot_bot"), "the way out names the verb: {how}");
+    }
+
+    /// **Amending a session that has not begun is refused, not turned into a
+    /// first entry.** A correction that silently became an append leaves a
+    /// chronology saying something nobody meant.
+    #[tokio::test]
+    async fn amending_before_the_first_entry_is_blocked_and_writes_nothing() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        boot(&jojobot, "gamma").await;
+
+        let body = json_of(
+            &jojobot
+                .amend_journal(Parameters(AmendJournalArgs {
+                    entry: "there is nothing to correct".into(),
+                    session: None,
+                }))
+                .await
+                .expect("call ok"),
+        );
+        assert_eq!(body["status"], "blocked");
+        assert!(
+            store
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok")
+                .is_empty(),
+            "…and it did not mint a session to hold the correction"
+        );
+    }
+
+    /// **One beat per verb class, its count kept current.** jojobot's own
+    /// footnotes are a tally, not a log: the second capture corrects the first
+    /// beat rather than adding one, and they stay marked apart from what the
+    /// session said about itself.
+    #[tokio::test]
+    async fn jojobot_writes_one_beat_per_verb_class_and_keeps_its_count() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        boot(&jojobot, "gamma").await;
+
+        ensure(&jojobot, "alpha").await;
+        ensure(&jojobot, "milhouse").await;
+        capture_ok(&jojobot, capture_args("alpha", "plays go")).await;
+        capture_ok(&jojobot, capture_args("milhouse", "plays chess")).await;
+        journal_entry(&jojobot, "captured a couple of things").await;
+
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        let entries = &live[0].entries;
+        let beats: Vec<(&str, &str)> = entries
+            .iter()
+            .filter_map(|e| e.beat.as_deref().map(|b| (b, e.text.as_str())))
+            .collect();
+        assert_eq!(
+            beats.iter().filter(|(class, _)| *class == "capture").count(),
+            1,
+            "one beat for the class, however many captures: {entries:?}"
+        );
+        let (_, tally) = beats
+            .iter()
+            .find(|(class, _)| *class == "capture")
+            .expect("a capture beat");
+        assert!(tally.contains("(2)"), "…with its count kept current: {tally}");
+        assert!(tally.contains("person:alpha"), "…and what it touched: {tally}");
+        assert!(tally.contains("person:milhouse"), "…both of them: {tally}");
+
+        // The classes stay apart, and so do jojobot's words and the session's.
+        assert!(
+            beats.iter().any(|(class, _)| *class == "add_entity"),
+            "a different verb class is a different beat: {entries:?}"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| !e.is_auto() && e.text == "captured a couple of things"),
+            "the session's own entry is not a beat: {entries:?}"
+        );
+    }
+
+    /// **An unbound connection auto-journals nothing.** jojobot does not guess
+    /// which identity made a call, so a verb on a connection that never booted
+    /// writes no beat and mints no session.
+    #[tokio::test]
+    async fn an_unbound_connection_writes_no_beats() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        ensure(&jojobot, "alpha").await;
+        capture_ok(&jojobot, capture_args("alpha", "plays go")).await;
+
+        for bot in ["bot:gamma", "bot:delta"] {
+            assert!(
+                store
+                    .sessions_of(&EntityId(bot.into()))
+                    .await
+                    .expect("list ok")
+                    .is_empty(),
+                "nothing may be recorded against an identity nobody claimed"
+            );
+        }
+    }
+
+    /// **A session world that is down must not stop a boot.** The identity, the
+    /// charter, the rules and the snapshot are all in other stores; refusing to
+    /// boot over the session half would take an identity offline for a reason
+    /// that has nothing to do with who it is.
+    #[tokio::test]
+    async fn boot_bot_survives_a_session_world_that_is_down() {
+        let memory = Arc::new(InMemoryMemory::new());
+        let healthy = Jojobot::new(
+            memory.clone(),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::new()),
+            Arc::new(InMemorySessions::new()),
+        );
+        make_bot(&healthy, "gamma", None).await;
+
+        let down = Jojobot::new(
+            memory,
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::new()),
+            Arc::new(DownSessions),
+        );
+        let booted = boot(&down, "gamma").await;
+        assert_eq!(booted["identity"]["bot"]["id"], "bot:gamma", "the boot still lands");
+        assert_eq!(booted["session"]["available"], false);
+        assert!(
+            booted["session"]["note"]
+                .as_str()
+                .expect("a note")
+                .contains("not reachable"),
+            "…and says it does not know rather than guessing: {booted}"
+        );
+    }
+
+    /// A session store that answers nothing.
+    struct DownSessions;
+
+    #[async_trait]
+    impl Sessions for DownSessions {
+        async fn sessions_of(&self, _: &EntityId) -> Result<Vec<Session>, SessionError> {
+            Err(SessionError::NotConfigured("the session world is down".into()))
+        }
+        async fn read_session(&self, _: &SessionId) -> Result<Session, SessionError> {
+            Err(SessionError::NotConfigured("the session world is down".into()))
+        }
+        async fn begin(&self, _: NewSession) -> Result<Session, SessionError> {
+            Err(SessionError::NotConfigured("the session world is down".into()))
+        }
+        async fn append(
+            &self,
+            _: &SessionId,
+            _: NewEntry,
+        ) -> Result<JournalEntry, SessionError> {
+            Err(SessionError::NotConfigured("the session world is down".into()))
+        }
+        async fn amend_last(&self, _: &SessionId, _: &str) -> Result<JournalEntry, SessionError> {
+            Err(SessionError::NotConfigured("the session world is down".into()))
+        }
+        async fn amend_beat(
+            &self,
+            _: &SessionId,
+            _: &EntryId,
+            _: &str,
+        ) -> Result<JournalEntry, SessionError> {
+            Err(SessionError::NotConfigured("the session world is down".into()))
+        }
+        async fn set_focus(&self, _: &SessionId, _: &str) -> Result<Session, SessionError> {
+            Err(SessionError::NotConfigured("the session world is down".into()))
+        }
+        async fn close(&self, _: &SessionId, _: SessionState) -> Result<Session, SessionError> {
+            Err(SessionError::NotConfigured("the session world is down".into()))
+        }
+    }
+
+    /// `SessionState::Abandoned`, spelled once so the assertion above reads.
+    fn mailbox_state_abandoned() -> SessionState {
+        SessionState::Abandoned
     }
 
     /// **The acceptance case: "start jojobot as the PM" and the session knows
@@ -4787,6 +5959,7 @@ mod tests {
             memory.clone(),
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::new()),
+            Arc::new(InMemorySessions::new()),
         );
         make_bot(&healthy, "gamma", Some("gamma-inbox")).await;
         healthy

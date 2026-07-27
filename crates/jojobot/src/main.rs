@@ -7,9 +7,11 @@ use std::sync::Arc;
 use anyhow::Context;
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory};
+use jojobot_adapters::vikunja::sessions::VikunjaSessions;
 use jojobot_adapters::vikunja::{Secret as VikunjaSecret, VikunjaConfig, VikunjaStore};
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::Memory;
+use jojobot_domain::session::Sessions;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -138,6 +140,27 @@ async fn main() -> anyhow::Result<()> {
     }
     let mailboxes: Arc<dyn Mailboxes> = mailboxes;
 
+    // The Sessions port — a third context, on the same Vikunja but in **its own
+    // project**, discovered and provisioned by the same title convention. It is
+    // not indexed: session records deliberately stay out of `search` for now.
+    let sessions: Arc<dyn Sessions> = match vikunja_from_env() {
+        Some(cfg) => {
+            tracing::info!(
+                project = VikunjaSessions::DEFAULT_PROJECT,
+                "sessions: Vikunja store wired"
+            );
+            Arc::new(VikunjaSessions::new(http.clone(), cfg))
+        }
+        None => {
+            tracing::warn!(
+                "SESSIONS DISABLED — set JOJOBOT_VIKUNJA_URL and JOJOBOT_VIKUNJA_TOKEN to enable \
+                 them. boot_bot still boots: the identity, its charter and its rules live in \
+                 Memory, and the session half says it does not know."
+            );
+            Arc::new(VikunjaSessions::unconfigured())
+        }
+    };
+
     let metadata_url = format!(
         "{}/.well-known/oauth-protected-resource",
         origin_of(&config.resource)
@@ -150,6 +173,7 @@ async fn main() -> anyhow::Result<()> {
         memory: indexed.clone(),
         search: indexed,
         mailboxes,
+        sessions,
     };
 
     let ct = CancellationToken::new();

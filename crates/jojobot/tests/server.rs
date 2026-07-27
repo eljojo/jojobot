@@ -12,7 +12,9 @@ use jojobot::{AppState, build_app};
 use jojobot_adapters::outline::OutlineStore;
 use jojobot_adapters::search::IndexedMemory;
 use jojobot_adapters::vikunja::VikunjaStore;
+use jojobot_adapters::vikunja::sessions::VikunjaSessions;
 use jojobot_domain::mailbox::Mailboxes;
+use jojobot_domain::session::Sessions;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::memory::testing::InMemoryMemory;
@@ -24,10 +26,23 @@ mod support;
 /// domain verbs — the real store, left unconfigured (no network), behind the real
 /// index. No toy store, and the same one-adapter-two-ports pairing production
 /// wires, so these tests can't pass on a shape the binary doesn't build.
-fn test_ports() -> (Arc<dyn Memory>, Arc<dyn Search>, Arc<dyn Mailboxes>) {
+/// The four ports a served app needs, as the transport/auth tests want them.
+type TestPorts = (
+    Arc<dyn Memory>,
+    Arc<dyn Search>,
+    Arc<dyn Mailboxes>,
+    Arc<dyn Sessions>,
+);
+
+fn test_ports() -> TestPorts {
     let store: Arc<dyn Memory> = Arc::new(OutlineStore::unconfigured());
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
-    (indexed.clone(), indexed, Arc::new(VikunjaStore::unconfigured()))
+    (
+        indexed.clone(),
+        indexed,
+        Arc::new(VikunjaStore::unconfigured()),
+        Arc::new(VikunjaSessions::unconfigured()),
+    )
 }
 
 /// Bind an ephemeral port, build the app from `make_state`, and serve it on a
@@ -53,7 +68,7 @@ async fn spawn_server(
 }
 
 fn no_auth_state(addr: SocketAddr) -> AppState {
-    let (memory, search, mailboxes) = test_ports();
+    let (memory, search, mailboxes, sessions) = test_ports();
     AppState {
         resource: format!("http://{addr}/mcp"),
         issuer: None,
@@ -62,6 +77,7 @@ fn no_auth_state(addr: SocketAddr) -> AppState {
         memory,
         search,
         mailboxes,
+        sessions,
     }
 }
 
@@ -69,7 +85,7 @@ fn no_auth_state(addr: SocketAddr) -> AppState {
 /// mounts and rejects unauthenticated requests. Token *acceptance* is covered by
 /// the unit golden tests in `auth.rs`.
 fn auth_state(addr: SocketAddr) -> AppState {
-    let (memory, search, mailboxes) = test_ports();
+    let (memory, search, mailboxes, sessions) = test_ports();
     AppState {
         resource: format!("http://{addr}/mcp"),
         issuer: Some("https://issuer.example".to_string()),
@@ -82,6 +98,7 @@ fn auth_state(addr: SocketAddr) -> AppState {
         memory,
         search,
         mailboxes,
+        sessions,
     }
 }
 
@@ -157,7 +174,7 @@ async fn mcp_guard_covers_path_and_method_variants() {
 /// its own.
 fn allowlist_state(validator: Validator) -> impl FnOnce(SocketAddr) -> AppState {
     move |addr| {
-        let (memory, search, mailboxes) = test_ports();
+        let (memory, search, mailboxes, sessions) = test_ports();
         AppState {
             resource: format!("http://{addr}/mcp"),
             issuer: Some(support::ISS.to_string()),
@@ -166,6 +183,7 @@ fn allowlist_state(validator: Validator) -> impl FnOnce(SocketAddr) -> AppState 
             memory,
             search,
             mailboxes,
+            sessions,
         }
     }
 }
@@ -234,7 +252,7 @@ async fn mcp_is_open_when_auth_disabled() {
 /// Auth-off state whose resource is a *public* URL, so the transport's Host
 /// allowlist must accept that hostname rather than only loopback.
 fn public_no_auth_state(_addr: SocketAddr) -> AppState {
-    let (memory, search, mailboxes) = test_ports();
+    let (memory, search, mailboxes, sessions) = test_ports();
     AppState {
         resource: "https://jojobot.example/mcp".to_string(),
         issuer: None,
@@ -243,6 +261,7 @@ fn public_no_auth_state(_addr: SocketAddr) -> AppState {
         memory,
         search,
         mailboxes,
+        sessions,
     }
 }
 
@@ -297,6 +316,7 @@ fn searchable_state(addr: SocketAddr) -> AppState {
         memory: indexed.clone(),
         search: indexed,
         mailboxes: Arc::new(VikunjaStore::unconfigured()),
+        sessions: Arc::new(VikunjaSessions::unconfigured()),
     }
 }
 

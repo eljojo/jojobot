@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::search::Search;
+use jojobot_domain::session::Sessions;
 use jojobot_mcp::Jojobot;
 
 use crate::auth::Validator;
@@ -42,6 +43,10 @@ pub struct AppState {
     /// context with a different store** (Vikunja, not Outline) — always the real
     /// adapter, possibly unconfigured; no toy store ships.
     pub mailboxes: Arc<dyn Mailboxes>,
+    /// The Sessions port backing `journal`, `amend_journal`, `wrap_session` and
+    /// the session half of `boot_bot`. A third context on the same Vikunja, in
+    /// **its own project** — never the mailbox one.
+    pub sessions: Arc<dyn Sessions>,
 }
 
 /// Build the full HTTP application: the guarded MCP transport plus the public
@@ -60,8 +65,19 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     let memory = state.memory.clone();
     let search = state.search.clone();
     let mailboxes = state.mailboxes.clone();
+    let sessions = state.sessions.clone();
     let mcp = StreamableHttpService::new(
-        move || Ok(Jojobot::new(memory.clone(), search.clone(), mailboxes.clone())),
+        // **One handler per MCP session, and that is what makes the connection
+        // binding a connection binding**: the factory runs per connect, so a
+        // session bound here belongs to this client and evaporates with it.
+        move || {
+            Ok(Jojobot::new(
+                memory.clone(),
+                search.clone(),
+                mailboxes.clone(),
+                sessions.clone(),
+            ))
+        },
         LocalSessionManager::default().into(),
         server_config,
     );
