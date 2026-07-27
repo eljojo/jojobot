@@ -164,6 +164,34 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // **The handle registry, filled from the board before anything is served.**
+    // Eagerly rather than on first miss: a lazy rebuild would hand the first
+    // caller after a restart a different answer from the second, and that is the
+    // class of difference nobody can reproduce.
+    //
+    // A failed read is not fatal, for the same reason a failed index scan is
+    // not. What it costs is stated rather than hidden: handles minted before the
+    // restart come back "that session is gone", the work on the board is
+    // untouched, and booting again offers it back by what it was working on.
+    let registry = Arc::new(jojobot_mcp::sid::SessionRegistry::new());
+    match sessions.all_sessions().await {
+        Ok(board) => {
+            let recovered = registry.rebuild_from(&board);
+            tracing::info!(
+                recovered,
+                cards = board.len(),
+                "sessions: handle registry rebuilt from the board"
+            );
+        }
+        Err(e) => tracing::warn!(
+            error = %e,
+            "SESSION HANDLES NOT RECOVERED — the board could not be read at startup, so every \
+             handle issued before this restart now answers 'that session is gone'. Nothing on the \
+             board was lost: booting an identity still offers its runs back by what they were \
+             working on. Restart once the store is reachable to recover the handles."
+        ),
+    }
+
     let metadata_url = format!(
         "{}/.well-known/oauth-protected-resource",
         origin_of(&config.resource)
@@ -177,6 +205,7 @@ async fn main() -> anyhow::Result<()> {
         search: indexed,
         mailboxes,
         sessions,
+        registry,
     };
 
     let ct = CancellationToken::new();

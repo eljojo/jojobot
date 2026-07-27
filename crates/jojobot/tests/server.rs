@@ -78,6 +78,7 @@ fn no_auth_state(addr: SocketAddr) -> AppState {
         search,
         mailboxes,
         sessions,
+        registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
     }
 }
 
@@ -99,6 +100,7 @@ fn auth_state(addr: SocketAddr) -> AppState {
         search,
         mailboxes,
         sessions,
+        registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
     }
 }
 
@@ -197,6 +199,7 @@ fn allowlist_state(validator: Validator) -> impl FnOnce(SocketAddr) -> AppState 
             search,
             mailboxes,
             sessions,
+            registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         }
     }
 }
@@ -279,6 +282,7 @@ fn public_no_auth_state(_addr: SocketAddr) -> AppState {
         search,
         mailboxes,
         sessions,
+        registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
     }
 }
 
@@ -338,6 +342,7 @@ fn searchable_state(addr: SocketAddr) -> AppState {
         search: indexed,
         mailboxes: Arc::new(VikunjaStore::unconfigured()),
         sessions: Arc::new(VikunjaSessions::unconfigured()),
+        registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
     }
 }
 

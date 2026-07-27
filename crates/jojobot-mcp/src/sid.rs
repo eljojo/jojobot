@@ -30,26 +30,12 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 
 use jojobot_domain::memory::EntityId;
-use jojobot_domain::session::SessionId;
+use jojobot_domain::session::{SID_ALPHABET, SID_LEN, Session, SessionId, is_readable_sid};
 
-/// The handle's alphabet: **Crockford's base32, lowercased** — the digits and
-/// the letters, minus `i`, `l`, `o` and `u`.
-///
-/// `i`/`l`/`1`, `o`/`0` and `u`/`v` are the pairs a reader mistakes for one
-/// another, and a mistaken handle is one jojobot must refuse rather than
-/// correct — correcting it means guessing which session somebody meant. Thirty
-/// two symbols, every one of them inside the `[a-z0-9-]` a
-/// [`SessionId`](jojobot_domain::session::SessionId) accepts.
-pub const ALPHABET: &[u8] = b"0123456789abcdefghjkmnpqrstvwxyz";
-
-/// How many characters a handle is.
-///
-/// **Four, not three.** Three would be 32³ = 32,768 — enough for the live
-/// sessions of one operator, but the space is what makes a handle hard to
-/// forge, and a fourth character buys 32× of it for one keystroke. It also
-/// keeps the handle space clear of [`NEW`], the one word a caller may answer
-/// the boot's offer with: three characters could mint `new` itself.
-pub const SID_LEN: usize = 4;
+// The handle type, its alphabet and its shape rule are the domain's — a session
+// answers to it, and the store persists it. Re-exported so callers reach one
+// vocabulary rather than two names for one thing.
+pub use jojobot_domain::session::{Sid, is_readable_sid as is_readable};
 
 /// The answer that chooses a fresh session over any of the resumable ones.
 /// Deliberately a word rather than a handle: it is not a session, and giving it
@@ -64,34 +50,6 @@ pub const NEW: &str = "new";
 /// error the door can report.
 const MINT_ATTEMPTS: usize = 64;
 
-/// A session handle. Its own type, because the thing it is NOT — the store's
-/// card id, also a `SessionId` — is exactly what it would otherwise be mixed up
-/// with while this migration is half done.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Sid(pub String);
-
-impl Sid {
-    /// Borrow the handle.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for Sid {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// Whether this string could be a handle jojobot minted.
-///
-/// **Shape only** — a readable handle may still be unknown, and the two are
-/// told apart where they are answered, because "you mistyped it" and "that
-/// session is gone" send a caller to different places.
-pub fn is_readable(sid: &str) -> bool {
-    sid.len() == SID_LEN && sid.bytes().all(|b| ALPHABET.contains(&b))
-}
-
 /// Draw one candidate handle from OS entropy.
 ///
 /// `256 % 32 == 0`, so the fold is uniform — no rejection sampling and no bias
@@ -104,7 +62,7 @@ pub fn draw() -> String {
     getrandom::fill(&mut bytes).expect("the OS entropy source is readable");
     bytes
         .iter()
-        .map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char)
+        .map(|b| SID_ALPHABET[*b as usize % SID_ALPHABET.len()] as char)
         .collect()
 }
 
@@ -208,6 +166,38 @@ impl SessionRegistry {
         }
     }
 
+    /// **Rebuild from the board** — every handle a card carries, put back.
+    ///
+    /// Called once at startup, eagerly, before the first request: a registry
+    /// filled lazily on the first miss would answer differently for the first
+    /// caller after a restart than for the second, which is the kind of
+    /// difference nobody can reproduce.
+    ///
+    /// A card written before handles were persisted carries none and simply
+    /// contributes nothing here — the boot that offers it mints one on the spot,
+    /// which is the whole of the migration.
+    ///
+    /// Returns how many it recovered, so a restart can say so out loud.
+    pub fn rebuild_from(&self, sessions: &[Session]) -> usize {
+        let mut held = self.held.write().expect("the registry is poisoned");
+        for session in sessions {
+            let Some(sid) = session.sid.clone() else {
+                continue;
+            };
+            if !is_readable_sid(sid.as_str()) {
+                continue;
+            }
+            held.insert(
+                sid.0,
+                Handle {
+                    bot: session.bot.clone(),
+                    card: Some(session.id.clone()),
+                },
+            );
+        }
+        held.len()
+    }
+
     /// Record the card a handle's session landed on, once the first write
     /// materializes one.
     pub fn attach_card(&self, sid: &Sid, card: SessionId) {
@@ -225,58 +215,9 @@ impl SessionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jojobot_domain::session::validate_session_id;
 
     fn bot(slug: &str) -> EntityId {
         EntityId(format!("bot:{slug}"))
-    }
-
-    /// **The glyphs a reader confuses are not in the alphabet**, and everything
-    /// in it is something the domain's id type accepts — a handle jojobot
-    /// cannot store is a handle jojobot cannot hand out.
-    #[test]
-    fn the_alphabet_excludes_the_confusable_glyphs() {
-        assert_eq!(ALPHABET.len(), 32, "Crockford's base32, minus nothing else");
-        for confusable in [b'i', b'l', b'o', b'u'] {
-            assert!(
-                !ALPHABET.contains(&confusable),
-                "{} reads as another glyph and must not be mintable",
-                confusable as char
-            );
-        }
-        let whole = String::from_utf8(ALPHABET.to_vec()).expect("ascii");
-        assert!(
-            validate_session_id(&SessionId(whole.clone())).is_ok(),
-            "every symbol must be a legal session id byte: {whole}"
-        );
-    }
-
-    /// A handle is four characters of that alphabet, and it is drawn rather
-    /// than derived — two draws in a row must not be the same thing.
-    #[test]
-    fn a_drawn_handle_is_four_readable_characters() {
-        let drawn: Vec<String> = (0..200).map(|_| draw()).collect();
-        for sid in &drawn {
-            assert!(is_readable(sid), "{sid} is not a readable handle");
-        }
-        let distinct: std::collections::HashSet<&String> = drawn.iter().collect();
-        assert!(
-            distinct.len() > 100,
-            "handles must come from entropy, not a pattern: {} distinct of 200",
-            distinct.len()
-        );
-    }
-
-    /// Shape is checked, and a near-miss is refused rather than repaired:
-    /// correcting `1` to `l` is guessing which session somebody meant.
-    #[test]
-    fn an_unreadable_handle_is_refused_rather_than_corrected() {
-        assert!(is_readable("k3f9"));
-        for bad in [
-            "", "k3f", "k3f9a", "k3fo", "k3fi", "k3fl", "k3fu", "K3F9", "k3f-", "k3f ",
-        ] {
-            assert!(!is_readable(bad), "{bad:?} must not read as a handle");
-        }
     }
 
     /// **The collision retry, watched.** Entropy will not produce a collision

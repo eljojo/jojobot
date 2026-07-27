@@ -1233,7 +1233,7 @@ impl Jojobot {
                      as one another. jojobot will not correct one, because correcting it means \
                      guessing which session you meant. Call start_here with your bot name and no \
                      resume to see what there is.",
-                    sid::SID_LEN,
+                    jojobot_domain::session::SID_LEN,
                 ),
             ));
         }
@@ -1580,10 +1580,22 @@ impl Jojobot {
             Some(theirs) => theirs.to_string(),
             None => display_line(derive_from.unwrap_or(FRESH_FOCUS)),
         };
+        // **The card is born with its handle.** The connection's, when the door
+        // gave it one; otherwise minted right here, because a card written
+        // without one is a session the registry could never rebuild an address
+        // for after a restart — and that is the whole point of storing it.
+        let handle = match bound.sid.clone() {
+            Some(handle) => handle,
+            None => self
+                .registry
+                .mint(&bound.bot, None)
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?,
+        };
         let begun = self
             .sessions
             .begin(NewSession {
                 bot: bound.bot.clone(),
+                sid: handle.clone(),
                 focus,
                 started_at: jiff::Timestamp::now(),
             })
@@ -1597,24 +1609,9 @@ impl Jojobot {
         // session for a bot you NAMED must not make you that bot, exactly as
         // attaching to one must not.
         self.bind_if_ours(&bound.bot, Some(&begun));
-        // **The registry learns the card here** — this is the moment one
-        // exists. Only for a caller whose connection still remembers the handle
-        // the door gave it; a client with no session affinity has no handle to
-        // record against until the sid rides the write verbs themselves.
-        let held = self
-            .bound
-            .read()
-            .expect("binding poisoned")
-            .as_ref()
-            .and_then(|b| b.sid.clone());
-        if let Some(handle) = held
-            && self
-                .registry
-                .lookup(handle.as_str())
-                .is_some_and(|h| h.bot == bound.bot && h.card.is_none())
-        {
-            self.registry.attach_card(&handle, begun.id.clone());
-        }
+        // **The registry learns the card here** — this is the moment one exists,
+        // and the handle above is the one now written on it.
+        self.registry.attach_card(&handle, begun.id.clone());
         Ok(Ok(begun.id))
     }
 
@@ -4259,6 +4256,7 @@ mod tests {
     use jojobot_domain::mailbox::testing::InMemoryMailboxes;
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{Boot, Edge, EdgeShape, EntityKind, FactId};
+    use jojobot_domain::session::Sid;
     use jojobot_domain::session::testing::InMemorySessions;
 
     /// A [`Search`] double: it records the query it was handed and answers with
@@ -8394,6 +8392,7 @@ mod tests {
             store
                 .begin(NewSession {
                     bot: EntityId("bot:gamma".into()),
+                    sid: Sid(format!("t{:03}", line!() % 1000)),
                     focus: focus.into(),
                     started_at: jiff::Timestamp::now(),
                 })
@@ -8449,6 +8448,7 @@ mod tests {
         let begun = store
             .begin(NewSession {
                 bot: EntityId("bot:gamma".into()),
+                sid: Sid("t001".into()),
                 focus: "reading the hand-off".into(),
                 started_at: jiff::Timestamp::now(),
             })
@@ -8501,6 +8501,163 @@ mod tests {
             SessionState::Active,
             "the old run is untouched"
         );
+    }
+
+    /// **A handle survives the process that minted it, because the card holds
+    /// it.** This is the restart cliff closed: the registry is rebuilt from the
+    /// board before anything is served, so the handle a caller wrote down
+    /// yesterday still addresses its run today.
+    ///
+    /// It matters beyond convenience. The sid is the address every later verb
+    /// carries, so a handle that died with the process meant a deploy silently
+    /// re-pointed every agent at nothing.
+    #[tokio::test]
+    async fn a_handle_written_on_the_card_survives_a_restart() {
+        let store = Arc::new(InMemorySessions::new());
+        let memory = Arc::new(InMemoryMemory::new());
+        let jojobot = connection_sharing(
+            memory.clone(),
+            store.clone(),
+            Arc::new(sid::SessionRegistry::new()),
+        );
+        make_bot(&jojobot, "gamma", None).await;
+
+        let handle = sid_of(&boot(&jojobot, "gamma").await).expect("a handle");
+        journal_entry(&jojobot, "read the hand-off").await;
+        let card = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok")
+            .into_iter()
+            .next()
+            .expect("a card");
+        assert_eq!(
+            card.sid.as_ref().map(|s| s.as_str()),
+            Some(handle.as_str()),
+            "the card carries the handle the door handed out: {card:?}"
+        );
+
+        // A restart: same board, an empty registry, filled from the board before
+        // the first request — exactly what the composition root does.
+        let rebuilt = Arc::new(sid::SessionRegistry::new());
+        let board = store.all_sessions().await.expect("board read ok");
+        assert_eq!(rebuilt.rebuild_from(&board), 1, "one handle recovered");
+        let restarted = connection_sharing(memory, store.clone(), rebuilt);
+
+        let resumed = boot_answering(&restarted, "gamma", &handle).await;
+        assert_eq!(
+            sid_of(&resumed).as_deref(),
+            Some(handle.as_str()),
+            "the same handle, still addressing the same run: {resumed}"
+        );
+        assert_eq!(resumed["session"]["session"]["id"], card.id.as_str());
+        assert_eq!(
+            resumed["session"]["session"]["chronology"][0]["text"],
+            "read the hand-off"
+        );
+    }
+
+    /// **Every card is born with a handle, including one begun by a caller whose
+    /// connection has forgotten its own.**
+    ///
+    /// On a client with no session affinity the write arrives carrying a bot
+    /// name and nothing else, so jojobot cannot know which handle that caller
+    /// holds — and must not guess, since two agents may have booted the same
+    /// identity. It mints the card its own handle instead. The caller's stays
+    /// card-less until the `sid` rides the write verbs themselves.
+    ///
+    /// What must NOT happen either way is a card with no handle at all: that is
+    /// a run the registry could never rebuild an address for, and the restart
+    /// cliff would be back for it alone.
+    #[tokio::test]
+    async fn a_card_begun_without_a_known_handle_is_still_born_with_one() {
+        let client = NoAffinity::new();
+        make_bot(&client.call(), "gamma", None).await;
+        let door_gave = sid_of(&boot(&client.call(), "gamma").await).expect("a handle");
+
+        json_of(
+            &client
+                .call()
+                .journal(Parameters(JournalArgs {
+                    entry: "read the hand-off".into(),
+                    focus: None,
+                    session: None,
+                    bot: Some("gamma".into()),
+                }))
+                .await
+                .expect("journal ok"),
+        );
+
+        let card = client
+            .sessions
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok")
+            .into_iter()
+            .next()
+            .expect("a card");
+        let stored = card.sid.as_ref().expect("a card is never born handle-less");
+        assert!(sid::is_readable(stored.as_str()));
+        assert_ne!(
+            stored.as_str(),
+            door_gave.as_str(),
+            "…and jojobot did not GUESS the caller's handle, which it has no way to know"
+        );
+
+        // The card's own handle is what survives a restart and addresses the run.
+        let rebuilt = Arc::new(sid::SessionRegistry::new());
+        let board = client.sessions.all_sessions().await.expect("read ok");
+        assert_eq!(rebuilt.rebuild_from(&board), 1);
+        assert_eq!(
+            rebuilt.lookup(stored.as_str()).expect("held").card,
+            Some(card.id.clone())
+        );
+    }
+
+    /// **A card written before handles were persisted carries none**, and that
+    /// is not a broken card: the boot that offers it mints one on the spot. The
+    /// migration is a no-op *only because* minting-on-offer already exists —
+    /// stated here so nobody later "simplifies" the offer into requiring a
+    /// stored handle.
+    #[tokio::test]
+    async fn a_card_with_no_stored_handle_is_offered_one_on_the_spot() {
+        let store = Arc::new(InMemorySessions::new());
+        let registry = Arc::new(sid::SessionRegistry::new());
+        let jojobot = connection_sharing(
+            Arc::new(InMemoryMemory::new()),
+            store.clone(),
+            registry.clone(),
+        );
+        make_bot(&jojobot, "gamma", None).await;
+
+        let legacy = store
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("t900".into()),
+                focus: "from before handles were stored".into(),
+                started_at: jiff::Timestamp::now(),
+            })
+            .await
+            .expect("begin ok");
+        // Strip the handle, which is what an older jojobot's card looks like.
+        store.forget_sid(&legacy.id);
+        let board = store.all_sessions().await.expect("read ok");
+        assert_eq!(
+            registry.rebuild_from(&board),
+            0,
+            "a card with no handle contributes none"
+        );
+
+        let offered = boot(&jojobot, "gamma").await;
+        let choice = &offered["session"]["choices"][0];
+        let minted = choice["sid"]
+            .as_str()
+            .expect("a handle, minted on the spot");
+        assert!(sid::is_readable(minted));
+        assert_eq!(choice["working_on"], "from before handles were stored");
+
+        let resumed = boot_answering(&jojobot, "gamma", minted).await;
+        assert_eq!(resumed["session"]["session"]["id"], legacy.id.as_str());
     }
 
     /// **A handle from before a restart is gone, and says so.** Not a 404 from
@@ -8595,6 +8752,7 @@ mod tests {
             store
                 .begin(NewSession {
                     bot: EntityId("bot:gamma".into()),
+                    sid: Sid(format!("t{:03}", line!() % 1000)),
                     focus: focus.into(),
                     started_at: jiff::Timestamp::now(),
                 })
@@ -8638,6 +8796,7 @@ mod tests {
         let begun = store
             .begin(NewSession {
                 bot: EntityId(format!("bot:{bot}")),
+                sid: Sid(format!("t{:03}", hours_ago.rem_euclid(1000))),
                 focus: focus.into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(hours_ago),
             })
@@ -8723,6 +8882,7 @@ mod tests {
         let told = store
             .begin(NewSession {
                 bot: EntityId("bot:gamma".into()),
+                sid: Sid("t001".into()),
                 focus: "a finished piece of work".into(),
                 started_at: jiff::Timestamp::now(),
             })
@@ -8823,6 +8983,7 @@ mod tests {
         store
             .begin(NewSession {
                 bot: EntityId("bot:gamma".into()),
+                sid: Sid("t001".into()),
                 focus: "still going".into(),
                 started_at: jiff::Timestamp::now(),
             })
@@ -8864,6 +9025,7 @@ mod tests {
         let told = store
             .begin(NewSession {
                 bot: EntityId("bot:gamma".into()),
+                sid: Sid("t001".into()),
                 focus: "a finished piece of work".into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(2),
             })
@@ -9813,6 +9975,7 @@ mod tests {
         let stale = store
             .begin(NewSession {
                 bot: EntityId("bot:gamma".into()),
+                sid: Sid("t001".into()),
                 focus: "something from the day before yesterday".into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
             })
@@ -9873,6 +10036,7 @@ mod tests {
         let recent = store
             .begin(NewSession {
                 bot: EntityId("bot:gamma".into()),
+                sid: Sid("t001".into()),
                 focus: "still going".into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1),
             })
@@ -10321,6 +10485,9 @@ mod tests {
             }
             self.inner.sessions_of(bot).await
         }
+        async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+            self.inner.all_sessions().await
+        }
         async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
             self.inner.read_session(id).await
         }
@@ -10369,6 +10536,7 @@ mod tests {
             .inner
             .begin(NewSession {
                 bot: EntityId("bot:gamma".into()),
+                sid: Sid("t001".into()),
                 focus: "in flight, and unreadable".into(),
                 started_at: jiff::Timestamp::now(),
             })
@@ -10507,6 +10675,9 @@ mod tests {
         async fn sessions_of(&self, _: &EntityId) -> Result<Vec<Session>, SessionError> {
             Err(SessionError::Store("the board cannot be listed".into()))
         }
+        async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+            Err(SessionError::Store("the board cannot be listed".into()))
+        }
         async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
             self.0.read_session(id).await
         }
@@ -10560,6 +10731,7 @@ mod tests {
         let live = inner
             .begin(NewSession {
                 bot: EntityId("bot:gamma".into()),
+                sid: Sid("t001".into()),
                 focus: "in flight, and unreadable".into(),
                 started_at: jiff::Timestamp::now(),
             })
@@ -10703,6 +10875,7 @@ mod tests {
                 store
                     .begin(NewSession {
                         bot: EntityId("bot:gamma".into()),
+                        sid: Sid(format!("r{n:03}")),
                         focus: format!("run {n}"),
                         started_at: jiff::Timestamp::now(),
                     })
@@ -10889,6 +11062,9 @@ mod tests {
         async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
             self.inner.sessions_of(bot).await
         }
+        async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+            self.inner.all_sessions().await
+        }
         async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
             self.inner.read_session(id).await
         }
@@ -10946,6 +11122,7 @@ mod tests {
         let theirs = store
             .begin(NewSession {
                 bot: EntityId("bot:delta".into()),
+                sid: Sid("d001".into()),
                 focus: "their run".into(),
                 started_at: jiff::Timestamp::now(),
             })
@@ -11012,6 +11189,9 @@ mod tests {
         async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
             self.pause().await;
             self.0.sessions_of(bot).await
+        }
+        async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+            self.0.all_sessions().await
         }
         async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
             self.pause().await;
@@ -11173,6 +11353,7 @@ mod tests {
             store
                 .begin(NewSession {
                     bot: EntityId("bot:gamma".into()),
+                    sid: Sid(format!("t{:03}", line!() % 1000)),
                     focus: "from the day before yesterday".into(),
                     started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
                 })
@@ -11290,6 +11471,11 @@ mod tests {
     #[async_trait]
     impl Sessions for DownSessions {
         async fn sessions_of(&self, _: &EntityId) -> Result<Vec<Session>, SessionError> {
+            Err(SessionError::NotConfigured(
+                "the session world is down".into(),
+            ))
+        }
+        async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
             Err(SessionError::NotConfigured(
                 "the session world is down".into(),
             ))

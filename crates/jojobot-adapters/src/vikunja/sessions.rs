@@ -26,7 +26,8 @@ use jojobot_domain::mailbox::MailboxError;
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::{
     EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionState,
-    Sessions, normalize_entry, validate_entry, validate_focus, validate_session_id,
+    Sessions, Sid, is_readable_sid, normalize_entry, validate_entry, validate_focus,
+    validate_session_id,
 };
 
 use super::VikunjaConfig;
@@ -40,6 +41,11 @@ const BOARD_PAGE: u64 = PAGE;
 
 /// The machine-block field naming the bot a session is one run of.
 const BOT: &str = "bot";
+/// The handle, on the card — **what makes it survive the process that minted
+/// it.** Absent on a card written before handles were persisted; that card is
+/// read as a session with no handle, and the first boot that offers it mints a
+/// process-local one.
+const SID: &str = "sid";
 /// The machine-block field carrying the instant a session began.
 const STARTED_AT: &str = "started-at";
 /// The machine-block field carrying the instant an entry was recorded.
@@ -209,6 +215,13 @@ impl VikunjaSessions {
         };
         Ok(Some(Session {
             id: SessionId(card.id.to_string()),
+            // **A handle that is not readable is no handle.** A card whose `sid`
+            // line was hand-edited into something jojobot could not have minted
+            // is read as a card without one, rather than as a session answering
+            // to a handle the registry would then have to honour.
+            sid: field(&fields, SID)
+                .map(Sid)
+                .filter(|s| is_readable_sid(s.as_str())),
             bot: EntityId(bot),
             focus,
             started_at,
@@ -524,14 +537,18 @@ fn render_entry(entry: &JournalEntry) -> String {
 }
 
 /// Render a session card's description: the focus a human reads, then the block.
-fn render_session(focus: &str, bot: &EntityId, started_at: Timestamp) -> String {
-    render_block(
-        focus,
-        &[
-            (BOT, bot.as_str().to_string()),
-            (STARTED_AT, started_at.to_string()),
-        ],
-    )
+/// **`sid` is optional here and required at `begin`**, which is not a
+/// contradiction: every card is born with a handle, and a card written before
+/// handles existed has none. Rewriting such a card's block must not invent one —
+/// a write that minted an identity is the thing this whole surface forbids — so
+/// the line stays absent and the card stays legacy.
+fn render_session(focus: &str, bot: &EntityId, sid: Option<&Sid>, started_at: Timestamp) -> String {
+    let mut fields = vec![(BOT, bot.as_str().to_string())];
+    if let Some(sid) = sid {
+        fields.push((SID, sid.as_str().to_string()));
+    }
+    fields.push((STARTED_AT, started_at.to_string()));
+    render_block(focus, &fields)
 }
 
 /// The human-visible half of a session card: the bot, then its focus.
@@ -627,6 +644,17 @@ impl Sessions for VikunjaSessions {
         Ok(mine)
     }
 
+    async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+        let _serialized = self.lock.lock().await;
+        let scope = self.scope().await?;
+        Ok(self
+            .sessions(&scope)
+            .await?
+            .into_iter()
+            .map(|(_, s)| s)
+            .collect())
+    }
+
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
         let _serialized = self.lock.lock().await;
         validate_session_id(id)?;
@@ -645,7 +673,7 @@ impl Sessions for VikunjaSessions {
             .create_task(
                 scope.project(),
                 &session_title(&new.bot, &focus),
-                &render_session(&focus, &new.bot, new.started_at),
+                &render_session(&focus, &new.bot, Some(&new.sid), new.started_at),
             )
             .await
             .map_err(store)?;
@@ -673,6 +701,7 @@ impl Sessions for VikunjaSessions {
         let id = SessionId(card.id.to_string());
         let expected = Session {
             id: id.clone(),
+            sid: Some(new.sid),
             bot: new.bot,
             focus,
             started_at: new.started_at,
@@ -811,7 +840,17 @@ impl Sessions for VikunjaSessions {
                 &Self::card_with(
                     &card,
                     &session_title(&session.bot, &focus),
-                    &render_session(&focus, &session.bot, session.started_at),
+                    // **The handle rides through a focus rewrite untouched.**
+                    // This verb rebuilds the whole machine block, so a field it
+                    // forgot to carry would be a field this verb silently
+                    // deletes — and the deleted one would be the session's
+                    // address.
+                    &render_session(
+                        &focus,
+                        &session.bot,
+                        session.sid.as_ref(),
+                        session.started_at,
+                    ),
                 ),
             )
             .await
@@ -1170,7 +1209,7 @@ mod tests {
         // rewrites its focus — still a readable session, so the verification
         // fails on content and the rollback is this verb's to make.
         api.before_board(3, move |fake| {
-            let rewritten = render_session("something else entirely", &bot("gamma"), at(0));
+            let rewritten = render_session("something else entirely", &bot("gamma"), None, at(0));
             let mut tasks = fake.tasks.lock().unwrap();
             let held = tasks.iter_mut().find(|t| t.id == card).expect("the card");
             held.title = "a title the operator typed".into();

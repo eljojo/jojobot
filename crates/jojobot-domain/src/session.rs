@@ -57,6 +57,62 @@ impl std::fmt::Display for SessionId {
     }
 }
 
+/// A session's **handle** — the address a caller is given and carries back.
+///
+/// Distinct from [`SessionId`], which is the store's card id, and the two must
+/// not be mixed: the card id is the store's key and the trace's anchor; the sid
+/// is what an agent holds. This type is here rather than in the MCP layer
+/// because a session's handle is part of what a session IS — the store persists
+/// it on the card, so the vocabulary has to reach the port.
+///
+/// **What one looks like is a domain rule; DRAWING one is not.** The charset and
+/// the length live here, next to the other validators; the entropy that produces
+/// a fresh one lives in the layer that mints, because reading the OS entropy
+/// source is I/O and this crate does none.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Sid(pub String);
+
+impl Sid {
+    /// Borrow the handle.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for Sid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// The handle's alphabet: **Crockford's base32, lowercased** — the digits and
+/// the letters, minus `i`, `l`, `o` and `u`.
+///
+/// Those are the glyphs a reader mistakes for one another (`i`/`l`/`1`, `o`/`0`,
+/// `u`/`v`), and a mistaken handle is one jojobot must refuse rather than
+/// correct — correcting it means guessing which session somebody meant. Every
+/// symbol is inside the `[a-z0-9-]` a [`SessionId`] accepts, so a handle is
+/// always storable wherever an id is.
+pub const SID_ALPHABET: &[u8] = b"0123456789abcdefghjkmnpqrstvwxyz";
+
+/// How many characters a handle is.
+///
+/// **Four, not three.** Three would be 32³ = 32,768 — enough for one operator's
+/// live sessions, but the space is what makes a handle hard to forge, and a
+/// fourth character buys 32× of it for one keystroke. It also keeps the handle
+/// space clear of the word a caller may answer the boot's offer with: three
+/// characters could mint `new` itself.
+pub const SID_LEN: usize = 4;
+
+/// Whether this string has the shape of a handle jojobot mints.
+///
+/// **Shape only** — a readable handle may still address nothing, and the two are
+/// told apart where they are answered, because "you mistyped it" and "that
+/// session is gone" send a caller to different places.
+pub fn is_readable_sid(sid: &str) -> bool {
+    sid.len() == SID_LEN && sid.bytes().all(|b| SID_ALPHABET.contains(&b))
+}
+
 /// One chronology entry's id — minted by the store (a comment id).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntryId(pub String);
@@ -323,11 +379,16 @@ impl NewEntry {
     }
 }
 
-/// A session about to begin — everything but the id, which the store mints.
+/// A session about to begin — everything but the card id, which the store mints.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewSession {
     /// The bot this is one run of.
     pub bot: EntityId,
+    /// **The handle, minted before the card and stored on it.** Required, not
+    /// optional: a card born without one would be a session the registry could
+    /// never rebuild an address for, and the whole point of persisting it is
+    /// that a restart does not orphan handles.
+    pub sid: Sid,
     /// What it is working on, at the moment it begins.
     pub focus: String,
     /// When it began.
@@ -337,8 +398,19 @@ pub struct NewSession {
 /// One session on the record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Session {
-    /// The store-minted id.
+    /// The store-minted id — the card, and the anchor a Journal entry's
+    /// `[session …]` mark refers to.
     pub id: SessionId,
+    /// The handle this run answers to, as stored on the card.
+    ///
+    /// **`None` only for a card written before handles were persisted.** Every
+    /// session created from now on is born with one, which is what lets the
+    /// registry be rebuilt from the board instead of dying with the process. A
+    /// legacy card is handed a handle the first time a boot offers it, and that
+    /// one is process-local — the migration is a no-op precisely because
+    /// minting-on-offer already exists.
+    #[serde(default)]
+    pub sid: Option<Sid>,
     /// The bot this is one run of.
     pub bot: EntityId,
     /// What it is working on now — current truth, rewritten in place.
@@ -500,6 +572,14 @@ pub trait Sessions: Send + Sync {
     /// attaching reads, and what the sweep walks.
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError>;
 
+    /// **Every session on the board, whosever it is** — what the handle registry
+    /// is rebuilt from at startup.
+    ///
+    /// Read once, eagerly, rather than lazily on a miss: a lazy rebuild would
+    /// make the first caller after a restart get a different answer from the
+    /// second, which is the kind of difference nobody can reproduce.
+    async fn all_sessions(&self) -> Result<Vec<Session>, SessionError>;
+
     /// One session by id, chronology and all.
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError>;
 
@@ -646,6 +726,7 @@ mod tests {
         let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
         let bare = Session {
             id: SessionId("1".into()),
+            sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
             focus: "nothing yet".into(),
             started_at: start,
@@ -692,6 +773,42 @@ mod tests {
         assert!(!closed.is_stale(start + ABANDONED_AFTER + hour));
     }
 
+    /// **The glyphs a reader confuses are not in the alphabet**, and everything
+    /// in it is something the card's id type accepts — a handle jojobot cannot
+    /// store is a handle jojobot cannot hand out.
+    #[test]
+    fn the_handle_alphabet_excludes_the_confusable_glyphs() {
+        assert_eq!(
+            SID_ALPHABET.len(),
+            32,
+            "Crockford's base32, minus nothing else"
+        );
+        for confusable in [b'i', b'l', b'o', b'u'] {
+            assert!(
+                !SID_ALPHABET.contains(&confusable),
+                "{} reads as another glyph and must not be mintable",
+                confusable as char
+            );
+        }
+        let whole = String::from_utf8(SID_ALPHABET.to_vec()).expect("ascii");
+        assert!(
+            validate_session_id(&SessionId(whole.clone())).is_ok(),
+            "every symbol must be a legal session id byte: {whole}"
+        );
+    }
+
+    /// Shape is checked, and a near-miss is refused rather than repaired:
+    /// correcting `1` to `l` is guessing which session somebody meant.
+    #[test]
+    fn an_unreadable_handle_is_refused_rather_than_corrected() {
+        assert!(is_readable_sid("k3f9"));
+        for bad in [
+            "", "k3f", "k3f9a", "k3fo", "k3fi", "k3fl", "k3fu", "K3F9", "k3f-", "k3f ",
+        ] {
+            assert!(!is_readable_sid(bad), "{bad:?} must not read as a handle");
+        }
+    }
+
     /// **What a boot volunteers is bounded; what a handle reaches is not.** An
     /// abandoned run inside the window is offered back, an older one is not, and
     /// a wrapped one never is — its story was told.
@@ -700,6 +817,7 @@ mod tests {
         let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
         let run = Session {
             id: SessionId("1".into()),
+            sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
             focus: "reading the hand-off".into(),
             started_at: start,

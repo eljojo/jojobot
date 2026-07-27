@@ -47,6 +47,10 @@ pub struct AppState {
     /// the session half of `start_here`. A third context on the same Vikunja, in
     /// **its own project** — never the mailbox one.
     pub sessions: Arc<dyn Sessions>,
+    /// **Every session handle this process can address**, shared by every
+    /// connection. Built and filled from the board before the server serves, so
+    /// the first caller after a restart gets the same answer as the second.
+    pub registry: Arc<jojobot_mcp::sid::SessionRegistry>,
 }
 
 /// Build the full HTTP application: the guarded MCP transport plus the public
@@ -66,13 +70,12 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     let search = state.search.clone();
     let mailboxes = state.mailboxes.clone();
     let sessions = state.sessions.clone();
-    // **Built once, outside the factory** — every handler this process makes
-    // shares it. A session handle is an address across connections, so a
-    // registry built per connect would forget each one as it handed it out.
-    // The other side of that: it lives in RAM, so a restart is the end of every
-    // handle it ever issued, which the door says out loud rather than papering
-    // over with a new session.
-    let registry = Arc::new(jojobot_mcp::sid::SessionRegistry::new());
+    // **One registry per process, never per connection** — a session handle is
+    // an address across connections, so a registry built per connect would
+    // forget each one as it handed it out. Filled from the board before the
+    // server serves (see `main`), which is what stops a restart from orphaning
+    // every handle it ever issued.
+    let registry = state.registry.clone();
     let mcp = StreamableHttpService::new(
         // **One handler per MCP session, and that is what makes the connection
         // binding a connection binding**: the factory runs per connect, so a

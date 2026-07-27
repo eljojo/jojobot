@@ -15,7 +15,8 @@ use jiff::Timestamp;
 
 use super::{
     EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionState,
-    Sessions, normalize_entry, validate_entry, validate_focus, validate_session_id,
+    Sessions, Sid, is_readable_sid, normalize_entry, validate_entry, validate_focus,
+    validate_session_id,
 };
 use crate::memory::EntityId;
 
@@ -31,6 +32,24 @@ impl InMemorySessions {
     /// An empty store.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// **Strip a session's stored handle** — the shape of a card written by an
+    /// older jojobot, before handles were persisted.
+    ///
+    /// A fixture, not a verb: no port method does this, and none should. It
+    /// exists so the migration path can be tested rather than assumed, because
+    /// "old cards still work" is exactly the claim nobody notices breaking.
+    pub fn forget_sid(&self, id: &SessionId) {
+        if let Some(session) = self
+            .sessions
+            .lock()
+            .expect("session lock")
+            .iter_mut()
+            .find(|s| &s.id == id)
+        {
+            session.sid = None;
+        }
     }
 
     fn mint(&self) -> String {
@@ -79,6 +98,10 @@ impl Sessions for InMemorySessions {
         Ok(found)
     }
 
+    async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+        Ok(self.sessions.lock().expect("session lock").clone())
+    }
+
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
         validate_session_id(id)?;
         self.sessions
@@ -96,6 +119,7 @@ impl Sessions for InMemorySessions {
         validate_focus(&new.focus)?;
         let session = Session {
             id: SessionId(self.mint()),
+            sid: Some(new.sid),
             bot: new.bot,
             focus: new.focus.trim().to_string(),
             started_at: new.started_at,
@@ -226,11 +250,24 @@ pub mod contract {
         EntityId(format!("bot:{slug}"))
     }
 
+    /// A deterministic handle for the contract's own sessions — the spec has to
+    /// be reproducible, so it never draws entropy. Real handles are drawn; these
+    /// only have to be distinct and shaped like one.
+    fn sid(nth: i64) -> Sid {
+        let handle = format!("s{:03}", nth.rem_euclid(1000));
+        assert!(
+            is_readable_sid(&handle),
+            "the fixture handle {handle} is not readable"
+        );
+        Sid(handle)
+    }
+
     /// Begin a session, asserting the store took it.
     pub async fn begin(store: &dyn Sessions, slug: &str, focus: &str, at_offset: i64) -> Session {
         store
             .begin(NewSession {
                 bot: bot(slug),
+                sid: sid(at_offset),
                 focus: focus.to_string(),
                 started_at: at(at_offset),
             })
@@ -754,6 +791,7 @@ pub mod contract {
             store
                 .begin(NewSession {
                     bot: bot("gamma"),
+                    sid: sid(900),
                     focus: "  ".into(),
                     started_at: at(0),
                 })
