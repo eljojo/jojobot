@@ -119,17 +119,21 @@ async fn main() -> anyhow::Result<()> {
     // that changes a message re-indexes it, and boot loads the board once.
     //
     // A failed board read is not fatal, exactly as a failed doc scan is not: the
-    // store is the truth, `search` says `mail: {searched: false}` in every answer
-    // until a restart fixes it, and the memory half is untouched. Refusing to
-    // start over a projection is worse than a thin one that admits what it is.
+    // store is the truth, the memory half is untouched, and `search` reports the
+    // gap in every answer rather than passing it off as "nothing matched".
+    // Refusing to start over a projection is worse than a thin one that admits
+    // what it is.
     let mailboxes = Arc::new(IndexedMailboxes::new(mailbox_store, indexed.index()));
     match mailboxes.rebuild().await {
         Ok(messages) => tracing::info!(messages, "search: mail indexed from a full board read"),
         Err(e) => tracing::warn!(
             error = %e,
-            "MAIL NOT SEARCHABLE — the boot board read failed, so `search` sees no messages at \
-             all and says so in every answer. The mailbox verbs are unaffected; restart once \
-             Vikunja is reachable."
+            "MAIL SEARCH DEGRADED — the boot board read failed, so `search` starts with no \
+             messages at all and says so (mail.searched: false). It does NOT stay that way: any \
+             message this process posts or delivers is indexed as it goes, and from the first \
+             one `search` reports partial coverage — real hits, with anything older than this \
+             process missing. The mailbox verbs are unaffected; restart once Vikunja is \
+             reachable to get the whole board back."
         ),
     }
     let mailboxes: Arc<dyn Mailboxes> = mailboxes;

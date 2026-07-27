@@ -210,11 +210,16 @@ impl FullTextIndex {
         for message in messages {
             self.write_message(&writer, message)?;
         }
-        writer.commit().map_err(store_err)?;
-        drop(writer);
-
+        // **Set before the commit, deliberately.** Whichever side of the commit
+        // this lands on, a concurrent searcher can see one and not the other —
+        // but the two orders are not equally wrong. Claiming coverage a moment
+        // early costs an answer that says it searched mail and returns nothing
+        // yet; claiming it a moment late is the one shape the invariant forbids,
+        // an answer carrying message hits while denying it searched any.
         self.mail_loaded
             .store(true, std::sync::atomic::Ordering::Release);
+        writer.commit().map_err(store_err)?;
+        drop(writer);
         self.reader.reload().map_err(store_err)?;
         Ok(())
     }
@@ -230,11 +235,11 @@ impl FullTextIndex {
             message.id.as_str(),
         ));
         self.write_message(&writer, message)?;
-        writer.commit().map_err(store_err)?;
-        drop(writer);
-
+        // Before the commit, for the reason `ingest_mail` sets its flag early.
         self.mail_touched
             .store(true, std::sync::atomic::Ordering::Release);
+        writer.commit().map_err(store_err)?;
+        drop(writer);
         self.reader.reload().map_err(store_err)?;
         Ok(())
     }

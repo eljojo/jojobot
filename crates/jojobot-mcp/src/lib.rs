@@ -761,10 +761,13 @@ impl Jojobot {
                        Mail is searched by default — pass include_mail: false to leave session \
                        traffic out, and note that a `kind` filter also leaves it out, since a \
                        message belongs to no entity and so has no kind to match. ALWAYS read the \
-                       `mail` field of the answer: searched: false means no message was searched \
-                       at all — which is not the same as nothing matching — and its note says \
-                       which of the reasons it was. No pagination — raise `limit` or ask a \
-                       better question."
+                       `mail` field of the answer, in BOTH directions: searched: false means no \
+                       message was searched at all, which is not the same as nothing matching; \
+                       and searched: true can still be partial after a degraded start, where the \
+                       hits are real but anything older than this server's start is missing. \
+                       Whenever `mail` carries a `note`, that note says which case you are in — \
+                       read it before concluding a message does not exist. No pagination — raise \
+                       `limit` or ask a better question."
     )]
     async fn search(
         &self,

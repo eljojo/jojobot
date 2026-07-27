@@ -728,11 +728,38 @@ impl VikunjaStore {
             if untouchable.contains(&card.id) {
                 continue;
             }
-            if let Err(failure) = self.restore(scope, card, *state).await {
+            // The column, and nothing else — see `put_back_column`. A delivery
+            // writes no description and no title, so it puts neither back.
+            if let Err(failure) = self.put_back_column(scope, card, *state).await {
                 failures.push((card.id, failure));
             }
         }
         Rollback::of(failures)
+    }
+
+    /// Move one card back to the column it came from. **No description, no
+    /// title** — the put-back a verb that only moved cards is entitled to.
+    ///
+    /// [`restore`](Self::restore) writes both back as well, which is right for
+    /// `mark_processed`: it wrote that description seconds earlier, so a card
+    /// that no longer matches is most likely its own write coming back mangled,
+    /// and putting it back is the repair. For a verb that only moved a card,
+    /// every difference a mismatch can show is somebody else's work.
+    ///
+    /// The [`untouchable`](Self::untouchable) guard alone does not cover this:
+    /// it excludes states strictly PAST what the verb wrote, so a card sitting
+    /// where the verb left it — hand-edited but still readable — is inside the
+    /// restorable set, and reverting it there erases an edit nobody asked about.
+    async fn put_back_column(
+        &self,
+        scope: &Scope,
+        card: &TaskRec,
+        to: MessageState,
+    ) -> Result<(), MailboxError> {
+        let bucket = self.column(scope, to).await?;
+        self.api
+            .move_task(scope.project(), scope.view, bucket, card.id)
+            .await
     }
 
     /// The cards a rollback must not touch, read off the board **as late as the
@@ -769,20 +796,9 @@ impl VikunjaStore {
         }
     }
 
-    /// Undo a column move, and **only** the column move — the rollback a verb
-    /// that wrote no description is entitled to.
-    ///
-    /// [`restore`](Self::restore) writes the description back as well, which is
-    /// right for `mark_processed`: it wrote that description seconds earlier, so
-    /// a card that no longer matches is most likely its own write coming back
-    /// mangled, and putting it back is the repair. It is wrong for a verb that
-    /// only moved a card. There, every difference a mismatch can show is
-    /// somebody else's work, and writing jojobot's stale snapshot over it
-    /// destroys the evidence of the very edit that failed the write.
-    ///
-    /// Guarded by [`untouchable`](Self::untouchable): a card that advanced past
-    /// what this verb wrote, one that is now quarantined, and any card at all
-    /// when the board cannot be re-read, are left exactly where they are.
+    /// The single-card [`restore_all`](Self::restore_all): the same guard, the
+    /// same column-only [`put_back_column`](Self::put_back_column), for a verb
+    /// that moved exactly one card.
     async fn restore_move(
         &self,
         scope: &Scope,
@@ -804,15 +820,13 @@ impl VikunjaStore {
             );
             return Rollback::Undone;
         }
-        let column = match self.column(scope, to).await {
-            Ok(bucket) => {
-                self.api
-                    .move_task(scope.project(), scope.view, bucket, card.id)
-                    .await
-            }
-            Err(e) => Err(e),
-        };
-        Rollback::of(column.err().map(|e| vec![(card.id, e)]).unwrap_or_default())
+        Rollback::of(
+            self.put_back_column(scope, card, to)
+                .await
+                .err()
+                .map(|e| vec![(card.id, e)])
+                .unwrap_or_default(),
+        )
     }
 
     /// Put a card back the way a failed write found it. A read-back mismatch
@@ -3379,6 +3393,63 @@ mod tests {
         );
     }
 
+    /// **A delivery's rollback writes no description and no title either.** The
+    /// asymmetry that entitles `mark_processed` to `restore` — it wrote that
+    /// description seconds earlier, so a card that no longer matches is most
+    /// likely its own write coming back mangled — does not hold for a delivery,
+    /// which only ever moves columns.
+    ///
+    /// The `untouchable` guard is not enough on its own here, and that is the
+    /// point of this case: it excludes only states STRICTLY past what the verb
+    /// wrote, so a card still sitting in `read` — hand-edited but perfectly
+    /// readable — is squarely inside the restorable set, and `restore` would
+    /// revert both halves of somebody's edit while putting the column back.
+    #[tokio::test]
+    async fn a_delivery_rollback_puts_the_column_back_without_reverting_an_edit() {
+        let fake = FakeVikunja::new();
+        let api = Interleaved::new(fake.clone());
+        let store = VikunjaStore::from_api(api.clone(), PROJECT);
+        contract::create(&store, "inbox").await;
+        let edited = contract::post(&store, "inbox", "alpha", "message one", 0).await;
+        let project = fake.projects_titled(PROJECT)[0].id;
+        let card: u64 = edited.id.as_str().parse().expect("a numeric card id");
+
+        // Right before the delivery's verification read, the operator retitles
+        // the card and rewrites its body — still a readable message, so it is
+        // neither quarantined nor advanced, and the verification fails on
+        // content. Exactly the card `untouchable` hands back for restoring.
+        api.before_board(5, move |fake| {
+            rewrite_body(fake, card, "a different message entirely");
+            let mut tasks = fake.tasks.lock().unwrap();
+            let held = tasks.iter_mut().find(|t| t.id == card).expect("the card");
+            held.title = "a title the operator typed".into();
+            held.raw["title"] = "a title the operator typed".into();
+        });
+
+        let outcome = store.read_mailbox(&MailboxName("inbox".into())).await;
+        assert!(outcome.is_err(), "a delivery that could not verify must not report success");
+
+        let stored = fake
+            .tasks_in(project)
+            .into_iter()
+            .find(|t| t.id == card)
+            .expect("the card is still there");
+        assert_eq!(
+            stored.title, "a title the operator typed",
+            "a verb that writes no title puts none back"
+        );
+        assert!(
+            stored.description.contains("a different message entirely"),
+            "…and none of the description either: got {:?}",
+            stored.description
+        );
+        assert_eq!(
+            fake.column_of(card).as_deref(),
+            Some("new"),
+            "the column move IS undone — the caller was told nothing was delivered"
+        );
+    }
+
     /// **A batch rollback must not undo another consumer's confirmed work.**
     /// The consumer here is a human on the board, not a second jojobot session
     /// — the verb lock rules that one out — but a card can still advance
@@ -3957,15 +4028,19 @@ mod tests {
         let garbled = contract::post(&store, "inbox", "milhouse", "message two", 60).await;
         let garbled_card: u64 = garbled.id.as_str().parse().expect("a numeric card id");
 
+        // The delivery moves both cards, fails its read-back on the garbled
+        // one, and then cannot move the other one back either. The failure is
+        // armed from inside this hook — which fires right before the
+        // verification read, after every move the delivery itself makes — so
+        // the only move left to fail is the rollback's, without counting them.
         api.before_board(5, move |fake| {
             let mut tasks = fake.tasks.lock().unwrap();
             let card = tasks.iter_mut().find(|t| t.id == garbled_card).expect("the card");
             card.description = "hand-garbled mid-delivery".into();
             card.raw["description"] = "hand-garbled mid-delivery".into();
+            drop(tasks);
+            fake.fail_all("move_task");
         });
-        // The delivery moves both cards, fails its read-back on the garbled
-        // one, and then cannot write the other one back either.
-        fake.fail_all("update_task");
 
         let err = store
             .read_mailbox(&MailboxName("inbox".into()))
@@ -4122,6 +4197,47 @@ mod tests {
             .filter(|l| l.title.ends_with("/inbox"))
             .count();
         assert_eq!(minted, 1, "one box, one label — the second create must find the first");
+    }
+
+    /// **The scan takes the verb lock, and this is what would notice if it
+    /// stopped.** `scan_messages` reads no message it can change — but the one
+    /// call it makes, `resolve_scope`, is a provisioning path: on a bare
+    /// Vikunja it creates the board and its three columns. Racing it against a
+    /// verb that provisions the same board is how you get two of everything,
+    /// and every other serialization claim in this file is pinned but this one
+    /// was not — deleting the lock line left the suite green.
+    #[tokio::test]
+    async fn a_scan_racing_a_create_provisions_one_board_not_two() {
+        let fake = FakeVikunja::new();
+        let store = VikunjaStore::from_api(Interleaved::new(fake.clone()), PROJECT);
+
+        // Nothing is provisioned yet: both calls arrive at a bare Vikunja and
+        // both want the board, its kanban view and its three columns.
+        let name = MailboxName("inbox".into());
+        let (scanned, created) =
+            tokio::join!(store.scan_messages(), store.create_mailbox(&name, false));
+        scanned.expect("scan_messages ok");
+        created.expect("create_mailbox ok");
+
+        assert_eq!(
+            fake.owned_titled(PROJECT),
+            1,
+            "one board, not one per racer — the scan provisions under the same lock"
+        );
+        let project = fake.projects_titled(PROJECT)[0].id;
+        let buckets = fake.buckets.lock().unwrap().clone();
+        let columns: Vec<String> = buckets
+            .iter()
+            .filter(|(p, _, _)| *p == project)
+            .map(|(_, _, b)| b.title.clone())
+            .collect();
+        for state in MessageState::ALL {
+            assert_eq!(
+                columns.iter().filter(|t| t.as_str() == state.as_token()).count(),
+                1,
+                "one `{state}` column, not two: {columns:?}"
+            );
+        }
     }
 
     /// **Two deliveries of one message must not both call it fresh mail.**
