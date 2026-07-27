@@ -27,7 +27,7 @@
 //! session.
 
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::{SID_ALPHABET, SID_LEN, Session, SessionId, is_readable_sid};
@@ -87,16 +87,53 @@ impl std::fmt::Display for NoFreeHandle {
     }
 }
 
-/// Every handle this process has issued.
+/// Every handle this process has issued — **and the locks that serialize the
+/// callers using them.**
+///
+/// The two live together because they answer to the same key. A handle is what
+/// names a session across connections, so it is also the only thing two callers
+/// writing to one session have in common: a lock anywhere else (on the handler,
+/// on the store) either excludes too much or, as the per-handler gate did,
+/// excludes nothing at all.
 #[derive(Debug, Default)]
 pub struct SessionRegistry {
     held: RwLock<HashMap<String, Handle>>,
+    /// One mutex per key in flight. Keyed by the handle when a caller carries
+    /// one and by the bot's handle otherwise — whichever names the session this
+    /// call will resolve to, since that is what two racing callers must agree
+    /// on.
+    ///
+    /// **Entries are never removed.** A key is a handle or a bot id, both of
+    /// which are bounded by how many identities and runs this operator has, and
+    /// reaping one would mean proving nobody is about to take it — a lock whose
+    /// removal races is worse than a map that keeps a few dozen mutexes.
+    gates: std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl SessionRegistry {
     /// An empty registry — one per process.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// **The lock a caller takes before resolving and writing a session**, keyed
+    /// by whatever names that session for this call.
+    ///
+    /// Returns the mutex rather than a guard, because the caller has to hold it
+    /// across awaits and `.lock().await` on a returned guard would drop it at
+    /// the end of this expression.
+    ///
+    /// The span it protects is read-the-board → decide → write-the-card. Two
+    /// callers inside it at once both see no live run and both begin one, and
+    /// the loser's chronology is orphaned on a card nothing will ever resolve to
+    /// again — a session whose story cannot be told, by construction.
+    pub fn gate(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.gates
+            .lock()
+            .expect("the gate map is poisoned")
+            .entry(key.to_string())
+            .or_default()
+            .clone()
     }
 
     /// Mint a handle for a session of `bot`, on `card` if one already exists.

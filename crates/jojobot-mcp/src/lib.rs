@@ -537,10 +537,6 @@ pub struct Jojobot {
     /// Shared across clones through the `Arc`, because the router clones the
     /// handler per call and a binding held by value would vanish between verbs.
     bound: Arc<std::sync::RwLock<Option<Bound>>>,
-    /// **Serializes the read-await-write span over `bound`.** rmcp runs one task
-    /// per request, so two tool calls in flight on one connection would
-    /// otherwise both read "no session yet" and both materialize a card.
-    session_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// What a booted connection knows about itself.
@@ -621,7 +617,6 @@ impl Jojobot {
             sessions,
             registry,
             bound: Arc::new(std::sync::RwLock::new(None)),
-            session_gate: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -1012,7 +1007,8 @@ impl Jojobot {
         //
         // Taken here rather than in `sweep_and_find`, which the first-write
         // retry calls with the gate already held — the mutex is not reentrant.
-        let _serialized = self.session_gate.lock().await;
+        let gate = self.registry.gate(bot.as_str());
+        let _serialized = gate.lock().await;
         let Board {
             live,
             offerable,
@@ -1166,6 +1162,29 @@ impl Jojobot {
                      begins on your first journal entry or the first write you make, so a boot \
                      that does nothing leaves nothing behind.",
         })
+    }
+
+    /// **What this call serializes on** — whatever names the session it is about
+    /// to resolve.
+    ///
+    /// The three addresses in the order they are resolved, so two callers who
+    /// will land on one session take one key: an explicit session id, a named
+    /// bot, or the connection's own identity. A call that names none of them
+    /// resolves to nothing and is refused anyway; it keys on the empty string
+    /// rather than skipping the lock, so there is exactly one code path.
+    fn gate_key(&self, explicit: Option<&str>, named: Option<&EntityId>) -> String {
+        if let Some(id) = explicit.map(str::trim).filter(|i| !i.is_empty()) {
+            return id.to_string();
+        }
+        if let Some(bot) = named {
+            return bot.as_str().to_string();
+        }
+        self.bound
+            .read()
+            .expect("binding poisoned")
+            .as_ref()
+            .map(|b| b.bot.as_str().to_string())
+            .unwrap_or_default()
     }
 
     /// Bind this connection to an identity and, when there is one, a session.
@@ -1654,7 +1673,8 @@ impl Jojobot {
             );
             return;
         };
-        let _serialized = self.session_gate.lock().await;
+        let gate = self.registry.gate(&self.gate_key(None, None));
+        let _serialized = gate.lock().await;
         let session = match self
             .working_session_locked(&_serialized, None, None, None, Some(phrase))
             .await
@@ -2424,7 +2444,10 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         let focus = args.focus.as_deref();
         let named = named_bot(args.bot.as_deref())?;
-        let _serialized = self.session_gate.lock().await;
+        let gate = self
+            .registry
+            .gate(&self.gate_key(args.session.as_deref(), named.as_ref()));
+        let _serialized = gate.lock().await;
         let session = match self
             .working_session_locked(
                 &_serialized,
@@ -2484,7 +2507,11 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<AmendJournalArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let _serialized = self.session_gate.lock().await;
+        let named = named_bot(args.bot.as_deref())?;
+        let gate = self
+            .registry
+            .gate(&self.gate_key(args.session.as_deref(), named.as_ref()));
+        let _serialized = gate.lock().await;
         // No lazy begin: there is nothing to amend in a session that does not
         // exist yet, and creating one to hold a correction would be a card
         // minted by a verb whose whole job is to not add anything.
@@ -2494,7 +2521,6 @@ impl Jojobot {
         // different facts — and a connection whose boot could not read the board
         // retries the attach here rather than answering "no entries" about a
         // session it never looked for. Unknown is not false.
-        let named = named_bot(args.bot.as_deref())?;
         let session = match args
             .session
             .as_deref()
@@ -2584,7 +2610,10 @@ impl Jojobot {
         Parameters(args): Parameters<WrapSessionArgs>,
     ) -> Result<CallToolResult, McpError> {
         let named = named_bot(args.bot.as_deref())?;
-        let _serialized = self.session_gate.lock().await;
+        let gate = self
+            .registry
+            .gate(&self.gate_key(args.session.as_deref(), named.as_ref()));
+        let _serialized = gate.lock().await;
         let session = match self
             .working_session_locked(
                 &_serialized,
@@ -11323,6 +11352,93 @@ mod tests {
             "one beat for the class, whatever raced: {:?}",
             live[0].entries
         );
+    }
+
+    /// **Two writers on one identity, on two connections, must not fork it.**
+    ///
+    /// The gate that stops this was a mutex on the HANDLER, and the transport
+    /// builds one handler per connection — so it excluded nothing between calls,
+    /// which on a client with no session affinity means it excluded nothing at
+    /// all. Both callers read a board with no live run, both began one, and the
+    /// loser's chronology was orphaned on a card the next resolve would never
+    /// pick: a session whose story is never told, by construction.
+    ///
+    /// It was masked while addressing was by bot name and the board was
+    /// re-resolved every call. It stops being masked the moment a `sid` names
+    /// one specific session, which is the next round — so the lock moves now, to
+    /// the one structure that is already process-wide and already keyed by the
+    /// thing being serialized.
+    ///
+    /// **Both orders, because only one of them forks.** `tokio::join!` rotates
+    /// which future it polls first.
+    #[tokio::test]
+    async fn two_connections_writing_as_one_bot_do_not_fork_the_card() {
+        for first_wins in [true, false] {
+            let client = NoAffinity::new();
+            make_bot(&client.call(), "gamma", None).await;
+
+            // **A store that yields between its steps.** The in-memory fake
+            // never suspends inside the read-then-begin span, so two futures on
+            // one runtime finish it one after the other and the race cannot
+            // happen — a green test proving nothing. This is the same double the
+            // single-connection race test uses.
+            let racing_ports = |ports: &NoAffinity| {
+                Jojobot::new(
+                    ports.memory.clone(),
+                    Arc::new(SpySearch::default()),
+                    ports.mailboxes.clone(),
+                    Arc::new(Yielding(ports.sessions.clone())),
+                    ports.registry.clone(),
+                )
+            };
+            let write = |entry: &'static str| {
+                let jojobot = racing_ports(&client);
+                async move {
+                    jojobot
+                        .journal(Parameters(JournalArgs {
+                            entry: entry.into(),
+                            focus: None,
+                            session: None,
+                            bot: Some("gamma".into()),
+                        }))
+                        .await
+                        .expect("journal ok")
+                }
+            };
+
+            // Two connections, as two agents booted as one identity present —
+            // or as one assistant turn issuing parallel tool calls.
+            let (a, b) = (write("the first beat"), write("the second beat"));
+            if first_wins {
+                let (x, y) = tokio::join!(a, b);
+                json_of(&x);
+                json_of(&y);
+            } else {
+                let (y, x) = tokio::join!(b, a);
+                json_of(&x);
+                json_of(&y);
+            }
+
+            let live: Vec<Session> = client
+                .sessions
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok")
+                .into_iter()
+                .filter(|s| !s.state.is_terminal())
+                .collect();
+            assert_eq!(
+                live.len(),
+                1,
+                "first_wins={first_wins}: one card, not one per connection: {live:?}"
+            );
+            assert_eq!(
+                live[0].entries.len(),
+                2,
+                "first_wins={first_wins}: …and neither beat was orphaned: {:?}",
+                live[0].entries
+            );
+        }
     }
 
     /// **A boot is a bind-read → act → bind-write span too, and it was ungated.**
