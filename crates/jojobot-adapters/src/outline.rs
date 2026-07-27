@@ -91,12 +91,38 @@ pub struct OutlineConfig {
 // --- the store --------------------------------------------------------------
 
 /// The real Memory adapter, fronting an Outline collection it manages by name.
-/// Stateless: it holds an API client and the collection *name*, never an id or a
-/// fact.
+/// Stateless about CONTENT: it holds an API client and the collection *name*,
+/// never an id or a fact.
 #[derive(Clone)]
 pub struct OutlineStore {
     api: Arc<dyn OutlineApi>,
     collection: String,
+    /// **Every write here is a read-modify-write over a whole document**, and
+    /// two of them overlapping is a lost update: the second builds its body
+    /// from a page that no longer exists, and the read-back cannot catch it,
+    /// because the page does contain what this caller wrote.
+    ///
+    /// So writes to a document are linearized, and the key is the DOCUMENT —
+    /// not the bot, not the session, not the verb. None of those is what two
+    /// racing writers have in common. The gate at the MCP layer answers a
+    /// different question (one handle, one writer) and cannot answer this one;
+    /// conflating the two is how a lock ends up excluding everybody except the
+    /// pair it was built for.
+    ///
+    /// **One store-wide mutex, not a per-document map.** Write traffic here is
+    /// low and a keyed map is an optimization with its own way to be wrong —
+    /// every caller has to derive the same key, and a document is reached by
+    /// title, by marker and by id. Narrow it when the simple one is shown to
+    /// hurt.
+    ///
+    /// Shared across clones, so a cloned handle is the same writer rather than
+    /// a second one. Mirrors the lock the Vikunja adapter already holds.
+    ///
+    /// **What it does not cover:** writers this process cannot see — a person
+    /// editing in the browser, a second instance across a deploy overlap. That
+    /// is a document-revision check, a different protection, and it does not
+    /// substitute for this one in either direction.
+    lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl OutlineStore {
@@ -132,6 +158,7 @@ impl OutlineStore {
         Self {
             api,
             collection: collection.into(),
+            lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -337,6 +364,9 @@ fn pick_oldest<T>(
 #[async_trait]
 impl Memory for OutlineStore {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+        // Serialized against every other write to this collection's
+        // documents — see [`OutlineStore::lock`].
+        let _writing = self.lock.lock().await;
         validate_entity(
             &new.id,
             &new.name,
@@ -407,6 +437,9 @@ impl Memory for OutlineStore {
         handle: &EntityId,
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
+        // Serialized against every other write to this collection's
+        // documents — see [`OutlineStore::lock`].
+        let _writing = self.lock.lock().await;
         validate_subject(handle)?;
         let collection_id = self.resolve_collection().await?;
         let index = self.entity_index(&collection_id).await?;
@@ -457,6 +490,9 @@ impl Memory for OutlineStore {
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        // Serialized against every other write to this collection's
+        // documents — see [`OutlineStore::lock`].
+        let _writing = self.lock.lock().await;
         validate_subject(&fact.subject)?;
         validate_content(&fact.content)?;
         validate_details(fact.details.as_deref())?;
@@ -569,6 +605,9 @@ impl Memory for OutlineStore {
         address: &FactAddress,
         patch: FactPatch,
     ) -> Result<Guarded<Fact>, MemoryError> {
+        // Serialized against every other write to this collection's
+        // documents — see [`OutlineStore::lock`].
+        let _writing = self.lock.lock().await;
         validate_subject(&address.home)?;
         let collection_id = self.resolve_collection().await?;
 
@@ -630,6 +669,9 @@ impl Memory for OutlineStore {
     }
 
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+        // Serialized against every other write to this collection's
+        // documents — see [`OutlineStore::lock`].
+        let _writing = self.lock.lock().await;
         validate_subject(entity)?;
         validate_prose(prose)?;
         let collection_id = self.resolve_collection().await?;
@@ -677,6 +719,9 @@ impl Memory for OutlineStore {
         on: jiff::civil::Date,
         entry: &str,
     ) -> Result<String, MemoryError> {
+        // Serialized against every other write to this collection's
+        // documents — see [`OutlineStore::lock`].
+        let _writing = self.lock.lock().await;
         validate_prose(entry)?;
         let collection_id = self.resolve_collection().await?;
 
@@ -1207,6 +1252,185 @@ mod tests {
             doc.text.contains(TABLE_HEADER),
             "the narrow header was migrated on write"
         );
+    }
+
+    /// An [`OutlineApi`] that suspends on **both sides of every call**, which
+    /// is where a round trip suspends: the request is on the server before the
+    /// caller resumes, and the answer arrives later still.
+    ///
+    /// [`FakeOutline`] completes each call under a std lock and so is atomic
+    /// against anything — two writers cannot interleave inside it, which is
+    /// exactly the interleaving under test. A write here is a read, a gap where
+    /// another task runs, then a whole-body PUT built from the earlier
+    /// snapshot: the real shape, and the one that loses an update.
+    struct Yielding(Arc<FakeOutline>);
+
+    #[async_trait]
+    impl OutlineApi for Yielding {
+        async fn list_collections(
+            &self,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<CollectionRec>, MemoryError> {
+            tokio::task::yield_now().await;
+            let out = self.0.list_collections(offset, limit).await;
+            tokio::task::yield_now().await;
+            out
+        }
+        async fn create_collection(
+            &self,
+            name: &str,
+            description: &str,
+        ) -> Result<CollectionRec, MemoryError> {
+            tokio::task::yield_now().await;
+            let out = self.0.create_collection(name, description).await;
+            tokio::task::yield_now().await;
+            out
+        }
+        async fn list_documents(
+            &self,
+            collection_id: &str,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<DocRec>, MemoryError> {
+            tokio::task::yield_now().await;
+            let out = self.0.list_documents(collection_id, offset, limit).await;
+            tokio::task::yield_now().await;
+            out
+        }
+        async fn create_document(
+            &self,
+            collection_id: &str,
+            title: &str,
+            text: &str,
+        ) -> Result<DocRec, MemoryError> {
+            tokio::task::yield_now().await;
+            let out = self.0.create_document(collection_id, title, text).await;
+            tokio::task::yield_now().await;
+            out
+        }
+        async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            tokio::task::yield_now().await;
+            let out = self.0.update_document(id, text).await;
+            tokio::task::yield_now().await;
+            out
+        }
+    }
+
+    /// **Two writes touching one document are linearized, whoever started
+    /// them.** Every write here is a read-modify-write over the whole document:
+    /// read the page, build a new body from what was read, PUT the lot back,
+    /// read it back. Two of them overlapping and the second's body is built
+    /// from a page that no longer exists — so the first write is gone, silently,
+    /// and the read-back that would have caught it passes because the page does
+    /// contain what this caller wrote.
+    ///
+    /// **The lock is keyed on the RESOURCE, not on who is writing.** A bot, a
+    /// session, a verb — none of them is what two racing writers have in
+    /// common. The document is. The gate at the MCP layer is a different job
+    /// (one handle, one writer) and cannot do this one.
+    ///
+    /// Three shapes, because they lose differently: two facts onto one entity's
+    /// page, a fact racing a prose rewrite of the same page, and two stories
+    /// racing onto the Journal — the last being the case the review proved,
+    /// where the loser's `restore()` puts back a snapshot that erases an entry
+    /// the winner had already committed and verified.
+    #[tokio::test]
+    async fn two_writes_to_one_document_do_not_lose_an_update() {
+        let racing = || {
+            let fake = FakeOutline::new();
+            (
+                fake.clone(),
+                OutlineStore::from_api(Arc::new(Yielding(fake)), COLL),
+            )
+        };
+
+        // ── two facts onto one page ──────────────────────────────────────
+        let (_, store) = racing();
+        ensure(&store, &EntityId::person("alpha")).await;
+        let (first, second) = tokio::join!(
+            store.capture(NewFact::about(
+                EntityId::person("alpha"),
+                "plays go",
+                date(2026, 7, 27)
+            )),
+            store.capture(NewFact::about(
+                EntityId::person("alpha"),
+                "keeps bees",
+                date(2026, 7, 27)
+            )),
+        );
+        first.expect("capture ok").written().expect("not blocked");
+        second.expect("capture ok").written().expect("not blocked");
+        let facts = store
+            .recall(&EntityId::person("alpha"))
+            .await
+            .expect("recall ok");
+        let claims: Vec<&str> = facts.iter().map(|f| f.content.as_str()).collect();
+        for expected in ["plays go", "keeps bees"] {
+            assert!(
+                claims.contains(&expected),
+                "a fact was lost to a racing write on the same page: {claims:?}"
+            );
+        }
+
+        // ── a fact racing a prose rewrite of the same page ───────────────
+        let (_, store) = racing();
+        ensure(&store, &EntityId::person("alpha")).await;
+        let alpha = EntityId::person("alpha");
+        let (fact, prose) = tokio::join!(
+            store.capture(NewFact::about(alpha.clone(), "plays go", date(2026, 7, 27))),
+            store.set_prose(&alpha, "a paragraph somebody wrote"),
+        );
+        fact.expect("capture ok").written().expect("not blocked");
+        prose.expect("set_prose ok");
+        let scanned = store
+            .scan_entity(&EntityId::person("alpha"))
+            .await
+            .expect("scan ok")
+            .expect("a doc");
+        assert!(
+            scanned.prose.contains("a paragraph somebody wrote"),
+            "the prose was lost to a racing capture: {:?}",
+            scanned.prose
+        );
+        assert!(
+            scanned.facts.iter().any(|f| f.content == "plays go"),
+            "the fact was lost to a racing prose write: {:?}",
+            scanned.facts
+        );
+
+        // ── two stories racing onto the Journal ──────────────────────────
+        let (_, store) = racing();
+        store
+            .append_journal(date(2026, 7, 26), "what some earlier run did")
+            .await
+            .expect("seed ok");
+        let (mine, theirs) = tokio::join!(
+            store.append_journal(date(2026, 7, 27), "gamma finished the slice"),
+            store.append_journal(date(2026, 7, 27), "delta answered the mail"),
+        );
+        mine.expect("a wrap must not fail over somebody else's wrap");
+        theirs.expect("a wrap must not fail over somebody else's wrap");
+        let page = store
+            .scan()
+            .await
+            .expect("scan ok")
+            .into_iter()
+            .find(|d| d.title.trim() == JOURNAL_TITLE)
+            .expect("the Journal")
+            .prose;
+        for published in [
+            "what some earlier run did",
+            "gamma finished the slice",
+            "delta answered the mail",
+        ] {
+            assert!(
+                page.contains(published),
+                "the Journal lost {published:?}, which a wrapped session can never tell again: \
+                 {page:?}"
+            );
+        }
     }
 
     /// A write whose read-back mismatches restores the page it found. The
