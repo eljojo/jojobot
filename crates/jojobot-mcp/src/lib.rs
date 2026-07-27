@@ -851,14 +851,22 @@ impl Jojobot {
     /// Whether **this session** has already told its story to the Journal — the
     /// other half of making a retry finish rather than repeat.
     ///
-    /// **Scoped by session, matched on the mark, never on the words.** The
-    /// Journal is one page holding every entry of every session there has ever
-    /// been, so asking whether the story appears anywhere on it answers yes for
-    /// work a different session did last month — and the wrap then reports
+    /// **Scoped by session, and the mark is a LINE rather than a substring.**
+    /// The Journal is one page holding every entry of every session there has
+    /// ever been, so asking whether the story appears anywhere on it answers yes
+    /// for work a different session did last month — and the wrap then reports
     /// success having written nothing, which is a dropped story: the very
     /// failure the guard trades a duplicate to avoid. A session tells its story
     /// at most once, because wrapping closes it for good, so its own mark is the
     /// whole question.
+    ///
+    /// Asking it of a whole line is what keeps the answer about this session:
+    /// the mark is written on its own line, and a page can perfectly well carry
+    /// the same characters inside somebody else's sentence — an entry quoting a
+    /// mark, the operator's own handwriting — which a substring match reads as
+    /// this session's entry. A line that has been joined to its story by hand
+    /// stops matching and the retry writes a duplicate, which is the direction
+    /// this whole guard is willing to fail in.
     ///
     /// Reads the Journal through the ordinary scan, because that is the only
     /// read there is: the Journal is nobody's entity, so there is no handle to
@@ -866,13 +874,12 @@ impl Jojobot {
     /// the entry — a duplicate line in the Journal is a cost worth paying to
     /// avoid dropping the story of a session that is about to close for good.
     async fn journal_holds(&self, mark: &str) -> bool {
-        self.memory
-            .scan()
-            .await
-            .is_ok_and(|docs| {
-                docs.iter()
-                    .any(|doc| doc.title.trim() == JOURNAL_TITLE && doc.prose.contains(mark))
+        self.memory.scan().await.is_ok_and(|docs| {
+            docs.iter().any(|doc| {
+                doc.title.trim() == JOURNAL_TITLE
+                    && doc.prose.lines().any(|line| line.trim() == mark)
             })
+        })
     }
 
     /// Sweep this bot's stale sessions and hand back the live one, if any —
@@ -1711,11 +1718,16 @@ impl Jojobot {
     /// End the session, telling its story into the Journal.
     #[tool(
         description = "End your session and tell its story. Three things happen together: the \
-                       story is appended to your chronology as its final entry, it is written \
-                       through to the operator's Journal as one dated entry, and the session \
-                       moves to `wrapped` — terminal both ways, so nothing appends to it or \
-                       reopens it afterwards, and a later journal/amend_journal/wrap_session on \
-                       that id comes back status: blocked. Write the story for somebody with \
+                       story is recorded in your chronology, it is written through to the \
+                       operator's Journal as one dated entry carrying your session id on its own \
+                       line (`[session <id>]`, so a person reading that page can see which run \
+                       wrote it), and the session moves to `wrapped` — terminal both ways, so \
+                       nothing appends to it or reopens it afterwards, and a later \
+                       journal/amend_journal/wrap_session on that id comes back status: blocked. \
+                       A wrap you have to retry finishes what the first attempt started rather \
+                       than repeating it, so the story is told once in each place — which means \
+                       it is your chronology's newest entry only when nothing was written \
+                       between the attempts. Write the story for somebody with \
                        none of your context: what this run was for, what actually happened, what \
                        is left. A session that stops without wrapping is not lost — the next \
                        boot of the same identity sweeps it to `abandoned` after a day, and its \
@@ -2008,9 +2020,13 @@ fn display_line(text: &str) -> String {
 /// The mark a session's Journal entry carries, so a wrap that has to be
 /// retried can find **its own** entry on a page holding everybody's.
 ///
-/// **Delimited, and the id is the whole of it.** A bare id would match a longer
-/// one that starts with the same digits (`session 42` inside `session 4212`),
-/// and a match on the story's words is not a match on this session at all.
+/// Written on its own line, which is how [`Jojobot::journal_holds`] reads it:
+/// matching the whole line is what tells `[session 1]` from `[session 12]` and
+/// what keeps the same characters inside somebody's sentence from counting.
+/// **The brackets are for the person reading the page** — they mark the line as
+/// jojobot's rather than part of the story — and they are belt to the line's
+/// braces, not the thing holding the ids apart.
+///
 /// Session ids are minted by the one store, so the id alone says which run of
 /// which bot without naming the bot twice.
 fn journal_mark(session: &SessionId) -> String {
@@ -6393,6 +6409,98 @@ mod tests {
             journal.matches(story).count(),
             2,
             "both sessions told their story, so both entries belong on the page: {journal}"
+        );
+    }
+
+    /// **The mark is a LINE of the page, never a substring of it.** The guard
+    /// answers one question — has THIS session told its story — and a page that
+    /// happens to carry the literal mark inside somebody else's sentence
+    /// answered yes to it: an entry that quotes one, the operator's own
+    /// handwriting. The wrap then wrote nothing and reported `wrapped`, which is
+    /// the silent drop the scoping exists to kill, arriving through the scoping.
+    #[tokio::test]
+    async fn a_mark_inside_foreign_prose_is_not_this_session_s_entry() {
+        let store = Arc::new(InMemorySessions::new());
+        let memory = Arc::new(InMemoryMemory::new());
+        let jojobot = connection(memory.clone(), store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        boot(&jojobot, "gamma").await;
+        let started = journal_entry(&jojobot, "read the hand-off").await;
+        let session = started["session"].as_str().expect("a session id").to_string();
+
+        // An entry already on the page that mentions this session's mark in
+        // passing — its own line, so nothing but a substring match sees it.
+        memory
+            .append_journal(
+                jiff::civil::date(2026, 7, 26),
+                &format!("picked up where [session {session}] left off, and stopped there"),
+            )
+            .await
+            .expect("append_journal ok");
+
+        let story = "built the thing, then told the story";
+        jojobot
+            .wrap_session(Parameters(WrapSessionArgs {
+                story: story.into(),
+                session: None,
+            }))
+            .await
+            .expect("wrap ok");
+
+        let journal = journal_prose(&memory).await;
+        assert!(
+            journal.contains(story),
+            "this session had told nobody anything, so its story belongs on the page: {journal}"
+        );
+    }
+
+    /// **Two sessions whose ids share a prefix are two sessions.** `[session 1]`
+    /// and `[session 12]` are one bracket apart, and the shorter one wrapping
+    /// second must not read the longer one's entry as its own.
+    #[tokio::test]
+    async fn a_session_whose_id_prefixes_another_still_tells_its_story() {
+        let store = Arc::new(InMemorySessions::new());
+        let memory = Arc::new(InMemoryMemory::new());
+        let jojobot = connection(memory.clone(), store.clone());
+
+        // Ids are minted in sequence, so twelve of them yield a pair where one
+        // is a prefix of the other.
+        let mut ids = Vec::new();
+        for n in 0..12 {
+            ids.push(
+                store
+                    .begin(NewSession {
+                        bot: EntityId("bot:gamma".into()),
+                        focus: format!("run {n}"),
+                        started_at: jiff::Timestamp::now(),
+                    })
+                    .await
+                    .expect("begin ok")
+                    .id,
+            );
+        }
+        assert_eq!(
+            (ids[0].as_str(), ids[11].as_str()),
+            ("1", "12"),
+            "the fixture needs a prefix pair: {ids:?}"
+        );
+
+        let wrap = async |session: &SessionId, story: &str| {
+            jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: story.into(),
+                    session: Some(session.to_string()),
+                }))
+                .await
+                .expect("wrap ok");
+        };
+        wrap(&ids[11], "the longer id's story").await;
+        wrap(&ids[0], "the shorter id's story").await;
+
+        let journal = journal_prose(&memory).await;
+        assert!(
+            journal.contains("the longer id's story") && journal.contains("the shorter id's story"),
+            "both sessions told their own story: {journal}"
         );
     }
 
