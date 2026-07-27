@@ -66,6 +66,13 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     let search = state.search.clone();
     let mailboxes = state.mailboxes.clone();
     let sessions = state.sessions.clone();
+    // **Built once, outside the factory** — every handler this process makes
+    // shares it. A session handle is an address across connections, so a
+    // registry built per connect would forget each one as it handed it out.
+    // The other side of that: it lives in RAM, so a restart is the end of every
+    // handle it ever issued, which the door says out loud rather than papering
+    // over with a new session.
+    let registry = Arc::new(jojobot_mcp::sid::SessionRegistry::new());
     let mcp = StreamableHttpService::new(
         // **One handler per MCP session, and that is what makes the connection
         // binding a connection binding**: the factory runs per connect, so a
@@ -76,6 +83,7 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
                 search.clone(),
                 mailboxes.clone(),
                 sessions.clone(),
+                registry.clone(),
             ))
         },
         LocalSessionManager::default().into(),

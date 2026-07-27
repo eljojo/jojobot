@@ -87,7 +87,7 @@ An **identity** is an entity of kind `bot`: a handle like `bot:gamma`, a **chart
 
 A bot is a **role**; a **session is one mortal run of it** — the unit of work, not the unit of connection. It outlives a disconnect and a device hop, because what makes two connections the same session is the identity that booted them.
 
-**Booting an identity starts or resumes its session; there is no separate verb.** `boot_bot` sweeps that bot's stale sessions to `abandoned` (a day without a beat), resumes the live one if there is one — read its chronology before you start, somebody was part way through something — and otherwise begins a fresh one **lazily**: no card exists until your first write, so a boot that does nothing leaves nothing behind.
+**Booting an identity starts or resumes its session; there is no separate verb.** `start_here` with your bot name sweeps that bot's stale sessions to `abandoned` (a day without a beat). If a resumable session remains you get the choice — what each one was working on — and NO sid until you answer: choose resume and you inherit its chronology, choose new and a fresh sid is minted beside it, closing nothing. With nothing to resume the sid comes back straight away. Either way the card itself is written **lazily**, on your first real write, so a boot that does nothing leaves nothing behind.
 
 A session has two halves that answer different questions. Its **focus** is what it is working on NOW, one line, rewritten in place. Its **chronology** is what happened: append-only, oldest first, with only the newest entry amendable.
 
@@ -101,7 +101,7 @@ jojobot also writes **its own beats** into your chronology: one per verb class y
 
 **WRAP when the work is over.** Your run finished what it was for; the story is told and the card closes clean. Nothing appends to it afterwards.
 
-**CLEAR AND RESUME when the work continues on another agent.** You are stopping, the job is not done, and somebody — a later run of you, on another device, after a context reset — picks it up. Then **journal a resume note and do NOT wrap**: the next boot of this identity attaches to the session you left open and reads your chronology. Wrapping here would tell the story of something that has not happened yet and force the next run to start from nothing.
+**CLEAR AND RESUME when the work continues on another agent.** You are stopping, the job is not done, and somebody — a later run of you, on another device, after a context reset — picks it up. Then **journal a resume note and do NOT wrap**: the next boot of this identity is offered this session by what it says it is working on, and whoever resumes it reads your chronology. Wrapping here would tell the story of something that has not happened yet and force the next run to start from nothing.
 
 The resume note is **the one sanctioned exception to journal leanness**. Everywhere else a beat is high-level; here, be dense and specific — where you got to, what you already ruled out, the exact next step, the thing that will bite whoever picks this up. Its only reader is somebody with your job and none of your context.
 
@@ -331,6 +331,12 @@ pub struct OrientArgs {
     /// the snapshot, your identity, your session.
     #[serde(default)]
     pub brief: Option<bool>,
+    /// Your answer to the resume-or-new choice a boot hands back when this bot
+    /// has a session worth picking up: the `sid` of the one you are resuming,
+    /// exactly as the offer spelled it, or `new` for a fresh session. Leave it
+    /// off on a first boot — there is nothing to answer yet.
+    #[serde(default)]
+    pub resume: Option<String>,
 }
 
 /// Arguments to `set_charter`.
@@ -515,6 +521,13 @@ pub struct Jojobot {
     mailboxes: Arc<dyn Mailboxes>,
     /// The Sessions port — a third context, on its own board.
     sessions: Arc<dyn Sessions>,
+    /// **Every session handle this PROCESS has issued** — see [`sid`].
+    ///
+    /// Shared across connections rather than born with each one, which is what
+    /// makes a `sid` an address: the transport builds a handler per MCP session
+    /// and most clients open a fresh one per tool call, so a registry living
+    /// here alone would forget each handle the moment it handed it out.
+    registry: Arc<sid::SessionRegistry>,
     /// **Which identity this connection is running as, and which session.**
     ///
     /// In-process and per connection: the transport builds one handler per MCP
@@ -535,6 +548,16 @@ pub struct Jojobot {
 struct Bound {
     /// The identity this connection booted as.
     bot: EntityId,
+    /// The handle the door gave this connection, when the door gave it one.
+    ///
+    /// **What joins a handle to a card.** The card materializes on the first
+    /// write, and this is how the write knows which handle to record it
+    /// against. It is `None` on a connection whose caller has not been handed
+    /// an address yet — an unanswered offer — and on one that never booted
+    /// through the door at all, which is every call of a client with no session
+    /// affinity. Those callers' handles stay card-less until the `sid` rides
+    /// the write verbs themselves.
+    sid: Option<sid::Sid>,
     /// The session it is working in — `None` until the card materializes on the
     /// first write. **A boot that never works leaves no card**, so a session
     /// with nothing to say is a session that never existed.
@@ -571,6 +594,7 @@ impl Jojobot {
         search: Arc<dyn Search>,
         mailboxes: Arc<dyn Mailboxes>,
         sessions: Arc<dyn Sessions>,
+        registry: Arc<sid::SessionRegistry>,
     ) -> Self {
         Self {
             tool_router: Self::tool_router(),
@@ -578,6 +602,7 @@ impl Jojobot {
             search,
             mailboxes,
             sessions,
+            registry,
             bound: Arc::new(std::sync::RwLock::new(None)),
             session_gate: Arc::new(tokio::sync::Mutex::new(())),
         }
@@ -632,9 +657,10 @@ impl Jojobot {
                        one of them, and a mailbox a bot claims but nobody has opened is reported \
                        missing rather than created. BOOTING STARTS OR RESUMES THAT BOT'S SESSION \
                        — there is no separate start verb. It first sweeps that bot's sessions \
-                       that have gone a day without a beat to `abandoned`. Name no bot at all and \
-                       this is an orientation preview: the world and the snapshot, no identity \
-                       and no session. Pass `bot` — the name you booted as — on every \
+                       that have gone a day without a beat to `abandoned` — which is the one \
+                       thing a boot writes. Name no bot at all and this is an orientation \
+                       preview: read-only, the world and the snapshot, no identity and no \
+                       session. Pass `bot` — the name you booted as — on every \
                        journal/amend_journal/wrap_session call too: most clients open a fresh \
                        connection per tool call, so the identity from your last call is usually \
                        already gone."
@@ -644,7 +670,21 @@ impl Jojobot {
         Parameters(args): Parameters<OrientArgs>,
     ) -> Result<CallToolResult, McpError> {
         let bot = named_bot(args.bot.as_deref())?;
-        self.orient(bot.as_ref(), args.brief.unwrap_or(false)).await
+        let resume = args.resume.as_deref().map(str::trim).filter(|r| !r.is_empty());
+        // **An answer with nobody to answer for.** `resume` responds to an
+        // offer only a named boot makes, so carrying one without a bot is a
+        // malformed call rather than an absence — there is no session it could
+        // be about, and honouring it would mean guessing whose it was.
+        if resume.is_some() && bot.is_none() {
+            return Err(McpError::invalid_params(
+                "resume answers the choice a boot hands back, so it needs the bot you are booting \
+                 as — pass `bot` too, or drop `resume` for an anonymous orientation"
+                    .to_string(),
+                None,
+            ));
+        }
+        self.orient(bot.as_ref(), args.brief.unwrap_or(false), resume)
+            .await
     }
 
     /// Write a bot's charter — the prose layer of its own page.
@@ -677,7 +717,12 @@ impl Jojobot {
     /// the point.** Naming a bot adds the identity half to an answer that is
     /// otherwise the same text and the same snapshot; it does not open a second
     /// way in.
-    async fn orient(&self, bot: Option<&EntityId>, brief: bool) -> Result<CallToolResult, McpError> {
+    async fn orient(
+        &self,
+        bot: Option<&EntityId>,
+        brief: bool,
+        resume: Option<&str>,
+    ) -> Result<CallToolResult, McpError> {
         // **The entity index is read ONCE for the whole answer.** Three parts of
         // a boot need it — the counts by kind, which boxes the caller drains,
         // and the identity itself — and each used to fetch it, which is three
@@ -776,7 +821,13 @@ impl Jojobot {
         // belonging to nobody.
         let session = match bot {
             None => serde_json::Value::Null,
-            Some(bot) => self.attach(bot).await,
+            Some(bot) => match self.attach(bot, resume).await {
+                Ok(session) => session,
+                // A handle that addresses nothing stops the whole answer.
+                // Handing back orientation around it would bury the one thing
+                // the caller has to act on.
+                Err(refused) => return Ok(refused),
+            },
         };
         json_result(&serde_json::json!({
             "orientation": if brief { serde_json::Value::Null } else { ORIENTATION.into() },
@@ -890,29 +941,45 @@ impl Jojobot {
 
     // ── sessions ────────────────────────────────────────────────────────────
 
-    /// Start or resume this bot's session, and bind the connection to it.
+    /// Start or resume this bot's session, and hand back the handle for it.
     ///
     /// **Booting an identity IS starting its session** — there is no separate
     /// verb, because there is no moment between "I am gamma" and "gamma is
-    /// working" for one to sit in. Three things happen, in this order:
+    /// working" for one to sit in. The sweep runs first either way: any `active`
+    /// session of THIS bot whose last beat is older than [`ABANDONED_AFTER`] is
+    /// closed as `abandoned` — lazily, at boot, because there is no background
+    /// runtime until M8 and a session left open forever would make "resume where
+    /// you left off" resume something from last month.
     ///
-    /// 1. **the sweep.** Any `active` session of THIS bot whose last beat is
-    ///    older than [`ABANDONED_AFTER`] is closed as `abandoned` — lazily, at
-    ///    boot, because there is no background runtime until M8 and a session
-    ///    left open forever would make "resume where you left off" resume
-    ///    something from last month.
-    /// 2. **attach**, if a live session survives the sweep. That is what makes a
-    ///    reconnect or a device hop resume work in flight rather than fork it.
-    /// 3. **bind without a card otherwise.** A fresh session begins lazily: no
-    ///    card until the first write. A boot that never works leaves no trace,
-    ///    which is what keeps "creation is an intentional act" true for a verb
-    ///    whose whole job is to start something.
+    /// **Then the boot has two branches, and which one you get is not a
+    /// preference.**
     ///
-    /// Returns the session block for the boot payload, or the reason there
-    /// isn't one. A session store that is down degrades exactly as the mailbox
-    /// world does: the boot still lands, and the block says jojobot does not
-    /// know rather than guessing.
-    async fn attach(&self, bot: &EntityId) -> serde_json::Value {
+    /// * **Nothing survives the sweep** → the handle comes back immediately.
+    ///   There is nothing to decide, and making the caller ask twice for an
+    ///   address would invent the moment this verb exists to deny.
+    /// * **Something does** → the CHOICE comes back and no handle: every
+    ///   resumable run, each named by what it was working on, because that is
+    ///   the only thing that tells two runs of one identity apart. The handle
+    ///   arrives when the caller answers — `resume` with one of them, or `new`.
+    ///   Attaching silently was the old behaviour and it decided for the caller;
+    ///   worse, it decided for the caller who had deliberately left the run open
+    ///   for somebody else.
+    ///
+    /// Either way the **card stays lazy**: no card until the first write, so a
+    /// boot that never works leaves no trace — which is what keeps "creation is
+    /// an intentional act" true for a verb whose whole job is to start
+    /// something. And **nothing here auto-wraps**: choosing `new` beside a
+    /// running session leaves that session running.
+    ///
+    /// `Err` is a handle that addresses nothing — see [`handle_declined`].
+    /// A session store that is down degrades exactly as the mailbox world does:
+    /// the boot still lands, and the block says jojobot does not know rather
+    /// than guessing.
+    async fn attach(
+        &self,
+        bot: &EntityId,
+        resume: Option<&str>,
+    ) -> Result<serde_json::Value, CallToolResult> {
         // **A boot is a bind-read → act → bind-write span like the others, so it
         // takes the same gate.** Without it a boot racing a first write on this
         // connection read the board before the card existed and wrote its
@@ -926,62 +993,244 @@ impl Jojobot {
         // retry calls with the gate already held — the mutex is not reentrant.
         let _serialized = self.session_gate.lock().await;
         let (live, swept) = match self.sweep_and_find(bot).await {
-            Ok(found) => {
-                // A boot IS the act of becoming this identity, so it binds
-                // whatever the connection held before.
-                *self.bound.write().expect("binding poisoned") = Some(Bound {
-                    bot: bot.clone(),
-                    session: found.0.as_ref().map(|s| s.id.clone()),
-                    attached: true,
-                    beats: found.0.as_ref().map(beats_of).unwrap_or_default(),
-                });
-                found
-            }
+            Ok(found) => found,
             Err(e) => {
                 tracing::warn!(error = %e, bot = %bot, "the session world is not reachable");
                 // Bound, but NOT attached: jojobot has not read the board, so it
                 // does not know whether this bot has a session in flight. The
                 // first write retries the attach rather than beginning one, or a
                 // boot during an outage would fork a session that is running.
+                //
+                // **And no handle is minted**, for the same reason: a handle
+                // handed out here would address either a fresh session or one
+                // already running, and jojobot cannot say which.
                 *self.bound.write().expect("binding poisoned") = Some(Bound {
                     bot: bot.clone(),
+                    sid: None,
                     session: None,
                     attached: false,
                     beats: Default::default(),
                 });
-                return serde_json::json!({
+                return Ok(serde_json::json!({
                     "available": false,
                     "note": "the session world is not reachable right now, so jojobot cannot say \
                              whether you have a session in flight, and has not started one — a \
                              fresh session here could fork one that is already running. It will \
                              try again on your first write. Everything else here is unaffected; \
                              the session verbs will say why.",
-                });
+                }));
             }
         };
 
-        let mut block = match &live {
-            Some(session) => serde_json::json!({
-                "available": true,
-                "resumed": true,
-                "session": session_json(session),
-                "note": "you are resuming a session already in flight — its chronology is above. \
-                         Read it before you start: somebody (you, before a disconnect) was part \
-                         way through something.",
-            }),
-            None => serde_json::json!({
-                "available": true,
-                "resumed": false,
-                "session": serde_json::Value::Null,
-                "note": "a fresh session. Nothing is written yet — the record begins on your \
-                         first journal entry or the first write you make, so a boot that does \
-                         nothing leaves nothing behind.",
-            }),
+        let mut block = match resume {
+            // ── the caller answered the offer ───────────────────────────────
+            Some(answer) if answer.eq_ignore_ascii_case(sid::NEW) => {
+                let handle = self.mint_or_say_why(bot, None)?;
+                // Bound to the identity with no session: the first write is
+                // what begins the card, exactly as a first boot's is. **The run
+                // that was offered is left running** — a new session never
+                // closes an old one.
+                self.bind(bot, Some(handle.clone()), None);
+                self.fresh_block(handle)
+            }
+            Some(answer) => {
+                let (handle, session) = self.resumable(bot, answer, &live)?;
+                match session {
+                    Some(session) => {
+                        self.bind(bot, Some(handle.clone()), Some(&session));
+                        let block = serde_json::json!({
+                            "available": true,
+                            "sid": handle.as_str(),
+                            "resumed": true,
+                            "session": session_json(&session),
+                            "note": "you are resuming a session already in flight — its \
+                                     chronology is above. Read it before you start: somebody \
+                                     (you, before a disconnect) was part way through something.",
+                        });
+                        block
+                    }
+                    // A handle whose session was never written: theirs, still
+                    // good, and still nothing behind it.
+                    None => {
+                        self.bind(bot, Some(handle.clone()), None);
+                        self.fresh_block(handle)
+                    }
+                }
+            }
+            // ── a first boot: the two branches ──────────────────────────────
+            None if live.is_empty() => {
+                let handle = self.mint_or_say_why(bot, None)?;
+                self.bind(bot, Some(handle.clone()), None);
+                self.fresh_block(handle)
+            }
+            None => {
+                let mut choices = Vec::with_capacity(live.len());
+                for session in &live {
+                    let handle = self.handle_for(bot, &session.id)?;
+                    choices.push(serde_json::json!({
+                        "sid": handle.as_str(),
+                        // **What it was working on is the whole point of the
+                        // offer.** A bot may have several runs at once, and a
+                        // list of opaque handles is not a choice anybody can
+                        // make.
+                        "working_on": session.focus,
+                        "started_at": session.started_at.to_string(),
+                        "last_beat": session.last_beat().to_string(),
+                        "entry_count": session.entries.len(),
+                    }));
+                }
+                // **Bound as it has always been, to the newest run.** This
+                // round moves what the DOOR hands back; the write path still
+                // resolves an unaddressed write to the live session, and
+                // binding to nothing here would make the next bare write fork a
+                // second card beside the one being offered.
+                self.bind(bot, None, live.first());
+                serde_json::json!({
+                    "available": true,
+                    // **No handle until the choice is answered.** Its absence
+                    // is the question: there is more than one thing this boot
+                    // could mean, and jojobot is not picking.
+                    "sid": serde_json::Value::Null,
+                    "resumed": false,
+                    "session": serde_json::Value::Null,
+                    "choices": choices,
+                    "how_to_proceed": "This identity has work already in flight. Call start_here \
+                                       again with resume: the sid of the run you are picking up — \
+                                       read what it was working on above — or resume: \"new\" for \
+                                       a fresh session. Nothing was closed and nothing was \
+                                       written; choosing new leaves the runs above running.",
+                })
+            }
         };
         if let Some(obj) = block.as_object_mut() {
             obj.insert("swept".into(), swept.into());
         }
-        block
+        Ok(block)
+    }
+
+    /// The block for a session with no card behind it yet — a first boot, or
+    /// `new`, or a handle nothing has been written under.
+    fn fresh_block(&self, handle: sid::Sid) -> serde_json::Value {
+        serde_json::json!({
+            "available": true,
+            "sid": handle.as_str(),
+            "resumed": false,
+            "session": serde_json::Value::Null,
+            "note": "a fresh session, and this is its sid. Nothing is written yet — the record \
+                     begins on your first journal entry or the first write you make, so a boot \
+                     that does nothing leaves nothing behind.",
+        })
+    }
+
+    /// Bind this connection to an identity and, when there is one, a session.
+    ///
+    /// `handle` is `None` in the offer branch: the connection knows whose
+    /// session it would resolve to, and the caller has not been given an
+    /// address for it yet.
+    fn bind(&self, bot: &EntityId, handle: Option<sid::Sid>, session: Option<&Session>) {
+        *self.bound.write().expect("binding poisoned") = Some(Bound {
+            bot: bot.clone(),
+            sid: handle,
+            session: session.map(|s| s.id.clone()),
+            attached: true,
+            beats: session.map(beats_of).unwrap_or_default(),
+        });
+    }
+
+    /// Mint a handle, or turn the one failure into an answer rather than a 500.
+    fn mint_or_say_why(
+        &self,
+        bot: &EntityId,
+        card: Option<SessionId>,
+    ) -> Result<sid::Sid, CallToolResult> {
+        self.registry.mint(bot, card).map_err(|_| {
+            handle_declined(
+                "",
+                "No session was started. jojobot could not mint a free session handle, which \
+                 means this process is holding a great many of them. Nothing is wrong with your \
+                 call and nothing on the board was touched — a restart clears the handles it is \
+                 holding."
+                    .to_string(),
+            )
+        })
+    }
+
+    /// The handle for a card that exists — the one it already has, or a new one.
+    fn handle_for(&self, bot: &EntityId, card: &SessionId) -> Result<sid::Sid, CallToolResult> {
+        match self.registry.addressing(card) {
+            Some(handle) => Ok(handle),
+            None => self.mint_or_say_why(bot, Some(card.clone())),
+        }
+    }
+
+    /// Read an answer to the offer: the handle it names, and the live session it
+    /// addresses if it addresses one.
+    ///
+    /// **Four refusals, and none of them is a correction.** A handle jojobot
+    /// could not have minted, one it is not holding, one that belongs to another
+    /// identity, and one whose session is closed or gone from the board. Each is
+    /// blocked in its own words, because a caller's next move differs in every
+    /// case — and none is repaired into a nearby handle, which would be jojobot
+    /// guessing which session somebody meant.
+    fn resumable(
+        &self,
+        bot: &EntityId,
+        answer: &str,
+        live: &[Session],
+    ) -> Result<(sid::Sid, Option<Session>), CallToolResult> {
+        if !sid::is_readable(answer) {
+            return Err(handle_declined(
+                answer,
+                format!(
+                    "No session was started. '{answer}' is not a handle jojobot mints — those are \
+                     {} characters of 0-9 and a-z, with i, l, o and u left out because they read \
+                     as one another. jojobot will not correct one, because correcting it means \
+                     guessing which session you meant. Call start_here with your bot name and no \
+                     resume to see what there is.",
+                    sid::SID_LEN,
+                ),
+            ));
+        }
+        let Some(held) = self.registry.lookup(answer) else {
+            return Err(handle_declined(
+                answer,
+                format!(
+                    "No session was started. That session is gone: '{answer}' is not a handle \
+                     this jojobot is holding. Handles live in memory, so a restart ends every one \
+                     of them — the work on the board is untouched and still readable. Call \
+                     start_here with your bot name again and take the offer it makes."
+                ),
+            ));
+        };
+        if held.bot != *bot {
+            return Err(handle_declined(
+                answer,
+                format!(
+                    "No session was started. The handle '{answer}' belongs to {}, and a session \
+                     is bound to its identity at boot and never switches. Boot as {} to pick it \
+                     up, or call start_here as '{bot}' with no resume to see what is yours.",
+                    held.bot, held.bot,
+                ),
+            ));
+        }
+        let handle = sid::Sid(answer.to_string());
+        let Some(card) = held.card else {
+            // Minted, never written under. Still theirs, still empty.
+            return Ok((handle, None));
+        };
+        match live.iter().find(|s| s.id == card) {
+            Some(session) => Ok((handle, Some(session.clone()))),
+            None => Err(handle_declined(
+                answer,
+                format!(
+                    "No session was started. '{answer}' addresses a session that is no longer \
+                     running — it was wrapped, or it went a day without a beat and the sweep \
+                     closed it, and closed is terminal both ways. Its chronology stands as the \
+                     record of what happened. Call start_here with your bot name and no resume to \
+                     begin the next one."
+                ),
+            )),
+        }
     }
 
     /// Whether **this session** has already told its story to the Journal — the
@@ -1024,10 +1273,13 @@ impl Jojobot {
     ///
     /// Binding is the caller's job: this returns what it found, and the two call
     /// sites differ in what they do with it.
+    /// **Every live session, not the newest one.** A bot may have several runs
+    /// at once — two devices, two pieces of work — so the boot's offer needs
+    /// them all. The write path still takes the first, which is the newest.
     async fn sweep_and_find(
         &self,
         bot: &EntityId,
-    ) -> Result<(Option<Session>, Vec<String>), SessionError> {
+    ) -> Result<(Vec<Session>, Vec<String>), SessionError> {
         let now = jiff::Timestamp::now();
         let existing = self.sessions.sessions_of(bot).await?;
 
@@ -1044,10 +1296,11 @@ impl Jojobot {
             }
         }
 
-        // Newest first already, so the first live one is the one to resume.
-        let live = existing
+        // Newest first already, so the first live one is the newest.
+        let live: Vec<Session> = existing
             .into_iter()
-            .find(|s| !s.state.is_terminal() && !s.is_stale(now));
+            .filter(|s| !s.state.is_terminal() && !s.is_stale(now))
+            .collect();
         Ok((live, swept))
     }
 
@@ -1068,8 +1321,13 @@ impl Jojobot {
         if held.as_ref().is_some_and(|b| b.bot != *bot) {
             return;
         }
+        // The handle the door gave this connection survives a rebind: it is
+        // the caller's address for this run, and resolving the run again does
+        // not hand them a different one.
+        let sid = held.as_ref().and_then(|b| b.sid.clone());
         *held = Some(Bound {
             bot: bot.clone(),
+            sid,
             session: live.map(|s| s.id.clone()),
             attached: true,
             // **Read back off the resumed session, not started empty.** The
@@ -1141,12 +1399,15 @@ impl Jojobot {
                 // A cache that changes the answer is not an optimization, and
                 // the read it saved is one the dominant caller pays anyway.
                 match self.sweep_and_find(bot).await {
-                    Ok((Some(live), _)) => {
+                    // The newest live run — an unaddressed write continues the
+                    // work in flight rather than forking beside it.
+                    Ok((live, _)) if !live.is_empty() => {
+                        let live = live.into_iter().next().expect("a live session");
                         self.bind_if_ours(bot, Some(&live));
                         return Ok(Ok(live.id));
                     }
                     // Nothing in flight: this write is what begins one.
-                    Ok((None, _)) => bot.clone(),
+                    Ok(_) => bot.clone(),
                     Err(e) => return Err(session_error(e)),
                 }
             }
@@ -1163,6 +1424,12 @@ impl Jojobot {
         };
         let bound = Bound {
             bot: bot.clone(),
+            sid: self
+                .bound
+                .read()
+                .expect("binding poisoned")
+                .as_ref()
+                .and_then(|b| b.sid.clone()),
             // A named bot has just been resolved against the board, so its
             // "have we looked?" is answered; an unnamed one carries whatever
             // the boot recorded.
@@ -1188,11 +1455,12 @@ impl Jojobot {
         // that SUCCEEDED and found nothing active reaches the begin.
         if !bound.attached {
             match self.sweep_and_find(&bound.bot).await {
-                Ok((Some(live), _)) => {
+                Ok((live, _)) if !live.is_empty() => {
+                    let live = live.into_iter().next().expect("a live session");
                     self.bind_if_ours(&bound.bot, Some(&live));
                     return Ok(Ok(live.id));
                 }
-                Ok((None, _)) => self.bind_if_ours(&bound.bot, None),
+                Ok(_) => self.bind_if_ours(&bound.bot, None),
                 Err(e) => return Err(session_error(e)),
             }
         }
@@ -1228,6 +1496,24 @@ impl Jojobot {
         // session for a bot you NAMED must not make you that bot, exactly as
         // attaching to one must not.
         self.bind_if_ours(&bound.bot, Some(&begun));
+        // **The registry learns the card here** — this is the moment one
+        // exists. Only for a caller whose connection still remembers the handle
+        // the door gave it; a client with no session affinity has no handle to
+        // record against until the sid rides the write verbs themselves.
+        let held = self
+            .bound
+            .read()
+            .expect("binding poisoned")
+            .as_ref()
+            .and_then(|b| b.sid.clone());
+        if let Some(handle) = held
+            && self
+                .registry
+                .lookup(handle.as_str())
+                .is_some_and(|h| h.bot == bound.bot && h.card.is_none())
+        {
+            self.registry.attach_card(&handle, begun.id.clone());
+        }
         Ok(Ok(begun.id))
     }
 
@@ -2087,11 +2373,12 @@ impl Jojobot {
                     return Ok(refused);
                 }
                 match self.sweep_and_find(bot).await {
-                    Ok((Some(live), _)) => {
+                    Ok((live, _)) if !live.is_empty() => {
+                        let live = live.into_iter().next().expect("a live session");
                         self.bind_if_ours(bot, Some(&live));
                         live.id
                     }
-                    Ok((None, _)) => return Ok(session_nothing_to_amend()),
+                    Ok(_) => return Ok(session_nothing_to_amend()),
                     Err(e) => return Err(session_error(e)),
                 }
             }
@@ -2104,12 +2391,13 @@ impl Jojobot {
                     Some(id) => id,
                     None if !bound.attached => {
                         match self.sweep_and_find(&bound.bot).await {
-                            Ok((Some(live), _)) => {
+                            Ok((live, _)) if !live.is_empty() => {
+                                let live = live.into_iter().next().expect("a live session");
                                 self.bind_if_ours(&bound.bot, Some(&live));
                                 live.id
                             }
                             // Still unreadable, or genuinely nothing in flight.
-                            Ok((None, _)) => return Ok(session_nothing_to_amend()),
+                            Ok(_) => return Ok(session_nothing_to_amend()),
                             Err(e) => return Err(session_error(e)),
                         }
                     }
@@ -2685,6 +2973,20 @@ fn session_unbound() -> CallToolResult {
                            before your first write, because that write is what mints a session \
                            id. Name a `session` outright only to write to one other than the \
                            session `bot` addresses.",
+    });
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
+/// **A session handle that addresses nothing.** The guards' own shape, so a
+/// caller branches on `status` here exactly as everywhere else — and `wrote:
+/// false` says the thing that matters most: a boot jojobot refused started no
+/// session, so nothing on the board moved.
+fn handle_declined(attempted: &str, how_to_proceed: String) -> CallToolResult {
+    let body = serde_json::json!({
+        "status": "blocked",
+        "attempted": attempted,
+        "wrote": false,
+        "how_to_proceed": how_to_proceed,
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -3818,6 +4120,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::new()),
             Arc::new(InMemorySessions::new()),
+            Arc::new(sid::SessionRegistry::new()),
         )
     }
 
@@ -3828,6 +4131,7 @@ mod tests {
             spy,
             Arc::new(InMemoryMailboxes::new()),
             Arc::new(InMemorySessions::new()),
+            Arc::new(sid::SessionRegistry::new()),
         )
     }
 
@@ -5460,6 +5764,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             mailboxes,
             Arc::new(InMemorySessions::new()),
+            Arc::new(sid::SessionRegistry::new()),
         )
     }
 
@@ -6861,7 +7166,7 @@ mod tests {
         send(&jojobot, "inbox", "alpha", "the shipment landed").await;
 
         let out = jojobot
-                .start_here(Parameters(OrientArgs { bot: None, brief: None }))
+                .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
                 .await
                 .expect("start_here ok");
         let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
@@ -7056,6 +7361,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             boxes.clone(),
             Arc::new(InMemorySessions::new()),
+            Arc::new(sid::SessionRegistry::new()),
         );
         make_box(&seeded, "dev").await;
         make_bot(&seeded, "gamma", Some("dev")).await;
@@ -7066,6 +7372,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             boxes,
             Arc::new(InMemorySessions::new()),
+            Arc::new(sid::SessionRegistry::new()),
         );
         let listed = drains(&blind, "gamma").await;
 
@@ -7087,6 +7394,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(DownMailboxes),
             Arc::new(InMemorySessions::new()),
+            Arc::new(sid::SessionRegistry::new()),
         )
     }
 
@@ -7210,7 +7518,7 @@ mod tests {
 
         let full = json_of(
             &jojobot
-                .start_here(Parameters(OrientArgs { bot: None, brief: None }))
+                .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
                 .await
                 .expect("start_here ok"),
         );
@@ -7219,7 +7527,7 @@ mod tests {
 
         let brief = json_of(
             &jojobot
-                .start_here(Parameters(OrientArgs { bot: None, brief: Some(true) }))
+                .start_here(Parameters(OrientArgs { bot: None, brief: Some(true), resume: None }))
                 .await
                 .expect("start_here ok"),
         );
@@ -7271,13 +7579,17 @@ mod tests {
         let answers = [
             json_of(
                 &jojobot
-                    .start_here(Parameters(OrientArgs { bot: None, brief: None }))
+                    .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
                     .await
                     .expect("start_here ok"),
             ),
             json_of(
                 &jojobot
-                    .start_here(Parameters(OrientArgs { bot: None, brief: Some(true) }))
+                    .start_here(Parameters(OrientArgs {
+                        bot: None,
+                        brief: Some(true),
+                        resume: None,
+                    }))
                     .await
                     .expect("start_here ok"),
             ),
@@ -7320,6 +7632,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: Some("gamma".into()),
                     brief: Some(true),
+                    resume: None,
                 }))
                 .await
                 .expect("boot ok"),
@@ -7336,7 +7649,7 @@ mod tests {
     #[tokio::test]
     async fn start_here_survives_a_world_that_is_down() {
         let out = handler_with_mailboxes_down(Arc::new(InMemoryMemory::new()))
-            .start_here(Parameters(OrientArgs { bot: None, brief: None }))
+            .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
             .await
             .expect("orientation still lands");
         let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
@@ -7370,10 +7683,312 @@ mod tests {
     async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
         json_of(
             &jojobot
-                .start_here(Parameters(OrientArgs { bot: Some(name.into()), brief: None }))
+                .start_here(Parameters(OrientArgs {
+                    bot: Some(name.into()),
+                    brief: None,
+                    resume: None,
+                }))
                 .await
                 .expect("the boot call is ok"),
         )
+    }
+
+    /// Answer the choice a boot handed back.
+    async fn boot_answering(jojobot: &Jojobot, name: &str, answer: &str) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    bot: Some(name.into()),
+                    brief: None,
+                    resume: Some(answer.into()),
+                }))
+                .await
+                .expect("the boot call is ok"),
+        )
+    }
+
+    /// The handle a boot handed back, or `None` when it handed none back.
+    fn sid_of(body: &serde_json::Value) -> Option<String> {
+        body["session"]["sid"].as_str().map(str::to_string)
+    }
+
+    // ── the two-branch boot ─────────────────────────────────────────────────
+
+    /// **An anonymous boot is an orientation preview: nothing usable behind
+    /// it.** The world and the snapshot, no identity, and above all no handle —
+    /// a caller who was handed one would reasonably believe it addressed
+    /// something, and there is nothing for it to address.
+    #[tokio::test]
+    async fn an_anonymous_boot_hands_back_no_handle_at_all() {
+        let jojobot = with_sessions(Arc::new(InMemorySessions::new()));
+        make_bot(&jojobot, "gamma", None).await;
+
+        let body = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert!(body["identity"].is_null(), "no identity was claimed: {body}");
+        assert!(body["session"].is_null(), "and no session was begun: {body}");
+        // Asserted over the whole payload, not over the one key it would sit
+        // on: a handle smuggled anywhere in this answer is a handle a caller
+        // will try to use.
+        assert!(
+            !body.to_string().contains("\"sid\""),
+            "an anonymous boot carries no handle anywhere: {body}"
+        );
+    }
+
+    /// **Nothing to resume, so the handle comes back immediately.** There is no
+    /// moment between "I am gamma" and "gamma is working", and a boot that made
+    /// the caller ask a second time for the address would invent one.
+    #[tokio::test]
+    async fn a_boot_with_nothing_to_resume_hands_back_a_handle_at_once() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+
+        let body = boot(&jojobot, "gamma").await;
+        let handle = sid_of(&body).unwrap_or_else(|| panic!("a handle comes back: {body}"));
+        assert!(sid::is_readable(&handle), "…and it is a readable one: {handle}");
+        assert_eq!(body["session"]["resumed"], false);
+        assert!(body["session"]["choices"].is_null(), "there was nothing to choose: {body}");
+
+        // **The card stays lazy.** A boot that does nothing leaves nothing
+        // behind, handle or no handle.
+        assert!(
+            store
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok")
+                .is_empty(),
+            "the handle is minted here; the card waits for the first write"
+        );
+    }
+
+    /// **Something to resume, so the choice comes first and the handle waits.**
+    /// Attaching silently was the old behaviour and it decided for the caller;
+    /// each option is named by what it was working on, because that is the only
+    /// thing that tells two runs of one identity apart.
+    #[tokio::test]
+    async fn a_resumable_session_comes_back_as_a_choice_and_no_handle() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+
+        for focus in ["reading the hand-off", "chasing the flaky test"] {
+            store
+                .begin(NewSession {
+                    bot: EntityId("bot:gamma".into()),
+                    focus: focus.into(),
+                    started_at: jiff::Timestamp::now(),
+                })
+                .await
+                .expect("begin ok");
+        }
+
+        let body = boot(&jojobot, "gamma").await;
+        assert!(
+            sid_of(&body).is_none(),
+            "the handle arrives with the answer, not before it: {body}"
+        );
+
+        let choices = body["session"]["choices"].as_array().expect("the offer is a list");
+        assert_eq!(choices.len(), 2, "a bot may have several runs at once: {body}");
+        let mut working_on: Vec<&str> = choices
+            .iter()
+            .map(|c| c["working_on"].as_str().expect("what it was working on"))
+            .collect();
+        working_on.sort_unstable();
+        assert_eq!(working_on, ["chasing the flaky test", "reading the hand-off"]);
+        for choice in choices {
+            let handle = choice["sid"].as_str().expect("each option is addressable");
+            assert!(sid::is_readable(handle), "{handle} is not a readable handle");
+        }
+        assert!(
+            body["session"]["how_to_proceed"]
+                .as_str()
+                .is_some_and(|h| h.contains("resume") && h.contains("new")),
+            "…and the way to answer is stated: {body}"
+        );
+    }
+
+    /// Answering it: resume returns that session's handle and its chronology;
+    /// choosing new returns a different handle and leaves the old run alone.
+    #[tokio::test]
+    async fn resuming_returns_that_session_s_handle_and_new_returns_another() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        let begun = store
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                focus: "reading the hand-off".into(),
+                started_at: jiff::Timestamp::now(),
+            })
+            .await
+            .expect("begin ok");
+
+        let offered = boot(&jojobot, "gamma").await;
+        let offer = offered["session"]["choices"][0]["sid"]
+            .as_str()
+            .expect("one option")
+            .to_string();
+
+        let resumed = boot_answering(&jojobot, "gamma", &offer).await;
+        assert_eq!(sid_of(&resumed).as_deref(), Some(offer.as_str()), "{resumed}");
+        assert_eq!(resumed["session"]["resumed"], true);
+        assert_eq!(
+            resumed["session"]["session"]["focus"], "reading the hand-off",
+            "resuming hands back the run itself, chronology and all: {resumed}"
+        );
+
+        // **The offer is stable**: the same card keeps the handle it was first
+        // given, so a caller who boots twice before answering is not looking at
+        // two addresses for one run.
+        assert_eq!(
+            boot(&jojobot, "gamma").await["session"]["choices"][0]["sid"],
+            offer.as_str()
+        );
+
+        let fresh = boot_answering(&jojobot, "gamma", sid::NEW).await;
+        let minted = sid_of(&fresh).unwrap_or_else(|| panic!("new mints one: {fresh}"));
+        assert_ne!(minted, offer, "choosing new is a different session: {fresh}");
+        assert_eq!(fresh["session"]["resumed"], false);
+
+        // **Nothing auto-wrapped.** A new session never closes an old one.
+        let all = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(all.len(), 1, "and new stays lazy until it writes: {all:?}");
+        assert_eq!(all[0].id, begun.id);
+        assert_eq!(all[0].state, SessionState::Active, "the old run is untouched");
+    }
+
+    /// **A handle from before a restart is gone, and says so.** Not a 404 from
+    /// the store — the card may be sitting right there — and above all not a
+    /// silent new session, which would leave a caller writing into a run they
+    /// did not mean under an id they think they know.
+    #[tokio::test]
+    async fn a_handle_from_before_a_restart_is_blocked_rather_than_missed() {
+        let client = NoAffinity::new();
+        make_bot(&client.call(), "gamma", None).await;
+        let handle = sid_of(&boot(&client.call(), "gamma").await).expect("a handle");
+
+        // Same stores, new process: the registry is what a restart empties.
+        let restarted = Jojobot::new(
+            client.memory.clone(),
+            Arc::new(SpySearch::default()),
+            client.mailboxes.clone(),
+            client.sessions.clone(),
+            Arc::new(sid::SessionRegistry::new()),
+        );
+        let body = blocked(
+            &restarted
+                .start_here(Parameters(OrientArgs {
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    resume: Some(handle.clone()),
+                }))
+                .await
+                .expect("a dead handle is an answer, not a protocol failure"),
+        );
+        assert_eq!(body["attempted"], handle);
+        let how = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("gone") && how.contains("start_here"),
+            "that session is gone; boot again: {how}"
+        );
+
+        // An unreadable handle is refused too — never repaired into a near one.
+        let mistyped = blocked(
+            &restarted
+                .start_here(Parameters(OrientArgs {
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    resume: Some("k3fo".into()),
+                }))
+                .await
+                .expect("an unreadable handle is an answer too"),
+        );
+        assert_eq!(mistyped["attempted"], "k3fo");
+    }
+
+    /// **A handle is bound to its identity at boot and never switches.** Naming
+    /// somebody else's session is refused rather than quietly honoured — the
+    /// whole bug class deleted instead of guarded against downstream.
+    #[tokio::test]
+    async fn a_handle_belonging_to_another_identity_is_refused() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store);
+        make_bot(&jojobot, "gamma", None).await;
+        make_bot(&jojobot, "delta", None).await;
+
+        let gammas = sid_of(&boot(&jojobot, "gamma").await).expect("a handle");
+        let body = blocked(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    bot: Some("delta".into()),
+                    brief: None,
+                    resume: Some(gammas.clone()),
+                }))
+                .await
+                .expect("somebody else's handle is an answer, not a protocol failure"),
+        );
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .is_some_and(|h| h.contains("bot:gamma")),
+            "the refusal names whose it is: {body}"
+        );
+    }
+
+    /// **The handle says nothing about the work.** Two runs of one identity on
+    /// the same focus get different handles, and no handle carries anything
+    /// derived from what its session is doing.
+    #[tokio::test]
+    async fn two_sessions_on_one_focus_get_different_and_opaque_handles() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+
+        let focus = "chasing the flaky test";
+        for _ in 0..2 {
+            store
+                .begin(NewSession {
+                    bot: EntityId("bot:gamma".into()),
+                    focus: focus.into(),
+                    started_at: jiff::Timestamp::now(),
+                })
+                .await
+                .expect("begin ok");
+        }
+
+        let offered = boot(&jojobot, "gamma").await;
+        let handles: Vec<&str> = offered["session"]["choices"]
+            .as_array()
+            .expect("the offer")
+            .iter()
+            .map(|c| c["sid"].as_str().expect("a handle"))
+            .collect();
+        assert_eq!(handles.len(), 2);
+        assert_ne!(handles[0], handles[1], "identical work, different handles");
+
+        for handle in &handles {
+            assert!(sid::is_readable(handle));
+            // Nothing of the focus survives into the handle: not a slug, not a
+            // word, not even a run of three of its characters.
+            let slug = focus.to_lowercase();
+            for window in slug.as_bytes().windows(3) {
+                let fragment = String::from_utf8(window.to_vec()).expect("ascii");
+                assert!(
+                    !handle.contains(&fragment),
+                    "{handle} carries {fragment:?} out of the focus it is for"
+                );
+            }
+        }
     }
 
     // ── sessions ────────────────────────────────────────────────────────────
@@ -7387,11 +8002,23 @@ mod tests {
     /// builds. The binding is per handler, so this is the only way to test that
     /// resuming reads the board rather than remembering anything.
     fn connection(memory: Arc<InMemoryMemory>, sessions: Arc<InMemorySessions>) -> Jojobot {
+        connection_sharing(memory, sessions, Arc::new(sid::SessionRegistry::new()))
+    }
+
+    /// The same, over a registry the caller keeps — what two connections of one
+    /// PROCESS share, and the only way a handle outlives the connection it was
+    /// handed to.
+    fn connection_sharing(
+        memory: Arc<InMemoryMemory>,
+        sessions: Arc<InMemorySessions>,
+        registry: Arc<sid::SessionRegistry>,
+    ) -> Jojobot {
         Jojobot::new(
             memory,
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::new()),
             sessions,
+            registry,
         )
     }
 
@@ -7411,6 +8038,9 @@ mod tests {
         memory: Arc<InMemoryMemory>,
         sessions: Arc<InMemorySessions>,
         mailboxes: Arc<InMemoryMailboxes>,
+        /// Process-wide, exactly as it is in production: the connections come
+        /// and go, the handles this process issued do not.
+        registry: Arc<sid::SessionRegistry>,
     }
 
     impl NoAffinity {
@@ -7419,6 +8049,7 @@ mod tests {
                 memory: Arc::new(InMemoryMemory::new()),
                 sessions: Arc::new(InMemorySessions::new()),
                 mailboxes: Arc::new(InMemoryMailboxes::new()),
+                registry: Arc::new(sid::SessionRegistry::new()),
             }
         }
 
@@ -7429,6 +8060,9 @@ mod tests {
                 Arc::new(SpySearch::default()),
                 self.mailboxes.clone(),
                 self.sessions.clone(),
+                // **The one thing a reconnect must NOT rebuild.** A handle is
+                // an address across connections or it is nothing.
+                self.registry.clone(),
             )
         }
     }
@@ -8122,23 +8756,39 @@ mod tests {
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     }
 
-    /// **A reconnect resumes the work in flight.** A session is the unit of
-    /// work, not of connection, so a second boot of the same identity attaches
-    /// to the live session and hands back its chronology rather than forking a
-    /// new one — which is the whole reason a device hop is survivable.
+    /// **A reconnect is OFFERED the work in flight.** A session is the unit of
+    /// work, not of connection, so a second boot of the same identity finds the
+    /// live run and hands back its chronology rather than forking a new one —
+    /// which is the whole reason a device hop is survivable.
+    ///
+    /// It is offered rather than attached: the run comes back as a choice named
+    /// by what it was working on, and resuming it is the caller's answer. The
+    /// difference matters most for the case the offer exists for — a run left
+    /// open on purpose, for somebody who has not arrived yet.
     #[tokio::test]
-    async fn booting_again_resumes_the_session_in_flight() {
+    async fn booting_again_is_offered_the_session_in_flight() {
         let store = Arc::new(InMemorySessions::new());
         let memory = Arc::new(InMemoryMemory::new());
-        let first = connection(memory.clone(), store.clone());
+        let registry = Arc::new(sid::SessionRegistry::new());
+        let first = connection_sharing(memory.clone(), store.clone(), registry.clone());
         make_bot(&first, "gamma", None).await;
         boot(&first, "gamma").await;
         let started = journal_entry(&first, "read the hand-off").await;
 
         // A different connection over the same worlds, exactly as a reconnect
         // builds one — a fresh binding, so anything it knows it read.
-        let second = connection(memory, store.clone());
-        let resumed = boot(&second, "gamma").await;
+        let second = connection_sharing(memory, store.clone(), registry);
+        let offered = boot(&second, "gamma").await;
+        assert!(sid_of(&offered).is_none(), "the choice comes first: {offered}");
+        let choice = &offered["session"]["choices"][0];
+        assert_eq!(choice["working_on"], "read the hand-off");
+
+        let resumed = boot_answering(
+            &second,
+            "gamma",
+            choice["sid"].as_str().expect("an addressable option"),
+        )
+        .await;
         assert_eq!(resumed["session"]["resumed"], true);
         assert_eq!(resumed["session"]["session"]["id"], started["session"]);
         assert_eq!(
@@ -8193,9 +8843,9 @@ mod tests {
     }
 
     /// A session that is merely quiet — an hour, not a day — is still yours, and
-    /// resuming it is the point.
+    /// being offered it back is the point.
     #[tokio::test]
-    async fn a_recent_session_is_resumed_rather_than_swept() {
+    async fn a_recent_session_is_offered_back_rather_than_swept() {
         let store = Arc::new(InMemorySessions::new());
         let jojobot = with_sessions(store.clone());
         make_bot(&jojobot, "gamma", None).await;
@@ -8209,9 +8859,17 @@ mod tests {
             .expect("begin ok");
 
         let booted = boot(&jojobot, "gamma").await;
-        assert_eq!(booted["session"]["resumed"], true);
-        assert_eq!(booted["session"]["session"]["id"], recent.id.as_str());
+        assert_eq!(booted["session"]["choices"][0]["working_on"], "still going");
         assert_eq!(booted["session"]["swept"], serde_json::json!([]));
+
+        let resumed = boot_answering(
+            &jojobot,
+            "gamma",
+            booted["session"]["choices"][0]["sid"].as_str().expect("an option"),
+        )
+        .await;
+        assert_eq!(resumed["session"]["resumed"], true);
+        assert_eq!(resumed["session"]["session"]["id"], recent.id.as_str());
     }
 
     /// **The whole arc through the surface:** boot, journal with a focus, amend
@@ -8668,6 +9326,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::new()),
             store.clone(),
+            Arc::new(sid::SessionRegistry::new()),
         );
         make_bot(&jojobot, "gamma", None).await;
         let booted = boot(&jojobot, "gamma").await;
@@ -8827,6 +9486,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::new()),
             Arc::new(UnlistableBoard(inner.clone())),
+            Arc::new(sid::SessionRegistry::new()),
         );
         make_bot(&jojobot, "gamma", None).await;
         let booted = boot(&jojobot, "gamma").await;
@@ -8996,6 +9656,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::new()),
             store.clone(),
+            Arc::new(sid::SessionRegistry::new()),
         );
         make_bot(&jojobot, "gamma", None).await;
         boot(&jojobot, "gamma").await;
@@ -9050,6 +9711,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::new()),
             store.clone(),
+            Arc::new(sid::SessionRegistry::new()),
         );
         make_bot(&jojobot, "gamma", None).await;
         boot(&jojobot, "gamma").await;
@@ -9269,6 +9931,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::new()),
             Arc::new(Yielding(store)),
+            Arc::new(sid::SessionRegistry::new()),
         )
     }
 
@@ -9378,6 +10041,7 @@ mod tests {
             let booting = jojobot.start_here(Parameters(OrientArgs {
                 bot: Some("gamma".into()),
                 brief: None,
+                resume: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {
                 entry: "the first beat".into(),
@@ -9453,6 +10117,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::new()),
             Arc::new(InMemorySessions::new()),
+            Arc::new(sid::SessionRegistry::new()),
         );
         make_bot(&healthy, "gamma", None).await;
 
@@ -9461,6 +10126,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::new()),
             Arc::new(DownSessions),
+            Arc::new(sid::SessionRegistry::new()),
         );
         let booted = boot(&down, "gamma").await;
         assert_eq!(booted["identity"]["bot"]["id"], "bot:gamma", "the boot still lands");
@@ -9770,7 +10436,11 @@ mod tests {
         // A near miss: the candidates are the guards' own answer, and they stay.
         let near = blocked(
             &jojobot
-                .start_here(Parameters(OrientArgs { bot: Some("gamm".into()), brief: None }))
+                .start_here(Parameters(OrientArgs {
+                    bot: Some("gamm".into()),
+                    brief: None,
+                    resume: None,
+                }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
         );
@@ -9781,7 +10451,11 @@ mod tests {
         // answer still has to be useful.
         let stranger = blocked(
             &jojobot
-                .start_here(Parameters(OrientArgs { bot: Some("nobody".into()), brief: None }))
+                .start_here(Parameters(OrientArgs {
+                    bot: Some("nobody".into()),
+                    brief: None,
+                    resume: None,
+                }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
         );
@@ -9827,7 +10501,11 @@ mod tests {
         let jojobot = handler();
         let body = blocked(
             &jojobot
-                .start_here(Parameters(OrientArgs { bot: Some("gamma".into()), brief: None }))
+                .start_here(Parameters(OrientArgs {
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    resume: None,
+                }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
         );
@@ -9854,7 +10532,11 @@ mod tests {
         );
 
         let err = jojobot
-            .start_here(Parameters(OrientArgs { bot: Some("person:milhouse".into()), brief: None }))
+            .start_here(Parameters(OrientArgs {
+                bot: Some("person:milhouse".into()),
+                brief: None,
+                resume: None,
+            }))
             .await
             .expect_err("another kind must be refused");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
@@ -9880,6 +10562,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::new()),
             Arc::new(InMemorySessions::new()),
+            Arc::new(sid::SessionRegistry::new()),
         );
         make_bot(&healthy, "gamma", Some("gamma-inbox")).await;
         healthy
@@ -9951,7 +10634,7 @@ mod tests {
         make_bot(&jojobot, "gamma", None).await;
 
         let anonymous = json_of(&jojobot
-                .start_here(Parameters(OrientArgs { bot: None, brief: None }))
+                .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
                 .await
                 .expect("start_here ok"));
         let identified = boot(&jojobot, "gamma").await;
@@ -10007,7 +10690,7 @@ mod tests {
 
         let anonymous = json_of(
             &jojobot
-                .start_here(Parameters(OrientArgs { bot: None, brief: None }))
+                .start_here(Parameters(OrientArgs { bot: None, brief: None, resume: None }))
                 .await
                 .expect("start_here ok"),
         );
