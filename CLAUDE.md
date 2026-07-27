@@ -109,8 +109,8 @@ Shipped and live:
 > answer with a receipt (id, state, notes, `body_bytes`, the opening line)
 > rather than echoing a body its own author wrote, `read_mailbox`'s `new_only`
 > stops re-shipping a deliberately held-open message on every poll, and
-> `start_here`/`boot_bot` take `brief` so a returning session pays for the
-> orientation essay once and afterwards compares `orientation_version`, and
+> `start_here` takes `brief` so a caller who does not need the orientation
+> essay can skip it, and
 > **mailbox counts are scoped to the caller** — the boxes a bot drains come back
 > with their per-state counts, every other box by name only, so existence stays
 > visible (a writer needs it) while somebody else's queue stops posing "is that
@@ -124,11 +124,14 @@ Shipped and live:
   charter (its doc's prose, written through `set_charter`) · rules (plain
   facts, so each carries its own provenance) · memory · one owned mailbox
   (a `mailbox:` claim on the bot's own record, unique across entities).
-  **`boot_bot` is the one orienting door**: it grows from `start_here` —
-  same world-model, same snapshot, plus the identity — and it **creates
-  nothing**: a declared box nobody has opened is reported as missing, with
-  `create_mailbox` named. Mailboxes stay bot-ignorant: ownership is a read
-  of Memory, never an ACL.
+  **`start_here` is the one orienting door** — the same verb with or without
+  a bot: world-model and snapshot always, plus the identity when a bot is
+  named. It **creates nothing**: a declared box nobody has opened is reported
+  as missing, with `create_mailbox` named; an unknown bot name comes back with
+  the roster plus the offer to boot as a known bot and create the new one from
+  there. Anonymous boot gets orientation and no `sid` — an orientation preview,
+  with nothing usable behind it. Mailboxes stay bot-ignorant: ownership is a
+  read of Memory, never an ACL.
 
 > **Creation is an intentional act.** `create_mailbox` is the only mint on
 > the surface, and the only place the full name screen runs. A claim written
@@ -145,32 +148,39 @@ Shipped and live:
   terminal both ways), **description = current truth** (the focus, rewritten
   in place), **comments = the chronology** (append-only, oldest first; only
   the newest entry amendable).
-  **`boot_bot` is the start verb** — there is no `start_session`, because
-  there is no moment between "I am gamma" and "gamma is working". Booting
-  sweeps that bot's sessions that have gone `ABANDONED_AFTER` (24h) without a
-  beat, **attaches** to a live one if there is one, and otherwise begins one
-  **lazily: no card until the first write**, so a boot that does nothing
-  leaves nothing behind. `journal` records a beat (and moves the focus),
+  **`start_here` is the start verb** — there is no `start_session`, because
+  there is no moment between "I am gamma" and "gamma is working". Booting with
+  a bot name hands back a `sid` immediately when there is nothing to resume,
+  and otherwise hands back the resume-or-new choice and no `sid` — the `sid`
+  arriving once the caller picks. Booting sweeps that bot's sessions that have
+  gone `ABANDONED_AFTER` (24h) without a beat, **offers** any resumable one
+  back as a choice, and otherwise begins one **lazily: no card until the first
+  write**, so a boot that does nothing leaves nothing behind. A session records
+  what it is working on, so the offer can tell two of them apart — and a bot
+  may have several running at once, because the `sid` is what tells them apart.
+  Nothing ever auto-wraps a session: a new one never closes an old one, and
+  wrapping is initiated from inside, by the bot that owns it. `journal` records a beat (and moves the focus),
   `amend_journal` fixes the newest one, `wrap_session` tells the story into
   the operator's **Journal** document and closes the card.
   jojobot writes **its own beats** too — one per verb class per session, count
   kept current, marked apart from what the session said about itself.
   Session records deliberately stay **out of the search index**.
 
-> **Identity is a PARAMETER, because no real client holds a connection.** The
-> binding was per-MCP-session and the design assumed a client keeps one across a
-> conversation; none do — claude.ai and ChatGPT both open what jojobot sees as a
-> fresh, unbound connection per tool call, so `boot_bot` bound an identity that
-> was gone by the next request. Addressing by `session` was no escape either: a
-> session materializes on the first write, and the first write could never land,
-> so no id was ever minted to name. **The bot's name is the only stable handle a
-> stateless caller has** — `journal`/`amend_journal`/`wrap_session` take `bot`
-> and resolve attach-or-begin against the board every call; the connection
-> binding is now an optimization for transports that do hold one, required by
-> nothing. A no-affinity client is permanently in the test suite, because every
+> **Identity is the SESSION ID, because no real client holds a connection.**
+> The binding was per-MCP-session and the design assumed a client keeps one
+> across a conversation; none do — claude.ai and ChatGPT both open what jojobot
+> sees as a fresh, unbound connection per tool call, so a boot bound an identity
+> that was gone by the next request. **The `sid` is the only address**: the door
+> hands one back, and it rides every verb, reads included, so jojobot always
+> knows which bot is asking — reads are attributed, never journalled.
+> `journal`/`amend_journal`/`wrap_session` take the `sid` and never a `bot`, and
+> **a session is bound to its identity at boot and never switches**, so naming
+> somebody else's session is refused rather than quietly honoured — a bug class
+> deleted instead of guarded against. The connection binding is not demoted, it
+> is gone. A no-affinity client is permanently in the test suite, because every
 > other test holds a handler across calls and that is the shape no client has.
-> Consequence, stated rather than hidden: the automatic beats cannot attribute
-> for such clients, since the verbs they cover carry no identity parameter.
+> And because the `sid` rides every verb, the automatic beats attribute for
+> those clients too.
 
 > **A literal journal, not a log.** High-level beats — what you set out to do,
 > what you found, what you decided, what went wrong — never a firehose of tool
