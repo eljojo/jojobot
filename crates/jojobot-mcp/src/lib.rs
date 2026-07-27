@@ -68,8 +68,8 @@ jojobot is a personal-assistant server: the durable memory and message rail behi
 - *"Which people are in Shelbyville?"* → `search` with kind `person` and edge `{shape: location, object: place:shelbyville}` — an edge walk, not a text match.
 - *"That was wrong"* → `recall` the subject, then `update_fact` rewrites the claim in place to state what is true NOW — including negative truth ("NOT allergic — confirmed by the operator"). The record is current truth, never a correction trail. *"That changed"* is a different move: the old claim was true in its day — mark it `superseded` and `capture` the new one.
 - *Leave word for another session* → `list_mailboxes` to see what exists and what is waiting, `post_message` into an agreed box with a body written for a reader with none of your context. jojobot records who sent it from the `sid` you pass, so there is nothing to declare and nothing to get wrong.
-- *Handle mail* → `read_mailbox` on the box you were told to drain — reading takes delivery of every message in it, and they are not yours just because you can read them — act, then `mark_processed`, ONLY after acting, with the outcome in notes. A failure is data to record, not a state to park in.
-- *One message, not a whole box* → `search` for it, then `read_message` on the id the hit carries. Draining a box you were not told to drain makes every message in it owed work you never agreed to.
+- *Handle mail* → `read_mailbox`, which opens YOUR box — the `sid` you pass says which one, so there is no name to give and no way to reach into somebody else's. Reading takes delivery of every message in it; act, then `mark_processed`, ONLY after acting, with the outcome in notes. A failure is data to record, not a state to park in.
+- *One message, not a whole box* → `search` for it, then `read_message` on the id the hit carries. Draining your whole box makes every message in it owed work; `read_message` takes on the one you actually meant.
 
 When the right write is not obvious, ask the operator — an unasked write outlives the conversation that guessed it.
 
@@ -109,7 +109,7 @@ The resume note is **the one sanctioned exception to journal leanness**. Everywh
 
 ### Your box is yours; the others are not
 
-**Read your OWN mailbox, full stop.** `start_here`, booted as your identity, tells you which box you own. Reading somebody else's is not a permission you happen to have — it is the wrong move: reading IS delivery, so a look moves their mail out of `new` and makes it yours to finish, and a message you took but cannot act on is one its real consumer will never see as fresh.
+**You read your OWN mailbox, and the surface offers no other.** `start_here`, booted as your identity, tells you which box you own, and `read_mailbox` opens that one — there is no name to pass. This used to be a norm you could ignore: reading IS delivery, so a look moved somebody's mail out of `new` and made it yours to finish, and a message you took but cannot act on is one its real consumer never sees as fresh. It is now simply not reachable.
 
 `list_mailboxes` reports every box on the server: that is a fact about the board and **not an invitation**. A box showing `new: 1` is not addressed to you unless it is yours. If you need something from another box, ask its owner or leave a message in it — `post_message` writes without reading, which is exactly the shape of a request.
 "#;
@@ -440,8 +440,6 @@ pub struct PostMessageArgs {
 /// Arguments to `read_mailbox`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReadMailboxArgs {
-    /// The box to read.
-    pub mailbox: String,
     /// Ship bodies only for messages nobody has taken yet — **the default**.
     /// Leftovers, the ones flagged `seen_before`, still come back, still
     /// counted, still owed; only their bodies are left out, and each says so.
@@ -2193,6 +2191,55 @@ impl Jojobot {
 
     /// The boxes a caller drains — the ones whose state is theirs to see.
     ///
+    /// **Whose box a read opens — resolved from the handle, never named.**
+    ///
+    /// Reading IS delivery: a name in the caller's hand is a way to move
+    /// somebody else's mail out of `new` and make it theirs-no-longer. The
+    /// own-box norm was stated in the essay in the strongest words available
+    /// and was still only advice for as long as the parameter sat there. The
+    /// `sid` already says whose box it is, so the parameter is gone and the
+    /// norm is structural.
+    ///
+    /// **Posting keeps its name, deliberately.** `post_message` reaches
+    /// somebody else's box and writes without reading, which is exactly the
+    /// shape of a request — and is the way forward this refusal points at. The
+    /// asymmetry is the design.
+    ///
+    /// Four ways to have no box, and they are not one answer: the caller has no
+    /// identity, jojobot cannot read who owns what, the bot claims nothing, or
+    /// it claims a box nobody has opened. Each needs a different next move.
+    async fn my_box(&self, sid: Option<&str>) -> Result<MailboxName, CallToolResult> {
+        let caller = match self.caller(sid) {
+            Ok(Some(caller)) => caller,
+            Ok(None) => return Err(no_box_for("", NoBox::Anonymous)),
+            Err(refused) => return Err(refused),
+        };
+        // **A world that is down is not an answer of "no".** Ownership is a
+        // read of Memory, so an outage means jojobot cannot say whose box this
+        // is — and opening none while implying the bot owns none would send a
+        // caller off to mint a box it already has.
+        let Ok(index) = self.memory.list_entities(None).await else {
+            return Err(no_box_for(caller.bot.as_str(), NoBox::Unknowable));
+        };
+        let claim = index
+            .iter()
+            .find(|e| e.id == caller.bot)
+            .and_then(|e| e.mailbox.clone());
+        let Some(claim) = claim else {
+            return Err(no_box_for(caller.bot.as_str(), NoBox::Unclaimed));
+        };
+        let name = MailboxName(claim.trim().to_string());
+        // **Reported missing, never opened.** The same rule the boot door
+        // keeps: creation is an intentional act, and `create_mailbox` is the
+        // only mint. A read that minted the box it was about to drain would be
+        // the side-effect creation this surface exists to forbid.
+        match self.mailboxes.list_mailboxes().await {
+            Err(_) => Err(no_box_for(caller.bot.as_str(), NoBox::Unknowable)),
+            Ok(boxes) if boxes.iter().any(|b| b.name == name) => Ok(name),
+            Ok(_) => Err(no_box_for(name.as_str(), NoBox::Unopened)),
+        }
+    }
+
     /// **Ownership is a read of Memory, never an ACL**: a bot owns a box by
     /// carrying a `mailbox:` claim on its own record, so this asks the entity
     /// index rather than anything mailbox-side. A caller that names no bot, and
@@ -2320,14 +2367,20 @@ impl Jojobot {
 
     /// Take delivery of everything unprocessed in a box.
     #[tool(
-        description = "Take delivery of everything unprocessed in a mailbox, oldest first, \
-                       moving each message from `new` to `read`. There is no peek: reading IS \
-                       taking delivery. Messages a previous read already handed over come back \
-                       too, flagged seen_before: true — leftovers from an interrupted earlier \
-                       read, not fresh mail. A message somebody else finished while this \
-                       delivery was in flight is left out, so a delivery can be smaller than \
-                       counts you saw a moment ago. An unknown box comes back status: blocked \
-                       with candidates and delivers nothing. Act on what you receive, then call \
+        description = "Take delivery of everything unprocessed in YOUR OWN mailbox, oldest \
+                       first, moving each message from `new` to `read`. There is no peek: \
+                       reading IS taking delivery. WHICH BOX IS NOT AN ARGUMENT — the `sid` you \
+                       pass says which bot is asking, and a bot reads the box it owns, full \
+                       stop. Reading somebody else's would move their mail out of `new` and \
+                       make it no longer waiting for them; to reach another box, post_message \
+                       writes into it without reading it, which is the shape of a request. No \
+                       box to open comes back status: blocked, saying which kind of nothing it \
+                       found — no sid, no claim, or a claim nobody has opened — and delivers \
+                       nothing. Messages a previous read already handed over come back too, \
+                       flagged seen_before: true — leftovers from an interrupted earlier read, \
+                       not fresh mail. A message somebody else finished while this delivery was \
+                       in flight is left out, so a delivery can be smaller than counts you saw a \
+                       moment ago. Act on what you receive, then call \
                        mark_processed for each. Draining a whole box makes every message in it \
                        yours to finish — use read_message when you want only one. ONLY CHECKING \
                        WHETHER ANYTHING IS WAITING? Use list_mailboxes — it reads counts without \
@@ -2344,7 +2397,10 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<ReadMailboxArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let name = MailboxName(args.mailbox.trim().to_string());
+        let name = match self.my_box(args.sid.as_deref()).await {
+            Ok(name) => name,
+            Err(refused) => return Ok(refused),
+        };
         // **The safe branch is the default.** The cheap, common read is a poll
         // for news; re-shipping a body its reader already has is the expensive
         // case, and a caller that follows defaults rather than prose must land
@@ -3747,6 +3803,63 @@ fn mailbox_candidate_json(candidate: &MailboxMatch) -> serde_json::Value {
 /// Which mailbox gate stopped a write — because the way out of each is
 /// different, and one copy-pasted paragraph telling a create to "call
 /// create_mailbox" is advice that goes in a circle.
+/// Why a read had no box to open. Four states, four different next moves — one
+/// generic miss would be advice that fits none of them.
+enum NoBox {
+    /// No handle, so no identity, so no box.
+    Anonymous,
+    /// A world that is down. jojobot does not know, which is not the same as
+    /// "you own none" and must never be rendered as it.
+    Unknowable,
+    /// A bot carrying no `mailbox:` claim — an identity that cannot receive
+    /// mail yet.
+    Unclaimed,
+    /// A claim nobody has opened. Said plainly, with the mint named; never
+    /// created here.
+    Unopened,
+}
+
+/// The refusal a read gets when there is no box behind its handle.
+fn no_box_for(attempted: &str, why: NoBox) -> CallToolResult {
+    let how_to_proceed = match why {
+        NoBox::Anonymous => {
+            "Nothing was delivered. This call carried no `sid`, and a read opens the box of \
+             whoever is asking — so jojobot has nobody to open one for. Call start_here with \
+             your bot name to get a handle, then pass it on every call. To leave mail in \
+             somebody else's box you do not need one of your own: post_message writes without \
+             reading."
+                .to_string()
+        }
+        NoBox::Unknowable => {
+            "Nothing was delivered, and nothing is wrong with your call. Which box you drain is \
+             a read of Memory, and that world is not reachable right now — so jojobot cannot \
+             say whose box this is rather than saying you have none. Try again; if it persists \
+             a person has to look."
+                .to_string()
+        }
+        NoBox::Unclaimed => format!(
+            "Nothing was delivered. '{attempted}' owns no mailbox, so there is nothing for it to \
+             drain — an identity that cannot receive mail yet, which is a normal thing to be. \
+             Give it one with update_entity naming the box it should own, and open that box with \
+             create_mailbox if nobody has yet. Posting into other boxes needs none of this: \
+             post_message writes without reading."
+        ),
+        NoBox::Unopened => format!(
+            "Nothing was delivered, and nothing was created. Your bot claims the mailbox \
+             '{attempted}' and no such box exists — the claim is a name, not a box, and only \
+             create_mailbox mints one, deliberately and with the near-miss screen. Open it and \
+             read again."
+        ),
+    };
+    let body = serde_json::json!({
+        "status": "blocked",
+        "attempted": attempted,
+        "wrote": false,
+        "how_to_proceed": how_to_proceed,
+    });
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
 enum BlockedBox {
     /// A creation: the name is being minted here.
     Creating,
@@ -6195,6 +6308,7 @@ mod tests {
     #[tokio::test]
     async fn the_mailbox_arc_through_the_handler() {
         let jojobot = mailbox_handler();
+        let reader = as_bot(&jojobot, "gamma");
         let created = make_box(&jojobot, "inbox").await;
         assert_eq!(created["name"], "inbox");
         assert_eq!(created["counts"]["new"], 0);
@@ -6225,9 +6339,8 @@ mod tests {
         let delivery = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
-                    mailbox: "inbox".into(),
                     new_only: None,
-                    sid: None,
+                    sid: Some(reader.clone()),
                 }))
                 .await
                 .expect("read ok"),
@@ -6264,9 +6377,8 @@ mod tests {
         let after = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
-                    mailbox: "inbox".into(),
                     new_only: None,
-                    sid: None,
+                    sid: Some(reader.clone()),
                 }))
                 .await
                 .expect("read ok"),
@@ -6282,13 +6394,13 @@ mod tests {
     #[tokio::test]
     async fn a_redelivered_message_says_it_was_seen_before() {
         let jojobot = mailbox_handler();
+        let reader = owning(&jojobot, "gamma", "inbox").await;
         make_box(&jojobot, "inbox").await;
         send(&jojobot, "inbox", "epsilon", "the shipment landed").await;
         jojobot
             .read_mailbox(Parameters(ReadMailboxArgs {
-                mailbox: "inbox".into(),
                 new_only: None,
-                sid: None,
+                sid: Some(reader.clone()),
             }))
             .await
             .expect("read ok");
@@ -6296,9 +6408,8 @@ mod tests {
         let again = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
-                    mailbox: "inbox".into(),
                     new_only: None,
-                    sid: None,
+                    sid: Some(reader.clone()),
                 }))
                 .await
                 .expect("read ok"),
@@ -6313,6 +6424,7 @@ mod tests {
     #[tokio::test]
     async fn a_subject_is_carried_by_every_verb_that_renders_a_message() {
         let jojobot = mailbox_handler();
+        let reader = owning(&jojobot, "gamma", "inbox").await;
         make_box(&jojobot, "inbox").await;
         let posted = send_titled(
             &jojobot,
@@ -6332,9 +6444,8 @@ mod tests {
         let delivery = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
-                    mailbox: "inbox".into(),
                     new_only: None,
-                    sid: None,
+                    sid: Some(reader.clone()),
                 }))
                 .await
                 .expect("read ok"),
@@ -6574,24 +6685,6 @@ mod tests {
         );
     }
 
-    /// Reading a box jojobot doesn't know is blocked — never an empty delivery,
-    /// which would read as "your box is empty" for a name that does not exist.
-    #[tokio::test]
-    async fn reading_an_unknown_box_is_blocked_rather_than_empty() {
-        let jojobot = mailbox_handler();
-        make_box(&jojobot, "inbox").await;
-        let result = jojobot
-            .read_mailbox(Parameters(ReadMailboxArgs {
-                mailbox: "inbx".into(),
-                new_only: None,
-                sid: None,
-            }))
-            .await
-            .expect("a blocked read is a successful call");
-        let body = blocked(&result);
-        assert_eq!(body["attempted"], "inbx");
-    }
-
     /// Malformed input is a client error that says what the grammar is, rather
     /// than a store failure or a silently-normalized name.
     // TODO(dev): semantics changed, needs a decision. The second half asserted
@@ -6640,6 +6733,134 @@ mod tests {
     /// then re-delivered the whole multi-KB body flagged `seen_before`. Over a
     /// long pickup loop that is the same message downloaded all night.
     ///
+    /// A bot that exists, owns `name`, and has a handle to call with.
+    async fn owning(jojobot: &Jojobot, bot: &str, name: &str) -> String {
+        make_bot(jojobot, bot, Some(name)).await;
+        as_bot(jojobot, bot)
+    }
+
+    /// **The box is not an argument on the read side: the `sid` says whose it
+    /// is.** Reading IS delivery, so a name in the caller's hand is a way to
+    /// take somebody else's mail out of `new` and make it theirs-no-longer. The
+    /// own-box norm was written in the essay in the strongest words available
+    /// and was still only advice, because the parameter was right there. It is
+    /// structural now.
+    #[tokio::test]
+    async fn a_read_opens_the_callers_own_box_and_needs_no_name() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "gamma-inbox").await;
+        make_box(&jojobot, "somebody-elses").await;
+        let sid = owning(&jojobot, "gamma", "gamma-inbox").await;
+        send(&jojobot, "gamma-inbox", "delta", "for gamma").await;
+        send(&jojobot, "somebody-elses", "delta", "not for gamma").await;
+
+        let delivery = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    new_only: None,
+                    sid: Some(sid),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(delivery["mailbox"], "gamma-inbox");
+        assert_eq!(delivery["count"], 1);
+        assert_eq!(delivery["messages"][0]["body"], "for gamma");
+
+        // …and the other box was not touched, which is the whole point: a
+        // delivery it never took is still waiting in `new` for its own drainer.
+        let theirs = json_of(
+            &jojobot
+                .list_mailboxes(Parameters(ListMailboxesArgs {
+                    sid: Some(owning(&jojobot, "delta", "somebody-elses").await),
+                }))
+                .await
+                .expect("list ok"),
+        );
+        let mine = theirs["mailboxes"]
+            .as_array()
+            .expect("boxes")
+            .iter()
+            .find(|b| b["name"] == "somebody-elses")
+            .expect("delta's box");
+        assert_eq!(
+            mine["counts"]["new"], 1,
+            "gamma's read must not have taken delivery of delta's mail: {mine}"
+        );
+    }
+
+    /// **Three ways to have no box, three different next moves.** Folding them
+    /// into one miss would be advice that fits none of them: a caller with no
+    /// identity has to boot, a bot with no claim has to be given one, and a
+    /// claim nobody has opened needs the box minted — deliberately, by the one
+    /// verb that mints.
+    #[tokio::test]
+    async fn a_read_with_no_box_to_open_says_which_kind_of_nothing_it_found() {
+        let jojobot = mailbox_handler();
+
+        // 1. No handle at all.
+        let anonymous = blocked(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    new_only: None,
+                    sid: None,
+                }))
+                .await
+                .expect("an answer, not a protocol failure"),
+        );
+        let how = anonymous["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("start_here"),
+            "an anonymous caller is sent to the door that gives it an identity: {how}"
+        );
+
+        // 2. A bot that claims no box.
+        let boxless = blocked(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    new_only: None,
+                    sid: Some({
+                        make_bot(&jojobot, "gamma", None).await;
+                        as_bot(&jojobot, "gamma")
+                    }),
+                }))
+                .await
+                .expect("an answer"),
+        );
+        let how = boxless["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("update_entity") && how.contains("create_mailbox"),
+            "a bot with no claim is told how to get one: {how}"
+        );
+
+        // 3. A claim nobody has opened. Reported missing, never created —
+        //    the same answer the boot door gives, so the two agree.
+        let missing = blocked(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    new_only: None,
+                    sid: Some(owning(&jojobot, "delta", "never-opened").await),
+                }))
+                .await
+                .expect("an answer"),
+        );
+        assert_eq!(missing["attempted"], "never-opened");
+        let how = missing["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("create_mailbox"),
+            "a claimed box nobody opened names the verb that mints: {how}"
+        );
+        assert!(
+            jojobot
+                .mailboxes
+                .list_mailboxes()
+                .await
+                .expect("list ok")
+                .is_empty(),
+            "and it stayed a report: nothing was minted"
+        );
+    }
+
     /// **The safe branch is the DEFAULT, not the documented preference.** A
     /// caller that passes nothing gets the cheap, common read — news whole,
     /// leftovers named but not re-shipped — and pays for the expensive one only
@@ -6653,6 +6874,7 @@ mod tests {
     #[tokio::test]
     async fn a_read_that_asks_for_nothing_still_hands_over_every_leftover() {
         let jojobot = mailbox_handler();
+        let reader = owning(&jojobot, "gamma", "dev").await;
         make_box(&jojobot, "dev").await;
         let held_body = "a long hand-off that stays open until the round closes. ".repeat(40);
         let held = json_of(
@@ -6673,9 +6895,8 @@ mod tests {
         json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
-                    mailbox: "dev".into(),
                     new_only: None,
-                    sid: None,
+                    sid: Some(reader.clone()),
                 }))
                 .await
                 .expect("read ok"),
@@ -6686,9 +6907,8 @@ mod tests {
         let plain = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
-                    mailbox: "dev".into(),
                     new_only: None,
-                    sid: None,
+                    sid: Some(reader.clone()),
                 }))
                 .await
                 .expect("read ok"),
@@ -6725,9 +6945,8 @@ mod tests {
         let whole = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
-                    mailbox: "dev".into(),
                     new_only: Some(false),
-                    sid: None,
+                    sid: Some(reader.clone()),
                 }))
                 .await
                 .expect("read ok"),
@@ -6756,6 +6975,7 @@ mod tests {
     #[tokio::test]
     async fn new_only_elides_a_leftover_s_body_and_never_its_existence() {
         let jojobot = mailbox_handler();
+        let reader = owning(&jojobot, "gamma", "dev").await;
         make_box(&jojobot, "dev").await;
         let held_body = "a long hand-off that stays open until the round closes. ".repeat(40);
         let held = json_of(
@@ -6776,9 +6996,8 @@ mod tests {
         let first = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
-                    mailbox: "dev".into(),
                     new_only: None,
-                    sid: None,
+                    sid: Some(reader.clone()),
                 }))
                 .await
                 .expect("read ok"),
@@ -6794,9 +7013,8 @@ mod tests {
         let poll = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
-                    mailbox: "dev".into(),
                     new_only: Some(true),
-                    sid: None,
+                    sid: Some(reader.clone()),
                 }))
                 .await
                 .expect("read ok"),
@@ -6955,15 +7173,15 @@ mod tests {
     #[tokio::test]
     async fn taking_delivery_still_hands_over_the_whole_body() {
         let jojobot = mailbox_handler();
+        let reader = owning(&jojobot, "gamma", "inbox").await;
         make_box(&jojobot, "inbox").await;
         send(&jojobot, "inbox", "epsilon", "the shipment landed at dawn").await;
 
         let delivery = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
-                    mailbox: "inbox".into(),
                     new_only: None,
-                    sid: None,
+                    sid: Some(reader.clone()),
                 }))
                 .await
                 .expect("read ok"),
@@ -8268,8 +8486,14 @@ mod tests {
             "…and the distinction that does survive is ended against stopped"
         );
 
-        // The own-box norm, and the affordance that tempted otherwise.
-        assert!(ORIENTATION.contains("Read your OWN mailbox"));
+        // The own-box norm, and the affordance that tempted otherwise. It is no
+        // longer a norm a caller can decline — the read side takes no box name —
+        // so what the essay owes is that the reader knows which box opens.
+        assert!(ORIENTATION.contains("read your OWN mailbox"));
+        assert!(
+            ORIENTATION.contains("no name to pass"),
+            "the essay has to say the choice is gone, not merely discouraged"
+        );
         assert!(
             ORIENTATION.contains("not an invitation"),
             "the flat listing is what posed the access question, so it is what gets answered"
