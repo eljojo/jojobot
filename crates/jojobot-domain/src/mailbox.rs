@@ -24,6 +24,8 @@
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
+use crate::text;
+
 pub mod guard;
 
 #[cfg(any(test, feature = "testing"))]
@@ -248,41 +250,18 @@ pub fn validate_notes(notes: Option<&str>) -> Result<(), MailboxError> {
     Ok(())
 }
 
-/// How much of the body rides in the card's title, in characters.
-const TITLE_BODY_BUDGET: usize = 60;
-
 /// The human-visible half of a message card: `"<sender>: <subject>"`, or the
 /// opening of the body when the message declares no subject.
 ///
 /// The subject wins because it is the title the poster actually wrote; the body
 /// head is the fallback that existed before there was anywhere to write one.
 ///
-/// Truncation is on a **word** boundary with an ellipsis, so a title never ends
-/// mid-word and never implies the message says less than it does. Newlines in
-/// the body collapse to spaces — a title is one line.
+/// How the head is fitted — one line, cut on a word boundary, saying it was cut
+/// — is [`text::MESSAGE_TITLE`], which is where the budget lives and what the
+/// golden test pins.
 pub fn message_title(sender: &str, subject: Option<&str>, body: &str) -> String {
     let head = normalize_subject(subject).unwrap_or_else(|| body.to_string());
-    let flat = head.split_whitespace().collect::<Vec<_>>().join(" ");
-    let head = if flat.chars().count() <= TITLE_BODY_BUDGET {
-        flat
-    } else {
-        let mut kept = String::new();
-        for word in flat.split(' ') {
-            if kept.chars().count() + word.chars().count() + 1 > TITLE_BODY_BUDGET {
-                break;
-            }
-            if !kept.is_empty() {
-                kept.push(' ');
-            }
-            kept.push_str(word);
-        }
-        // A single word longer than the whole budget has no boundary to cut on.
-        if kept.is_empty() {
-            kept = flat.chars().take(TITLE_BODY_BUDGET).collect();
-        }
-        format!("{kept}…")
-    };
-    format!("{}: {head}", sender.trim())
+    format!("{}: {}", sender.trim(), text::MESSAGE_TITLE.render(&head))
 }
 
 /// Normalize a body to the form that survives a round-trip through the store:
@@ -305,7 +284,7 @@ pub fn normalize_body(body: &str) -> String {
 /// How much of an outcome record a message card carries, in characters.
 ///
 /// **Generous, and a cut rather than a refusal** — see [`normalize_notes`].
-pub const NOTES_BUDGET: usize = 2000;
+pub const NOTES_BUDGET: usize = text::OUTCOME_NOTES.budget;
 
 /// Normalize optional notes — blank notes are no notes, not empty ones, and a
 /// record longer than [`NOTES_BUDGET`] is **cut to fit rather than refused**.
@@ -320,7 +299,7 @@ pub const NOTES_BUDGET: usize = 2000;
 /// stop mid-sentence read as a consumer who trailed off rather than a store
 /// that ran out of room.
 pub fn normalize_notes(notes: Option<&str>) -> Option<String> {
-    blank_is_absent(notes).map(|n| cut_to_fit(&n, NOTES_BUDGET))
+    blank_is_absent(notes).map(|n| text::OUTCOME_NOTES.render(&n))
 }
 
 /// Normalize an optional subject — blank is no subject, exactly as blank notes
@@ -341,29 +320,6 @@ fn blank_is_absent(text: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Cut text to `budget` characters **inclusive of the ellipsis**, on a word
-/// boundary, saying that it was cut. Text that already fits is returned whole.
-fn cut_to_fit(text: &str, budget: usize) -> String {
-    if text.chars().count() <= budget {
-        return text.to_string();
-    }
-    let room = budget - 1;
-    let mut kept = String::new();
-    for word in text.split(' ') {
-        if kept.chars().count() + word.chars().count() + 1 > room {
-            break;
-        }
-        if !kept.is_empty() {
-            kept.push(' ');
-        }
-        kept.push_str(word);
-    }
-    // A single word longer than the whole budget has no boundary to cut on.
-    if kept.is_empty() {
-        kept = text.chars().take(room).collect();
-    }
-    format!("{kept}…")
-}
 
 /// A mailbox and what is in it. The counts are the whole point of
 /// `list_mailboxes`: what's new, what's seen, what's handled, per box.
@@ -778,6 +734,48 @@ mod tests {
             ),
             "the kept part is a prefix of the body, never a mangled word: {title:?}"
         );
+    }
+
+    /// **The golden: every byte a message card's title has ever been given.**
+    /// Card titles are stored on a live board, so this strategy's output is not
+    /// an implementation detail — changing it rewrites what a person sees on
+    /// cards that already exist. Recorded literally, so a refactor underneath
+    /// (the shared text engine) has something that can only pass by producing
+    /// the same bytes, and a deliberate change to the rules has to come here
+    /// and say so.
+    #[test]
+    fn the_message_title_golden() {
+        let cases: [(&str, &str); 8] = [
+            ("short one", "alpha: short one"),
+            (
+                "read the hand-off\n\nthen scoped the slice",
+                "alpha: read the hand-off then scoped the slice",
+            ),
+            // No backtick strip here — a title keeps them; only the focus line
+            // has to survive a fenced machine block.
+            (
+                "started on `working_session`, which was the wrong shape",
+                "alpha: started on `working_session`, which was the wrong shape",
+            ),
+            (&"w".repeat(60), "alpha: wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"),
+            (&"w".repeat(59), "alpha: wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"),
+            (
+                "counted the crates and reconciled them against the manifest twice over",
+                "alpha: counted the crates and reconciled them against the manifest…",
+            ),
+            (
+                &"x".repeat(80),
+                "alpha: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…",
+            ),
+            ("   ", "alpha: "),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                message_title("alpha", None, input),
+                expected,
+                "the stored title changed for {input:?}"
+            );
+        }
     }
 
     /// A single word longer than the whole budget has no boundary to cut on —

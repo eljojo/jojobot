@@ -11,6 +11,7 @@
 
 pub mod memory;
 pub mod mailbox;
+pub mod text;
 pub mod attention;
 pub mod session;
 pub mod life;

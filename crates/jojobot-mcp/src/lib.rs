@@ -38,6 +38,7 @@ use jojobot_domain::memory::{
     search::{DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, MailCoverage, Search, SearchQuery},
     validate_edge,
 };
+use jojobot_domain::text::{self, FRESH_FOCUS};
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -1993,11 +1994,6 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
     }
 }
 
-/// The focus a session gets when it materializes with nothing better to say.
-/// Only reachable when a beat is what creates the card — every caller-facing
-/// path passes the entry or the story instead.
-const FRESH_FOCUS: &str = "working";
-
 /// Prose reduced to one line a display field can carry.
 ///
 /// **A cut, never a refusal.** This is what a focus is derived from when the
@@ -2006,39 +2002,12 @@ const FRESH_FOCUS: &str = "working";
 /// would throw away the thing worth keeping to protect the thing that is only a
 /// glance — which is exactly what it did.
 ///
-/// Three things go, and each is a rule of the field rather than a judgement
-/// about the text: line breaks (a focus is one line), backticks and control
-/// characters (they can close the fence around the machine block under it), and
-/// length past the cap (cut on a word boundary, with an ellipsis that says so).
-fn display_line(text: &str) -> String {
-    let flat: String = text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .filter(|c| *c != '`' && !c.is_control())
-        .collect();
-    let flat = flat.trim();
-    if flat.is_empty() {
-        return FRESH_FOCUS.to_string();
-    }
-    if flat.chars().count() <= 200 {
-        return flat.to_string();
-    }
-    let mut kept = String::new();
-    for word in flat.split(' ') {
-        if kept.chars().count() + word.chars().count() + 1 > 199 {
-            break;
-        }
-        if !kept.is_empty() {
-            kept.push(' ');
-        }
-        kept.push_str(word);
-    }
-    if kept.is_empty() {
-        kept = flat.chars().take(199).collect();
-    }
-    format!("{kept}…")
+/// The rules — one line, no backtick or control character, cut on a word
+/// boundary with an ellipsis inside the cap — are [`text::FOCUS_LINE`]. Each is
+/// a rule of the *field* rather than a judgement about the text, which is why
+/// they are declared there beside the other fields' and pinned by a golden.
+fn display_line(prose: &str) -> String {
+    text::FOCUS_LINE.render(prose)
 }
 
 /// The mark a session's Journal entry carries, so a wrap that has to be
@@ -5603,6 +5572,42 @@ mod tests {
         let body = json_of(&result);
         assert_ne!(body["status"], "blocked", "the guard blocked: {body}");
         body
+    }
+
+    /// **The golden: every byte the derived focus has ever been given.** A focus
+    /// is stored in a session card's description on a live board, so this
+    /// strategy's output is the product. Recorded literally so the shared text
+    /// engine underneath can only pass by producing the same bytes.
+    ///
+    /// This is the one strategy that strips: a focus rides above a fenced
+    /// machine block, so a backtick in it can close the fence, and it has an
+    /// empty fallback because a card with a blank description says nothing.
+    #[test]
+    fn the_focus_line_golden() {
+        let w200 = "w".repeat(200);
+        let w199 = "w".repeat(199);
+        let words = format!("{} tail", "word ".repeat(45));
+        let x400 = "x".repeat(400);
+        let cases: [(&str, String); 9] = [
+            ("short one", "short one".into()),
+            (
+                "read the hand-off\n\nthen scoped the slice",
+                "read the hand-off then scoped the slice".into(),
+            ),
+            (
+                "started on `working_session`, which was the wrong shape",
+                "started on working_session, which was the wrong shape".into(),
+            ),
+            (&w200, w200.clone()),
+            (&w199, w199.clone()),
+            (&words, format!("{}word…", "word ".repeat(39))),
+            (&x400, format!("{}…", "x".repeat(199))),
+            ("   ", "working".into()),
+            ("bell\u{7}char", "bellchar".into()),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(display_line(input), expected, "the stored focus changed for {input:?}");
+        }
     }
 
     /// **A boot that does nothing leaves nothing behind.** The card materializes

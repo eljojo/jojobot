@@ -51,8 +51,6 @@ const BEAT: &str = "beat";
 /// one nobody has corrected — see `JournalEntry::touched`.
 const TOUCHED: &str = "touched";
 
-/// How much of the focus rides in the card's title.
-const TITLE_BUDGET: usize = 60;
 
 /// The real Sessions adapter. Stateless as far as Vikunja goes: it holds an API
 /// client and the project *name*, never an id.
@@ -533,29 +531,62 @@ fn render_session(focus: &str, bot: &EntityId, started_at: Timestamp) -> String 
     )
 }
 
-/// The human-visible half of a session card: the bot, then its focus, cut on a
-/// word boundary the way a message title is.
+/// The human-visible half of a session card: the bot, then its focus.
+///
+/// How the focus is fitted is [`jojobot_domain::text::SESSION_TITLE`], which is
+/// where the budget lives and what the golden test pins.
 fn session_title(bot: &EntityId, focus: &str) -> String {
-    let flat = focus.split_whitespace().collect::<Vec<_>>().join(" ");
-    let head = if flat.chars().count() <= TITLE_BUDGET {
-        flat
-    } else {
-        let mut kept = String::new();
-        for word in flat.split(' ') {
-            if kept.chars().count() + word.chars().count() + 1 > TITLE_BUDGET {
-                break;
-            }
-            if !kept.is_empty() {
-                kept.push(' ');
-            }
-            kept.push_str(word);
+    format!("{bot}: {}", jojobot_domain::text::SESSION_TITLE.render(focus))
+}
+
+#[cfg(test)]
+mod title_golden {
+    use super::session_title;
+    use jojobot_domain::memory::EntityId;
+
+    /// **The golden: every byte a session card's title has ever been given.**
+    /// The same reason the message-title golden exists — these titles sit on a
+    /// live board, so the strategy's output is the product, not an
+    /// implementation detail. A refactor underneath can only pass by producing
+    /// the same bytes.
+    #[test]
+    fn the_session_title_golden() {
+        let bot = EntityId("bot:gamma".into());
+        let cases: [(&str, &str); 7] = [
+            ("short one", "bot:gamma: short one"),
+            (
+                "read the hand-off\n\nthen scoped the slice",
+                "bot:gamma: read the hand-off then scoped the slice",
+            ),
+            (
+                "started on `working_session`, which was the wrong shape",
+                "bot:gamma: started on `working_session`, which was the wrong shape",
+            ),
+            (
+                &"w".repeat(60),
+                "bot:gamma: wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+            ),
+            (
+                &"w".repeat(59),
+                "bot:gamma: wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+            ),
+            (
+                "counted the crates and reconciled them against the manifest twice over",
+                "bot:gamma: counted the crates and reconciled them against the manifest…",
+            ),
+            (
+                &"x".repeat(80),
+                "bot:gamma: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…",
+            ),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                session_title(&bot, input),
+                expected,
+                "the stored title changed for {input:?}"
+            );
         }
-        if kept.is_empty() {
-            kept = flat.chars().take(TITLE_BUDGET).collect();
-        }
-        format!("{kept}…")
-    };
-    format!("{bot}: {head}")
+    }
 }
 
 /// The value of a `key: value` line, if this line is one.
