@@ -626,7 +626,8 @@ impl Jojobot {
         description = "New here? Call this first. Explains what jojobot is and how its world \
                        fits together — entities, facts, provenance, edges, mailboxes — with \
                        worked examples, and returns a live snapshot of what exists right now \
-                       (entities by kind, every mailbox with its counts), so you start \
+                       (entities by kind, and every mailbox by name — with counts for the ones \
+                       you drain and the ones nobody drains), so you start \
                        oriented instead of guessing. Read-only, no side effects. CALLED THIS \
                        BEFORE? Pass brief: true — you get the snapshot and orientation_version \
                        without the essay, which is the only part that does not change between \
@@ -708,12 +709,19 @@ impl Jojobot {
     /// `boot_bot` are this function with and without a bot — deliberately, so
     /// the two doors can never come to teach two different jojobots.
     async fn orient(&self, bot: Option<&EntityId>, brief: bool) -> Result<CallToolResult, McpError> {
+        // **The entity index is read ONCE for the whole answer.** Three parts of
+        // a boot need it — the counts by kind, which boxes the caller drains,
+        // and the identity itself — and each used to fetch it, which is three
+        // remote round trips per boot AND three reads that can disagree with
+        // one another inside a single payload.
+        //
         // Best-effort per world: orientation must land even when one world is
         // down — a fresh agent on a half-configured server still gets the map.
-        let entities = match self.memory.list_entities(None).await {
+        let index = self.memory.list_entities(None).await;
+        let entities = match &index {
             Ok(entities) => {
                 let mut by_kind = std::collections::BTreeMap::<&str, usize>::new();
-                for e in &entities {
+                for e in entities {
                     let kind = e.id.as_str().split(':').next().unwrap_or("unknown");
                     *by_kind.entry(kind).or_default() += 1;
                 }
@@ -733,11 +741,14 @@ impl Jojobot {
         // and it posed the same question the own-box norm then has to answer in
         // prose: is that unread one mine? An anonymous `start_here` owns
         // nothing, which is exactly right for a caller that only posts.
-        let mine = self.boxes_drained_by(bot).await?;
+        let mine = match &index {
+            Ok(index) => self.ownership_of(index, bot),
+            Err(_) => Ownership::unknown(),
+        };
         let mailboxes = match self.mailboxes.list_mailboxes().await {
             Ok(boxes) => serde_json::json!({
                 "available": true,
-                "counts_shown_for": mine.mine.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
+                "counts_shown_for": mine.shown_for(&boxes),
                 "ownership_known": mine.known,
                 "note": mine.note(),
                 "boxes": boxes
@@ -746,7 +757,7 @@ impl Jojobot {
                         if mine.covers(b.name.as_str()) {
                             let mut body = mailbox_json(b);
                             if let Some(obj) = body.as_object_mut() {
-                                obj.insert("yours".into(), true.into());
+                                obj.insert("yours".into(), mine.drains(b.name.as_str()).into());
                             }
                             body
                         } else {
@@ -775,9 +786,12 @@ impl Jojobot {
             }),
         };
         let snapshot = serde_json::json!({ "entities": entities, "mailboxes": mailboxes });
-        let identity = match bot {
-            None => serde_json::Value::Null,
-            Some(bot) => match self.identity(bot).await? {
+        // A memory world that is down cannot answer who anybody is; the
+        // snapshot above already says so, and this stays null rather than
+        // claiming the identity is missing.
+        let identity = match (bot, &index) {
+            (None, _) | (_, Err(_)) => serde_json::Value::Null,
+            (Some(bot), Ok(index)) => match self.identity(index, bot).await? {
                 Ok(identity) => identity,
                 // A name that is no bot: the guards' own shape, so one
                 // client-side branch handles every "jojobot declined" answer.
@@ -827,11 +841,11 @@ impl Jojobot {
     /// `Err(candidates)` is the guards' answer for a name that is no bot.
     async fn identity(
         &self,
+        index: &[Entity],
         bot: &EntityId,
     ) -> Result<Result<serde_json::Value, Vec<EntityMatch>>, McpError> {
-        let index = self.memory.list_entities(None).await.map_err(memory_error)?;
         let Some(entity) = index.iter().find(|e| &e.id == bot) else {
-            return Ok(Err(guard::screen(bot, &[], &index)));
+            return Ok(Err(guard::screen(bot, &[], index)));
         };
 
         // The charter is the doc's prose; a bot nobody has written one for has
@@ -1790,7 +1804,7 @@ impl Jojobot {
             .map_err(mailbox_error)?;
         let body = serde_json::json!({
             "count": boxes.len(),
-            "counts_shown_for": mine.mine.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
+            "counts_shown_for": mine.shown_for(&boxes),
             "ownership_known": mine.known,
             "note": mine.note(),
             "mailboxes": boxes
@@ -1799,7 +1813,7 @@ impl Jojobot {
                     if mine.covers(b.name.as_str()) {
                         let mut body = mailbox_json(b);
                         if let Some(obj) = body.as_object_mut() {
-                            obj.insert("yours".into(), true.into());
+                            obj.insert("yours".into(), mine.drains(b.name.as_str()).into());
                         }
                         body
                     } else {
@@ -1851,30 +1865,41 @@ impl Jojobot {
     /// whose connection carries no identity either, drains nothing — which is
     /// the right answer for a pure sender, and for an anonymous `start_here`.
     async fn boxes_drained_by(&self, named: Option<&EntityId>) -> Result<Ownership, McpError> {
-        let bot = match named {
-            Some(bot) => Some(bot.clone()),
-            None => self.bound.read().expect("binding poisoned").as_ref().map(|b| b.bot.clone()),
-        };
-        let Some(bot) = bot else {
-            return Ok(Ownership::known(Vec::new()));
-        };
         // **A world that is down is not an answer of "no".** Ownership is a
         // read of Memory, so an outage means jojobot cannot say what anybody
         // drains — and rendering that as "not yours" tells every bot its own
         // queue belongs to somebody else, which is a claim nobody can act on.
-        // The owned-mailbox block makes the same call in the other direction
-        // and says so; these two must not disagree about what down means.
-        let Ok(index) = self.memory.list_entities(None).await else {
-            return Ok(Ownership::unknown());
+        match self.memory.list_entities(None).await {
+            Ok(index) => Ok(self.ownership_of(&index, named)),
+            Err(_) => Ok(Ownership::unknown()),
+        }
+    }
+
+    /// The same answer, off an index the caller already has — so a boot reads
+    /// the entity index once for the whole payload instead of three times.
+    fn ownership_of(&self, index: &[Entity], named: Option<&EntityId>) -> Ownership {
+        let bot = match named {
+            Some(bot) => Some(bot.clone()),
+            None => self.bound.read().expect("binding poisoned").as_ref().map(|b| b.bot.clone()),
         };
-        Ok(Ownership::known(
+        // **An unclaimed box has no queue to protect.** The scoping shields a
+        // DRAINER's workload from everybody else; a box nobody owns has no
+        // drainer, and hiding its counts from every caller alive would leave a
+        // box that `read_mailbox` empties freely and nothing can report on —
+        // which is also what falsified the polling advice pointing at this verb.
+        let claimed: Vec<String> = index.iter().filter_map(|e| e.mailbox.clone()).collect();
+        let Some(bot) = bot else {
+            return Ownership::known(Vec::new(), claimed);
+        };
+        Ownership::known(
             index
                 .iter()
                 .find(|e| e.id == bot)
                 .and_then(|e| e.mailbox.clone())
                 .into_iter()
                 .collect(),
-        ))
+            claimed,
+        )
     }
 
     /// Leave a message in a box.
@@ -3074,35 +3099,65 @@ struct Ownership {
     /// The boxes this caller drains. Empty when they drain none — or when
     /// nothing could be read, which is why `known` exists beside it.
     mine: Vec<String>,
+    /// Every box some bot has claimed. What is NOT in here is drained by
+    /// nobody, and a box with no drainer has no queue to shield.
+    claimed: Vec<String>,
     /// Whether the ownership read succeeded at all.
     known: bool,
 }
 
 impl Ownership {
-    fn known(mine: Vec<String>) -> Self {
-        Ownership { mine, known: true }
+    fn known(mine: Vec<String>, claimed: Vec<String>) -> Self {
+        Ownership {
+            mine,
+            claimed,
+            known: true,
+        }
     }
 
     fn unknown() -> Self {
         Ownership {
             mine: Vec::new(),
+            claimed: Vec::new(),
             known: false,
         }
     }
 
-    /// Whether this box is one the caller drains. Never true when ownership
-    /// could not be read: an unknown is not a yes.
-    fn covers(&self, name: &str) -> bool {
+    /// Whether this caller drains this box — the ownership question.
+    fn drains(&self, name: &str) -> bool {
         self.known && self.mine.iter().any(|m| m == name)
+    }
+
+    /// Whether this box's counts are this caller's to see — a **different**
+    /// question from whether they drain it: one they drain, or one nobody
+    /// drains, since a box with no drainer has no queue to shield. Never true
+    /// when ownership could not be read; an unknown is not a yes.
+    fn covers(&self, name: &str) -> bool {
+        self.known && (self.drains(name) || !self.claimed.iter().any(|c| c == name))
+    }
+
+    /// Which of the boxes actually on the board this answer counted.
+    ///
+    /// **Derived from the listing, never from the claim.** A bot can carry a
+    /// `mailbox:` claim on a box nobody ever created, and naming that in
+    /// `counts_shown_for` would point a reader at a box not in the list beside
+    /// it.
+    fn shown_for(&self, boxes: &[Mailbox]) -> Vec<String> {
+        boxes
+            .iter()
+            .map(|b| b.name.as_str())
+            .filter(|name| self.covers(name))
+            .map(str::to_string)
+            .collect()
     }
 
     /// The clause that says what this listing's counts mean, including when it
     /// cannot say.
     fn note(&self) -> &'static str {
         if self.known {
-            "Counts are shown for the boxes you drain; every other box is listed by name only. \
-             It exists and you can post into it — what is waiting in it belongs to whoever \
-             works it."
+            "Counts are shown for the boxes you drain, and for any box nobody drains. A box \
+             somebody else works is listed by name only — it exists and you can post into it; \
+             what is waiting in it belongs to whoever works it."
         } else {
             "OWNERSHIP IS UNKNOWN: the store that records which boxes you drain could not be \
              read, so no counts are shown for any box — including your own. This is jojobot \
@@ -3456,11 +3511,6 @@ fn entity_id(kind: &str, handle: &str) -> Result<EntityId, McpError> {
     }
 }
 
-/// Read a bot handle off a name. A bare name is a bot here — this is the bot
-/// door, so a bare slug is read with the bot kind on it — and a handle of
-/// another kind is a client
-/// error rather than a silent winner: booting a person as an identity would
-/// hand somebody's page back as a charter.
 /// The identity a session verb was told to write as, if it was told one.
 ///
 /// Blank is absent rather than an error: a client that sends `bot: ""` meant to
@@ -3473,6 +3523,10 @@ fn named_bot(name: Option<&str>) -> Result<Option<EntityId>, McpError> {
     }
 }
 
+/// Read a bot handle off a name. A bare name is a bot here — this is the bot
+/// door, so a bare slug is read with the bot kind on it — and a handle of
+/// another kind is a client error rather than a silent winner: booting a person
+/// as an identity would hand somebody's page back as a charter.
 fn bot_id(name: &str) -> Result<EntityId, McpError> {
     let name = name.trim();
     match name.split_once(':') {
@@ -5477,7 +5531,10 @@ mod tests {
 
         let delivery = json_of(
             &jojobot
-                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into(), new_only: None }))
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    mailbox: "inbox".into(),
+                    new_only: None,
+                }))
                 .await
                 .expect("read ok"),
         );
@@ -5508,7 +5565,10 @@ mod tests {
 
         let after = json_of(
             &jojobot
-                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into(), new_only: None }))
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    mailbox: "inbox".into(),
+                    new_only: None,
+                }))
                 .await
                 .expect("read ok"),
         );
@@ -5523,13 +5583,19 @@ mod tests {
         make_box(&jojobot, "inbox").await;
         send(&jojobot, "inbox", "alpha", "the shipment landed").await;
         jojobot
-            .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into(), new_only: None }))
+            .read_mailbox(Parameters(ReadMailboxArgs {
+                    mailbox: "inbox".into(),
+                    new_only: None,
+                }))
             .await
             .expect("read ok");
 
         let again = json_of(
             &jojobot
-                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into(), new_only: None }))
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    mailbox: "inbox".into(),
+                    new_only: None,
+                }))
                 .await
                 .expect("read ok"),
         );
@@ -5561,7 +5627,10 @@ mod tests {
 
         let delivery = json_of(
             &jojobot
-                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into(), new_only: None }))
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    mailbox: "inbox".into(),
+                    new_only: None,
+                }))
                 .await
                 .expect("read ok"),
         );
@@ -5984,7 +6053,10 @@ mod tests {
 
         let delivery = json_of(
             &jojobot
-                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into(), new_only: None }))
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    mailbox: "inbox".into(),
+                    new_only: None,
+                }))
                 .await
                 .expect("read ok"),
         );
@@ -6720,7 +6792,10 @@ mod tests {
         make_box(&jojobot, "inbox").await;
         send(&jojobot, "inbox", "alpha", "the shipment landed").await;
 
-        let out = jojobot.start_here(Parameters(OrientArgs { brief: None })).await.expect("start_here ok");
+        let out = jojobot
+                .start_here(Parameters(OrientArgs { brief: None }))
+                .await
+                .expect("start_here ok");
         let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
         let orientation = body["orientation"].as_str().expect("orientation prose");
         // The orientation must teach the load-bearing vocabulary, not assume it.
@@ -6755,14 +6830,48 @@ mod tests {
         let boxes = body["snapshot"]["mailboxes"]["boxes"]
             .as_array()
             .expect("mailboxes listed");
-        // **Anonymous orientation sees names, not queues.** `start_here` is
-        // nobody in particular, so it owns nothing and every box comes back as
-        // existence only — which is exactly what a caller that only posts
-        // needs, and it is the affordance that used to pose "is that one mine?"
+        // **Anonymous orientation drains nothing, so it sees no bot's queue** —
+        // but this box is claimed by nobody, and a box with no drainer has no
+        // queue to shield. That is the distinction the scoping actually draws:
+        // it protects a drainer's workload, not the board's contents.
         assert_eq!(boxes[0]["name"], "inbox");
-        assert_eq!(boxes[0]["yours"], false);
-        assert!(boxes[0]["counts"].is_null(), "{:?}", boxes[0]);
-        assert_eq!(boxes[0]["counts_elided"], true);
+        assert_eq!(boxes[0]["yours"], false, "an anonymous caller drains nothing");
+        assert_eq!(
+            boxes[0]["counts"]["new"], 1,
+            "…and an unclaimed box is still countable: {:?}",
+            boxes[0]
+        );
+    }
+
+    /// The other half, and the one the scoping exists for: a box somebody else
+    /// drains comes back to an anonymous caller as a name only.
+    #[tokio::test]
+    async fn an_anonymous_caller_sees_no_counts_for_a_box_somebody_drains() {
+        let jojobot = handler();
+        make_box(&jojobot, "dev").await;
+        make_bot(&jojobot, "gamma", Some("dev")).await;
+        send(&jojobot, "dev", "coordinator (pm)", "your hand-off").await;
+
+        let listed = json_of(
+            &jojobot
+                .list_mailboxes(Parameters(ListMailboxesArgs { bot: None }))
+                .await
+                .expect("list ok"),
+        );
+        let dev = listed["mailboxes"]
+            .as_array()
+            .expect("boxes")
+            .iter()
+            .find(|b| b["name"] == "dev")
+            .expect("the box");
+        assert_eq!(dev["yours"], false);
+        assert!(dev["counts"].is_null(), "somebody drains this one: {dev}");
+        assert_eq!(dev["counts_elided"], true, "elided, never silently");
+        assert_eq!(
+            listed["counts_shown_for"],
+            serde_json::json!([]),
+            "…and the answer names what it counted: {listed}"
+        );
     }
 
     /// A mailbox world that answers nothing. Shared by both orientation doors:
@@ -7108,13 +7217,22 @@ mod tests {
     /// Stand up a bot the way an operator would: an entity of kind `bot`
     /// claiming a box, its charter as prose, its rules as facts.
     async fn make_bot(jojobot: &Jojobot, slug: &str, mailbox: Option<&str>) {
-        jojobot
+        let result = jojobot
             .add_entity(Parameters(AddEntityArgs {
                 mailbox: mailbox.map(str::to_string),
                 ..add_args("bot", slug, slug)
             }))
             .await
-            .expect("add_entity ok");
+            .expect("add_entity call ok");
+        // **A blocked write is a SUCCESSFUL result**, so `.expect` alone let a
+        // refused claim pass as a created bot — and a fixture that silently
+        // created nothing makes every assertion built on it vacuous. Its
+        // sibling `make_box` has always checked this.
+        let body = json_of(&result);
+        assert_ne!(
+            body["status"], "blocked",
+            "the fixture bot {slug:?} was not created: {body}"
+        );
     }
 
     async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
@@ -7246,6 +7364,28 @@ mod tests {
             .expect("list ok");
         assert_eq!(live.len(), 1, "still one session, not one per call: {live:?}");
         assert_eq!(live[0].entries.len(), 2, "…and it accrued: {:?}", live[0].entries);
+    }
+
+    /// The two edges of reading an identity off a parameter: blank is absent,
+    /// and a handle of another kind is a client error rather than a silent
+    /// winner — booting a person as an identity would hand somebody's page back
+    /// as a charter.
+    #[test]
+    fn a_named_bot_is_absent_when_blank_and_refused_when_it_is_another_kind() {
+        assert_eq!(named_bot(None).expect("ok"), None);
+        assert_eq!(named_bot(Some("   ")).expect("blank is absent"), None);
+        assert_eq!(
+            named_bot(Some(" gamma ")).expect("ok"),
+            Some(EntityId("bot:gamma".into())),
+            "a bare name is a bot at this door"
+        );
+        assert_eq!(
+            named_bot(Some("bot:gamma")).expect("ok"),
+            Some(EntityId("bot:gamma".into())),
+            "…and so is the qualified handle"
+        );
+        let wrong = named_bot(Some("person:milhouse")).expect_err("another kind is refused");
+        assert_eq!(wrong.code, ErrorCode::INVALID_PARAMS);
     }
 
     /// **A closed session is terminal when you NAME it, and a bot whose last
@@ -9103,7 +9243,10 @@ mod tests {
                 .await
                 .expect("begin ok");
 
-            let booting = jojobot.boot_bot(Parameters(BootBotArgs { name: "gamma".into(), brief: None }));
+            let booting = jojobot.boot_bot(Parameters(BootBotArgs {
+                name: "gamma".into(),
+                brief: None,
+            }));
             let writing = jojobot.journal(Parameters(JournalArgs {
                 entry: "the first beat".into(),
                 focus: None,
@@ -9328,7 +9471,9 @@ mod tests {
         for _ in 0..2 {
             boot(&jojobot, "sigma").await;
         }
-        let listed = json_of(&jojobot.list_mailboxes(Parameters(ListMailboxesArgs { bot: None })).await.expect("list ok"));
+        let listed = json_of(&jojobot.list_mailboxes(Parameters(ListMailboxesArgs { bot: None }))
+                .await
+                .expect("list ok"));
         assert_eq!(
             listed["count"], 0,
             "booting must not put a box on the board: {listed}"
@@ -9464,7 +9609,9 @@ mod tests {
         assert_eq!(body["identity"]["bot"]["id"], "bot:epsilon");
         assert!(body["identity"]["owned_mailbox"].is_null(), "got {body}");
         assert!(
-            json_of(&jojobot.list_mailboxes(Parameters(ListMailboxesArgs { bot: None })).await.expect("list ok"))["mailboxes"]
+            json_of(&jojobot.list_mailboxes(Parameters(ListMailboxesArgs { bot: None }))
+                .await
+                .expect("list ok"))["mailboxes"]
                 .as_array()
                 .expect("boxes")
                 .is_empty(),
@@ -9605,14 +9752,72 @@ mod tests {
         let jojobot = handler();
         make_bot(&jojobot, "gamma", None).await;
 
-        let anonymous = json_of(&jojobot.start_here(Parameters(OrientArgs { brief: None })).await.expect("start_here ok"));
+        let anonymous = json_of(&jojobot
+                .start_here(Parameters(OrientArgs { brief: None }))
+                .await
+                .expect("start_here ok"));
         let identified = boot(&jojobot, "gamma").await;
         assert_eq!(
             anonymous["orientation"], identified["orientation"],
             "the world-model is one text, or the two doors teach different jojobots"
         );
-        assert_eq!(anonymous["snapshot"], identified["snapshot"]);
+        assert_eq!(
+            anonymous["snapshot"]["entities"], identified["snapshot"]["entities"],
+            "what exists is one answer, whoever asks"
+        );
+        // **The mailbox half is deliberately NOT equal once a bot drains a
+        // box** — that is the whole point of scoping counts to the caller — so
+        // the shared invariant is the set of boxes, not their contents. The
+        // fixture used to give gamma no mailbox, which made a stale assertion
+        // of full equality pass for a reason that had nothing to do with the
+        // invariant it claimed.
+        let names = |body: &serde_json::Value| -> Vec<String> {
+            body["snapshot"]["mailboxes"]["boxes"]
+                .as_array()
+                .expect("boxes")
+                .iter()
+                .map(|b| b["name"].as_str().expect("a name").to_string())
+                .collect()
+        };
+        assert_eq!(
+            names(&anonymous),
+            names(&identified),
+            "both doors see the same board; they differ only in whose queue is theirs to read"
+        );
         assert!(anonymous["identity"].is_null(), "an anonymous session claims no identity");
+    }
+
+    /// …and the difference the previous test carves out, asserted directly: the
+    /// booted door counts the box its identity drains, the anonymous one does
+    /// not.
+    #[tokio::test]
+    async fn the_two_doors_differ_only_in_whose_queue_is_theirs_to_read() {
+        let jojobot = handler();
+        make_box(&jojobot, "dev").await;
+        make_bot(&jojobot, "gamma", Some("dev")).await;
+        send(&jojobot, "dev", "coordinator (pm)", "your hand-off").await;
+
+        let counts_for = |body: &serde_json::Value| -> serde_json::Value {
+            body["snapshot"]["mailboxes"]["boxes"]
+                .as_array()
+                .expect("boxes")
+                .iter()
+                .find(|b| b["name"] == "dev")
+                .expect("the box")
+                .clone()
+        };
+
+        let anonymous = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs { brief: None }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert!(counts_for(&anonymous)["counts"].is_null(), "{anonymous}");
+
+        let identified = boot(&jojobot, "gamma").await;
+        assert_eq!(counts_for(&identified)["counts"]["new"], 1, "{identified}");
+        assert_eq!(counts_for(&identified)["yours"], true);
     }
 
     /// `set_charter` writes the orienting prose and reads it back — and it is
