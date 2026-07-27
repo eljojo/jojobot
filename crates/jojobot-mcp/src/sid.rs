@@ -21,10 +21,13 @@
 //!
 //! **The registry is process-wide, never per connection.** The transport builds
 //! one handler per MCP session and most clients open a fresh one per tool call,
-//! so a map living on the handler would forget every sid it ever issued. The
-//! flip side is stated rather than papered over: a restart empties it, and a
-//! handle from before one is *gone* — blocked, never silently swapped for a new
-//! session.
+//! so a map living on the handler would forget every sid it ever issued.
+//!
+//! **A restart empties it, and the board fills it back**: every handle is
+//! written on the card its run created, so [`SessionRegistry::rebuild_from`]
+//! recovers it at startup. What does NOT come back is a handle whose run never
+//! wrote a card — there is nothing on the board carrying it — and that one is
+//! *gone*: blocked, never silently swapped for a new session.
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -173,8 +176,9 @@ impl SessionRegistry {
         Err(NoFreeHandle)
     }
 
-    /// What this handle addresses, or `None` for one this process never issued
-    /// — a typo, or a handle from before a restart.
+    /// What this handle addresses, or `None` for one this registry is not
+    /// holding — a typo, or a handle whose run never wrote a card for a restart
+    /// to rebuild it from.
     pub fn lookup(&self, sid: &str) -> Option<Handle> {
         self.held
             .read()
@@ -341,9 +345,12 @@ mod tests {
     }
 
     /// A handle this process never issued is simply not there — and it is the
-    /// registry's silence, not a guess, that the door turns into a block.
+    /// registry's silence, not a guess, that the door turns into a block. A
+    /// fresh registry, before any rebuild: what a rebuild puts back is the
+    /// handles the cards carry, which is [`SessionRegistry::rebuild_from`]'s
+    /// business and not this one's.
     #[test]
-    fn a_handle_from_before_a_restart_is_not_in_a_fresh_registry() {
+    fn a_handle_this_process_never_issued_is_not_in_the_registry() {
         let old = SessionRegistry::new();
         let sid = old.mint(&bot("gamma"), None).expect("minted");
         assert!(SessionRegistry::new().lookup(sid.as_str()).is_none());

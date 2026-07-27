@@ -1345,9 +1345,10 @@ impl Jojobot {
                 answer,
                 format!(
                     "No session was started. That session is gone: '{answer}' is not a handle \
-                     this jojobot is holding. Handles live in memory, so a restart ends every one \
-                     of them — the work on the board is untouched and still readable. Call \
-                     start_here with your bot name again and take the offer it makes."
+                     this jojobot is holding — a handle whose run never wrote a card has nothing \
+                     to be recovered from. The work on the board is untouched and still \
+                     readable. Call start_here with your bot name again and take the offer it \
+                     makes."
                 ),
             ));
         };
@@ -8868,23 +8869,44 @@ mod tests {
         assert_eq!(resumed["session"]["session"]["id"], legacy.id.as_str());
     }
 
-    /// **A handle from before a restart is gone, and says so.** Not a 404 from
-    /// the store — the card may be sitting right there — and above all not a
-    /// silent new session, which would leave a caller writing into a run they
-    /// did not mean under an id they think they know.
+    /// **A handle that never reached a card does not survive a restart, and
+    /// says so** — even though the restart rebuilt everything it could.
+    ///
+    /// A card is written lazily, so a boot that did no work leaves the handle
+    /// with nothing behind it, and nothing behind it is nothing to rebuild
+    /// FROM: `rebuild_from` reads handles off the cards on the board, and this
+    /// handle is on no card. It comes back blocked, which is not a 404 from the
+    /// store — the store was never asked — and above all not a silent new
+    /// session, which would leave a caller writing into a run they did not mean
+    /// under an id they think they know.
+    ///
+    /// **Age is not what blocks it.** The old name here said "a handle from
+    /// before a restart", which is the opposite of the spec: a pre-restart
+    /// handle whose card exists RESOLVES, and its sibling
+    /// `a_handle_written_on_the_card_survives_a_restart` is what pins that. The
+    /// rebuild is run here rather than skipped so the two cases are told apart
+    /// by the thing that actually decides them.
     #[tokio::test]
-    async fn a_handle_from_before_a_restart_is_blocked_rather_than_missed() {
+    async fn a_handle_that_never_reached_a_card_is_blocked_after_a_rebuild() {
         let client = NoAffinity::new();
         make_bot(&client.call(), "gamma", None).await;
         let handle = sid_of(&boot(&client.call(), "gamma").await).expect("a handle");
 
-        // Same stores, new process: the registry is what a restart empties.
+        // Same stores, new process: the registry is what a restart empties, and
+        // filling it back from the board is what a restart then does.
+        let rebuilt = Arc::new(sid::SessionRegistry::new());
+        let board = client.sessions.all_sessions().await.expect("read ok");
+        assert_eq!(
+            rebuilt.rebuild_from(&board),
+            0,
+            "the boot wrote no card, so the rebuild has nothing to recover: {board:?}"
+        );
         let restarted = Jojobot::new(
             client.memory.clone(),
             Arc::new(SpySearch::default()),
             client.mailboxes.clone(),
             client.sessions.clone(),
-            Arc::new(sid::SessionRegistry::new()),
+            rebuilt,
         );
         let body = blocked(
             &restarted
@@ -11082,26 +11104,78 @@ mod tests {
         );
     }
 
-    /// **A call carrying no identity auto-journals nothing.** jojobot does not
-    /// guess which session made a call, so a verb arriving without a `sid`
-    /// writes no beat and mints no session.
+    /// **A call carrying no identity auto-journals nothing** — not even when
+    /// there is exactly one live session it could obviously have meant.
+    ///
+    /// jojobot does not guess which session made a call. The temptation is the
+    /// single-candidate case: one bot, one run in flight, an unaddressed write
+    /// arriving — and resolving it "helpfully" attributes somebody's work to a
+    /// session they did not name.
+    ///
+    /// **The fixture is the assertion here.** This booted nothing and wrote
+    /// nothing before, so the board was empty and there was nothing for a
+    /// guessing implementation to guess FROM: restoring the deleted
+    /// fall-back-to-the-one-live-run resolver left the suite green, which is a
+    /// test that cannot fail. There is a card on the board now, warm and
+    /// unambiguous, and the anonymous write must still leave it alone.
     #[tokio::test]
     async fn a_call_carrying_no_sid_writes_no_beats() {
         let store = Arc::new(InMemorySessions::new());
         let jojobot = with_sessions(store.clone());
         ensure(&jojobot, "alpha").await;
-        capture_ok(&jojobot, capture_args("alpha", "plays go")).await;
+        make_bot(&jojobot, "gamma", None).await;
 
-        for bot in ["bot:gamma", "bot:delta"] {
-            assert!(
-                store
-                    .sessions_of(&EntityId(bot.into()))
-                    .await
-                    .expect("list ok")
-                    .is_empty(),
-                "nothing may be recorded against an identity nobody claimed"
-            );
-        }
+        // One live run, with a card already materialized: the single obvious
+        // candidate an unaddressed write would land in if anything resolved it.
+        let sid = booted(&jojobot, "gamma").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                ..capture_args("alpha", "plays go")
+            },
+        )
+        .await;
+        let chronology = || async {
+            let runs = store
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok");
+            assert_eq!(runs.len(), 1, "one run in flight: {runs:?}");
+            runs[0]
+                .entries
+                .iter()
+                .map(|e| e.text.clone())
+                .collect::<Vec<_>>()
+        };
+        let before = chronology().await;
+        assert_eq!(
+            before.len(),
+            1,
+            "…carrying the beat for the write that named it: {before:?}"
+        );
+
+        // **Two anonymous writes, of two classes, because they fail
+        // differently.** A guessing resolver reached by a class the session
+        // already has AMENDS that beat in place — the entry count never moves,
+        // so counting entries alone is a test that still cannot fail. A class it
+        // does not have opens a new one.
+        capture_ok(&jojobot, capture_args("alpha", "plays go on tuesdays")).await;
+        jojobot
+            .create_mailbox(Parameters(CreateMailboxArgs {
+                name: "nobodys-box".into(),
+                create_new: None,
+                sid: None,
+            }))
+            .await
+            .expect("create ok");
+
+        let after = chronology().await;
+        assert_eq!(
+            after, before,
+            "an anonymous write lands in nobody's chronology, however obvious the candidate — \
+             neither as a new beat nor as a count moving on one that is already there"
+        );
     }
 
     /// A session store whose `close` refuses until it is told not to — the
