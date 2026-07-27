@@ -50,16 +50,6 @@ use rmcp::{
 
 /// What `start_here` hands a fresh agent. Engine prose: the method, in role
 /// language only — no operator specifics, fictional example identities.
-/// **A stamp on the orientation essay, so a returning session can skip it.**
-///
-/// The essay is the one part of an orientation answer that does not change
-/// between boots; everything else — the snapshot, the identity, the session —
-/// is why you call again. A version rides on every answer, brief or not, so a
-/// session holding a boot-surface token budget can pay for the essay ONCE and
-/// afterwards ask only whether it moved. **Bump it whenever [`ORIENTATION`]
-/// changes**, or a session that has read the old one will believe it is current.
-const ORIENTATION_VERSION: u32 = 2;
-
 const ORIENTATION: &str = r#"# jojobot — start here
 
 jojobot is a personal-assistant server: the durable memory and message rail behind an assistant serving one person, the operator. You are one of possibly many AI sessions connected to it — jojobot itself never thinks; it stores, guards, and serves. What you write here outlives this conversation and will be read back as truth by sessions that cannot ask you what you meant. The rules below exist for them.
@@ -331,9 +321,8 @@ pub struct UpdateEntityArgs {
 /// Arguments to `start_here`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct OrientArgs {
-    /// Skip the orientation essay and return only what changes between calls.
-    /// The answer still carries `orientation_version`, so you can tell whether
-    /// the essay you already read is the current one.
+    /// Skip the orientation essay and return only what changes between calls —
+    /// the snapshot, your identity, your session.
     #[serde(default)]
     pub brief: Option<bool>,
 }
@@ -631,10 +620,9 @@ impl Jojobot {
                        (entities by kind, and every mailbox by name — with counts for the ones \
                        you drain and the ones nobody drains), so you start \
                        oriented instead of guessing. Read-only, no side effects. CALLED THIS \
-                       BEFORE? Pass brief: true — you get the snapshot and orientation_version \
-                       without the essay, which is the only part that does not change between \
-                       calls. Read the essay again whenever that version is one you have not \
-                       seen; every answer carries it, brief or not."
+                       BEFORE? Pass brief: true and you get the snapshot without the essay — the \
+                       essay is the only part that does not change between calls, and calling \
+                       again without brief reads it in full."
     )]
     async fn start_here(
         &self,
@@ -817,21 +805,13 @@ impl Jojobot {
         };
         json_result(&serde_json::json!({
             "orientation": if brief { serde_json::Value::Null } else { ORIENTATION.into() },
-            // **Always present, brief or not.** The essay is the only part of
-            // this answer that does not change between boots, so a returning
-            // session can tell whether it already has the current one without
-            // paying for it — and a session that finds a version it has never
-            // seen knows to ask for the full call.
-            "orientation_version": ORIENTATION_VERSION,
+            // **The elision is marked, and that is all it is.** The essay used
+            // to arrive stamped with a version so a returning session could ask
+            // whether the copy it held was current; the stamp is gone, and no
+            // staleness check replaces it. What is left is the marker every
+            // elision on this surface owes — less came back, and the caller is
+            // told so rather than left to infer withheld from empty.
             "orientation_elided": brief,
-            "how_to_read_orientation": if brief {
-                serde_json::Value::from(
-                    "call again without brief to read the orientation in full — do that whenever \
-                     orientation_version is one you have not read",
-                )
-            } else {
-                serde_json::Value::Null
-            },
             "snapshot": snapshot,
             "identity": identity,
             "session": session,
@@ -7136,7 +7116,7 @@ mod tests {
     /// it rode every one of them — so a client running a boot-surface token
     /// budget skipped orientation entirely rather than paying for it again,
     /// which is the opposite of what it is for. `brief` returns everything that
-    /// moves, and the version says whether the essay did.
+    /// moves, and says plainly that the essay is what it left out.
     #[tokio::test]
     async fn a_brief_orientation_keeps_the_snapshot_and_drops_only_the_essay() {
         let jojobot = handler();
@@ -7159,22 +7139,86 @@ mod tests {
         );
         assert!(brief["orientation"].is_null(), "the essay is what was dropped: {brief}");
         assert_eq!(brief["orientation_elided"], true);
-        assert!(
-            brief["how_to_read_orientation"]
-                .as_str()
-                .is_some_and(|h| h.contains("orientation_version")),
-            "…and it says how to get it back: {brief}"
+        assert_eq!(
+            full["orientation_elided"], false,
+            "…and the marker says which of the two answers this is: {full}"
         );
 
-        // **The version rides on both**, which is the whole mechanism: a
-        // session compares what it holds against what came back.
-        assert_eq!(full["orientation_version"], brief["orientation_version"]);
-        assert!(brief["orientation_version"].as_u64().is_some());
+        // **How to get it back is on the surface a caller reads**, since the
+        // payload no longer carries a nudge of its own — an elision nobody can
+        // undo is an elision that costs the reader the thing it saved.
+        let tools = Jojobot::tool_router().list_all();
+        let door = tools
+            .iter()
+            .find(|t| t.name == "start_here")
+            .expect("start_here is a tool");
+        let description = door.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains("without brief"),
+            "the way back to the essay must be stated where brief is: {description}"
+        );
 
         // Everything that changes between calls is still here.
         assert_eq!(brief["snapshot"], full["snapshot"]);
         assert_eq!(brief["snapshot"]["entities"]["available"], true);
         assert!(brief["snapshot"]["mailboxes"].is_object());
+    }
+
+    /// **The orientation stamp is gone, whole.** It was a version on the essay
+    /// so a returning session could tell whether the copy it held was current —
+    /// and it was rejected outright, along with every proposed way of keeping
+    /// the check honest (a prose hash, a derived version, a hand-maintained
+    /// one). A number a human has to remember to bump is a number that lies,
+    /// and what it bought did not pay for that.
+    ///
+    /// **Asserted over the whole payload and the whole surface**, not over the
+    /// two keys that used to carry it: the failure this guards against is the
+    /// idea coming back somewhere adjacent, and a key-by-key check would miss
+    /// it in a note or an arg doc. `brief` survives, as a plain caller-chosen
+    /// option with nothing to compare.
+    #[tokio::test]
+    async fn nothing_on_the_surface_stamps_the_orientation_with_a_version() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store);
+        make_bot(&jojobot, "gamma", None).await;
+
+        let answers = [
+            json_of(
+                &jojobot
+                    .start_here(Parameters(OrientArgs { brief: None }))
+                    .await
+                    .expect("start_here ok"),
+            ),
+            json_of(
+                &jojobot
+                    .start_here(Parameters(OrientArgs { brief: Some(true) }))
+                    .await
+                    .expect("start_here ok"),
+            ),
+            boot(&jojobot, "gamma").await,
+        ];
+        for body in &answers {
+            assert!(
+                !body.to_string().contains("orientation_version"),
+                "no answer carries a version stamp: {body}"
+            );
+            assert!(
+                body.get("how_to_read_orientation").is_none(),
+                "…nor the nudge that existed only to explain one: {body}"
+            );
+        }
+
+        for tool in Jojobot::tool_router().list_all() {
+            let description = tool.description.as_deref().unwrap_or_default();
+            let schema = serde_json::to_string(&tool.input_schema).expect("a schema");
+            for surface in [description, schema.as_str()] {
+                assert!(
+                    !surface.contains("orientation_version"),
+                    "{} still teaches a version stamp: {surface}",
+                    tool.name
+                );
+            }
+        }
     }
 
     /// A boot is brief the same way, and never at the cost of the things a boot

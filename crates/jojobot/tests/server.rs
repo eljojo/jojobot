@@ -477,7 +477,7 @@ async fn ping_tool_round_trips_end_to_end() {
         .expect("start_here must answer a call that carries no arguments at all");
     let json = serde_json::to_string(&oriented).unwrap();
     assert!(
-        json.contains("orientation_version"),
+        json.contains("orientation_elided"),
         "orientation should land on a bare call: {json}"
     );
 
