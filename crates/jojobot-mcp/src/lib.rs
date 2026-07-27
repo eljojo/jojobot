@@ -448,11 +448,16 @@ pub struct JournalArgs {
     /// the session's current focus rather than adding to it.
     #[serde(default)]
     pub focus: Option<String>,
-    /// The session to write to. Omit it: the connection is bound to the session
-    /// `boot_bot` started or resumed. Only name one to write to a different
-    /// session than the one you are in.
+    /// The session to write to. Only needed to write to a session other than
+    /// the one `bot` addresses.
     #[serde(default)]
     pub session: Option<String>,
+    /// **Which identity is writing** — the bot you booted as, by name. Pass it
+    /// on every call: most clients open a fresh connection per tool call, so
+    /// the identity from your last call is usually gone. Naming the bot
+    /// resolves its live session, or starts one if it has none.
+    #[serde(default)]
+    pub bot: Option<String>,
 }
 
 /// Arguments to `amend_journal`.
@@ -461,9 +466,13 @@ pub struct AmendJournalArgs {
     /// What the most recent entry should say instead. It replaces that entry
     /// whole.
     pub entry: String,
-    /// The session whose newest entry to rewrite; omit for the one you are in.
+    /// The session whose newest entry to rewrite; omit to use `bot`.
     #[serde(default)]
     pub session: Option<String>,
+    /// **Which identity is writing** — the bot you booted as, by name. Pass it
+    /// on every call; see `journal`.
+    #[serde(default)]
+    pub bot: Option<String>,
 }
 
 /// Arguments to `wrap_session`.
@@ -473,9 +482,13 @@ pub struct WrapSessionArgs {
     /// it was for, what happened, what is left. It becomes the final chronology
     /// entry AND one dated entry in the operator's Journal.
     pub story: String,
-    /// The session to wrap; omit for the one you are in.
+    /// The session to wrap; omit to use `bot`.
     #[serde(default)]
     pub session: Option<String>,
+    /// **Which identity is writing** — the bot you booted as, by name. Pass it
+    /// on every call; see `journal`.
+    #[serde(default)]
+    pub bot: Option<String>,
 }
 
 /// Arguments to `mark_processed`.
@@ -637,9 +650,14 @@ impl Jojobot {
                        true`) — read that before you start, it is work already in flight, yours \
                        from before a disconnect. Otherwise a fresh session begins lazily: no \
                        card is written until your first journal entry or first write, so a boot \
-                       that does nothing leaves no trace. The connection is bound to that \
-                       identity and session afterwards, so journal/amend_journal/wrap_session \
-                       need no id."
+                       that does nothing leaves no trace. IDENTITY DOES NOT PERSIST ACROSS CALLS \
+                       ON MOST CLIENTS: booting binds this connection, but most clients open a \
+                       fresh connection per tool call, so by your next call that binding is \
+                       usually gone. **Pass `bot` on every journal/amend_journal/wrap_session \
+                       call** — the same name you booted with. It resolves your live session, or \
+                       starts one, from the board every time, and it is the only address that \
+                       works everywhere: a session id cannot be used before the first write, \
+                       because that write is what mints it."
     )]
     async fn boot_bot(
         &self,
@@ -1015,13 +1033,21 @@ impl Jojobot {
         });
         Ok((live, swept))
     }
-    /// The session a verb should write to: the one named outright, else the one
-    /// this connection is bound to — **beginning it lazily** if the connection
-    /// booted but has not written anything yet.
+    /// The session a verb should write to, resolved for a caller that may have
+    /// **no connection to remember it by**.
     ///
-    /// An explicit id wins over the binding, always: a caller that names a
-    /// session means that session, and silently writing somewhere else would be
-    /// the worst kind of helpfulness.
+    /// Three addresses, in order:
+    ///
+    /// 1. an explicit `session` id — a caller that names one means it;
+    /// 2. an explicit **bot name** — resolved against the board every call:
+    ///    attach to its live session, or begin one. This is the address that
+    ///    works for everybody, because a bot's name is a thing the caller
+    ///    already knows and a session id is not — a session materializes on the
+    ///    first write, so before that there is no id to name;
+    /// 3. the connection's binding — **an optimization, never a requirement**.
+    ///    Most clients open a fresh MCP session per tool call, so the identity
+    ///    from the previous call is usually already gone; a transport that does
+    ///    hold one saves a board read, and nothing else depends on it.
     async fn working_session_locked(
         &self,
         // **Proof the session gate is held.** This function reads the binding,
@@ -1033,19 +1059,60 @@ impl Jojobot {
         // comment somebody has to read.
         _serialized: &tokio::sync::MutexGuard<'_, ()>,
         explicit: Option<&str>,
+        named_bot: Option<&EntityId>,
         explicit_focus: Option<&str>,
         derive_from: Option<&str>,
     ) -> Result<Result<SessionId, CallToolResult>, McpError> {
         if let Some(id) = explicit.map(str::trim).filter(|i| !i.is_empty()) {
             return Ok(Ok(SessionId(id.to_string())));
         }
-        let bound = self.bound.read().expect("binding poisoned").clone();
-        let Some(bound) = bound else {
-            return Ok(Err(session_unbound()));
+
+        // **The caller named an identity, so the board is the authority.** A
+        // stateless caller has no binding worth trusting, and one that does
+        // have a binding for this same bot is only saving a read.
+        let bot = match named_bot {
+            Some(bot) => {
+                let held = self.bound.read().expect("binding poisoned").clone();
+                if let Some(held) = held
+                    && held.bot == *bot
+                    && held.attached
+                    && let Some(id) = held.session
+                {
+                    return Ok(Ok(id));
+                }
+                match self.sweep_and_find(bot).await {
+                    Ok((Some(live), _)) => return Ok(Ok(live.id)),
+                    // Nothing in flight: this write is what begins one.
+                    Ok((None, _)) => bot.clone(),
+                    Err(e) => return Err(session_error(e)),
+                }
+            }
+            None => {
+                let bound = self.bound.read().expect("binding poisoned").clone();
+                let Some(bound) = bound else {
+                    return Ok(Err(session_unbound()));
+                };
+                if let Some(id) = bound.session {
+                    return Ok(Ok(id));
+                }
+                bound.bot
+            }
         };
-        if let Some(id) = bound.session {
-            return Ok(Ok(id));
-        }
+        let bound = Bound {
+            bot: bot.clone(),
+            // A named bot has just been resolved against the board, so its
+            // "have we looked?" is answered; an unnamed one carries whatever
+            // the boot recorded.
+            attached: named_bot.is_some()
+                || self
+                    .bound
+                    .read()
+                    .expect("binding poisoned")
+                    .as_ref()
+                    .is_some_and(|b| b.attached),
+            session: None,
+            beats: Default::default(),
+        };
         // **A boot that could not read the board has not attached to anything**,
         // so beginning a session here would fork one that is already running.
         // The attach is retried at the first write instead, which is the next
@@ -1087,9 +1154,13 @@ impl Jojobot {
             })
             .await
             .map_err(session_error)?;
-        if let Some(held) = self.bound.write().expect("binding poisoned").as_mut() {
-            held.session = Some(begun.id.clone());
-        }
+        // Recorded on the connection so a transport that DOES hold one skips
+        // the board read next time. A transport that does not simply drops it,
+        // and the next call resolves from the bot name again.
+        *self.bound.write().expect("binding poisoned") = Some(Bound {
+            session: Some(begun.id.clone()),
+            ..bound
+        });
         Ok(Ok(begun.id))
     }
 
@@ -1108,6 +1179,16 @@ impl Jojobot {
     /// write. **A beat never fails the verb it is about.** A capture that landed
     /// did land; reporting it as failed because its footnote could not be
     /// written would make the record wrong in the more damaging direction.
+    ///
+    /// **On a client with no session affinity, that first case is every call.**
+    /// The verbs jojobot beats about — captures, entity writes, mailbox writes —
+    /// carry no `bot` parameter, so the only identity available to them is the
+    /// connection's, and most clients open a fresh connection per tool call.
+    /// The consequence, stated rather than papered over: for those clients the
+    /// automatic tally does not appear, and a session's chronology is what the
+    /// session itself wrote through `journal(bot:)`. Closing that would mean an
+    /// identity parameter on every verb on the surface, which is a decision
+    /// about the whole tool surface rather than about beats.
     async fn beat(&self, class: &'static str, example: &str) {
         if self.bound.read().expect("binding poisoned").is_none() {
             return;
@@ -1120,7 +1201,9 @@ impl Jojobot {
             return;
         };
         let _serialized = self.session_gate.lock().await;
-        let session = match self.working_session_locked(&_serialized, None, None, Some(phrase)).await
+        let session = match self
+            .working_session_locked(&_serialized, None, None, None, Some(phrase))
+            .await
         {
             Ok(Ok(session)) => session,
             _ => return,
@@ -1731,8 +1814,12 @@ impl Jojobot {
                        the chronology is history, the focus is the present, and they answer \
                        different questions. The first journal entry (or the first write of any \
                        kind) is what brings your session card into being, so a boot that does \
-                       nothing leaves nothing behind. Bound to the identity you booted as, so \
-                       `session` is only needed to write to a different one. A session that is \
+                       nothing leaves nothing behind. PASS `bot` — the name you booted as — ON \
+                       EVERY CALL: most clients open a fresh connection per tool call, so the \
+                       identity from your last call is usually already gone, and naming the bot \
+                       resolves its live session (or starts one) from the board every time. \
+                       `session` is only for writing to a session other than the one `bot` \
+                       addresses. A session that is \
                        already wrapped or abandoned comes back status: blocked — closed is \
                        terminal both ways, and what is left to say belongs to a new session."
     )]
@@ -1741,11 +1828,13 @@ impl Jojobot {
         Parameters(args): Parameters<JournalArgs>,
     ) -> Result<CallToolResult, McpError> {
         let focus = args.focus.as_deref();
+        let named = named_bot(args.bot.as_deref())?;
         let _serialized = self.session_gate.lock().await;
         let session = match self
             .working_session_locked(
                 &_serialized,
                 args.session.as_deref(),
+                named.as_ref(),
                 focus,
                 Some(&args.entry),
             )
@@ -1788,7 +1877,10 @@ impl Jojobot {
                        comes back status: blocked rather than quietly writing your text as a \
                        first entry — an amend that silently became an append leaves a chronology \
                        saying something you did not mean. A closed session comes back blocked \
-                       too."
+                       too. Pass `bot` — the name you booted as — on every call: identity does \
+                       not survive to your next call on most clients. This verb never STARTS a \
+                       session, named bot or not: there is nothing to amend in one that does not \
+                       exist yet."
     )]
     async fn amend_journal(
         &self,
@@ -1804,8 +1896,21 @@ impl Jojobot {
         // different facts — and a connection whose boot could not read the board
         // retries the attach here rather than answering "no entries" about a
         // session it never looked for. Unknown is not false.
+        let named = named_bot(args.bot.as_deref())?;
         let session = match args.session.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             Some(id) => SessionId(id.to_string()),
+            // A named identity is resolved from the board, exactly as the other
+            // two verbs resolve it — the caller may have no connection carrying
+            // one. Nothing is begun here: an amend still has nothing to amend
+            // in a session that does not exist yet.
+            None if named.is_some() => {
+                let bot = named.as_ref().expect("just checked");
+                match self.sweep_and_find(bot).await {
+                    Ok((Some(live), _)) => live.id,
+                    Ok((None, _)) => return Ok(session_nothing_to_amend()),
+                    Err(e) => return Err(session_error(e)),
+                }
+            }
             None => {
                 let bound = self.bound.read().expect("binding poisoned").clone();
                 let Some(bound) = bound else {
@@ -1851,15 +1956,26 @@ impl Jojobot {
                        is left. A session that stops without wrapping is not lost — the next \
                        boot of the same identity sweeps it to `abandoned` after a day, and its \
                        chronology stays readable — but its story was never told, and that is the \
-                       difference between the two endings."
+                       difference between the two endings. Pass `bot` — the name you booted as — \
+                       on every call: identity does not survive to your next call on most \
+                       clients. And wrap only when the WORK is over: if it continues on another \
+                       agent, journal a resume note instead and leave the session open for the \
+                       next boot to attach to."
     )]
     async fn wrap_session(
         &self,
         Parameters(args): Parameters<WrapSessionArgs>,
     ) -> Result<CallToolResult, McpError> {
+        let named = named_bot(args.bot.as_deref())?;
         let _serialized = self.session_gate.lock().await;
         let session = match self
-            .working_session_locked(&_serialized, args.session.as_deref(), None, Some(&args.story))
+            .working_session_locked(
+                &_serialized,
+                args.session.as_deref(),
+                named.as_ref(),
+                None,
+                Some(&args.story),
+            )
             .await?
         {
             Ok(session) => session,
@@ -3010,6 +3126,18 @@ fn entity_id(kind: &str, handle: &str) -> Result<EntityId, McpError> {
 /// another kind is a client
 /// error rather than a silent winner: booting a person as an identity would
 /// hand somebody's page back as a charter.
+/// The identity a session verb was told to write as, if it was told one.
+///
+/// Blank is absent rather than an error: a client that sends `bot: ""` meant to
+/// send nothing, and refusing the whole call over an empty string would be the
+/// second-worst way to answer.
+fn named_bot(name: Option<&str>) -> Result<Option<EntityId>, McpError> {
+    match name.map(str::trim).filter(|n| !n.is_empty()) {
+        None => Ok(None),
+        Some(name) => bot_id(name).map(Some),
+    }
+}
+
 fn bot_id(name: &str) -> Result<EntityId, McpError> {
     let name = name.trim();
     match name.split_once(':') {
@@ -6258,12 +6386,224 @@ mod tests {
         )
     }
 
+    /// **A client with no session affinity — a FRESH connection per tool call.**
+    ///
+    /// This is what production clients actually present. The service factory
+    /// builds one handler per MCP session, so a client that does not hold one
+    /// across a conversation gets a new handler — and a new, empty binding —
+    /// for every single call. Both claude.ai and ChatGPT do exactly this:
+    /// `boot_bot` succeeds, and the journal on the very next call finds nobody
+    /// home.
+    ///
+    /// **This stays in the suite permanently.** Every other test here holds a
+    /// handle across calls, which is the shape no real client has, and that is
+    /// the gap this whole class of bug shipped through.
+    struct NoAffinity {
+        memory: Arc<InMemoryMemory>,
+        sessions: Arc<InMemorySessions>,
+        mailboxes: Arc<InMemoryMailboxes>,
+    }
+
+    impl NoAffinity {
+        fn new() -> Self {
+            NoAffinity {
+                memory: Arc::new(InMemoryMemory::new()),
+                sessions: Arc::new(InMemorySessions::new()),
+                mailboxes: Arc::new(InMemoryMailboxes::new()),
+            }
+        }
+
+        /// One tool call, on a connection that has never seen another.
+        fn call(&self) -> Jojobot {
+            Jojobot::new(
+                self.memory.clone(),
+                Arc::new(SpySearch::default()),
+                self.mailboxes.clone(),
+                self.sessions.clone(),
+            )
+        }
+    }
+
+    /// **THE PRODUCTION SHAPE: identity does not survive to the next call.**
+    /// Every session verb was addressed by a connection binding, and no real
+    /// client holds a connection — so `boot_bot` bound an identity to something
+    /// that evaporated before the next request arrived, and every write after it
+    /// came back "not running as any identity".
+    ///
+    /// The chicken-and-egg made addressing by `session` no help either: a
+    /// session materializes lazily on the first write, and the first write could
+    /// never land, so no id was ever minted to name. **The bot name is the only
+    /// stable handle a stateless caller has.**
+    #[tokio::test]
+    async fn a_stateless_client_can_journal_by_naming_its_bot() {
+        let client = NoAffinity::new();
+        make_bot(&client.call(), "gamma", None).await;
+
+        // Call 1: boot. Succeeds, as it did in production.
+        let booted = boot(&client.call(), "gamma").await;
+        assert_eq!(booted["session"]["available"], true);
+
+        // Call 2: a different connection, as every real client presents.
+        let body = json_of(
+            &client
+                .call()
+                .journal(Parameters(JournalArgs {
+                    entry: "read the hand-off".into(),
+                    focus: None,
+                    session: None,
+                    bot: Some("gamma".into()),
+                }))
+                .await
+                .expect("journal call ok"),
+        );
+        assert_ne!(body["status"], "blocked", "naming the bot is enough: {body}");
+
+        let live = client
+            .sessions
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(live.len(), 1, "one session, minted by the first write: {live:?}");
+        assert_eq!(live[0].entries[0].text, "read the hand-off");
+
+        // Call 3: another fresh connection ATTACHES to that session rather than
+        // forking a second one — the whole point of resolving from the board.
+        json_of(
+            &client
+                .call()
+                .journal(Parameters(JournalArgs {
+                    entry: "picked it back up".into(),
+                    focus: None,
+                    session: None,
+                    bot: Some("gamma".into()),
+                }))
+                .await
+                .expect("journal call ok"),
+        );
+        let live = client
+            .sessions
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(live.len(), 1, "still one session, not one per call: {live:?}");
+        assert_eq!(live[0].entries.len(), 2, "…and it accrued: {:?}", live[0].entries);
+    }
+
+    /// The other two session verbs address by bot name too — a stateless client
+    /// has to be able to amend and to wrap, not only to journal.
+    #[tokio::test]
+    async fn a_stateless_client_can_amend_and_wrap_by_naming_its_bot() {
+        let client = NoAffinity::new();
+        make_bot(&client.call(), "gamma", None).await;
+
+        // Amending before anything exists is still refused, not a begin.
+        let nothing = json_of(
+            &client
+                .call()
+                .amend_journal(Parameters(AmendJournalArgs {
+                    entry: "actually".into(),
+                    session: None,
+                    bot: Some("gamma".into()),
+                }))
+                .await
+                .expect("call ok"),
+        );
+        assert_eq!(nothing["status"], "blocked", "nothing to amend, and nothing begun: {nothing}");
+        assert!(
+            client
+                .sessions
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok")
+                .is_empty(),
+            "an amend never mints a card"
+        );
+
+        client
+            .call()
+            .journal(Parameters(JournalArgs {
+                entry: "read the hand-off".into(),
+                focus: None,
+                session: None,
+                bot: Some("gamma".into()),
+            }))
+            .await
+            .expect("journal ok");
+
+        let amended = json_of(
+            &client
+                .call()
+                .amend_journal(Parameters(AmendJournalArgs {
+                    entry: "read the hand-off, and scoped it".into(),
+                    session: None,
+                    bot: Some("gamma".into()),
+                }))
+                .await
+                .expect("call ok"),
+        );
+        assert_ne!(amended["status"], "blocked", "{amended}");
+
+        let wrapped = json_of(
+            &client
+                .call()
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "built the thing and told the story".into(),
+                    session: None,
+                    bot: Some("gamma".into()),
+                }))
+                .await
+                .expect("wrap ok"),
+        );
+        assert_eq!(wrapped["session"]["state"], "wrapped", "{wrapped}");
+
+        let live = client
+            .sessions
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(live.len(), 1, "one session across five connections: {live:?}");
+        assert_eq!(
+            live[0].entries[0].text, "read the hand-off, and scoped it",
+            "the amend landed in place: {:?}",
+            live[0].entries
+        );
+    }
+
+    /// **A boot that fails leaves the identity you already had alone.** On a
+    /// transport that does hold a connection, a typo in a bot name must not
+    /// unbind the session in flight — that would turn a mistyped call into lost
+    /// work on the next write.
+    #[tokio::test]
+    async fn a_failed_boot_does_not_clear_an_established_binding() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        boot(&jojobot, "gamma").await;
+        let mine = journal_entry(&jojobot, "my first beat").await;
+        let my_id = mine["session"].as_str().expect("a session id").to_string();
+
+        // A name that is no bot.
+        let missed = boot(&jojobot, "nobody-by-that-name").await;
+        assert_eq!(missed["status"], "blocked", "the boot missed: {missed}");
+
+        // …and the next write is still mine.
+        let after = journal_entry(&jojobot, "my second beat").await;
+        assert_eq!(after["session"], my_id.as_str(), "the binding survived the miss");
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(live.len(), 1, "and no second card was minted: {live:?}");
+        assert_eq!(live[0].entries.len(), 2);
+    }
+
     async fn journal_entry(jojobot: &Jojobot, entry: &str) -> serde_json::Value {
         let result = jojobot
             .journal(Parameters(JournalArgs {
                 entry: entry.into(),
                 focus: None,
                 session: None,
+                bot: None,
             }))
             .await
             .expect("journal call ok");
@@ -6391,6 +6731,7 @@ mod tests {
                         entry: entry.into(),
                         focus: None,
                         session: None,
+                        bot: None,
                     }))
                     .await
                     .unwrap_or_else(|e| panic!("a {shape} first entry must not error: {e:?}")),
@@ -6437,6 +6778,7 @@ mod tests {
                 .wrap_session(Parameters(WrapSessionArgs {
                     story: story.into(),
                     session: None,
+                    bot: None,
                 }))
                 .await
                 .expect("a wrap as a first write must not error"),
@@ -6470,6 +6812,7 @@ mod tests {
                 entry: "read the hand-off".into(),
                 focus: Some("two\nlines".into()),
                 session: None,
+                bot: None,
             }))
             .await
             .expect_err("a focus that is not one line must be refused");
@@ -6584,6 +6927,7 @@ mod tests {
                     entry: "read the hand-off and scoped the slice".into(),
                     focus: Some("building the session context".into()),
                     session: None,
+                    bot: None,
                 }))
                 .await
                 .expect("journal ok"),
@@ -6596,6 +6940,7 @@ mod tests {
                 .amend_journal(Parameters(AmendJournalArgs {
                     entry: "read the hand-off and scoped the slice properly".into(),
                     session: None,
+                    bot: None,
                 }))
                 .await
                 .expect("amend ok"),
@@ -6607,6 +6952,7 @@ mod tests {
                 .wrap_session(Parameters(WrapSessionArgs {
                     story: "built the session context; the sweep is lazy until M8".into(),
                     session: None,
+                    bot: None,
                 }))
                 .await
                 .expect("wrap ok"),
@@ -6651,6 +6997,7 @@ mod tests {
             .wrap_session(Parameters(WrapSessionArgs {
                 story: "done".into(),
                 session: None,
+                bot: None,
             }))
             .await
             .expect("wrap ok");
@@ -6671,6 +7018,7 @@ mod tests {
                         entry: "one more thing".into(),
                         focus: None,
                         session: Some(id.clone()),
+                        bot: None,
                     }))
                     .await
                     .expect("call ok"),
@@ -6683,6 +7031,7 @@ mod tests {
                     .amend_journal(Parameters(AmendJournalArgs {
                         entry: "actually".into(),
                         session: Some(id.clone()),
+                        bot: None,
                     }))
                     .await
                     .expect("call ok"),
@@ -6695,6 +7044,7 @@ mod tests {
                     .wrap_session(Parameters(WrapSessionArgs {
                         story: "done again".into(),
                         session: Some(id.clone()),
+                        bot: None,
                     }))
                     .await
                     .expect("call ok"),
@@ -6714,6 +7064,7 @@ mod tests {
                     entry: "who am i".into(),
                     focus: None,
                     session: None,
+                    bot: None,
                 }))
                 .await
                 .expect("call ok"),
@@ -6738,6 +7089,7 @@ mod tests {
                 .amend_journal(Parameters(AmendJournalArgs {
                     entry: "there is nothing to correct".into(),
                     session: None,
+                    bot: None,
                 }))
                 .await
                 .expect("call ok"),
@@ -7051,6 +7403,7 @@ mod tests {
                 .amend_journal(Parameters(AmendJournalArgs {
                     entry: "actually, it was the other thing".into(),
                     session: None,
+                    bot: None,
                 }))
                 .await
                 .expect("call ok"),
@@ -7078,6 +7431,7 @@ mod tests {
                 .amend_journal(Parameters(AmendJournalArgs {
                     entry: "what it was doing, said better".into(),
                     session: None,
+                    bot: None,
                 }))
                 .await
                 .expect("call ok"),
@@ -7172,6 +7526,7 @@ mod tests {
                 entry: "the first beat of the reconnect".into(),
                 focus: None,
                 session: None,
+                bot: None,
             }))
             .await
             .expect_err("a write against an unreadable board must say so");
@@ -7204,6 +7559,7 @@ mod tests {
                 .wrap_session(Parameters(WrapSessionArgs {
                     story: story.into(),
                     session: None,
+                    bot: None,
                 }))
                 .await
                 .expect("wrap ok");
@@ -7248,6 +7604,7 @@ mod tests {
             .wrap_session(Parameters(WrapSessionArgs {
                 story: story.into(),
                 session: None,
+                bot: None,
             }))
             .await
             .expect("wrap ok");
@@ -7295,6 +7652,7 @@ mod tests {
                 .wrap_session(Parameters(WrapSessionArgs {
                     story: story.into(),
                     session: Some(session.to_string()),
+                    bot: None,
                 }))
                 .await
                 .expect("wrap ok");
@@ -7333,6 +7691,7 @@ mod tests {
             jojobot.wrap_session(Parameters(WrapSessionArgs {
                 story: story.into(),
                 session: None,
+                bot: None,
             }))
         };
         assert!(wrap().await.is_err(), "the close refused, so the wrap failed");
@@ -7386,6 +7745,7 @@ mod tests {
             jojobot.wrap_session(Parameters(WrapSessionArgs {
                 story: story.into(),
                 session: None,
+                bot: None,
             }))
         };
         assert!(wrap().await.is_err(), "the close refused, so the wrap failed");
@@ -7510,6 +7870,7 @@ mod tests {
             .wrap_session(Parameters(WrapSessionArgs {
                 story: "wrapping theirs".into(),
                 session: Some(theirs.id.to_string()),
+                bot: None,
             }))
             .await
             .expect("wrap ok");
@@ -7611,11 +7972,13 @@ mod tests {
             entry: "first".into(),
             focus: None,
             session: None,
+            bot: None,
         }));
         let two = jojobot.journal(Parameters(JournalArgs {
             entry: "second".into(),
             focus: None,
             session: None,
+            bot: None,
         }));
         let (a, b) = tokio::join!(one, two);
         a.expect("journal ok");
@@ -7702,6 +8065,7 @@ mod tests {
                 entry: "the first beat".into(),
                 focus: None,
                 session: None,
+                bot: None,
             }));
             if boot_first {
                 let (b, w) = tokio::join!(booting, writing);
