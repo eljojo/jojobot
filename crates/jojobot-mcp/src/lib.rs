@@ -87,7 +87,7 @@ An **identity** is an entity of kind `bot`: a handle like `bot:gamma`, a **chart
 
 A bot is a **role**; a **session is one mortal run of it** — the unit of work, not the unit of connection. It outlives a disconnect and a device hop, because what makes two connections the same session is the identity that booted them.
 
-**Booting an identity starts or resumes its session; there is no separate verb.** `start_here` with your bot name sweeps that bot's stale sessions to `abandoned` (a day without a beat). If a resumable session remains you get the choice — what each one was working on — and NO sid until you answer: choose resume and you inherit its chronology, choose new and a fresh sid is minted beside it, closing nothing. With nothing to resume the sid comes back straight away. Either way the card itself is written **lazily**, on your first real write, so a boot that does nothing leaves nothing behind.
+**Booting an identity starts or resumes its session; there is no separate verb.** `start_here` with your bot name sweeps that bot's stale sessions to `abandoned` (a day without a beat). If a resumable session remains you get the choice — what each one was working on, and whether it is still running or stopped without being wrapped up — and NO sid until you answer: choose resume and you inherit its chronology, choose new and a fresh sid is minted beside it, closing nothing. With nothing to resume the sid comes back straight away. Either way the card itself is written **lazily**, on your first real write, so a boot that does nothing leaves nothing behind.
 
 A session has two halves that answer different questions. Its **focus** is what it is working on NOW, one line, rewritten in place. Its **chronology** is what happened: append-only, oldest first, with only the newest entry amendable.
 
@@ -572,6 +572,23 @@ struct Bound {
     beats: std::collections::HashMap<&'static str, Beat>,
 }
 
+/// **What a boot found on the board**, after the sweep has run.
+///
+/// Named rather than a tuple because it grew a third thing the day an
+/// `abandoned` run became something a boot could offer back, and a
+/// `(Vec, Option, Vec)` at five call sites is a shape nobody can read.
+struct Board {
+    /// Every run still going, newest first. A bot may have several at once.
+    live: Vec<Session>,
+    /// **At most one** run that stopped without being wrapped up, recently
+    /// enough to be worth bringing up — see
+    /// [`OFFER_ABANDONED_WITHIN`](jojobot_domain::session::OFFER_ABANDONED_WITHIN).
+    /// One is a memory jog; a list of them is a history nobody asked for.
+    offerable: Option<Session>,
+    /// The ids this boot's sweep closed.
+    swept: Vec<String>,
+}
+
 /// A running tally of one verb class, as one chronology entry.
 #[derive(Debug, Clone)]
 struct Beat {
@@ -992,7 +1009,7 @@ impl Jojobot {
         // Taken here rather than in `sweep_and_find`, which the first-write
         // retry calls with the gate already held — the mutex is not reentrant.
         let _serialized = self.session_gate.lock().await;
-        let (live, swept) = match self.sweep_and_find(bot).await {
+        let Board { live, offerable, swept } = match self.sweep_and_find(bot).await {
             Ok(found) => found,
             Err(e) => {
                 tracing::warn!(error = %e, bot = %bot, "the session world is not reachable");
@@ -1034,7 +1051,7 @@ impl Jojobot {
                 self.fresh_block(handle)
             }
             Some(answer) => {
-                let (handle, session) = self.resumable(bot, answer, &live)?;
+                let (handle, session) = self.resumable(bot, answer, &live).await?;
                 match session {
                     Some(session) => {
                         self.bind(bot, Some(handle.clone()), Some(&session));
@@ -1058,26 +1075,47 @@ impl Jojobot {
                 }
             }
             // ── a first boot: the two branches ──────────────────────────────
-            None if live.is_empty() => {
+            None if live.is_empty() && offerable.is_none() => {
                 let handle = self.mint_or_say_why(bot, None)?;
                 self.bind(bot, Some(handle.clone()), None);
                 self.fresh_block(handle)
             }
             None => {
-                let mut choices = Vec::with_capacity(live.len());
-                for session in &live {
+                // Every live run, then the one stop worth bringing up. The
+                // abandoned one comes last because it is the weaker claim on
+                // the caller's attention, not because it is worse.
+                let offered: Vec<&Session> = live.iter().chain(offerable.iter()).collect();
+                let mut choices = Vec::with_capacity(offered.len());
+                for session in offered {
                     let handle = self.handle_for(bot, &session.id)?;
-                    choices.push(serde_json::json!({
+                    let mut choice = serde_json::json!({
                         "sid": handle.as_str(),
                         // **What it was working on is the whole point of the
                         // offer.** A bot may have several runs at once, and a
                         // list of opaque handles is not a choice anybody can
                         // make.
                         "working_on": session.focus,
+                        // **Marked, never silently mixed in.** Not because a
+                        // stop is worse — it is not a failure — but because
+                        // "this one was never wrapped up" is what tells the
+                        // caller which of these is still warm.
+                        "state": session.state.as_token(),
                         "started_at": session.started_at.to_string(),
                         "last_beat": session.last_beat().to_string(),
                         "entry_count": session.entries.len(),
-                    }));
+                    });
+                    if session.state == SessionState::Abandoned
+                        && let Some(obj) = choice.as_object_mut()
+                    {
+                        obj.insert(
+                            "note".into(),
+                            "this run stopped without being wrapped up — a disconnect, a closed \
+                             laptop, an agent that moved on. Resuming it is ordinary: it reopens \
+                             where it left off and its chronology continues."
+                                .into(),
+                        );
+                    }
+                    choices.push(choice);
                 }
                 // **Bound as it has always been, to the newest run.** This
                 // round moves what the DOOR hands back; the write path still
@@ -1172,7 +1210,7 @@ impl Jojobot {
     /// blocked in its own words, because a caller's next move differs in every
     /// case — and none is repaired into a nearby handle, which would be jojobot
     /// guessing which session somebody meant.
-    fn resumable(
+    async fn resumable(
         &self,
         bot: &EntityId,
         answer: &str,
@@ -1218,18 +1256,53 @@ impl Jojobot {
             // Minted, never written under. Still theirs, still empty.
             return Ok((handle, None));
         };
-        match live.iter().find(|s| s.id == card) {
-            Some(session) => Ok((handle, Some(session.clone()))),
-            None => Err(handle_declined(
+        if let Some(session) = live.iter().find(|s| s.id == card) {
+            return Ok((handle, Some(session.clone())));
+        }
+        // **Not among the live runs, so it stopped — and stopping is not the
+        // end.** Reopening is what makes "resume last session" always work, and
+        // it is bounded by nothing but the state the run reached: the offer's
+        // age window governs what jojobot VOLUNTEERS, never what a handle
+        // someone kept can still reach.
+        match self.sessions.reopen(&card).await {
+            Ok(session) => Ok((handle, Some(session))),
+            // The one end that is the last word. Its story is already an entry
+            // in the operator's Journal, and reopening the run would make a
+            // published account retroactively false.
+            Err(SessionError::Closed { state, .. }) => Err(handle_declined(
                 answer,
                 format!(
-                    "No session was started. '{answer}' addresses a session that is no longer \
-                     running — it was wrapped, or it went a day without a beat and the sweep \
-                     closed it, and closed is terminal both ways. Its chronology stands as the \
-                     record of what happened. Call start_here with your bot name and no resume to \
-                     begin the next one."
+                    "No session was started. '{answer}' addresses a session that is {state} — its \
+                     story has been told, and it went into the operator's Journal as a dated \
+                     entry. Reopening it would make that account false, so this end is the last \
+                     word. Its chronology stands as the record of what happened. Call start_here \
+                     with your bot name and no resume to begin the next run."
                 ),
             )),
+            Err(SessionError::UnknownSession { .. }) => Err(handle_declined(
+                answer,
+                format!(
+                    "No session was started. '{answer}' is a handle jojobot is holding, but the \
+                     session it addresses is not on the board any more. Nothing was changed. Call \
+                     start_here with your bot name and no resume to see what is there."
+                ),
+            )),
+            // **Degrades the way the rest of a boot degrades**: nothing was
+            // changed, the caller is told plainly, and the underlying fault
+            // goes to the log where an operator reads it — rather than a 500
+            // that says nothing about what happened to the session.
+            Err(e) => {
+                tracing::warn!(error = %e, session = %card, "a session could not be reopened");
+                Err(handle_declined(
+                    answer,
+                    format!(
+                        "No session was started, and nothing was changed. '{answer}' addresses a \
+                         session that stopped, and jojobot could not reopen it: the session store \
+                         refused. This is not something your call can fix by being different — \
+                         try again, and if it persists a person has to look at the board."
+                    ),
+                ))
+            }
         }
     }
 
@@ -1276,10 +1349,7 @@ impl Jojobot {
     /// **Every live session, not the newest one.** A bot may have several runs
     /// at once — two devices, two pieces of work — so the boot's offer needs
     /// them all. The write path still takes the first, which is the newest.
-    async fn sweep_and_find(
-        &self,
-        bot: &EntityId,
-    ) -> Result<(Vec<Session>, Vec<String>), SessionError> {
+    async fn sweep_and_find(&self, bot: &EntityId) -> Result<Board, SessionError> {
         let now = jiff::Timestamp::now();
         let existing = self.sessions.sessions_of(bot).await?;
 
@@ -1298,10 +1368,22 @@ impl Jojobot {
 
         // Newest first already, so the first live one is the newest.
         let live: Vec<Session> = existing
-            .into_iter()
+            .iter()
             .filter(|s| !s.state.is_terminal() && !s.is_stale(now))
+            .cloned()
             .collect();
-        Ok((live, swept))
+        // **Read AFTER the sweep, and through it.** The run this boot just
+        // marked `abandoned` is the archetypal "resume last session" — it is
+        // the one that stopped yesterday — so it has to be a candidate here,
+        // and the list jojobot is holding still says `active` for it.
+        let offerable = existing
+            .into_iter()
+            .map(|s| match swept.contains(&s.id.to_string()) {
+                true => Session { state: SessionState::Abandoned, ..s },
+                false => s,
+            })
+            .find(|s| s.is_offerable(now));
+        Ok(Board { live, offerable, swept })
     }
 
     /// Record what a sweep found on this connection — **only when it is this
@@ -1401,8 +1483,8 @@ impl Jojobot {
                 match self.sweep_and_find(bot).await {
                     // The newest live run — an unaddressed write continues the
                     // work in flight rather than forking beside it.
-                    Ok((live, _)) if !live.is_empty() => {
-                        let live = live.into_iter().next().expect("a live session");
+                    Ok(board) if !board.live.is_empty() => {
+                        let live = board.live.into_iter().next().expect("a live session");
                         self.bind_if_ours(bot, Some(&live));
                         return Ok(Ok(live.id));
                     }
@@ -1455,8 +1537,8 @@ impl Jojobot {
         // that SUCCEEDED and found nothing active reaches the begin.
         if !bound.attached {
             match self.sweep_and_find(&bound.bot).await {
-                Ok((live, _)) if !live.is_empty() => {
-                    let live = live.into_iter().next().expect("a live session");
+                Ok(board) if !board.live.is_empty() => {
+                    let live = board.live.into_iter().next().expect("a live session");
                     self.bind_if_ours(&bound.bot, Some(&live));
                     return Ok(Ok(live.id));
                 }
@@ -2373,8 +2455,8 @@ impl Jojobot {
                     return Ok(refused);
                 }
                 match self.sweep_and_find(bot).await {
-                    Ok((live, _)) if !live.is_empty() => {
-                        let live = live.into_iter().next().expect("a live session");
+                    Ok(board) if !board.live.is_empty() => {
+                        let live = board.live.into_iter().next().expect("a live session");
                         self.bind_if_ours(bot, Some(&live));
                         live.id
                     }
@@ -2391,8 +2473,8 @@ impl Jojobot {
                     Some(id) => id,
                     None if !bound.attached => {
                         match self.sweep_and_find(&bound.bot).await {
-                            Ok((live, _)) if !live.is_empty() => {
-                                let live = live.into_iter().next().expect("a live session");
+                            Ok(board) if !board.live.is_empty() => {
+                                let live = board.live.into_iter().next().expect("a live session");
                                 self.bind_if_ours(&bound.bot, Some(&live));
                                 live.id
                             }
@@ -8004,6 +8086,205 @@ mod tests {
         }
     }
 
+    /// Close a session the way the sweep would, and put its last beat far
+    /// enough back that it reads as that old.
+    async fn abandoned_run(
+        store: &InMemorySessions,
+        bot: &str,
+        focus: &str,
+        hours_ago: i64,
+    ) -> Session {
+        let begun = store
+            .begin(NewSession {
+                bot: EntityId(format!("bot:{bot}")),
+                focus: focus.into(),
+                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(hours_ago),
+            })
+            .await
+            .expect("begin ok");
+        store
+            .close(&begun.id, SessionState::Abandoned)
+            .await
+            .expect("close ok");
+        store.read_session(&begun.id).await.expect("read ok")
+    }
+
+    /// **An abandoned run is picked up, not recovered from.** It stopped without
+    /// telling its story — a disconnect, a closed laptop — so the boot offers it
+    /// back, resuming REOPENS it, and the record continues where it stopped
+    /// instead of starting again beside it.
+    ///
+    /// Without this, an interrupted run could never be wrapped at all: the verb
+    /// that tells the story refuses a closed session, so the story was lost by
+    /// construction.
+    #[tokio::test]
+    async fn resuming_an_abandoned_run_reopens_it_and_continues_the_record() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        let stopped = abandoned_run(&store, "gamma", "reading the hand-off", 30).await;
+
+        let offered = boot(&jojobot, "gamma").await;
+        assert!(sid_of(&offered).is_none(), "there is something to choose: {offered}");
+        let choice = &offered["session"]["choices"][0];
+        assert_eq!(choice["working_on"], "reading the hand-off");
+        assert_eq!(
+            choice["state"], "abandoned",
+            "**marked, never silently mixed in with the live runs**: {offered}"
+        );
+
+        let resumed = boot_answering(
+            &jojobot,
+            "gamma",
+            choice["sid"].as_str().expect("an addressable option"),
+        )
+        .await;
+        assert_eq!(resumed["session"]["resumed"], true);
+        assert_eq!(resumed["session"]["session"]["id"], stopped.id.as_str());
+        assert_eq!(
+            resumed["session"]["session"]["state"], "active",
+            "resuming reopens it — it is running again: {resumed}"
+        );
+
+        // The proof it meant something: the write that would have been refused
+        // a moment ago lands, on the same record.
+        journal_entry(&jojobot, "picked it back up").await;
+        let read = store.read_session(&stopped.id).await.expect("read ok");
+        assert_eq!(read.state, SessionState::Active);
+        assert_eq!(read.entries.last().expect("an entry").text, "picked it back up");
+        let all = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(all.len(), 1, "continued, not forked beside: {all:?}");
+    }
+
+    /// **Bounded attention, unbounded reachability.** A run nobody has touched
+    /// in months is not something to bring up — but a handle its caller still
+    /// holds still addresses it, and resuming it still works.
+    #[tokio::test]
+    async fn an_old_abandoned_run_is_not_offered_and_is_still_resumable() {
+        let store = Arc::new(InMemorySessions::new());
+        let registry = Arc::new(sid::SessionRegistry::new());
+        let jojobot =
+            connection_sharing(Arc::new(InMemoryMemory::new()), store.clone(), registry.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        let ancient = abandoned_run(&store, "gamma", "something from last winter", 24 * 240).await;
+
+        let booted = boot(&jojobot, "gamma").await;
+        assert!(
+            booted["session"]["choices"].is_null(),
+            "nothing recent enough to offer, so the sid comes back at once: {booted}"
+        );
+        assert!(sid_of(&booted).is_some());
+
+        // The caller kept the handle from when this process issued it.
+        let held = registry
+            .for_card(&EntityId("bot:gamma".into()), &ancient.id)
+            .expect("a handle");
+        let resumed = boot_answering(&jojobot, "gamma", held.as_str()).await;
+        assert_eq!(
+            resumed["session"]["resumed"], true,
+            "age bounds what is volunteered, never what a handle reaches: {resumed}"
+        );
+        assert_eq!(resumed["session"]["session"]["id"], ancient.id.as_str());
+        assert_eq!(resumed["session"]["session"]["state"], "active");
+    }
+
+    /// The offer reaches **at most one** abandoned run — the most recent — while
+    /// every live run is offered. One is a memory jog; a list of them is a
+    /// history nobody asked for.
+    #[tokio::test]
+    async fn the_offer_carries_every_live_run_and_only_the_newest_abandoned_one() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+
+        abandoned_run(&store, "gamma", "the oldest stop", 100).await;
+        abandoned_run(&store, "gamma", "the middle stop", 70).await;
+        abandoned_run(&store, "gamma", "the newest stop", 40).await;
+        store
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                focus: "still going".into(),
+                started_at: jiff::Timestamp::now(),
+            })
+            .await
+            .expect("begin ok");
+
+        let offered = boot(&jojobot, "gamma").await;
+        let choices = offered["session"]["choices"].as_array().expect("the offer");
+        let shown: Vec<(&str, &str)> = choices
+            .iter()
+            .map(|c| {
+                (
+                    c["working_on"].as_str().expect("a focus"),
+                    c["state"].as_str().expect("a state"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shown,
+            [("still going", "active"), ("the newest stop", "abandoned")],
+            "every live run, and only the most recent stop: {offered}"
+        );
+    }
+
+    /// **A wrapped run is over, both in the offer and by handle.** Its story is
+    /// already an entry in the operator's Journal, and reopening it would make a
+    /// published account retroactively false.
+    #[tokio::test]
+    async fn a_wrapped_run_is_never_offered_and_never_reopens() {
+        let store = Arc::new(InMemorySessions::new());
+        let registry = Arc::new(sid::SessionRegistry::new());
+        let jojobot =
+            connection_sharing(Arc::new(InMemoryMemory::new()), store.clone(), registry.clone());
+        make_bot(&jojobot, "gamma", None).await;
+
+        let told = store
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                focus: "a finished piece of work".into(),
+                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(2),
+            })
+            .await
+            .expect("begin ok");
+        store
+            .close(&told.id, SessionState::Wrapped)
+            .await
+            .expect("close ok");
+
+        let booted = boot(&jojobot, "gamma").await;
+        assert!(
+            booted["session"]["choices"].is_null(),
+            "a told story is not on offer: {booted}"
+        );
+
+        let held = registry
+            .for_card(&EntityId("bot:gamma".into()), &told.id)
+            .expect("a handle");
+        let refused = blocked(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    resume: Some(held.as_str().into()),
+                }))
+                .await
+                .expect("a wrapped run is an answer, not a protocol failure"),
+        );
+        let how = refused["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("wrapped") && how.contains("story"),
+            "the refusal says why this end is the last word: {how}"
+        );
+        assert_eq!(
+            store.read_session(&told.id).await.expect("read ok").state,
+            SessionState::Wrapped,
+            "and nothing moved"
+        );
+    }
+
     // ── sessions ────────────────────────────────────────────────────────────
 
     /// A handler over a session store the test still holds a typed handle to.
@@ -8821,8 +9102,13 @@ mod tests {
 
     /// **The sweep, and what it is measured from.** A session that has gone a
     /// day without a beat is closed as `abandoned` at the next boot of its bot —
-    /// never deleted, never wrapped, because its story was never told. A fresh
-    /// session begins beside it rather than resuming it.
+    /// never deleted, never wrapped, because its story was never told.
+    ///
+    /// **And the same boot offers it straight back**, which is not a
+    /// contradiction: sweeping records that the run stopped, and the offer is
+    /// how "resume last session" reaches it. A run that stopped yesterday is the
+    /// archetypal thing a returning agent means, so closing it and then hiding
+    /// it would make the sweep a way of losing work rather than of marking it.
     #[tokio::test]
     async fn a_stale_session_is_swept_to_abandoned_at_the_next_boot() {
         let store = Arc::new(InMemorySessions::new());
@@ -8845,13 +9131,35 @@ mod tests {
             serde_json::json!([stale.id.as_str()]),
             "the boot says what it closed: {booted}"
         );
-        assert_eq!(booted["session"]["resumed"], false, "a swept session is not resumed");
+        assert_eq!(
+            booted["session"]["resumed"], false,
+            "sweeping resumes nothing by itself — the caller still chooses"
+        );
 
         let read = store.read_session(&stale.id).await.expect("read ok");
         assert_eq!(read.state, mailbox_state_abandoned(), "closed, not deleted");
         assert_eq!(
             read.focus, "something from the day before yesterday",
             "…and its record is untouched"
+        );
+
+        // **The run this very boot swept is the one it offers back.** It
+        // stopped the day before yesterday, which is exactly the run a
+        // returning agent means by "resume last session".
+        let choice = &booted["session"]["choices"][0];
+        assert_eq!(choice["state"], "abandoned", "offered, and marked: {booted}");
+        assert_eq!(choice["working_on"], "something from the day before yesterday");
+
+        let resumed = boot_answering(
+            &jojobot,
+            "gamma",
+            choice["sid"].as_str().expect("an addressable option"),
+        )
+        .await;
+        assert_eq!(resumed["session"]["session"]["id"], stale.id.as_str());
+        assert_eq!(
+            resumed["session"]["session"]["state"], "active",
+            "…and taking the offer reopens it: {resumed}"
         );
     }
 

@@ -164,6 +164,27 @@ impl std::fmt::Display for SessionState {
 /// entry, or when it started if it never wrote one.
 pub const ABANDONED_AFTER: jiff::SignedDuration = jiff::SignedDuration::from_hours(24);
 
+/// How recently a run must have stopped for a boot to **offer** it back.
+///
+/// **Its own number, deliberately not [`ABANDONED_AFTER`].** They answer
+/// different questions — one is "when does an unattended run stop being active",
+/// the other is "how long do we keep bringing it up" — and fusing them means
+/// changing one silently changes the other.
+///
+/// A week, from the operator's own session granularity: a run covers a milestone
+/// or a few, so a week covers coming back after a weekend and stops offering
+/// month-old runs nobody remembers.
+///
+/// **This bounds attention, never reachability.** A handle a caller still holds
+/// addresses its session at any age — resuming an eight-month-old run works
+/// perfectly well. The bound governs only what jojobot volunteers unprompted,
+/// because an offer nobody wants is noise in front of the one they do.
+///
+/// Measured from the last beat, like staleness, because that is the only instant
+/// the record carries: a card knows when it was last worked in, not when the
+/// sweep got round to marking it.
+pub const OFFER_ABANDONED_WITHIN: jiff::SignedDuration = jiff::SignedDuration::from_hours(24 * 7);
+
 /// The id charset, `[a-z0-9-]` — the mailbox context's, for the same reasons.
 fn is_id_byte(b: u8) -> bool {
     b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'
@@ -346,6 +367,17 @@ impl Session {
     /// Only an `active` session is ever swept: the other two are already closed.
     pub fn is_stale(&self, now: Timestamp) -> bool {
         !self.state.is_terminal() && now.duration_since(self.last_beat()) >= ABANDONED_AFTER
+    }
+
+    /// Whether a boot should **offer** this run back — an `abandoned` one that
+    /// stopped inside [`OFFER_ABANDONED_WITHIN`].
+    ///
+    /// `wrapped` is never offered: its story was told and it does not reopen.
+    /// An older `abandoned` run is not offered either, and stays resumable by
+    /// anyone holding its handle — see the constant.
+    pub fn is_offerable(&self, now: Timestamp) -> bool {
+        self.state == SessionState::Abandoned
+            && now.duration_since(self.last_beat()) < OFFER_ABANDONED_WITHIN
     }
 }
 
@@ -621,6 +653,53 @@ mod tests {
         // A closed session is never swept: it is already at an end.
         let closed = Session { state: SessionState::Wrapped, ..bare };
         assert!(!closed.is_stale(start + ABANDONED_AFTER + hour));
+    }
+
+    /// **What a boot volunteers is bounded; what a handle reaches is not.** An
+    /// abandoned run inside the window is offered back, an older one is not, and
+    /// a wrapped one never is — its story was told.
+    #[test]
+    fn only_a_recently_abandoned_run_is_offered_back() {
+        let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
+        let run = Session {
+            id: SessionId("1".into()),
+            bot: EntityId("bot:gamma".into()),
+            focus: "reading the hand-off".into(),
+            started_at: start,
+            state: SessionState::Abandoned,
+            entries: Vec::new(),
+        };
+
+        let day = jiff::SignedDuration::from_hours(24);
+        assert!(run.is_offerable(start + day), "yesterday's run is the one to offer");
+        assert!(
+            run.is_offerable(start + OFFER_ABANDONED_WITHIN - day),
+            "…and so is one from inside the window"
+        );
+        assert!(
+            !run.is_offerable(start + OFFER_ABANDONED_WITHIN),
+            "the bound is exclusive at the edge"
+        );
+        assert!(
+            !run.is_offerable(start + OFFER_ABANDONED_WITHIN + day * 60),
+            "a run from two months ago is not something to bring up"
+        );
+
+        // The other two states are never offered, whatever their age.
+        for state in [SessionState::Active, SessionState::Wrapped] {
+            let other = Session { state, ..run.clone() };
+            assert!(
+                !other.is_offerable(start + day),
+                "{state} is not an abandoned run to offer back"
+            );
+        }
+
+        // **The two thresholds are not the same number**, and fusing them would
+        // make changing one silently change the other.
+        assert!(
+            OFFER_ABANDONED_WITHIN > ABANDONED_AFTER,
+            "a run must be abandoned before it can be offered back as abandoned"
+        );
     }
 
     /// An automatic beat is marked apart from a session's own words, so a
