@@ -48,6 +48,16 @@ use rmcp::{
 
 /// What `start_here` hands a fresh agent. Engine prose: the method, in role
 /// language only — no operator specifics, fictional example identities.
+/// **A stamp on the orientation essay, so a returning session can skip it.**
+///
+/// The essay is the one part of an orientation answer that does not change
+/// between boots; everything else — the snapshot, the identity, the session —
+/// is why you call again. A version rides on every answer, brief or not, so a
+/// session holding a boot-surface token budget can pay for the essay ONCE and
+/// afterwards ask only whether it moved. **Bump it whenever [`ORIENTATION`]
+/// changes**, or a session that has read the old one will believe it is current.
+const ORIENTATION_VERSION: u32 = 1;
+
 const ORIENTATION: &str = r#"# jojobot — start here
 
 jojobot is a personal-assistant server: the durable memory and message rail behind an assistant serving one person, the operator. You are one of possibly many AI sessions connected to it — jojobot itself never thinks; it stores, guards, and serves. What you write here outlives this conversation and will be read back as truth by sessions that cannot ask you what you meant. The rules below exist for them.
@@ -300,12 +310,26 @@ pub struct UpdateEntityArgs {
     pub create_new: Option<bool>,
 }
 
+/// Arguments to `start_here`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct OrientArgs {
+    /// Skip the orientation essay and return only what changes between calls.
+    /// The answer still carries `orientation_version`, so you can tell whether
+    /// the essay you already read is the current one.
+    #[serde(default)]
+    pub brief: Option<bool>,
+}
+
 /// Arguments to `boot_bot`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct BootBotArgs {
     /// The bot to start as: its bare slug, or its full `bot:`-prefixed handle.
     /// A handle of any other kind is refused — this door boots bots.
     pub name: String,
+    /// Skip the orientation essay — see `start_here`. Your identity, your box
+    /// and your session come back either way: those are what a boot is for.
+    #[serde(default)]
+    pub brief: Option<bool>,
 }
 
 /// Arguments to `set_charter`.
@@ -563,10 +587,17 @@ impl Jojobot {
                        fits together — entities, facts, provenance, edges, mailboxes — with \
                        worked examples, and returns a live snapshot of what exists right now \
                        (entities by kind, every mailbox with its counts), so you start \
-                       oriented instead of guessing. Read-only, no side effects."
+                       oriented instead of guessing. Read-only, no side effects. CALLED THIS \
+                       BEFORE? Pass brief: true — you get the snapshot and orientation_version \
+                       without the essay, which is the only part that does not change between \
+                       calls. Read the essay again whenever that version is one you have not \
+                       seen; every answer carries it, brief or not."
     )]
-    async fn start_here(&self) -> Result<CallToolResult, McpError> {
-        self.orient(None).await
+    async fn start_here(
+        &self,
+        Parameters(args): Parameters<OrientArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.orient(None, args.brief.unwrap_or(false)).await
     }
 
     /// Orientation with an identity attached: the same world-model and the same
@@ -599,7 +630,7 @@ impl Jojobot {
         Parameters(args): Parameters<BootBotArgs>,
     ) -> Result<CallToolResult, McpError> {
         let bot = bot_id(&args.name)?;
-        self.orient(Some(&bot)).await
+        self.orient(Some(&bot), args.brief.unwrap_or(false)).await
     }
 
     /// Write a bot's charter — the prose layer of its own page.
@@ -631,7 +662,7 @@ impl Jojobot {
     /// The one orientation, anonymous or identified. `start_here` and
     /// `boot_bot` are this function with and without a bot — deliberately, so
     /// the two doors can never come to teach two different jojobots.
-    async fn orient(&self, bot: Option<&EntityId>) -> Result<CallToolResult, McpError> {
+    async fn orient(&self, bot: Option<&EntityId>, brief: bool) -> Result<CallToolResult, McpError> {
         // Best-effort per world: orientation must land even when one world is
         // down — a fresh agent on a half-configured server still gets the map.
         let entities = match self.memory.list_entities(None).await {
@@ -688,7 +719,22 @@ impl Jojobot {
             Some(bot) => self.attach(bot).await,
         };
         json_result(&serde_json::json!({
-            "orientation": ORIENTATION,
+            "orientation": if brief { serde_json::Value::Null } else { ORIENTATION.into() },
+            // **Always present, brief or not.** The essay is the only part of
+            // this answer that does not change between boots, so a returning
+            // session can tell whether it already has the current one without
+            // paying for it — and a session that finds a version it has never
+            // seen knows to ask for the full call.
+            "orientation_version": ORIENTATION_VERSION,
+            "orientation_elided": brief,
+            "how_to_read_orientation": if brief {
+                serde_json::Value::from(
+                    "call again without brief to read the orientation in full — do that whenever \
+                     orientation_version is one you have not read",
+                )
+            } else {
+                serde_json::Value::Null
+            },
             "snapshot": snapshot,
             "identity": identity,
             "session": session,
@@ -5922,7 +5968,7 @@ mod tests {
         make_box(&jojobot, "inbox").await;
         send(&jojobot, "inbox", "alpha", "the shipment landed").await;
 
-        let out = jojobot.start_here().await.expect("start_here ok");
+        let out = jojobot.start_here(Parameters(OrientArgs { brief: None })).await.expect("start_here ok");
         let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
         let orientation = body["orientation"].as_str().expect("orientation prose");
         // The orientation must teach the load-bearing vocabulary, not assume it.
@@ -6021,12 +6067,82 @@ mod tests {
         )
     }
 
+    /// **A returning session pays for the essay once.** The orientation prose
+    /// is the only part of this answer that does not change between calls, and
+    /// it rode every one of them — so a client running a boot-surface token
+    /// budget skipped orientation entirely rather than paying for it again,
+    /// which is the opposite of what it is for. `brief` returns everything that
+    /// moves, and the version says whether the essay did.
+    #[tokio::test]
+    async fn a_brief_orientation_keeps_the_snapshot_and_drops_only_the_essay() {
+        let jojobot = handler();
+        ensure(&jojobot, "alpha").await;
+
+        let full = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs { brief: None }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert!(full["orientation"].as_str().is_some_and(|o| !o.is_empty()));
+        assert_eq!(full["orientation_elided"], false);
+
+        let brief = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs { brief: Some(true) }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert!(brief["orientation"].is_null(), "the essay is what was dropped: {brief}");
+        assert_eq!(brief["orientation_elided"], true);
+        assert!(
+            brief["how_to_read_orientation"]
+                .as_str()
+                .is_some_and(|h| h.contains("orientation_version")),
+            "…and it says how to get it back: {brief}"
+        );
+
+        // **The version rides on both**, which is the whole mechanism: a
+        // session compares what it holds against what came back.
+        assert_eq!(full["orientation_version"], brief["orientation_version"]);
+        assert!(brief["orientation_version"].as_u64().is_some());
+
+        // Everything that changes between calls is still here.
+        assert_eq!(brief["snapshot"], full["snapshot"]);
+        assert_eq!(brief["snapshot"]["entities"]["available"], true);
+        assert!(brief["snapshot"]["mailboxes"].is_object());
+    }
+
+    /// A boot is brief the same way, and never at the cost of the things a boot
+    /// exists for: the identity, its box, and its session.
+    #[tokio::test]
+    async fn a_brief_boot_still_hands_over_the_identity_and_the_session() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+
+        let booted = json_of(
+            &jojobot
+                .boot_bot(Parameters(BootBotArgs {
+                    name: "gamma".into(),
+                    brief: Some(true),
+                }))
+                .await
+                .expect("boot ok"),
+        );
+        assert!(booted["orientation"].is_null());
+        assert_eq!(booted["orientation_elided"], true);
+        assert_eq!(booted["identity"]["bot"]["id"], "bot:gamma");
+        assert_eq!(booted["session"]["available"], true);
+        assert_eq!(booted["session"]["resumed"], false);
+    }
+
     /// One world being down must not take orientation with it: a fresh agent
     /// on a half-configured server still deserves the map.
     #[tokio::test]
     async fn start_here_survives_a_world_that_is_down() {
         let out = handler_with_mailboxes_down(Arc::new(InMemoryMemory::new()))
-            .start_here()
+            .start_here(Parameters(OrientArgs { brief: None }))
             .await
             .expect("orientation still lands");
         let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
@@ -6051,7 +6167,7 @@ mod tests {
     async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
         json_of(
             &jojobot
-                .boot_bot(Parameters(BootBotArgs { name: name.into() }))
+                .boot_bot(Parameters(BootBotArgs { name: name.into(), brief: None }))
                 .await
                 .expect("boot_bot call ok"),
         )
@@ -7515,7 +7631,7 @@ mod tests {
                 .await
                 .expect("begin ok");
 
-            let booting = jojobot.boot_bot(Parameters(BootBotArgs { name: "gamma".into() }));
+            let booting = jojobot.boot_bot(Parameters(BootBotArgs { name: "gamma".into(), brief: None }));
             let writing = jojobot.journal(Parameters(JournalArgs {
                 entry: "the first beat".into(),
                 focus: None,
@@ -7893,7 +8009,7 @@ mod tests {
 
         let body = blocked(
             &jojobot
-                .boot_bot(Parameters(BootBotArgs { name: "gamm".into() }))
+                .boot_bot(Parameters(BootBotArgs { name: "gamm".into(), brief: None }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
         );
@@ -7920,7 +8036,7 @@ mod tests {
         );
 
         let err = jojobot
-            .boot_bot(Parameters(BootBotArgs { name: "person:milhouse".into() }))
+            .boot_bot(Parameters(BootBotArgs { name: "person:milhouse".into(), brief: None }))
             .await
             .expect_err("another kind must be refused");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
@@ -8016,7 +8132,7 @@ mod tests {
         let jojobot = handler();
         make_bot(&jojobot, "gamma", None).await;
 
-        let anonymous = json_of(&jojobot.start_here().await.expect("start_here ok"));
+        let anonymous = json_of(&jojobot.start_here(Parameters(OrientArgs { brief: None })).await.expect("start_here ok"));
         let identified = boot(&jojobot, "gamma").await;
         assert_eq!(
             anonymous["orientation"], identified["orientation"],
