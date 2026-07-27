@@ -62,6 +62,10 @@ reqwest = { version = "0.13", default-features = false, features = [
 # Outline at start — so none of that is load-bearing, it is only build time.
 tantivy = { version = "0.25", default-features = false }
 
+# --- entropy: the session handle is minted here, and a handle a caller could
+# predict is a handle a caller could forge. OS entropy, no PRNG state to seed. ---
+getrandom = "0.4"
+
 # --- errors + logging ---
 thiserror = "2"
 anyhow = "1"

@@ -23,6 +23,8 @@
 
 use std::sync::Arc;
 
+pub mod sid;
+
 use jojobot_domain::mailbox::{
     self, Delivered, Delivery, Mailbox, MailboxError, MailboxName, Mailboxes, Message, MessageId,
     NewMessage, guard::MailboxMatch,
