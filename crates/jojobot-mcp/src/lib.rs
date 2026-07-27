@@ -413,6 +413,17 @@ pub struct ReadMailboxArgs {
     pub new_only: Option<bool>,
 }
 
+/// Arguments to `list_mailboxes`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ListMailboxesArgs {
+    /// Whose boxes to show counts for — the bot you booted as, by name. Boxes
+    /// that bot owns come back with their counts; every other box comes back as
+    /// a name only. Omit it and you own nothing, which is right for a caller
+    /// that only posts.
+    #[serde(default)]
+    pub bot: Option<String>,
+}
+
 /// Arguments to `list_sent`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ListSentArgs {
@@ -717,10 +728,38 @@ impl Jojobot {
                 "note": "the memory world is not reachable right now — its tools will say why",
             }),
         };
+        // **The snapshot is scoped the same way the listing is.** It was the
+        // other place a boot met per-state counts for every box on the server,
+        // and it posed the same question the own-box norm then has to answer in
+        // prose: is that unread one mine? An anonymous `start_here` owns
+        // nothing, which is exactly right for a caller that only posts.
+        let mine = self.boxes_drained_by(bot).await?;
         let mailboxes = match self.mailboxes.list_mailboxes().await {
             Ok(boxes) => serde_json::json!({
                 "available": true,
-                "boxes": boxes.iter().map(mailbox_json).collect::<Vec<_>>(),
+                "counts_shown_for": mine.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
+                "note": "Counts are shown for the boxes you drain; every other box is listed by \
+                         name only. It exists and you can post into it — what is waiting in it \
+                         belongs to whoever works it.",
+                "boxes": boxes
+                    .iter()
+                    .map(|b| {
+                        if mine.iter().any(|m| m == b.name.as_str()) {
+                            let mut body = mailbox_json(b);
+                            if let Some(obj) = body.as_object_mut() {
+                                obj.insert("yours".into(), true.into());
+                            }
+                            body
+                        } else {
+                            serde_json::json!({
+                                "name": b.name.as_str(),
+                                "yours": false,
+                                "counts": serde_json::Value::Null,
+                                "counts_elided": true,
+                            })
+                        }
+                    })
+                    .collect::<Vec<_>>(),
             }),
             Err(_) => serde_json::json!({
                 "available": false,
@@ -1672,9 +1711,21 @@ impl Jojobot {
                        delivered nowhere, and cannot be processed, so this is the only place \
                        their existence shows — their ids are listed, and repairing one takes a \
                        person. If a message somebody expected is missing, look here before \
-                       concluding it was never sent, and say what you find."
+                       concluding it was never sent, and say what you find. COUNTS ARE FOR YOUR \
+                       OWN BOXES: pass `bot` (the name you booted as) and the boxes that bot owns \
+                       come back with their per-state counts; every other box comes back as a \
+                       NAME ONLY, marked `yours: false`. You can still see that a box EXISTS — \
+                       which is what you need to post into it — but not what is waiting in \
+                       somebody else's, because that is their queue to work and not yours to \
+                       weigh. Name no bot and you own nothing, which is exactly right for a \
+                       caller that only posts."
     )]
-    async fn list_mailboxes(&self) -> Result<CallToolResult, McpError> {
+    async fn list_mailboxes(
+        &self,
+        Parameters(args): Parameters<ListMailboxesArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let named = named_bot(args.bot.as_deref())?;
+        let mine = self.boxes_drained_by(named.as_ref()).await?;
         let boxes = self
             .mailboxes
             .list_mailboxes()
@@ -1682,9 +1733,59 @@ impl Jojobot {
             .map_err(mailbox_error)?;
         let body = serde_json::json!({
             "count": boxes.len(),
-            "mailboxes": boxes.iter().map(mailbox_json).collect::<Vec<_>>(),
+            "counts_shown_for": mine.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
+            "note": "Counts are shown for the boxes you drain. Every other box is listed by name \
+                     only — it exists, and post_message can reach it; what is waiting in it \
+                     belongs to whoever works it.",
+            "mailboxes": boxes
+                .iter()
+                .map(|b| {
+                    if mine.iter().any(|m| m == b.name.as_str()) {
+                        let mut body = mailbox_json(b);
+                        if let Some(obj) = body.as_object_mut() {
+                            obj.insert("yours".into(), true.into());
+                        }
+                        body
+                    } else {
+                        // **Existence, not state.** The name is what a writer
+                        // needs; the counts are what posed "is that one mine?"
+                        serde_json::json!({
+                            "name": b.name.as_str(),
+                            "yours": false,
+                            "counts": serde_json::Value::Null,
+                            "counts_elided": true,
+                        })
+                    }
+                })
+                .collect::<Vec<_>>(),
         });
         json_result(&body)
+    }
+
+    /// The boxes a caller drains — the ones whose state is theirs to see.
+    ///
+    /// **Ownership is a read of Memory, never an ACL**: a bot owns a box by
+    /// carrying a `mailbox:` claim on its own record, so this asks the entity
+    /// index rather than anything mailbox-side. A caller that names no bot, and
+    /// whose connection carries no identity either, drains nothing — which is
+    /// the right answer for a pure sender, and for an anonymous `start_here`.
+    async fn boxes_drained_by(&self, named: Option<&EntityId>) -> Result<Vec<String>, McpError> {
+        let bot = match named {
+            Some(bot) => Some(bot.clone()),
+            None => self.bound.read().expect("binding poisoned").as_ref().map(|b| b.bot.clone()),
+        };
+        let Some(bot) = bot else { return Ok(Vec::new()) };
+        // A memory world that is down means jojobot cannot say what anybody
+        // owns, and the safe answer to "is this yours" is no.
+        let Ok(index) = self.memory.list_entities(None).await else {
+            return Ok(Vec::new());
+        };
+        Ok(index
+            .iter()
+            .find(|e| e.id == bot)
+            .and_then(|e| e.mailbox.clone())
+            .into_iter()
+            .collect())
     }
 
     /// Leave a message in a box.
@@ -5062,6 +5163,19 @@ mod tests {
         )
     }
 
+    /// The listing as the bot that drains those boxes sees it — counts are for
+    /// your own boxes now, so a test that asserts one has to say whose it is.
+    async fn drains(jojobot: &Jojobot, bot: &str) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .list_mailboxes(Parameters(ListMailboxesArgs {
+                    bot: Some(bot.into()),
+                }))
+                .await
+                .expect("list ok"),
+        )
+    }
+
     async fn make_box(jojobot: &Jojobot, name: &str) -> serde_json::Value {
         let result = jojobot
             .create_mailbox(Parameters(CreateMailboxArgs {
@@ -5121,7 +5235,8 @@ mod tests {
         assert!(posted["sent_at"].is_string(), "a message says when it was sent");
         let id = posted["id"].as_str().expect("a message carries its id").to_string();
 
-        let listed = json_of(&jojobot.list_mailboxes().await.expect("list ok"));
+        make_bot(&jojobot, "gamma", Some("inbox")).await;
+        let listed = drains(&jojobot, "gamma").await;
         assert_eq!(listed["count"], 1);
         assert_eq!(listed["mailboxes"][0]["name"], "inbox");
         assert_eq!(listed["mailboxes"][0]["counts"]["new"], 1);
@@ -5249,7 +5364,8 @@ mod tests {
         assert_eq!(delivered["state"], "read", "taking one message moves its column");
         assert_eq!(delivered["seen_before"], false);
 
-        let listed = json_of(&jojobot.list_mailboxes().await.expect("list ok"));
+        make_bot(&jojobot, "gamma", Some("inbox")).await;
+        let listed = drains(&jojobot, "gamma").await;
         assert_eq!(listed["mailboxes"][0]["counts"]["read"], 1);
         assert_eq!(
             listed["mailboxes"][0]["counts"]["new"], 1,
@@ -5639,6 +5755,87 @@ mod tests {
         assert!(delivery["messages"][0]["body_elided"].is_null(), "nothing was withheld");
     }
 
+    /// **Existence is public; what is waiting in somebody's queue is not.**
+    /// Live report: sender bots posting into boxes they do not drain kept
+    /// narrating "there is an unread message there that is not mine to pick up"
+    /// — correct restraint, and attention spent on a question that should never
+    /// have been posed. The affordance posed it: every box's per-state counts
+    /// were shown to everybody, and the own-box norm then had to suppress in
+    /// prose what the payload kept suggesting.
+    ///
+    /// Names stay visible, because a writer needs them — `post_message` must
+    /// name an existing box, and a near-miss comes back with candidates.
+    #[tokio::test]
+    async fn counts_are_shown_for_the_boxes_you_drain_and_names_for_the_rest() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "dev").await;
+        make_box(&jojobot, "pm").await;
+        make_bot(&jojobot, "gamma", Some("dev")).await;
+        // **A second bot that drains the other box** — without one, "your boxes"
+        // and "every claimed box" are the same set and the scoping proves
+        // nothing.
+        make_bot(&jojobot, "delta", Some("pm")).await;
+        send(&jojobot, "dev", "coordinator (pm)", "your hand-off").await;
+        send(&jojobot, "pm", "somebody else", "not your business").await;
+
+        let listed = drains(&jojobot, "gamma").await;
+        assert_eq!(listed["count"], 2, "every box is still LISTED: {listed}");
+        assert_eq!(
+            listed["counts_shown_for"],
+            serde_json::json!(["dev"]),
+            "…and the answer says whose counts these are: {listed}"
+        );
+
+        let by_name = |name: &str| -> serde_json::Value {
+            listed["mailboxes"]
+                .as_array()
+                .expect("boxes")
+                .iter()
+                .find(|b| b["name"] == name)
+                .expect("the box")
+                .clone()
+        };
+
+        let mine = by_name("dev");
+        assert_eq!(mine["yours"], true);
+        assert_eq!(mine["counts"]["new"], 1, "my own queue, in full: {mine}");
+
+        let theirs = by_name("pm");
+        assert_eq!(theirs["name"], "pm", "it EXISTS — post_message needs the name");
+        assert_eq!(theirs["yours"], false);
+        assert!(theirs["counts"].is_null(), "…and its queue is not mine to weigh: {theirs}");
+        assert_eq!(theirs["counts_elided"], true, "elided, never silently");
+    }
+
+    /// A boot sees its own box's counts in the snapshot, and names only for the
+    /// rest — the same rule, in the other place a session meets this listing.
+    #[tokio::test]
+    async fn a_boot_snapshot_counts_only_the_bot_s_own_box() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "dev").await;
+        make_box(&jojobot, "pm").await;
+        make_bot(&jojobot, "gamma", Some("dev")).await;
+        make_bot(&jojobot, "delta", Some("pm")).await;
+        send(&jojobot, "dev", "coordinator (pm)", "your hand-off").await;
+        send(&jojobot, "pm", "somebody else", "not your business").await;
+
+        let booted = boot(&jojobot, "gamma").await;
+        let boxes = booted["snapshot"]["mailboxes"]["boxes"]
+            .as_array()
+            .expect("boxes")
+            .clone();
+        let find = |name: &str| boxes.iter().find(|b| b["name"] == name).expect("the box").clone();
+
+        assert_eq!(find("dev")["counts"]["new"], 1, "my box, counted: {booted}");
+        assert_eq!(find("dev")["yours"], true);
+        assert!(find("pm")["counts"].is_null(), "somebody else's, name only: {booted}");
+        assert_eq!(find("pm")["yours"], false);
+
+        // The bot's own box still comes back in full under `identity`, which is
+        // the whole point of booting as somebody.
+        assert_eq!(booted["identity"]["owned_mailbox"]["counts"]["new"], 1);
+    }
+
     /// **A sender can see where their own mail got to, and seeing moves
     /// nothing.** Twice a session wanted to confirm a report had been *read*
     /// rather than merely delivered, and could not: the only verbs that show a
@@ -5681,20 +5878,10 @@ mod tests {
         assert!(first["body_head"].as_str().expect("a head").contains("note for somebody else"));
         assert!(first["how_to_read"].as_str().expect("a pointer").contains("include_bodies"));
 
-        // **Nothing moved.** Every message is still exactly as owed as it was —
-        // including the one this sender cannot see.
-        let boxes = json_of(&jojobot.list_mailboxes().await.expect("list ok"));
-        for name in ["pm", "inbox"] {
-            let counted = boxes["mailboxes"]
-                .as_array()
-                .expect("boxes")
-                .iter()
-                .find(|b| b["name"] == name)
-                .expect("the box");
-            assert_eq!(
-                counted["counts"]["read"], 0,
-                "{name}: looking at your own outbox is not a delivery: {counted}"
-            );
+        // **Nothing moved.** Every message this sender can see is still `new`,
+        // which is what it was before the look.
+        for m in sent["messages"].as_array().expect("messages") {
+            assert_eq!(m["state"], "new", "looking at your own outbox is not a delivery: {m}");
         }
         assert!(
             !json_of(
@@ -5882,7 +6069,8 @@ mod tests {
             "its description no longer carries a readable machine block",
         );
 
-        let listed = json_of(&jojobot.list_mailboxes().await.expect("list ok"));
+        make_bot(&jojobot, "gamma", Some("inbox")).await;
+        let listed = drains(&jojobot, "gamma").await;
         let inbox = &listed["mailboxes"][0];
         assert_eq!(inbox["quarantined"]["count"], 1, "got {listed}");
         assert_eq!(inbox["quarantined"]["card_ids"][0], "4212");
@@ -6147,8 +6335,14 @@ mod tests {
         let boxes = body["snapshot"]["mailboxes"]["boxes"]
             .as_array()
             .expect("mailboxes listed");
+        // **Anonymous orientation sees names, not queues.** `start_here` is
+        // nobody in particular, so it owns nothing and every box comes back as
+        // existence only — which is exactly what a caller that only posts
+        // needs, and it is the affordance that used to pose "is that one mine?"
         assert_eq!(boxes[0]["name"], "inbox");
-        assert_eq!(boxes[0]["counts"]["new"], 1);
+        assert_eq!(boxes[0]["yours"], false);
+        assert!(boxes[0]["counts"].is_null(), "{:?}", boxes[0]);
+        assert_eq!(boxes[0]["counts_elided"], true);
     }
 
     /// A mailbox world that answers nothing. Shared by both orientation doors:
@@ -8285,7 +8479,7 @@ mod tests {
         for _ in 0..2 {
             boot(&jojobot, "sigma").await;
         }
-        let listed = json_of(&jojobot.list_mailboxes().await.expect("list ok"));
+        let listed = json_of(&jojobot.list_mailboxes(Parameters(ListMailboxesArgs { bot: None })).await.expect("list ok"));
         assert_eq!(
             listed["count"], 0,
             "booting must not put a box on the board: {listed}"
@@ -8421,7 +8615,7 @@ mod tests {
         assert_eq!(body["identity"]["bot"]["id"], "bot:epsilon");
         assert!(body["identity"]["owned_mailbox"].is_null(), "got {body}");
         assert!(
-            json_of(&jojobot.list_mailboxes().await.expect("list ok"))["mailboxes"]
+            json_of(&jojobot.list_mailboxes(Parameters(ListMailboxesArgs { bot: None })).await.expect("list ok"))["mailboxes"]
                 .as_array()
                 .expect("boxes")
                 .is_empty(),
