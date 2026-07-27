@@ -3221,13 +3221,31 @@ fn session_declined(e: SessionError) -> Result<CallToolResult, McpError> {
                  identity — use the sid it gives you rather than composing one."
             ),
         ),
+        // **The two ends part company here, because the way forward does.** One
+        // paragraph for both used to tell the owner of a run that merely
+        // stopped that their work belonged to a new session — which is advice
+        // to fork the very thing they were trying to continue.
+        SessionError::Closed {
+            attempted,
+            state: SessionState::Abandoned,
+        } => blocked(
+            &attempted.clone(),
+            format!(
+                "Nothing was written. Session '{attempted}' is abandoned — it stopped without \
+                 being wrapped up, so it takes no write as it stands. That is not a failure and \
+                 not the end of it: resume it. Call start_here with your bot name, and either \
+                 take it from the offer or pass resume with its sid — it reopens where it left \
+                 off and its chronology continues."
+            ),
+        ),
         SessionError::Closed { attempted, state } => blocked(
             &attempted.clone(),
             format!(
-                "Nothing was written. Session '{attempted}' is {state} — closed, and closed is \
-                 terminal both ways. Its chronology stands as the record of what happened; \
-                 nothing appends to it, amends it, or reopens it. If there is more to say, it \
-                 belongs to a new session: boot again (or rotate) and start_here mints one."
+                "Nothing was written. Session '{attempted}' is {state} — its story has been told, \
+                 and it went into the operator's Journal as a dated entry. Reopening it would \
+                 make that account false, so this end is the last word. Its chronology stands as \
+                 the record of what happened. If there is more to say, it belongs to a new \
+                 session: boot again (or rotate) and start_here mints one."
             ),
         ),
         SessionError::NoEntries { attempted } => blocked(
@@ -8688,6 +8706,73 @@ mod tests {
         assert_eq!(all.len(), 1, "continued, not forked beside: {all:?}");
     }
 
+    /// **Writing to a closed run says something different depending on which
+    /// end it reached**, because the way forward is different.
+    ///
+    /// Both refusals used to read "closed is terminal both ways — nothing
+    /// appends to it, amends it, or reopens it", which is now false for half of
+    /// them: an abandoned run reopens, and telling its owner to start a new one
+    /// instead sends them to fork the work they were trying to continue.
+    #[tokio::test]
+    async fn writing_to_a_closed_run_says_which_end_it_reached() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+
+        let stopped = abandoned_run(&store, "gamma", "reading the hand-off", 30).await;
+        let told = store
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                focus: "a finished piece of work".into(),
+                started_at: jiff::Timestamp::now(),
+            })
+            .await
+            .expect("begin ok");
+        store
+            .close(&told.id, SessionState::Wrapped)
+            .await
+            .expect("close ok");
+
+        let advice = |session: &SessionId| {
+            let jojobot = &jojobot;
+            let id = session.to_string();
+            async move {
+                let body = blocked(
+                    &jojobot
+                        .journal(Parameters(JournalArgs {
+                            entry: "one more thing".into(),
+                            focus: None,
+                            session: Some(id),
+                            bot: None,
+                        }))
+                        .await
+                        .expect("a closed session is an answer, not a protocol failure"),
+                );
+                body["how_to_proceed"].as_str().expect("advice").to_string()
+            }
+        };
+
+        let on_stopped = advice(&stopped.id).await;
+        assert!(
+            on_stopped.contains("resume") && on_stopped.contains("start_here"),
+            "a run that stopped is picked back up, not replaced: {on_stopped}"
+        );
+        assert!(
+            !on_stopped.contains("belongs to a new session"),
+            "…and it must not send the caller off to fork the work: {on_stopped}"
+        );
+
+        let on_told = advice(&told.id).await;
+        assert!(
+            on_told.contains("story") && on_told.contains("Journal"),
+            "a told story names the reason this end is the last word: {on_told}"
+        );
+        assert!(
+            on_told.contains("new session"),
+            "…and there the next run really is the way forward: {on_told}"
+        );
+    }
+
     /// **Bounded attention, unbounded reachability.** A run nobody has touched
     /// in months is not something to bring up — but a handle its caller still
     /// holds still addresses it, and resuming it still works.
@@ -9911,8 +9996,13 @@ mod tests {
             assert_eq!(body["status"], "blocked", "{verb} must be blocked: {body}");
             assert_eq!(body["wrote"], false);
             let how = body["how_to_proceed"].as_str().expect("advice");
+            // **Why this end is the last word, not merely that it is.** A
+            // wrapped run's story is already a dated entry in the operator's
+            // Journal, and that published account is what reopening would
+            // falsify — which is also what makes this refusal different from
+            // the one an abandoned run gets.
             assert!(
-                how.contains("terminal both ways"),
+                how.contains("story has been told") && how.contains("Journal"),
                 "{verb} has to say why: {how}"
             );
         };

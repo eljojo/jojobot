@@ -22,7 +22,10 @@
 //!   as evidence.
 //! * **the lifecycle — `active` → `wrapped` | `abandoned`.** `wrapped` is a
 //!   session whose story was told; `abandoned` is one that stopped without
-//!   telling it. Both are terminal, and nothing walks back out of either.
+//!   telling it. Both are closed — neither takes a write — but only `wrapped`
+//!   is the last word. An `abandoned` run reopens, because it published
+//!   nothing and because otherwise no interrupted run could ever be wrapped at
+//!   all. See [`SessionState::is_final`].
 //!
 //! **This is user-agnostic software: no user PII, fixtures included.** Bots and
 //! entries in tests and examples are openly fictional.
@@ -397,15 +400,21 @@ pub enum SessionError {
         /// The id that missed.
         attempted: String,
     },
-    /// **The terminal-both-ways rule.** The session is closed, so it takes no
-    /// more entries and cannot be closed again. Its own variant, because it is
-    /// the answer a caller most needs told apart from "no such session": the id
-    /// is real, the record is right there and readable, and the only thing that
-    /// is over is writing to it.
+    /// **The closed-session rule.** The session takes no more entries and cannot
+    /// be closed again. Its own variant, because it is the answer a caller most
+    /// needs told apart from "no such session": the id is real, the record is
+    /// right there and readable, and the only thing that is over is writing to
+    /// it.
+    ///
+    /// Also what [`Sessions::reopen`] returns for a `wrapped` session — the one
+    /// end that is the last word. The message stays true of both states by
+    /// saying only what closed means for writes; which end this is, and whether
+    /// it can be picked back up, is `state`, and the layer talking to a caller
+    /// is where that difference gets spelled out.
     #[error(
-        "session '{attempted}' is {state} — closed, and closed is terminal both ways. Its \
-         chronology stands as the record of what happened, and nothing appends to it, amends it \
-         or reopens it. If there is more to say, it belongs to a new session"
+        "session '{attempted}' is {state} — closed, so it takes no entry, no amend and no focus \
+         change. Its chronology stands as the record of what happened. A wrapped session is the \
+         last word; an abandoned one can be picked back up by resuming it"
     )]
     Closed {
         /// The id that was addressed.
@@ -476,8 +485,12 @@ pub enum SessionError {
 ///
 /// * **read-back** — a write succeeds only if reading it back through the read
 ///   path returns it, and a mismatch restores the prior state before erroring.
-/// * **terminal both ways** — nothing appends to, amends, or reopens a closed
-///   session, and no rollback moves a card out of a terminal column.
+/// * **closed is closed, for writes** — nothing appends to, amends, or changes
+///   the focus of a closed session, whichever end it reached, and no rollback
+///   moves a card out of a terminal column.
+/// * **only `wrapped` is the last word** — [`reopen`](Sessions::reopen) takes an
+///   `abandoned` session back to `active` and is refused on a `wrapped` one. It
+///   is the single walk-back on this port; see [`SessionState::is_final`].
 /// * **nothing is created as a side effect** — [`begin`](Sessions::begin) is the
 ///   only thing that brings a session card into being, and the caller decides
 ///   when. A boot that never works leaves no card.
