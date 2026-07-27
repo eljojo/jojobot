@@ -44,7 +44,7 @@ pub struct AppState {
     /// adapter, possibly unconfigured; no toy store ships.
     pub mailboxes: Arc<dyn Mailboxes>,
     /// The Sessions port backing `journal`, `amend_journal`, `wrap_session` and
-    /// the session half of `boot_bot`. A third context on the same Vikunja, in
+    /// the session half of `start_here`. A third context on the same Vikunja, in
     /// **its own project** — never the mailbox one.
     pub sessions: Arc<dyn Sessions>,
 }

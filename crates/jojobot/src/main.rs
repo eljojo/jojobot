@@ -154,7 +154,7 @@ async fn main() -> anyhow::Result<()> {
         None => {
             tracing::warn!(
                 "SESSIONS DISABLED — set JOJOBOT_VIKUNJA_URL and JOJOBOT_VIKUNJA_TOKEN to enable \
-                 them. boot_bot still boots: the identity, its charter and its rules live in \
+                 them. start_here still boots an identity: its charter and its rules live in \
                  Memory, and the session half says it does not know."
             );
             Arc::new(VikunjaSessions::unconfigured())

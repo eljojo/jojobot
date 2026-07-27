@@ -105,7 +105,7 @@ jojobot also writes **its own beats** into your chronology: one per verb class y
 
 The resume note is **the one sanctioned exception to journal leanness**. Everywhere else a beat is high-level; here, be dense and specific — where you got to, what you already ruled out, the exact next step, the thing that will bite whoever picks this up. Its only reader is somebody with your job and none of your context.
 
-`abandoned` is neither of these. It is the **failure path**: a session that stopped without telling its story, swept a day later by the next boot. Its chronology survives and is still worth reading, but nobody decided anything — the difference between `wrapped` and `abandoned` is whether a run ended or merely stopped.
+`abandoned` is neither of these, and it is **not a failure**: it means the run was never wrapped up. A session stops without telling its story — a disconnect, a closed laptop, an agent that moved on — and the next boot a day later marks it so. Its chronology survives, it is still worth reading, and **resuming it is ordinary rather than recovery**. The difference between `wrapped` and `abandoned` is whether a run ended or merely stopped.
 
 ### Your box is yours; the others are not
 
@@ -7423,9 +7423,22 @@ mod tests {
             ORIENTATION.contains("exception to journal leanness"),
             "…and exempts it from the leanness rule, or the rule suppresses it"
         );
+        // **`abandoned` is not a failure**, and the essay must not teach it as
+        // one: it means the run was never wrapped up, and picking one back up
+        // is ordinary rather than recovery. What the essay still has to draw is
+        // the distinction that survives — a run that ENDED against one that
+        // merely STOPPED.
         assert!(
-            ORIENTATION.contains("failure path"),
-            "abandoned is not a third ordinary ending"
+            ORIENTATION.contains("not a failure"),
+            "abandoned is a run nobody wrapped up, not a run that broke"
+        );
+        assert!(
+            !ORIENTATION.contains("failure path"),
+            "…so the old framing must be gone, not merely balanced by the new one"
+        );
+        assert!(
+            ORIENTATION.contains("merely stopped"),
+            "…and the distinction that does survive is ended against stopped"
         );
 
         // The own-box norm, and the affordance that tempted otherwise.
