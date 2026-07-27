@@ -17,8 +17,13 @@ never runs inference of its own — the assistant is the only mind.
 > **Mailboxes** — kanban-backed message boxes with `new → read → processed`
 > state (read ≠ processed; processed is a terminal archive; no delete verbs —
 > the tool surface is pinned by test), each message optionally carrying a
-> `subject`, and `read_message` taking delivery of one without draining its
-> box. **`search` spans both**: one ranked list over entities, facts, prose and
+> `subject` and an `in_reply_to` link to what it answers, `read_message` taking
+> delivery of one without draining its box, and `list_sent` showing a sender
+> where their own mail got to without moving any of it. **What a caller already
+> has is not shipped back**: the two verbs that echoed a body now answer with a
+> receipt, a poll can ask for news only, and orientation can be skipped by a
+> session that has read it — always with a marker saying what was left out and
+> how to get it. **`search` spans both**: one ranked list over entities, facts, prose and
 > messages, mail included by default and in every state (`processed` archives
 > too), each mail hit carrying its box, state, sender and id — and an answer
 > that could not see the board says so rather than reading as "nothing

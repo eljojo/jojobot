@@ -96,10 +96,26 @@ Shipped and live:
 > messages" are different claims and a caller acts on both.
 - **M3** — Mailboxes: kanban-backed message boxes (`new → read → processed`;
   read ≠ processed; processed is a terminal archive; no delete verbs — the
-  tool surface is pinned by test). A message may carry a one-line `subject`,
-  and **`read_message` takes delivery of one by id** — draining a whole box
-  makes every message in it owed work, which is the wrong price for wanting
-  the single one a search hit named.
+  tool surface is pinned by test). A message may carry a one-line `subject`
+  and an `in_reply_to` link to the message it answers, and **`read_message`
+  takes delivery of one by id** — draining a whole box makes every message in
+  it owed work, which is the wrong price for wanting the single one a search
+  hit named. **`list_sent` is the sender's own view**: where your mail got to
+  and whether anyone has read it, read-only and moving nothing.
+
+> **Delivery-awareness: serve the difference.** `seen_before` was the first
+> instance; the rule now runs across the surface. What a caller demonstrably
+> already has is not shipped back to them — `post_message` and `mark_processed`
+> answer with a receipt (id, state, notes, `body_bytes`, the opening line)
+> rather than echoing a body its own author wrote, `read_mailbox`'s `new_only`
+> stops re-shipping a deliberately held-open message on every poll, and
+> `start_here`/`boot_bot` take `brief` so a returning session pays for the
+> orientation essay once and afterwards compares `orientation_version`.
+> **Eliding is never silent**: whenever less comes back, a marker says what was
+> left out and how to get it, because a reader who has to infer withheld-vs-empty
+> from a missing key will eventually infer wrong. What the full echo *proved* is
+> untouched — read-back happens server-side, so a body that did not survive
+> storage is still an error rather than a success with mangled bytes.
 - **M4** — Bots: a ninth entity kind, `bot` — an AI identity is handle ·
   charter (its doc's prose, written through `set_charter`) · rules (plain
   facts, so each carries its own provenance) · memory · one owned mailbox
