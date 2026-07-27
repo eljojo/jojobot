@@ -1550,7 +1550,11 @@ impl Jojobot {
                        in between, and that is success, not a problem: the message exists and \
                        someone has it. `sender` is recorded exactly as you declare it — \
                        identity is not verified, so name yourself specifically enough that a \
-                       reply can find you. `in_reply_to` links this message to the one it \
+                       reply can find you. YOUR BODY IS NOT ECHOED BACK — you wrote it, and \
+                       jojobot verified it by reading the stored card back, so the answer carries \
+                       the id, the state and body_bytes with body_elided: true rather than the \
+                       text. `list_sent` with include_bodies returns it and takes no delivery. \
+                       `in_reply_to` links this message to the one it \
                        answers: optional, it must name a message that exists (a miss comes back \
                        blocked, nothing written), and it says only that the two are one exchange \
                        — it does not deliver the original, handle it, or oblige anybody."
@@ -1585,7 +1589,11 @@ impl Jojobot {
         match posted {
             mailbox::Guarded::Written(message) => {
                 self.beat("post_message", message.mailbox.as_str()).await;
-                json_result(&message_json(&message))
+                json_result(&message_receipt_json(
+                    &message,
+                    "you wrote this body; jojobot verified it by reading the stored card back. \
+                     list_sent with include_bodies: true returns it, and takes no delivery",
+                ))
             }
             mailbox::Guarded::Blocked {
                 attempted,
@@ -1956,7 +1964,11 @@ impl Jojobot {
                        for work that was never owed. Write the outcome you actually have: a note \
                        longer than the card holds is CUT to fit and says so (a trailing ellipsis, \
                        and notes_truncated: true), never refused — the verb that retires a \
-                       message will not fail over the length of its own record. A message can be \
+                       message will not fail over the length of its own record. The answer \
+                       confirms the move — state, notes, id — WITHOUT echoing the message's body \
+                       back at you, since the read that handed it over already gave you that; it \
+                       carries body_bytes and body_elided: true instead, and read_message returns \
+                       the text unchanged for a processed message. A message can be \
                        processed straight from `new`, no delivery first. Two refusals wear the \
                        same status: blocked shape and mean different things: an id that names \
                        nothing at all (use one read_mailbox or post_message handed you), and an \
@@ -1975,7 +1987,11 @@ impl Jojobot {
         match self.mailboxes.mark_processed(&id, args.notes.as_deref()).await {
             Ok(processed) => {
                 self.beat("mark_processed", processed.id.as_str()).await;
-                let mut body = message_json(&processed);
+                let mut body = message_receipt_json(
+                    &processed,
+                    "you had this body from the read that handed it to you. read_message returns \
+                     it, and a processed message comes back unchanged — processed is terminal",
+                );
                 if let Some(obj) = body.as_object_mut() {
                     // **Always present, never inferred from the ellipsis.** The
                     // record can legitimately end in one, and a reader that has
@@ -4865,8 +4881,11 @@ mod tests {
         let posted = send(&jojobot, "inbox", "alpha", "the shipment landed").await;
         assert_eq!(posted["mailbox"], "inbox");
         assert_eq!(posted["sender"], "alpha");
-        assert_eq!(posted["body"], "the shipment landed");
         assert_eq!(posted["state"], "new");
+        // The author's own body is not shipped back to them — see
+        // `a_post_is_receipted_without_shipping_the_body_back`.
+        assert!(posted["body"].is_null());
+        assert_eq!(posted["body_bytes"], "the shipment landed".len());
         assert!(posted["sent_at"].is_string(), "a message says when it was sent");
         let id = posted["id"].as_str().expect("a message carries its id").to_string();
 
@@ -4954,7 +4973,7 @@ mod tests {
         .await;
         assert_eq!(posted["subject"], "the shipment");
         assert_eq!(
-            posted["body"], "it landed at dawn; the crates are by the north door",
+            posted["body_head"], "it landed at dawn; the crates are by the north door",
             "the subject sits beside the body, never carved out of it"
         );
         let id = posted["id"].as_str().expect("an id").to_string();
@@ -5206,6 +5225,99 @@ mod tests {
 
     /// An id nothing answers to is **blocked**, carrying the id that missed —
     /// never a silent success, which would look exactly like a handled message,
+    /// **The two verbs that echo a body back echo it to the one caller who
+    /// already has it.** `post_message` returned the whole stored body to its
+    /// author; `mark_processed` returned the entire original message to the
+    /// consumer who had just read it. On 4–8 KB reports that doubled the cost
+    /// of the behaviour the crash contract asks for, which is a price that
+    /// scales with thoroughness — the wrong thing to charge for.
+    ///
+    /// What the full echo proved is preserved: the store's read-back invariant
+    /// means a body that did not survive storage is an ERROR, not a success
+    /// with mangled bytes, so fidelity is proven server-side. The receipt keeps
+    /// what a caller cannot derive — the id, the state, the notes, the exact
+    /// stored size — and says plainly that the body was left out.
+    #[tokio::test]
+    async fn a_post_is_receipted_without_shipping_the_body_back() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "pm").await;
+        let long = "counted the crates and reconciled them against the manifest. ".repeat(60);
+
+        let posted = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    mailbox: "pm".into(),
+                    sender: "dev (implementer)".into(),
+                    body: long.clone(),
+                    subject: Some("the crate count".into()),
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("post ok"),
+        );
+        // Everything a caller cannot derive is still here.
+        assert!(posted["id"].as_str().is_some());
+        assert_eq!(posted["mailbox"], "pm");
+        assert_eq!(posted["state"], "new");
+        assert_eq!(posted["subject"], "the crate count");
+        assert!(posted["sent_at"].is_string());
+        // …and the body is not, loudly.
+        assert!(posted["body"].is_null());
+        assert_eq!(posted["body_elided"], true);
+        assert_eq!(posted["body_bytes"], long.trim().len());
+        assert!(posted["body_head"].as_str().expect("a head").starts_with("counted the crates"));
+        assert!(
+            posted["body_head"].as_str().expect("a head").chars().count()
+                < long.chars().count() / 4,
+            "the head is a head, not the body under another key"
+        );
+        assert!(posted["how_to_read"].as_str().expect("a pointer").contains("list_sent"));
+    }
+
+    /// The same, for the terminal verb — whose caller got the body from the
+    /// read that handed it to them.
+    #[tokio::test]
+    async fn processing_receipts_without_shipping_the_body_back() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let posted = send(&jojobot, "inbox", "alpha", "the shipment landed at dawn").await;
+
+        let body = json_of(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_id: posted["id"].as_str().expect("an id").to_string(),
+                    notes: Some("filed under shipments".into()),
+                }))
+                .await
+                .expect("mark_processed ok"),
+        );
+        assert_eq!(body["state"], "processed", "the proof that matters: it moved");
+        assert_eq!(body["notes"], "filed under shipments", "…and what was recorded");
+        assert!(body["body"].is_null());
+        assert_eq!(body["body_elided"], true);
+        assert_eq!(body["body_bytes"], "the shipment landed at dawn".len());
+        assert!(body["how_to_read"].as_str().expect("a pointer").contains("read_message"));
+    }
+
+    /// **The delivery verbs still ship bodies.** The elision is for the caller
+    /// who wrote or already read the text; a consumer taking delivery is being
+    /// handed something they have never seen, and that is the whole verb.
+    #[tokio::test]
+    async fn taking_delivery_still_hands_over_the_whole_body() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        send(&jojobot, "inbox", "alpha", "the shipment landed at dawn").await;
+
+        let delivery = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into() }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(delivery["messages"][0]["body"], "the shipment landed at dawn");
+        assert!(delivery["messages"][0]["body_elided"].is_null(), "nothing was withheld");
+    }
+
     /// **A sender can see where their own mail got to, and seeing moves
     /// nothing.** Twice a session wanted to confirm a report had been *read*
     /// rather than merely delivered, and could not: the only verbs that show a
