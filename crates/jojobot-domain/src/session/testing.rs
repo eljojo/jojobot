@@ -718,6 +718,49 @@ pub mod contract {
         assert_eq!(theirs[0].focus, "somebody else's run");
     }
 
+    /// **The whole board, across bots and across states** — and it carries the
+    /// handles.
+    ///
+    /// This is the read a restart rebuilds its handle registry from: it runs
+    /// once at startup, and a card missing from it is a run whose address can
+    /// never be recovered, which is the exact cliff persisting the handle was
+    /// meant to close. It sat outside this contract entirely, so no store — fake
+    /// or real — was ever asked whether it does what the restart path needs.
+    ///
+    /// Pinned by the two things that distinguish it from `sessions_of`: it does
+    /// not narrow to one bot, and it does not drop what is closed. Found rather
+    /// than counted, because a real board may carry cards this case never wrote.
+    pub async fn all_sessions_carries_every_card_across_bots_with_its_handle(store: &dyn Sessions) {
+        let mine = begin(store, "gamma", "the run that is still going", 0).await;
+        let theirs = begin(store, "delta", "somebody else's run", 300).await;
+        let ended = begin(store, "gamma", "the run that ended", 600).await;
+        store
+            .close(&ended.id, SessionState::Wrapped)
+            .await
+            .expect("close ok");
+
+        let board = store.all_sessions().await.expect("read ok");
+        for expected in [&mine, &theirs, &ended] {
+            let found = board
+                .iter()
+                .find(|s| s.id == expected.id)
+                .unwrap_or_else(|| panic!("{} is missing from the board: {board:?}", expected.id));
+            assert_eq!(
+                found.sid, expected.sid,
+                "a card without its handle rebuilds into nothing: {found:?}"
+            );
+        }
+        let closed = board
+            .iter()
+            .find(|s| s.id == ended.id)
+            .expect("found above");
+        assert_eq!(
+            closed.state,
+            SessionState::Wrapped,
+            "a closed card is still on the board — this is not sessions_of's live view"
+        );
+    }
+
     /// A closed session stays in the bot's list — closed is an archive, never a
     /// deletion, and the record of what happened is the whole capability.
     pub async fn a_closed_session_stays_on_the_record(store: &dyn Sessions) {
@@ -844,6 +887,7 @@ pub mod contract {
         a_closed_session_is_terminal_both_ways(&fresh()).await;
         an_abandoned_session_reopens_and_a_wrapped_one_never_does(&fresh()).await;
         sessions_are_listed_per_bot_newest_first(&fresh()).await;
+        all_sessions_carries_every_card_across_bots_with_its_handle(&fresh()).await;
         a_closed_session_stays_on_the_record(&fresh()).await;
         addressing_an_unknown_session_is_a_miss(&fresh()).await;
         malformed_input_is_refused(&fresh()).await;
