@@ -367,6 +367,21 @@ pub struct ReadMailboxArgs {
     pub mailbox: String,
 }
 
+/// Arguments to `list_sent`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ListSentArgs {
+    /// Whose outgoing mail to show, matched **exactly** against the sender
+    /// recorded on each message — the same string you pass to `post_message`.
+    pub sender: String,
+    /// Only this box. Omit for every box you have posted into.
+    #[serde(default)]
+    pub mailbox: Option<String>,
+    /// Ship the bodies back too. Off by default: you wrote them, so the useful
+    /// answer is where they got to, not what they say.
+    #[serde(default)]
+    pub include_bodies: Option<bool>,
+}
+
 /// Arguments to `read_message`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReadMessageArgs {
@@ -1841,6 +1856,63 @@ impl Jojobot {
         }))
     }
 
+    /// What a sender has sent, and where it got to — without touching any of it.
+    #[tool(
+        description = "See the mail YOU have sent and where it got to — read-only, and it moves \
+                       NOTHING: no state changes, nobody's delivery is taken, and the messages \
+                       stay exactly as owed as they were. This is the answer to 'did my report \
+                       land' and 'has anyone read it', which every other verb could only answer \
+                       by taking delivery of somebody else's box. Newest first, each with its \
+                       state (`new` = nobody has picked it up · `read` = delivered, not yet \
+                       finished with · `processed` = acted on) plus notes when the consumer \
+                       recorded an outcome. Bodies are left out unless you ask for them — you \
+                       wrote them — so each carries body_bytes and the opening line instead, and \
+                       says body_elided: true rather than leaving you to guess. IDENTITY IS NOT \
+                       VERIFIED: `sender` is matched exactly against what each message declared, \
+                       and jojobot has no way to know that is you — the same trust model \
+                       post_message records under. Use the sender string you actually post with."
+    )]
+    async fn list_sent(
+        &self,
+        Parameters(args): Parameters<ListSentArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let sender = args.sender.trim();
+        let only = args.mailbox.as_deref().map(str::trim).filter(|m| !m.is_empty());
+        let bodies = args.include_bodies.unwrap_or(false);
+
+        // Built on the scan, which is the one read that moves nothing: it is
+        // how the search projection is rebuilt, and its "nothing moves" is
+        // pinned by the shared contract on every tier.
+        let mut sent: Vec<Message> = self
+            .mailboxes
+            .scan_messages()
+            .await
+            .map_err(mailbox_error)?
+            .into_iter()
+            .filter(|m| m.sender.trim() == sender)
+            .filter(|m| only.is_none_or(|name| m.mailbox.as_str() == name))
+            .collect();
+        sent.sort_by(|a, b| b.sent_at.cmp(&a.sent_at).then_with(|| b.id.cmp(&a.id)));
+
+        json_result(&serde_json::json!({
+            "sender": sender,
+            "mailbox": only,
+            "count": sent.len(),
+            "messages": sent
+                .iter()
+                .map(|m| if bodies {
+                    message_json(m)
+                } else {
+                    message_receipt_json(
+                        m,
+                        "call list_sent again with include_bodies: true — this is your own \
+                         message, so reading it takes no delivery from anybody",
+                    )
+                })
+                .collect::<Vec<_>>(),
+        }))
+    }
+
     /// Take delivery of one message by id, leaving the rest of its box alone.
     #[tool(
         description = "Take delivery of ONE message by id — the selective half of read_mailbox, \
@@ -2532,6 +2604,31 @@ fn message_json(message: &Message) -> serde_json::Value {
         // about whether either has been handled.
         "in_reply_to": message.in_reply_to.as_ref().map(|id| id.as_str()),
     })
+}
+
+/// A message **without its body shipped back** — the whole record otherwise,
+/// plus enough of the body to recognize which message this is.
+///
+/// **Eliding is never silent.** `body_elided` is always present and always
+/// true here, `body_bytes` is the exact size of what is stored, and
+/// `how_to_read` names the verb that hands the body over. A reader that has to
+/// infer from a missing key whether a body was withheld or empty is a reader
+/// that will eventually infer wrong.
+///
+/// The write is still verified: the store's read-back invariant means a body
+/// that did not survive storage is an error rather than a success with mangled
+/// bytes, so what the full echo used to prove is proven server-side. What the
+/// echo added was shipping a 4-8 KB report back to the one caller who wrote it.
+fn message_receipt_json(message: &Message, how_to_read: &str) -> serde_json::Value {
+    let mut body = message_json(message);
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("body".into(), serde_json::Value::Null);
+        obj.insert("body_elided".into(), true.into());
+        obj.insert("body_bytes".into(), message.body.len().into());
+        obj.insert("body_head".into(), text::BODY_DIGEST.render(&message.body).into());
+        obj.insert("how_to_read".into(), how_to_read.into());
+    }
+    body
 }
 
 /// One delivered message: the whole record, plus whether a previous read had
@@ -5109,6 +5206,99 @@ mod tests {
 
     /// An id nothing answers to is **blocked**, carrying the id that missed —
     /// never a silent success, which would look exactly like a handled message,
+    /// **A sender can see where their own mail got to, and seeing moves
+    /// nothing.** Twice a session wanted to confirm a report had been *read*
+    /// rather than merely delivered, and could not: the only verbs that show a
+    /// message's state take delivery, and taking delivery of somebody else's box
+    /// makes their mail yours to finish. So the question went unanswered because
+    /// asking it cost more than the answer was worth.
+    #[tokio::test]
+    async fn a_sender_sees_where_their_mail_got_to_without_moving_any_of_it() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "pm").await;
+        make_box(&jojobot, "inbox").await;
+        send(&jojobot, "pm", "dev (implementer)", "the kiln slice is done").await;
+        send(&jojobot, "inbox", "dev (implementer)", "a note for somebody else").await;
+        let theirs = send(&jojobot, "pm", "coordinator (pm)", "not yours to see").await;
+
+        let sent = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    sender: "dev (implementer)".into(),
+                    mailbox: None,
+                    include_bodies: None,
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        assert_eq!(sent["count"], 2, "only what this sender sent: {sent}");
+        let bodies: Vec<&str> = sent["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .map(|m| m["sender"].as_str().expect("a sender"))
+            .collect();
+        assert_eq!(bodies, vec!["dev (implementer)", "dev (implementer)"]);
+
+        // The body is elided, and says so rather than leaving a reader to guess.
+        let first = &sent["messages"][0];
+        assert!(first["body"].is_null(), "{first}");
+        assert_eq!(first["body_elided"], true);
+        assert!(first["body_bytes"].as_u64().expect("a size") > 0);
+        assert!(first["body_head"].as_str().expect("a head").contains("note for somebody else"));
+        assert!(first["how_to_read"].as_str().expect("a pointer").contains("include_bodies"));
+
+        // **Nothing moved.** Every message is still exactly as owed as it was —
+        // including the one this sender cannot see.
+        let boxes = json_of(&jojobot.list_mailboxes().await.expect("list ok"));
+        for name in ["pm", "inbox"] {
+            let counted = boxes["mailboxes"]
+                .as_array()
+                .expect("boxes")
+                .iter()
+                .find(|b| b["name"] == name)
+                .expect("the box");
+            assert_eq!(
+                counted["counts"]["read"], 0,
+                "{name}: looking at your own outbox is not a delivery: {counted}"
+            );
+        }
+        assert!(
+            !json_of(
+                &jojobot
+                    .read_message(Parameters(ReadMessageArgs {
+                        message_id: theirs["id"].as_str().expect("an id").to_string(),
+                    }))
+                    .await
+                    .expect("read ok")
+            )["seen_before"]
+                .as_bool()
+                .expect("a flag"),
+            "somebody else's message was never taken"
+        );
+    }
+
+    /// Asking for the bodies gets them — the elision is a default, not a rule.
+    #[tokio::test]
+    async fn a_sender_can_ask_for_the_bodies_of_their_own_mail() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "pm").await;
+        send(&jojobot, "pm", "dev (implementer)", "the kiln slice is done").await;
+
+        let sent = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    sender: "dev (implementer)".into(),
+                    mailbox: Some("pm".into()),
+                    include_bodies: Some(true),
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        assert_eq!(sent["messages"][0]["body"], "the kiln slice is done");
+        assert!(sent["messages"][0]["body_elided"].is_null(), "nothing was elided to announce");
+    }
+
     /// **A reply names what it answers, and a dangling link is blocked.** The
     /// hand-off ↔ report chain was correlated by prose convention alone, which
     /// is manual archaeology the moment there is any volume. The link is
@@ -5366,6 +5556,7 @@ mod tests {
                 "journal",
                 "list_entities",
                 "list_mailboxes",
+                "list_sent",
                 "mark_processed",
                 "ping",
                 "post_message",

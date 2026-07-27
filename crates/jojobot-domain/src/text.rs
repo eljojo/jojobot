@@ -156,6 +156,20 @@ pub const SESSION_TITLE: Fitted = Fitted {
     when_empty: None,
 };
 
+/// **The opening of a body, for an answer that is not shipping the body back.**
+///
+/// Enough to recognize which message this is beside its byte count, which is
+/// what an author verifying their own write actually needs — they wrote the
+/// body, so sending it back to them is the one reader it teaches nothing.
+pub const BODY_DIGEST: Fitted = Fitted {
+    name: "body-digest",
+    budget: 120,
+    ellipsis: Ellipsis::WithinBudget,
+    flatten: true,
+    strip_unprintable: false,
+    when_empty: None,
+};
+
 /// **An outcome record** on a retired message — what a consumer says happened.
 ///
 /// Does not flatten: the caller's spacing is theirs, and the field is validated
