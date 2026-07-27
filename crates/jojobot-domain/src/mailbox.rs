@@ -230,6 +230,11 @@ pub fn validate_subject(subject: Option<&str>) -> Result<(), MailboxError> {
 
 /// Validate the outcome notes a consumer records when it marks a message
 /// processed. One plain line: notes ride in the machine block beside `sender`.
+///
+/// **Length is not validated here** — it is a cut, not a refusal, and
+/// [`normalize_notes`] makes it. What is refused is what a one-line field
+/// genuinely cannot carry: a newline, a backtick, a control character. Those
+/// are shapes the caller can fix; being long is not.
 pub fn validate_notes(notes: Option<&str>) -> Result<(), MailboxError> {
     let Some(notes) = notes else { return Ok(()) };
     if notes.trim().is_empty() {
@@ -239,9 +244,6 @@ pub fn validate_notes(notes: Option<&str>) -> Result<(), MailboxError> {
         return Err(MailboxError::InvalidMessage(
             "notes must be one plain line (no newline, no backtick)".into(),
         ));
-    }
-    if notes.chars().count() > 500 {
-        return Err(MailboxError::InvalidMessage("notes are too long".into()));
     }
     Ok(())
 }
@@ -300,19 +302,67 @@ pub fn normalize_body(body: &str) -> String {
     body.trim().to_string()
 }
 
-/// Normalize optional notes — blank notes are no notes, not empty ones.
+/// How much of an outcome record a message card carries, in characters.
+///
+/// **Generous, and a cut rather than a refusal** — see [`normalize_notes`].
+pub const NOTES_BUDGET: usize = 2000;
+
+/// Normalize optional notes — blank notes are no notes, not empty ones, and a
+/// record longer than [`NOTES_BUDGET`] is **cut to fit rather than refused**.
+///
+/// The crash contract asks a consumer to write down what happened, including a
+/// failure. A cap that rejected the whole call made the ask and the answer
+/// contradict each other: the message stayed unprocessed, so the cap cost
+/// exactly the record it was policing. That is not hypothetical — it happened
+/// to a caller in production, which is why this is a cut.
+///
+/// The cut **says so** with a trailing ellipsis, because notes that quietly
+/// stop mid-sentence read as a consumer who trailed off rather than a store
+/// that ran out of room.
 pub fn normalize_notes(notes: Option<&str>) -> Option<String> {
-    notes
-        .map(str::trim)
-        .filter(|n| !n.is_empty())
-        .map(str::to_string)
+    blank_is_absent(notes).map(|n| cut_to_fit(&n, NOTES_BUDGET))
 }
 
 /// Normalize an optional subject — blank is no subject, exactly as blank notes
 /// are no notes. A store that kept `Some("")` would render an empty title line
 /// and read back as a message that has a subject nobody wrote.
+///
+/// **No cut here**: a subject is a title the poster wrote to be read whole, and
+/// one silently shortened is a different title. Over-length is refused by
+/// [`validate_subject`], and the poster shortens it themselves.
 pub fn normalize_subject(subject: Option<&str>) -> Option<String> {
-    normalize_notes(subject)
+    blank_is_absent(subject)
+}
+
+/// Blank is absent — the half both of the above share.
+fn blank_is_absent(text: Option<&str>) -> Option<String> {
+    text.map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+}
+
+/// Cut text to `budget` characters **inclusive of the ellipsis**, on a word
+/// boundary, saying that it was cut. Text that already fits is returned whole.
+fn cut_to_fit(text: &str, budget: usize) -> String {
+    if text.chars().count() <= budget {
+        return text.to_string();
+    }
+    let room = budget - 1;
+    let mut kept = String::new();
+    for word in text.split(' ') {
+        if kept.chars().count() + word.chars().count() + 1 > room {
+            break;
+        }
+        if !kept.is_empty() {
+            kept.push(' ');
+        }
+        kept.push_str(word);
+    }
+    // A single word longer than the whole budget has no boundary to cut on.
+    if kept.is_empty() {
+        kept = text.chars().take(room).collect();
+    }
+    format!("{kept}…")
 }
 
 /// A mailbox and what is in it. The counts are the whole point of

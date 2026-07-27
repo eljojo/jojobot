@@ -1863,7 +1863,10 @@ impl Jojobot {
                        acknowledgement — an ack, a heads-up, a round-closed note, anything whose \
                        whole content is now known to you — READING IT IS THE ACTING, so process \
                        it with a note and move on; the order matters for work you still owe, not \
-                       for work that was never owed. A message can be \
+                       for work that was never owed. Write the outcome you actually have: a note \
+                       longer than the card holds is CUT to fit and says so (a trailing ellipsis, \
+                       and notes_truncated: true), never refused — the verb that retires a \
+                       message will not fail over the length of its own record. A message can be \
                        processed straight from `new`, no delivery first. Two refusals wear the \
                        same status: blocked shape and mean different things: an id that names \
                        nothing at all (use one read_mailbox or post_message handed you), and an \
@@ -1876,10 +1879,24 @@ impl Jojobot {
         Parameters(args): Parameters<MarkProcessedArgs>,
     ) -> Result<CallToolResult, McpError> {
         let id = MessageId(args.message_id.trim().to_string());
+        // What the caller asked to record, blank-is-absent — the store applies
+        // the same rule, so anything else coming back means it made a cut.
+        let asked = args.notes.as_deref().map(str::trim).filter(|n| !n.is_empty());
         match self.mailboxes.mark_processed(&id, args.notes.as_deref()).await {
             Ok(processed) => {
                 self.beat("mark_processed", processed.id.as_str()).await;
-                json_result(&message_json(&processed))
+                let mut body = message_json(&processed);
+                if let Some(obj) = body.as_object_mut() {
+                    // **Always present, never inferred from the ellipsis.** The
+                    // record can legitimately end in one, and a reader that has
+                    // to guess whether a store cut its text is a reader that
+                    // will eventually guess wrong.
+                    obj.insert(
+                        "notes_truncated".into(),
+                        (processed.notes.as_deref() != asked).into(),
+                    );
+                }
+                json_result(&body)
             }
             // Both misses here are answers, not failures: an id that names
             // nothing, and an id naming a card jojobot cannot read. They stay
@@ -5097,6 +5114,57 @@ mod tests {
 
     /// An id nothing answers to is **blocked**, carrying the id that missed —
     /// never a silent success, which would look exactly like a handled message,
+    /// **A long outcome record is cut, and the caller is told it was cut.** The
+    /// crash contract asks for an account of what happened; refusing the whole
+    /// call over its length left the message unprocessed and cost exactly the
+    /// record the cap was policing — which is what it did to a caller in
+    /// production. Cutting silently would be the other half of the same
+    /// mistake: notes that stop mid-sentence read as a consumer who trailed
+    /// off, not a store that ran out of room.
+    #[tokio::test]
+    async fn a_long_outcome_record_is_cut_and_says_so_rather_than_failing() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let posted = send(&jojobot, "inbox", "alpha", "the shipment landed").await;
+        let id = posted["id"].as_str().expect("an id").to_string();
+
+        let long = "counted the crates and reconciled them against the manifest ".repeat(200);
+        let body = json_of(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_id: id.clone(),
+                    notes: Some(long.clone()),
+                }))
+                .await
+                .expect("a long note must not fail the terminal verb"),
+        );
+        assert_eq!(body["state"], "processed", "the message WAS handled: {body}");
+        assert_eq!(body["notes_truncated"], true, "…and the cut is said out loud: {body}");
+        let kept = body["notes"].as_str().expect("the outcome is recorded");
+        assert!(kept.ends_with('…'), "the record itself says it was cut: {kept:?}");
+        assert!(kept.chars().count() < long.chars().count());
+    }
+
+    /// A record that fits is stored whole and reports no cut — the flag is
+    /// always present, so a reader never branches on whether it is there.
+    #[tokio::test]
+    async fn an_outcome_record_that_fits_reports_no_cut() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let posted = send(&jojobot, "inbox", "alpha", "the shipment landed").await;
+        let body = json_of(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_id: posted["id"].as_str().expect("an id").to_string(),
+                    notes: Some("filed under shipments".into()),
+                }))
+                .await
+                .expect("mark_processed ok"),
+        );
+        assert_eq!(body["notes"], "filed under shipments");
+        assert_eq!(body["notes_truncated"], false, "{body}");
+    }
+
     /// and no longer a protocol error either: naming something that does not
     /// exist is the same kind of answer whichever gate catches it, so it wears
     /// one shape.

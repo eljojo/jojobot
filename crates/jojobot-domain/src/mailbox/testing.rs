@@ -15,7 +15,7 @@ use jiff::Timestamp;
 
 use super::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
-    MessageId, MessageState, NewMessage, StateCounts, guard,
+    MessageId, MessageState, NOTES_BUDGET, NewMessage, StateCounts, guard,
     normalize_body, normalize_notes, normalize_subject, validate_body, validate_mailbox_name,
     validate_message_id, validate_notes, validate_sender, validate_subject,
 };
@@ -826,6 +826,54 @@ pub mod contract {
         assert!(processed.notes.as_deref().is_some_and(|n| n.contains("FAILED")));
     }
 
+    /// **The terminal verb never refuses an outcome record for being long.**
+    /// The crash contract asks a consumer to write down what happened,
+    /// including a failure — and a cap that rejected the whole call made the
+    /// ask and the answer contradict each other. It bit a real caller in
+    /// production: the message was left unprocessed because its account of the
+    /// work did not fit, so the cap cost exactly the record it was policing.
+    ///
+    /// Long notes are kept as far as they fit and **say they were cut**, which
+    /// is the one thing silence could not do.
+    pub async fn long_notes_are_kept_as_far_as_they_fit(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let posted = post(store, "inbox", "alpha", "the shipment landed", 0).await;
+
+        let long = "counted the crates and reconciled them against the manifest ".repeat(200);
+        let processed = store
+            .mark_processed(&posted.id, Some(&long))
+            .await
+            .expect("a long outcome record must not fail the verb");
+        assert_eq!(processed.state, MessageState::Processed, "the message WAS handled");
+
+        let kept = processed.notes.as_deref().expect("the outcome is recorded");
+        assert!(kept.chars().count() <= NOTES_BUDGET, "cut to fit: {} chars", kept.chars().count());
+        assert!(kept.ends_with('…'), "…and it says it was cut: {kept:?}");
+        assert!(
+            kept.starts_with("counted the crates"),
+            "what was kept is the start of what they wrote: {kept:?}"
+        );
+
+        // Read back through the ordinary path: what the verb returned is what
+        // the store holds, cut and all.
+        let seen = store.read_message(&posted.id).await.expect("read_message ok");
+        assert_eq!(seen.message.notes.as_deref(), Some(kept));
+    }
+
+    /// Notes that fit are stored exactly as written — the cut is for the ones
+    /// that don't, and touches nothing else.
+    pub async fn notes_that_fit_are_untouched(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let posted = post(store, "inbox", "alpha", "the shipment landed", 0).await;
+        let notes = "x".repeat(NOTES_BUDGET);
+        let processed = store.mark_processed(&posted.id, Some(&notes)).await.expect("ok");
+        assert_eq!(
+            processed.notes.as_deref(),
+            Some(notes.as_str()),
+            "a record that fits is stored whole, to the last character of the budget"
+        );
+    }
+
     /// Marking processed without notes is ordinary — the outcome is optional.
     pub async fn processing_without_notes_is_allowed(store: &dyn Mailboxes) {
         create(store, "inbox").await;
@@ -952,6 +1000,8 @@ pub mod contract {
         a_second_read_redelivers_leftovers_flagged(&fresh()).await;
         mark_processed_is_terminal_and_records_the_outcome(&fresh()).await;
         a_failure_is_recorded_as_an_outcome(&fresh()).await;
+        long_notes_are_kept_as_far_as_they_fit(&fresh()).await;
+        notes_that_fit_are_untouched(&fresh()).await;
         processing_without_notes_is_allowed(&fresh()).await;
         a_new_message_can_be_processed_without_a_read(&fresh()).await;
         boxes_do_not_leak_into_each_other(&fresh()).await;
