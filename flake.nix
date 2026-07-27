@@ -45,7 +45,13 @@
 
         devShells.default = pkgs.mkShell {
           inherit nativeBuildInputs;
-          buildInputs = buildInputs ++ [ rustToolchain ];
+          # gnumake so `nix develop -c make check` works on a machine that has
+          # no make of its own — the Makefile is the green bar written down, and
+          # a runner you have to install separately is one people skip.
+          buildInputs = buildInputs ++ [
+            rustToolchain
+            pkgs.gnumake
+          ];
           # Cargo's default ./target (gitignored) — no CARGO_TARGET_DIR override,
           # which would anchor to the shell-entry $PWD and leak artifacts if run
           # from a parent directory.
