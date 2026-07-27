@@ -9216,10 +9216,12 @@ mod tests {
     ///
     /// The chicken-and-egg made addressing by `session` no help either: a
     /// session materializes lazily on the first write, and the first write could
-    /// never land, so no id was ever minted to name. **The bot name is the only
-    /// stable handle a stateless caller has.**
+    /// never land, so no id was ever minted to name. **The `sid` has neither
+    /// problem** — the door mints it before any card exists and hands it back,
+    /// so a caller that keeps nothing but that string writes to the same run
+    /// across as many connections as its client opens.
     #[tokio::test]
-    async fn a_stateless_client_can_journal_by_naming_its_bot() {
+    async fn a_stateless_client_can_journal_by_carrying_its_sid() {
         let client = NoAffinity::new();
         make_bot(&client.call(), "gamma", None).await;
 
@@ -9242,7 +9244,7 @@ mod tests {
         );
         assert_ne!(
             body["status"], "blocked",
-            "naming the bot is enough: {body}"
+            "the sid is enough, on a connection that remembers nothing: {body}"
         );
 
         let live = client
@@ -9310,13 +9312,13 @@ mod tests {
         assert_eq!(wrong.code, ErrorCode::INVALID_PARAMS);
     }
 
-    /// **A closed session is terminal when you NAME it, and a bot whose last
-    /// session closed simply starts its next one.** Those are different
-    /// questions and the answers have to differ: naming a session means that
-    /// record, and naming a bot means the identity, which outlives any run of
-    /// it. The description promised the first for both.
+    /// **A wrapped `sid` stays closed, and the bot behind it boots its next
+    /// run.** Those are different questions and the answers have to differ: a
+    /// `sid` names one run, and closed is terminal both ways for that record —
+    /// while the identity outlives any run of it, so booting again is ordinary
+    /// rather than a way back in.
     #[tokio::test]
-    async fn a_bot_whose_session_wrapped_starts_the_next_one_but_a_named_session_stays_closed() {
+    async fn a_wrapped_sid_stays_closed_while_its_bot_boots_the_next_run() {
         let client = NoAffinity::new();
         make_bot(&client.call(), "gamma", None).await;
         let first = booted(&client.call(), "gamma").await;
@@ -9395,17 +9397,18 @@ mod tests {
         );
     }
 
-    /// **Writing to another bot's session does not make you that bot.** The
-    /// sweep bound the connection unconditionally, which was harmless while a
-    /// boot was its only caller. Once a caller could NAME a bot, one
-    /// `journal(bot: "delta")` from a connection booted as gamma rebound the
-    /// whole connection: every later bare call, and every automatic beat,
-    /// attributed to delta while gamma's own beats orphaned.
+    /// **Writing with another identity's `sid` does not move mine.** The
+    /// connection used to carry the identity, and one `journal` addressed at
+    /// another bot rebound the whole thing: every later call, and every
+    /// automatic beat, attributed to delta while gamma's own beats orphaned. A
+    /// `sid` cannot do that — it addresses one run and says nothing about the
+    /// caller's other handles — and this pins that it stays so.
     ///
     /// This is the stateful-transport shape — stdio, where connections really
-    /// do persist — so it holds one handler across calls on purpose.
+    /// do persist — so it holds one handler across calls on purpose: the shape
+    /// where a leftover binding would still have somewhere to live.
     #[tokio::test]
-    async fn naming_another_bot_writes_there_without_rebinding_this_connection() {
+    async fn writing_with_another_identitys_sid_leaves_mine_where_it_was() {
         let store = Arc::new(InMemorySessions::new());
         let memory = Arc::new(InMemoryMemory::new());
         let jojobot = connection(memory.clone(), store.clone());
@@ -9456,13 +9459,15 @@ mod tests {
         assert_eq!(delta[0].entries.len(), 1);
     }
 
-    /// **The binding short-circuit must never change the answer.** It exists to
-    /// save a board read on a transport that holds a connection; a version that
-    /// answered differently from the stateless path would be a cache that lies.
-    /// Nothing exercised it before — every `bot:`-addressed call in the suite
-    /// ran on a fresh handler, where the held binding is always `None`.
+    /// **Two identities alive on ONE connection each keep their own session.**
+    /// There used to be a per-connection binding here, and a short-circuit that
+    /// read it instead of the board; the risk it carried was a cache that
+    /// answered for whichever identity spoke last. Nothing remembers anything
+    /// between calls now, so the answer comes from the `sid` every time — and
+    /// this holds one handler across all of it, which is the transport shape
+    /// where such a cache could have existed at all.
     #[tokio::test]
-    async fn the_binding_fast_path_answers_what_the_board_would() {
+    async fn two_identities_on_one_connection_each_keep_their_own_session() {
         let store = Arc::new(InMemorySessions::new());
         let memory = Arc::new(InMemoryMemory::new());
         let jojobot = connection(memory.clone(), store.clone());
@@ -9487,7 +9492,7 @@ mod tests {
         assert_eq!(
             named["session"],
             my_session.as_str(),
-            "naming the bot I am bound to is the same session, not another: {named}"
+            "my own handle lands in my own session, not another: {named}"
         );
 
         // And a DIFFERENT identity's handle must not be served from mine.
@@ -9505,7 +9510,7 @@ mod tests {
         assert_ne!(
             other["session"],
             my_session.as_str(),
-            "the cached session belongs to gamma and must not answer for delta: {other}"
+            "gamma's session must not answer for delta's handle: {other}"
         );
     }
 
@@ -9618,10 +9623,10 @@ mod tests {
         );
     }
 
-    /// The other two session verbs address by bot name too — a stateless client
-    /// has to be able to amend and to wrap, not only to journal.
+    /// The other two session verbs take the same one address — a stateless
+    /// client has to be able to amend and to wrap, not only to journal.
     #[tokio::test]
-    async fn a_stateless_client_can_amend_and_wrap_by_naming_its_bot() {
+    async fn a_stateless_client_can_amend_and_wrap_by_carrying_its_sid() {
         let client = NoAffinity::new();
         make_bot(&client.call(), "gamma", None).await;
         let sid = booted(&client.call(), "gamma").await;
@@ -9702,12 +9707,12 @@ mod tests {
         );
     }
 
-    /// **A boot that fails leaves the identity you already had alone.** On a
-    /// transport that does hold a connection, a typo in a bot name must not
-    /// unbind the session in flight — that would turn a mistyped call into lost
-    /// work on the next write.
+    /// **A boot that fails leaves a session already in flight alone.** A typo in
+    /// a bot name must not disturb the handle its caller is already writing
+    /// under — that would turn one mistyped call into lost work on the next
+    /// write, and a boot has no business reaching a run it did not name.
     #[tokio::test]
-    async fn a_failed_boot_does_not_clear_an_established_binding() {
+    async fn a_failed_boot_leaves_a_live_sid_writing_where_it_was() {
         let store = Arc::new(InMemorySessions::new());
         let jojobot = with_sessions(store.clone());
         make_bot(&jojobot, "gamma", None).await;
@@ -9724,7 +9729,7 @@ mod tests {
         assert_eq!(
             after["session"],
             my_id.as_str(),
-            "the binding survived the miss"
+            "the handle still addresses the same run after the miss"
         );
         let live = store
             .sessions_of(&EntityId("bot:gamma".into()))
@@ -10745,7 +10750,7 @@ mod tests {
     /// guess which session made a call, so a verb arriving without a `sid`
     /// writes no beat and mints no session.
     #[tokio::test]
-    async fn an_unbound_connection_writes_no_beats() {
+    async fn a_call_carrying_no_sid_writes_no_beats() {
         let store = Arc::new(InMemorySessions::new());
         let jojobot = with_sessions(store.clone());
         ensure(&jojobot, "alpha").await;
