@@ -737,14 +737,13 @@ impl Jojobot {
         let mailboxes = match self.mailboxes.list_mailboxes().await {
             Ok(boxes) => serde_json::json!({
                 "available": true,
-                "counts_shown_for": mine.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
-                "note": "Counts are shown for the boxes you drain; every other box is listed by \
-                         name only. It exists and you can post into it — what is waiting in it \
-                         belongs to whoever works it.",
+                "counts_shown_for": mine.mine.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
+                "ownership_known": mine.known,
+                "note": mine.note(),
                 "boxes": boxes
                     .iter()
                     .map(|b| {
-                        if mine.iter().any(|m| m == b.name.as_str()) {
+                        if mine.covers(b.name.as_str()) {
                             let mut body = mailbox_json(b);
                             if let Some(obj) = body.as_object_mut() {
                                 obj.insert("yours".into(), true.into());
@@ -756,6 +755,15 @@ impl Jojobot {
                                 "yours": false,
                                 "counts": serde_json::Value::Null,
                                 "counts_elided": true,
+                                // **Quarantine is not a count, and it does not
+                                // ride out with them.** It is the only place an
+                                // unreadable card's existence shows, and the
+                                // caller who most needs it is a SENDER — who by
+                                // definition does not drain this box, and would
+                                // otherwise conclude their message was never
+                                // sent. What is scoped away is somebody's
+                                // queue, never a fault on the board.
+                                "quarantined": quarantined_json(b),
                             })
                         }
                     })
@@ -947,7 +955,17 @@ impl Jojobot {
         // retry calls with the gate already held — the mutex is not reentrant.
         let _serialized = self.session_gate.lock().await;
         let (live, swept) = match self.sweep_and_find(bot).await {
-            Ok(found) => found,
+            Ok(found) => {
+                // A boot IS the act of becoming this identity, so it binds
+                // whatever the connection held before.
+                *self.bound.write().expect("binding poisoned") = Some(Bound {
+                    bot: bot.clone(),
+                    session: found.0.as_ref().map(|s| s.id.clone()),
+                    attached: true,
+                    beats: found.0.as_ref().map(beats_of).unwrap_or_default(),
+                });
+                found
+            }
             Err(e) => {
                 tracing::warn!(error = %e, bot = %bot, "the session world is not reachable");
                 // Bound, but NOT attached: jojobot has not read the board, so it
@@ -1059,18 +1077,37 @@ impl Jojobot {
         let live = existing
             .into_iter()
             .find(|s| !s.state.is_terminal() && !s.is_stale(now));
-        *self.bound.write().expect("binding poisoned") = Some(Bound {
+        Ok((live, swept))
+    }
+
+    /// Record what a sweep found on this connection — **only when it is this
+    /// connection's own identity.**
+    ///
+    /// The sweep used to bind unconditionally, which was harmless while the
+    /// only caller was a boot. Once a caller could NAME a bot, one
+    /// `journal(bot: "delta")` on a connection booted as gamma rebound the
+    /// whole connection to delta: every later bare call and every automatic
+    /// beat attributed to delta, and gamma's beat entries orphaned — which
+    /// re-opens the duplicate-tally bug the read-back below exists to prevent.
+    ///
+    /// Writing to another bot's session is legitimate; *becoming* that bot
+    /// because you wrote to it is not.
+    fn bind_if_ours(&self, bot: &EntityId, live: Option<&Session>) {
+        let mut held = self.bound.write().expect("binding poisoned");
+        if held.as_ref().is_some_and(|b| b.bot != *bot) {
+            return;
+        }
+        *held = Some(Bound {
             bot: bot.clone(),
-            session: live.as_ref().map(|s| s.id.clone()),
+            session: live.map(|s| s.id.clone()),
             attached: true,
             // **Read back off the resumed session, not started empty.** The
             // tally belongs to the session; a connection is only holding it. An
             // empty map here made the first verb of each class after every
             // reconnect append a second beat for that class — and a reconnect is
             // the ordinary case, so the duplicate was the ordinary shape.
-            beats: live.as_ref().map(beats_of).unwrap_or_default(),
+            beats: live.map(beats_of).unwrap_or_default(),
         });
-        Ok((live, swept))
     }
     /// The session a verb should write to, resolved for a caller that may have
     /// **no connection to remember it by**.
@@ -1111,16 +1148,32 @@ impl Jojobot {
         // have a binding for this same bot is only saving a read.
         let bot = match named_bot {
             Some(bot) => {
-                let held = self.bound.read().expect("binding poisoned").clone();
-                if let Some(held) = held
-                    && held.bot == *bot
-                    && held.attached
-                    && let Some(id) = held.session
-                {
-                    return Ok(Ok(id));
+                // **Everything a write names must already exist**, and making
+                // the name the address opened a second door into `begin` past
+                // the screen `boot_bot` runs. A session begun for an identity
+                // nobody created belongs to nobody — and there is no verb that
+                // removes the card.
+                if let Err(refused) = self.known_bot(bot).await? {
+                    return Ok(Err(refused));
                 }
+                // **A named bot always resolves from the board.** There was a
+                // short-circuit here that answered from the binding when it
+                // held a session for this same bot, to save a read. It tested
+                // the bot and the presence of a session — never whether that
+                // session was still ALIVE — so on a connection whose session
+                // had been wrapped elsewhere or swept, it answered `blocked`
+                // while a stateless caller with identical arguments got a fresh
+                // session and landed the entry. `amend_journal` had no such
+                // path, so the two verbs could address different sessions on
+                // one connection.
+                //
+                // A cache that changes the answer is not an optimization, and
+                // the read it saved is one the dominant caller pays anyway.
                 match self.sweep_and_find(bot).await {
-                    Ok((Some(live), _)) => return Ok(Ok(live.id)),
+                    Ok((Some(live), _)) => {
+                        self.bind_if_ours(bot, Some(&live));
+                        return Ok(Ok(live.id));
+                    }
                     // Nothing in flight: this write is what begins one.
                     Ok((None, _)) => bot.clone(),
                     Err(e) => return Err(session_error(e)),
@@ -1164,8 +1217,11 @@ impl Jojobot {
         // that SUCCEEDED and found nothing active reaches the begin.
         if !bound.attached {
             match self.sweep_and_find(&bound.bot).await {
-                Ok((Some(live), _)) => return Ok(Ok(live.id)),
-                Ok((None, _)) => {}
+                Ok((Some(live), _)) => {
+                    self.bind_if_ours(&bound.bot, Some(&live));
+                    return Ok(Ok(live.id));
+                }
+                Ok((None, _)) => self.bind_if_ours(&bound.bot, None),
                 Err(e) => return Err(session_error(e)),
             }
         }
@@ -1196,10 +1252,11 @@ impl Jojobot {
         // Recorded on the connection so a transport that DOES hold one skips
         // the board read next time. A transport that does not simply drops it,
         // and the next call resolves from the bot name again.
-        *self.bound.write().expect("binding poisoned") = Some(Bound {
-            session: Some(begun.id.clone()),
-            ..bound
-        });
+        //
+        // **Only when it is this connection's own identity** — beginning a
+        // session for a bot you NAMED must not make you that bot, exactly as
+        // attaching to one must not.
+        self.bind_if_ours(&bound.bot, Some(&begun));
         Ok(Ok(begun.id))
     }
 
@@ -1733,14 +1790,13 @@ impl Jojobot {
             .map_err(mailbox_error)?;
         let body = serde_json::json!({
             "count": boxes.len(),
-            "counts_shown_for": mine.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
-            "note": "Counts are shown for the boxes you drain. Every other box is listed by name \
-                     only — it exists, and post_message can reach it; what is waiting in it \
-                     belongs to whoever works it.",
+            "counts_shown_for": mine.mine.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
+            "ownership_known": mine.known,
+            "note": mine.note(),
             "mailboxes": boxes
                 .iter()
                 .map(|b| {
-                    if mine.iter().any(|m| m == b.name.as_str()) {
+                    if mine.covers(b.name.as_str()) {
                         let mut body = mailbox_json(b);
                         if let Some(obj) = body.as_object_mut() {
                             obj.insert("yours".into(), true.into());
@@ -1749,17 +1805,42 @@ impl Jojobot {
                     } else {
                         // **Existence, not state.** The name is what a writer
                         // needs; the counts are what posed "is that one mine?"
+                        // Quarantine stays: it is a fault on the board rather
+                        // than somebody's queue, and this listing is the only
+                        // place it shows.
                         serde_json::json!({
                             "name": b.name.as_str(),
                             "yours": false,
                             "counts": serde_json::Value::Null,
                             "counts_elided": true,
+                            "quarantined": quarantined_json(b),
                         })
                     }
                 })
                 .collect::<Vec<_>>(),
         });
         json_result(&body)
+    }
+
+    /// **The screen every verb that ADDRESSES a bot by name owes.** `boot_bot`
+    /// runs it through `identity`; the session verbs address the same identity
+    /// and must reach the same answer, or a name one door refuses is a name the
+    /// other writes for.
+    ///
+    /// `Err` here carries the guards' own blocked shape, so a caller branches
+    /// once on `status` whichever door they came through.
+    async fn known_bot(&self, bot: &EntityId) -> Result<Result<(), CallToolResult>, McpError> {
+        let index = self.memory.list_entities(None).await.map_err(memory_error)?;
+        if index.iter().any(|e| &e.id == bot) {
+            return Ok(Ok(()));
+        }
+        let candidates = guard::screen(bot, &[], &index);
+        Ok(Err(blocked_result(
+            bot,
+            &candidates,
+            Blocked::MustExist("this verb"),
+            None,
+        )))
     }
 
     /// The boxes a caller drains — the ones whose state is theirs to see.
@@ -1769,23 +1850,31 @@ impl Jojobot {
     /// index rather than anything mailbox-side. A caller that names no bot, and
     /// whose connection carries no identity either, drains nothing — which is
     /// the right answer for a pure sender, and for an anonymous `start_here`.
-    async fn boxes_drained_by(&self, named: Option<&EntityId>) -> Result<Vec<String>, McpError> {
+    async fn boxes_drained_by(&self, named: Option<&EntityId>) -> Result<Ownership, McpError> {
         let bot = match named {
             Some(bot) => Some(bot.clone()),
             None => self.bound.read().expect("binding poisoned").as_ref().map(|b| b.bot.clone()),
         };
-        let Some(bot) = bot else { return Ok(Vec::new()) };
-        // A memory world that is down means jojobot cannot say what anybody
-        // owns, and the safe answer to "is this yours" is no.
-        let Ok(index) = self.memory.list_entities(None).await else {
-            return Ok(Vec::new());
+        let Some(bot) = bot else {
+            return Ok(Ownership::known(Vec::new()));
         };
-        Ok(index
-            .iter()
-            .find(|e| e.id == bot)
-            .and_then(|e| e.mailbox.clone())
-            .into_iter()
-            .collect())
+        // **A world that is down is not an answer of "no".** Ownership is a
+        // read of Memory, so an outage means jojobot cannot say what anybody
+        // drains — and rendering that as "not yours" tells every bot its own
+        // queue belongs to somebody else, which is a claim nobody can act on.
+        // The owned-mailbox block makes the same call in the other direction
+        // and says so; these two must not disagree about what down means.
+        let Ok(index) = self.memory.list_entities(None).await else {
+            return Ok(Ownership::unknown());
+        };
+        Ok(Ownership::known(
+            index
+                .iter()
+                .find(|e| e.id == bot)
+                .and_then(|e| e.mailbox.clone())
+                .into_iter()
+                .collect(),
+        ))
     }
 
     /// Leave a message in a box.
@@ -1919,9 +2008,11 @@ impl Jojobot {
                        identity from your last call is usually already gone, and naming the bot \
                        resolves its live session (or starts one) from the board every time. \
                        `session` is only for writing to a session other than the one `bot` \
-                       addresses. A session that is \
-                       already wrapped or abandoned comes back status: blocked — closed is \
-                       terminal both ways, and what is left to say belongs to a new session."
+                       addresses. The two differ on a CLOSED session, deliberately: a `session` \
+                       you name that is wrapped or abandoned comes back status: blocked, because \
+                       you meant that record and closed is terminal both ways — while a `bot` \
+                       whose last session is closed simply starts its next one, exactly as \
+                       booting it would, because a bot is a role and a session is one run of it."
     )]
     async fn journal(
         &self,
@@ -2005,8 +2096,19 @@ impl Jojobot {
             // in a session that does not exist yet.
             None if named.is_some() => {
                 let bot = named.as_ref().expect("just checked");
+                // The same screen the other two run: a name that is no bot is
+                // refused here too, even though this verb never begins one —
+                // "there is nothing to amend" would be a true sentence about a
+                // false premise, and it sends the caller looking for entries
+                // instead of at their typo.
+                if let Err(refused) = self.known_bot(bot).await? {
+                    return Ok(refused);
+                }
                 match self.sweep_and_find(bot).await {
-                    Ok((Some(live), _)) => live.id,
+                    Ok((Some(live), _)) => {
+                        self.bind_if_ours(bot, Some(&live));
+                        live.id
+                    }
                     Ok((None, _)) => return Ok(session_nothing_to_amend()),
                     Err(e) => return Err(session_error(e)),
                 }
@@ -2020,7 +2122,10 @@ impl Jojobot {
                     Some(id) => id,
                     None if !bound.attached => {
                         match self.sweep_and_find(&bound.bot).await {
-                            Ok((Some(live), _)) => live.id,
+                            Ok((Some(live), _)) => {
+                                self.bind_if_ours(&bound.bot, Some(&live));
+                                live.id
+                            }
                             // Still unreadable, or genuinely nothing in flight.
                             Ok((None, _)) => return Ok(session_nothing_to_amend()),
                             Err(e) => return Err(session_error(e)),
@@ -2058,9 +2163,7 @@ impl Jojobot {
                        chronology stays readable — but its story was never told, and that is the \
                        difference between the two endings. Pass `bot` — the name you booted as — \
                        on every call: identity does not survive to your next call on most \
-                       clients. And wrap only when the WORK is over: if it continues on another \
-                       agent, journal a resume note instead and leave the session open for the \
-                       next boot to attach to."
+                       clients."
     )]
     async fn wrap_session(
         &self,
@@ -2591,11 +2694,15 @@ fn session_unbound() -> CallToolResult {
     let body = serde_json::json!({
         "status": "blocked",
         "wrote": false,
-        "how_to_proceed": "Nothing was written. This connection is not running as any identity, \
-                           so there is no session to write to and jojobot will not guess which \
-                           one you meant. Call boot_bot with the identity you were told you are \
-                           — that starts or resumes its session — or name an existing `session` \
-                           outright if you are writing to somebody else's.",
+        "how_to_proceed": "Nothing was written. This call did not say which identity is writing, \
+                           and jojobot will not guess. PASS `bot` — the name you booted as — and \
+                           call this again: it resolves that identity's live session, or starts \
+                           one, from the board. Most clients open a fresh connection per tool \
+                           call, so an identity from an earlier call is usually already gone; \
+                           `bot` is what works everywhere, and it is the only address available \
+                           before your first write, because that write is what mints a session \
+                           id. Name a `session` outright only to write to one other than the \
+                           session `bot` addresses.",
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -2606,10 +2713,17 @@ fn session_nothing_to_amend() -> CallToolResult {
     let body = serde_json::json!({
         "status": "blocked",
         "wrote": false,
-        "how_to_proceed": "Nothing was written. Your session has no entries yet — it has not \
-                           even been written to disk, because a session's record begins on its \
-                           first beat. There is nothing to amend, so use journal to record the \
-                           first one.",
+        // **True of both ways to get here.** A bot with no session at all has
+        // nothing written yet; a bot whose last session was wrapped or swept
+        // has a record that is closed and no longer amendable. Saying "not even
+        // written to disk" was false for the second, and it sent a caller
+        // looking for entries that are sitting right there, closed.
+        "how_to_proceed": "Nothing was written. There is no OPEN session to amend: either this \
+                           identity has not written anything yet — a session's record begins on \
+                           its first beat — or its last session is closed, and closed is \
+                           terminal both ways. Use journal to begin the next one; its first \
+                           entry is what brings the record into being. To read a closed \
+                           session's chronology, boot_bot reports the identity's state.",
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -2947,10 +3061,67 @@ fn mailbox_json(mailbox: &Mailbox) -> serde_json::Value {
             "processed": mailbox.counts.processed,
             "total": mailbox.counts.total(),
         },
-        "quarantined": {
-            "count": mailbox.quarantined.len(),
-            "card_ids": mailbox.quarantined.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
-        },
+        "quarantined": quarantined_json(mailbox),
+    })
+}
+
+/// Which boxes a caller drains, and **whether jojobot could tell**.
+///
+/// The two are separate answers on purpose. "You drain none of these" and
+/// "jojobot cannot read the store that says which you drain" produce the same
+/// listing and mean opposite things, and a caller acts on both.
+struct Ownership {
+    /// The boxes this caller drains. Empty when they drain none — or when
+    /// nothing could be read, which is why `known` exists beside it.
+    mine: Vec<String>,
+    /// Whether the ownership read succeeded at all.
+    known: bool,
+}
+
+impl Ownership {
+    fn known(mine: Vec<String>) -> Self {
+        Ownership { mine, known: true }
+    }
+
+    fn unknown() -> Self {
+        Ownership {
+            mine: Vec::new(),
+            known: false,
+        }
+    }
+
+    /// Whether this box is one the caller drains. Never true when ownership
+    /// could not be read: an unknown is not a yes.
+    fn covers(&self, name: &str) -> bool {
+        self.known && self.mine.iter().any(|m| m == name)
+    }
+
+    /// The clause that says what this listing's counts mean, including when it
+    /// cannot say.
+    fn note(&self) -> &'static str {
+        if self.known {
+            "Counts are shown for the boxes you drain; every other box is listed by name only. \
+             It exists and you can post into it — what is waiting in it belongs to whoever \
+             works it."
+        } else {
+            "OWNERSHIP IS UNKNOWN: the store that records which boxes you drain could not be \
+             read, so no counts are shown for any box — including your own. This is jojobot \
+             being unable to tell, NOT a statement that you drain nothing."
+        }
+    }
+}
+
+/// The cards on a box that jojobot cannot read as messages.
+///
+/// **Rendered apart from the counts, because it is scoped differently.** Counts
+/// are a queue and belong to whoever drains it; an unreadable card is a fault
+/// on the board that no verb can act on, and the caller who most needs to see
+/// it is a sender — somebody who does not drain this box, and who would
+/// otherwise read the silence as "my message was never sent".
+fn quarantined_json(mailbox: &Mailbox) -> serde_json::Value {
+    serde_json::json!({
+        "count": mailbox.quarantined.len(),
+        "card_ids": mailbox.quarantined.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
     })
 }
 
@@ -5944,11 +6115,24 @@ mod tests {
         assert!(first["body_head"].as_str().expect("a head").contains("note for somebody else"));
         assert!(first["how_to_read"].as_str().expect("a pointer").contains("include_bodies"));
 
-        // **Nothing moved.** Every message this sender can see is still `new`,
-        // which is what it was before the look.
-        for m in sent["messages"].as_array().expect("messages") {
-            assert_eq!(m["state"], "new", "looking at your own outbox is not a delivery: {m}");
-        }
+        // **Nothing moved — read from the STORE, not from the verb.** Asserting
+        // `state == "new"` on `list_sent`'s own response lets the verb grade
+        // itself: its body is built from a snapshot taken before it returns, so
+        // a version that took delivery afterwards would still report `new`. The
+        // counts come from the other side of the store.
+        make_bot(&jojobot, "gamma", Some("pm")).await;
+        let counted = drains(&jojobot, "gamma").await;
+        let pm = counted["mailboxes"]
+            .as_array()
+            .expect("boxes")
+            .iter()
+            .find(|b| b["name"] == "pm")
+            .expect("the box");
+        assert_eq!(
+            pm["counts"]["read"], 0,
+            "looking at your own outbox is not a delivery: {pm}"
+        );
+        assert_eq!(pm["counts"]["new"], 2, "…and everything is still waiting: {pm}");
         assert!(
             !json_of(
                 &jojobot
@@ -6632,6 +6816,94 @@ mod tests {
     /// A handler whose mailbox world answers nothing, over a memory the caller
     /// may already have populated — a bot has to be stood up while the world is
     /// up, since a claim that cannot be screened is refused.
+    /// A Memory whose ENTITY INDEX cannot be read, everything else working —
+    /// the shape an Outline outage takes for the one read ownership depends on.
+    struct UnindexedMemory(Arc<InMemoryMemory>);
+
+    #[async_trait]
+    impl Memory for UnindexedMemory {
+        async fn list_entities(&self, _: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
+            Err(MemoryError::Store("the entity index cannot be read".into()))
+        }
+        async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+            self.0.add_entity(new).await
+        }
+        async fn update_entity(
+            &self,
+            id: &EntityId,
+            patch: EntityPatch,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            self.0.update_entity(id, patch).await
+        }
+        async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+            self.0.capture(fact).await
+        }
+        async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+            self.0.recall(subject).await
+        }
+        async fn update_fact(
+            &self,
+            address: &FactAddress,
+            patch: FactPatch,
+        ) -> Result<Guarded<Fact>, MemoryError> {
+            self.0.update_fact(address, patch).await
+        }
+        async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+            self.0.set_prose(entity, prose).await
+        }
+        async fn append_journal(
+            &self,
+            on: jiff::civil::Date,
+            entry: &str,
+        ) -> Result<String, MemoryError> {
+            self.0.append_journal(on, entry).await
+        }
+        async fn scan(
+            &self,
+        ) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
+            self.0.scan().await
+        }
+    }
+
+    /// **A world that is down is not an answer of "no".** Ownership is a read
+    /// of Memory, so an outage means jojobot cannot say what anybody drains —
+    /// and rendering that as "not yours" told every bot its own queue belonged
+    /// to somebody else, with a note asserting counts are shown for the boxes
+    /// you drain. That is a claim nobody can act on.
+    #[tokio::test]
+    async fn an_unreadable_entity_index_says_ownership_is_unknown() {
+        let memory = Arc::new(InMemoryMemory::new());
+        let boxes = Arc::new(InMemoryMailboxes::new());
+        let seeded = Jojobot::new(
+            memory.clone(),
+            Arc::new(SpySearch::default()),
+            boxes.clone(),
+            Arc::new(InMemorySessions::new()),
+        );
+        make_box(&seeded, "dev").await;
+        make_bot(&seeded, "gamma", Some("dev")).await;
+        send(&seeded, "dev", "coordinator (pm)", "your hand-off").await;
+
+        let blind = Jojobot::new(
+            Arc::new(UnindexedMemory(memory)),
+            Arc::new(SpySearch::default()),
+            boxes,
+            Arc::new(InMemorySessions::new()),
+        );
+        let listed = drains(&blind, "gamma").await;
+
+        assert_eq!(listed["ownership_known"], false, "{listed}");
+        assert!(
+            listed["note"].as_str().expect("a note").contains("OWNERSHIP IS UNKNOWN"),
+            "…and the note says so rather than asserting whose the counts are: {listed}"
+        );
+        assert_eq!(
+            listed["mailboxes"][0]["yours"], false,
+            "an unknown is not a yes — the counts still do not go out"
+        );
+        assert!(listed["mailboxes"][0]["counts"].is_null());
+    }
+
     fn handler_with_mailboxes_down(memory: Arc<InMemoryMemory>) -> Jojobot {
         Jojobot::new(
             memory,
@@ -6974,6 +7246,278 @@ mod tests {
             .expect("list ok");
         assert_eq!(live.len(), 1, "still one session, not one per call: {live:?}");
         assert_eq!(live[0].entries.len(), 2, "…and it accrued: {:?}", live[0].entries);
+    }
+
+    /// **A closed session is terminal when you NAME it, and a bot whose last
+    /// session closed simply starts its next one.** Those are different
+    /// questions and the answers have to differ: naming a session means that
+    /// record, and naming a bot means the identity, which outlives any run of
+    /// it. The description promised the first for both.
+    #[tokio::test]
+    async fn a_bot_whose_session_wrapped_starts_the_next_one_but_a_named_session_stays_closed() {
+        let client = NoAffinity::new();
+        make_bot(&client.call(), "gamma", None).await;
+
+        client
+            .call()
+            .journal(Parameters(JournalArgs {
+                entry: "the first run".into(),
+                focus: None,
+                session: None,
+                bot: Some("gamma".into()),
+            }))
+            .await
+            .expect("journal ok");
+        let wrapped = json_of(
+            &client
+                .call()
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "the first run is over".into(),
+                    session: None,
+                    bot: Some("gamma".into()),
+                }))
+                .await
+                .expect("wrap ok"),
+        );
+        let closed = wrapped["session"]["id"].as_str().expect("an id").to_string();
+
+        // Naming THAT session is blocked — you meant that record.
+        let named = json_of(
+            &client
+                .call()
+                .journal(Parameters(JournalArgs {
+                    entry: "one more thing".into(),
+                    focus: None,
+                    session: Some(closed.clone()),
+                    bot: None,
+                }))
+                .await
+                .expect("call ok"),
+        );
+        assert_eq!(named["status"], "blocked", "a closed session takes no more entries: {named}");
+
+        // Naming the BOT starts its next run, exactly as booting would.
+        let next = json_of(
+            &client
+                .call()
+                .journal(Parameters(JournalArgs {
+                    entry: "the second run".into(),
+                    focus: None,
+                    session: None,
+                    bot: Some("gamma".into()),
+                }))
+                .await
+                .expect("journal ok"),
+        );
+        assert_ne!(next["session"], closed.as_str(), "a new run, not the closed one: {next}");
+
+        let all = client
+            .sessions
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(all.len(), 2, "two runs of one role: {all:?}");
+        assert_eq!(
+            all.iter().filter(|s| !s.state.is_terminal()).count(),
+            1,
+            "…and exactly one of them is open"
+        );
+    }
+
+    /// **Writing to another bot's session does not make you that bot.** The
+    /// sweep bound the connection unconditionally, which was harmless while a
+    /// boot was its only caller. Once a caller could NAME a bot, one
+    /// `journal(bot: "delta")` from a connection booted as gamma rebound the
+    /// whole connection: every later bare call, and every automatic beat,
+    /// attributed to delta while gamma's own beats orphaned.
+    ///
+    /// This is the stateful-transport shape — stdio, where connections really
+    /// do persist — so it holds one handler across calls on purpose.
+    #[tokio::test]
+    async fn naming_another_bot_writes_there_without_rebinding_this_connection() {
+        let store = Arc::new(InMemorySessions::new());
+        let memory = Arc::new(InMemoryMemory::new());
+        let jojobot = connection(memory.clone(), store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        make_bot(&jojobot, "delta", None).await;
+
+        boot(&jojobot, "gamma").await;
+        let mine = journal_entry(&jojobot, "my first beat").await;
+        let my_session = mine["session"].as_str().expect("a session").to_string();
+
+        // A deliberate write into the other identity's session.
+        let theirs = json_of(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: "a note for delta".into(),
+                    focus: None,
+                    session: None,
+                    bot: Some("delta".into()),
+                }))
+                .await
+                .expect("journal ok"),
+        );
+        assert_ne!(theirs["session"], my_session.as_str(), "it landed in delta's session");
+
+        // …and I am still gamma.
+        let after = journal_entry(&jojobot, "my second beat").await;
+        assert_eq!(after["session"], my_session.as_str(), "the connection is still gamma's");
+
+        let gamma = store.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
+        assert_eq!(gamma.len(), 1, "one session for gamma: {gamma:?}");
+        assert_eq!(gamma[0].entries.len(), 2, "…carrying both of my beats");
+        let delta = store.sessions_of(&EntityId("bot:delta".into())).await.expect("list ok");
+        assert_eq!(delta.len(), 1, "and one for delta");
+        assert_eq!(delta[0].entries.len(), 1);
+    }
+
+    /// **The binding short-circuit must never change the answer.** It exists to
+    /// save a board read on a transport that holds a connection; a version that
+    /// answered differently from the stateless path would be a cache that lies.
+    /// Nothing exercised it before — every `bot:`-addressed call in the suite
+    /// ran on a fresh handler, where the held binding is always `None`.
+    #[tokio::test]
+    async fn the_binding_fast_path_answers_what_the_board_would() {
+        let store = Arc::new(InMemorySessions::new());
+        let memory = Arc::new(InMemoryMemory::new());
+        let jojobot = connection(memory.clone(), store.clone());
+        make_bot(&jojobot, "gamma", None).await;
+        make_bot(&jojobot, "delta", None).await;
+
+        boot(&jojobot, "gamma").await;
+        let mine = journal_entry(&jojobot, "my first beat").await;
+        let my_session = mine["session"].as_str().expect("a session").to_string();
+
+        // Naming my own bot takes the fast path and must land in MY session.
+        let named = json_of(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: "named myself".into(),
+                    focus: None,
+                    session: None,
+                    bot: Some("gamma".into()),
+                }))
+                .await
+                .expect("journal ok"),
+        );
+        assert_eq!(
+            named["session"], my_session.as_str(),
+            "naming the bot I am bound to is the same session, not another: {named}"
+        );
+
+        // And naming a DIFFERENT bot must not be served from that binding.
+        let other = json_of(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: "named somebody else".into(),
+                    focus: None,
+                    session: None,
+                    bot: Some("delta".into()),
+                }))
+                .await
+                .expect("journal ok"),
+        );
+        assert_ne!(
+            other["session"], my_session.as_str(),
+            "the cached session belongs to gamma and must not answer for delta: {other}"
+        );
+    }
+
+    /// **BLOCKER: a write must not mint a session for a bot that does not
+    /// exist.** `boot_bot` refuses an unknown name with candidates, and its own
+    /// comment says why — a session bound to an identity jojobot just refused
+    /// belongs to nobody. Making the bot NAME the address opened a second door
+    /// into `begin` that had no such screen: one typo mints a permanent card
+    /// (there is no delete verb; the sweep only marks it `abandoned` a day
+    /// later), misattributes the beat away from the caller's real session, and
+    /// through `wrap_session` writes a dated story into the operator's Journal
+    /// under an identity nobody created.
+    ///
+    /// It is this round's own regression: before it, `begin` was reachable only
+    /// through a binding `boot_bot` had already validated.
+    #[tokio::test]
+    async fn a_session_verb_naming_an_unknown_bot_blocks_and_writes_nothing() {
+        let client = NoAffinity::new();
+        make_bot(&client.call(), "gamma", None).await;
+
+        for (verb, body) in [
+            (
+                "journal",
+                json_of(
+                    &client
+                        .call()
+                        .journal(Parameters(JournalArgs {
+                            entry: "read the hand-off".into(),
+                            focus: None,
+                            session: None,
+                            bot: Some("gamm".into()),
+                        }))
+                        .await
+                        .expect("call ok"),
+                ),
+            ),
+            (
+                "wrap_session",
+                json_of(
+                    &client
+                        .call()
+                        .wrap_session(Parameters(WrapSessionArgs {
+                            story: "a story for nobody".into(),
+                            session: None,
+                            bot: Some("gamm".into()),
+                        }))
+                        .await
+                        .expect("call ok"),
+                ),
+            ),
+            (
+                "amend_journal",
+                json_of(
+                    &client
+                        .call()
+                        .amend_journal(Parameters(AmendJournalArgs {
+                            entry: "actually".into(),
+                            session: None,
+                            bot: Some("gamm".into()),
+                        }))
+                        .await
+                        .expect("call ok"),
+                ),
+            ),
+        ] {
+            assert_eq!(body["status"], "blocked", "{verb} minted for a typo: {body}");
+            let names: Vec<&str> = body["candidates"]
+                .as_array()
+                .expect("candidates")
+                .iter()
+                .map(|c| c["handle"].as_str().or(c["name"].as_str()).expect("a handle"))
+                .collect();
+            assert!(
+                names.iter().any(|n| n.contains("gamma")),
+                "{verb}: the identity they meant is named: {body}"
+            );
+        }
+
+        assert!(
+            client
+                .sessions
+                .sessions_of(&EntityId("bot:gamm".into()))
+                .await
+                .expect("list ok")
+                .is_empty(),
+            "no card was written for an identity nobody created"
+        );
+        // …and the Journal was not told a story by a bot that does not exist.
+        let journal: String = client
+            .memory
+            .scan()
+            .await
+            .expect("scan ok")
+            .into_iter()
+            .map(|d| d.prose)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!journal.contains("a story for nobody"), "the Journal is untouched: {journal}");
     }
 
     /// The other two session verbs address by bot name too — a stateless client
@@ -7558,7 +8102,11 @@ mod tests {
         );
         assert_eq!(body["status"], "blocked");
         let how = body["how_to_proceed"].as_str().expect("advice");
-        assert!(how.contains("boot_bot"), "the way out names the verb: {how}");
+        // **The remedy must be one that works on the caller's next call.** It
+        // used to say "call boot_bot" — which binds a connection most clients
+        // do not keep, so the very next call landed back here. `bot` is the
+        // address that survives, and this is the message that has to say so.
+        assert!(how.contains("`bot`"), "the way out names the parameter: {how}");
     }
 
     /// **Amending a session that has not begun is refused, not turned into a
@@ -7897,7 +8445,15 @@ mod tests {
         );
         assert_eq!(body["status"], "blocked");
         let how = body["how_to_proceed"].as_str().expect("advice");
-        assert!(how.contains("boot_bot"), "the way out names the verb: {how}");
+        // **The remedy has to be one that works.** This is the message a
+        // stateless caller sees, and `bot` is optional, so omitting it is the
+        // DEFAULT failure — the advice pointing at boot_bot pointed straight
+        // back into the loop this round exists to close.
+        assert!(how.contains("`bot`"), "the way out names the parameter: {how}");
+        assert!(
+            !how.contains("Call boot_bot"),
+            "…and does not send them round the loop again: {how}"
+        );
         assert!(
             !how.contains("no entries"),
             "…and it does not answer about a session nobody looked for: {how}"
