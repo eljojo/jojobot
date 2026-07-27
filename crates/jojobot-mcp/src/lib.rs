@@ -442,10 +442,12 @@ pub struct PostMessageArgs {
 pub struct ReadMailboxArgs {
     /// The box to read.
     pub mailbox: String,
-    /// Ship bodies only for messages nobody has taken yet. Leftovers — the ones
-    /// flagged `seen_before` — still come back, still counted, still owed; only
-    /// their bodies are left out. Use it when you are polling for news while a
-    /// message you are deliberately holding open sits in the box.
+    /// Ship bodies only for messages nobody has taken yet — **the default**.
+    /// Leftovers, the ones flagged `seen_before`, still come back, still
+    /// counted, still owed; only their bodies are left out, and each says so.
+    ///
+    /// Pass `false` to get those bodies back — the read a consumer makes when
+    /// it is recovering from a crash and no longer holds what it was given.
     #[serde(default)]
     pub new_only: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -2330,17 +2332,25 @@ impl Jojobot {
                        yours to finish — use read_message when you want only one. ONLY CHECKING \
                        WHETHER ANYTHING IS WAITING? Use list_mailboxes — it reads counts without \
                        taking delivery, so a poll that finds an empty box costs nothing and owes \
-                       nothing. new_only: true ships bodies only for messages nobody has taken \
-                       yet — leftovers still come back, still counted, still flagged and still \
-                       owed, but with their bodies left out (body_elided: true, plus body_bytes \
-                       and the opening line). It changes what is SHIPPED, never what is owed."
+                       nothing. BY DEFAULT you get bodies for the messages nobody has taken yet: \
+                       leftovers still come back, still counted, still flagged and still owed, \
+                       but with their bodies left out (body_elided: true, plus body_bytes and the \
+                       opening line) — because you were handed those bodies once already. Pass \
+                       new_only: false to get them back, which is the read for a consumer \
+                       recovering from a crash that no longer holds what it was given. Either \
+                       way it changes what is SHIPPED, never what is owed."
     )]
     async fn read_mailbox(
         &self,
         Parameters(args): Parameters<ReadMailboxArgs>,
     ) -> Result<CallToolResult, McpError> {
         let name = MailboxName(args.mailbox.trim().to_string());
-        let new_only = args.new_only.unwrap_or(false);
+        // **The safe branch is the default.** The cheap, common read is a poll
+        // for news; re-shipping a body its reader already has is the expensive
+        // case, and a caller that follows defaults rather than prose must land
+        // on the conservative one. Nothing goes silent either way — a leftover
+        // is still delivered, counted, flagged and owed.
+        let new_only = args.new_only.unwrap_or(true);
         match self
             .mailboxes
             .read_mailbox(&name)
@@ -6630,6 +6640,111 @@ mod tests {
     /// then re-delivered the whole multi-KB body flagged `seen_before`. Over a
     /// long pickup loop that is the same message downloaded all night.
     ///
+    /// **The safe branch is the DEFAULT, not the documented preference.** A
+    /// caller that passes nothing gets the cheap, common read — news whole,
+    /// leftovers named but not re-shipped — and pays for the expensive one only
+    /// by asking. Prose recommending the cheap option does not help a client
+    /// that follows defaults, which is most of them.
+    ///
+    /// **What makes that safe is that nothing goes silent**, so it is pinned
+    /// here rather than left to the description: under the default, a leftover
+    /// is still delivered, still counted, still flagged `seen_before`, and
+    /// still owed. Only its body is withheld, and it says so.
+    #[tokio::test]
+    async fn a_read_that_asks_for_nothing_still_hands_over_every_leftover() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "dev").await;
+        let held_body = "a long hand-off that stays open until the round closes. ".repeat(40);
+        let held = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    mailbox: "dev".into(),
+                    sid: as_bot(&jojobot, "delta"),
+                    body: held_body.clone(),
+                    subject: None,
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("post ok"),
+        );
+        let held_id = held["id"].as_str().expect("an id").to_string();
+
+        // Delivered once and deliberately not processed.
+        json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    mailbox: "dev".into(),
+                    new_only: None,
+                    sid: None,
+                }))
+                .await
+                .expect("read ok"),
+        );
+        send(&jojobot, "dev", "delta", "and here is the next batch").await;
+
+        // The plain read — no argument, no opinion.
+        let plain = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    mailbox: "dev".into(),
+                    new_only: None,
+                    sid: None,
+                }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(plain["new_only"], true, "the safe branch is the default");
+        assert_eq!(
+            plain["count"], 2,
+            "the leftover is still delivered: {plain}"
+        );
+
+        let leftover = plain["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|m| m["id"] == held_id.as_str())
+            .expect("a default read still hands the leftover over");
+        assert_eq!(leftover["seen_before"], true, "…still owed: {leftover}");
+        assert_eq!(leftover["body_elided"], true, "…and says what it withheld");
+        assert_eq!(leftover["body_bytes"], held_body.trim().len());
+        assert!(leftover["body"].is_null());
+
+        let fresh = plain["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|m| m["id"] != held_id.as_str())
+            .expect("the fresh message");
+        assert_eq!(
+            fresh["body"], "and here is the next batch",
+            "news is what a plain read is for, so news arrives whole: {fresh}"
+        );
+
+        // And the expensive read is still there for the caller who asks.
+        let whole = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    mailbox: "dev".into(),
+                    new_only: Some(false),
+                    sid: None,
+                }))
+                .await
+                .expect("read ok"),
+        );
+        let recovered = whole["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|m| m["id"] == held_id.as_str())
+            .expect("still there");
+        assert_eq!(
+            recovered["body"],
+            held_body.trim(),
+            "new_only: false is how a crashed consumer gets the body back: {recovered}"
+        );
+    }
+
     /// `new_only` changes what is SHIPPED, never what is owed: the leftover is
     /// still in the delivery, still counted, still flagged, still to be marked
     /// processed. Only its body is left out, and it says so.
