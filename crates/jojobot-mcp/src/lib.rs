@@ -787,6 +787,18 @@ impl Jojobot {
     /// world does: the boot still lands, and the block says jojobot does not
     /// know rather than guessing.
     async fn attach(&self, bot: &EntityId) -> serde_json::Value {
+        // **A boot is a bind-read → act → bind-write span like the others, so it
+        // takes the same gate.** Without it a boot racing a first write on this
+        // connection read the board before the card existed and wrote its
+        // binding after — clearing the session the write had just materialized
+        // and rolling the tally back to what the stale read saw. The next write
+        // then minted a second card for a session already running. The gap is
+        // real rather than theoretical: sweeping a stale card is an await
+        // sitting inside that very span.
+        //
+        // Taken here rather than in `sweep_and_find`, which the first-write
+        // retry calls with the gate already held — the mutex is not reentrant.
+        let _serialized = self.session_gate.lock().await;
         let (live, swept) = match self.sweep_and_find(bot).await {
             Ok(found) => found,
             Err(e) => {
@@ -6499,6 +6511,80 @@ mod tests {
             "one beat for the class, whatever raced: {:?}",
             live[0].entries
         );
+    }
+
+    /// **A boot is a bind-read → act → bind-write span too, and it was ungated.**
+    /// Every other such span takes `session_gate`; attaching did not, so a boot
+    /// racing a first write on the same connection read the board before the
+    /// card existed and wrote its binding after — clearing the session the write
+    /// had just materialized, and the tally with it. The next write then minted
+    /// a second card for a session already running.
+    ///
+    /// The window is the sweep: closing a stale card is an await between the
+    /// board read and the binding write, which is exactly when the racing write
+    /// gets to run.
+    /// **Both orders, because only one of them forked.** `tokio::join!` rotates
+    /// which future it polls first, so a single ordering proves whichever
+    /// interleaving it happened to produce; the invariant is that neither
+    /// produces two cards.
+    #[tokio::test]
+    async fn a_boot_racing_a_first_write_does_not_fork_the_card() {
+        for boot_first in [true, false] {
+            let store = Arc::new(InMemorySessions::new());
+            let jojobot = racing(store.clone());
+            make_bot(&jojobot, "gamma", None).await;
+            boot(&jojobot, "gamma").await;
+
+            // Something for the racing boot to sweep. Closing it is an await
+            // between the board read and the binding write — the gap the racing
+            // write slips through.
+            store
+                .begin(NewSession {
+                    bot: EntityId("bot:gamma".into()),
+                    focus: "from the day before yesterday".into(),
+                    started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
+                })
+                .await
+                .expect("begin ok");
+
+            let booting = jojobot.boot_bot(Parameters(BootBotArgs { name: "gamma".into() }));
+            let writing = jojobot.journal(Parameters(JournalArgs {
+                entry: "the first beat".into(),
+                focus: None,
+                session: None,
+            }));
+            if boot_first {
+                let (b, w) = tokio::join!(booting, writing);
+                b.expect("boot ok");
+                w.expect("journal ok");
+            } else {
+                let (w, b) = tokio::join!(writing, booting);
+                b.expect("boot ok");
+                w.expect("journal ok");
+            }
+
+            // The next write must continue that session rather than mint a second.
+            journal_entry(&jojobot, "the second beat").await;
+
+            let live: Vec<Session> = store
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok")
+                .into_iter()
+                .filter(|s| !s.state.is_terminal())
+                .collect();
+            assert_eq!(
+                live.len(),
+                1,
+                "boot_first={boot_first}: one card, not one per racing boot: {live:?}"
+            );
+            assert_eq!(
+                live[0].entries.len(),
+                2,
+                "boot_first={boot_first}: …and it kept accruing: {:?}",
+                live[0].entries
+            );
+        }
     }
 
     /// **An unbound connection auto-journals nothing.** jojobot does not guess
