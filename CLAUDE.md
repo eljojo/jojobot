@@ -118,7 +118,32 @@ Shipped and live:
 > verb that would create something as a side effect of doing something else
 > is the thing this rule exists to forbid.
 
-Ahead: **M5** sessions → **M6** trace (claim → fact → receipt → evidence) →
+- **M5** — Sessions: a bot is a **role**, a session is **one mortal run of it**
+  — the unit of work, not of connection, so it survives a disconnect or a
+  device hop. Its own Vikunja project (never the mailbox one): one card per
+  session, **column = state** (`active` → `wrapped` | `abandoned`, both
+  terminal both ways), **description = current truth** (the focus, rewritten
+  in place), **comments = the chronology** (append-only, oldest first; only
+  the newest entry amendable).
+  **`boot_bot` is the start verb** — there is no `start_session`, because
+  there is no moment between "I am gamma" and "gamma is working". Booting
+  sweeps that bot's sessions that have gone `ABANDONED_AFTER` (24h) without a
+  beat, **attaches** to a live one if there is one, and otherwise begins one
+  **lazily: no card until the first write**, so a boot that does nothing
+  leaves nothing behind. `journal` records a beat (and moves the focus),
+  `amend_journal` fixes the newest one, `wrap_session` tells the story into
+  the operator's **Journal** document and closes the card.
+  jojobot writes **its own beats** too — one per verb class per session, count
+  kept current, marked apart from what the session said about itself.
+  Session records deliberately stay **out of the search index**.
+
+> **A literal journal, not a log.** High-level beats — what you set out to do,
+> what you found, what you decided, what went wrong — never a firehose of tool
+> calls. It is taught in the orientation and the tool descriptions and enforced
+> **nowhere**, because it is a judgement about what is worth recording and no
+> length check can make it.
+
+Ahead: **M6** trace (claim → fact → receipt → evidence) →
 **M7** portraits (which generalize `set_charter` into the one prose verb) →
 **M8** attention (rules, rhythms, nags) → **M9** boot bundles (sessions boot
 from jojobot) → **M10** seeding (user-agnostic defaults, "batteries included,

@@ -24,8 +24,15 @@ never runs inference of its own — the assistant is the only mind.
 > that could not see the board says so rather than reading as "nothing
 > matched". On top of both, **bots**: an AI identity is an entity of kind `bot`
 > with a charter, rules, memory and one owned mailbox, and `boot_bot` hands a
-> session all of it in one call. All behind OAuth2 resource-server auth, every
-> write verified by read-back.
+> session all of it in one call — and **that call starts or resumes the bot's
+> session**, because a bot is a role and a session is one mortal run of it.
+> **Sessions** live on their own board: a focus that is current truth, an
+> append-only chronology (the session's own beats plus jojobot's, marked
+> apart), and `active` → `wrapped` | `abandoned`, both terminal. A session
+> begins lazily — no card until the first write — resumes across a disconnect,
+> is swept to `abandoned` after a day of silence, and tells its story into the
+> operator's Journal when it wraps. All behind OAuth2 resource-server auth,
+> every write verified by read-back.
 
 ## Vision & roadmap
 
@@ -36,11 +43,11 @@ I can ___", never after infrastructure:
 
 memory (M1) → search & edges (M2) → **mailboxes** (M3) → **bots** — AI
 identities with a handle, charter, rules, memory and an owned mailbox (M4),
-with mail folded into the one `search` → sessions on the record (M5) → trace:
-claim → fact → receipt → evidence (M6) →
+with mail folded into the one `search` → **every session on the record** (M5)
+→ trace: claim → fact → receipt → evidence (M6) →
 portraits (M7) → attention: rules, rhythms, nags (M8) → sessions boot *from*
 jojobot (M9) → seeding: batteries included, overrides win (M10). Everything
-up to and including **M4** is shipped.
+up to and including **M5** is shipped.
 
 Two layers hold it together: the **engine** (this repo — user-agnostic, golden
 tests) and **bots** (data in the user's own store). The design docs live with
