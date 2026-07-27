@@ -836,23 +836,31 @@ impl Jojobot {
         block
     }
 
-    /// The Journal entry a story is already recorded in, if a previous attempt
-    /// at this wrap got that far — the other half of making a retry finish
-    /// rather than repeat.
+    /// Whether **this session** has already told its story to the Journal — the
+    /// other half of making a retry finish rather than repeat.
+    ///
+    /// **Scoped by session, matched on the mark, never on the words.** The
+    /// Journal is one page holding every entry of every session there has ever
+    /// been, so asking whether the story appears anywhere on it answers yes for
+    /// work a different session did last month — and the wrap then reports
+    /// success having written nothing, which is a dropped story: the very
+    /// failure the guard trades a duplicate to avoid. A session tells its story
+    /// at most once, because wrapping closes it for good, so its own mark is the
+    /// whole question.
     ///
     /// Reads the Journal through the ordinary scan, because that is the only
     /// read there is: the Journal is nobody's entity, so there is no handle to
     /// fetch it by. A scan that fails answers "not there" and the wrap writes
     /// the entry — a duplicate line in the Journal is a cost worth paying to
     /// avoid dropping the story of a session that is about to close for good.
-    async fn journal_entry_for(&self, story: &str) -> Option<String> {
+    async fn journal_holds(&self, mark: &str) -> bool {
         self.memory
             .scan()
             .await
-            .ok()?
-            .into_iter()
-            .find(|doc| doc.title.trim() == JOURNAL_TITLE && doc.prose.contains(story))
-            .map(|_| story.to_string())
+            .is_ok_and(|docs| {
+                docs.iter()
+                    .any(|doc| doc.title.trim() == JOURNAL_TITLE && doc.prose.contains(mark))
+            })
     }
 
     /// Sweep this bot's stale sessions and hand back the live one, if any —
@@ -1711,8 +1719,12 @@ impl Jojobot {
         // by whether its own half is already done, and a retry finishes what the
         // first attempt started rather than repeating it.
         let story = jojobot_domain::session::normalize_entry(&args.story);
+        // **Anywhere in the chronology, not just at its tail.** The retry is the
+        // move left after a failed close, and the natural thing to write between
+        // the two is a beat saying the wrap failed — which made the story no
+        // longer the newest entry, and the retry told it again.
         let already = match self.sessions.read_session(&session).await {
-            Ok(read) => read.entries.last().filter(|e| e.text == story).cloned(),
+            Ok(read) => read.entries.iter().rev().find(|e| !e.is_auto() && e.text == story).cloned(),
             // Not fatal: an unreadable session fails the append below, in that
             // verb's own words rather than this guard's.
             Err(_) => None,
@@ -1730,11 +1742,18 @@ impl Jojobot {
         };
 
         let today = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date();
-        let journalled = match self.journal_entry_for(&story).await {
-            Some(told) => told,
-            None => self
+        // The entry carries the session's mark, which is what a retry looks for.
+        // It is also the one thing a reader of the Journal cannot recover
+        // otherwise: which run of which bot wrote this.
+        let told = format!("{story}\n\n{}", journal_mark(&session));
+        let journalled = match self.journal_holds(&journal_mark(&session)).await {
+            // Already on the page — reported as the entry rather than the dated
+            // block a fresh append reads back, because the date it first landed
+            // under belongs to that attempt and this one cannot know it.
+            true => told,
+            false => self
                 .memory
-                .append_journal(today, &story)
+                .append_journal(today, &told)
                 .await
                 .map_err(memory_error)?,
         };
@@ -1958,6 +1977,18 @@ fn display_line(text: &str) -> String {
         kept = flat.chars().take(199).collect();
     }
     format!("{kept}…")
+}
+
+/// The mark a session's Journal entry carries, so a wrap that has to be
+/// retried can find **its own** entry on a page holding everybody's.
+///
+/// **Delimited, and the id is the whole of it.** A bare id would match a longer
+/// one that starts with the same digits (`session 42` inside `session 4212`),
+/// and a match on the story's words is not a match on this session at all.
+/// Session ids are minted by the one store, so the id alone says which run of
+/// which bot without naming the bot twice.
+fn journal_mark(session: &SessionId) -> String {
+    format!("[session {session}]")
 }
 
 /// A running tally, as one line of chronology.
@@ -5964,6 +5995,105 @@ mod tests {
             captures[0].contains("person:alpha") && captures[0].contains("person:milhouse"),
             "…along with what it touched on both sides: {}",
             captures[0]
+        );
+    }
+
+    /// Every doc's prose on one string — how a test reads the operator's
+    /// Journal, which is a page rather than an entity and so has no handle to
+    /// fetch it by.
+    async fn journal_prose(memory: &InMemoryMemory) -> String {
+        memory
+            .scan()
+            .await
+            .expect("scan ok")
+            .into_iter()
+            .map(|d| d.prose)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// **The Journal guard is scoped to the SESSION, never to the page.** It
+    /// asked whether the whole Journal — every dated entry, every bot, every
+    /// session there has ever been — contained the story as a substring, and
+    /// skipped the write when it did. So a session whose story matched anything
+    /// already written had that story silently dropped while its wrap reported
+    /// success: the ordinary repeat loop, the short story, the second run of the
+    /// same work. That is the exact failure the guard trades a duplicate to
+    /// avoid, arriving through the guard itself.
+    #[tokio::test]
+    async fn two_sessions_telling_the_same_story_both_reach_the_journal() {
+        let store = Arc::new(InMemorySessions::new());
+        let memory = Arc::new(InMemoryMemory::new());
+        let story = "read the hand-off, found nothing to do, wrapped";
+
+        for bot in ["gamma", "delta"] {
+            let jojobot = connection(memory.clone(), store.clone());
+            make_bot(&jojobot, bot, None).await;
+            boot(&jojobot, bot).await;
+            jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: story.into(),
+                    session: None,
+                }))
+                .await
+                .expect("wrap ok");
+        }
+
+        let journal = journal_prose(&memory).await;
+        assert_eq!(
+            journal.matches(story).count(),
+            2,
+            "both sessions told their story, so both entries belong on the page: {journal}"
+        );
+    }
+
+    /// **A retry finishes what the first attempt started, wherever the story now
+    /// sits.** The chronology half of the guard looked only at the newest entry,
+    /// so anything written between the failed close and the retry — a journal
+    /// entry saying the wrap failed, which is the natural thing to write — pushed
+    /// the story off the tail and the retry told it a second time.
+    #[tokio::test]
+    async fn a_wrap_retried_after_an_intervening_entry_tells_the_story_once() {
+        let store = Arc::new(RefusingClose::new());
+        let memory = Arc::new(InMemoryMemory::new());
+        let jojobot = Jojobot::new(
+            memory.clone(),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::new()),
+            store.clone(),
+        );
+        make_bot(&jojobot, "gamma", None).await;
+        boot(&jojobot, "gamma").await;
+        journal_entry(&jojobot, "read the hand-off").await;
+
+        let story = "built the thing; the close is what failed";
+        let wrap = || {
+            jojobot.wrap_session(Parameters(WrapSessionArgs {
+                story: story.into(),
+                session: None,
+            }))
+        };
+        assert!(wrap().await.is_err(), "the close refused, so the wrap failed");
+
+        // The natural next beat: saying so. It is now the tail, not the story.
+        journal_entry(&jojobot, "the wrap failed at the close — retrying").await;
+
+        store.allow_close();
+        let second = json_of(&wrap().await.expect("the retry must land"));
+        assert_eq!(second["session"]["state"], "wrapped");
+
+        let live = store.inner.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
+        assert_eq!(
+            live[0].entries.iter().filter(|e| e.text == story).count(),
+            1,
+            "the story is told once in the chronology: {:?}",
+            live[0].entries
+        );
+        let journal = journal_prose(&memory).await;
+        assert_eq!(
+            journal.matches(story).count(),
+            1,
+            "…and once in the operator's Journal: {journal}"
         );
     }
 
