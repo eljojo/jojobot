@@ -67,7 +67,7 @@ jojobot is a personal-assistant server: the durable memory and message rail behi
 - *No mailbox fits what you want to leave* → almost never `create_mailbox`. A new box is a message posted where nobody is listening, plus a permanent label. Use an existing, agreed box, or say plainly there is nowhere fitting and let the operator decide — mint one only when the operator or a standing arrangement asked for that box by name.
 - *"Which people are in Shelbyville?"* → `search` with kind `person` and edge `{shape: location, object: place:shelbyville}` — an edge walk, not a text match.
 - *"That was wrong"* → `recall` the subject, then `update_fact` rewrites the claim in place to state what is true NOW — including negative truth ("NOT allergic — confirmed by the operator"). The record is current truth, never a correction trail. *"That changed"* is a different move: the old claim was true in its day — mark it `superseded` and `capture` the new one.
-- *Leave word for another session* → `list_mailboxes` to see what exists and what is waiting, `post_message` into an agreed box with a body written for a reader with none of your context, and your `sender` naming a role that still exists next week, not this session's id.
+- *Leave word for another session* → `list_mailboxes` to see what exists and what is waiting, `post_message` into an agreed box with a body written for a reader with none of your context. jojobot records who sent it from the `sid` you pass, so there is nothing to declare and nothing to get wrong.
 - *Handle mail* → `read_mailbox` on the box you were told to drain — reading takes delivery of every message in it, and they are not yours just because you can read them — act, then `mark_processed`, ONLY after acting, with the outcome in notes. A failure is data to record, not a state to park in.
 - *One message, not a whole box* → `search` for it, then `read_message` on the id the hit carries. Draining a box you were not told to drain makes every message in it owed work you never agreed to.
 
@@ -2257,9 +2257,11 @@ impl Jojobot {
                        than on the body's first line. The `state` you get back is the state as \
                        it stands — it can already say `read` if a person picked the message up \
                        in between, and that is success, not a problem: the message exists and \
-                       someone has it. `sender` is recorded exactly as you declare it — \
-                       identity is not verified, so name yourself specifically enough that a \
-                       reply can find you. YOUR BODY IS NOT ECHOED BACK — you wrote it, and \
+                       someone has it. The sender is not yours to declare: jojobot records the \
+                       bot behind the `sid` you pass, so a reply can always find you and nothing \
+                       can be posted under somebody else's name. A `sid` jojobot is not holding \
+                       comes back status: blocked and nothing is written. YOUR BODY IS NOT \
+                       ECHOED BACK — you wrote it, and \
                        jojobot verified it by reading the stored card back, so the answer carries \
                        the id, the state and body_bytes with body_elided: true rather than the \
                        text. `list_sent` with include_bodies returns it and takes no delivery. \
@@ -2631,10 +2633,11 @@ impl Jojobot {
                        finished with · `processed` = acted on) plus notes when the consumer \
                        recorded an outcome. Bodies are left out unless you ask for them — you \
                        wrote them — so each carries body_bytes and the opening line instead, and \
-                       says body_elided: true rather than leaving you to guess. IDENTITY IS NOT \
-                       VERIFIED: `sender` is matched exactly against what each message declared, \
-                       and jojobot has no way to know that is you — the same trust model \
-                       post_message records under. Use the sender string you actually post with."
+                       says body_elided: true rather than leaving you to guess. OMIT `sender` for \
+                       your own mail — your `sid` already says who that is. Pass one to ask after \
+                       somebody else's outgoing mail: it is matched exactly against the bot \
+                       handle recorded on each message (`bot:gamma`), which is allowed, because \
+                       where a message got to is not private to its sender."
     )]
     async fn list_sent(
         &self,
@@ -7744,7 +7747,13 @@ mod tests {
     #[test]
     fn the_session_verbs_are_described_by_the_one_address_they_take() {
         let tools = Jojobot::tool_router().list_all();
-        for name in ["journal", "amend_journal", "wrap_session", "list_mailboxes"] {
+        for name in [
+            "journal",
+            "amend_journal",
+            "wrap_session",
+            "list_mailboxes",
+            "post_message",
+        ] {
             let tool = tools
                 .iter()
                 .find(|t| t.name == name)
@@ -7754,13 +7763,51 @@ mod tests {
                 description.contains("`sid`"),
                 "{name} must name the address it takes: {description}"
             );
-            for gone in ["`bot`", "`session`", "you booted as"] {
+            // `sender` joins the list for the same reason the other two are on
+            // it: `post_message` derives it from the handle and takes no such
+            // parameter, so a sentence describing one sends a caller to emit a
+            // field that is silently dropped.
+            for gone in ["`bot`", "`session`", "`sender`", "you booted as"] {
                 assert!(
                     !description.contains(gone),
                     "{name} still describes {gone}, which is no parameter of it: {description}"
                 );
             }
         }
+    }
+
+    /// **Nothing agent-facing tells a caller to declare who it is.**
+    ///
+    /// `sender` left `PostMessageArgs` when it became derived from the `sid`,
+    /// and three texts went on describing it. `PostMessageArgs` does not deny
+    /// unknown fields, so a caller following those sentences emits a `sender`
+    /// that is silently dropped, then calls `list_sent` with the string it
+    /// invented, gets nothing, and concludes its report never arrived — which
+    /// is the exact failure `list_sent` exists to prevent.
+    ///
+    /// **Asserted as absence of the token, not as a list of today's
+    /// sentences.** The essay and `post_message` have no honest use for the
+    /// word: the caller does not supply one, so any sentence that reaches for
+    /// it is describing a parameter that is not there, whatever its wording.
+    /// `list_sent` is the one verb that still takes a `sender` — somebody
+    /// else's, to ask after their mail — so it is the one place the token
+    /// belongs.
+    #[test]
+    fn no_agent_facing_text_asks_a_caller_to_declare_a_sender() {
+        assert!(
+            !ORIENTATION.contains("`sender`"),
+            "the essay still asks a caller for a sender it does not supply"
+        );
+        let tools = Jojobot::tool_router().list_all();
+        let post = tools
+            .iter()
+            .find(|t| t.name == "post_message")
+            .expect("post_message is a tool");
+        let description = post.description.as_deref().unwrap_or_default();
+        assert!(
+            !description.contains("`sender`"),
+            "post_message still describes a `sender` parameter it does not take: {description}"
+        );
     }
 
     /// **The door says what to carry away from it, and how far it reaches.**
