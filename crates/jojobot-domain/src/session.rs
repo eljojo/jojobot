@@ -88,8 +88,10 @@ pub enum SessionState {
 
 impl SessionState {
     /// Every state, in funnel order — which is also the column order on the
-    /// board. Provisioning walks this, so the board can never grow a column the
-    /// domain doesn't know or lose one it does.
+    /// board. What reads a board's columns walks this, so a column title that is
+    /// no state is never mistaken for one; **an adapter names its own columns**
+    /// rather than deriving them here, because the board is that adapter's to
+    /// provision and this is the domain.
     pub const ALL: [SessionState; 3] = [
         SessionState::Active,
         SessionState::Wrapped,
@@ -210,6 +212,20 @@ pub struct JournalEntry {
     pub at: Timestamp,
     /// The entry itself.
     pub text: String,
+    /// When this entry was last rewritten, for one that has been.
+    ///
+    /// **`at` is when it happened; this is when it was last touched.** They are
+    /// different questions and a beat needs both: `at` keeps the chronology in
+    /// the order things occurred, and a tally corrected an hour later must not
+    /// jump to the end of the record — while the sweep, which asks whether this
+    /// session is still working, has to see that hour.
+    ///
+    /// Without it a session that had already used every verb class once went
+    /// quiet as far as the sweep was concerned: each further call amended an
+    /// existing beat, no instant moved, and a session working steadily became
+    /// sweepable while it worked.
+    #[serde(default)]
+    pub touched: Option<Timestamp>,
     /// The verb class this beat summarizes, for an entry jojobot wrote itself;
     /// `None` for one the session wrote.
     ///
@@ -299,7 +315,7 @@ impl Session {
     pub fn last_beat(&self) -> Timestamp {
         self.entries
             .iter()
-            .map(|e| e.at)
+            .flat_map(|e| [e.at, e.touched.unwrap_or(e.at)])
             .max()
             .unwrap_or(self.started_at)
     }
@@ -445,11 +461,16 @@ pub trait Sessions: Send + Sync {
     /// its own account of what it was doing, and
     /// [`SessionError::NotABeat`] is what reaching for one gets — only
     /// [`amend_last`](Sessions::amend_last) touches those, and only the newest.
+    ///
+    /// `at` records when the correction was made, and lands on the entry's
+    /// `touched` rather than its `at` — the beat keeps its place in the
+    /// chronology, and the session stops looking idle to the sweep.
     async fn amend_beat(
         &self,
         id: &SessionId,
         entry: &EntryId,
         text: &str,
+        at: Timestamp,
     ) -> Result<JournalEntry, SessionError>;
 
     /// Rewrite what the session is working on now. Refused on a closed session.
@@ -549,6 +570,7 @@ mod tests {
                 id: EntryId("e1".into()),
                 at: start + hour,
                 text: "did a thing".into(),
+                touched: None,
                 beat: None,
             }],
             ..bare.clone()
@@ -578,6 +600,7 @@ mod tests {
             id: EntryId("e1".into()),
             at: new.at,
             text: new.text,
+            touched: None,
             beat: new.beat,
         };
         assert!(!entry(manual).is_auto());

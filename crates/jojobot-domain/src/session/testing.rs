@@ -119,6 +119,7 @@ impl Sessions for InMemorySessions {
             id: EntryId(self.mint()),
             at: entry.at,
             text: normalize_entry(&entry.text),
+            touched: None,
             beat: entry.beat,
         };
         sessions[at].entries.push(recorded.clone());
@@ -145,12 +146,13 @@ impl Sessions for InMemorySessions {
         id: &SessionId,
         entry: &EntryId,
         text: &str,
+        at: Timestamp,
     ) -> Result<JournalEntry, SessionError> {
         validate_session_id(id)?;
         validate_entry(text)?;
         let mut sessions = self.sessions.lock().expect("session lock");
-        let at = Self::writable(&mut sessions, id)?;
-        let held = sessions[at]
+        let index = Self::writable(&mut sessions, id)?;
+        let held = sessions[index]
             .entries
             .iter_mut()
             .find(|e| &e.id == entry)
@@ -164,6 +166,8 @@ impl Sessions for InMemorySessions {
             });
         }
         held.text = normalize_entry(text);
+        // The beat keeps its place in the chronology and records that it moved.
+        held.touched = Some(at);
         Ok(held.clone())
     }
 
@@ -341,6 +345,7 @@ pub mod contract {
                 &session.id,
                 &beat.id,
                 "captured facts: person:milhouse, person:otto (2)",
+                at(180),
             )
             .await
             .expect("amend_beat ok");
@@ -358,12 +363,60 @@ pub mod contract {
         // The session's own words are not a beat, and this verb will not touch
         // them wherever they sit.
         let err = store
-            .amend_beat(&session.id, &mine.id, "read the task properly")
+            .amend_beat(&session.id, &mine.id, "read the task properly", at(240))
             .await
             .expect_err("a session's own entry is append-only");
         assert!(matches!(err, SessionError::NotABeat { .. }), "got {err:?}");
         let read = store.read_session(&session.id).await.expect("read ok");
         assert_eq!(read.entries[1].text, "read the task", "…and it is unchanged");
+    }
+
+    /// **A session that is working is not idle.** A beat correction is a write,
+    /// so it moves what the sweep measures — but it does NOT move the entry's
+    /// place in the chronology, which is where it happened.
+    ///
+    /// Without this, a session that had used every verb class once looked
+    /// motionless: every further call only amended an existing beat, no instant
+    /// advanced, and a session working steadily became sweepable while it worked.
+    pub async fn amending_a_beat_keeps_its_place_but_moves_the_clock(store: &dyn Sessions) {
+        let session = begin(store, "gamma", "reading the hand-off", 0).await;
+        let beat = store
+            .append(
+                &session.id,
+                NewEntry::beat("capture", "captured facts: person:milhouse (1)", at(60)),
+            )
+            .await
+            .expect("append ok");
+        journal(store, &session.id, "read the task", 120).await;
+
+        let amended = store
+            .amend_beat(
+                &session.id,
+                &beat.id,
+                "captured facts: person:milhouse, person:otto (2)",
+                at(600),
+            )
+            .await
+            .expect("amend_beat ok");
+        assert_eq!(amended.at, at(60), "the beat keeps when it happened");
+        assert_eq!(
+            amended.touched,
+            Some(at(600)),
+            "…and records when it was last corrected"
+        );
+
+        let read = store.read_session(&session.id).await.expect("read ok");
+        let texts: Vec<&str> = read.entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec!["captured facts: person:milhouse, person:otto (2)", "read the task"],
+            "the correction does not move the beat to the end of the record"
+        );
+        assert_eq!(
+            read.last_beat(),
+            at(600),
+            "…but the sweep sees the work: a corrected beat is a session still going"
+        );
     }
 
     /// Amending a session with nothing in it is refused, not silently turned
@@ -404,6 +457,10 @@ pub mod contract {
     pub async fn a_closed_session_is_terminal_both_ways(store: &dyn Sessions) {
         for end in [SessionState::Wrapped, SessionState::Abandoned] {
             let session = begin(store, "gamma", "reading the hand-off", 0).await;
+            let beat = store
+                .append(&session.id, NewEntry::beat("capture", "captured facts: x (1)", at(30)))
+                .await
+                .expect("append ok");
             journal(store, &session.id, "read the task", 60).await;
             let closed = store.close(&session.id, end).await.expect("close ok");
             assert_eq!(closed.state, end);
@@ -430,6 +487,13 @@ pub mod contract {
             );
             refused(
                 store
+                    .amend_beat(&session.id, &beat.id, "a corrected tally", at(180))
+                    .await
+                    .expect_err("amending a beat must be refused"),
+                "amend_beat",
+            );
+            refused(
+                store
                     .set_focus(&session.id, "something else")
                     .await
                     .expect_err("set_focus must be refused"),
@@ -453,7 +517,7 @@ pub mod contract {
             // …and the record stands, readable, with everything it had.
             let read = store.read_session(&session.id).await.expect("read ok");
             assert_eq!(read.state, end, "nothing moved it");
-            assert_eq!(read.entries.len(), 1, "and nothing was appended to it");
+            assert_eq!(read.entries.len(), 2, "and nothing was appended to it");
         }
     }
 
@@ -576,6 +640,7 @@ pub mod contract {
         a_beat_is_stored_beside_manual_entries_and_stays_distinguishable(&fresh()).await;
         an_amend_rewrites_the_last_entry_and_nothing_else(&fresh()).await;
         only_an_automatic_beat_is_amended_in_place(&fresh()).await;
+        amending_a_beat_keeps_its_place_but_moves_the_clock(&fresh()).await;
         amending_with_no_entries_is_refused(&fresh()).await;
         focus_is_rewritten_in_place_and_leaves_the_chronology_alone(&fresh()).await;
         a_closed_session_is_terminal_both_ways(&fresh()).await;

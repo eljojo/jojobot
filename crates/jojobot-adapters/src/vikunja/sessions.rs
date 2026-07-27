@@ -47,6 +47,9 @@ const AT: &str = "at";
 /// The machine-block field naming the verb class an automatic beat is about.
 /// Absent on an entry the session wrote itself.
 const BEAT: &str = "beat";
+/// The machine-block field carrying when an entry was last rewritten. Absent on
+/// one nobody has corrected — see `JournalEntry::touched`.
+const TOUCHED: &str = "touched";
 
 /// How much of the focus rides in the card's title.
 const TITLE_BUDGET: usize = 60;
@@ -400,7 +403,7 @@ impl VikunjaSessions {
             .update_comment(
                 card.id,
                 comment,
-                &render_entry(text, held.at, held.beat.as_deref()),
+                &render_entry(&JournalEntry { text: text.to_string(), ..held.clone() }),
             )
             .await
             .map_err(store)?;
@@ -416,7 +419,7 @@ impl VikunjaSessions {
             }
             other => {
                 let restored =
-                    put_back(render_entry(&held.text, held.at, held.beat.as_deref())).await;
+                    put_back(render_entry(held)).await;
                 Err(stranded(
                     "amend_journal",
                     format!("entry {} did not read back amended: read {other:?}", held.id),
@@ -498,18 +501,23 @@ fn parse_entry(comment: &CommentRec) -> Option<JournalEntry> {
     Some(JournalEntry {
         id: EntryId(comment.id.to_string()),
         at: field(&fields, AT)?.parse().ok()?,
+        touched: field(&fields, TOUCHED).and_then(|t| t.parse().ok()),
         text,
         beat: field(&fields, BEAT),
     })
 }
 
 /// Render one chronology entry as a comment body.
-fn render_entry(text: &str, at: Timestamp, beat: Option<&str>) -> String {
+fn render_entry(entry: &JournalEntry) -> String {
     render_block(
-        text,
+        &entry.text,
         &[
-            (AT, at.to_string()),
-            (BEAT, beat.unwrap_or_default().to_string()),
+            (AT, entry.at.to_string()),
+            (
+                TOUCHED,
+                entry.touched.map(|t| t.to_string()).unwrap_or_default(),
+            ),
+            (BEAT, entry.beat.clone().unwrap_or_default()),
         ],
     )
 }
@@ -659,7 +667,16 @@ impl Sessions for VikunjaSessions {
         let text = normalize_entry(&entry.text);
         let written = self
             .api
-            .create_comment(card.id, &render_entry(&text, entry.at, entry.beat.as_deref()))
+            .create_comment(
+                card.id,
+                &render_entry(&JournalEntry {
+                    id: EntryId(String::new()),
+                    at: entry.at,
+                    touched: None,
+                    text: text.clone(),
+                    beat: entry.beat.clone(),
+                }),
+            )
             .await
             .map_err(store)?;
 
@@ -707,6 +724,7 @@ impl Sessions for VikunjaSessions {
         id: &SessionId,
         entry: &EntryId,
         text: &str,
+        at: Timestamp,
     ) -> Result<JournalEntry, SessionError> {
         let _serialized = self.lock.lock().await;
         validate_session_id(id)?;
@@ -731,7 +749,11 @@ impl Sessions for VikunjaSessions {
                 session: id.to_string(),
             });
         }
-        self.rewrite_entry(&scope, &card, &held, &normalize_entry(text))
+        // The beat keeps its place in the chronology and records that it moved —
+        // so the sweep sees a session still working, without the correction
+        // jumping to the end of the record.
+        let touched = JournalEntry { touched: Some(at), ..held };
+        self.rewrite_entry(&scope, &card, &touched, &normalize_entry(text))
             .await
     }
 
@@ -1119,12 +1141,42 @@ mod tests {
     async fn no_verb_ever_reaches_a_project_other_than_this_stores() {
         let fake = FakeVikunja::new();
         let store = store(fake.clone());
+
+        // **A board that is not ours, sitting right there.** Without one the
+        // walk asserts over an instance holding nothing else, which passes for a
+        // store that would happily have reached across if there were anything to
+        // reach for.
+        let theirs = fake
+            .create_project("somebody-elses-board", "not jojobot's", None)
+            .await
+            .expect("the operator has boards of their own");
+        let stray_card = fake.seed_task(theirs.id, "their card", "their note", &[]);
+
+        // Every method on the port, so a ninth cannot arrive unwalked.
         let session = contract::begin(&store, "gamma", "reading the hand-off", 0).await;
+        store.sessions_of(&bot("gamma")).await.expect("list ok");
+        store.read_session(&session.id).await.expect("read ok");
+        let beat = store
+            .append(
+                &session.id,
+                NewEntry::beat("capture", "captured facts: person:milhouse (1)", at(30)),
+            )
+            .await
+            .expect("append ok");
         contract::journal(&store, &session.id, "read the task", 60).await;
         store
             .amend_last(&session.id, "read the task properly")
             .await
             .expect("amend ok");
+        store
+            .amend_beat(
+                &session.id,
+                &beat.id,
+                "captured facts: person:milhouse, person:otto (2)",
+                at(90),
+            )
+            .await
+            .expect("amend_beat ok");
         store
             .set_focus(&session.id, "building the session context")
             .await
@@ -1134,19 +1186,26 @@ mod tests {
             .await
             .expect("close ok");
 
-        let project = fake.projects_titled(PROJECT)[0].id;
+        let ours = fake.projects_titled(PROJECT)[0].id;
         let home = fake.projects_titled("jojobot")[0].id;
         let named = fake.named_projects.lock().unwrap().clone();
         let stray: Vec<u64> = named
             .iter()
             .copied()
-            .filter(|p| *p != project && *p != home)
+            .filter(|p| *p != ours && *p != home)
             .collect();
-        assert!(stray.is_empty(), "a call named a project that is not ours: {stray:?}");
+        assert!(
+            stray.is_empty(),
+            "a call named a project that is not ours (theirs is {}): {stray:?}",
+            theirs.id
+        );
 
         let card: u64 = session.id.as_str().parse().expect("a numeric card id");
         let written = fake.written_tasks.lock().unwrap().clone();
         let strays: Vec<u64> = written.iter().copied().filter(|t| *t != card).collect();
-        assert!(strays.is_empty(), "a call wrote to a card that is not ours: {strays:?}");
+        assert!(
+            strays.is_empty(),
+            "a call wrote to a card that is not ours (theirs is {stray_card}): {strays:?}"
+        );
     }
 }

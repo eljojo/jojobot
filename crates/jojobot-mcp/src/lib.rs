@@ -1009,7 +1009,10 @@ impl Jojobot {
                     beat.examples.push(example.to_string());
                 }
                 let text = beat_text(phrase, &beat);
-                let written = self.sessions.amend_beat(&session, &beat.entry, &text).await;
+                let written = self
+                    .sessions
+                    .amend_beat(&session, &beat.entry, &text, jiff::Timestamp::now())
+                    .await;
                 written.map(|_| (class, beat))
             }
             None => {
@@ -6068,8 +6071,9 @@ mod tests {
             id: &SessionId,
             entry: &EntryId,
             text: &str,
+            at: jiff::Timestamp,
         ) -> Result<JournalEntry, SessionError> {
-            self.inner.amend_beat(id, entry, text).await
+            self.inner.amend_beat(id, entry, text, at).await
         }
         async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
             self.inner.set_focus(id, focus).await
@@ -6175,9 +6179,10 @@ mod tests {
             id: &SessionId,
             entry: &EntryId,
             text: &str,
+            at: jiff::Timestamp,
         ) -> Result<JournalEntry, SessionError> {
             self.pause().await;
-            self.0.amend_beat(id, entry, text).await
+            self.0.amend_beat(id, entry, text, at).await
         }
         async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
             self.pause().await;
@@ -6350,6 +6355,7 @@ mod tests {
             _: &SessionId,
             _: &EntryId,
             _: &str,
+            _: jiff::Timestamp,
         ) -> Result<JournalEntry, SessionError> {
             Err(SessionError::NotConfigured("the session world is down".into()))
         }
