@@ -842,9 +842,9 @@ const PARKED_COLUMN: &str = "parked";
 /// the write and its verification; that is delivery working, not corruption,
 /// and rolling it back would destroy a message a consumer already has. Notes
 /// are not compared once the state advanced: they belong to whichever consumer
-/// moved the card. **The subject is** — it is the poster's, and no consumer has
-/// any business rewriting it, so a changed one is corruption exactly as a
-/// changed body is.
+/// moved the card. **The subject and the reply link are** — both are the
+/// poster's, and no consumer has any business rewriting either, so a changed
+/// one is corruption exactly as a changed body is.
 fn read_back_confirms(expected: &Message, seen: &Message) -> bool {
     if seen == expected {
         return true;
@@ -854,6 +854,7 @@ fn read_back_confirms(expected: &Message, seen: &Message) -> bool {
         && seen.mailbox == expected.mailbox
         && seen.body == expected.body
         && seen.subject == expected.subject
+        && seen.in_reply_to == expected.in_reply_to
         && seen.sender == expected.sender
         && seen.sent_at == expected.sent_at
 }
@@ -4270,6 +4271,13 @@ pub(super) mod tests {
             ("the subject", Message { subject: Some("a title nobody wrote".into()), ..advanced.clone() }),
             ("the sender", Message { sender: "milhouse".into(), ..advanced.clone() }),
             ("the instant", Message { sent_at: at(1_770_000_000), ..advanced.clone() }),
+            // The reply link is the POSTER'S, by the identical argument the
+            // subject is included under — no consumer has any business
+            // rewriting what a message says it answers.
+            (
+                "the reply link",
+                Message { in_reply_to: Some(MessageId("99".into())), ..advanced.clone() },
+            ),
         ] {
             assert!(
                 !read_back_confirms(&wrote, &seen),

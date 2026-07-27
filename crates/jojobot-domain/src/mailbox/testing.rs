@@ -880,6 +880,42 @@ pub mod contract {
         assert_eq!(original_now.message.in_reply_to, None);
     }
 
+    /// **A reply answers ACROSS boxes, which is the shape it will actually run
+    /// in.** A hand-off is left in one box and its report goes back in another;
+    /// a reply into the same box is the easy case and not the real one. It runs
+    /// on every tier because this is precisely where a fake and a store can
+    /// quietly disagree: the real adapter scopes its reads to the mailbox
+    /// PROJECT rather than the box, and if that ever narrowed, a fake checking
+    /// globally would stay green while production stopped linking.
+    pub async fn a_reply_can_answer_a_message_in_another_box(store: &dyn Mailboxes) {
+        create(store, "dev").await;
+        create(store, "pm").await;
+        let handoff = post(store, "dev", "coordinator", "build the kiln slice", 0).await;
+
+        let report = store
+            .post_message(NewMessage {
+                mailbox: name("pm"),
+                body: "the kiln slice is done".into(),
+                subject: None,
+                sender: "implementer".into(),
+                sent_at: at(1),
+                in_reply_to: Some(handoff.id.clone()),
+            })
+            .await
+            .expect("post ok")
+            .written()
+            .expect("a reply across boxes is written");
+        assert_eq!(report.mailbox, name("pm"), "the reply is in the box it was posted to");
+        assert_eq!(
+            report.in_reply_to.as_ref(),
+            Some(&handoff.id),
+            "…and it answers the message in the other one"
+        );
+
+        let seen = store.read_message(&report.id).await.expect("read_message ok");
+        assert_eq!(seen.message.in_reply_to.as_ref(), Some(&handoff.id));
+    }
+
     /// **Everything a write names must already exist**, and a reply naming a
     /// message jojobot does not hold is the same miss every other dangling
     /// reference is. Nothing is written.
@@ -898,6 +934,25 @@ pub mod contract {
         assert!(
             matches!(missing, Err(MailboxError::UnknownMessage { .. })),
             "a dangling reply link is a miss, not a stored message: {missing:?}"
+        );
+
+        // **A malformed id is refused as malformed**, not looked up and
+        // reported as absent: an id carrying a path segment or a quote never
+        // reaches a store, and saying "no such message" about it would send the
+        // caller hunting for a message rather than fixing their id.
+        let malformed = store
+            .post_message(NewMessage {
+                mailbox: name("inbox"),
+                body: "answering something misspelt".into(),
+                subject: None,
+                sender: "beta".into(),
+                sent_at: at(0),
+                in_reply_to: Some(MessageId("../42".into())),
+            })
+            .await;
+        assert!(
+            matches!(malformed, Err(MailboxError::InvalidMessageId(_))),
+            "a reply link outside the id grammar is malformed, not missing: {malformed:?}"
         );
         assert_eq!(
             counts(store, "inbox").await.expect("inbox exists").total(),
@@ -1083,6 +1138,7 @@ pub mod contract {
         mark_processed_is_terminal_and_records_the_outcome(&fresh()).await;
         a_failure_is_recorded_as_an_outcome(&fresh()).await;
         a_reply_names_the_message_it_answers(&fresh()).await;
+        a_reply_can_answer_a_message_in_another_box(&fresh()).await;
         a_reply_to_an_unknown_message_is_refused(&fresh()).await;
         long_notes_are_kept_as_far_as_they_fit(&fresh()).await;
         notes_that_fit_are_untouched(&fresh()).await;
