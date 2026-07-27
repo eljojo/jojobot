@@ -81,7 +81,7 @@ A plain **error** is a malformed call — a token that is no kind, a string that
 
 ## Bots
 
-An **identity** is an entity of kind `bot`: a handle like `bot:gamma`, a **charter** (its prose — what this identity is, its hard lines, where its work lives), **rules** as ordinary facts about it (so each one carries its own provenance: an inferred rule is a hypothesis, not a policy), and optionally **one owned mailbox**. If you were told which identity you are, `boot_bot` is your first call instead of this one: it hands over everything here plus that identity. Nothing about a bot is built into jojobot — a bot is data somebody wrote, like every other entity.
+An **identity** is an entity of kind `bot`: a handle like `bot:gamma`, a **charter** (its prose — what this identity is, its hard lines, where its work lives), **rules** as ordinary facts about it (so each one carries its own provenance: an inferred rule is a hypothesis, not a policy), and optionally **one owned mailbox**. If you were told which identity you are, pass that name to `start_here` — the one door — and it hands over everything here plus that identity. Nothing about a bot is built into jojobot — a bot is data somebody wrote, like every other entity.
 
 ## Sessions
 
@@ -109,7 +109,7 @@ The resume note is **the one sanctioned exception to journal leanness**. Everywh
 
 ### Your box is yours; the others are not
 
-**Read your OWN mailbox, full stop.** `boot_bot` tells you which box you own. Reading somebody else's is not a permission you happen to have — it is the wrong move: reading IS delivery, so a look moves their mail out of `new` and makes it yours to finish, and a message you took but cannot act on is one its real consumer will never see as fresh.
+**Read your OWN mailbox, full stop.** `start_here`, booted as your identity, tells you which box you own. Reading somebody else's is not a permission you happen to have — it is the wrong move: reading IS delivery, so a look moves their mail out of `new` and makes it yours to finish, and a message you took but cannot act on is one its real consumer will never see as fresh.
 
 `list_mailboxes` reports every box on the server: that is a fact about the board and **not an invitation**. A box showing `new: 1` is not addressed to you unless it is yours. If you need something from another box, ask its owner or leave a message in it — `post_message` writes without reading, which is exactly the shape of a request.
 "#;
@@ -318,23 +318,17 @@ pub struct UpdateEntityArgs {
     pub create_new: Option<bool>,
 }
 
-/// Arguments to `start_here`.
+/// Arguments to `start_here` — **the one door**, with or without an identity.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct OrientArgs {
+    /// Optional. The bot to boot as: its bare slug, or its full `bot:`-prefixed
+    /// handle. A handle of any other kind is refused — this door boots bots.
+    /// Omit it for an anonymous orientation: you get the world and the
+    /// snapshot, and no sid.
+    #[serde(default)]
+    pub bot: Option<String>,
     /// Skip the orientation essay and return only what changes between calls —
     /// the snapshot, your identity, your session.
-    #[serde(default)]
-    pub brief: Option<bool>,
-}
-
-/// Arguments to `boot_bot`.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct BootBotArgs {
-    /// The bot to start as: its bare slug, or its full `bot:`-prefixed handle.
-    /// A handle of any other kind is refused — this door boots bots.
-    pub name: String,
-    /// Skip the orientation essay — see `start_here`. Your identity, your box
-    /// and your session come back either way: those are what a boot is for.
     #[serde(default)]
     pub brief: Option<bool>,
 }
@@ -526,7 +520,7 @@ pub struct Jojobot {
     /// In-process and per connection: the transport builds one handler per MCP
     /// session, so this map is born empty on every connect and evaporates on
     /// restart. That is fine, and it is why the truth lives on the card: the
-    /// next `boot_bot` re-attaches to the same session by reading the board.
+    /// next boot re-attaches to the same session by reading the board.
     /// Shared across clones through the `Arc`, because the router clones the
     /// handler per call and a binding held by value would vanish between verbs.
     bound: Arc<std::sync::RwLock<Option<Bound>>>,
@@ -608,73 +602,57 @@ impl Jojobot {
         )]))
     }
 
-    /// The orientation call: the world-model in prose, then a live snapshot of
-    /// what exists. The anonymous ancestor of a later per-identity boot.
+    /// **The one orienting door**, with or without an identity: the world-model
+    /// in prose, a live snapshot of what exists, and — when a bot is named —
+    /// that identity and its session.
+    ///
+    /// There is deliberately no second verb for the identified case. The two
+    /// used to be separate doors over this same function, which is one text and
+    /// one snapshot by construction but two surfaces to keep true, and the
+    /// second one drifted.
     ///
     /// The prose below is ENGINE material: it explains the method, names only
     /// roles ("the operator"), and every example identity is fictional.
     #[tool(
-        description = "New here? Call this first. Explains what jojobot is and how its world \
-                       fits together — entities, facts, provenance, edges, mailboxes — with \
-                       worked examples, and returns a live snapshot of what exists right now \
-                       (entities by kind, and every mailbox by name — with counts for the ones \
-                       you drain and the ones nobody drains), so you start \
-                       oriented instead of guessing. Read-only, no side effects. CALLED THIS \
+        description = "New here? Call this first — it is the ONE door, whether or not you have an \
+                       identity. Explains what jojobot is and how its world fits together — \
+                       entities, facts, provenance, edges, mailboxes — with worked examples, and \
+                       returns a live snapshot of what exists right now (entities by kind, and \
+                       every mailbox by name — with counts for the ones you drain and the ones \
+                       nobody drains), so you start oriented instead of guessing. CALLED THIS \
                        BEFORE? Pass brief: true and you get the snapshot without the essay — the \
                        essay is the only part that does not change between calls, and calling \
-                       again without brief reads it in full."
+                       again without brief reads it in full. NAME A BOT and the same answer also \
+                       carries that identity: its charter (the orienting text — what this \
+                       identity is, its hard lines, where its work lives), its rules as dated \
+                       claims each carrying its own provenance (testimony is settled, inference \
+                       is a hypothesis — read them that way), and the per-state counts of the \
+                       mailbox it owns. THIS DOOR MINTS NOTHING: a name that is no bot comes back \
+                       status: blocked, listing the bots that do exist and offering to boot as \
+                       one of them, and a mailbox a bot claims but nobody has opened is reported \
+                       missing rather than created. BOOTING STARTS OR RESUMES THAT BOT'S SESSION \
+                       — there is no separate start verb. It first sweeps that bot's sessions \
+                       that have gone a day without a beat to `abandoned`. Name no bot at all and \
+                       this is an orientation preview: the world and the snapshot, no identity \
+                       and no session. Pass `bot` — the name you booted as — on every \
+                       journal/amend_journal/wrap_session call too: most clients open a fresh \
+                       connection per tool call, so the identity from your last call is usually \
+                       already gone."
     )]
     async fn start_here(
         &self,
         Parameters(args): Parameters<OrientArgs>,
     ) -> Result<CallToolResult, McpError> {
-        self.orient(None, args.brief.unwrap_or(false)).await
-    }
-
-    /// Orientation with an identity attached: the same world-model and the same
-    /// live snapshot `start_here` hands an anonymous session, plus which bot
-    /// this session is — its charter, its rules, and the state of its own box.
-    #[tool(
-        description = "Start a session AS a named bot. Hands over what start_here does — how \
-                       jojobot's world fits together, and a snapshot of what exists — plus the \
-                       identity itself: the bot's charter (the orienting text: what this identity \
-                       is, its hard lines, where its work lives), its rules as dated claims each \
-                       carrying its own provenance (testimony is settled, inference is a \
-                       hypothesis — read them that way), and the per-state counts of the mailbox \
-                       it owns. Call it first when you have been told which identity you are; \
-                       call start_here when you have not. A name that is no bot comes back \
-                       status: blocked with candidates and boots nothing. A mailbox the bot \
-                       claims but nobody has opened is reported as missing, never created. \
-                       BOOTING ALSO STARTS OR RESUMES THIS BOT'S SESSION — there is no separate \
-                       start verb. It first sweeps that bot's sessions that have gone a day \
-                       without a beat to `abandoned`; then, if a live session remains, this \
-                       ATTACHES to it and returns it with its chronology (`session.resumed: \
-                       true`) — read that before you start, it is work already in flight, yours \
-                       from before a disconnect. Otherwise a fresh session begins lazily: no \
-                       card is written until your first journal entry or first write, so a boot \
-                       that does nothing leaves no trace. IDENTITY DOES NOT PERSIST ACROSS CALLS \
-                       ON MOST CLIENTS: booting binds this connection, but most clients open a \
-                       fresh connection per tool call, so by your next call that binding is \
-                       usually gone. **Pass `bot` on every journal/amend_journal/wrap_session \
-                       call** — the same name you booted with. It resolves your live session, or \
-                       starts one, from the board every time, and it is the only address that \
-                       works everywhere: a session id cannot be used before the first write, \
-                       because that write is what mints it."
-    )]
-    async fn boot_bot(
-        &self,
-        Parameters(args): Parameters<BootBotArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        let bot = bot_id(&args.name)?;
-        self.orient(Some(&bot), args.brief.unwrap_or(false)).await
+        let bot = named_bot(args.bot.as_deref())?;
+        self.orient(bot.as_ref(), args.brief.unwrap_or(false)).await
     }
 
     /// Write a bot's charter — the prose layer of its own page.
     #[tool(
-        description = "Write a bot's charter: the orienting text boot_bot hands a session that \
-                       starts as this bot — what this identity is, its hard lines, where its work \
+        description = "Write a bot's charter: the orienting text start_here hands a session that \
+                       boots as this bot — what this identity is, its hard lines, where its work \
                        lives. Replaces the whole charter rather than adding to it, and returns \
-                       the stored text, which is what a later boot_bot will read back. A bot that \
+                       the stored text, which is what a later boot will read back. A bot that \
                        does not exist comes back status: blocked with the nearest handles — \
                        add_entity first; nothing is created here. Rules are not written here \
                        either: a rule is a fact about the bot, so capture it."
@@ -695,9 +673,10 @@ impl Jojobot {
         }))
     }
 
-    /// The one orientation, anonymous or identified. `start_here` and
-    /// `boot_bot` are this function with and without a bot — deliberately, so
-    /// the two doors can never come to teach two different jojobots.
+    /// The one orientation, anonymous or identified — **the one call site is
+    /// the point.** Naming a bot adds the identity half to an answer that is
+    /// otherwise the same text and the same snapshot; it does not open a second
+    /// way in.
     async fn orient(&self, bot: Option<&EntityId>, brief: bool) -> Result<CallToolResult, McpError> {
         // **The entity index is read ONCE for the whole answer.** Three parts of
         // a boot need it — the counts by kind, which boxes the caller drains,
@@ -784,14 +763,10 @@ impl Jojobot {
             (Some(bot), Ok(index)) => match self.identity(index, bot).await? {
                 Ok(identity) => identity,
                 // A name that is no bot: the guards' own shape, so one
-                // client-side branch handles every "jojobot declined" answer.
+                // client-side branch handles every "jojobot declined" answer —
+                // but with the door's own body, not the generic absence one.
                 Err(candidates) => {
-                    return Ok(blocked_result(
-                        bot,
-                        &candidates,
-                        Blocked::MustExist("boot_bot"),
-                        None,
-                    ));
+                    return Ok(booting_unknown(bot, &candidates, index));
                 }
             },
         };
@@ -1146,7 +1121,7 @@ impl Jojobot {
             Some(bot) => {
                 // **Everything a write names must already exist**, and making
                 // the name the address opened a second door into `begin` past
-                // the screen `boot_bot` runs. A session begun for an identity
+                // the screen the boot door runs. A session begun for an identity
                 // nobody created belongs to nobody — and there is no verb that
                 // removes the card.
                 if let Err(refused) = self.known_bot(bot).await? {
@@ -1818,7 +1793,7 @@ impl Jojobot {
         json_result(&body)
     }
 
-    /// **The screen every verb that ADDRESSES a bot by name owes.** `boot_bot`
+    /// **The screen every verb that ADDRESSES a bot by name owes.** The door
     /// runs it through `identity`; the session verbs address the same identity
     /// and must reach the same answer, or a name one door refuses is a name the
     /// other writes for.
@@ -2730,7 +2705,8 @@ fn session_nothing_to_amend() -> CallToolResult {
                            its first beat — or its last session is closed, and closed is \
                            terminal both ways. Use journal to begin the next one; its first \
                            entry is what brings the record into being. To read a closed \
-                           session's chronology, boot_bot reports the identity's state.",
+                           session's chronology, booting as this identity through start_here \
+                           reports its state.",
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -2753,8 +2729,8 @@ fn session_declined(e: SessionError) -> Result<CallToolResult, McpError> {
             &attempted.clone(),
             format!(
                 "Nothing was written. No session on jojobot's board has the id '{attempted}'. \
-                 Ids are minted by jojobot and handed back by boot_bot — boot as the identity \
-                 you are and use the session it gives you, rather than composing an id."
+                 Ids are minted by jojobot and handed back by start_here when you boot as your \
+                 identity — use the sid it gives you rather than composing one."
             ),
         ),
         SessionError::Closed { attempted, state } => blocked(
@@ -2763,7 +2739,7 @@ fn session_declined(e: SessionError) -> Result<CallToolResult, McpError> {
                 "Nothing was written. Session '{attempted}' is {state} — closed, and closed is \
                  terminal both ways. Its chronology stands as the record of what happened; \
                  nothing appends to it, amends it, or reopens it. If there is more to say, it \
-                 belongs to a new session: boot_bot starts one."
+                 belongs to a new session: boot again (or rotate) and start_here mints one."
             ),
         ),
         SessionError::NoEntries { attempted } => blocked(
@@ -3035,6 +3011,60 @@ fn blocked_result(
         ),
     };
     blocked_body(attempted, candidates, how_to_proceed)
+}
+
+/// **The boot door's own refusal: the roster, and an offer.**
+///
+/// It used to reuse the generic absence gate — "nothing resembles it, call
+/// add_entity first" — and that answer is wrong here in two ways. Its candidate
+/// list is near misses only, so a name that resembles nothing came back with an
+/// empty list, which reads as a broken server rather than as "you are not one
+/// of these"; and its advice sends a caller who has no identity off to make one
+/// through a verb that needs a session it does not have.
+///
+/// So this says what a caller in that position actually needs: here is who
+/// exists, boot as one of them, and create the identity you wanted from inside
+/// that session. **The door itself mints nothing** — creation is an intentional
+/// act, and it happens through the verb that is for it, from a session that can
+/// answer for it.
+fn booting_unknown(
+    attempted: &EntityId,
+    candidates: &[EntityMatch],
+    index: &[Entity],
+) -> CallToolResult {
+    let roster: Vec<&str> = index
+        .iter()
+        .filter(|e| e.id.as_str().starts_with("bot:"))
+        .map(|e| e.id.as_str())
+        .collect();
+    let how_to_proceed = if roster.is_empty() {
+        format!(
+            "Nothing was written and no session was started. '{attempted}' is not a bot jojobot \
+             knows, and there are no bots on this server at all yet. Call start_here with no bot \
+             for the world and the snapshot, then add_entity with kind `bot` to create the first \
+             identity — this door mints nothing."
+        )
+    } else {
+        format!(
+            "Nothing was written and no session was started. '{attempted}' is not a bot jojobot \
+             knows. The identities that exist are: {}. Boot as one of these and create \
+             '{attempted}' from inside that session — this door mints nothing.",
+            roster.join(", "),
+        )
+    };
+    let body = serde_json::json!({
+        "status": "blocked",
+        "attempted": attempted.as_str(),
+        "wrote": false,
+        // **The roster, not only the near misses.** `candidates` answers "did
+        // you mean one of these"; it is empty whenever nothing resembles the
+        // name, and that is exactly the caller who most needs to be told who
+        // does exist.
+        "bots": roster,
+        "candidates": candidates.iter().map(candidate_json).collect::<Vec<_>>(),
+        "how_to_proceed": how_to_proceed,
+    });
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
 /// The blocked envelope itself, once — so every gate's advice arrives in one
@@ -4272,7 +4302,7 @@ mod tests {
 
         // **All three surfaces, not the one that was noticed.** The claim was
         // written down in three places — the tool description, the orientation
-        // `start_here`/`boot_bot` hand over, and the server instructions every
+        // `start_here` hands over, and the server instructions every
         // client loads before it calls anything — and fixing one leaves a
         // session reading either of the others exactly as misinformed as before.
         let instructions = handler().get_info().instructions.unwrap_or_default();
@@ -6645,7 +6675,6 @@ mod tests {
             [
                 "add_entity",
                 "amend_journal",
-                "boot_bot",
                 "capture",
                 "create_mailbox",
                 "journal",
@@ -6666,6 +6695,63 @@ mod tests {
                 "wrap_session",
             ],
             "the tool surface changed — if that was deliberate, say so here"
+        );
+    }
+
+    /// **There is exactly one orientation verb, and this is written so a second
+    /// one cannot satisfy it.**
+    ///
+    /// "One door, never a second" was prose in the roadmap sitting beside a
+    /// claim about lineage, and the only test that watched the surface pinned a
+    /// LIST OF NAMES. So a second door was added, its name was added to the
+    /// list, the suite stayed green, and the diff read as a deliberate act
+    /// rather than as the drift it was. A list cannot express "one of these,
+    /// ever" — adding to it is how you satisfy it.
+    ///
+    /// The property is asserted three ways in the code and once on the surface,
+    /// because a second door can be built four ways: by calling `orient` again,
+    /// by taking the door's arguments again, by reading the essay again, or by
+    /// telling a caller to start somewhere else.
+    #[test]
+    fn there_is_exactly_one_orientation_verb() {
+        // The tests below this line construct doors on purpose; the constraint
+        // is about the shipped surface, so it reads only the code half.
+        let source = include_str!("lib.rs");
+        let (code, _) = source
+            .split_once("#[cfg(test)]\nmod tests")
+            .expect("the test module marks where the shipped code ends");
+
+        for (what, marker, expected) in [
+            ("entry points into orientation", "self.orient(", 1),
+            ("verbs taking the door's arguments", "Parameters<OrientArgs>", 1),
+            // Defined once, read once. A door that reimplemented the answer
+            // rather than calling `orient` would still have to reach for the
+            // essay, and this is where that shows.
+            ("readers of the orientation essay", "ORIENTATION", 2),
+        ] {
+            let found = code.matches(marker).count();
+            assert_eq!(
+                found, expected,
+                "{found} {what} ({marker:?}) — there is one door, and a second is how this fails"
+            );
+        }
+
+        // And on the surface a caller actually reads: exactly one verb claims
+        // to be the one you call first. A door nobody is told to call is not a
+        // door, so a second one has to say this somewhere.
+        let tools = Jojobot::tool_router().list_all();
+        let claiming: Vec<&str> = tools
+            .iter()
+            .filter(|t| {
+                let description = t.description.as_deref().unwrap_or_default().to_lowercase();
+                description.contains("call this first") || description.contains("call it first")
+            })
+            .map(|t| t.name.as_ref())
+            .collect();
+        assert_eq!(
+            claiming,
+            ["start_here"],
+            "one verb tells a caller where to start, and it is the door"
         );
     }
 
@@ -6690,7 +6776,7 @@ mod tests {
             "wrap_session",
             "read_message",
             "set_charter",
-            "boot_bot",
+            "start_here",
         ] {
             let tool = tools
                 .iter()
@@ -6775,7 +6861,7 @@ mod tests {
         send(&jojobot, "inbox", "alpha", "the shipment landed").await;
 
         let out = jojobot
-                .start_here(Parameters(OrientArgs { brief: None }))
+                .start_here(Parameters(OrientArgs { bot: None, brief: None }))
                 .await
                 .expect("start_here ok");
         let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
@@ -6798,7 +6884,7 @@ mod tests {
             "superseded",
             "ask the operator",
             // M4: an identity is a thing a session can be, and the orientation
-            // has to say what one is made of before boot_bot hands one over.
+            // has to say what one is made of before the door hands one over.
             "bot",
             "charter",
         ] {
@@ -7124,7 +7210,7 @@ mod tests {
 
         let full = json_of(
             &jojobot
-                .start_here(Parameters(OrientArgs { brief: None }))
+                .start_here(Parameters(OrientArgs { bot: None, brief: None }))
                 .await
                 .expect("start_here ok"),
         );
@@ -7133,7 +7219,7 @@ mod tests {
 
         let brief = json_of(
             &jojobot
-                .start_here(Parameters(OrientArgs { brief: Some(true) }))
+                .start_here(Parameters(OrientArgs { bot: None, brief: Some(true) }))
                 .await
                 .expect("start_here ok"),
         );
@@ -7185,13 +7271,13 @@ mod tests {
         let answers = [
             json_of(
                 &jojobot
-                    .start_here(Parameters(OrientArgs { brief: None }))
+                    .start_here(Parameters(OrientArgs { bot: None, brief: None }))
                     .await
                     .expect("start_here ok"),
             ),
             json_of(
                 &jojobot
-                    .start_here(Parameters(OrientArgs { brief: Some(true) }))
+                    .start_here(Parameters(OrientArgs { bot: None, brief: Some(true) }))
                     .await
                     .expect("start_here ok"),
             ),
@@ -7231,8 +7317,8 @@ mod tests {
 
         let booted = json_of(
             &jojobot
-                .boot_bot(Parameters(BootBotArgs {
-                    name: "gamma".into(),
+                .start_here(Parameters(OrientArgs {
+                    bot: Some("gamma".into()),
                     brief: Some(true),
                 }))
                 .await
@@ -7250,7 +7336,7 @@ mod tests {
     #[tokio::test]
     async fn start_here_survives_a_world_that_is_down() {
         let out = handler_with_mailboxes_down(Arc::new(InMemoryMemory::new()))
-            .start_here(Parameters(OrientArgs { brief: None }))
+            .start_here(Parameters(OrientArgs { bot: None, brief: None }))
             .await
             .expect("orientation still lands");
         let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
@@ -7258,7 +7344,7 @@ mod tests {
         assert_eq!(body["snapshot"]["mailboxes"]["available"], false);
     }
 
-    // ── boot_bot ────────────────────────────────────────────────────────────
+    // ── booting as an identity ──────────────────────────────────────────────
 
     /// Stand up a bot the way an operator would: an entity of kind `bot`
     /// claiming a box, its charter as prose, its rules as facts.
@@ -7284,9 +7370,9 @@ mod tests {
     async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
         json_of(
             &jojobot
-                .boot_bot(Parameters(BootBotArgs { name: name.into(), brief: None }))
+                .start_here(Parameters(OrientArgs { bot: Some(name.into()), brief: None }))
                 .await
-                .expect("boot_bot call ok"),
+                .expect("the boot call is ok"),
         )
     }
 
@@ -7315,7 +7401,7 @@ mod tests {
     /// builds one handler per MCP session, so a client that does not hold one
     /// across a conversation gets a new handler — and a new, empty binding —
     /// for every single call. Both claude.ai and ChatGPT do exactly this:
-    /// `boot_bot` succeeds, and the journal on the very next call finds nobody
+    /// the boot succeeds, and the journal on the very next call finds nobody
     /// home.
     ///
     /// **This stays in the suite permanently.** Every other test here holds a
@@ -7349,7 +7435,7 @@ mod tests {
 
     /// **THE PRODUCTION SHAPE: identity does not survive to the next call.**
     /// Every session verb was addressed by a connection binding, and no real
-    /// client holds a connection — so `boot_bot` bound an identity to something
+    /// client holds a connection — so the boot bound an identity to something
     /// that evaporated before the next request arrived, and every write after it
     /// came back "not running as any identity".
     ///
@@ -7610,7 +7696,7 @@ mod tests {
     }
 
     /// **BLOCKER: a write must not mint a session for a bot that does not
-    /// exist.** `boot_bot` refuses an unknown name with candidates, and its own
+    /// exist.** The door refuses an unknown name with the roster, and its own
     /// comment says why — a session bound to an identity jojobot just refused
     /// belongs to nobody. Making the bot NAME the address opened a second door
     /// into `begin` that had no such screen: one typo mints a permanent card
@@ -7620,7 +7706,7 @@ mod tests {
     /// under an identity nobody created.
     ///
     /// It is this round's own regression: before it, `begin` was reachable only
-    /// through a binding `boot_bot` had already validated.
+    /// through a binding the door had already validated.
     #[tokio::test]
     async fn a_session_verb_naming_an_unknown_bot_blocks_and_writes_nothing() {
         let client = NoAffinity::new();
@@ -8289,7 +8375,7 @@ mod tests {
         assert_eq!(body["status"], "blocked");
         let how = body["how_to_proceed"].as_str().expect("advice");
         // **The remedy must be one that works on the caller's next call.** It
-        // used to say "call boot_bot" — which binds a connection most clients
+        // used to say "call boot_bot" — a verb that bound a connection most clients
         // do not keep, so the very next call landed back here. `bot` is the
         // address that survives, and this is the message that has to say so.
         assert!(how.contains("`bot`"), "the way out names the parameter: {how}");
@@ -9289,8 +9375,8 @@ mod tests {
                 .await
                 .expect("begin ok");
 
-            let booting = jojobot.boot_bot(Parameters(BootBotArgs {
-                name: "gamma".into(),
+            let booting = jojobot.start_here(Parameters(OrientArgs {
+                bot: Some("gamma".into()),
                 brief: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {
@@ -9360,7 +9446,7 @@ mod tests {
     /// boot over the session half would take an identity offline for a reason
     /// that has nothing to do with who it is.
     #[tokio::test]
-    async fn boot_bot_survives_a_session_world_that_is_down() {
+    async fn booting_survives_a_session_world_that_is_down() {
         let memory = Arc::new(InMemoryMemory::new());
         let healthy = Jojobot::new(
             memory.clone(),
@@ -9440,7 +9526,7 @@ mod tests {
     /// the charter, the rules with their provenance showing, and the state of
     /// the box whose mail is this bot's.
     #[tokio::test]
-    async fn boot_bot_lands_a_session_knowing_which_identity_it_is() {
+    async fn booting_lands_a_session_knowing_which_identity_it_is() {
         let jojobot = handler();
         make_bot(&jojobot, "otto", Some("otto-inbox")).await;
         make_box(&jojobot, "otto-inbox").await;
@@ -9498,7 +9584,7 @@ mod tests {
     /// screen, so a door that minted on the side would be a door that minted
     /// near-duplicates nobody was ever shown.
     #[tokio::test]
-    async fn boot_bot_reports_a_missing_box_and_opens_nothing() {
+    async fn booting_reports_a_missing_box_and_opens_nothing() {
         let jojobot = handler();
         make_bot(&jojobot, "sigma", Some("sigma-inbox")).await;
 
@@ -9528,7 +9614,7 @@ mod tests {
 
     /// …and once someone opens it deliberately, the same boot reports it live.
     #[tokio::test]
-    async fn boot_bot_reports_the_box_once_it_has_been_opened_deliberately() {
+    async fn booting_reports_the_box_once_it_has_been_opened_deliberately() {
         let jojobot = handler();
         make_bot(&jojobot, "sigma", Some("sigma-inbox")).await;
         assert_eq!(boot(&jojobot, "sigma").await["identity"]["owned_mailbox"]["exists"], false);
@@ -9668,22 +9754,88 @@ mod tests {
     /// A name that is no bot comes back in the guards' own shape — nothing was
     /// written, here is what jojobot suspects you meant — rather than a fresh
     /// identity conjured out of a typo.
+    ///
+    /// **And with the roster, not only the near misses.** `candidates` answers
+    /// "did you mean one of these", so it is EMPTY whenever the name resembles
+    /// nothing — and an empty list reads as a broken server to the one caller
+    /// who most needs telling who does exist. The way out is an offer: boot as
+    /// somebody real and create the identity you wanted from in there.
     #[tokio::test]
-    async fn booting_an_unknown_bot_is_blocked_with_candidates() {
+    async fn booting_an_unknown_bot_answers_with_the_roster_and_an_offer() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma", None).await;
+        make_bot(&jojobot, "delta", None).await;
+        ensure(&jojobot, "alpha").await;
 
-        let body = blocked(
+        // A near miss: the candidates are the guards' own answer, and they stay.
+        let near = blocked(
             &jojobot
-                .boot_bot(Parameters(BootBotArgs { name: "gamm".into(), brief: None }))
+                .start_here(Parameters(OrientArgs { bot: Some("gamm".into()), brief: None }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
         );
-        assert_eq!(body["attempted"], "bot:gamm");
-        assert_eq!(body["candidates"][0]["handle"], "bot:gamma");
+        assert_eq!(near["attempted"], "bot:gamm");
+        assert_eq!(near["candidates"][0]["handle"], "bot:gamma");
+
+        // A name resembling nothing: the candidate list is empty, and the
+        // answer still has to be useful.
+        let stranger = blocked(
+            &jojobot
+                .start_here(Parameters(OrientArgs { bot: Some("nobody".into()), brief: None }))
+                .await
+                .expect("an unknown bot is an answer, not a protocol failure"),
+        );
         assert!(
-            body["how_to_proceed"].as_str().is_some_and(|a| a.contains("add_entity")),
-            "the way out names the verb that opens it: {body}"
+            stranger["candidates"].as_array().expect("a list").is_empty(),
+            "nothing resembles this name, which is exactly the case: {stranger}"
+        );
+
+        for body in [&near, &stranger] {
+            let roster: Vec<&str> = body["bots"]
+                .as_array()
+                .expect("the roster is a list")
+                .iter()
+                .map(|b| b.as_str().expect("a handle"))
+                .collect();
+            assert_eq!(roster, ["bot:gamma", "bot:delta"], "who exists: {body}");
+            let how = body["how_to_proceed"].as_str().expect("advice");
+            assert!(how.contains("bot:gamma"), "the roster is in the words too: {how}");
+            assert!(
+                how.contains("Boot as one of these") && how.contains("from inside that session"),
+                "the offer is the way out: {how}"
+            );
+            assert!(
+                how.contains("mints nothing"),
+                "…and the door says what it will not do: {how}"
+            );
+        }
+
+        // **Nothing was written.** Not the identity, not a session, not a box.
+        let listed = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs { kind: Some("bot".into()) }))
+                .await
+                .expect("list ok"),
+        );
+        assert_eq!(listed["count"], 2, "a refused boot mints no identity: {listed}");
+    }
+
+    /// The empty board says something different, because "boot as one of these"
+    /// is no offer when there is nobody to boot as.
+    #[tokio::test]
+    async fn booting_into_an_empty_roster_says_so_rather_than_offering_nobody() {
+        let jojobot = handler();
+        let body = blocked(
+            &jojobot
+                .start_here(Parameters(OrientArgs { bot: Some("gamma".into()), brief: None }))
+                .await
+                .expect("an unknown bot is an answer, not a protocol failure"),
+        );
+        assert!(body["bots"].as_array().expect("a list").is_empty());
+        let how = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("no bots on this server") && how.contains("add_entity"),
+            "with nobody to boot as, the way out is the verb that creates one: {how}"
         );
     }
 
@@ -9691,7 +9843,7 @@ mod tests {
     /// kind is the caller's mistake — booting a person as an identity would hand
     /// back somebody's page as a charter.
     #[tokio::test]
-    async fn boot_bot_reads_a_bare_name_as_a_bot_and_refuses_another_kind() {
+    async fn the_door_reads_a_bare_name_as_a_bot_and_refuses_another_kind() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma", None).await;
 
@@ -9702,16 +9854,16 @@ mod tests {
         );
 
         let err = jojobot
-            .boot_bot(Parameters(BootBotArgs { name: "person:milhouse".into(), brief: None }))
+            .start_here(Parameters(OrientArgs { bot: Some("person:milhouse".into()), brief: None }))
             .await
             .expect_err("another kind must be refused");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
         assert!(err.message.contains("bot"), "the error says what this door takes: {}", err.message);
     }
 
-    /// **Both doors make the same promise, so both keep it.** `orient` says
+    /// **Both halves of the door make the same promise, so both keep it.** `orient` says
     /// orientation lands even when a world is down — and `start_here` did,
-    /// while `boot_bot` hard-errored the moment a bot owned a box, which made
+    /// while the identified half hard-errored the moment a bot owned a box, which made
     /// every box-owning identity unbootable over an outage in the *other*
     /// world. The charter and the rules are in Memory and were right there.
     ///
@@ -9719,7 +9871,7 @@ mod tests {
     /// does: the boot lands, the identity is whole, and the one thing jojobot
     /// cannot answer says so instead of guessing.
     #[tokio::test]
-    async fn boot_bot_survives_a_world_that_is_down_exactly_as_start_here_does() {
+    async fn a_boot_survives_a_world_that_is_down_exactly_as_an_anonymous_one_does() {
         // Stood up while both worlds are up — a claim that cannot be screened
         // is refused, so this bot could not have been created below.
         let memory = Arc::new(InMemoryMemory::new());
@@ -9791,15 +9943,15 @@ mod tests {
         assert!(listed(&after), "…and agree it is there: {after}");
     }
 
-    /// **One orientation, two doors.** `boot_bot` is `start_here` plus an
+    /// **One orientation, one door.** Naming a bot is `start_here` plus an
     /// identity — not a second world-model to drift out of step with the first.
     #[tokio::test]
-    async fn boot_bot_and_start_here_hand_over_the_same_world() {
+    async fn a_named_boot_and_an_anonymous_one_hand_over_the_same_world() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma", None).await;
 
         let anonymous = json_of(&jojobot
-                .start_here(Parameters(OrientArgs { brief: None }))
+                .start_here(Parameters(OrientArgs { bot: None, brief: None }))
                 .await
                 .expect("start_here ok"));
         let identified = boot(&jojobot, "gamma").await;
@@ -9855,7 +10007,7 @@ mod tests {
 
         let anonymous = json_of(
             &jojobot
-                .start_here(Parameters(OrientArgs { brief: None }))
+                .start_here(Parameters(OrientArgs { bot: None, brief: None }))
                 .await
                 .expect("start_here ok"),
         );
@@ -9867,10 +10019,10 @@ mod tests {
     }
 
     /// `set_charter` writes the orienting prose and reads it back — and it is
-    /// the same text `boot_bot` hands over, so what an operator writes is what a
+    /// the same text a boot hands over, so what an operator writes is what a
     /// session is told.
     #[tokio::test]
-    async fn set_charter_writes_the_prose_that_boot_bot_reads_back() {
+    async fn set_charter_writes_the_prose_that_a_boot_reads_back() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma", None).await;
 
