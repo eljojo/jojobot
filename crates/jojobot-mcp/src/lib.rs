@@ -85,7 +85,7 @@ An **identity** is an entity of kind `bot`: a handle like `bot:gamma`, a **chart
 
 ## Sessions
 
-A bot is a **role**; a **session is one mortal run of it** — the unit of work, not the unit of connection. It outlives a disconnect and a device hop, because what makes two connections the same session is the identity that booted them.
+A bot is a **role**; a **session is one mortal run of it** — the unit of work, not the unit of connection. It outlives a disconnect and a device hop, because what makes two connections the same session is the `sid` you carry — hold it and keep passing it, on writes and reads alike.
 
 **Booting an identity starts or resumes its session; there is no separate verb.** `start_here` with your bot name sweeps that bot's stale sessions to `abandoned` (a day without a beat). If a resumable session remains you get the choice — what each one was working on, and whether it is still running or stopped without being wrapped up — and NO sid until you answer: choose resume and you inherit its chronology, choose new and a fresh sid is minted beside it, closing nothing. With nothing to resume the sid comes back straight away. Either way the card itself is written **lazily**, on your first real write, so a boot that does nothing leaves nothing behind.
 
@@ -95,7 +95,7 @@ A session has two halves that answer different questions. Its **focus** is what 
 - *Fix the beat you just wrote* → `amend_journal`. Only the most recent one; everything older is what it was.
 - *End* → `wrap_session` with the story, written for somebody with none of your context. It becomes your final entry AND one dated entry in the operator's Journal, and the session goes `wrapped` — terminal both ways.
 
-jojobot also writes **its own beats** into your chronology: one per verb class you use, its count kept current as you go. They are marked apart (`beat` names the class) because what you said you were doing and what jojobot noticed you doing are different kinds of evidence.
+jojobot also writes **its own beats** into your chronology: one per class of WRITE you make, its count kept current as you go. Reads are not journalled. They are marked apart (`beat` names the class) because what you said you were doing and what jojobot noticed you doing are different kinds of evidence.
 
 ### The two endings, and they are not interchangeable
 
@@ -705,10 +705,8 @@ impl Jojobot {
                        that have gone a day without a beat to `abandoned` — which is the one \
                        thing a boot writes. Name no bot at all and this is an orientation \
                        preview: read-only, the world and the snapshot, no identity and no \
-                       session. Pass `bot` — the name you booted as — on every \
-                       journal/amend_journal/wrap_session call too: most clients open a fresh \
-                       connection per tool call, so the identity from your last call is usually \
-                       already gone."
+                       session. Pass the `sid` you were handed on EVERY call, reads included — it \
+                       is how jojobot knows which bot is asking."
     )]
     async fn start_here(
         &self,
@@ -1528,15 +1526,15 @@ impl Jojobot {
     /// did land; reporting it as failed because its footnote could not be
     /// written would make the record wrong in the more damaging direction.
     ///
-    /// **On a client with no session affinity, that first case is every call.**
-    /// The verbs jojobot beats about — captures, entity writes, mailbox writes —
-    /// carry no `bot` parameter, so the only identity available to them is the
-    /// connection's, and most clients open a fresh connection per tool call.
-    /// The consequence, stated rather than papered over: for those clients the
-    /// automatic tally does not appear, and a session's chronology is what the
-    /// session itself wrote through `journal(bot:)`. Closing that would mean an
-    /// identity parameter on every verb on the surface, which is a decision
-    /// about the whole tool surface rather than about beats.
+    /// **That first case used to be every call on a client with no session
+    /// affinity, and is not any more.** The verbs jojobot beats about — captures,
+    /// entity writes, mailbox writes — carried no identity of their own, so the
+    /// only one available to them was the connection's, and most clients open a
+    /// fresh connection per tool call: for those clients the tally simply never
+    /// appeared. The `sid` rides every verb now, so a caller that keeps passing
+    /// it is beaten about wherever it writes, whatever its client does with
+    /// connections. What is left in the first case is a caller carrying no
+    /// `sid`, which is a caller that has not asked to be recorded anywhere.
     async fn beat(&self, class: &'static str, example: &str, sid: Option<&str>) {
         // **No caller, no beat.** jojobot does not guess which identity made a
         // call, and an anonymous one is legitimate — a reader, a poster who
@@ -2062,12 +2060,12 @@ impl Jojobot {
                        their existence shows — their ids are listed, and repairing one takes a \
                        person. If a message somebody expected is missing, look here before \
                        concluding it was never sent, and say what you find. COUNTS ARE FOR YOUR \
-                       OWN BOXES: pass `bot` (the name you booted as) and the boxes that bot owns \
-                       come back with their per-state counts; every other box comes back as a \
-                       NAME ONLY, marked `yours: false`. You can still see that a box EXISTS — \
-                       which is what you need to post into it — but not what is waiting in \
-                       somebody else's, because that is their queue to work and not yours to \
-                       weigh. Name no bot and you own nothing, which is exactly right for a \
+                       OWN BOXES: the `sid` you pass says which bot is asking, and the boxes that \
+                       bot owns come back with their per-state counts; every other box comes back \
+                       as a NAME ONLY, marked `yours: false`. You can still see that a box \
+                       EXISTS — which is what you need to post into it — but not what is waiting \
+                       in somebody else's, because that is their queue to work and not yours to \
+                       weigh. Call without a `sid` and you own nothing — exactly right for a \
                        caller that only posts."
     )]
     async fn list_mailboxes(
@@ -2297,16 +2295,15 @@ impl Jojobot {
                        the chronology is history, the focus is the present, and they answer \
                        different questions. The first journal entry (or the first write of any \
                        kind) is what brings your session card into being, so a boot that does \
-                       nothing leaves nothing behind. PASS `bot` — the name you booted as — ON \
-                       EVERY CALL: most clients open a fresh connection per tool call, so the \
-                       identity from your last call is usually already gone, and naming the bot \
-                       resolves its live session (or starts one) from the board every time. \
-                       `session` is only for writing to a session other than the one `bot` \
-                       addresses. The two differ on a CLOSED session, deliberately: a `session` \
-                       you name that is wrapped or abandoned comes back status: blocked, because \
-                       you meant that record and closed is terminal both ways — while a `bot` \
-                       whose last session is closed simply starts its next one, exactly as \
-                       booting it would, because a bot is a role and a session is one run of it."
+                       nothing leaves nothing behind. PASS `sid` — the session id the boot door \
+                       gave you — ON EVERY CALL; it is the only address, and it is what tells \
+                       jojobot which bot is writing. A `sid` whose session is closed comes back \
+                       status: blocked: a closed session takes no more entries, whichever end it \
+                       reached. The two ends part company on what comes NEXT — a run that stopped \
+                       without being wrapped up is offered back at your next boot, and resuming \
+                       it continues this same record, while a wrapped one is the last word, its \
+                       story already a dated entry in the operator's Journal, so carrying on \
+                       there means a fresh session."
     )]
     async fn journal(
         &self,
@@ -2362,10 +2359,10 @@ impl Jojobot {
                        comes back status: blocked rather than quietly writing your text as a \
                        first entry — an amend that silently became an append leaves a chronology \
                        saying something you did not mean. A closed session comes back blocked \
-                       too. Pass `bot` — the name you booted as — on every call: identity does \
-                       not survive to your next call on most clients. This verb never STARTS a \
-                       session, named bot or not: there is nothing to amend in one that does not \
-                       exist yet."
+                       too. Pass your `sid` on every call — it is the address, and it survives \
+                       the fresh connection most clients open per tool call. This verb never \
+                       STARTS a session: there is nothing to amend in one that does not exist \
+                       yet."
     )]
     async fn amend_journal(
         &self,
@@ -2412,11 +2409,12 @@ impl Jojobot {
                        between the attempts. Write the story for somebody with \
                        none of your context: what this run was for, what actually happened, what \
                        is left. A session that stops without wrapping is not lost — the next \
-                       boot of the same identity sweeps it to `abandoned` after a day, and its \
-                       chronology stays readable — but its story was never told, and that is the \
-                       difference between the two endings. Pass `bot` — the name you booted as — \
-                       on every call: identity does not survive to your next call on most \
-                       clients."
+                       boot of the same identity sweeps it to `abandoned` after a day, its \
+                       chronology stays readable, and the run itself can be picked up again — but \
+                       its story was never told, and that is the difference between the two \
+                       endings. Pass your `sid` on every call. When the work continues but this \
+                       run has gotten long, wrapping is also how you ROTATE: wrap the story, then \
+                       boot again for a fresh sid."
     )]
     async fn wrap_session(
         &self,
@@ -7617,6 +7615,94 @@ mod tests {
         assert!(
             description.contains("list_mailboxes"),
             "the cheaper verb must be named where the expensive one is read: {description}"
+        );
+    }
+
+    /// **A description may not name a parameter its verb does not take.**
+    ///
+    /// `bot` and `session` are both gone from these verbs' schemas — one address
+    /// rides every call now, and it is the `sid`. The descriptions are the half
+    /// of the surface a model actually reads, so one still saying "pass `bot`,
+    /// the name you booted as" produces exactly the call the schema refuses,
+    /// from a caller who has no reason to doubt the sentence.
+    ///
+    /// **Pinned per verb rather than swept over the whole surface**, because two
+    /// verbs keep a legitimate `bot` and neither is the caller's identity:
+    /// `start_here` takes the name to boot AS, and `set_charter`'s names the bot
+    /// its write is ABOUT, exactly as a capture names a subject.
+    #[test]
+    fn the_session_verbs_are_described_by_the_one_address_they_take() {
+        let tools = Jojobot::tool_router().list_all();
+        for name in ["journal", "amend_journal", "wrap_session", "list_mailboxes"] {
+            let tool = tools
+                .iter()
+                .find(|t| t.name == name)
+                .unwrap_or_else(|| panic!("{name} is a tool"));
+            let description = tool.description.as_deref().unwrap_or_default();
+            assert!(
+                description.contains("`sid`"),
+                "{name} must name the address it takes: {description}"
+            );
+            for gone in ["`bot`", "`session`", "you booted as"] {
+                assert!(
+                    !description.contains(gone),
+                    "{name} still describes {gone}, which is no parameter of it: {description}"
+                );
+            }
+        }
+    }
+
+    /// **The door says what to carry away from it, and how far it reaches.**
+    ///
+    /// A boot that hands back an address and then tells the caller to identify
+    /// itself some other way has spent the answer it just gave. The reach is the
+    /// part a caller cannot infer: `sid` rides the reads too — they are
+    /// attributed, never journalled — and a caller who passes it only on the
+    /// session verbs is anonymous for every other call it makes.
+    #[test]
+    fn the_boot_door_says_the_sid_rides_every_call_including_the_reads() {
+        let tools = Jojobot::tool_router().list_all();
+        let door = tools
+            .iter()
+            .find(|t| t.name == "start_here")
+            .expect("start_here is a tool");
+        let description = door.description.as_deref().unwrap_or_default();
+        assert!(
+            !description.contains("you booted as"),
+            "the door must not send a caller back to naming its bot: {description}"
+        );
+        assert!(
+            description.contains("reads included"),
+            "the door must say the sid rides the reads too: {description}"
+        );
+    }
+
+    /// **The essay teaches the address, and what jojobot writes down about you.**
+    ///
+    /// Two claims that moved with the model. What makes two connections one
+    /// session is the `sid` the caller carries, not an identity the connection
+    /// remembers — nothing remembers anything between calls. And jojobot's own
+    /// beats follow the WRITES: every call site of [`Jojobot::beat`] is a write
+    /// verb and [`BEAT_CLASSES`] holds no read, so an essay promising "one per
+    /// verb class you use" tells a session to expect a tally of its reads that
+    /// will never appear.
+    #[test]
+    fn the_orientation_teaches_the_sid_as_the_address_and_leaves_reads_untallied() {
+        assert!(
+            ORIENTATION.contains("`sid` you carry"),
+            "the essay must name what makes two connections one session"
+        );
+        assert!(
+            !ORIENTATION.contains("the identity that booted them"),
+            "the essay still says a connection carries the identity, which nothing does"
+        );
+        assert!(
+            ORIENTATION.contains("Reads are not journalled"),
+            "the essay must say which calls jojobot beats about"
+        );
+        assert!(
+            !ORIENTATION.contains("one per verb class you use"),
+            "the essay still promises a beat per verb class, reads included"
         );
     }
 
