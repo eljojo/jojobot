@@ -36,7 +36,10 @@ never runs inference of its own — the assistant is the only mind.
 > apart), and `active` → `wrapped` | `abandoned`, both terminal. A session
 > begins lazily — no card until the first write — resumes across a disconnect,
 > is swept to `abandoned` after a day of silence, and tells its story into the
-> operator's Journal when it wraps. All behind OAuth2 resource-server auth,
+> operator's Journal when it wraps. **Identity travels as a parameter**: the
+> session verbs take the bot's name and resolve its session from the board on
+> every call, because real MCP clients open a fresh connection per tool call and
+> a connection-held identity does not survive to the next one. All behind OAuth2 resource-server auth,
 > every write verified by read-back.
 
 ## Vision & roadmap

@@ -110,7 +110,11 @@ Shipped and live:
 > rather than echoing a body its own author wrote, `read_mailbox`'s `new_only`
 > stops re-shipping a deliberately held-open message on every poll, and
 > `start_here`/`boot_bot` take `brief` so a returning session pays for the
-> orientation essay once and afterwards compares `orientation_version`.
+> orientation essay once and afterwards compares `orientation_version`, and
+> **mailbox counts are scoped to the caller** — the boxes a bot drains come back
+> with their per-state counts, every other box by name only, so existence stays
+> visible (a writer needs it) while somebody else's queue stops posing "is that
+> one mine?".
 > **Eliding is never silent**: whenever less comes back, a marker says what was
 > left out and how to get it, because a reader who has to infer withheld-vs-empty
 > from a missing key will eventually infer wrong. What the full echo *proved* is
@@ -152,6 +156,21 @@ Shipped and live:
   jojobot writes **its own beats** too — one per verb class per session, count
   kept current, marked apart from what the session said about itself.
   Session records deliberately stay **out of the search index**.
+
+> **Identity is a PARAMETER, because no real client holds a connection.** The
+> binding was per-MCP-session and the design assumed a client keeps one across a
+> conversation; none do — claude.ai and ChatGPT both open what jojobot sees as a
+> fresh, unbound connection per tool call, so `boot_bot` bound an identity that
+> was gone by the next request. Addressing by `session` was no escape either: a
+> session materializes on the first write, and the first write could never land,
+> so no id was ever minted to name. **The bot's name is the only stable handle a
+> stateless caller has** — `journal`/`amend_journal`/`wrap_session` take `bot`
+> and resolve attach-or-begin against the board every call; the connection
+> binding is now an optimization for transports that do hold one, required by
+> nothing. A no-affinity client is permanently in the test suite, because every
+> other test holds a handler across calls and that is the shape no client has.
+> Consequence, stated rather than hidden: the automatic beats cannot attribute
+> for such clients, since the verbs they cover carry no identity parameter.
 
 > **A literal journal, not a log.** High-level beats — what you set out to do,
 > what you found, what you decided, what went wrong — never a firehose of tool
