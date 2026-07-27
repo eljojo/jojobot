@@ -1872,11 +1872,10 @@ impl Jojobot {
                        yours to finish — use read_message when you want only one. ONLY CHECKING \
                        WHETHER ANYTHING IS WAITING? Use list_mailboxes — it reads counts without \
                        taking delivery, so a poll that finds an empty box costs nothing and owes \
-                       nothing. POLLING FOR NEWS WHILE HOLDING SOMETHING OPEN? Pass new_only: \
-                       true — leftovers still come back, still counted and still owed, but their \
-                       bodies are left out (body_elided: true, with body_bytes and the opening \
-                       line), so a message you are deliberately holding open stops costing its \
-                       full size on every poll. It changes what is SHIPPED, never what is owed."
+                       nothing. new_only: true ships bodies only for messages nobody has taken \
+                       yet — leftovers still come back, still counted, still flagged and still \
+                       owed, but with their bodies left out (body_elided: true, plus body_bytes \
+                       and the opening line). It changes what is SHIPPED, never what is owed."
     )]
     async fn read_mailbox(
         &self,
@@ -2160,9 +2159,14 @@ impl Jojobot {
     #[tool(
         description = "See the mail YOU have sent and where it got to — read-only, and it moves \
                        NOTHING: no state changes, nobody's delivery is taken, and the messages \
-                       stay exactly as owed as they were. This is the answer to 'did my report \
-                       land' and 'has anyone read it', which every other verb could only answer \
-                       by taking delivery of somebody else's box. Newest first, each with its \
+                       stay exactly as owed as they were. It answers whether something you sent \
+                       arrived and whether anyone has read it — questions every other verb could \
+                       only answer by taking delivery of the box you posted into. A `mailbox` \
+                       that names no box comes back status: blocked with candidates, never an \
+                       empty list, because an empty list would read as 'it never arrived'. Cards \
+                       jojobot cannot read as messages are reported separately under \
+                       `unreadable`: it cannot tell who sent them, so one of yours could be \
+                       there. Newest first, each with its \
                        state (`new` = nobody has picked it up · `read` = delivered, not yet \
                        finished with · `processed` = acted on) plus notes when the consumer \
                        recorded an outcome. Bodies are left out unless you ask for them — you \
@@ -2180,6 +2184,26 @@ impl Jojobot {
         let only = args.mailbox.as_deref().map(str::trim).filter(|m| !m.is_empty());
         let bodies = args.include_bodies.unwrap_or(false);
 
+        // **A named box must exist, exactly as it must for every other verb
+        // that names one.** Without this a typo answered `count: 0` — and this
+        // verb's whole job is answering "did my report land", so a mistyped box
+        // says "no" and the sender posts it again. The near-miss screen is the
+        // read-side twin of "a typo must never mint a box".
+        if let Some(name) = only {
+            let name = MailboxName(name.to_string());
+            let known = self.mailboxes.list_mailboxes().await.map_err(mailbox_error)?;
+            let names: Vec<MailboxName> = known.iter().map(|b| b.name.clone()).collect();
+            if let mailbox::guard::Decision::Block(candidates) =
+                mailbox::guard::decide_existing(&name, &names)
+            {
+                return Ok(mailbox_blocked(
+                    &name,
+                    &candidates,
+                    BlockedBox::MustExist("list_sent"),
+                ));
+            }
+        }
+
         // Built on the scan, which is the one read that moves nothing: it is
         // how the search projection is rebuilt, and its "nothing moves" is
         // pinned by the shared contract on every tier.
@@ -2192,12 +2216,45 @@ impl Jojobot {
             .filter(|m| m.sender.trim() == sender)
             .filter(|m| only.is_none_or(|name| m.mailbox.as_str() == name))
             .collect();
-        sent.sort_by(|a, b| b.sent_at.cmp(&a.sent_at).then_with(|| b.id.cmp(&a.id)));
+        // **The tie breaks on the id as a NUMBER.** Ids are a decimal counter,
+        // so ordering them as text puts `9` after `10` — the same trap the
+        // board read and the fake both avoid deliberately.
+        let minted = |id: &MessageId| id.as_str().parse::<u64>().unwrap_or(u64::MAX);
+        sent.sort_by(|a, b| {
+            b.sent_at.cmp(&a.sent_at).then_with(|| minted(&b.id).cmp(&minted(&a.id)))
+        });
+
+        // **A card jojobot cannot read is not a message that was never sent.**
+        // The scan leaves quarantined cards out — it cannot parse them, so it
+        // has nothing to return — and this verb answers "did my report land".
+        // Staying silent about them means the honest answer ("something is
+        // wrong with a card here") arrives as a confident "no". Their senders
+        // are unreadable too, so they cannot be filtered to this caller; the
+        // count is reported per box and the ids are named.
+        let unreadable: Vec<serde_json::Value> = self
+            .mailboxes
+            .list_mailboxes()
+            .await
+            .map_err(mailbox_error)?
+            .iter()
+            .filter(|b| only.is_none_or(|name| b.name.as_str() == name))
+            .filter(|b| !b.quarantined.is_empty())
+            .map(|b| {
+                serde_json::json!({
+                    "mailbox": b.name.as_str(),
+                    "card_ids": b.quarantined.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
 
         json_result(&serde_json::json!({
             "sender": sender,
             "mailbox": only,
             "count": sent.len(),
+            "unreadable": unreadable,
+            "unreadable_note": "Cards jojobot cannot read as messages are not in the list above — \
+                                it cannot tell who sent them. If one of yours is missing, it may \
+                                be here: a person has to repair the card on the board.",
             "messages": sent
                 .iter()
                 .map(|m| if bodies {
@@ -2249,11 +2306,11 @@ impl Jojobot {
                        the next read_mailbox hands it back as a leftover — recoverable. A \
                        FAILURE IS DATA, NOT A STATE: record it in notes (and reply with a new \
                        message if someone needs to know) — there is no failed status, because a \
-                       message whose handling failed has still been handled. For a pure \
-                       acknowledgement — an ack, a heads-up, a round-closed note, anything whose \
-                       whole content is now known to you — READING IT IS THE ACTING, so process \
-                       it with a note and move on; the order matters for work you still owe, not \
-                       for work that was never owed. Write the outcome you actually have: a note \
+                       message whose handling failed has still been handled. When a message asks \
+                       nothing of you — its whole content is known to you once you have read it \
+                       — READING IT IS THE ACTING, so process it with a note and move on; the \
+                       order matters for work you still owe, not for work that was never owed. \
+                       Write the outcome you actually have: a note \
                        longer than the card holds is CUT to fit and says so (a trailing ellipsis, \
                        and notes_truncated: true), never refused — the verb that retires a \
                        message will not fail over the length of its own record. The answer \
@@ -2273,8 +2330,7 @@ impl Jojobot {
         Parameters(args): Parameters<MarkProcessedArgs>,
     ) -> Result<CallToolResult, McpError> {
         let id = MessageId(args.message_id.trim().to_string());
-        // What the caller asked to record, blank-is-absent — the store applies
-        // the same rule, so anything else coming back means it made a cut.
+        // What the caller asked to record, blank-is-absent.
         let asked = args.notes.as_deref().map(str::trim).filter(|n| !n.is_empty());
         match self.mailboxes.mark_processed(&id, args.notes.as_deref()).await {
             Ok(processed) => {
@@ -2289,9 +2345,16 @@ impl Jojobot {
                     // record can legitimately end in one, and a reader that has
                     // to guess whether a store cut its text is a reader that
                     // will eventually guess wrong.
+                    //
+                    // **Only a record this call OFFERED can have been cut.**
+                    // Both stores carry a pre-existing note forward when the
+                    // caller supplies none, and nothing gates re-processing, so
+                    // comparing unconditionally made a second call report a cut
+                    // of a record it never sent — the same wrong inference,
+                    // pointing the other way.
                     obj.insert(
                         "notes_truncated".into(),
-                        (processed.notes.as_deref() != asked).into(),
+                        asked.is_some_and(|asked| processed.notes.as_deref() != Some(asked)).into(),
                     );
                 }
                 json_result(&body)
@@ -5571,17 +5634,20 @@ mod tests {
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     }
 
-    /// An id nothing answers to is **blocked**, carrying the id that missed —
-    /// never a silent success, which would look exactly like a handled message,
     /// **A held-open message stops costing its full size on every poll — and is
-    /// never hidden.** The crash contract keeps a round's report unprocessed
-    /// until the round closes, which is correct; but every poll of that box then
-    /// re-delivered the whole multi-KB body flagged `seen_before`. Over a
-    /// twenty-minute pickup loop that is the same report downloaded all night.
+    /// never hidden.** The crash contract keeps a message unprocessed until the
+    /// work it asks for is done, which is correct; but every poll of that box
+    /// then re-delivered the whole multi-KB body flagged `seen_before`. Over a
+    /// long pickup loop that is the same message downloaded all night.
     ///
     /// `new_only` changes what is SHIPPED, never what is owed: the leftover is
     /// still in the delivery, still counted, still flagged, still to be marked
     /// processed. Only its body is left out, and it says so.
+    ///
+    /// What holds the invariant here is the `.find(...).expect(...)` below, not
+    /// the count: `count` is `delivery.messages.len()`, so an implementation
+    /// that dropped leftovers from the RENDERED list alone would still report
+    /// two. The lookup is what fails.
     #[tokio::test]
     async fn new_only_elides_a_leftover_s_body_and_never_its_existence() {
         let jojobot = mailbox_handler();
@@ -5898,6 +5964,115 @@ mod tests {
         );
     }
 
+    /// **A mistyped box is a near miss, not an empty outbox.** This verb's
+    /// whole job is answering "did my report land", so answering `count: 0` for
+    /// a typo says "no, it did not" — and the sender posts it again, leaving
+    /// duplicate mail with the original still unprocessed. Every other verb
+    /// that names a box screens it; this was the one that did not.
+    #[tokio::test]
+    async fn a_mistyped_box_is_blocked_with_candidates_rather_than_answering_empty() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "handoffs").await;
+        send(&jojobot, "handoffs", "dev (implementer)", "the kiln slice is done").await;
+
+        let body = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    sender: "dev (implementer)".into(),
+                    mailbox: Some("handofs".into()),
+                    include_bodies: None,
+                }))
+                .await
+                .expect("a near miss is an answer, not an error"),
+        );
+        assert_eq!(body["status"], "blocked", "{body}");
+        assert_ne!(body["count"], 0, "…and never a confident zero: {body}");
+        let names: Vec<&str> = body["candidates"]
+            .as_array()
+            .expect("candidates")
+            .iter()
+            .map(|c| c["name"].as_str().expect("a name"))
+            .collect();
+        assert!(names.contains(&"handoffs"), "the box they meant is named: {body}");
+    }
+
+    /// **A card jojobot cannot read is not a message that was never sent.** The
+    /// scan cannot parse a quarantined card, so it leaves it out — and this
+    /// verb would then answer "no, your report never landed" about a card
+    /// sitting on the board with the report on it.
+    #[tokio::test]
+    async fn list_sent_surfaces_cards_it_cannot_read_rather_than_answering_no() {
+        let boxes = Arc::new(InMemoryMailboxes::new());
+        let jojobot = with_mailboxes(boxes.clone());
+        make_box(&jojobot, "pm").await;
+        boxes.quarantine(
+            &MailboxName("pm".into()),
+            &MessageId("4212".into()),
+            "its description no longer carries a readable machine block",
+        );
+
+        let body = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    sender: "dev (implementer)".into(),
+                    mailbox: None,
+                    include_bodies: None,
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        assert_eq!(body["count"], 0, "nothing readable is theirs");
+        assert_eq!(
+            body["unreadable"][0]["mailbox"], "pm",
+            "…but the unreadable card is not silence: {body}"
+        );
+        assert_eq!(body["unreadable"][0]["card_ids"][0], "4212");
+        assert!(
+            body["unreadable_note"].as_str().is_some_and(|n| n.contains("repair")),
+            "…and it says what fixes it: {body}"
+        );
+    }
+
+    /// Ids are minted as decimal counters, so ordering them as text puts `9`
+    /// after `10`. Both other sort sites in this subsystem compare them as
+    /// numbers on purpose; this one did not.
+    #[tokio::test]
+    async fn list_sent_breaks_a_tie_on_the_id_as_a_number() {
+        let boxes = Arc::new(InMemoryMailboxes::new());
+        let jojobot = with_mailboxes(boxes.clone());
+        make_box(&jojobot, "pm").await;
+        // **Seeded through the store, with ONE instant across all ten.** The
+        // handler stamps `now()` per call, so posting through it never produces
+        // the tie this sorts on and the tie-break would go unexercised.
+        let at = jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant");
+        for n in 1..=10 {
+            boxes
+                .post_message(NewMessage {
+                    mailbox: MailboxName("pm".into()),
+                    body: format!("report {n}"),
+                    subject: None,
+                    sender: "dev (implementer)".into(),
+                    sent_at: at,
+                    in_reply_to: None,
+                })
+                .await
+                .expect("post ok");
+        }
+
+        let sent = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    sender: "dev (implementer)".into(),
+                    mailbox: None,
+                    include_bodies: None,
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        let first = sent["messages"][0]["id"].as_str().expect("an id");
+        assert_eq!(first, "10", "the newest is id 10, not id 9: {sent}");
+    }
+
     /// Asking for the bodies gets them — the elision is a default, not a rule.
     #[tokio::test]
     async fn a_sender_can_ask_for_the_bodies_of_their_own_mail() {
@@ -5973,6 +6148,25 @@ mod tests {
         );
         assert_eq!(dangling["status"], "blocked", "{dangling}");
         assert_eq!(dangling["wrote"], false);
+
+        // **A blank link is no link.** A client that sends `in_reply_to: ""`
+        // meant to send nothing; refusing the whole post over an empty string
+        // would be the second-worst way to answer, and the message reads back
+        // as answering nothing — which is what it says.
+        let unlinked = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    mailbox: "pm".into(),
+                    sender: "dev (implementer)".into(),
+                    body: "answering nothing in particular".into(),
+                    subject: None,
+                    in_reply_to: Some("   ".into()),
+                }))
+                .await
+                .expect("a blank link is not a malformed call"),
+        );
+        assert_ne!(unlinked["status"], "blocked", "{unlinked}");
+        assert!(unlinked["in_reply_to"].is_null(), "blank is absent, not empty: {unlinked}");
     }
 
     /// **A long outcome record is cut, and the caller is told it was cut.** The
@@ -6006,6 +6200,48 @@ mod tests {
         assert!(kept.chars().count() < long.chars().count());
     }
 
+    /// **A caller who recorded nothing was cut off from nothing.** The flag
+    /// compared the stored notes against what this call asked to store, on the
+    /// premise that the store applies the same rule — but both stores carry a
+    /// PRE-EXISTING note forward when the caller supplies none, and
+    /// `mark_processed` has no state gate, so re-processing is reachable. The
+    /// second call then saw notes it had not sent and reported a cut nobody
+    /// made: the same wrong inference the flag exists to prevent, pointing the
+    /// other way.
+    #[tokio::test]
+    async fn processing_again_without_notes_reports_no_cut() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let posted = send(&jojobot, "inbox", "alpha", "the shipment landed").await;
+        let id = posted["id"].as_str().expect("an id").to_string();
+
+        let processed = |notes: Option<String>| {
+            let id = id.clone();
+            async {
+                json_of(
+                    &jojobot
+                        .mark_processed(Parameters(MarkProcessedArgs {
+                            message_id: id,
+                            notes,
+                        }))
+                        .await
+                        .expect("mark_processed ok"),
+                )
+            }
+        };
+
+        let first = processed(Some("filed under shipments".into())).await;
+        assert_eq!(first["notes_truncated"], false);
+
+        // Again, recording nothing. The store keeps the earlier note.
+        let again = processed(None).await;
+        assert_eq!(again["notes"], "filed under shipments", "the record stands: {again}");
+        assert_eq!(
+            again["notes_truncated"], false,
+            "no record was offered, so none was cut: {again}"
+        );
+    }
+
     /// A record that fits is stored whole and reports no cut — the flag is
     /// always present, so a reader never branches on whether it is there.
     #[tokio::test]
@@ -6026,9 +6262,9 @@ mod tests {
         assert_eq!(body["notes_truncated"], false, "{body}");
     }
 
-    /// and no longer a protocol error either: naming something that does not
-    /// exist is the same kind of answer whichever gate catches it, so it wears
-    /// one shape.
+    /// **An id that names nothing is an answer, not a failure** — and no longer
+    /// a protocol error either: naming something that does not exist is the
+    /// same kind of answer whichever gate catches it, so it wears one shape.
     #[tokio::test]
     async fn processing_an_unknown_message_is_blocked_not_an_error() {
         let jojobot = mailbox_handler();
@@ -6161,11 +6397,11 @@ mod tests {
         // Sorted, so the list is stable and a diff to it is legible — which
         // means it is NOT grouped by context, and any comment here claiming
         // otherwise would be describing a different list than the one below.
-        // The six mailbox verbs in it are create_mailbox, list_mailboxes,
-        // post_message, read_mailbox, read_message and mark_processed; the
-        // three session verbs are journal, amend_journal and wrap_session
-        // (there is deliberately no start_session — booting an identity IS
-        // starting its session); the rest are Memory's.
+        // The seven mailbox verbs in it are create_mailbox, list_mailboxes,
+        // list_sent, post_message, read_mailbox, read_message and
+        // mark_processed; the three session verbs are journal, amend_journal
+        // and wrap_session (there is deliberately no start_session — booting an
+        // identity IS starting its session); the rest are Memory's.
         assert_eq!(
             names,
             [
@@ -6253,7 +6489,7 @@ mod tests {
         // real session hesitate over pure acknowledgements, where reading IS
         // the acting. The rule and its one boundary case travel together.
         assert!(
-            description.contains("acknowledgement"),
+            description.contains("READING IT IS THE ACTING"),
             "the crash contract must say where reading is itself the acting: {description}"
         );
     }
@@ -6446,12 +6682,69 @@ mod tests {
             "…and there is a sanctioned way to reach another box: write to it"
         );
 
-        // **Engine-generic**: no per-bot granularity compiled in.
-        for specific in ["every 20 minutes", "hourly", "each night"] {
-            assert!(
-                !ORIENTATION.contains(specific),
-                "how often a role runs belongs to its charter, not to the engine: {specific:?}"
-            );
+        engine_generic("ORIENTATION", ORIENTATION);
+    }
+
+    /// **The engine names roles, never a particular working agreement.** A
+    /// cadence ("every 20 minutes"), a named protocol ("the round is closed"),
+    /// or one party's framing ("my report") is a charter's business — data in
+    /// the operator's own store — and compiling it in makes a user-agnostic
+    /// server carry one user's arrangements.
+    ///
+    /// **Asserted as a property, not an enumerated denylist.** A list of
+    /// today's phrasings only fires on today's phrasings: "every 15 minutes"
+    /// and "each morning" would both sail past one. This matches the SHAPE — a
+    /// cadence is a count next to a unit of time — so a wording nobody
+    /// anticipated is caught too.
+    fn engine_generic(what: &str, prose: &str) {
+        let lower = prose.to_lowercase();
+        let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric()).collect();
+
+        const UNITS: [&str; 12] = [
+            "minute", "minutes", "hour", "hours", "day", "days", "week", "weeks", "morning",
+            "evening", "night", "nights",
+        ];
+        const QUANTIFIERS: [&str; 6] = ["every", "each", "per", "twice", "once", "hourly"];
+
+        for (i, word) in words.iter().enumerate() {
+            // A cadence is a quantifier reaching a time unit within a couple of
+            // words: "every 20 minutes", "each morning", "twice a day".
+            if !QUANTIFIERS.contains(word) {
+                continue;
+            }
+            if *word == "hourly" {
+                panic!("{what} states a cadence ('hourly') — that belongs to a bot's charter");
+            }
+            let mut reach = words.iter().skip(i + 1).take(3);
+            if let Some(unit) = reach.find(|w| UNITS.contains(w)) {
+                panic!(
+                    "{what} states a cadence ('{word} … {unit}') — how often a role runs belongs \
+                     to that bot's charter at seeding, not to a user-agnostic engine"
+                );
+            }
+        }
+    }
+
+    /// The same property, over every tool description — which is where this
+    /// round's working-agreement prose actually landed. The orientation essay
+    /// had a gate; the descriptions had none, and they are read by exactly the
+    /// same audience for exactly the same purpose.
+    #[test]
+    fn no_tool_description_carries_a_working_agreement() {
+        for tool in Jojobot::tool_router().list_all() {
+            let description = tool.description.as_deref().unwrap_or_default();
+            engine_generic(&format!("{}'s description", tool.name), description);
+
+            // Named protocols and one party's framing: a verb's contract is
+            // what it does and refuses, never who is arranged to call it.
+            for borrowed in ["round-closed", "the round", "my report", "hand-off ↔"] {
+                assert!(
+                    !description.to_lowercase().contains(borrowed),
+                    "{}'s description borrows a working agreement ({borrowed:?}): a description \
+                     states the contract, and an arrangement between two bots is charter material",
+                    tool.name
+                );
+            }
         }
     }
 

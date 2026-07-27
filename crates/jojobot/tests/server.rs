@@ -466,6 +466,21 @@ async fn ping_tool_round_trips_end_to_end() {
     assert!(json.contains("jojobot"), "ping result should name the server: {json}");
     assert!(json.contains("ok"), "ping result should report ok: {json}");
 
+    // **The boot verb, called the way a client with nothing to say calls it —
+    // no `arguments` member at all.** `start_here` grew optional arguments; if
+    // an absent `arguments` were ever rejected, every session would come up
+    // blind, and no test that constructs `Parameters(..)` in-process would see
+    // it because none of them cross the JSON boundary. This one does.
+    let oriented = client
+        .call_tool(CallToolRequestParams::new("start_here"))
+        .await
+        .expect("start_here must answer a call that carries no arguments at all");
+    let json = serde_json::to_string(&oriented).unwrap();
+    assert!(
+        json.contains("orientation_version"),
+        "orientation should land on a bare call: {json}"
+    );
+
     client.cancel().await.unwrap();
     ct.cancel();
 }
