@@ -98,15 +98,16 @@ impl std::fmt::Display for NoFreeHandle {
 #[derive(Debug, Default)]
 pub struct SessionRegistry {
     held: RwLock<HashMap<String, Handle>>,
-    /// One mutex per key in flight. Keyed by the handle when a caller carries
-    /// one and by the bot's handle otherwise — whichever names the session this
-    /// call will resolve to, since that is what two racing callers must agree
-    /// on.
+    /// One mutex per key in flight, **keyed by the bot's handle**: a boot
+    /// resolves a whole identity's board and a write resolves one run of it, and
+    /// the identity is the only name both of them hold. Keyed any more narrowly
+    /// the pair that must agree ends up in two queues.
     ///
-    /// **Entries are never removed.** A key is a handle or a bot id, both of
-    /// which are bounded by how many identities and runs this operator has, and
-    /// reaping one would mean proving nobody is about to take it — a lock whose
-    /// removal races is worse than a map that keeps a few dozen mutexes.
+    /// **Entries are never removed.** A key is a bot id — or, for a handle this
+    /// process is not holding, the handle itself — and both are bounded by how
+    /// many identities and runs this operator has. Reaping one would mean
+    /// proving nobody is about to take it, and a lock whose removal races is
+    /// worse than a map that keeps a few dozen mutexes.
     gates: std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 

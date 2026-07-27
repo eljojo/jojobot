@@ -1028,17 +1028,16 @@ impl Jojobot {
         bot: &EntityId,
         resume: Option<&str>,
     ) -> Result<serde_json::Value, CallToolResult> {
-        // **A boot is a bind-read → act → bind-write span like the others, so it
-        // takes the same gate.** Without it a boot racing a first write on this
-        // connection read the board before the card existed and wrote its
-        // binding after — clearing the session the write had just materialized
-        // and rolling the tally back to what the stale read saw. The next write
-        // then minted a second card for a session already running. The gap is
-        // real rather than theoretical: sweeping a stale card is an await
-        // sitting inside that very span.
+        // **A boot is a read-the-board → decide → write-the-registry span like
+        // the write verbs, so it takes the same gate, on the same key.** Its
+        // board read is full of awaits — sweeping a stale card is one — and a
+        // first write running inside them commits a card the boot then sees
+        // with no handle against it yet, which is a second handle minted for a
+        // run that already has one. See [`Jojobot::gate_key`] for why the key
+        // is the identity: it is the only name a boot and a write share.
         //
-        // Taken here rather than in `sweep_and_find`, which the first-write
-        // retry calls with the gate already held — the mutex is not reentrant.
+        // Taken here rather than inside `sweep_and_find`, which runs under it —
+        // the mutex is not reentrant.
         let gate = self.registry.gate(bot.as_str());
         let _serialized = gate.lock().await;
         let Board {
@@ -1177,18 +1176,34 @@ impl Jojobot {
         })
     }
 
-    /// **What this call serializes on** — whatever names the session it is about
-    /// to resolve.
+    /// **What this call serializes on: the IDENTITY, not the handle.**
     ///
-    /// The three addresses in the order they are resolved, so two callers who
-    /// will land on one session take one key. A call carrying no handle keys on
-    /// the empty string rather than skipping the lock, so there is exactly one
-    /// code path; it is refused downstream anyway.
+    /// The handle looks like the right key — it names exactly the run this call
+    /// will write to, and two writes on one handle are the pair the gate was
+    /// first built for. It is too narrow by one caller. A boot resolves the
+    /// whole bot's board, so it can only key on the bot; a write knows its
+    /// handle and nothing else; and the two are about the same run whenever
+    /// that run's card does not exist yet. Keyed separately they queue apart,
+    /// and the boot reads the board inside the gap between the write committing
+    /// its card and the registry being told which handle it landed on — finding
+    /// a live run no handle addresses, and minting a second one for it.
+    ///
+    /// The identity is the only name both callers hold, so it is the key. It
+    /// serializes two writes on one handle exactly as before (same bot, same
+    /// key) and two runs of one bot besides, which is a cost bounded by how many
+    /// identities this operator has.
+    ///
+    /// A handle this process is not holding keys on itself, and a call carrying
+    /// none keys on the empty string rather than skipping the lock, so there is
+    /// exactly one code path; both are refused downstream anyway.
     fn gate_key(&self, sid: Option<&str>) -> String {
-        sid.map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or_default()
-            .to_string()
+        let Some(raw) = sid.map(str::trim).filter(|s| !s.is_empty()) else {
+            return String::new();
+        };
+        match self.registry.lookup(raw) {
+            Some(held) => held.bot.as_str().to_string(),
+            None => raw.to_string(),
+        }
     }
 
     /// **Who is calling.** `None` is an anonymous caller, which is a legitimate
@@ -10962,9 +10977,17 @@ mod tests {
             self.pause().await;
             self.0.read_session(id).await
         }
+        /// **Yields on both sides of the write, because reality does.** A real
+        /// `begin` is a round trip: the card exists on the board the moment the
+        /// server commits it, and the caller learns its id only when the
+        /// response comes back. A double that suspends only on the way in never
+        /// makes the board observable without its registry entry, which is the
+        /// one interleaving worth being hostile about here.
         async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
             self.pause().await;
-            self.0.begin(new).await
+            let begun = self.0.begin(new).await;
+            self.pause().await;
+            begun
         }
         async fn append(
             &self,
@@ -11197,28 +11220,30 @@ mod tests {
         }
     }
 
-    /// **A boot runs concurrently with the writes of a session already booted,
-    /// and must not fork one.** A boot reads the board, sweeps what is stale and
-    /// answers; a write on a handle already held reads that handle's card and
-    /// begins one if there is none. The two overlap: sweeping a stale card is an
-    /// await sitting inside the boot's board read, and that is exactly when the
-    /// racing write gets to run.
+    /// **A boot writes nothing a concurrent first write can lose.** A boot reads
+    /// the board, sweeps what is stale and answers; a write on a handle already
+    /// held reads that handle's card and begins one if there is none. The two
+    /// overlap: sweeping a stale card is an await sitting inside the boot's
+    /// board read, and that is exactly when the racing write gets to run.
     ///
-    /// It used to fork because the boot wrote a connection binding at the end of
-    /// that span, clearing the session the write had just materialized and
-    /// rolling the tally back to what the stale read saw; the next write then
-    /// minted a second card for a session already running. **The binding is
-    /// gone** — a boot writes no identity anywhere a write reads from — so what
-    /// is pinned here is the invariant rather than that mechanism: whatever the
-    /// interleaving, the handle keeps addressing one card and the next write
-    /// keeps accruing to it.
+    /// The old name promised a race this can no longer run. It forked because
+    /// the boot wrote a connection binding at the end of that span, clearing the
+    /// session the write had just materialized and rolling the tally back to
+    /// what the stale read saw; the next write then minted a second card for a
+    /// session already running. **The binding is gone** — the boot writes no
+    /// identity anywhere a write reads from, so there is nothing left for it to
+    /// clobber. What is pinned here is that: whatever the interleaving, the
+    /// handle keeps addressing one card and the next write keeps accruing to it.
+    /// The remaining overlap between the two — a boot reading the board inside
+    /// the gap a first write leaves — is a different defect with its own test
+    /// below.
     ///
     /// **Both orders, because only one of them forked.** `tokio::join!` rotates
     /// which future it polls first, so a single ordering proves whichever
     /// interleaving it happened to produce; the invariant is that neither
     /// produces two cards.
     #[tokio::test]
-    async fn a_boot_racing_a_first_write_does_not_fork_the_card() {
+    async fn a_racing_boot_writes_nothing_the_first_write_can_lose() {
         for boot_first in [true, false] {
             let store = Arc::new(InMemorySessions::new());
             let jojobot = racing(store.clone());
@@ -11279,6 +11304,73 @@ mod tests {
                 "boot_first={boot_first}: …and it kept accruing: {:?}",
                 live[0].entries
             );
+        }
+    }
+
+    /// **One run answers to one handle, even when a boot reads the board in the
+    /// middle of the write that creates it.**
+    ///
+    /// A first write begins the card and then tells the registry which handle it
+    /// landed on, and those two are not one step: the card is on the board the
+    /// moment the store commits it, and the registry learns of it only when the
+    /// write's own future is polled again. A boot reading the board inside that
+    /// gap finds a live run no handle addresses and mints a second one for it —
+    /// so the offer names an address the run's own writer has never heard of,
+    /// and one session answers to two names. That is the fork the per-run gate
+    /// exists to prevent, one layer up.
+    ///
+    /// **The gate has to be keyed on the identity rather than the handle**,
+    /// because that is the only key the two callers share: the boot knows the
+    /// bot, the write knows its sid, and they are talking about the same run.
+    /// Keying the boot on the bot and the write on its handle put them in
+    /// different queues, which is a lock that excludes the pair it was for.
+    ///
+    /// **Both orders, and only one of them forks.** Polled boot-first, the board
+    /// read lands before the card exists and the boot legitimately hands back a
+    /// fresh handle with nothing behind it; polled write-first, the boot reads
+    /// inside the gap. `tokio::join!` rotates which future it polls first, so a
+    /// single ordering proves only whichever it happened to produce.
+    #[tokio::test]
+    async fn a_boot_reading_the_board_mid_write_offers_the_handle_the_run_has() {
+        for boot_first in [true, false] {
+            let store = Arc::new(InMemorySessions::new());
+            let jojobot = racing(store.clone());
+            make_bot(&jojobot, "gamma", None).await;
+            let sid = booted(&jojobot, "gamma").await;
+
+            let booting = jojobot.start_here(Parameters(OrientArgs {
+                bot: Some("gamma".into()),
+                brief: None,
+                resume: None,
+            }));
+            let writing = jojobot.journal(Parameters(JournalArgs {
+                entry: "the first beat, which is what mints the card".into(),
+                focus: None,
+                sid: sid.clone(),
+            }));
+            let booted_answer = if boot_first {
+                let (b, w) = tokio::join!(booting, writing);
+                w.expect("journal ok");
+                json_of(&b.expect("boot ok"))
+            } else {
+                let (w, b) = tokio::join!(writing, booting);
+                w.expect("journal ok");
+                json_of(&b.expect("boot ok"))
+            };
+
+            // A boot that saw the card offers it back. Whether it saw one is the
+            // interleaving's business; what it may never do is offer it under a
+            // handle minted beside the one its writer is already using.
+            if let Some(choices) = booted_answer["session"]["choices"].as_array() {
+                for choice in choices {
+                    assert_eq!(
+                        choice["sid"].as_str(),
+                        Some(sid.as_str()),
+                        "boot_first={boot_first}: the offer minted a second handle for a run that \
+                         already has one: {choice}"
+                    );
+                }
+            }
         }
     }
 
