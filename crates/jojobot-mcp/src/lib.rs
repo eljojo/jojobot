@@ -9313,6 +9313,9 @@ mod tests {
         async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
             self.inner.close(id, to).await
         }
+        async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+            self.inner.reopen(id).await
+        }
     }
 
     /// The bot, its session already in flight, and a connection that booted
@@ -9472,6 +9475,9 @@ mod tests {
         }
         async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
             self.0.close(id, to).await
+        }
+        async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+            self.0.reopen(id).await
         }
     }
 
@@ -9826,6 +9832,9 @@ mod tests {
             }
             self.inner.close(id, to).await
         }
+        async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+            self.inner.reopen(id).await
+        }
     }
 
     /// **Wrapping somebody else's session by id leaves your own alone.** It used
@@ -9934,6 +9943,10 @@ mod tests {
         async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
             self.pause().await;
             self.0.close(id, to).await
+        }
+        async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+            self.pause().await;
+            self.0.reopen(id).await
         }
     }
 
@@ -10190,6 +10203,9 @@ mod tests {
             Err(SessionError::NotConfigured("the session world is down".into()))
         }
         async fn close(&self, _: &SessionId, _: SessionState) -> Result<Session, SessionError> {
+            Err(SessionError::NotConfigured("the session world is down".into()))
+        }
+        async fn reopen(&self, _: &SessionId) -> Result<Session, SessionError> {
             Err(SessionError::NotConfigured("the session world is down".into()))
         }
     }

@@ -114,13 +114,35 @@ impl SessionState {
         Self::ALL.into_iter().find(|s| s.as_token() == token.trim())
     }
 
-    /// Whether this state is an end. **Both ends are terminal both ways**: a
-    /// closed session takes no more entries, and nothing moves it back to
-    /// `active` — the same rule `processed` carries, for the same reason.
-    /// Reopening a session would make its chronology a thing that can grow
-    /// after the story was told.
+    /// Whether this state is an end. **A closed session takes no more entries**,
+    /// whichever end it reached — no append, no amend, no focus change, no
+    /// second close.
     pub fn is_terminal(self) -> bool {
         !matches!(self, SessionState::Active)
+    }
+
+    /// Whether this end is the last word — **the one place the two ends stop
+    /// being the same.**
+    ///
+    /// **`wrapped` is final because wrapping PUBLISHES.** The story goes into
+    /// the operator's Journal as one dated entry, and reopening the run would
+    /// make an already-published entry retroactively false — an account of a
+    /// thing that turns out not to have finished. That is what terminal-both-
+    /// ways is protecting, and it is a rationale about *this state*.
+    ///
+    /// `abandoned` published nothing, which is the entire content of "it wasn't
+    /// wrapped up": a disconnect, a closed laptop, an agent that moved on. So
+    /// [`Sessions::reopen`] takes it back to `active` and the record continues
+    /// where it stopped. Picking one back up is ordinary rather than recovery.
+    ///
+    /// **The corollary is why this walk-back has to exist at all.** Without it,
+    /// no run that was ever interrupted could ever be wrapped properly — its
+    /// story would be lost by construction, permanently, because the only verb
+    /// that tells it refuses to run on a closed session. Reopening from
+    /// `abandoned` is precisely what lets an interrupted run eventually tell its
+    /// story.
+    pub fn is_final(self) -> bool {
+        matches!(self, SessionState::Wrapped)
     }
 }
 
@@ -479,6 +501,19 @@ pub trait Sessions: Send + Sync {
     /// Move a session to a terminal state. Refused if it is already in one —
     /// terminal both ways.
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError>;
+
+    /// Take an `abandoned` session back to `active`, so the run continues where
+    /// it stopped rather than starting again beside it.
+    ///
+    /// **The one walk-back, and only from the end that told no story.** A
+    /// `wrapped` session is refused with [`SessionError::Closed`] — see
+    /// [`SessionState::is_final`]. An `active` one comes back unchanged, because
+    /// a caller resuming the run they are already in has made no mistake.
+    ///
+    /// The chronology is untouched by this: reopening adds nothing, rewrites
+    /// nothing, and leaves no mark saying the session was ever away. What it
+    /// changes is what the store will accept next.
+    async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError>;
 }
 
 #[cfg(test)]

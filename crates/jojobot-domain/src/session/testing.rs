@@ -187,6 +187,25 @@ impl Sessions for InMemorySessions {
         sessions[at].state = to;
         Ok(sessions[at].clone())
     }
+
+    async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+        validate_session_id(id)?;
+        let mut sessions = self.sessions.lock().expect("session lock");
+        let at = sessions
+            .iter()
+            .position(|s| &s.id == id)
+            .ok_or_else(|| SessionError::UnknownSession {
+                attempted: id.to_string(),
+            })?;
+        if sessions[at].state.is_final() {
+            return Err(SessionError::Closed {
+                attempted: id.to_string(),
+                state: sessions[at].state,
+            });
+        }
+        sessions[at].state = SessionState::Active;
+        Ok(sessions[at].clone())
+    }
 }
 
 /// The shared behavioural spec — every adapter must satisfy all of it.
@@ -451,9 +470,83 @@ pub mod contract {
         assert_eq!(read.entries.len(), 1, "a focus change is not a chronology entry");
     }
 
+    /// **The two ends stop being the same at exactly one point: reopening.**
+    ///
+    /// `wrapped` is final. Its story was told, and a chronology that can grow
+    /// after the telling makes the telling worthless — that is the whole of the
+    /// terminal-both-ways rationale, and it is about this state.
+    ///
+    /// `abandoned` told no story. It means the run was never wrapped up — a
+    /// disconnect, a closed laptop, an agent that moved on — so picking it back
+    /// up is ordinary rather than recovery, and the record continues where it
+    /// stopped rather than starting again beside it.
+    ///
+    /// **A reopened session is `active` in the full sense**: it takes entries
+    /// again, its chronology is intact and unrewritten, and nothing marks it as
+    /// having been away. It also stops being sweepable, which is the point —
+    /// somebody is working in it.
+    pub async fn an_abandoned_session_reopens_and_a_wrapped_one_never_does(store: &dyn Sessions) {
+        let abandoned = begin(store, "gamma", "reading the hand-off", 0).await;
+        journal(store, &abandoned.id, "got half way", 60).await;
+        store
+            .close(&abandoned.id, SessionState::Abandoned)
+            .await
+            .expect("close ok");
+
+        let reopened = store.reopen(&abandoned.id).await.expect("an abandoned run reopens");
+        assert_eq!(reopened.state, SessionState::Active, "it is running again");
+        assert_eq!(
+            reopened.entries.len(),
+            1,
+            "…and the chronology is what it was: {:?}",
+            reopened.entries
+        );
+        assert_eq!(reopened.entries[0].text, "got half way");
+        assert_eq!(reopened.focus, "reading the hand-off", "and so is the focus");
+
+        // The proof that reopening MEANT something: the verb that was refused a
+        // moment ago now lands, and lands on the same record.
+        store
+            .append(&reopened.id, NewEntry::manual("picked it back up", at(120)))
+            .await
+            .expect("a reopened session takes entries");
+        let read = store.read_session(&abandoned.id).await.expect("read ok");
+        assert_eq!(read.entries.len(), 2, "one record, continued: {:?}", read.entries);
+        assert_eq!(read.state, SessionState::Active);
+
+        // Reopening what is already open is not an error — a caller resuming
+        // the run they are already in has made no mistake.
+        assert_eq!(
+            store.reopen(&abandoned.id).await.expect("idempotent").state,
+            SessionState::Active
+        );
+
+        // **And the half that does not bend.** A wrapped session told its
+        // story; nothing reopens it, and the refusal names which end it reached
+        // rather than pretending the id is unknown.
+        let wrapped = begin(store, "delta", "chasing the flaky test", 200).await;
+        journal(store, &wrapped.id, "found it", 240).await;
+        store.close(&wrapped.id, SessionState::Wrapped).await.expect("close ok");
+        let refused = store
+            .reopen(&wrapped.id)
+            .await
+            .expect_err("a wrapped session never reopens");
+        assert!(
+            matches!(&refused, SessionError::Closed { state, .. } if *state == SessionState::Wrapped),
+            "the refusal says the story was already told: {refused:?}"
+        );
+        let read = store.read_session(&wrapped.id).await.expect("read ok");
+        assert_eq!(read.state, SessionState::Wrapped, "and nothing moved");
+        assert_eq!(read.entries.len(), 1, "…including its chronology");
+    }
+
     /// **Both ends are terminal both ways.** A closed session takes no entry, no
     /// amend, no focus change and no second close — and it is still readable,
     /// because the record is the point.
+    ///
+    /// Reopening is the one verb where the two ends part company, and it has its
+    /// own case above. Everything here holds for both, unchanged: while a
+    /// session is closed it is closed, whichever end it reached.
     pub async fn a_closed_session_is_terminal_both_ways(store: &dyn Sessions) {
         for end in [SessionState::Wrapped, SessionState::Abandoned] {
             let session = begin(store, "gamma", "reading the hand-off", 0).await;
@@ -644,6 +737,7 @@ pub mod contract {
         amending_with_no_entries_is_refused(&fresh()).await;
         focus_is_rewritten_in_place_and_leaves_the_chronology_alone(&fresh()).await;
         a_closed_session_is_terminal_both_ways(&fresh()).await;
+        an_abandoned_session_reopens_and_a_wrapped_one_never_does(&fresh()).await;
         sessions_are_listed_per_bot_newest_first(&fresh()).await;
         a_closed_session_stays_on_the_record(&fresh()).await;
         addressing_an_unknown_session_is_a_miss(&fresh()).await;

@@ -832,6 +832,66 @@ impl Sessions for VikunjaSessions {
         }
     }
 
+    /// **The one walk-back**, and it is a column move like every other state
+    /// change here — the column IS the state, so reopening writes nothing to the
+    /// card's body and leaves the chronology untouched.
+    async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+        let _serialized = self.lock.lock().await;
+        validate_session_id(id)?;
+        let scope = self.scope().await?;
+        // **`addressed`, not `writable`.** Every other write refuses a closed
+        // session; this one exists precisely to reach one.
+        let (card, session) = self.addressed(&scope, id).await?;
+
+        if session.state.is_final() {
+            return Err(SessionError::Closed {
+                attempted: id.to_string(),
+                state: session.state,
+            });
+        }
+        // Already running: no move, no read-back, nothing to put back. A caller
+        // resuming the run they are already in has made no mistake.
+        if !session.state.is_terminal() {
+            return Ok(session);
+        }
+
+        let bucket = self.column(&scope, SessionState::Active).await?;
+        if let Err(e) = self
+            .api
+            .move_task(scope.project(), scope.view, bucket, card.id)
+            .await
+        {
+            let restored = self
+                .restore_move(&scope, &card, session.state, SessionState::Active)
+                .await;
+            return Err(stranded("resume", e.to_string(), restored));
+        }
+
+        let expected = Session {
+            state: SessionState::Active,
+            ..session.clone()
+        };
+        match self.read_back(&scope, id).await {
+            Ok(seen) if seen == expected => Ok(seen),
+            outcome => {
+                let restored = self
+                    .restore_move(&scope, &card, session.state, SessionState::Active)
+                    .await;
+                Err(stranded(
+                    "resume",
+                    match outcome {
+                        Ok(seen) => format!(
+                            "session {id} did not read back reopened: wrote {expected:?}, read \
+                             {seen:?}"
+                        ),
+                        Err(e) => e.to_string(),
+                    },
+                    restored,
+                ))
+            }
+        }
+    }
+
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         let _serialized = self.lock.lock().await;
         validate_session_id(id)?;
