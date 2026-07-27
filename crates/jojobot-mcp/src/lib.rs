@@ -941,10 +941,18 @@ impl Jojobot {
         // so beginning a session here would fork one that is already running.
         // The attach is retried at the first write instead, which is the next
         // moment the store might be up.
-        if !bound.attached
-            && let Ok((Some(live), _)) = self.sweep_and_find(&bound.bot).await
-        {
-            return Ok(Ok(live.id));
+        //
+        // **A retry that failed is not a retry that found nothing.** Falling
+        // through to the begin below on an error made the outage fork the record
+        // deterministically — the same wrong answer every time, not a race — for
+        // the one bot whose session is in flight and unreadable. Only a retry
+        // that SUCCEEDED and found nothing active reaches the begin.
+        if !bound.attached {
+            match self.sweep_and_find(&bound.bot).await {
+                Ok((Some(live), _)) => return Ok(Ok(live.id)),
+                Ok((None, _)) => {}
+                Err(e) => return Err(session_error(e)),
+            }
         }
 
         // The card materializes here, on the first write and never before.
@@ -6010,6 +6018,98 @@ mod tests {
             .map(|d| d.prose)
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// A board that cannot be listed, though everything else on it works — the
+    /// shape one endpoint being down actually takes, and the one that matters
+    /// here: a boot cannot see what is in flight, but `begin` would happily mint
+    /// a card beside it.
+    struct UnlistableBoard(Arc<InMemorySessions>);
+
+    #[async_trait]
+    impl Sessions for UnlistableBoard {
+        async fn sessions_of(&self, _: &EntityId) -> Result<Vec<Session>, SessionError> {
+            Err(SessionError::Store("the board cannot be listed".into()))
+        }
+        async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+            self.0.read_session(id).await
+        }
+        async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+            self.0.begin(new).await
+        }
+        async fn append(
+            &self,
+            id: &SessionId,
+            entry: NewEntry,
+        ) -> Result<JournalEntry, SessionError> {
+            self.0.append(id, entry).await
+        }
+        async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+            self.0.amend_last(id, text).await
+        }
+        async fn amend_beat(
+            &self,
+            id: &SessionId,
+            entry: &EntryId,
+            text: &str,
+            at: jiff::Timestamp,
+        ) -> Result<JournalEntry, SessionError> {
+            self.0.amend_beat(id, entry, text, at).await
+        }
+        async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
+            self.0.set_focus(id, focus).await
+        }
+        async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
+            self.0.close(id, to).await
+        }
+    }
+
+    /// **A retry that FAILED is not a retry that found nothing.** The boot binds
+    /// without attaching when it cannot read the board, so the first write tries
+    /// again — and when that try errored too, the code fell straight through to
+    /// beginning a session. Deterministically, not as a race: the outage forks
+    /// the record every time, minting a second card for a bot whose real session
+    /// is in flight and unreadable. Unknown is not "nothing there".
+    #[tokio::test]
+    async fn a_failed_attach_retry_answers_the_outage_rather_than_beginning() {
+        let inner = Arc::new(InMemorySessions::new());
+        // The session actually running — exactly what the boot cannot see.
+        let live = inner
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                focus: "in flight, and unreadable".into(),
+                started_at: jiff::Timestamp::now(),
+            })
+            .await
+            .expect("begin ok");
+
+        let jojobot = Jojobot::new(
+            Arc::new(InMemoryMemory::new()),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::new()),
+            Arc::new(UnlistableBoard(inner.clone())),
+        );
+        make_bot(&jojobot, "gamma", None).await;
+        let booted = boot(&jojobot, "gamma").await;
+        assert_eq!(
+            booted["session"]["available"], false,
+            "the board was unreadable, so the boot attached to nothing: {booted}"
+        );
+
+        // The first write retries the attach. The board is still down.
+        let err = jojobot
+            .journal(Parameters(JournalArgs {
+                entry: "the first beat of the reconnect".into(),
+                focus: None,
+                session: None,
+            }))
+            .await
+            .expect_err("a write against an unreadable board must say so");
+        assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+
+        let all = inner.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
+        assert_eq!(all.len(), 1, "no second card was minted beside the live one: {all:?}");
+        assert_eq!(all[0].id, live.id);
     }
 
     /// **The Journal guard is scoped to the SESSION, never to the page.** It
