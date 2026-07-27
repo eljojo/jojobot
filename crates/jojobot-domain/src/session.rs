@@ -354,6 +354,21 @@ pub enum SessionError {
         /// The id that was addressed.
         attempted: String,
     },
+    /// An out-of-order amend reached for an entry the session wrote itself.
+    /// Only jojobot's own beats may be rewritten where they sit; a session's
+    /// account of what it was doing is append-only, and the newest entry is the
+    /// only one [`Sessions::amend_last`] will touch.
+    #[error(
+        "entry '{attempted}' on session '{session}' is not an automatic beat — it is what the \
+         session itself recorded, and those are append-only. Only the most recent entry can be \
+         amended, through amend_journal"
+    )]
+    NotABeat {
+        /// The entry that was addressed.
+        attempted: String,
+        /// The session it is on.
+        session: String,
+    },
     /// **The write-scope invariant**, extended to this context's own project.
     /// The operator's boards live on the same Vikunja, and this store may touch
     /// exactly one project — a different one from the mailbox store's.
@@ -416,6 +431,26 @@ pub trait Sessions: Send + Sync {
     /// and refused with [`SessionError::NoEntries`] when there is nothing to
     /// amend. Only the last one: everything older is append-only.
     async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError>;
+
+    /// Rewrite one **automatic beat** in place, wherever it sits in the
+    /// chronology — and **only** an automatic beat.
+    ///
+    /// A beat is jojobot's running tally of one verb class ("captured facts:
+    /// …"), so a second capture does not deserve a second entry; it deserves the
+    /// first one to say two. That is one fact getting more accurate, not a
+    /// record being rewritten.
+    ///
+    /// The append-only rule is untouched by this, which is why the restriction
+    /// is on the port rather than left to callers: an entry the session wrote is
+    /// its own account of what it was doing, and
+    /// [`SessionError::NotABeat`] is what reaching for one gets — only
+    /// [`amend_last`](Sessions::amend_last) touches those, and only the newest.
+    async fn amend_beat(
+        &self,
+        id: &SessionId,
+        entry: &EntryId,
+        text: &str,
+    ) -> Result<JournalEntry, SessionError>;
 
     /// Rewrite what the session is working on now. Refused on a closed session.
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError>;

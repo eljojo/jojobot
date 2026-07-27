@@ -140,6 +140,33 @@ impl Sessions for InMemorySessions {
         Ok(last.clone())
     }
 
+    async fn amend_beat(
+        &self,
+        id: &SessionId,
+        entry: &EntryId,
+        text: &str,
+    ) -> Result<JournalEntry, SessionError> {
+        validate_session_id(id)?;
+        validate_entry(text)?;
+        let mut sessions = self.sessions.lock().expect("session lock");
+        let at = Self::writable(&mut sessions, id)?;
+        let held = sessions[at]
+            .entries
+            .iter_mut()
+            .find(|e| &e.id == entry)
+            .ok_or_else(|| SessionError::NoEntries {
+                attempted: id.to_string(),
+            })?;
+        if !held.is_auto() {
+            return Err(SessionError::NotABeat {
+                attempted: entry.to_string(),
+                session: id.to_string(),
+            });
+        }
+        held.text = normalize_entry(text);
+        Ok(held.clone())
+    }
+
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
         validate_session_id(id)?;
         validate_focus(focus)?;
@@ -289,6 +316,54 @@ pub mod contract {
             vec!["read the task", "wrote the domain module"],
             "two entries, not three — an amend is never an append"
         );
+    }
+
+    /// **A beat is a tally, so it is rewritten where it sits — and only a
+    /// beat.** A second capture does not deserve a second entry; it deserves the
+    /// first one to say two. Reaching for an entry the session wrote is refused,
+    /// which is what keeps the append-only rule true while a machine's count
+    /// stays accurate.
+    pub async fn only_an_automatic_beat_is_amended_in_place(store: &dyn Sessions) {
+        let session = begin(store, "gamma", "reading the hand-off", 0).await;
+        let beat = store
+            .append(
+                &session.id,
+                NewEntry::beat("capture", "captured facts: person:milhouse", at(60)),
+            )
+            .await
+            .expect("append ok");
+        let mine = journal(store, &session.id, "read the task", 120).await;
+
+        // The beat is rewritten where it sits — behind a later entry, which is
+        // exactly what `amend_last` could never reach.
+        let counted = store
+            .amend_beat(
+                &session.id,
+                &beat.id,
+                "captured facts: person:milhouse, person:otto (2)",
+            )
+            .await
+            .expect("amend_beat ok");
+        assert_eq!(counted.id, beat.id, "the same entry, rewritten in place");
+        assert_eq!(counted.beat.as_deref(), Some("capture"), "still a beat");
+
+        let read = store.read_session(&session.id).await.expect("read ok");
+        let texts: Vec<&str> = read.entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec!["captured facts: person:milhouse, person:otto (2)", "read the task"],
+            "two entries, in the same order — a growing tally is not a new beat"
+        );
+
+        // The session's own words are not a beat, and this verb will not touch
+        // them wherever they sit.
+        let err = store
+            .amend_beat(&session.id, &mine.id, "read the task properly")
+            .await
+            .expect_err("a session's own entry is append-only");
+        assert!(matches!(err, SessionError::NotABeat { .. }), "got {err:?}");
+        let read = store.read_session(&session.id).await.expect("read ok");
+        assert_eq!(read.entries[1].text, "read the task", "…and it is unchanged");
     }
 
     /// Amending a session with nothing in it is refused, not silently turned
@@ -500,6 +575,7 @@ pub mod contract {
         the_chronology_accrues_oldest_first(&fresh()).await;
         a_beat_is_stored_beside_manual_entries_and_stays_distinguishable(&fresh()).await;
         an_amend_rewrites_the_last_entry_and_nothing_else(&fresh()).await;
+        only_an_automatic_beat_is_amended_in_place(&fresh()).await;
         amending_with_no_entries_is_refused(&fresh()).await;
         focus_is_rewritten_in_place_and_leaves_the_chronology_alone(&fresh()).await;
         a_closed_session_is_terminal_both_ways(&fresh()).await;

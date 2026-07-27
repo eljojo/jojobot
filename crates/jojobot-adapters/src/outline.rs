@@ -25,7 +25,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use jojobot_domain::memory::{
-    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, Memory, MemoryError,
+    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, JOURNAL_TITLE,
+    Memory, MemoryError,
     NewEntity, NewFact, apply_entity_patch, apply_fact_patch, normalize_content, normalize_details, normalize_prose,
     screen_entity_patch, validate_content, validate_details, validate_edge, validate_entity, validate_prose,
     validate_subject,
@@ -656,6 +657,76 @@ impl Memory for OutlineStore {
             )));
         }
         Ok(seen)
+    }
+
+    async fn append_journal(
+        &self,
+        on: jiff::civil::Date,
+        entry: &str,
+    ) -> Result<String, MemoryError> {
+        validate_prose(entry)?;
+        let collection_id = self.resolve_collection().await?;
+
+        // **Adopted by title, created if absent.** The Journal is nobody's
+        // entity, so it carries no id marker and there is nothing else to
+        // resolve it by; the oldest wins, so a concurrent double-create
+        // converges rather than forking the record in two.
+        let existing = pick_oldest(
+            self.all_docs(&collection_id)
+                .await?
+                .into_iter()
+                .filter(|d| d.title.trim() == JOURNAL_TITLE)
+                .collect(),
+            |d| &d.created_at,
+            |d| &d.id,
+        );
+        let doc = match existing {
+            Some(doc) => doc,
+            None => {
+                self.api
+                    .create_document(&collection_id, JOURNAL_TITLE, "")
+                    .await?;
+                pick_oldest(
+                    self.all_docs(&collection_id)
+                        .await?
+                        .into_iter()
+                        .filter(|d| d.title.trim() == JOURNAL_TITLE)
+                        .collect(),
+                    |d| &d.created_at,
+                    |d| &d.id,
+                )
+                .ok_or_else(|| MemoryError::Store("the Journal is missing after create".into()))?
+            }
+        };
+
+        // **Append. Everything above stays exactly as it was** — the page is
+        // read, one entry is added at the end, and the whole text goes back.
+        // Nothing here reconstructs the page from what jojobot believes is on
+        // it, which is what keeps months of entries safe from one bad write.
+        let stored = format!("## {on}\n\n{}", normalize_prose(entry));
+        let appended = if doc.text.trim().is_empty() {
+            stored.clone()
+        } else {
+            format!("{}\n\n{stored}", doc.text.trim_end())
+        };
+        self.api.update_document(&doc.id, &appended).await?;
+
+        // Read-back: written only once the read path shows it, and the entries
+        // that were already there are still there.
+        let seen = self
+            .all_docs(&collection_id)
+            .await?
+            .into_iter()
+            .find(|d| d.id == doc.id)
+            .map(|d| d.text)
+            .ok_or_else(|| MemoryError::Store("the Journal lost its doc mid-write".into()))?;
+        if !seen.contains(&stored) || !seen.contains(doc.text.trim()) {
+            let restored = self.restore(&doc, "append_journal").await;
+            return Err(MemoryError::Store(format!(
+                "the Journal read back changed: appended {stored:?}, read {seen:?}; {restored}"
+            )));
+        }
+        Ok(stored)
     }
 
     /// Every doc in the collection, whole — including docs that are **not**

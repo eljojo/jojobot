@@ -368,6 +368,64 @@ impl VikunjaSessions {
             .map_err(|e| vec![(card.id, e.to_string())])
     }
 
+    /// Rewrite one entry's comment in place, verified, with the rollback this
+    /// kind of write earns: jojobot wrote that comment's text itself, so a
+    /// mismatch is most likely its own write coming back mangled and putting the
+    /// previous text back is the repair.
+    ///
+    /// **Only the text changes.** The instant and the beat marker are written
+    /// back exactly as they were: an amend corrects what an entry says, never
+    /// when it happened or whether a machine wrote it.
+    async fn rewrite_entry(
+        &self,
+        scope: &Scope,
+        card: &TaskRec,
+        held: &JournalEntry,
+        text: &str,
+    ) -> Result<JournalEntry, SessionError> {
+        let _ = scope;
+        let comment: u64 = held
+            .id
+            .as_str()
+            .parse()
+            .map_err(|_| SessionError::Store(format!("entry id {} is not a comment", held.id)))?;
+        let put_back = |body: String| async move {
+            self.api
+                .update_comment(card.id, comment, &body)
+                .await
+                .map_err(|e| vec![(card.id, e.to_string())])
+        };
+
+        self.api
+            .update_comment(
+                card.id,
+                comment,
+                &render_entry(text, held.at, held.beat.as_deref()),
+            )
+            .await
+            .map_err(store)?;
+
+        let seen = self
+            .entries(card.id)
+            .await?
+            .into_iter()
+            .find(|e| e.id == held.id);
+        match seen {
+            Some(seen) if seen.text == text && seen.at == held.at && seen.beat == held.beat => {
+                Ok(seen)
+            }
+            other => {
+                let restored =
+                    put_back(render_entry(&held.text, held.at, held.beat.as_deref())).await;
+                Err(stranded(
+                    "amend_journal",
+                    format!("entry {} did not read back amended: read {other:?}", held.id),
+                    restored,
+                ))
+            }
+        }
+    }
+
     /// Put a card's description back the way a failed write found it — the
     /// rollback a focus change earns by having written that description itself,
     /// exactly as `mark_processed` earns the mailbox store's.
@@ -640,51 +698,41 @@ impl Sessions for VikunjaSessions {
             .ok_or_else(|| SessionError::NoEntries {
                 attempted: id.to_string(),
             })?;
-        let comment: u64 = last
-            .id
-            .as_str()
-            .parse()
-            .map_err(|_| SessionError::Store(format!("entry id {} is not a comment", last.id)))?;
-
-        let text = normalize_entry(text);
-        self.api
-            .update_comment(
-                card.id,
-                comment,
-                &render_entry(&text, last.at, last.beat.as_deref()),
-            )
+        self.rewrite_entry(&scope, &card, &last, &normalize_entry(text))
             .await
-            .map_err(store)?;
+    }
 
-        // The rollback this verb earns: it wrote this comment's text moments
-        // ago, so a mismatch is most likely its own write coming back mangled,
-        // and putting the previous text back is the repair.
-        let seen = self
-            .entries(card.id)
-            .await?
-            .into_iter()
-            .find(|e| e.id == last.id);
-        match seen {
-            Some(seen) if seen.text == text && seen.at == last.at && seen.beat == last.beat => {
-                Ok(seen)
-            }
-            other => {
-                let restored = self
-                    .api
-                    .update_comment(
-                        card.id,
-                        comment,
-                        &render_entry(&last.text, last.at, last.beat.as_deref()),
-                    )
-                    .await
-                    .map_err(|e| vec![(card.id, e.to_string())]);
-                Err(stranded(
-                    "amend_journal",
-                    format!("entry {} did not read back amended: read {other:?}", last.id),
-                    restored,
-                ))
-            }
+    async fn amend_beat(
+        &self,
+        id: &SessionId,
+        entry: &EntryId,
+        text: &str,
+    ) -> Result<JournalEntry, SessionError> {
+        let _serialized = self.lock.lock().await;
+        validate_session_id(id)?;
+        validate_entry(text)?;
+        let scope = self.scope().await?;
+        let (card, session) = self.writable(&scope, id).await?;
+
+        let held = session
+            .entries
+            .iter()
+            .find(|e| &e.id == entry)
+            .cloned()
+            .ok_or_else(|| SessionError::NoEntries {
+                attempted: id.to_string(),
+            })?;
+        // The restriction is the point of having this verb apart from
+        // `amend_last`: a beat is jojobot's tally and may be corrected where it
+        // sits, a session's own words are append-only wherever they sit.
+        if !held.is_auto() {
+            return Err(SessionError::NotABeat {
+                attempted: entry.to_string(),
+                session: id.to_string(),
+            });
         }
+        self.rewrite_entry(&scope, &card, &held, &normalize_entry(text))
+            .await
     }
 
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {

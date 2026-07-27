@@ -696,6 +696,16 @@ pub fn validate_crm(crm: &str) -> Result<(), MemoryError> {
 /// keeping a private copy the others could not enforce.
 pub const FACTS_HEADER: &str = "### ⚙ facts";
 
+/// The title of **the Journal** — the one document in jojobot's collection that
+/// is nobody's entity: the operator's running record, one dated entry appended
+/// per wrapped session.
+///
+/// Named in the domain rather than in an adapter for the reason
+/// [`FACTS_HEADER`] is: it is the one string that decides *which page* the
+/// record accrues on, and a store keeping a private copy of it is a store that
+/// can quietly start a second journal.
+pub const JOURNAL_TITLE: &str = "Journal";
+
 /// The lines a document reserves for its own structure. Prose may not carry
 /// one, whatever store it is bound for — see [`validate_prose`].
 ///
@@ -1209,6 +1219,25 @@ pub trait Memory: Send + Sync {
     /// [`MemoryError::UnknownEntity`] — this verb never creates a doc to hold
     /// the text, exactly as no other verb here creates on a miss.
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError>;
+
+    /// Append one dated entry to **the Journal** — the operator's own running
+    /// record of what happened, adopted or created by title in jojobot's own
+    /// collection.
+    ///
+    /// A document rather than an entity, because it is nobody's page: it belongs
+    /// to no person, project or thing, it accrues rather than being edited, and
+    /// giving it a handle would invite writes that treat it as a subject. It is
+    /// still prose in jojobot's collection, so it is searchable like any other
+    /// page the operator wrote.
+    ///
+    /// **Append, never rewrite.** Every entry ever written stays; a wrap adds
+    /// one and touches nothing above it. Returns the entry as stored, which is
+    /// what the read-back verified.
+    async fn append_journal(
+        &self,
+        on: jiff::civil::Date,
+        entry: &str,
+    ) -> Result<String, MemoryError>;
 
     /// Every document in the store, whole: its prose, the entity it is, and the
     /// facts in its table. This is the **index's boot scan** — the search
