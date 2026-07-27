@@ -44,23 +44,19 @@ pub(super) struct Envelope {
 /// Vikunja came to read; the block sits under it the way the Memory codec's fact
 /// table sits under a doc's prose.
 pub(super) fn render_description(body: &str, envelope: &Envelope) -> String {
-    let mut block = format!(
-        "{FENCE}\n{SENDER}: {}\n{SENT_AT}: {}\n",
-        envelope.sender.trim(),
-        envelope.sent_at
-    );
-    // Absent, not blank, for the same reason `notes` is: a blank `subject:`
-    // reads as a title somebody wrote and left empty.
-    if let Some(subject) = envelope.subject.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        block.push_str(&format!("{SUBJECT}: {subject}\n"));
-    }
-    // The line is absent, not blank, when there is no outcome yet: a blank
-    // `notes:` reads as "handled, nothing to say", which is a different claim.
-    if let Some(notes) = envelope.notes.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
-        block.push_str(&format!("{NOTES}: {notes}\n"));
-    }
-    block.push_str(CLOSE);
-    format!("{}\n\n{block}", body.trim())
+    // `subject` and `notes` are absent rather than blank when there is nothing
+    // to say — `render_block` drops an empty value — because a blank `notes:`
+    // reads as "handled, nothing to say" and a blank `subject:` as a title
+    // somebody wrote and left empty. Both are claims nobody made.
+    render_block(
+        body,
+        &[
+            (SENDER, envelope.sender.trim().to_string()),
+            (SENT_AT, envelope.sent_at.to_string()),
+            (SUBJECT, envelope.subject.clone().unwrap_or_default()),
+            (NOTES, envelope.notes.clone().unwrap_or_default()),
+        ],
+    )
 }
 
 /// Read a card's description back: its body and its envelope, or `None` if this
@@ -70,13 +66,70 @@ pub(super) fn render_description(body: &str, envelope: &Envelope) -> String {
 /// has no declared sender and no sent-at, so it is not a message, and inventing
 /// either would put a card into a delivery with provenance nobody wrote.
 pub(super) fn parse_description(description: &str) -> Option<(String, Envelope)> {
-    // The de-HTML pass is a **fallback**, not a first step. Vikunja's own editor
-    // treats a description as rich text, so a card touched in the web UI can
-    // come back tagged and entity-escaped — but a store that keeps plain text
-    // must never be put through an entity decoder, or a body's literal `&amp;`
-    // silently becomes an `&`. Plain text is tried first and wins whenever it
-    // parses; the decoder only ever sees text that had no readable block.
-    read(description).or_else(|| read(&de_html(description)))
+    let (body, fields) = split_description(description, |inner| {
+        let has_sender = inner.iter().any(|l| field_of(l, SENDER).is_some());
+        let has_instant = inner
+            .iter()
+            .any(|l| field_of(l, SENT_AT).is_some_and(|v| v.parse::<Timestamp>().is_ok()));
+        has_sender && has_instant
+    })?;
+    let field = |key: &str| fields.iter().find_map(|l| field_of(l, key));
+    Some((
+        body,
+        Envelope {
+            sender: field(SENDER)?,
+            sent_at: field(SENT_AT)?.parse().ok()?,
+            // Absent on every card written before there was a field for it, and
+            // that is not a defect — those messages have no subject.
+            subject: field(SUBJECT),
+            notes: field(NOTES),
+        },
+    ))
+}
+
+/// Split any jojobot card's description into **the prose a human reads** and
+/// **the lines of its machine block** — the half of this codec that is not about
+/// messages at all.
+///
+/// Shared, because the two things that make it safe are not obvious and must not
+/// be reinvented per card type: the block is anchored at the END of the
+/// description (see [`machine_block`]) so a body cannot forge one, and the
+/// de-HTML pass is a FALLBACK rather than a first step. Vikunja's own editor
+/// treats a description as rich text, so a card touched in the web UI can come
+/// back tagged and entity-escaped — but a store that keeps plain text must never
+/// be put through an entity decoder, or a body's literal `&amp;` silently
+/// becomes an `&`. Plain text is tried first and wins whenever it parses; the
+/// decoder only ever sees text that had no readable block.
+///
+/// `valid` decides whether what sits between the fences is jojobot's block for
+/// this kind of card. It is what keeps a card a human fenced by hand inert
+/// rather than turning it into a record with invented fields.
+pub(super) fn split_description(
+    description: &str,
+    valid: impl Fn(&[&str]) -> bool + Copy,
+) -> Option<(String, Vec<String>)> {
+    read_block(description, valid).or_else(|| read_block(&de_html(description), valid))
+}
+
+/// One `key: value` line out of a block's lines, if it is there.
+pub(super) fn field(lines: &[String], key: &str) -> Option<String> {
+    lines.iter().find_map(|l| field_of(l, key))
+}
+
+/// Render a card description: the prose a human reads, then a fenced block of
+/// `key: value` lines. Blank values are dropped — an absent line and a blank one
+/// say different things, and only one of them is true.
+pub(super) fn render_block(prose: &str, fields: &[(&str, String)]) -> String {
+    let mut block = String::from(FENCE);
+    block.push('\n');
+    for (key, value) in fields {
+        let value = value.trim();
+        if !value.is_empty() {
+            block.push_str(&format!("{key}: {value}\n"));
+        }
+    }
+    block.push_str(CLOSE);
+    format!("{}\n\n{block}", prose.trim())
 }
 
 /// The fence a machine block opens and closes with.
@@ -117,7 +170,7 @@ fn field_of(line: &str, key: &str) -> Option<String> {
 ///   description unparseable. The card jojobot itself just wrote then fails its
 ///   own read-back, `post_message` rolls it back, and that message can never be
 ///   sent at all.
-fn machine_block(lines: &[&str]) -> Option<(usize, usize)> {
+fn machine_block(lines: &[&str], valid: impl Fn(&[&str]) -> bool) -> Option<(usize, usize)> {
     let mut fences = lines
         .iter()
         .enumerate()
@@ -127,31 +180,22 @@ fn machine_block(lines: &[&str]) -> Option<(usize, usize)> {
     let open = fences.next_back()?;
 
     // Still content-checked, so a card a human added by hand — fenced or not —
-    // stays inert rather than becoming a message with an invented sender.
-    let inner = &lines[open + 1..close];
-    let has_sender = inner.iter().any(|l| field_of(l, SENDER).is_some());
-    let has_instant = inner
-        .iter()
-        .any(|l| field_of(l, SENT_AT).is_some_and(|v| v.parse::<Timestamp>().is_ok()));
-    (has_sender && has_instant).then_some((open, close + 1))
+    // stays inert rather than becoming a record with invented fields.
+    valid(&lines[open + 1..close]).then_some((open, close + 1))
 }
 
 /// Read a description that is already plain text.
-fn read(description: &str) -> Option<(String, Envelope)> {
+fn read_block(
+    description: &str,
+    valid: impl Fn(&[&str]) -> bool,
+) -> Option<(String, Vec<String>)> {
     let lines: Vec<&str> = description.lines().collect();
-    let (open, close) = machine_block(&lines)?;
-    let inner = &lines[open + 1..close - 1];
-    let field = |key: &str| inner.iter().find_map(|l| field_of(l, key));
-
-    let envelope = Envelope {
-        sender: field(SENDER)?,
-        sent_at: field(SENT_AT)?.parse().ok()?,
-        // Absent on every card written before there was a field for it, and
-        // that is not a defect — those messages have no subject.
-        subject: field(SUBJECT),
-        notes: field(NOTES),
-    };
-    let body = lines
+    let (open, close) = machine_block(&lines, valid)?;
+    let inner = lines[open + 1..close - 1]
+        .iter()
+        .map(|l| (*l).to_string())
+        .collect();
+    let prose = lines
         .iter()
         .enumerate()
         .filter_map(|(i, l)| (i < open || i >= close).then_some(*l))
@@ -159,7 +203,7 @@ fn read(description: &str) -> Option<(String, Envelope)> {
         .join("\n")
         .trim()
         .to_string();
-    Some((body, envelope))
+    Some((prose, inner))
 }
 
 /// Flatten rich text back to the plain text it was written as: block-level tags

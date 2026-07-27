@@ -93,6 +93,19 @@ pub(super) struct BoardBucket {
     pub tasks: Vec<TaskRec>,
 }
 
+/// A comment on a card — the storage a session's chronology is made of.
+///
+/// Comments are the one Vikunja surface that is genuinely append-shaped: they
+/// arrive in creation order, each keeps its own id, and editing one leaves the
+/// rest alone. That is why a session's entries live here rather than as more
+/// lines in the description, which every write would rewrite whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct CommentRec {
+    pub id: u64,
+    pub text: String,
+    pub created: String,
+}
+
 /// A label. Global in Vikunja — labels are not scoped to a project — which is
 /// why jojobot's mailbox labels carry both a title prefix and an owner tag.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,6 +189,19 @@ pub(super) trait VikunjaApi: Send + Sync {
     -> Result<LabelRec, MailboxError>;
     /// Replace the whole label set on a card.
     async fn set_task_labels(&self, task_id: u64, labels: &[u64]) -> Result<(), MailboxError>;
+    /// A card's comments, oldest first.
+    async fn list_comments(&self, task_id: u64) -> Result<Vec<CommentRec>, MailboxError>;
+    async fn create_comment(&self, task_id: u64, text: &str)
+    -> Result<CommentRec, MailboxError>;
+    /// Rewrite one comment. **Only ever used on the most recent** — the domain
+    /// keeps everything older append-only; nothing here enforces that, which is
+    /// why the rule lives on the port above rather than in this transport.
+    async fn update_comment(
+        &self,
+        task_id: u64,
+        comment_id: u64,
+        text: &str,
+    ) -> Result<(), MailboxError>;
 }
 
 fn as_u64(v: &Value) -> Option<u64> {
@@ -236,6 +262,14 @@ fn board_bucket(b: &Value) -> Option<BoardBucket> {
             .as_array()
             .map(|ts| ts.iter().filter_map(task_rec).collect())
             .unwrap_or_default(),
+    })
+}
+
+fn comment_rec(c: &Value) -> Option<CommentRec> {
+    Some(CommentRec {
+        id: as_u64(&c["id"])?,
+        text: text(&c["comment"]),
+        created: text(&c["created"]),
     })
 }
 
@@ -497,6 +531,40 @@ impl VikunjaApi for HttpVikunja {
         .await
         .map(|_| ())
     }
+
+    async fn list_comments(&self, task_id: u64) -> Result<Vec<CommentRec>, MailboxError> {
+        let path = format!("/tasks/{task_id}/comments");
+        let v = self.get(&path, &[]).await?;
+        Ok(Self::array(&v, &path)?.iter().filter_map(comment_rec).collect())
+    }
+
+    async fn create_comment(
+        &self,
+        task_id: u64,
+        text: &str,
+    ) -> Result<CommentRec, MailboxError> {
+        let v = self
+            .put(
+                &format!("/tasks/{task_id}/comments"),
+                json!({ "comment": text }),
+            )
+            .await?;
+        comment_rec(&v).ok_or_else(|| MailboxError::Store("comments.create: malformed".into()))
+    }
+
+    async fn update_comment(
+        &self,
+        task_id: u64,
+        comment_id: u64,
+        text: &str,
+    ) -> Result<(), MailboxError> {
+        self.post(
+            &format!("/tasks/{task_id}/comments/{comment_id}"),
+            json!({ "id": comment_id, "comment": text }),
+        )
+        .await
+        .map(|_| ())
+    }
 }
 
 /// An adapter with no credentials — every call refuses. Lets the server boot and
@@ -556,6 +624,15 @@ impl VikunjaApi for Unconfigured {
         Self::refuse()
     }
     async fn set_task_labels(&self, _: u64, _: &[u64]) -> Result<(), MailboxError> {
+        Self::refuse()
+    }
+    async fn list_comments(&self, _: u64) -> Result<Vec<CommentRec>, MailboxError> {
+        Self::refuse()
+    }
+    async fn create_comment(&self, _: u64, _: &str) -> Result<CommentRec, MailboxError> {
+        Self::refuse()
+    }
+    async fn update_comment(&self, _: u64, _: u64, _: &str) -> Result<(), MailboxError> {
         Self::refuse()
     }
 }
