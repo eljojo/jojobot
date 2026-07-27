@@ -88,8 +88,10 @@ pub enum MessageState {
 
 impl MessageState {
     /// Every state, in funnel order — which is also the column order on the
-    /// board. Provisioning walks this, so the board can never grow a column the
-    /// domain doesn't know or lose one it does.
+    /// board. What reads a board's columns walks this, so a column title that is
+    /// no state is never mistaken for one; **an adapter names its own columns**
+    /// rather than deriving them here, because the board is that adapter's to
+    /// provision and this is the domain.
     pub const ALL: [MessageState; 3] = [
         MessageState::New,
         MessageState::Read,
@@ -677,7 +679,9 @@ mod tests {
                 "{unknown:?} is not a state"
             );
         }
-        // The funnel order is the column order — provisioning walks it.
+        // The funnel order is the column order a board carries, in the order it
+        // carries them — each adapter names its own, so this is what they are
+        // named after rather than what walks them.
         assert_eq!(
             MessageState::ALL.map(|s| s.as_token()),
             ["new", "read", "processed"]

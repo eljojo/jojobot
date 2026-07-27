@@ -502,7 +502,9 @@ mod tests {
         for unknown in ["done", "Active", "", "open", "closed"] {
             assert_eq!(SessionState::from_token(unknown), None, "{unknown:?} is no state");
         }
-        // The funnel order is the column order — provisioning walks it.
+        // The funnel order is the column order a board carries, in the order it
+        // carries them — each adapter names its own, so this is what they are
+        // named after rather than what walks them.
         assert_eq!(
             SessionState::ALL.map(|s| s.as_token()),
             ["active", "wrapped", "abandoned"]

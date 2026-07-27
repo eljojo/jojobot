@@ -813,15 +813,24 @@ pub mod contract {
             .await
             .expect("append_journal ok");
 
+        // **One page, and it scans under its own title.** A reader that needs
+        // the Journal specifically — the wrap's retry guard is one — has nothing
+        // but the title to find it by, so a store whose scan filed these entries
+        // under some other heading would make that reader answer "not there"
+        // about entries sitting right in front of it.
+        let docs = store.scan().await.expect("scan ok");
+        let journal = docs
+            .iter()
+            .find(|d| d.title.trim() == JOURNAL_TITLE)
+            .map(|d| d.prose.clone())
+            .unwrap_or_else(|| {
+                panic!(
+                    "the Journal must scan under the title '{JOURNAL_TITLE}', not {:?}",
+                    docs.iter().map(|d| &d.title).collect::<Vec<_>>()
+                )
+            });
+
         // Both entries are on the page, and the older one is untouched.
-        let journal: String = store
-            .scan()
-            .await
-            .expect("scan ok")
-            .into_iter()
-            .map(|d| d.prose)
-            .collect::<Vec<_>>()
-            .join("\n");
         assert!(
             journal.contains("wrapped the mail-search slice"),
             "the first entry must still be there after the second: {journal}"

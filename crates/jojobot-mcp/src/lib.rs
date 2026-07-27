@@ -999,6 +999,12 @@ impl Jojobot {
     /// Record one coarse beat for a verb class — **at most one per class per
     /// session**, its count and examples corrected in place as the class repeats.
     ///
+    /// One case leaves two lines of a class, and does so deliberately: a beat
+    /// somebody rewrote by hand no longer parses as a tally, so [`beats_of`]
+    /// does not find it and the class opens a fresh one beside it. Their words
+    /// stay theirs — overwriting what a person wrote on the card to keep a count
+    /// tidy is the worse trade.
+    ///
     /// Silent by design in three cases, all of them "there is nobody to record
     /// this for": an unbound connection (jojobot will not guess which identity
     /// made a call), a session store that refuses, and a beat that fails to
@@ -5534,12 +5540,25 @@ mod tests {
     async fn a_first_entry_is_prose_and_still_lands_whole() {
         let backticked = "started on `working_session`, which was the wrong shape";
         let long = "x".repeat(400);
-        let cases: [(&str, &str); 3] = [
-            ("multi-line", "read the hand-off\n\nthen scoped the slice"),
-            ("backticked", backticked),
-            ("over-long", &long),
+        let cut = format!("{}…", "x".repeat(199));
+        // The derived focus in full, not just its shape — a flatten that joined
+        // with nothing would glue the words either side of a paragraph break
+        // into one, and every rule-shaped assertion (no newline, no backtick,
+        // within the cap) still holds of the glued line.
+        let cases: [(&str, &str, &str); 3] = [
+            (
+                "multi-line",
+                "read the hand-off\n\nthen scoped the slice",
+                "read the hand-off then scoped the slice",
+            ),
+            (
+                "backticked",
+                backticked,
+                "started on working_session, which was the wrong shape",
+            ),
+            ("over-long", &long, &cut),
         ];
-        for (shape, entry) in cases {
+        for (shape, entry, focus) in cases {
             let store = Arc::new(InMemorySessions::new());
             let jojobot = with_sessions(store.clone());
             make_bot(&jojobot, "gamma", None).await;
@@ -5567,10 +5586,9 @@ mod tests {
                 jojobot_domain::session::normalize_entry(entry),
                 "{shape}: the entry reaches the chronology whole"
             );
-            assert!(
-                !live[0].focus.contains('\n') && !live[0].focus.contains('`'),
-                "{shape}: the derived focus is display text: {:?}",
-                live[0].focus
+            assert_eq!(
+                live[0].focus, focus,
+                "{shape}: the derived focus is display text, word for word"
             );
             assert!(
                 live[0].focus.chars().count() <= 200,
@@ -6018,6 +6036,60 @@ mod tests {
         );
     }
 
+    /// **A beat line a person rewrote stays theirs, and the class starts over
+    /// beside it.** jojobot reads its tally back out of the line it rendered, so
+    /// a hand-edited one no longer parses — and the deliberate answer is to
+    /// leave their words alone and open a fresh tally rather than overwrite what
+    /// somebody wrote on the card. The cost is the one case where a session
+    /// carries two beat lines of one class, which is why the rule is "at most
+    /// one per class that jojobot itself is still keeping".
+    #[tokio::test]
+    async fn a_hand_edited_beat_is_left_alone_and_the_class_starts_a_fresh_tally() {
+        let store = Arc::new(InMemorySessions::new());
+        let memory = Arc::new(InMemoryMemory::new());
+        let first = connection(memory.clone(), store.clone());
+        make_bot(&first, "gamma", None).await;
+        boot(&first, "gamma").await;
+        ensure(&first, "alpha").await;
+        capture_ok(&first, capture_args("alpha", "plays go")).await;
+
+        let live = store.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
+        let beat = live[0]
+            .entries
+            .iter()
+            .find(|e| e.beat.as_deref() == Some("capture"))
+            .expect("a capture beat")
+            .clone();
+
+        // Somebody edits that comment on the board, in their own words.
+        let theirs = "I checked these myself — they are right";
+        store
+            .amend_beat(&live[0].id, &beat.id, theirs, jiff::Timestamp::now())
+            .await
+            .expect("amend ok");
+
+        // A reconnect: the tally is re-read off the chronology, and this line no
+        // longer says anything jojobot can count.
+        let second = connection(memory, store.clone());
+        boot(&second, "gamma").await;
+        ensure(&second, "milhouse").await;
+        capture_ok(&second, capture_args("milhouse", "plays chess")).await;
+
+        let live = store.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
+        let captures: Vec<&str> = live[0]
+            .entries
+            .iter()
+            .filter(|e| e.beat.as_deref() == Some("capture"))
+            .map(|e| e.text.as_str())
+            .collect();
+        assert_eq!(
+            captures,
+            vec![theirs, "captured facts about: person:milhouse (1)"],
+            "their line untouched, and a fresh tally beside it: {:?}",
+            live[0].entries
+        );
+    }
+
     /// Every doc's prose on one string — how a test reads the operator's
     /// Journal, which is a page rather than an entity and so has no handle to
     /// fetch it by.
@@ -6030,6 +6102,171 @@ mod tests {
             .map(|d| d.prose)
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// A board that cannot be listed until it can — an outage that ends, which
+    /// is the whole reason a boot binds without attaching instead of giving up.
+    struct BoardComesBack {
+        inner: Arc<InMemorySessions>,
+        down: std::sync::atomic::AtomicBool,
+    }
+
+    impl BoardComesBack {
+        fn new(inner: Arc<InMemorySessions>) -> Self {
+            BoardComesBack {
+                inner,
+                down: std::sync::atomic::AtomicBool::new(true),
+            }
+        }
+        fn comes_back(&self) {
+            self.down.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl Sessions for BoardComesBack {
+        async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+            if self.down.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(SessionError::Store("the board cannot be listed".into()));
+            }
+            self.inner.sessions_of(bot).await
+        }
+        async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+            self.inner.read_session(id).await
+        }
+        async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+            self.inner.begin(new).await
+        }
+        async fn append(
+            &self,
+            id: &SessionId,
+            entry: NewEntry,
+        ) -> Result<JournalEntry, SessionError> {
+            self.inner.append(id, entry).await
+        }
+        async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+            self.inner.amend_last(id, text).await
+        }
+        async fn amend_beat(
+            &self,
+            id: &SessionId,
+            entry: &EntryId,
+            text: &str,
+            at: jiff::Timestamp,
+        ) -> Result<JournalEntry, SessionError> {
+            self.inner.amend_beat(id, entry, text, at).await
+        }
+        async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
+            self.inner.set_focus(id, focus).await
+        }
+        async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
+            self.inner.close(id, to).await
+        }
+    }
+
+    /// The bot, its session already in flight, and a connection that booted
+    /// while the board was unreadable — the state the whole `attached` flag
+    /// exists to represent.
+    async fn booted_blind(store: &Arc<BoardComesBack>) -> (Jojobot, Session) {
+        let live = store
+            .inner
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                focus: "in flight, and unreadable".into(),
+                started_at: jiff::Timestamp::now(),
+            })
+            .await
+            .expect("begin ok");
+        store
+            .inner
+            .append(&live.id, NewEntry::manual("what it was doing", jiff::Timestamp::now()))
+            .await
+            .expect("append ok");
+
+        let jojobot = Jojobot::new(
+            Arc::new(InMemoryMemory::new()),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::new()),
+            store.clone(),
+        );
+        make_bot(&jojobot, "gamma", None).await;
+        let booted = boot(&jojobot, "gamma").await;
+        assert_eq!(
+            booted["session"]["available"], false,
+            "the board was unreadable, so nothing was attached to: {booted}"
+        );
+        (jojobot, live)
+    }
+
+    /// **The first write RETRIES the attach.** A boot that could not read the
+    /// board binds without attaching precisely so the next write can look again
+    /// — and when the board is back, that write joins the session already in
+    /// flight instead of beginning a second one beside it.
+    #[tokio::test]
+    async fn a_first_write_after_a_blind_boot_attaches_rather_than_beginning() {
+        let store = Arc::new(BoardComesBack::new(Arc::new(InMemorySessions::new())));
+        let (jojobot, live) = booted_blind(&store).await;
+
+        store.comes_back();
+        let journalled = journal_entry(&jojobot, "picked it back up").await;
+        assert_eq!(
+            journalled["session"], live.id.as_str(),
+            "the write joined the session in flight: {journalled}"
+        );
+
+        let all = store.inner.sessions_of(&EntityId("bot:gamma".into())).await.expect("list ok");
+        assert_eq!(all.len(), 1, "no second card beside it: {all:?}");
+        assert_eq!(all[0].entries.len(), 2, "…and it kept accruing: {:?}", all[0].entries);
+    }
+
+    /// **amend_journal triages the same way the other two do.** A connection
+    /// that never booted is told to boot — not told there is nothing to amend,
+    /// which is a different fact about a different thing.
+    #[tokio::test]
+    async fn amending_without_a_boot_says_to_boot_rather_than_no_entries() {
+        let jojobot = with_sessions(Arc::new(InMemorySessions::new()));
+        let body = json_of(
+            &jojobot
+                .amend_journal(Parameters(AmendJournalArgs {
+                    entry: "actually, it was the other thing".into(),
+                    session: None,
+                }))
+                .await
+                .expect("call ok"),
+        );
+        assert_eq!(body["status"], "blocked");
+        let how = body["how_to_proceed"].as_str().expect("advice");
+        assert!(how.contains("boot_bot"), "the way out names the verb: {how}");
+        assert!(
+            !how.contains("no entries"),
+            "…and it does not answer about a session nobody looked for: {how}"
+        );
+    }
+
+    /// …and a connection whose boot could not read the board retries the attach
+    /// here too, rather than answering "no entries" about a session it never
+    /// looked for. Unknown is not false.
+    #[tokio::test]
+    async fn amending_after_a_blind_boot_retries_the_attach() {
+        let store = Arc::new(BoardComesBack::new(Arc::new(InMemorySessions::new())));
+        let (jojobot, live) = booted_blind(&store).await;
+
+        store.comes_back();
+        let body = json_of(
+            &jojobot
+                .amend_journal(Parameters(AmendJournalArgs {
+                    entry: "what it was doing, said better".into(),
+                    session: None,
+                }))
+                .await
+                .expect("call ok"),
+        );
+        assert_ne!(body["status"], "blocked", "the session was there to be found: {body}");
+        assert_eq!(body["session"], live.id.as_str());
+
+        let read = store.inner.read_session(&live.id).await.expect("read ok");
+        assert_eq!(read.entries.len(), 1, "amended in place, not appended");
+        assert_eq!(read.entries[0].text, "what it was doing, said better");
     }
 
     /// A board that cannot be listed, though everything else on it works — the
