@@ -13,10 +13,12 @@
 //! carry, and the differences between them are now written down in one place
 //! where they can be compared, rather than inferred by diffing three functions.
 //!
-//! **These outputs are stored bytes.** A title sits on a live board and a focus
-//! sits in a card's description, so changing what a strategy produces rewrites
-//! records that already exist. Every strategy is pinned by a golden test at its
-//! own call site; a change to the rules has to go there and say so.
+//! **Most of these outputs are stored bytes.** A title sits on a live board and
+//! a focus sits in a card's description, so changing what those strategies
+//! produce rewrites records that already exist — each is pinned by a golden at
+//! its own call site, and a change to the rules has to go there and say so.
+//! [`BODY_DIGEST`] is the exception: it is computed per response and stored
+//! nowhere, so its golden sits here beside it rather than at a call site.
 
 /// Whether the ellipsis a cut adds is counted against the budget.
 ///
@@ -89,7 +91,10 @@ impl Fitted {
         }
 
         let room = match self.ellipsis {
-            Ellipsis::WithinBudget => self.budget - 1,
+            // Saturating because `Fitted` is public with public fields: a
+            // budget of zero is no strategy anyone here declares, and it must
+            // still not be an arithmetic panic in a library type.
+            Ellipsis::WithinBudget => self.budget.saturating_sub(1),
             Ellipsis::BeyondBudget => self.budget,
         };
         let mut kept = String::new();
@@ -234,6 +239,34 @@ mod tests {
         assert_eq!(MESSAGE_TITLE.render("a `fence`"), "a `fence`");
         assert_eq!(FOCUS_LINE.render("   "), FRESH_FOCUS);
         assert_eq!(MESSAGE_TITLE.render("   "), "");
+    }
+
+    /// **The body digest's golden**, kept here because this strategy is the one
+    /// whose output is never stored — it is computed per response, so it has no
+    /// call site to pin it at.
+    #[test]
+    fn the_body_digest_golden() {
+        assert_eq!(BODY_DIGEST.render("the shipment landed"), "the shipment landed");
+        assert_eq!(
+            BODY_DIGEST.render("the shipment landed\n\nand the crates are stacked"),
+            "the shipment landed and the crates are stacked",
+            "a multi-line body reads as one line of preview"
+        );
+        assert_eq!(
+            BODY_DIGEST.render(&"counted the crates. ".repeat(20)),
+            format!("{}counted the crates.…", "counted the crates. ".repeat(5)),
+            "…and a long one is cut inside the budget"
+        );
+        assert!(BODY_DIGEST.render(&"x".repeat(500)).chars().count() <= BODY_DIGEST.budget);
+        assert_eq!(BODY_DIGEST.render("   "), "", "an empty body previews as nothing");
+    }
+
+    /// A budget of zero is no strategy declared here, and a public type with
+    /// public fields must still not panic on one.
+    #[test]
+    fn a_zero_budget_cuts_rather_than_underflowing() {
+        let nothing = Fitted { budget: 0, ..BODY_DIGEST };
+        assert_eq!(nothing.render("anything at all"), "…");
     }
 
     /// An outcome record keeps the writer's own spacing — it is one line
