@@ -1576,7 +1576,10 @@ impl Jojobot {
                        counts you saw a moment ago. An unknown box comes back status: blocked \
                        with candidates and delivers nothing. Act on what you receive, then call \
                        mark_processed for each. Draining a whole box makes every message in it \
-                       yours to finish — use read_message when you want only one."
+                       yours to finish — use read_message when you want only one. ONLY CHECKING \
+                       WHETHER ANYTHING IS WAITING? Use list_mailboxes — it reads counts without \
+                       taking delivery, so a poll that finds an empty box costs nothing and owes \
+                       nothing."
     )]
     async fn read_mailbox(
         &self,
@@ -1856,7 +1859,11 @@ impl Jojobot {
                        the next read_mailbox hands it back as a leftover — recoverable. A \
                        FAILURE IS DATA, NOT A STATE: record it in notes (and reply with a new \
                        message if someone needs to know) — there is no failed status, because a \
-                       message whose handling failed has still been handled. A message can be \
+                       message whose handling failed has still been handled. For a pure \
+                       acknowledgement — an ack, a heads-up, a round-closed note, anything whose \
+                       whole content is now known to you — READING IT IS THE ACTING, so process \
+                       it with a note and move on; the order matters for work you still owe, not \
+                       for work that was never owed. A message can be \
                        processed straight from `new`, no delivery first. Two refusals wear the \
                        same status: blocked shape and mean different things: an id that names \
                        nothing at all (use one read_mailbox or post_message handed you), and an \
@@ -5310,6 +5317,33 @@ mod tests {
         assert!(
             description.contains("ONLY AFTER"),
             "the crash contract must be stated where a consumer reads it: {description}"
+        );
+        // **…and it must not read as forbidding the ack.** "Act first" made a
+        // real session hesitate over pure acknowledgements, where reading IS
+        // the acting. The rule and its one boundary case travel together.
+        assert!(
+            description.contains("acknowledgement"),
+            "the crash contract must say where reading is itself the acting: {description}"
+        );
+    }
+
+    /// **Polling is a read, and the surface has to say which verb reads.** A
+    /// session whose standing loop was "check the box; if empty do nothing" paid
+    /// ~14 state-changing deliveries of an empty box, because the only verb that
+    /// visibly answers "is there anything waiting" is the one that takes
+    /// delivery. `list_mailboxes` was the answer the whole time and nothing
+    /// pointed at it from the place the caller was standing.
+    #[test]
+    fn the_read_mailbox_description_points_at_the_read_only_way_to_poll() {
+        let tools = Jojobot::tool_router().list_all();
+        let read = tools
+            .iter()
+            .find(|t| t.name == "read_mailbox")
+            .expect("read_mailbox is a tool");
+        let description = read.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains("list_mailboxes"),
+            "the cheaper verb must be named where the expensive one is read: {description}"
         );
     }
 
