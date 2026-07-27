@@ -381,6 +381,15 @@ pub struct NewMessage {
     /// When it was sent. Passed in rather than read off a clock, so the domain
     /// stays deterministic.
     pub sent_at: Timestamp,
+    /// The message this one answers, when it answers one.
+    ///
+    /// **A reference like any other, so it must already exist**: a link to a
+    /// message jojobot does not hold is [`MailboxError::UnknownMessage`] and
+    /// nothing is written. It carries no semantics beyond itself — it does not
+    /// mark the original handled, does not deliver it, and does not oblige
+    /// anybody. It says these two messages are one exchange, which is the thing
+    /// prose conventions ("report = message 935") could not survive.
+    pub in_reply_to: Option<MessageId>,
 }
 
 /// A message on the board.
@@ -408,6 +417,15 @@ pub struct Message {
     /// state**: there is no `failed` column, because a message whose handling
     /// failed has still been handled, and the retry is a new message.
     pub notes: Option<String>,
+    /// The message this one answers, when the poster named one. `None` is the
+    /// ordinary case — every message written before there was a field for it
+    /// has none, and none of them is broken.
+    ///
+    /// **A link, not a status.** It says these two are one exchange; it says
+    /// nothing about whether either has been handled, and reading it moves
+    /// nothing.
+    #[serde(default)]
+    pub in_reply_to: Option<MessageId>,
 }
 
 /// One message as `read_mailbox` delivers it.

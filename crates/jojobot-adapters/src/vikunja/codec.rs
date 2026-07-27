@@ -36,6 +36,11 @@ pub(super) struct Envelope {
     pub sent_at: Timestamp,
     pub subject: Option<String>,
     pub notes: Option<String>,
+    /// The id of the message this one answers, when it answers one. A card
+    /// reference rather than a Vikunja task relation: the link belongs to the
+    /// record jojobot keeps, and a relation a person could remove from the
+    /// board would be a fact that silently stopped being true.
+    pub in_reply_to: Option<String>,
 }
 
 /// Render a card's description: the body, then jojobot's machine block.
@@ -55,6 +60,7 @@ pub(super) fn render_description(body: &str, envelope: &Envelope) -> String {
             (SENT_AT, envelope.sent_at.to_string()),
             (SUBJECT, envelope.subject.clone().unwrap_or_default()),
             (NOTES, envelope.notes.clone().unwrap_or_default()),
+            (IN_REPLY_TO, envelope.in_reply_to.clone().unwrap_or_default()),
         ],
     )
 }
@@ -83,6 +89,7 @@ pub(super) fn parse_description(description: &str) -> Option<(String, Envelope)>
             // that is not a defect — those messages have no subject.
             subject: field(SUBJECT),
             notes: field(NOTES),
+            in_reply_to: field(IN_REPLY_TO),
         },
     ))
 }
@@ -144,6 +151,8 @@ const SENT_AT: &str = "sent-at";
 const NOTES: &str = "notes";
 /// The field carrying the subject the poster gave the message.
 const SUBJECT: &str = "subject";
+/// The field carrying the id of the message this one answers.
+const IN_REPLY_TO: &str = "in-reply-to";
 
 /// The value of a `key: value` line, if this line is one.
 fn field_of(line: &str, key: &str) -> Option<String> {
@@ -271,6 +280,7 @@ mod tests {
             sent_at: at(1_780_000_000),
             subject: None,
             notes: None,
+            in_reply_to: None,
         }
     }
 

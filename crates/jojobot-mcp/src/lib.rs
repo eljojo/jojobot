@@ -352,6 +352,12 @@ pub struct PostMessageArgs {
     /// resolve or verify identity — name yourself specifically enough that a
     /// reply can find you.
     pub sender: String,
+    /// The id of the message this one answers, when it answers one. Optional.
+    /// It must name a message that exists — a miss comes back blocked and
+    /// nothing is written — and it links the two without saying anything about
+    /// either: it does not deliver, handle, or oblige.
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
 }
 
 /// Arguments to `read_mailbox`.
@@ -1529,7 +1535,10 @@ impl Jojobot {
                        in between, and that is success, not a problem: the message exists and \
                        someone has it. `sender` is recorded exactly as you declare it — \
                        identity is not verified, so name yourself specifically enough that a \
-                       reply can find you."
+                       reply can find you. `in_reply_to` links this message to the one it \
+                       answers: optional, it must name a message that exists (a miss comes back \
+                       blocked, nothing written), and it says only that the two are one exchange \
+                       — it does not deliver the original, handle it, or oblige anybody."
     )]
     async fn post_message(
         &self,
@@ -1544,13 +1553,21 @@ impl Jojobot {
             // date here: the domain stays clock-free, and a caller does not get
             // to backdate a message it is posting now.
             sent_at: jiff::Timestamp::now(),
+            in_reply_to: args
+                .in_reply_to
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(|id| MessageId(id.to_string())),
         };
-        match self
-            .mailboxes
-            .post_message(new)
-            .await
-            .map_err(mailbox_error)?
-        {
+        // Declined rather than errored: a reply naming a message jojobot does
+        // not hold is a bad reference, and every other bad reference on this
+        // surface comes back as the blocked shape.
+        let posted = match self.mailboxes.post_message(new).await {
+            Ok(posted) => posted,
+            Err(e) => return mailbox_declined(e),
+        };
+        match posted {
             mailbox::Guarded::Written(message) => {
                 self.beat("post_message", message.mailbox.as_str()).await;
                 json_result(&message_json(&message))
@@ -2510,6 +2527,10 @@ fn message_json(message: &Message) -> serde_json::Value {
         "body": message.body,
         "state": message.state.as_token(),
         "notes": message.notes,
+        // Null for a message that answers nothing, which is most of them. A
+        // link, never a status: it says these two are one exchange and nothing
+        // about whether either has been handled.
+        "in_reply_to": message.in_reply_to.as_ref().map(|id| id.as_str()),
     })
 }
 
@@ -3314,6 +3335,7 @@ mod tests {
                 sent_at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
                 state: mailbox::MessageState::Processed,
                 notes: Some("filed".into()),
+                in_reply_to: None,
             },
             snippet: "…the damper is still hand-cut…".into(),
         }]));
@@ -3431,6 +3453,7 @@ mod tests {
                     sent_at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
                     state: mailbox::MessageState::New,
                     notes: None,
+                    in_reply_to: None,
                 },
                 snippet: "…the damper…".into(),
             }]
@@ -4724,6 +4747,7 @@ mod tests {
                 sender: sender.into(),
                 subject: subject.map(str::to_string),
                 body: body.into(),
+                in_reply_to: None,
             }))
             .await
             .expect("post_message call ok");
@@ -4957,6 +4981,7 @@ mod tests {
                 sender: "alpha".into(),
                 body: "the shipment landed".into(),
                 subject: None,
+                in_reply_to: None,
             }))
             .await
             .expect("a blocked post is a successful call");
@@ -5075,6 +5100,7 @@ mod tests {
                 sender: "  ".into(),
                 body: "the shipment landed".into(),
                 subject: None,
+                in_reply_to: None,
             }))
             .await
             .expect_err("a message with no sender has no provenance");
@@ -5083,6 +5109,62 @@ mod tests {
 
     /// An id nothing answers to is **blocked**, carrying the id that missed —
     /// never a silent success, which would look exactly like a handled message,
+    /// **A reply names what it answers, and a dangling link is blocked.** The
+    /// hand-off ↔ report chain was correlated by prose convention alone, which
+    /// is manual archaeology the moment there is any volume. The link is
+    /// optional, carries no semantics beyond itself, and — like every other
+    /// reference on this surface — must name something that exists.
+    #[tokio::test]
+    async fn a_reply_carries_the_message_it_answers_and_a_dangling_link_is_blocked() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "pm").await;
+        let original = send(&jojobot, "pm", "coordinator (pm)", "build the kiln slice").await;
+        let original_id = original["id"].as_str().expect("an id").to_string();
+        assert!(original["in_reply_to"].is_null(), "a message answering nothing says so");
+
+        let reply = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    mailbox: "pm".into(),
+                    sender: "dev (implementer)".into(),
+                    body: "the kiln slice is done".into(),
+                    subject: None,
+                    in_reply_to: Some(original_id.clone()),
+                }))
+                .await
+                .expect("post ok"),
+        );
+        assert_eq!(reply["in_reply_to"], original_id.as_str());
+
+        // …and it rides on every verb that renders a message.
+        let delivered = json_of(
+            &jojobot
+                .read_message(Parameters(ReadMessageArgs {
+                    message_id: reply["id"].as_str().expect("an id").to_string(),
+                }))
+                .await
+                .expect("read_message ok"),
+        );
+        assert_eq!(delivered["in_reply_to"], original_id.as_str());
+
+        // A link to nothing is the blocked shape, never a protocol error and
+        // never a stored message.
+        let dangling = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    mailbox: "pm".into(),
+                    sender: "dev (implementer)".into(),
+                    body: "answering something nobody said".into(),
+                    subject: None,
+                    in_reply_to: Some("9999".into()),
+                }))
+                .await
+                .expect("a bad reference is an answer, not an error"),
+        );
+        assert_eq!(dangling["status"], "blocked", "{dangling}");
+        assert_eq!(dangling["wrote"], false);
+    }
+
     /// **A long outcome record is cut, and the caller is told it was cut.** The
     /// crash contract asks for an account of what happened; refusing the whole
     /// call over its length left the message unprocessed and cost exactly the

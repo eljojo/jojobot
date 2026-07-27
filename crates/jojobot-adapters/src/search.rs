@@ -2183,6 +2183,7 @@ mod tests {
             sent_at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
             state,
             notes: None,
+            in_reply_to: None,
         }
     }
 
@@ -2575,6 +2576,7 @@ mod tests {
                 subject: None,
                 sender: "dev".into(),
                 sent_at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
+                in_reply_to: None,
             })
             .await
             .expect("a blocked post is a result, not a failure");

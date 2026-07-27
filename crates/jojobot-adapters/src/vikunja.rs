@@ -430,6 +430,7 @@ impl VikunjaStore {
                     sent_at: envelope.sent_at,
                     state,
                     notes: envelope.notes,
+                    in_reply_to: envelope.in_reply_to.map(MessageId),
                 };
                 found.push((task, message));
             }
@@ -960,6 +961,23 @@ impl Mailboxes for VikunjaStore {
                 ))
             })?;
 
+        // **Everything a write names must already exist** — the reply link
+        // included, and checked before the card is created rather than after,
+        // so a dangling link never mints a card that has to be rolled back.
+        if let Some(answered) = &message.in_reply_to {
+            validate_message_id(answered)?;
+            let known = self
+                .messages(&scope)
+                .await?
+                .into_iter()
+                .any(|(_, m)| &m.id == answered);
+            if !known {
+                return Err(MailboxError::UnknownMessage {
+                    attempted: answered.to_string(),
+                });
+            }
+        }
+
         let body = normalize_body(&message.body);
         let sender = message.sender.trim().to_string();
         let subject = normalize_subject(message.subject.as_deref());
@@ -968,6 +986,7 @@ impl Mailboxes for VikunjaStore {
             sent_at: message.sent_at,
             subject: subject.clone(),
             notes: None,
+            in_reply_to: message.in_reply_to.as_ref().map(|id| id.to_string()),
         };
         let card = self
             .api
@@ -1031,6 +1050,7 @@ impl Mailboxes for VikunjaStore {
             sent_at: message.sent_at,
             state: MessageState::New,
             notes: None,
+            in_reply_to: message.in_reply_to,
         };
         match self.read_back(&scope, &expected.id).await {
             Ok(seen) if read_back_confirms(&expected, &seen) => Ok(Guarded::Written(seen)),
@@ -1301,6 +1321,9 @@ impl Mailboxes for VikunjaStore {
             sent_at: message.sent_at,
             subject: message.subject.clone(),
             notes: notes.clone(),
+            // Carried through untouched: processing a message says nothing
+            // about what it was answering.
+            in_reply_to: message.in_reply_to.as_ref().map(|id| id.to_string()),
         };
         // The outcome is written first, then the column moves. A `?` between the
         // two left the message carrying a recorded outcome while still sitting
@@ -2608,6 +2631,7 @@ pub(super) mod tests {
                 subject: None,
                 sender: "alpha".into(),
                 sent_at: at(1_780_000_000),
+                in_reply_to: None,
             })
             .await;
         assert!(outcome.is_err(), "a mangled write must not report success: {outcome:?}");
@@ -2752,7 +2776,7 @@ pub(super) mod tests {
             "alpha: looks like a message",
             &render_description(
                 "looks like a message",
-                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), subject: None, notes: None },
+                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), subject: None, notes: None, in_reply_to: None },
             ),
             &[label],
         );
@@ -2775,7 +2799,7 @@ pub(super) mod tests {
             fake.tasks_in(theirs)[0].description,
             render_description(
                 "looks like a message",
-                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), subject: None, notes: None },
+                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), subject: None, notes: None, in_reply_to: None },
             ),
             "…and the card is untouched"
         );
@@ -2944,6 +2968,7 @@ pub(super) mod tests {
                     subject: None,
                     sender: "alpha".into(),
                     sent_at: at(1_780_000_000),
+                    in_reply_to: None,
                 })
                 .await;
             assert!(outcome.is_err(), "a failed {step} must not report success");
@@ -3013,6 +3038,7 @@ pub(super) mod tests {
                 subject: None,
                 sender: "alpha".into(),
                 sent_at: at(1_780_000_000),
+                in_reply_to: None,
             })
             .await;
         assert!(outcome.is_err(), "a failed labelling must not report success: {outcome:?}");
@@ -3106,6 +3132,7 @@ pub(super) mod tests {
                     subject: None,
                     sender: "alpha".into(),
                     sent_at: at(1_780_000_000),
+                    in_reply_to: None,
                 })
                 .await;
             assert!(outcome.is_err(), "a failed {step} must not report success: {outcome:?}");
@@ -3158,6 +3185,7 @@ pub(super) mod tests {
                 subject: None,
                 sender: "alpha".into(),
                 sent_at: at(1_780_000_000),
+                in_reply_to: None,
             })
             .await;
         assert!(outcome.is_err(), "a failed create_task must not report success: {outcome:?}");
@@ -3562,6 +3590,7 @@ pub(super) mod tests {
                 sent_at: at(1_780_000_000),
                 subject: None,
                 notes: None,
+                in_reply_to: None,
             },
         );
         let mut tasks = fake.tasks.lock().unwrap();
@@ -4006,7 +4035,7 @@ pub(super) mod tests {
             fake.placement.lock().unwrap().insert(card, processed);
             let swapped = render_description(
                 "a different message entirely",
-                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), subject: None, notes: None },
+                &Envelope { sender: "alpha".into(), sent_at: at(1_780_000_000), subject: None, notes: None, in_reply_to: None },
             );
             let mut tasks = fake.tasks.lock().unwrap();
             let held = tasks.iter_mut().find(|t| t.id == card).expect("the card");
@@ -4061,6 +4090,7 @@ pub(super) mod tests {
                 subject: None,
                 sender: "alpha".into(),
                 sent_at: at(1_780_000_000),
+                in_reply_to: None,
             })
             .await
             .expect("a consumed message is a delivered message, not a failure")
@@ -4225,6 +4255,7 @@ pub(super) mod tests {
             sent_at: at(1_780_000_000),
             state: MessageState::New,
             notes: None,
+            in_reply_to: None,
         };
         let advanced = Message { state: MessageState::Read, ..wrote.clone() };
         assert!(
@@ -4271,6 +4302,7 @@ pub(super) mod tests {
             sent_at: at(1_780_000_000),
             subject: None,
             notes: None,
+            in_reply_to: None,
         };
         let swapped_body = ("the body", "a different message entirely".to_string(), posted.clone());
         let swapped_sender = (
@@ -4316,6 +4348,7 @@ pub(super) mod tests {
                     subject: None,
                     sender: "alpha".into(),
                     sent_at: at(1_780_000_000),
+                    in_reply_to: None,
                 })
                 .await;
             assert!(

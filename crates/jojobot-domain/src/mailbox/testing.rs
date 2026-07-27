@@ -165,6 +165,22 @@ impl Mailboxes for InMemoryMailboxes {
             });
         }
 
+        // Everything a write names must already exist — a reply link included.
+        if let Some(answered) = &message.in_reply_to {
+            validate_message_id(answered)?;
+            let known = self
+                .messages
+                .lock()
+                .expect("message lock")
+                .iter()
+                .any(|m| &m.id == answered);
+            if !known {
+                return Err(MailboxError::UnknownMessage {
+                    attempted: answered.to_string(),
+                });
+            }
+        }
+
         let stored = Message {
             id: self.mint_id(),
             mailbox: message.mailbox,
@@ -174,6 +190,7 @@ impl Mailboxes for InMemoryMailboxes {
             sent_at: message.sent_at,
             state: MessageState::New,
             notes: None,
+            in_reply_to: message.in_reply_to,
         };
         self.messages.lock().expect("message lock").push(stored.clone());
         Ok(Guarded::Written(stored))
@@ -338,6 +355,7 @@ pub mod contract {
                 subject: subject.map(str::to_string),
                 sender: sender.to_string(),
                 sent_at: at(at_offset),
+                in_reply_to: None,
             })
             .await
             .expect("post_message should succeed")
@@ -559,6 +577,7 @@ pub mod contract {
                 subject: Some("two\nlines".into()),
                 sender: "alpha".into(),
                 sent_at: at(30),
+                in_reply_to: None,
             })
             .await;
         assert!(broken.is_err(), "a subject is one plain line");
@@ -697,6 +716,7 @@ pub mod contract {
                 subject: None,
                 sender: "alpha".into(),
                 sent_at: at(0),
+                in_reply_to: None,
             })
             .await
             .expect("a blocked post is a result, not a failure")
@@ -824,6 +844,66 @@ pub mod contract {
             .expect("mark_processed ok");
         assert_eq!(processed.state, MessageState::Processed);
         assert!(processed.notes.as_deref().is_some_and(|n| n.contains("FAILED")));
+    }
+
+    /// **A reply says what it is replying to, and the link must resolve.** A
+    /// hand-off and its report were correlated only by prose convention
+    /// ("report = message 935"), which is fine at today's volume and archaeology
+    /// later. The link is optional and carries no semantics beyond itself: it
+    /// says these two messages are one exchange, not that either is owed.
+    pub async fn a_reply_names_the_message_it_answers(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let original = post(store, "inbox", "alpha", "please count the crates", 0).await;
+
+        let reply = store
+            .post_message(NewMessage {
+                mailbox: name("inbox"),
+                body: "counted them: forty".into(),
+                subject: None,
+                sender: "beta".into(),
+                sent_at: at(1),
+                in_reply_to: Some(original.id.clone()),
+            })
+            .await
+            .expect("post ok")
+            .written()
+            .expect("a reply to a message that exists is written");
+        assert_eq!(reply.in_reply_to.as_ref(), Some(&original.id));
+
+        // …and it survives the round trip, which is the whole point of a link
+        // nobody is going to re-derive from prose later.
+        let seen = store.read_message(&reply.id).await.expect("read_message ok");
+        assert_eq!(seen.message.in_reply_to.as_ref(), Some(&original.id));
+
+        // The message it answers is untouched — a reply is not a delivery.
+        let original_now = store.read_message(&original.id).await.expect("read ok");
+        assert_eq!(original_now.message.in_reply_to, None);
+    }
+
+    /// **Everything a write names must already exist**, and a reply naming a
+    /// message jojobot does not hold is the same miss every other dangling
+    /// reference is. Nothing is written.
+    pub async fn a_reply_to_an_unknown_message_is_refused(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let missing = store
+            .post_message(NewMessage {
+                mailbox: name("inbox"),
+                body: "answering something that was never said".into(),
+                subject: None,
+                sender: "beta".into(),
+                sent_at: at(0),
+                in_reply_to: Some(MessageId("9999".into())),
+            })
+            .await;
+        assert!(
+            matches!(missing, Err(MailboxError::UnknownMessage { .. })),
+            "a dangling reply link is a miss, not a stored message: {missing:?}"
+        );
+        assert_eq!(
+            counts(store, "inbox").await.expect("inbox exists").total(),
+            0,
+            "nothing reached the board"
+        );
     }
 
     /// **The terminal verb never refuses an outcome record for being long.**
@@ -957,6 +1037,7 @@ pub mod contract {
                 subject: None,
                 sender: "alpha".into(),
                 sent_at: at(0),
+                in_reply_to: None,
             })
             .await;
         assert!(bad_body.is_err(), "an empty body is not a message");
@@ -968,6 +1049,7 @@ pub mod contract {
                 subject: None,
                 sender: "  ".into(),
                 sent_at: at(0),
+                in_reply_to: None,
             })
             .await;
         assert!(bad_sender.is_err(), "a message with no sender has no provenance");
@@ -1000,6 +1082,8 @@ pub mod contract {
         a_second_read_redelivers_leftovers_flagged(&fresh()).await;
         mark_processed_is_terminal_and_records_the_outcome(&fresh()).await;
         a_failure_is_recorded_as_an_outcome(&fresh()).await;
+        a_reply_names_the_message_it_answers(&fresh()).await;
+        a_reply_to_an_unknown_message_is_refused(&fresh()).await;
         long_notes_are_kept_as_far_as_they_fit(&fresh()).await;
         notes_that_fit_are_untouched(&fresh()).await;
         processing_without_notes_is_allowed(&fresh()).await;
