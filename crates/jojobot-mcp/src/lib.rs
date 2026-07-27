@@ -365,6 +365,12 @@ pub struct PostMessageArgs {
 pub struct ReadMailboxArgs {
     /// The box to read.
     pub mailbox: String,
+    /// Ship bodies only for messages nobody has taken yet. Leftovers — the ones
+    /// flagged `seen_before` — still come back, still counted, still owed; only
+    /// their bodies are left out. Use it when you are polling for news while a
+    /// message you are deliberately holding open sits in the box.
+    #[serde(default)]
+    pub new_only: Option<bool>,
 }
 
 /// Arguments to `list_sent`.
@@ -1620,20 +1626,27 @@ impl Jojobot {
                        yours to finish — use read_message when you want only one. ONLY CHECKING \
                        WHETHER ANYTHING IS WAITING? Use list_mailboxes — it reads counts without \
                        taking delivery, so a poll that finds an empty box costs nothing and owes \
-                       nothing."
+                       nothing. POLLING FOR NEWS WHILE HOLDING SOMETHING OPEN? Pass new_only: \
+                       true — leftovers still come back, still counted and still owed, but their \
+                       bodies are left out (body_elided: true, with body_bytes and the opening \
+                       line), so a message you are deliberately holding open stops costing its \
+                       full size on every poll. It changes what is SHIPPED, never what is owed."
     )]
     async fn read_mailbox(
         &self,
         Parameters(args): Parameters<ReadMailboxArgs>,
     ) -> Result<CallToolResult, McpError> {
         let name = MailboxName(args.mailbox.trim().to_string());
+        let new_only = args.new_only.unwrap_or(false);
         match self
             .mailboxes
             .read_mailbox(&name)
             .await
             .map_err(mailbox_error)?
         {
-            mailbox::Guarded::Written(delivery) => json_result(&delivery_json(&delivery)),
+            mailbox::Guarded::Written(delivery) => {
+                json_result(&delivery_json(&delivery, new_only))
+            }
             mailbox::Guarded::Blocked {
                 attempted,
                 candidates,
@@ -2658,11 +2671,40 @@ fn delivered_json(delivered: &Delivered) -> serde_json::Value {
 }
 
 /// A whole delivery.
-fn delivery_json(delivery: &Delivery) -> serde_json::Value {
+///
+/// **`new_only` changes what is shipped, never what is owed.** Every message
+/// the delivery covers is here either way, counted and flagged the same, and
+/// every one of them still has to be marked processed — the crash contract is
+/// exactly as it was. What it drops is the BODIES of the leftovers, which is
+/// the whole cost of polling a box that holds a message somebody is
+/// deliberately keeping open: the report stays unprocessed on purpose until its
+/// round closes, and every poll in between was re-shipping it in full.
+///
+/// The elision is announced per message rather than once for the delivery,
+/// because a reader walking the list must not have to remember a flag from the
+/// envelope to know what it is looking at.
+fn delivery_json(delivery: &Delivery, new_only: bool) -> serde_json::Value {
     serde_json::json!({
         "mailbox": delivery.mailbox.as_str(),
         "count": delivery.messages.len(),
-        "messages": delivery.messages.iter().map(delivered_json).collect::<Vec<_>>(),
+        "new_only": new_only,
+        "messages": delivery
+            .messages
+            .iter()
+            .map(|d| if new_only && d.seen_before {
+                let mut body = message_receipt_json(
+                    &d.message,
+                    "an earlier read already handed you this one. read_message returns it in \
+                     full, or read_mailbox without new_only",
+                );
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("seen_before".into(), true.into());
+                }
+                body
+            } else {
+                delivered_json(d)
+            })
+            .collect::<Vec<_>>(),
     })
 }
 
@@ -4896,7 +4938,7 @@ mod tests {
 
         let delivery = json_of(
             &jojobot
-                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into() }))
+                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into(), new_only: None }))
                 .await
                 .expect("read ok"),
         );
@@ -4927,7 +4969,7 @@ mod tests {
 
         let after = json_of(
             &jojobot
-                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into() }))
+                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into(), new_only: None }))
                 .await
                 .expect("read ok"),
         );
@@ -4942,13 +4984,13 @@ mod tests {
         make_box(&jojobot, "inbox").await;
         send(&jojobot, "inbox", "alpha", "the shipment landed").await;
         jojobot
-            .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into() }))
+            .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into(), new_only: None }))
             .await
             .expect("read ok");
 
         let again = json_of(
             &jojobot
-                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into() }))
+                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into(), new_only: None }))
                 .await
                 .expect("read ok"),
         );
@@ -4980,7 +5022,7 @@ mod tests {
 
         let delivery = json_of(
             &jojobot
-                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into() }))
+                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into(), new_only: None }))
                 .await
                 .expect("read ok"),
         );
@@ -5188,7 +5230,7 @@ mod tests {
         let jojobot = mailbox_handler();
         make_box(&jojobot, "inbox").await;
         let result = jojobot
-            .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbx".into() }))
+            .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbx".into(), new_only: None }))
             .await
             .expect("a blocked read is a successful call");
         let body = blocked(&result);
@@ -5225,6 +5267,95 @@ mod tests {
 
     /// An id nothing answers to is **blocked**, carrying the id that missed —
     /// never a silent success, which would look exactly like a handled message,
+    /// **A held-open message stops costing its full size on every poll — and is
+    /// never hidden.** The crash contract keeps a round's report unprocessed
+    /// until the round closes, which is correct; but every poll of that box then
+    /// re-delivered the whole multi-KB body flagged `seen_before`. Over a
+    /// twenty-minute pickup loop that is the same report downloaded all night.
+    ///
+    /// `new_only` changes what is SHIPPED, never what is owed: the leftover is
+    /// still in the delivery, still counted, still flagged, still to be marked
+    /// processed. Only its body is left out, and it says so.
+    #[tokio::test]
+    async fn new_only_elides_a_leftover_s_body_and_never_its_existence() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "dev").await;
+        let held_body = "a long hand-off that stays open until the round closes. ".repeat(40);
+        let held = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    mailbox: "dev".into(),
+                    sender: "coordinator (pm)".into(),
+                    body: held_body.clone(),
+                    subject: None,
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("post ok"),
+        );
+        let held_id = held["id"].as_str().expect("an id").to_string();
+
+        // Take delivery once, and deliberately do NOT process it.
+        let first = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    mailbox: "dev".into(),
+                    new_only: None,
+                }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(first["messages"][0]["body"], held_body.trim(), "the first read is whole");
+
+        // Fresh mail arrives, and the poll asks for news only.
+        send(&jojobot, "dev", "coordinator (pm)", "and here is the next batch").await;
+        let poll = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    mailbox: "dev".into(),
+                    new_only: Some(true),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(poll["count"], 2, "the leftover is STILL in the delivery: {poll}");
+        assert_eq!(poll["new_only"], true);
+
+        let leftover = poll["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|m| m["id"] == held_id.as_str())
+            .expect("the held message is still handed over");
+        assert_eq!(leftover["seen_before"], true, "…still flagged as owed: {leftover}");
+        assert!(leftover["body"].is_null(), "…and its body is what was dropped");
+        assert_eq!(leftover["body_elided"], true);
+        assert_eq!(leftover["body_bytes"], held_body.trim().len());
+
+        let fresh = poll["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|m| m["id"] != held_id.as_str())
+            .expect("the fresh message");
+        assert_eq!(
+            fresh["body"], "and here is the next batch",
+            "news is the point of the poll, so news arrives whole: {fresh}"
+        );
+
+        // And it is still owed: processing it is still the caller's job.
+        let processed = json_of(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_id: held_id,
+                    notes: None,
+                }))
+                .await
+                .expect("mark ok"),
+        );
+        assert_eq!(processed["state"], "processed");
+    }
+
     /// **The two verbs that echo a body back echo it to the one caller who
     /// already has it.** `post_message` returned the whole stored body to its
     /// author; `mark_processed` returned the entire original message to the
@@ -5310,7 +5441,7 @@ mod tests {
 
         let delivery = json_of(
             &jojobot
-                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into() }))
+                .read_mailbox(Parameters(ReadMailboxArgs { mailbox: "inbox".into(), new_only: None }))
                 .await
                 .expect("read ok"),
         );
