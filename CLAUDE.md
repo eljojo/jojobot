@@ -144,8 +144,10 @@ Shipped and live:
 - **M5** — Sessions: a bot is a **role**, a session is **one mortal run of it**
   — the unit of work, not of connection, so it survives a disconnect or a
   device hop. Its own Vikunja project (never the mailbox one): one card per
-  session, **column = state** (`active` → `wrapped` | `abandoned`, both
-  terminal both ways), **description = current truth** (the focus, rewritten
+  session, **column = state** (`active` → `wrapped` | `abandoned`; **`wrapped`
+  is the last word, because wrapping PUBLISHES the story to the Journal —
+  `abandoned → active` is the one legal walk-back, since an abandoned run
+  published nothing**), **description = current truth** (the focus, rewritten
   in place), **comments = the chronology** (append-only, oldest first; only
   the newest entry amendable).
   **`start_here` is the start verb** — there is no `start_session`, because

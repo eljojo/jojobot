@@ -33,19 +33,23 @@ never runs inference of its own — the assistant is the only mind.
 > too), each mail hit carrying its box, state, sender and id — and an answer
 > that could not see the board says so rather than reading as "nothing
 > matched". On top of both, **bots**: an AI identity is an entity of kind `bot`
-> with a charter, rules, memory and one owned mailbox, and `boot_bot` hands a
-> session all of it in one call — and **that call starts or resumes the bot's
-> session**, because a bot is a role and a session is one mortal run of it.
-> **Sessions** live on their own board: a focus that is current truth, an
-> append-only chronology (the session's own beats plus jojobot's, marked
-> apart), and `active` → `wrapped` | `abandoned`, both terminal. A session
-> begins lazily — no card until the first write — resumes across a disconnect,
-> is swept to `abandoned` after a day of silence, and tells its story into the
-> operator's Journal when it wraps. **Identity travels as a parameter**: the
-> session verbs take the bot's name and resolve its session from the board on
-> every call, because real MCP clients open a fresh connection per tool call and
-> a connection-held identity does not survive to the next one. All behind OAuth2 resource-server auth,
-> every write verified by read-back.
+> with a charter, rules, memory and one owned mailbox. **`start_here` is the one
+> door**: it takes an optional bot name, and naming one **starts or resumes that
+> bot's session**, because a bot is a role and a session is one mortal run of it.
+> Booting anonymously is legal and deliberately useless — orientation, and no
+> handle behind it. **Sessions** live on their own board: a focus that is current
+> truth, an append-only chronology (the session's own beats plus jojobot's,
+> marked apart), and `active` → `wrapped` | `abandoned` — **`wrapped` is the last
+> word, because wrapping publishes the story to the operator's Journal, while
+> `abandoned → active` is the one legal walk-back, since a run nobody wrapped up
+> published nothing.** A session begins lazily — no card until the first write —
+> resumes across a disconnect, and is swept to `abandoned` after a day of
+> silence. **The `sid` is the only address**: a short opaque handle the server
+> mints at the door, saying nothing about the work, and it rides every verb —
+> reads included — because real MCP clients open a fresh connection per tool call
+> and a connection-held identity does not survive to the next one. It is written
+> on the session's own card, so a restart does not orphan it. All behind OAuth2
+> resource-server auth, every write verified by read-back.
 
 ## Vision & roadmap
 
