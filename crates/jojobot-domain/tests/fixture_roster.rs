@@ -25,13 +25,11 @@ const KINDS: [&str; 9] = [
 /// The complete allowlist. Keep it sorted; keep it fictional.
 const ROSTER: &[&str] = &[
     "bot:delta",
-    "bot:delta-two",
     "bot:epsilon",
     "bot:gamm",
     "bot:gamma",
     "bot:nobody",
     "bot:otto",
-    "bot:sigma",
     "event:winter-fest",
     "org:guild",
     "org:north-trail-club",
@@ -124,6 +122,42 @@ fn handles_in(text: &str) -> Vec<String> {
         }
     }
     found
+}
+
+/// **Every entry on the allowlist is one the workspace actually uses.**
+///
+/// The roster's value is that adding a name is a conscious, reviewed diff. An
+/// entry nothing uses is permission granted to nothing: it widens the gate
+/// without a caller, and it turns the list from a record of what is in the repo
+/// into a pool of names anybody may reach for without review. Both of those
+/// undo the reason the gate exists.
+///
+/// It also means the list stops being readable as evidence. "These are the
+/// fictional names this repo contains" is a claim somebody can check; "these
+/// are the fictional names this repo contains, plus some it used to" is not.
+#[test]
+fn the_roster_carries_no_name_the_workspace_has_stopped_using() {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates");
+    let mut files = Vec::new();
+    rust_sources(&crates, &mut files);
+    let corpus: String = files
+        .iter()
+        .filter(|f| f.file_name().is_some_and(|n| n != "fixture_roster.rs"))
+        .map(|f| fs::read_to_string(f).expect("readable source file"))
+        .collect();
+
+    let orphaned: Vec<&str> = ROSTER
+        .iter()
+        .copied()
+        .filter(|handle| !corpus.contains(handle))
+        .collect();
+    assert!(
+        orphaned.is_empty(),
+        "roster entries nothing in the workspace uses — delete them, or the allowlist \
+         stops being a record of what is here and becomes a pool of names nobody \
+         reviewed the use of:\n{}",
+        orphaned.join("\n")
+    );
 }
 
 #[test]

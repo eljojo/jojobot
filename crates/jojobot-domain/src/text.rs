@@ -13,8 +13,8 @@
 //! carry, and the differences between them are now written down in one place
 //! where they can be compared, rather than inferred by diffing three functions.
 //!
-//! **Most of these outputs are stored bytes.** A title sits on a live board and
-//! a focus sits in a card's description, so changing what those strategies
+//! **Most of these outputs are stored bytes.** A message's title sits on a page
+//! and a focus sits in a session's row, so changing what those strategies
 //! produce rewrites records that already exist — each is pinned by a golden at
 //! its own call site, and a change to the rules has to go there and say so.
 //! [`BODY_DIGEST`] is the exception: it is computed per response and stored
@@ -142,20 +142,6 @@ pub const FOCUS_LINE: Fitted = Fitted {
 /// head is empty still renders a title that says who it is from.
 pub const MESSAGE_TITLE: Fitted = Fitted {
     name: "message-title",
-    budget: 60,
-    ellipsis: Ellipsis::BeyondBudget,
-    flatten: true,
-    strip_unprintable: false,
-    when_empty: None,
-};
-
-/// **The head of a session card's title** — the bot's focus, after `"<bot>: "`.
-///
-/// Identical to [`MESSAGE_TITLE`] today, and declared separately anyway: they
-/// are two boards, and merging them would mean a future change to what a
-/// mailbox card is called silently renaming every session card too.
-pub const SESSION_TITLE: Fitted = Fitted {
-    name: "session-title",
     budget: 60,
     ellipsis: Ellipsis::BeyondBudget,
     flatten: true,

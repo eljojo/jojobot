@@ -1440,15 +1440,21 @@ impl Jojobot {
         })
     }
 
-    /// Sweep this bot's stale sessions and hand back the live one, if any —
-    /// **the half of attaching that reads and writes the board**, shared by the
-    /// boot and by the first write that retries an attach a boot could not make.
+    /// Sweep this bot's stale sessions and hand back what is live —
+    /// **the half of attaching that reads and writes the store.**
     ///
-    /// Binding is the caller's job: this returns what it found, and the two call
-    /// sites differ in what they do with it.
+    /// **One caller: the boot.** This doc used to claim two — the boot, and a
+    /// first write retrying an attach the boot could not make — and to explain
+    /// how the two differed in what they did with the result. There is no such
+    /// write path anywhere in the crate, and no test for one; the phrase
+    /// survived only here. Whether it was removed or never built, describing a
+    /// caller that does not exist sent every reader looking for it.
+    ///
+    /// Binding is the caller's job: this returns what it found.
+    ///
     /// **Every live session, not the newest one.** A bot may have several runs
     /// at once — two devices, two pieces of work — so the boot's offer needs
-    /// them all. The write path still takes the first, which is the newest.
+    /// them all.
     async fn sweep_and_find(&self, bot: &EntityId) -> Result<Board, SessionError> {
         let now = jiff::Timestamp::now();
         let existing = self.sessions.sessions_of(bot).await?;
