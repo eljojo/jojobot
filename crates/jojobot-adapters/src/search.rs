@@ -2172,7 +2172,7 @@ mod tests {
         );
     }
 
-    /// The crate's one log sink. **Shared, not local**: the Vikunja store also
+    /// The crate's one log sink. **Shared, not local**: other stores also
     /// reports things whose only surface is a log line, and a process gets
     /// exactly one global subscriber — so the sink lives beside both of them.
     use crate::log_capture::log_sink;

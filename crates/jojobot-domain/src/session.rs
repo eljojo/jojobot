@@ -546,8 +546,8 @@ pub enum SessionError {
     NotConfigured(String),
 }
 
-/// The Sessions port. One real adapter stands behind it in production (Vikunja,
-/// in its own project); a fake stands behind it in tests. The invariants every
+/// The Sessions port. One real adapter stands behind it in production (Outline,
+/// a page per bot); a fake stands behind it in tests. The invariants every
 /// adapter holds:
 ///
 /// * **read-back** — a write succeeds only if reading it back through the read
@@ -642,7 +642,7 @@ mod tests {
     use super::*;
 
     /// The full behavioural contract holds for the fake — the same suite the
-    /// Vikunja adapter runs against its API double, and against real Vikunja.
+    /// Outline adapter runs against its API double, and against real Outline.
     #[tokio::test]
     async fn the_fake_satisfies_the_contract() {
         contract::run_all(InMemorySessions::new).await;

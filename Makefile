@@ -9,7 +9,7 @@
 # one. That is also why `make` itself is in the shell's inputs.
 
 CARGO ?= cargo
-INTEGRATION_SUITES := vikunja_integration outline_integration
+INTEGRATION_SUITES := outline_integration
 
 .DEFAULT_GOAL := help
 .PHONY: help check test lint fmt fmt-check build integration

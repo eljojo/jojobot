@@ -16,16 +16,6 @@ impl Captured {
     pub(crate) fn text(&self) -> String {
         String::from_utf8_lossy(&self.0.lock().expect("log buffer poisoned")).into_owned()
     }
-
-    /// The one logged line containing `needle` — so an assertion is about one
-    /// event's own fields, not about a buffer every test in the binary writes
-    /// to. A card id is a small integer and turns up in plenty of other lines.
-    pub(crate) fn line_with(&self, needle: &str) -> Option<String> {
-        self.text()
-            .lines()
-            .find(|line| line.contains(needle))
-            .map(str::to_string)
-    }
 }
 
 impl std::io::Write for Captured {

@@ -7,7 +7,6 @@ use std::sync::Arc;
 use anyhow::Context;
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory};
-use jojobot_adapters::vikunja::{Secret as VikunjaSecret, VikunjaConfig, VikunjaStore};
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::session::Sessions;
@@ -93,6 +92,9 @@ async fn main() -> anyhow::Result<()> {
     // It is not indexed: a sessions page declares itself jojobot's own
     // machinery, and the boot scan skips those.
     let sessions: Arc<dyn Sessions> = Arc::new(outline.sessions());
+    // Built here too, off the same handle and therefore the same lock, before
+    // the store is moved behind the search projection.
+    let mailbox_store: Arc<dyn Mailboxes> = Arc::new(outline.mailboxes());
     let store: Arc<dyn Memory> = Arc::new(outline);
 
     // The search projection sits in FRONT of the store, so every write through
@@ -110,24 +112,6 @@ async fn main() -> anyhow::Result<()> {
              reachable to get a full index."
         ),
     }
-
-    // The Mailboxes port — a different bounded context with a different store.
-    // Same convention-over-configuration deal as Memory: credentials only, and
-    // the project, its columns and every mailbox label are discovered or
-    // provisioned at runtime.
-    let mailbox_store: Arc<dyn Mailboxes> = match vikunja_from_env() {
-        Some(cfg) => {
-            tracing::info!(base_url = %cfg.base_url, "mailboxes: Vikunja store wired");
-            Arc::new(VikunjaStore::new(http.clone(), cfg))
-        }
-        None => {
-            tracing::warn!(
-                "MAILBOXES DISABLED — set JOJOBOT_VIKUNJA_URL and JOJOBOT_VIKUNJA_TOKEN to \
-                 enable them. The mailbox verbs return a NotConfigured error until then."
-            );
-            Arc::new(VikunjaStore::unconfigured())
-        }
-    };
 
     // Mail goes into the SAME index — one front door, one ranked list — so the
     // mailbox store gets the same decorator treatment Memory's does: every verb
@@ -147,8 +131,8 @@ async fn main() -> anyhow::Result<()> {
              messages at all and says so (mail.searched: false). It does NOT stay that way: any \
              message this process posts or delivers is indexed as it goes, and from the first \
              one `search` reports partial coverage — real hits, with anything older than this \
-             process missing. The mailbox verbs are unaffected; restart once Vikunja is \
-             reachable to get the whole board back."
+             process missing. The mailbox verbs are unaffected; restart once Outline is \
+             reachable to get the whole store back."
         ),
     }
     let mailboxes: Arc<dyn Mailboxes> = mailboxes;
@@ -225,19 +209,6 @@ fn outline_from_env() -> Option<OutlineConfig> {
     Some(OutlineConfig {
         base_url: nonempty("JOJOBOT_OUTLINE_URL")?,
         token: Secret::new(nonempty("JOJOBOT_OUTLINE_TOKEN")?),
-    })
-}
-
-/// Read the Vikunja store's **credentials** from the environment — the only
-/// config there is; the project, its columns and every mailbox label are
-/// discovered or provisioned by convention. The URL is Vikunja's root, without
-/// the `/api/v1` suffix. Both must be set; either missing → `None` (mailboxes
-/// disabled). The adapter never reads env itself.
-fn vikunja_from_env() -> Option<VikunjaConfig> {
-    let nonempty = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
-    Some(VikunjaConfig {
-        base_url: nonempty("JOJOBOT_VIKUNJA_URL")?,
-        token: VikunjaSecret::new(nonempty("JOJOBOT_VIKUNJA_TOKEN")?),
     })
 }
 

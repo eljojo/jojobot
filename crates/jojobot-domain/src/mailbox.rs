@@ -55,7 +55,7 @@ impl std::fmt::Display for MailboxName {
 }
 
 /// A message's id — minted by the store, opaque to the domain. Digits in the
-/// Vikunja adapter; validated as a narrow token here so an id arriving from a
+/// store adapter; validated as a narrow token here so an id arriving from a
 /// client can never carry a path segment, a quote, or a newline into a URL or a
 /// card.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -552,13 +552,7 @@ pub enum MailboxError {
         /// Why the rollback could not undo it.
         rollback: String,
     },
-    /// **The write-scope invariant.** A call path reached for a project that is
-    /// not the discovered mailbox project. Refused before any request leaves the
-    /// process: the operator's own boards live on the same Vikunja, and a
-    /// mis-scoped write there is not something a read-back can undo.
-    #[error("refusing to touch a project other than jojobot's mailbox project: {0}")]
-    ForeignProject(String),
-    /// The underlying store (Vikunja, or its network/parse layer) failed.
+    /// The underlying store (Outline, or its network/parse layer) failed.
     #[error("store error: {0}")]
     Store(String),
     /// The store isn't configured (no credentials).
@@ -567,8 +561,8 @@ pub enum MailboxError {
 }
 
 /// The Mailboxes port — five verbs over boxes and the messages in them. One real
-/// adapter stands behind it in production (Vikunja); a fake stands behind it in
-/// tests. Three invariants bind every adapter:
+/// adapter stands behind it in production (Outline, one page per box); a fake
+/// stands behind it in tests. Three invariants bind every adapter:
 ///
 /// * **read-back** — a write succeeds only if reading it back through the read
 ///   path returns it. A read-back mismatch restores the prior state before
@@ -612,8 +606,8 @@ pub trait Mailboxes: Send + Sync {
     /// not always `new`: somebody picking the message up off the board between
     /// the write and its verification leaves it in `read`, and that is this
     /// verb succeeding — the message exists and someone has it — not a failure
-    /// to file it. An adapter that serializes its own verbs (the Vikunja store
-    /// does) narrows that somebody to a person working the board by hand.
+    /// to file it. An adapter that serializes its own verbs (the Outline store
+    /// does) narrows that somebody to a person editing the page by hand.
     async fn post_message(&self, message: NewMessage) -> Result<Guarded<Message>, MailboxError>;
 
     /// Deliver everything unprocessed in a box — messages in `new` and messages
@@ -657,7 +651,7 @@ mod tests {
     use super::*;
 
     /// The full behavioural contract holds for the fake — the same suite the
-    /// Vikunja adapter runs against its API double, and against real Vikunja.
+    /// Outline adapter runs against its API double, and against real Outline.
     #[tokio::test]
     async fn the_fake_satisfies_the_contract() {
         contract::run_all(InMemoryMailboxes::new).await;

@@ -567,7 +567,7 @@ pub struct Jojobot {
     /// production both are the one indexed adapter.
     search: Arc<dyn Search>,
     /// The Mailboxes port — a **separate bounded context**, with its own store
-    /// (Vikunja) and its own vocabulary. It shares nothing with Memory but this
+    /// and its own vocabulary. It shares nothing with Memory but this
     /// handler.
     mailboxes: Arc<dyn Mailboxes>,
     /// The Sessions port — a third context, on its own board.
@@ -4042,7 +4042,7 @@ fn mailbox_error(e: MailboxError) -> McpError {
         // own board that belongs to another project and refused, or a write
         // failed and could not be undone, leaving a card mid-verb. Both are
         // integrity conditions on the server side that need a person.
-        MailboxError::ForeignProject(_) | MailboxError::Stranded { .. } => {
+        MailboxError::Stranded { .. } => {
             McpError::internal_error(e.to_string(), None)
         }
         MailboxError::NotConfigured(msg) => {

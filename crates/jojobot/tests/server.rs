@@ -11,7 +11,6 @@ use jojobot::auth::Validator;
 use jojobot::{AppState, build_app};
 use jojobot_adapters::outline::OutlineStore;
 use jojobot_adapters::search::IndexedMemory;
-use jojobot_adapters::vikunja::VikunjaStore;
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::search::Search;
@@ -39,7 +38,7 @@ fn test_ports() -> TestPorts {
     (
         indexed.clone(),
         indexed,
-        Arc::new(VikunjaStore::unconfigured()),
+        Arc::new(OutlineStore::unconfigured().mailboxes()),
         Arc::new(OutlineStore::unconfigured().sessions()),
     )
 }
@@ -339,7 +338,7 @@ fn searchable_state(addr: SocketAddr) -> AppState {
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
         memory: indexed.clone(),
         search: indexed,
-        mailboxes: Arc::new(VikunjaStore::unconfigured()),
+        mailboxes: Arc::new(OutlineStore::unconfigured().mailboxes()),
         sessions: Arc::new(OutlineStore::unconfigured().sessions()),
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
     }

@@ -1,7 +1,7 @@
 //! The Sessions contract, and the in-memory fake that must satisfy it.
 //!
-//! One behavioural spec, three tiers — the fake here, the real Vikunja adapter
-//! over an in-memory API double, and the real adapter against real Vikunja —
+//! One behavioural spec, three tiers — the fake here, the real Outline adapter
+//! over an in-memory API double, and the real adapter against real Outline —
 //! and **the spec is the same code in all three**, which is what stops the fake
 //! from drifting into a store that agrees with the tests and disagrees with
 //! reality.
