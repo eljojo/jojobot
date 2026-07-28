@@ -825,6 +825,66 @@ pub mod contract {
         );
     }
 
+    /// **Editing a child does not orphan it.** Every write that rewrites a
+    /// whole document is a chance to drop a field nobody was thinking about,
+    /// and parentage is the newest and least-remembered one. A rename and a
+    /// prose replacement both go through here, because both rebuild the page
+    /// around the part they came to change.
+    pub async fn a_write_that_rewrites_a_child_leaves_it_where_it_was<M: Memory>(store: &M) {
+        let parent = EntityId::new(EntityKind::Project, "contract-kwik-e");
+        let child = EntityId::new(EntityKind::Project, "contract-kwik-e-squishee");
+        add(
+            store,
+            NewEntity::new(parent.clone(), "Contract Kwik-E", "contract-fixture"),
+        )
+        .await;
+        add(
+            store,
+            NewEntity {
+                parent: Some(parent.clone()),
+                ..NewEntity::new(child.clone(), "Squishee Machine", "contract-fixture")
+            },
+        )
+        .await;
+
+        let renamed = store
+            .update_entity(
+                &child,
+                EntityPatch {
+                    name: Some("Squishee Machine (the second one)".into()),
+                    crm: Some("card:552".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("update_entity should succeed")
+            .written()
+            .expect("the guard must not block an uncontested rename");
+        assert_eq!(
+            renamed.parent.as_ref(),
+            Some(&parent),
+            "a metadata edit rebuilds the record; the parent must survive it"
+        );
+
+        store
+            .set_prose(&child, "The machine, and what it is for.")
+            .await
+            .expect("set_prose should succeed");
+        assert_eq!(
+            read_entity(store, &child).await.parent.as_ref(),
+            Some(&parent),
+            "…and so must a prose write, which rebuilds the page around it"
+        );
+        assert_eq!(
+            store
+                .children(&parent)
+                .await
+                .expect("children should succeed"),
+            vec![child.clone()],
+            "the parent still has it, which is the only place that would show"
+        );
+    }
+
     /// **A miss is a miss, not a leaf.** Asking for the children of something
     /// that does not exist is an error carrying candidates — never an empty
     /// list, which a caller would read as "this thing has nothing under it".
@@ -2954,6 +3014,7 @@ pub mod contract {
 
         a_child_names_its_parent_and_reads_back(store).await;
         children_are_handles_and_one_level_deep(store).await;
+        a_write_that_rewrites_a_child_leaves_it_where_it_was(store).await;
         children_of_an_unknown_entity_is_a_miss(store).await;
         an_unnamed_parent_is_refused_and_provisions_nothing(store).await;
         nothing_may_be_its_own_parent(store).await;
