@@ -541,7 +541,6 @@ mod tests {
             aliases: Vec::new(),
             source: "test".into(),
             crm: None,
-            mailbox: None,
             parent: None,
             boot: Boot::OnDemand,
         };
@@ -607,7 +606,6 @@ mod tests {
             aliases: Vec::new(),
             source: "test".into(),
             crm: None,
-            mailbox: None,
             parent: None,
             boot: Boot::OnDemand,
         };

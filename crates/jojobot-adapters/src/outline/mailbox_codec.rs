@@ -25,7 +25,7 @@ use jiff::Timestamp;
 use jojobot_domain::mailbox::{
     MailboxName, Message, MessageId, MessageState, normalize_notes, normalize_subject,
 };
-use jojobot_domain::memory::MACHINERY_FIELD;
+use jojobot_domain::memory::{EntityId, MACHINERY_FIELD, validate_subject};
 
 /// The value of the machinery field on a mailbox page — what keeps the page
 /// itself out of the prose index.
@@ -39,6 +39,10 @@ pub(super) const MAILBOX: &str = "mailbox";
 
 /// The machine-block field naming the box a page holds.
 const NAME: &str = "name";
+/// The machine-block field naming **whose box it is**. Never absent: a mailbox
+/// cannot be created without an owner, so a page without this line is not one
+/// jojobot wrote.
+const OWNER: &str = "owner";
 
 /// The header above the table of messages.
 pub(super) const MESSAGES_HEADER: &str = "### ⚙ messages";
@@ -68,18 +72,22 @@ pub(super) struct Row {
 }
 
 /// The markdown a fresh mailbox page is seeded with.
-pub(super) fn seeded_page(name: &MailboxName) -> String {
+pub(super) fn seeded_page(name: &MailboxName, owner: &EntityId) -> String {
     format!(
         "_Managed by jojobot — one row per message, bodies below. The page is not searched; \
          the messages on it are._\n\n\
-         ```yaml\n{MACHINERY_FIELD}: {MAILBOX}\n{NAME}: {name}\n```\n\n\
+         ```yaml\n{MACHINERY_FIELD}: {MAILBOX}\n{NAME}: {name}\n{OWNER}: {owner}\n```\n\n\
          {MESSAGES_HEADER}\n\n{TABLE_HEADER}\n{TABLE_SEP}\n\n{BODIES_HEADER}\n"
     )
 }
 
-/// The box a page holds, off its `name:` line — `None` if this is not a mailbox
-/// page or does not say.
-pub(super) fn parse_name(doc: &str) -> Option<MailboxName> {
+/// The box a page holds and whose it is, off its `name:` and `owner:` lines —
+/// `None` if this is not a mailbox page, or does not carry both.
+///
+/// **Both or neither.** A box without an owner is a state the system refuses to
+/// enter, so a page missing the owner line is not a mailbox page jojobot wrote
+/// and is left alone rather than adopted as an ownerless box.
+pub(super) fn parse_name(doc: &str) -> Option<(MailboxName, EntityId)> {
     let lines: Vec<&str> = doc.lines().collect();
     let (open, close) = machine_block(&lines)?;
     let inside = &lines[open + 1..close - 1];
@@ -92,9 +100,10 @@ pub(super) fn parse_name(doc: &str) -> Option<MailboxName> {
         return None;
     }
     let name = MailboxName(inside.iter().find_map(|l| field(l, NAME))?);
-    jojobot_domain::mailbox::validate_mailbox_name(&name)
-        .ok()
-        .map(|()| name)
+    jojobot_domain::mailbox::validate_mailbox_name(&name).ok()?;
+    let owner = EntityId(inside.iter().find_map(|l| field(l, OWNER))?);
+    validate_subject(&owner).ok()?;
+    Some((name, owner))
 }
 
 /// The fenced block carrying this page's machine fields.

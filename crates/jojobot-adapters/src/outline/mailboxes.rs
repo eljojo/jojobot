@@ -33,14 +33,14 @@ use jojobot_domain::mailbox::{
     normalize_notes, normalize_subject, validate_body, validate_mailbox_name, validate_message_id,
     validate_notes, validate_sender, validate_subject,
 };
-use jojobot_domain::memory::MemoryError;
+use jojobot_domain::memory::{Entity, EntityId, MemoryError, guard as memory_guard};
 
 use super::api::{DocRec, OutlineApi};
 use super::mailbox_codec::{
     Row, message, next_message_id, parse_bodies, parse_name, parse_rows, render_body, seeded_page,
     with_rows_replaced,
 };
-use super::{Workspace, parse_entity};
+use super::{Workspace, parse_entity, parse_id_marker};
 
 /// The real Mailboxes adapter, over Outline.
 pub struct OutlineMailboxes {
@@ -60,22 +60,26 @@ impl OutlineMailboxes {
         self.ws.resolve_collection().await.map_err(store)
     }
 
-    /// Every mailbox page in the collection, with the box each holds.
-    async fn pages(&self, collection_id: &str) -> Result<Vec<(MailboxName, DocRec)>, MailboxError> {
-        let mut found: Vec<(MailboxName, DocRec)> = self
+    /// Every mailbox page in the collection, with the box each holds and whose
+    /// it is.
+    async fn pages(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<(MailboxName, EntityId, DocRec)>, MailboxError> {
+        let mut found: Vec<(MailboxName, EntityId, DocRec)> = self
             .ws
             .all_docs(collection_id)
             .await
             .map_err(store)?
             .into_iter()
-            .filter_map(|d| parse_name(&d.text).map(|n| (n, d)))
+            .filter_map(|d| parse_name(&d.text).map(|(n, owner)| (n, owner, d)))
             .collect();
         // Oldest wins where a double-create left two pages for one box, so a
         // box's mail never forks across them.
         found.sort_by(|a, b| {
-            a.1.created_at
-                .cmp(&b.1.created_at)
-                .then_with(|| a.1.id.cmp(&b.1.id))
+            a.2.created_at
+                .cmp(&b.2.created_at)
+                .then_with(|| a.2.id.cmp(&b.2.id))
         });
         found.dedup_by(|a, b| a.0 == b.0);
         Ok(found)
@@ -90,8 +94,20 @@ impl OutlineMailboxes {
             .pages(collection_id)
             .await?
             .into_iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, d)| d))
+            .find(|(n, _, _)| n == name)
+            .map(|(_, _, d)| d))
+    }
+
+    /// The entities this collection holds — what an owner is checked against.
+    async fn entities(&self, collection_id: &str) -> Result<Vec<Entity>, MailboxError> {
+        Ok(self
+            .ws
+            .all_docs(collection_id)
+            .await
+            .map_err(store)?
+            .iter()
+            .filter_map(|d| parse_entity(&d.text))
+            .collect())
     }
 
     /// The names of every box that exists — what the guard screens against.
@@ -100,7 +116,7 @@ impl OutlineMailboxes {
             .pages(collection_id)
             .await?
             .into_iter()
-            .map(|(n, _)| n)
+            .map(|(n, _, _)| n)
             .collect())
     }
 
@@ -131,7 +147,7 @@ impl OutlineMailboxes {
         id: &MessageId,
     ) -> Result<(MailboxName, DocRec, Message), MailboxError> {
         validate_message_id(id)?;
-        for (name, doc) in self.pages(collection_id).await? {
+        for (name, _, doc) in self.pages(collection_id).await? {
             if let Some(found) = Self::assemble(&name, &doc)
                 .into_iter()
                 .find(|m| &m.id == id)
@@ -234,11 +250,31 @@ impl Mailboxes for OutlineMailboxes {
     async fn create_mailbox(
         &self,
         name: &MailboxName,
+        owner: &EntityId,
         create_new: bool,
     ) -> Result<Guarded<Mailbox>, MailboxError> {
         validate_mailbox_name(name)?;
+        jojobot_domain::memory::validate_subject(owner)
+            .map_err(|e| MailboxError::InvalidName(e.to_string()))?;
         let _writing = self.ws.write().await;
         let collection_id = self.collection().await?;
+
+        // **The owner must exist, and it is screened first.** "There is no such
+        // owner" is the more fundamental mistake, and hearing it first matters:
+        // near-miss advice about a box name is advice about a box the caller may
+        // have no business creating at all.
+        //
+        // This is the mail context reading Memory, which it used not to do. It
+        // reads it because a box now belongs to somebody by construction — the
+        // claim that used to sit on the owner's own record, as a second place
+        // for one truth, is gone.
+        let entities = self.entities(&collection_id).await?;
+        if !entities.iter().any(|e| &e.id == owner) {
+            return Ok(Guarded::UnknownOwner {
+                attempted: owner.clone(),
+                candidates: memory_guard::screen(owner, &[], &entities),
+            });
+        }
 
         let existing = self.names(&collection_id).await?;
         if let guard::Decision::Block(candidates) =
@@ -250,29 +286,29 @@ impl Mailboxes for OutlineMailboxes {
             });
         }
 
-        // **Filed under whoever claims it, when anybody does.** Placement only:
-        // an unclaimed box is created at the top of the collection and works
-        // exactly the same. Nothing here reads a claim to decide whether a
-        // caller may do something — only where the page goes.
+        // **The page always has a parent**, because the owner is an input. There
+        // is no unowned box to place gracefully, so there is no fallback here
+        // and no claimant to go looking for.
         let under = self
             .ws
             .all_docs(&collection_id)
             .await
             .map_err(store)?
             .into_iter()
-            .find(|d| {
-                parse_entity(&d.text)
-                    .and_then(|e| e.mailbox)
-                    .is_some_and(|m| m == name.as_str())
-            })
-            .map(|d| d.id);
+            .find(|d| parse_id_marker(&d.text).as_deref() == Some(owner.as_str()))
+            .map(|d| d.id)
+            .ok_or_else(|| {
+                store_msg(format!(
+                    "{owner} exists but has no page to file its mailbox under"
+                ))
+            })?;
 
         self.api()
             .create_document(
                 &collection_id,
                 name.as_str(),
-                &seeded_page(name),
-                under.as_deref(),
+                &seeded_page(name, owner),
+                Some(&under),
             )
             .await
             .map_err(store)?;
@@ -282,6 +318,7 @@ impl Mailboxes for OutlineMailboxes {
             .ok_or_else(|| store_msg(format!("the page for {name} vanished after create")))?;
         Ok(Guarded::Written(Mailbox {
             name: name.clone(),
+            owner: owner.clone(),
             counts: StateCounts::default(),
             quarantined: Vec::new(),
         }))
@@ -293,7 +330,7 @@ impl Mailboxes for OutlineMailboxes {
             .pages(&collection_id)
             .await?
             .into_iter()
-            .map(|(name, doc)| {
+            .map(|(name, owner, doc)| {
                 let (rows, quarantined) = parse_rows(&doc.text);
                 let mut counts = StateCounts::default();
                 for row in &rows {
@@ -301,6 +338,7 @@ impl Mailboxes for OutlineMailboxes {
                 }
                 Mailbox {
                     name,
+                    owner,
                     counts,
                     quarantined,
                 }
@@ -314,7 +352,7 @@ impl Mailboxes for OutlineMailboxes {
             .pages(&collection_id)
             .await?
             .iter()
-            .flat_map(|(name, doc)| Self::assemble(name, doc))
+            .flat_map(|(name, _, doc)| Self::assemble(name, doc))
             .collect())
     }
 

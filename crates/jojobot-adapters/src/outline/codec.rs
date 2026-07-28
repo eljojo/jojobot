@@ -641,7 +641,6 @@ pub(super) fn parse_entity(doc: &str) -> Option<Entity> {
         aliases: parse_aliases(doc),
         source: parse_field(doc, "source").unwrap_or_default(),
         crm: parse_field(doc, "crm"),
-        mailbox: parse_field(doc, "mailbox"),
         parent,
         boot: parse_field(doc, "boot").map_or(Boot::default(), |b| Boot::from_token(&b)),
     })
@@ -724,9 +723,6 @@ fn frontmatter(e: &Entity) -> String {
     out.push_str(&format!("source: {}\n", e.source));
     if let Some(crm) = &e.crm {
         out.push_str(&format!("crm: {crm}\n"));
-    }
-    if let Some(mailbox) = &e.mailbox {
-        out.push_str(&format!("mailbox: {mailbox}\n"));
     }
     if let Some(parent) = &e.parent {
         out.push_str(&format!("parent: {parent}\n"));
@@ -848,7 +844,6 @@ mod tests {
             aliases: Vec::new(),
             source: "crm-card".into(),
             crm: Some("card:554".into()),
-            mailbox: None,
             parent: None,
             boot: Boot::OnDemand,
         }
@@ -1468,100 +1463,6 @@ mod tests {
         let written = with_prose_replaced(&repaired, "a charter").expect("now writable");
         assert_eq!(parse_prose(&written), "a charter");
         assert_eq!(parse_id_marker(&written).as_deref(), Some("bot:gamma"));
-    }
-
-    /// **The box an identity owns is written on its own doc.** One line in the
-    /// machine block, read back as it was written — which is what lets ownership
-    /// be answered from Memory alone, with no mailbox code learning what a bot
-    /// is. Absent is the ordinary case for the other eight kinds, so no line is
-    /// written and none is expected.
-    #[test]
-    fn an_owned_mailbox_round_trips_and_an_entity_without_one_writes_no_line() {
-        let owner = Entity {
-            id: EntityId("bot:gamma".into()),
-            kind: EntityKind::Bot,
-            mailbox: Some("gamma-inbox".into()),
-            ..alpha()
-        };
-        let doc = seeded_doc(&owner);
-        assert!(
-            doc.contains("mailbox: gamma-inbox"),
-            "one legible line: {doc}"
-        );
-        assert_eq!(parse_entity(&doc).expect("the doc is an entity"), owner);
-
-        assert!(
-            !seeded_doc(&alpha()).contains("mailbox"),
-            "no claim, no line: {}",
-            seeded_doc(&alpha())
-        );
-
-        // A doc from before the field reads as claiming nothing, and gains the
-        // line on the next write that touches its block — the lazy migration
-        // `aliases`, `details` and `edges` each got.
-        let legacy = "```yaml\nid: bot:gamma\nkind: bot\nname: Gamma\nsource: user-named\n\
-                      boot: on-demand\n```\n";
-        let read = parse_entity(legacy).expect("a legacy doc still identifies its entity");
-        assert_eq!(
-            read.mailbox, None,
-            "an absent field is no claim, not a failure"
-        );
-        let touched = with_frontmatter_replaced(
-            legacy,
-            &Entity {
-                mailbox: Some("gamma-inbox".into()),
-                ..read
-            },
-        );
-        assert!(
-            touched.contains("mailbox: gamma-inbox"),
-            "gained on touch: {touched}"
-        );
-    }
-
-    /// **The entity a page sits under is written on the page.** One line in the
-    /// machine block, read back as written — so rebuilding the tree is a plain
-    /// re-read of the docs, with no second source to consult and nothing to
-    /// reconcile. A root writes no line, which is what most entities are.
-    #[test]
-    fn a_parent_round_trips_and_a_root_writes_no_line() {
-        let child = Entity {
-            id: EntityId("place:leftorium".into()),
-            kind: EntityKind::Place,
-            parent: Some(EntityId("org:guild".into())),
-            ..alpha()
-        };
-        let doc = seeded_doc(&child);
-        assert!(doc.contains("parent: org:guild"), "one legible line: {doc}");
-        assert_eq!(parse_entity(&doc).expect("the doc is an entity"), child);
-
-        assert!(
-            !seeded_doc(&alpha()).contains("parent"),
-            "a root sits under nothing, so nothing is written: {}",
-            seeded_doc(&alpha())
-        );
-
-        // A doc from before the field reads as a root, and gains the line on the
-        // next write that touches its block — the same lazy migration `aliases`,
-        // `details`, `edges` and `mailbox` each got. Nothing is swept.
-        let legacy = "```yaml\nid: place:leftorium\nkind: place\nname: Leftorium\n\
-                      source: user-named\nboot: on-demand\n```\n";
-        let read = parse_entity(legacy).expect("a legacy doc still identifies its entity");
-        assert_eq!(
-            read.parent, None,
-            "an absent field is a root, not a failure"
-        );
-        let touched = with_frontmatter_replaced(
-            legacy,
-            &Entity {
-                parent: Some(EntityId("org:guild".into())),
-                ..read
-            },
-        );
-        assert!(
-            touched.contains("parent: org:guild"),
-            "gained on touch: {touched}"
-        );
     }
 
     /// **A page cannot hand-edit itself into being its own parent.** The write

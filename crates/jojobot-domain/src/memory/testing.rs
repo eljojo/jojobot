@@ -57,24 +57,11 @@ impl Memory for InMemoryMemory {
             &new.aliases,
             &new.source,
             new.crm.as_deref(),
-            new.mailbox.as_deref(),
             new.parent.as_ref(),
         )?;
         let index = self.index();
         if let Decision::Block(candidates) =
             guard::decide(&new.id, &new.labels(), &index, new.create_new)
-        {
-            return Ok(Guarded::Blocked {
-                attempted: new.id,
-                candidates,
-            });
-        }
-        // A box has exactly one owner, so the claim faces its own gate —
-        // deliberately after the naming one and deliberately not cleared by
-        // `create_new`, which answers a question about names, not ownership.
-        if let Some(mailbox) = new.mailbox.as_deref()
-            && let Decision::Block(candidates) =
-                guard::decide_mailbox_claim(&new.id, mailbox, &index)
         {
             return Ok(Guarded::Blocked {
                 attempted: new.id,
@@ -88,7 +75,6 @@ impl Memory for InMemoryMemory {
             aliases: new.aliases.iter().map(|a| a.trim().to_string()).collect(),
             source: new.source.trim().to_string(),
             crm: new.crm.map(|c| c.trim().to_string()),
-            mailbox: new.mailbox.map(|m| m.trim().to_string()),
             parent: new.parent,
             boot: new.boot,
         };
@@ -139,17 +125,6 @@ impl Memory for InMemoryMemory {
         // on purpose: a patch that moves no label screens against nothing, so
         // there is no "is this a rename?" test to get wrong.
         if let Decision::Block(candidates) = screen_entity_patch(entity, &patch, &index) {
-            return Ok(Guarded::Blocked {
-                attempted: handle.clone(),
-                candidates,
-            });
-        }
-        // A claim moved onto an entity is screened exactly as one written at
-        // creation — otherwise ownership is stealable in two steps.
-        if let Some(mailbox) = patch.mailbox.as_deref()
-            && let Decision::Block(candidates) =
-                guard::decide_mailbox_claim(handle, mailbox, &index)
-        {
             return Ok(Guarded::Blocked {
                 attempted: handle.clone(),
                 candidates,
@@ -713,7 +688,6 @@ pub mod contract {
             store,
             NewEntity {
                 crm: Some("card:874".into()),
-                mailbox: None,
                 boot: Boot::Always,
                 ..NewEntity::new(id.clone(), "Atlas", "user-named")
             },
@@ -1025,118 +999,6 @@ pub mod contract {
                 .any(|e| e.id == ouroboros),
             "a blocked write writes nothing at all"
         );
-    }
-
-    /// **An identity owns a mailbox, and only one may.** The claim rides on the
-    /// entity's own record — so ownership is readable from Memory alone, and no
-    /// mailbox ever has to learn what a bot is — and the write guard holds the
-    /// other half: a second claimant on one box comes back blocked, naming the
-    /// owner. Two identities both believing the mail is theirs is how each one's
-    /// `mark_processed` becomes the other's silently lost message.
-    pub async fn an_entity_claims_a_mailbox_and_only_one_may<M: Memory>(store: &M) {
-        let owner = EntityId::new(EntityKind::Bot, "contract-gamma");
-        let rival = EntityId::new(EntityKind::Bot, "contract-sigma");
-        let claimed = "contract-gamma-inbox";
-
-        let added = add(
-            store,
-            NewEntity {
-                mailbox: Some(claimed.into()),
-                ..NewEntity::new(owner.clone(), "Contract Gamma", "contract-fixture")
-            },
-        )
-        .await;
-        assert_eq!(added.mailbox.as_deref(), Some(claimed));
-        assert_eq!(
-            read_entity(store, &owner).await.mailbox.as_deref(),
-            Some(claimed),
-            "the claim must survive the read path, like every other field"
-        );
-
-        // A second identity reaching for the same box is blocked, naming the owner.
-        let blocked = store
-            .add_entity(NewEntity {
-                mailbox: Some(claimed.into()),
-                // `create_new` does NOT clear this: a box has one owner, as a
-                // handle does. The rival is otherwise unlike anything here, so
-                // the claim is the only thing that can be blocking it.
-                create_new: true,
-                ..NewEntity::new(rival.clone(), "Contract Sigma", "contract-fixture")
-            })
-            .await
-            .expect("a claimed box is an answer, not a failure");
-        let Guarded::Blocked { candidates, .. } = blocked else {
-            panic!("a box another identity owns must not be claimable");
-        };
-        assert!(
-            candidates.iter().any(|c| c.handle == owner),
-            "the answer must name who owns it: {candidates:?}"
-        );
-        assert!(
-            !store
-                .list_entities(Some(EntityKind::Bot))
-                .await
-                .expect("list bots")
-                .iter()
-                .any(|e| e.id == rival),
-            "a blocked claim writes nothing at all"
-        );
-
-        // **The two-step walk around, closed.** A rival that could not claim the
-        // box at creation must not be able to create itself bare and then move
-        // the claim on afterwards — the update side of the gate. A verifier
-        // deleted this check from both stores and the whole suite stayed green,
-        // so it is pinned here, in the contract both stores run.
-        add(
-            store,
-            NewEntity::new(rival.clone(), "Contract Sigma", "contract-fixture"),
-        )
-        .await;
-        let stolen = store
-            .update_entity(
-                &rival,
-                EntityPatch {
-                    mailbox: Some(claimed.into()),
-                    // Same signal that clears a name collision — it must not
-                    // clear this one.
-                    create_new: true,
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("a claimed box is an answer, not a failure");
-        let Guarded::Blocked { candidates, .. } = stolen else {
-            panic!("a box another identity owns must not be claimable by an update either");
-        };
-        assert!(
-            candidates.iter().any(|c| c.handle == owner),
-            "the answer must name who owns it: {candidates:?}"
-        );
-        assert_eq!(
-            read_entity(store, &rival).await.mailbox,
-            None,
-            "a blocked claim leaves the rival exactly as it was"
-        );
-        assert_eq!(
-            read_entity(store, &owner).await.mailbox.as_deref(),
-            Some(claimed),
-            "…and the owner keeps its box"
-        );
-
-        // The same claim reasserted by its own owner is not a collision.
-        let reasserted = store
-            .update_entity(
-                &owner,
-                EntityPatch {
-                    mailbox: Some(claimed.into()),
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("update_entity ok")
-            .written()
-            .expect("an entity is not a rival claimant to its own box");
-        assert_eq!(reasserted.mailbox.as_deref(), Some(claimed));
     }
 
     /// **An entity's prose is writable, and it is replaced whole.** The prose
@@ -3043,7 +2905,6 @@ pub mod contract {
         recall_unknown_is_a_miss_not_an_empty_page(store).await;
 
         every_kind_holds_facts(store).await;
-        an_entity_claims_a_mailbox_and_only_one_may(store).await;
 
         a_child_names_its_parent_and_reads_back(store).await;
         children_are_handles_and_one_level_deep(store).await;

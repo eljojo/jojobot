@@ -13,6 +13,8 @@ use std::sync::Mutex;
 
 use jiff::Timestamp;
 
+use crate::memory::{EntityId, guard as memory_guard};
+
 use super::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
     MessageId, MessageState, NOTES_BUDGET, NewMessage, StateCounts, guard, normalize_body,
@@ -24,6 +26,15 @@ use super::{
 /// network. Deterministic: ids are a monotonic counter, never a clock.
 #[derive(Default)]
 pub struct InMemoryMailboxes {
+    /// Who owns each box. A box cannot exist without an owner, so this is
+    /// keyed by name and never absent for a box that is here.
+    owners: Mutex<Vec<(MailboxName, EntityId)>>,
+    /// The owners this store can resolve — the fake's stand-in for the entity
+    /// index the real adapter reads. Seeded by [`InMemoryMailboxes::know_owner`].
+    known_owners: Mutex<Vec<EntityId>>,
+    /// Whether any well-formed owner resolves — see
+    /// [`InMemoryMailboxes::knowing_any_owner`].
+    permissive: Mutex<bool>,
     boxes: Mutex<Vec<MailboxName>>,
     messages: Mutex<Vec<Message>>,
     next_id: Mutex<u64>,
@@ -31,9 +42,51 @@ pub struct InMemoryMailboxes {
 }
 
 impl InMemoryMailboxes {
-    /// An empty store.
+    /// An empty store that already resolves the owners [`contract::OWNERS`]
+    /// names.
+    ///
+    /// **Seeded rather than bare, because a box cannot exist without an owner.**
+    /// Almost every test that creates a box wants one that resolves, and the
+    /// real adapter gets that for free by reading the same store its entities
+    /// live in — a fake with no owners at all would make every one of those
+    /// tests carry setup for a question they are not about.
+    ///
+    /// The refusal has its own case, and it names an owner deliberately outside
+    /// this set. [`know_owner`](Self::know_owner) adds others.
     pub fn new() -> Self {
-        Self::default()
+        let store = Self::default();
+        for owner in contract::OWNERS {
+            store.know_owner(&EntityId((*owner).to_string()));
+        }
+        store
+    }
+
+    /// **Resolve any well-formed owner** — for tests whose subject is not
+    /// ownership.
+    ///
+    /// The strict fake exists so the contract can prove the refusal, and that
+    /// is the only place that needs it. A suite testing the mail *surface*
+    /// stands bots up through Memory and would otherwise have to teach this
+    /// store about each one — setup for a question those tests are not asking,
+    /// and the real adapter never needs it because both contexts read one store.
+    pub fn knowing_any_owner() -> Self {
+        let store = Self::default();
+        *store.permissive.lock().expect("owner lock") = true;
+        store
+    }
+
+    /// **Make an owner resolvable.** A fixture, not a verb: no port method does
+    /// this, and none should — the real adapter answers "does this owner exist"
+    /// from the entity index, which this fake does not have.
+    ///
+    /// It is how the fake meets [`contract::OWNERS`]' precondition. See that
+    /// constant for why the contract states a precondition rather than growing
+    /// a trait to provision through.
+    pub fn know_owner(&self, owner: &EntityId) {
+        let mut known = self.known_owners.lock().expect("owner lock");
+        if !known.contains(owner) {
+            known.push(owner.clone());
+        }
     }
 
     /// Put a card into quarantine, as a hand edit on a real board would.
@@ -102,9 +155,29 @@ impl Mailboxes for InMemoryMailboxes {
     async fn create_mailbox(
         &self,
         name: &MailboxName,
+        owner: &EntityId,
         create_new: bool,
     ) -> Result<Guarded<Mailbox>, MailboxError> {
         validate_mailbox_name(name)?;
+        crate::memory::validate_subject(owner)
+            .map_err(|e| MailboxError::InvalidName(e.to_string()))?;
+
+        // The owner must exist. Screened before the name, because "there is no
+        // such owner" is the more fundamental mistake and the caller should hear
+        // it first — a near-miss on the name is advice about a box they may not
+        // be entitled to create at all.
+        {
+            let known = self.known_owners.lock().expect("owner lock");
+            let permissive = *self.permissive.lock().expect("owner lock");
+            if !permissive && !known.contains(owner) {
+                let index: Vec<crate::memory::Entity> = Vec::new();
+                return Ok(Guarded::UnknownOwner {
+                    attempted: owner.clone(),
+                    candidates: memory_guard::screen(owner, &[], &index),
+                });
+            }
+        }
+
         let mut boxes = self.boxes.lock().expect("mailbox lock");
         if let guard::Decision::Block(candidates) = guard::decide_create(name, &boxes, create_new) {
             return Ok(Guarded::Blocked {
@@ -113,8 +186,13 @@ impl Mailboxes for InMemoryMailboxes {
             });
         }
         boxes.push(name.clone());
+        self.owners
+            .lock()
+            .expect("owner lock")
+            .push((name.clone(), owner.clone()));
         Ok(Guarded::Written(Mailbox {
             name: name.clone(),
+            owner: owner.clone(),
             counts: StateCounts::default(),
             quarantined: Vec::new(),
         }))
@@ -123,6 +201,7 @@ impl Mailboxes for InMemoryMailboxes {
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
         let messages = self.messages.lock().expect("message lock");
         let quarantined = self.quarantined.lock().expect("quarantine lock");
+        let owners = self.owners.lock().expect("owner lock");
         Ok(self
             .names()
             .into_iter()
@@ -142,6 +221,11 @@ impl Mailboxes for InMemoryMailboxes {
                         .filter(|(mailbox, _, _)| mailbox == &name)
                         .map(|(_, card, _)| card.clone())
                         .collect(),
+                    owner: owners
+                        .iter()
+                        .find(|(box_name, _)| box_name == &name)
+                        .map(|(_, owner)| owner.clone())
+                        .expect("a box on this store was created with an owner"),
                     name,
                     counts,
                 }
@@ -323,10 +407,31 @@ pub mod contract {
         MailboxName(n.to_string())
     }
 
+    /// **The owners this spec creates boxes for, and the store's precondition.**
+    ///
+    /// A mailbox cannot exist without an owner, so every create in this suite
+    /// names one — which means the store handed to [`run_all`] must already
+    /// resolve these before the suite starts. Each tier meets that its own way:
+    /// the fake through [`InMemoryMailboxes::know_owner`], the real adapter by
+    /// having the entity in the store.
+    ///
+    /// **A precondition rather than a provisioning trait**, because provisioning
+    /// an entity is Memory's verb and this is the Mailboxes spec. A trait to
+    /// reach across would make every implementor of a mail store answer a
+    /// question about entities; a stated precondition leaves each tier to
+    /// satisfy it with the tools it already has.
+    pub const OWNERS: &[&str] = &["bot:gamma", "bot:delta"];
+
+    /// An owner from [`OWNERS`] — the one this suite files boxes under unless a
+    /// case is about ownership itself.
+    fn owner() -> EntityId {
+        EntityId(OWNERS[0].to_string())
+    }
+
     /// Create a box, asserting the guard waved it through.
     pub async fn create(store: &dyn Mailboxes, n: &str) -> Mailbox {
         store
-            .create_mailbox(&name(n), false)
+            .create_mailbox(&name(n), &owner(), false)
             .await
             .expect("create_mailbox should succeed")
             .written()
@@ -414,7 +519,7 @@ pub mod contract {
             attempted,
             candidates,
         } = store
-            .create_mailbox(&name("inbx"), false)
+            .create_mailbox(&name("inbx"), &owner(), false)
             .await
             .expect("a blocked create is a result, not a failure")
         else {
@@ -437,7 +542,7 @@ pub mod contract {
         create(store, "worker-1").await;
 
         let Guarded::Blocked { candidates, .. } = store
-            .create_mailbox(&name("worker-2"), false)
+            .create_mailbox(&name("worker-2"), &owner(), false)
             .await
             .expect("a blocked create is a result, not a failure")
         else {
@@ -446,7 +551,7 @@ pub mod contract {
         assert_eq!(candidates[0].name.as_str(), "worker-1");
 
         let created = store
-            .create_mailbox(&name("worker-2"), true)
+            .create_mailbox(&name("worker-2"), &owner(), true)
             .await
             .expect("create_mailbox should succeed")
             .written()
@@ -454,7 +559,7 @@ pub mod contract {
         assert_eq!(created.name.as_str(), "worker-2");
 
         let Guarded::Blocked { candidates, .. } = store
-            .create_mailbox(&name("worker-1"), true)
+            .create_mailbox(&name("worker-1"), &owner(), true)
             .await
             .expect("a blocked create is a result, not a failure")
         else {
@@ -1189,7 +1294,10 @@ pub mod contract {
     /// Malformed input is refused before anything is written.
     pub async fn malformed_input_is_refused(store: &dyn Mailboxes) {
         assert!(
-            store.create_mailbox(&name("Inbox"), false).await.is_err(),
+            store
+                .create_mailbox(&name("Inbox"), &owner(), false)
+                .await
+                .is_err(),
             "a name outside the grammar is refused"
         );
         create(store, "inbox").await;

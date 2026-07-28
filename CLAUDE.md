@@ -130,8 +130,11 @@ Shipped and live:
   as missing, with `create_mailbox` named; an unknown bot name comes back with
   the roster plus the offer to boot as a known bot and create the new one from
   there. Anonymous boot gets orientation and no `sid` — an orientation preview,
-  with nothing usable behind it. Mailboxes stay bot-ignorant: ownership is a
-  read of Memory, never an ACL.
+  with nothing usable behind it. Ownership is stated **on the mailbox**, and
+  read from there — the sentence that stood here said mailboxes stay
+  bot-ignorant and that ownership is a read of Memory, and both halves are now
+  false. It is still not an ACL: a box names its one owner, and nothing on the
+  mail rail enforces anything against it.
 
 > **Creation is an intentional act.** `create_mailbox` is the only mint on
 > the surface, and the only place the full name screen runs. A claim written

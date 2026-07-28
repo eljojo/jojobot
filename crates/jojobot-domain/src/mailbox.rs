@@ -24,6 +24,7 @@
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
+use crate::memory::{EntityId, guard as memory_guard};
 use crate::text;
 
 pub mod guard;
@@ -325,6 +326,16 @@ fn blank_is_absent(text: Option<&str>) -> Option<String> {
 pub struct Mailbox {
     /// The box's name.
     pub name: MailboxName,
+    /// **Whose box it is.** Stated once, here, and nowhere else — a mailbox
+    /// cannot exist without an owner, so this is never absent.
+    ///
+    /// It used to live on the owner's own entity record as a `mailbox:` claim,
+    /// which made two places hold one truth and left the mail context needing a
+    /// story about boxes nobody had claimed. There are no such boxes: the model
+    /// says a bot's children are its sessions and its mailbox, and a child with
+    /// no parent is not an edge case to place gracefully but a state the system
+    /// refuses to enter.
+    pub owner: EntityId,
     /// How many messages sit in each state.
     pub counts: StateCounts,
     /// Cards wearing this box's label that could not be read as messages — a
@@ -474,6 +485,22 @@ pub enum Guarded<T> {
         /// What the guard found, strongest first.
         candidates: Vec<guard::MailboxMatch>,
     },
+    /// **Nothing was written: the owner does not exist.** A box is created
+    /// *for* somebody, so an owner jojobot cannot resolve is the same class of
+    /// refusal as a capture's unknown subject — report, never provision.
+    ///
+    /// Its own variant rather than a [`Guarded::Blocked`] with entity handles
+    /// stuffed into a mailbox-shaped field: an owner that does not resolve is
+    /// not a near-miss on a box name, and a type that said so would be lying
+    /// about which of the two the caller got wrong. The candidates are the ones
+    /// Memory's own screen finds, so a typo comes back with the handle it
+    /// probably meant rather than a shrug.
+    UnknownOwner {
+        /// The owner the caller named.
+        attempted: EntityId,
+        /// What Memory's guard found nearby, strongest first.
+        candidates: Vec<memory_guard::EntityMatch>,
+    },
 }
 
 impl<T> Guarded<T> {
@@ -481,7 +508,7 @@ impl<T> Guarded<T> {
     pub fn written(self) -> Option<T> {
         match self {
             Guarded::Written(v) => Some(v),
-            Guarded::Blocked { .. } => None,
+            Guarded::Blocked { .. } | Guarded::UnknownOwner { .. } => None,
         }
     }
 }
@@ -580,9 +607,14 @@ pub trait Mailboxes: Send + Sync {
     /// `create_new` is the caller's explicit "I know, it's a sibling" signal:
     /// it overrides the near/containment screen (so `worker-2` is creatable
     /// beside `worker-1`), and never an exact name — that box already exists.
+    /// **A mailbox is created FOR somebody.** The owner is an input, not
+    /// something discovered later: an owner that does not exist comes back
+    /// [`Guarded::UnknownOwner`], and there is no way to mint an unowned box —
+    /// no default, no `Option`, no claim added afterwards.
     async fn create_mailbox(
         &self,
         name: &MailboxName,
+        owner: &EntityId,
         create_new: bool,
     ) -> Result<Guarded<Mailbox>, MailboxError>;
 
