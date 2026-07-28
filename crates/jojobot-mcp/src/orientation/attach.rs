@@ -1236,4 +1236,158 @@ mod tests {
         );
         assert_eq!(owned["available"], true, "the box is there and says so");
     }
+
+    /// **A boot writes nothing a concurrent first write can lose.** A boot reads
+    /// the board, sweeps what is stale and answers; a write on a handle already
+    /// held reads that handle's card and begins one if there is none. The two
+    /// overlap: sweeping a stale card is an await sitting inside the boot's
+    /// board read, and that is exactly when the racing write gets to run.
+    ///
+    /// The old name promised a race this can no longer run. It forked because
+    /// the boot wrote a connection binding at the end of that span, clearing the
+    /// session the write had just materialized and rolling the tally back to
+    /// what the stale read saw; the next write then minted a second card for a
+    /// session already running. **The binding is gone** — the boot writes no
+    /// identity anywhere a write reads from, so there is nothing left for it to
+    /// clobber. What is pinned here is that: whatever the interleaving, the
+    /// handle keeps addressing one card and the next write keeps accruing to it.
+    /// The remaining overlap between the two — a boot reading the board inside
+    /// the gap a first write leaves — is a different defect with its own test
+    /// below.
+    ///
+    /// **Both orders, because only one of them forked.** `tokio::join!` rotates
+    /// which future it polls first, so a single ordering proves whichever
+    /// interleaving it happened to produce; the invariant is that neither
+    /// produces two cards.
+    #[tokio::test]
+    async fn a_racing_boot_writes_nothing_the_first_write_can_lose() {
+        for boot_first in [true, false] {
+            let store = Arc::new(InMemorySessions::new());
+            let jojobot = racing(store.clone());
+            make_bot(&jojobot, "gamma").await;
+            let sid = booted(&jojobot, "gamma").await;
+
+            // Something for the racing boot to sweep. Closing it is an await
+            // inside the boot's board read — the gap the racing write slips
+            // through.
+            store
+                .begin(NewSession {
+                    bot: EntityId("bot:gamma".into()),
+                    sid: fixture_sid(line!()),
+                    focus: "from the day before yesterday".into(),
+                    started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
+                })
+                .await
+                .expect("begin ok");
+
+            let booting = jojobot.start_here(Parameters(OrientArgs {
+                bot: Some("gamma".into()),
+                brief: None,
+                resume: None,
+            }));
+            let writing = jojobot.journal(Parameters(JournalArgs {
+                entry: "the first beat".into(),
+                focus: None,
+                sid: sid.clone(),
+            }));
+            if boot_first {
+                let (b, w) = tokio::join!(booting, writing);
+                b.expect("boot ok");
+                w.expect("journal ok");
+            } else {
+                let (w, b) = tokio::join!(writing, booting);
+                b.expect("boot ok");
+                w.expect("journal ok");
+            }
+
+            // The next write must continue that session rather than mint a second.
+            journal_entry(&jojobot, &sid, "the second beat").await;
+
+            let live: Vec<Session> = store
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok")
+                .into_iter()
+                .filter(|s| !s.state.is_terminal())
+                .collect();
+            assert_eq!(
+                live.len(),
+                1,
+                "boot_first={boot_first}: one card, not one per racing boot: {live:?}"
+            );
+            assert_eq!(
+                live[0].entries.len(),
+                2,
+                "boot_first={boot_first}: …and it kept accruing: {:?}",
+                live[0].entries
+            );
+        }
+    }
+
+    /// **One run answers to one handle, even when a boot reads the board in the
+    /// middle of the write that creates it.**
+    ///
+    /// A first write begins the card and then tells the registry which handle it
+    /// landed on, and those two are not one step: the card is on the board the
+    /// moment the store commits it, and the registry learns of it only when the
+    /// write's own future is polled again. A boot reading the board inside that
+    /// gap finds a live run no handle addresses and mints a second one for it —
+    /// so the offer names an address the run's own writer has never heard of,
+    /// and one session answers to two names. That is the fork the per-run gate
+    /// exists to prevent, one layer up.
+    ///
+    /// **The gate has to be keyed on the identity rather than the handle**,
+    /// because that is the only key the two callers share: the boot knows the
+    /// bot, the write knows its sid, and they are talking about the same run.
+    /// Keying the boot on the bot and the write on its handle put them in
+    /// different queues, which is a lock that excludes the pair it was for.
+    ///
+    /// **Both orders, and only one of them forks.** Polled boot-first, the board
+    /// read lands before the card exists and the boot legitimately hands back a
+    /// fresh handle with nothing behind it; polled write-first, the boot reads
+    /// inside the gap. `tokio::join!` rotates which future it polls first, so a
+    /// single ordering proves only whichever it happened to produce.
+    #[tokio::test]
+    async fn a_boot_reading_the_board_mid_write_offers_the_handle_the_run_has() {
+        for boot_first in [true, false] {
+            let store = Arc::new(InMemorySessions::new());
+            let jojobot = racing(store.clone());
+            make_bot(&jojobot, "gamma").await;
+            let sid = booted(&jojobot, "gamma").await;
+
+            let booting = jojobot.start_here(Parameters(OrientArgs {
+                bot: Some("gamma".into()),
+                brief: None,
+                resume: None,
+            }));
+            let writing = jojobot.journal(Parameters(JournalArgs {
+                entry: "the first beat, which is what mints the card".into(),
+                focus: None,
+                sid: sid.clone(),
+            }));
+            let booted_answer = if boot_first {
+                let (b, w) = tokio::join!(booting, writing);
+                w.expect("journal ok");
+                json_of(&b.expect("boot ok"))
+            } else {
+                let (w, b) = tokio::join!(writing, booting);
+                w.expect("journal ok");
+                json_of(&b.expect("boot ok"))
+            };
+
+            // A boot that saw the card offers it back. Whether it saw one is the
+            // interleaving's business; what it may never do is offer it under a
+            // handle minted beside the one its writer is already using.
+            if let Some(choices) = booted_answer["session"]["choices"].as_array() {
+                for choice in choices {
+                    assert_eq!(
+                        choice["sid"].as_str(),
+                        Some(sid.as_str()),
+                        "boot_first={boot_first}: the offer minted a second handle for a run that \
+                         already has one: {choice}"
+                    );
+                }
+            }
+        }
+    }
 }
