@@ -2776,6 +2776,74 @@ mod tests {
         );
     }
 
+    /// **The sessions half of the same exclusion — a session page is machinery,
+    /// not content.**
+    ///
+    /// `64d54bf` deleted `jojobots_own_machinery_is_not_scanned_into_the_index`,
+    /// which covered BOTH flavours. Its sibling above covers mail; this covers
+    /// sessions, and without it nothing at HEAD asserted the property for the
+    /// pages that carry a run's whole record.
+    ///
+    /// **What leaks if this breaks is not a stray marker.** A session page holds
+    /// every focus line, every chronology entry and the closing story of every
+    /// run of that bot. One unguarded filter in `scan` is all that keeps them
+    /// out, and a question about the operator's life would come back answered
+    /// with an agent's private working notes.
+    ///
+    /// Written through the real path — `begin` then `append`, so the page is
+    /// produced exactly as production produces it — rather than by seeding
+    /// markdown, which would prove only that a hand-written marker is honoured.
+    #[tokio::test]
+    async fn a_sessions_page_is_machinery_and_never_scanned_into_the_index() {
+        use jojobot_domain::memory::search::{Search, SearchQuery};
+        use jojobot_domain::session::{NewEntry, NewSession, Sessions as _, Sid};
+
+        let outline = store(FakeOutline::new());
+        let sessions = outline.sessions();
+
+        // Two strings that exist nowhere else, so a hit can only have come off
+        // the session page: one in the focus, one in a chronology entry.
+        const FOCUS: &str = "chasing the monorail flake";
+        const ENTRY: &str = "ruled out the escaping, it is the read-back";
+
+        let begun = sessions
+            .begin(NewSession {
+                bot: EntityId::new(EntityKind::Bot, "gamma"),
+                sid: Sid("ab12".into()),
+                focus: FOCUS.into(),
+                started_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
+            })
+            .await
+            .expect("begin ok");
+        sessions
+            .append(
+                &begun.id,
+                NewEntry::manual(ENTRY, "2026-07-28T01:00:00Z".parse().expect("a timestamp")),
+            )
+            .await
+            .expect("append ok");
+
+        // A restart: the index is rebuilt by reading every document, which is
+        // the path a leak appears on. Searching an index this process has been
+        // writing to would prove nothing about what the scan admits.
+        let restarted = IndexedMemory::new(Arc::new(outline.clone())).expect("index opens");
+        restarted.rebuild().await.expect("rebuild ok");
+
+        for secret in [FOCUS, ENTRY] {
+            let hits = restarted
+                .search(&SearchQuery {
+                    text: Some(secret.into()),
+                    ..Default::default()
+                })
+                .expect("search ok");
+            assert!(
+                hits.is_empty(),
+                "a session's own record must never be reachable as content — {secret:?} came \
+                 back as {hits:?}"
+            );
+        }
+    }
+
     /// The fake stores what the real Outline would store: the editor model
     /// re-serializes every markdown table RECTANGULAR AT THE HEADER'S WIDTH —
     /// long rows lose their tail, short rows are padded. Pinned so the fake can
