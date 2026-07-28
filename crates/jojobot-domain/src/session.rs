@@ -638,6 +638,103 @@ pub trait Sessions: Send + Sync {
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError>;
 }
 
+/// A running tally of one verb class, as one chronology entry.
+///
+/// **jojobot's own account of what a session did**, kept apart from what the
+/// session said about itself: one beat per class per session, its count and its
+/// examples corrected in place as the class repeats.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Beat {
+    /// The entry the tally lives in.
+    pub entry: EntryId,
+    /// How many calls of this class this session has made.
+    pub count: usize,
+    /// The first few things it named, so the beat says what it touched and not
+    /// only how often. Capped — a beat is a beat, not a log.
+    pub examples: Vec<String>,
+}
+
+/// How many examples a beat carries before it stops naming them.
+pub const BEAT_EXAMPLES: usize = 5;
+
+/// Every verb class jojobot beats, and the phrase its tally is written with.
+///
+/// **One table, because the phrase is half the parse.** A beat is rendered from
+/// it and read back through it, so a class whose phrase lived only at its call
+/// site would render fine and come back unparseable on the next reconnect.
+///
+/// **Writes only.** A read is attributed and never journalled, so no read verb
+/// appears here.
+pub const BEAT_CLASSES: &[(&str, &str)] = &[
+    ("add_entity", "brought entities into being"),
+    ("update_entity", "edited entities"),
+    ("capture", "captured facts about"),
+    ("update_fact", "edited facts"),
+    ("set_charter", "wrote charters for"),
+    ("post_message", "posted to mailboxes"),
+    ("mark_processed", "retired messages"),
+];
+
+/// A running tally, as one line of chronology.
+///
+/// **One shape, always, including at a count of one** — because this line is
+/// where the tally LIVES. A session outlives the connections that write to it,
+/// so a resumed session's counts are read back out of the entries by
+/// [`parse_beat`], and a rendering that dropped the count for the first
+/// occurrence would make the two disagree the moment somebody reconnects.
+pub fn beat_text(phrase: &str, beat: &Beat) -> String {
+    let mut named = beat.examples.join(", ");
+    // Said out loud when the examples stop naming everything, so the line does
+    // not read as a complete list that happens to be short.
+    if beat.examples.len() < beat.count {
+        named.push_str(", …");
+    }
+    format!("{phrase}: {named} ({})", beat.count)
+}
+
+/// Read a tally back out of the line it was rendered as — the inverse of
+/// [`beat_text`], and the reason a resumed session keeps counting rather than
+/// starting over.
+///
+/// `None` for a line this did not write: a beat whose text a person edited by
+/// hand is left exactly as they left it, and the class starts a fresh tally
+/// rather than jojobot rewriting their words into its own format.
+pub fn parse_beat(phrase: &str, entry: &JournalEntry) -> Option<Beat> {
+    let rest = entry.text.strip_prefix(phrase)?.strip_prefix(": ")?;
+    let (named, count) = rest.rsplit_once(" (")?;
+    let count: usize = count.strip_suffix(')')?.parse().ok()?;
+    let examples: Vec<String> = named
+        .trim_end_matches(", …")
+        .split(", ")
+        .filter(|e| !e.is_empty())
+        .map(str::to_string)
+        .collect();
+    Some(Beat {
+        entry: entry.id.clone(),
+        count,
+        examples,
+    })
+}
+
+/// The tally this session already has, read off its chronology — what makes the
+/// one-beat-per-class rule belong to the SESSION rather than to whichever
+/// connection happens to be holding it.
+pub fn beats_of(session: &Session) -> std::collections::HashMap<&'static str, Beat> {
+    let mut found = std::collections::HashMap::new();
+    for entry in &session.entries {
+        let Some(class) = entry.beat.as_deref() else {
+            continue;
+        };
+        let Some((class, phrase)) = BEAT_CLASSES.iter().find(|(known, _)| *known == class) else {
+            continue;
+        };
+        if let Some(beat) = parse_beat(phrase, entry) {
+            found.insert(*class, beat);
+        }
+    }
+    found
+}
+
 /// **What a boot found on this bot's board**, after the sweep has run.
 ///
 /// Named rather than a tuple because it grew a third thing the day an
@@ -731,6 +828,126 @@ mod tests {
     /// its arguments.** This is what the descent bought: the boot's whole
     /// board decision — what to close, what is live, what to offer — is now
     /// decidable at a chosen instant, with no handler and no wall clock.
+    /// A full beat's worth of examples, all from the fictional roster — exactly
+    /// [`BEAT_EXAMPLES`] of them, so the cap is exercised by the constant
+    /// rather than by a number written twice.
+    const ROSTER_EXAMPLES: [&str; BEAT_EXAMPLES] = [
+        "person:milhouse",
+        "person:alpha",
+        "person:beta",
+        "person:kappa",
+        "person:zenith",
+    ];
+
+    /// **Render and parse are inverses, for every class in the table.** That is
+    /// the claim `BEAT_CLASSES` is written for — "the phrase is half the parse"
+    /// — and until now nothing asserted it directly: it was exercised through a
+    /// handler, one class at a time, which is a test of the two classes
+    /// somebody happened to use.
+    #[test]
+    fn every_class_renders_a_tally_that_reads_back_as_itself() {
+        for (class, phrase) in BEAT_CLASSES {
+            for beat in [
+                // A count of one still carries its count — this line is where
+                // the tally LIVES, so a reconnect has to be able to read it.
+                Beat {
+                    entry: EntryId("e1".into()),
+                    count: 1,
+                    examples: vec!["person:milhouse".into()],
+                },
+                // Examples capped below the count: the line says so, and the
+                // ellipsis must not survive as a phantom example.
+                Beat {
+                    entry: EntryId("e2".into()),
+                    count: 9,
+                    examples: ROSTER_EXAMPLES.iter().map(|e| (*e).to_string()).collect(),
+                },
+            ] {
+                let text = beat_text(phrase, &beat);
+                let entry = JournalEntry {
+                    id: beat.entry.clone(),
+                    at: contract::epoch(),
+                    touched: None,
+                    beat: Some((*class).to_string()),
+                    text: text.clone(),
+                };
+                let read = parse_beat(phrase, &entry)
+                    .unwrap_or_else(|| panic!("{class} must read back its own line: {text:?}"));
+                assert_eq!(read.count, beat.count, "{class}: {text:?}");
+                assert_eq!(read.examples, beat.examples, "{class}: {text:?}");
+                assert_eq!(read.entry, beat.entry, "{class}: {text:?}");
+            }
+        }
+    }
+
+    /// A line jojobot did not write is not a tally. Somebody's own words stay
+    /// theirs, and the class opens a fresh tally beside them rather than jojobot
+    /// rewriting a person's entry into its own format.
+    #[test]
+    fn a_line_this_did_not_write_is_not_read_as_a_tally() {
+        let entry = |text: &str| JournalEntry {
+            id: EntryId("e1".into()),
+            at: contract::epoch(),
+            touched: None,
+            beat: Some("capture".into()),
+            text: text.to_string(),
+        };
+        for hand_edited in [
+            "captured facts about milhouse and a few others",
+            "captured facts about: person:milhouse",
+            "captured facts about: person:milhouse (lots)",
+            "wrote charters for: bot:gamma (1)",
+            "",
+        ] {
+            assert!(
+                parse_beat("captured facts about", &entry(hand_edited)).is_none(),
+                "must not read {hand_edited:?} as a tally"
+            );
+        }
+    }
+
+    /// The tally belongs to the SESSION, not to whichever connection is holding
+    /// it — so it is read back off the chronology. An entry that is not an
+    /// automatic beat is skipped, and so is one whose class is not in the table.
+    #[test]
+    fn the_tally_is_read_back_off_the_chronology() {
+        let entry = |id: &str, beat: Option<&str>, text: &str| JournalEntry {
+            id: EntryId(id.into()),
+            at: contract::epoch(),
+            touched: None,
+            beat: beat.map(str::to_string),
+            text: text.to_string(),
+        };
+        let session = Session {
+            id: SessionId("1".into()),
+            sid: Some(Sid("s001".into())),
+            bot: EntityId("bot:gamma".into()),
+            focus: "working".into(),
+            started_at: contract::epoch(),
+            state: SessionState::Active,
+            entries: vec![
+                entry("e1", None, "read the hand-off"),
+                entry(
+                    "e2",
+                    Some("capture"),
+                    "captured facts about: person:milhouse (2)",
+                ),
+                entry("e3", Some("no-such-class"), "did a thing: x (1)"),
+                entry("e4", Some("post_message"), "posted to mailboxes: pm (1)"),
+            ],
+        };
+
+        let found = beats_of(&session);
+        assert_eq!(found.len(), 2, "two tallies, not four: {found:?}");
+        assert_eq!(found["capture"].count, 2);
+        assert_eq!(found["capture"].entry, EntryId("e2".into()));
+        assert_eq!(found["post_message"].examples, vec!["pm".to_string()]);
+        assert!(
+            !found.contains_key("no-such-class"),
+            "a class with no phrase renders nothing readable, so it is no tally"
+        );
+    }
+
     /// A run of `bot:gamma` that last had something to show for itself
     /// `hours_ago` before [`contract::epoch`].
     async fn run(store: &dyn Sessions, nth: u8, focus: &str, hours_ago: i64) -> Session {

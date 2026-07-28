@@ -37,8 +37,8 @@ use jojobot_domain::memory::{
     validate_edge,
 };
 use jojobot_domain::session::{
-    Board, EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId,
-    SessionState, Sessions, sweep_and_find,
+    BEAT_CLASSES, BEAT_EXAMPLES, Beat, Board, EntryId, JournalEntry, NewEntry, NewSession, Session,
+    SessionError, SessionId, SessionState, Sessions, beat_text, beats_of, sweep_and_find,
 };
 use jojobot_domain::text::{self, FRESH_FOCUS};
 use rmcp::{
@@ -575,21 +575,6 @@ struct Caller {
     /// real write materializes it.
     card: Option<SessionId>,
 }
-
-/// A running tally of one verb class, as one chronology entry.
-#[derive(Debug, Clone)]
-struct Beat {
-    /// The entry the tally lives in.
-    entry: EntryId,
-    /// How many calls of this class this session has made.
-    count: usize,
-    /// The first few things it named, so the beat says what it touched and not
-    /// only how often. Capped — a beat is a beat, not a log.
-    examples: Vec<String>,
-}
-
-/// How many examples a beat carries before it stops naming them.
-const BEAT_EXAMPLES: usize = 5;
 
 #[tool_router]
 impl Jojobot {
@@ -2909,81 +2894,6 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
 fn display_line(prose: &str) -> String {
     text::FOCUS_LINE.render(prose)
 }
-
-/// A running tally, as one line of chronology.
-///
-/// **One shape, always, including at a count of one** — because this line is
-/// where the tally LIVES. The handler's copy is per connection and a session
-/// outlives connections, so a resumed session's counts are read back out of the
-/// entries by [`parse_beat`], and a rendering that dropped the count for the
-/// first occurrence would make the two disagree the moment somebody reconnects.
-fn beat_text(phrase: &str, beat: &Beat) -> String {
-    let mut named = beat.examples.join(", ");
-    // Said out loud when the examples stop naming everything, so the line does
-    // not read as a complete list that happens to be short.
-    if beat.examples.len() < beat.count {
-        named.push_str(", …");
-    }
-    format!("{phrase}: {named} ({})", beat.count)
-}
-
-/// Read a tally back out of the line it was rendered as — the inverse of
-/// [`beat_text`], and the reason a resumed session keeps counting rather than
-/// starting over.
-///
-/// `None` for a line this did not write: a beat whose text a person edited by
-/// hand is left exactly as they left it, and the class starts a fresh tally
-/// rather than jojobot rewriting their words into its own format.
-fn parse_beat(phrase: &str, entry: &JournalEntry) -> Option<Beat> {
-    let rest = entry.text.strip_prefix(phrase)?.strip_prefix(": ")?;
-    let (named, count) = rest.rsplit_once(" (")?;
-    let count: usize = count.strip_suffix(')')?.parse().ok()?;
-    let examples: Vec<String> = named
-        .trim_end_matches(", …")
-        .split(", ")
-        .filter(|e| !e.is_empty())
-        .map(str::to_string)
-        .collect();
-    Some(Beat {
-        entry: entry.id.clone(),
-        count,
-        examples,
-    })
-}
-
-/// The tally this session already has, read off its chronology — what makes the
-/// one-beat-per-class rule belong to the SESSION rather than to whichever
-/// connection happens to be holding it.
-fn beats_of(session: &Session) -> std::collections::HashMap<&'static str, Beat> {
-    let mut found = std::collections::HashMap::new();
-    for entry in &session.entries {
-        let Some(class) = entry.beat.as_deref() else {
-            continue;
-        };
-        let Some((class, phrase)) = BEAT_CLASSES.iter().find(|(known, _)| *known == class) else {
-            continue;
-        };
-        if let Some(beat) = parse_beat(phrase, entry) {
-            found.insert(*class, beat);
-        }
-    }
-    found
-}
-
-/// Every verb class jojobot beats, and the phrase its tally is written with.
-///
-/// **One table, because the phrase is half the parse.** A beat is rendered from
-/// it and read back through it, so a class whose phrase lived only at its call
-/// site would render fine and come back unparseable on the next reconnect.
-const BEAT_CLASSES: &[(&str, &str)] = &[
-    ("add_entity", "brought entities into being"),
-    ("update_entity", "edited entities"),
-    ("capture", "captured facts about"),
-    ("update_fact", "edited facts"),
-    ("set_charter", "wrote charters for"),
-    ("post_message", "posted to mailboxes"),
-    ("mark_processed", "retired messages"),
-];
 
 /// One session on the wire — the record, its chronology, and where it sits.
 fn session_json(session: &Session) -> serde_json::Value {
