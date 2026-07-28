@@ -949,6 +949,21 @@ mod tests {
                 let mut cells = split_cells(lines[i]);
                 cells.resize(width, String::new());
                 let cells: Vec<String> = cells.iter().map(|c| escape_cell(c)).collect();
+                // **A lone `-` comes back `\-`, and that is not cosmetic.**
+                // The editor model escapes a cell that would otherwise read as
+                // markdown, and a bare dash is one — verified against live
+                // Outline, where a message posted with no subject read back
+                // with the subject `\-`. The codecs write `-` for an absent
+                // optional, so a fake that left it alone would call every
+                // absent field present. This is the same gap the
+                // rectangularization above exists for, one character wide.
+                let cells: Vec<String> = cells
+                    .iter()
+                    .map(|c| match c.trim() {
+                        "-" => "\\-".to_string(),
+                        _ => c.clone(),
+                    })
+                    .collect();
                 out.push(format!("| {} |", cells.join(" | ")));
                 i += 1;
             }
@@ -2606,5 +2621,197 @@ mod tests {
             .unwrap();
         assert_eq!(facts.len(), 1, "must find the paged-past doc");
         assert_eq!(facts[0].content, "found me");
+    }
+
+    // ── restored: deleted by 64d54bf, which was about `documents.move` ──────
+    //
+    // A rewrite of this module took 204 lines out and put 212 back, and four
+    // tests went with them. The commit message says nothing about tests, so
+    // nothing marked their absence: `make check` stayed green over an adapter
+    // with no coverage at any tier. Two of them are the ONLY thing standing
+    // between the operator's mail and markdown normalization.
+
+    /// **The Mailboxes contract, unchanged, over Outline.** Same claim as the
+    /// sessions one: the spec is untouched, so this was a storage move.
+    #[tokio::test]
+    async fn the_outline_mailbox_store_satisfies_the_contract() {
+        jojobot_domain::mailbox::testing::contract::run_all(|| async {
+            // **The owners are written first, because this store resolves them
+            // by reading Memory.** A box belongs to a bot by construction, so
+            // `create_mailbox` refuses an owner it cannot find — which is the
+            // contract's stated precondition and the reason its factory is
+            // async. The fake meets it in its constructor; here it is I/O.
+            let outline = store(FakeOutline::new());
+            for owner in jojobot_domain::mailbox::testing::contract::OWNERS {
+                outline
+                    .add_entity(jojobot_domain::memory::NewEntity {
+                        id: jojobot_domain::memory::EntityId((*owner).to_string()),
+                        name: owner.trim_start_matches("bot:").to_string(),
+                        aliases: Vec::new(),
+                        source: "user-named".into(),
+                        crm: None,
+                        parent: None,
+                        boot: Default::default(),
+                        create_new: false,
+                    })
+                    .await
+                    .expect("the owner is written")
+                    .written()
+                    .expect("not blocked");
+            }
+            outline.mailboxes()
+        })
+        .await;
+    }
+
+    /// **The Sessions contract, unchanged, over Outline.** The same spec the
+    /// fake satisfies and the Vikunja adapter satisfied — that it passes here
+    /// with no edit to it is the whole proof that this was a storage move and
+    /// not a redesign.
+    #[tokio::test]
+    async fn the_outline_sessions_store_satisfies_the_contract() {
+        jojobot_domain::session::testing::contract::run_all(|| {
+            store(FakeOutline::new()).sessions()
+        })
+        .await;
+    }
+
+    /// **Mail is in the index; the page it lives on is not.** Both halves, in
+    /// one test, because getting either wrong is silent and they fail in
+    /// opposite directions.
+    ///
+    /// Sessions are excluded from search on purpose and mail is included on
+    /// purpose, and both now live on pages in the collection the boot scan
+    /// reads. So the exclusion has to be surgical: exclude the page's raw
+    /// markdown as content, and let the messages through by their own path.
+    /// Exclude too much and mail vanishes from search; exclude too little and a
+    /// question about the operator's life comes back with the raw markdown of a
+    /// box, bodies quoted out of their envelopes.
+    #[tokio::test]
+    async fn mail_reaches_the_index_but_the_page_it_sits_on_does_not() {
+        use jojobot_domain::mailbox::{MailboxName, Mailboxes as _, NewMessage};
+        use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
+
+        let outline = store(FakeOutline::new());
+        let index = IndexedMemory::new(Arc::new(outline.clone())).expect("index opens");
+        let mail =
+            crate::search::IndexedMailboxes::new(Arc::new(outline.mailboxes()), index.index());
+
+        // A box has an owner now — it belongs to a bot and is named for it.
+        // That is the one adaptation this recovered test needed; everything it
+        // asserts about the index is untouched.
+        let inbox = MailboxName("gamma".into());
+        let owner = jojobot_domain::memory::EntityId("bot:gamma".into());
+        outline
+            .add_entity(jojobot_domain::memory::NewEntity {
+                id: owner.clone(),
+                name: "Gamma".into(),
+                aliases: Vec::new(),
+                source: "user-named".into(),
+                crm: None,
+                parent: None,
+                boot: Default::default(),
+                create_new: false,
+            })
+            .await
+            .expect("the owner exists")
+            .written()
+            .expect("not blocked");
+        mail.create_mailbox(&inbox, &owner, false)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("not blocked");
+        mail.post_message(NewMessage {
+            mailbox: inbox.clone(),
+            body: "the monorail contract needs a decision".into(),
+            subject: Some("monorail".into()),
+            sender: "gamma".into(),
+            sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
+            in_reply_to: None,
+        })
+        .await
+        .expect("post ok")
+        .written()
+        .expect("not blocked");
+
+        // **Direction one, through the BOOT path.** Searching the index this
+        // process has been writing to proves only that the incremental write
+        // works — it survives `scan_messages` returning nothing, which is the
+        // failure that matters: a restart rebuilds from that read, and a broken
+        // one loses every message older than the process while looking fine.
+        // So this is a restart: a fresh index, both halves rebuilt from the
+        // store, and only then the question.
+        let restarted = IndexedMemory::new(Arc::new(outline.clone())).expect("index opens");
+        restarted.rebuild().await.expect("memory rebuild ok");
+        let restarted_mail =
+            crate::search::IndexedMailboxes::new(Arc::new(outline.mailboxes()), restarted.index());
+        restarted_mail.rebuild().await.expect("mail rebuild ok");
+
+        let hits = restarted
+            .search(&SearchQuery {
+                text: Some("monorail".into()),
+                ..Default::default()
+            })
+            .expect("search ok");
+        assert!(
+            hits.iter().any(|h| matches!(h, Hit::Message { .. })),
+            "mail survives a restart and is in the one ranked list: {hits:?}"
+        );
+
+        // Direction two, on that same rebuilt index: the page carrying the mail
+        // is not content. The rebuild is what reads every document, so this is
+        // the path where a leak would appear.
+        let after = restarted
+            .search(&SearchQuery {
+                text: Some("monorail".into()),
+                ..Default::default()
+            })
+            .expect("search ok");
+        assert!(
+            !after
+                .iter()
+                .any(|h| matches!(h, Hit::Prose { .. } | Hit::Entity { .. })),
+            "the raw page must never surface as content: {after:?}"
+        );
+    }
+
+    /// The fake stores what the real Outline would store: the editor model
+    /// re-serializes every markdown table RECTANGULAR AT THE HEADER'S WIDTH —
+    /// long rows lose their tail, short rows are padded. Pinned so the fake can
+    /// never quietly regress to the verbatim store that hid the production
+    /// edge-loss bug from 217 green tests.
+    #[tokio::test]
+    async fn the_fake_rectangularizes_tables_like_the_real_store() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        let id = fake.seed_document(&coll, "Alpha", "seed");
+        fake.update_document(
+            &id,
+            "| id | subject | content |\n\
+             | --- | --- | --- |\n\
+             | f1 | person:alpha | plays go | EXTRA |\n\
+             | f2 | person:alpha |",
+        )
+        .await
+        .expect("update ok");
+
+        let doc = fake
+            .docs_in(&coll)
+            .into_iter()
+            .find(|d| d.id == id)
+            .expect("doc");
+        let lines: Vec<&str> = doc.text.lines().collect();
+        assert!(
+            !lines[2].contains("EXTRA"),
+            "a cell past the header's width is truncated on save: {:?}",
+            lines[2]
+        );
+        assert_eq!(
+            split_cells(lines[3]).len(),
+            3,
+            "a short row is padded to the header's width: {:?}",
+            lines[3]
+        );
     }
 }

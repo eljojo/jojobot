@@ -686,7 +686,7 @@ mod tests {
     /// Outline adapter runs against its API double, and against real Outline.
     #[tokio::test]
     async fn the_fake_satisfies_the_contract() {
-        contract::run_all(InMemoryMailboxes::new).await;
+        contract::run_all(|| async { InMemoryMailboxes::new() }).await;
     }
 
     #[test]

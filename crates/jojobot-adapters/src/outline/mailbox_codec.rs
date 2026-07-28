@@ -59,6 +59,10 @@ const BODY_FENCE: &str = "```jojobot-message";
 /// indistinguishable from a field somebody blanked by hand.
 const NONE: &str = "-";
 
+/// How the store hands [`NONE`] back: the editor escapes a lone dash, and a
+/// read that did not know this called every absent field present.
+const ESCAPED_NONE: &str = "\\-";
+
 /// One row of the messages table — a message without its body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Row {
@@ -211,7 +215,16 @@ fn parse_row(line: &str) -> Read {
         return Read::NotARow; // the separator
     }
     let id = MessageId(id.clone());
-    let opt = |v: &String| Some(v.clone()).filter(|v| v != NONE && !v.is_empty());
+    // **`\-` is the store's spelling of `-`, and that one character was data
+    // loss.** Outline's editor model escapes a cell whose content would
+    // otherwise parse as markdown, and a lone dash is one — verified against
+    // live Outline, where a message posted with no subject read back carrying
+    // the subject `\-`, the notes `\-`, and an `in_reply_to` naming a message
+    // id that cannot exist. The read-back check caught the mismatch and
+    // restored the page, so posting FAILED rather than corrupting quietly —
+    // which means most messages could not be written at all.
+    let opt =
+        |v: &String| Some(v.clone()).filter(|v| v != NONE && v != ESCAPED_NONE && !v.is_empty());
 
     let ok = c.len() >= 7;
     let state = ok.then(|| MessageState::from_token(&c[1])).flatten();

@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
 use jojobot_adapters::search::IndexedMemory;
+use jojobot_domain::mailbox::testing::contract as mailboxes;
 use jojobot_domain::memory::testing::contract;
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity};
 use jojobot_domain::session::testing::contract as sessions;
@@ -35,6 +36,7 @@ const TEST_COLLECTION: &str = "jojobot-test";
 /// prefix — one per case, because the spec assumes a store that starts empty.
 /// Deliberately distinct from both the real collection and [`TEST_COLLECTION`].
 const SESSION_PREFIX: &str = "jojobot-sessions-itest-";
+const MAILBOX_PREFIX: &str = "jojobot-mailboxes-itest-";
 
 struct Creds {
     url: String,
@@ -226,7 +228,7 @@ async fn drop_session_collections(http: &reqwest::Client, c: &Creds) {
             .filter(|c| {
                 c["name"]
                     .as_str()
-                    .is_some_and(|n| n.starts_with(SESSION_PREFIX))
+                    .is_some_and(|n| n.starts_with(SESSION_PREFIX) || n.starts_with(MAILBOX_PREFIX))
             })
             .filter_map(|c| c["id"].as_str().map(str::to_string))
             .collect();
@@ -274,6 +276,56 @@ async fn drop_test_collection(http: &reqwest::Client, c: &Creds) {
 /// registry is rebuilt from at startup, the previous review found it untested
 /// against a real adapter, and it is the one read that spans pages — so a bug
 /// in it is a restart that silently forgets every session of every bot but one.
+/// **The Mailboxes contract, against real Outline.**
+///
+/// It ran nowhere at any tier until this round: `64d54bf` deleted the fast-tier
+/// run and this suite was never extended, so the only thing between the
+/// operator's mail and markdown normalization had no test at all. A break in
+/// body escaping, cell escaping, id minting over ragged rows or notes
+/// flattening shipped with the whole workspace green.
+///
+/// A collection per case, like the sessions run: the spec wants a fresh store
+/// each time, and the owners are written into each because a box belongs to a
+/// bot by construction and this store resolves that by reading Memory.
+async fn assert_the_mailbox_contract_holds(http: &reqwest::Client, c: &Creds) {
+    let next = AtomicU64::new(0);
+    let url = c.url.clone();
+    let token = c.token.clone();
+    let client = http.clone();
+    mailboxes::run_all(move || {
+        let n = next.fetch_add(1, Ordering::SeqCst);
+        let store = OutlineStore::with_collection(
+            client.clone(),
+            OutlineConfig {
+                base_url: url.clone(),
+                token: Secret::new(token.clone()),
+            },
+            format!("{MAILBOX_PREFIX}{n}"),
+        );
+        async move {
+            for owner in mailboxes::OWNERS {
+                store
+                    .add_entity(NewEntity {
+                        id: EntityId((*owner).to_string()),
+                        name: owner.trim_start_matches("bot:").to_string(),
+                        aliases: Vec::new(),
+                        source: "user-named".into(),
+                        crm: None,
+                        parent: None,
+                        boot: Default::default(),
+                        create_new: false,
+                    })
+                    .await
+                    .expect("the owner is written")
+                    .written()
+                    .expect("not blocked");
+            }
+            store.mailboxes()
+        }
+    })
+    .await;
+}
+
 async fn assert_the_session_contract_holds(http: &reqwest::Client, c: &Creds) {
     let next = AtomicU64::new(0);
     let url = c.url.clone();
@@ -382,6 +434,7 @@ async fn real_outline_satisfies_the_contract() {
         contract::run_all_searchable(&indexed).await;
         assert_a_child_page_is_nested(&http_for_spec, &creds_for_spec, &store).await;
         assert_the_session_contract_holds(&http_for_spec, &creds_for_spec).await;
+        assert_the_mailbox_contract_holds(&http_for_spec, &creds_for_spec).await;
     })
     .await;
 

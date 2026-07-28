@@ -1338,35 +1338,48 @@ pub mod contract {
 
     /// The whole spec, against one store. Each case runs on a **fresh** store,
     /// so nothing here depends on the order the others ran in.
-    pub async fn run_all<S: Mailboxes, F: Fn() -> S>(fresh: F) {
-        create_then_list(&fresh()).await;
-        creating_a_near_miss_is_blocked_and_writes_nothing(&fresh()).await;
-        a_confirmed_near_miss_creates_the_sibling_box(&fresh()).await;
-        a_posted_message_lands_in_new(&fresh()).await;
-        a_subject_rides_with_the_message(&fresh()).await;
-        a_blank_subject_is_absent_and_a_broken_one_is_refused(&fresh()).await;
-        read_message_takes_one_and_leaves_the_rest(&fresh()).await;
-        read_message_leaves_a_processed_message_terminal(&fresh()).await;
-        reading_an_unknown_message_is_a_miss(&fresh()).await;
-        a_scan_sees_every_box_and_every_state(&fresh()).await;
-        a_body_survives_the_round_trip(&fresh()).await;
-        a_crlf_body_normalizes_to_plain_newlines(&fresh()).await;
-        a_body_of_markup_and_a_loose_fence_survives(&fresh()).await;
-        posting_into_an_unknown_mailbox_is_blocked(&fresh()).await;
-        a_read_delivers_everything_new_and_moves_the_column(&fresh()).await;
-        a_second_read_redelivers_leftovers_flagged(&fresh()).await;
-        mark_processed_is_terminal_and_records_the_outcome(&fresh()).await;
-        a_failure_is_recorded_as_an_outcome(&fresh()).await;
-        a_reply_names_the_message_it_answers(&fresh()).await;
-        a_reply_can_answer_a_message_in_another_box(&fresh()).await;
-        a_reply_to_an_unknown_message_is_refused(&fresh()).await;
-        long_notes_are_kept_as_far_as_they_fit(&fresh()).await;
-        notes_that_fit_are_untouched(&fresh()).await;
-        processing_without_notes_is_allowed(&fresh()).await;
-        a_new_message_can_be_processed_without_a_read(&fresh()).await;
-        boxes_do_not_leak_into_each_other(&fresh()).await;
-        reading_an_unknown_mailbox_is_blocked(&fresh()).await;
-        processing_an_unknown_message_is_a_miss(&fresh()).await;
-        malformed_input_is_refused(&fresh()).await;
+    /// Every case, each against a store this hands back fresh.
+    ///
+    /// **The factory is async because a real store's precondition is.** Every
+    /// case files boxes under [`OWNERS`], and a store that resolves owners by
+    /// reading Memory cannot be given them by a constructor — the entities have
+    /// to be written, which is I/O. The fake seeds them synchronously and does
+    /// not need this; the Outline adapter does, and running this suite against
+    /// it is the point of the shape.
+    pub async fn run_all<S, F, Fut>(fresh: F) -> ()
+    where
+        S: Mailboxes,
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = S>,
+    {
+        create_then_list(&fresh().await).await;
+        creating_a_near_miss_is_blocked_and_writes_nothing(&fresh().await).await;
+        a_confirmed_near_miss_creates_the_sibling_box(&fresh().await).await;
+        a_posted_message_lands_in_new(&fresh().await).await;
+        a_subject_rides_with_the_message(&fresh().await).await;
+        a_blank_subject_is_absent_and_a_broken_one_is_refused(&fresh().await).await;
+        read_message_takes_one_and_leaves_the_rest(&fresh().await).await;
+        read_message_leaves_a_processed_message_terminal(&fresh().await).await;
+        reading_an_unknown_message_is_a_miss(&fresh().await).await;
+        a_scan_sees_every_box_and_every_state(&fresh().await).await;
+        a_body_survives_the_round_trip(&fresh().await).await;
+        a_crlf_body_normalizes_to_plain_newlines(&fresh().await).await;
+        a_body_of_markup_and_a_loose_fence_survives(&fresh().await).await;
+        posting_into_an_unknown_mailbox_is_blocked(&fresh().await).await;
+        a_read_delivers_everything_new_and_moves_the_column(&fresh().await).await;
+        a_second_read_redelivers_leftovers_flagged(&fresh().await).await;
+        mark_processed_is_terminal_and_records_the_outcome(&fresh().await).await;
+        a_failure_is_recorded_as_an_outcome(&fresh().await).await;
+        a_reply_names_the_message_it_answers(&fresh().await).await;
+        a_reply_can_answer_a_message_in_another_box(&fresh().await).await;
+        a_reply_to_an_unknown_message_is_refused(&fresh().await).await;
+        long_notes_are_kept_as_far_as_they_fit(&fresh().await).await;
+        notes_that_fit_are_untouched(&fresh().await).await;
+        processing_without_notes_is_allowed(&fresh().await).await;
+        a_new_message_can_be_processed_without_a_read(&fresh().await).await;
+        boxes_do_not_leak_into_each_other(&fresh().await).await;
+        reading_an_unknown_mailbox_is_blocked(&fresh().await).await;
+        processing_an_unknown_message_is_a_miss(&fresh().await).await;
+        malformed_input_is_refused(&fresh().await).await;
     }
 }

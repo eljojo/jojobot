@@ -183,6 +183,7 @@ pub(super) fn escape_cell(s: &str) -> String {
 
 /// Split a markdown table row into trimmed, unescaped cells, honouring `\|` as a
 /// literal pipe inside a cell.
+///
 pub(super) fn split_cells(row: &str) -> Vec<String> {
     let row = row.trim();
     let inner = row.strip_prefix('|').unwrap_or(row);
