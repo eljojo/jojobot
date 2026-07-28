@@ -988,14 +988,30 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         let mut out: Vec<String> = Vec::with_capacity(lines.len());
         let mut i = 0;
+        let mut fenced = false;
         while i < lines.len() {
-            if !lines[i].trim_start().starts_with('|') {
+            // **Inside a fence nothing is a table.** The editor model treats
+            // fenced content as literal, verified against live Outline: a
+            // pipe-leading line inside a code block comes back exactly as
+            // written. A fake that rectangularized it would be wrong rather
+            // than hostile — failing a write production accepts, which is the
+            // mirror of the bug this whole function exists to catch.
+            if lines[i].trim_start().starts_with("```") {
+                fenced = !fenced;
+                out.push(lines[i].to_string());
+                i += 1;
+                continue;
+            }
+            if fenced || !lines[i].trim_start().starts_with('|') {
                 out.push(lines[i].to_string());
                 i += 1;
                 continue;
             }
             let width = split_cells(lines[i]).len();
-            while i < lines.len() && lines[i].trim_start().starts_with('|') {
+            while i < lines.len()
+                && lines[i].trim_start().starts_with('|')
+                && !lines[i].trim_start().starts_with("```")
+            {
                 let mut cells = split_cells(lines[i]);
                 cells.resize(width, String::new());
                 let cells: Vec<String> = cells.iter().map(|c| escape_cell(c)).collect();
@@ -1518,6 +1534,56 @@ mod tests {
             store(FakeOutline::new()).sessions()
         })
         .await;
+    }
+
+    /// **A chronology entry that quotes a table survives being one.**
+    ///
+    /// The fake re-serializes tables because the real store does — that is the
+    /// quirk the production edge-loss bug lived in. But the real store applies
+    /// it to *tables*, and a pipe-leading line inside a fenced block is not one:
+    /// verified against live Outline, which leaves it exactly as written. A fake
+    /// that rectangularized it would be wrong rather than hostile, and would
+    /// fail a write that production accepts — the mirror image of the bug the
+    /// rectangularization exists to catch, and just as expensive.
+    #[tokio::test]
+    async fn an_entry_quoting_a_table_is_not_re_serialized_as_one() {
+        use jojobot_domain::session::Sessions as _;
+
+        let sessions = OutlineStore::from_api(FakeOutline::new(), COLL).sessions();
+        let begun = sessions
+            .begin(jojobot_domain::session::NewSession {
+                bot: EntityId::new(EntityKind::Bot, "gamma"),
+                sid: jojobot_domain::session::Sid("ab12".into()),
+                focus: "the first run".into(),
+                started_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
+            })
+            .await
+            .expect("begin should succeed");
+
+        // Deliberately RAGGED. A tidy table survives rectangularization by
+        // accident, so quoting one would prove nothing: this one loses a cell
+        // and gains a padded one the moment the fake treats it as a table.
+        let quoted = "the counts were:\n| kind | n |\n| --- | --- |\n\
+                      | fact | 3 | dropped |\n| bare |\nand that was all";
+        sessions
+            .append(
+                &begun.id,
+                jojobot_domain::session::NewEntry::manual(
+                    quoted,
+                    "2026-07-28T00:01:00Z".parse().expect("a timestamp"),
+                ),
+            )
+            .await
+            .expect("append should succeed");
+
+        let read = sessions
+            .read_session(&begun.id)
+            .await
+            .expect("read should succeed");
+        assert_eq!(
+            read.entries[0].text, quoted,
+            "a table inside somebody's entry is their prose, not the page's table"
+        );
     }
 
     /// **Two runs of one bot beginning at once do not collide.** Both reads see
