@@ -3274,10 +3274,9 @@ fn session_error(e: SessionError) -> McpError {
         | SessionError::Closed { .. }
         | SessionError::NoEntries { .. }
         | SessionError::NotABeat { .. } => McpError::invalid_params(e.to_string(), None),
-        SessionError::ForeignProject(_)
-        | SessionError::Stranded { .. }
-        | SessionError::Store(_)
-        | SessionError::NotConfigured(_) => McpError::internal_error(e.to_string(), None),
+        SessionError::Stranded { .. } | SessionError::Store(_) | SessionError::NotConfigured(_) => {
+            McpError::internal_error(e.to_string(), None)
+        }
     }
 }
 

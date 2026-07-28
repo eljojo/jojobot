@@ -467,7 +467,7 @@ pub enum SessionError {
     #[error("invalid entry: {0}")]
     InvalidEntry(String),
     /// The addressed session doesn't exist. Never created, never guessed at.
-    #[error("no session '{attempted}' on jojobot's session board")]
+    #[error("no session '{attempted}': no bot's sessions page carries a run with that id")]
     UnknownSession {
         /// The id that missed.
         attempted: String,
@@ -520,11 +520,6 @@ pub enum SessionError {
         /// The session it is on.
         session: String,
     },
-    /// **The write-scope invariant**, extended to this context's own project.
-    /// The operator's boards live on the same Vikunja, and this store may touch
-    /// exactly one project — a different one from the mailbox store's.
-    #[error("refusing to touch a project other than jojobot's session project: {0}")]
-    ForeignProject(String),
     /// A write failed, and putting the card back failed too. Its own variant for
     /// the reason the mailbox context's is: whether the rollback worked is the
     /// one thing a caller cannot infer from anything else in the answer.
