@@ -19,14 +19,22 @@
 //! hardcodes a token; the token comes from the env the operator sets.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
 use jojobot_adapters::search::IndexedMemory;
 use jojobot_domain::memory::testing::contract;
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity};
+use jojobot_domain::session::testing::contract as sessions;
+use jojobot_domain::session::{NewSession, Sessions, Sid};
 
 /// The collection this test owns end to end. NOT the real `jojobot` collection.
 const TEST_COLLECTION: &str = "jojobot-test";
+
+/// Every throwaway collection the session contract creates is named under this
+/// prefix — one per case, because the spec assumes a store that starts empty.
+/// Deliberately distinct from both the real collection and [`TEST_COLLECTION`].
+const SESSION_PREFIX: &str = "jojobot-sessions-itest-";
 
 struct Creds {
     url: String,
@@ -195,6 +203,47 @@ async fn assert_a_child_page_is_nested(http: &reqwest::Client, c: &Creds, store:
     );
 }
 
+/// Delete every throwaway collection the session contract created.
+async fn drop_session_collections(http: &reqwest::Client, c: &Creds) {
+    loop {
+        let (_, page) = (
+            (),
+            http.post(format!("{}/api/collections.list", c.url))
+                .bearer_auth(&c.token)
+                .json(&serde_json::json!({ "limit": 100 }))
+                .send()
+                .await
+                .expect("collections.list")
+                .json::<serde_json::Value>()
+                .await
+                .expect("collections.list body"),
+        );
+        let mine: Vec<String> = page["data"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|c| {
+                c["name"]
+                    .as_str()
+                    .is_some_and(|n| n.starts_with(SESSION_PREFIX))
+            })
+            .filter_map(|c| c["id"].as_str().map(str::to_string))
+            .collect();
+        if mine.is_empty() {
+            return;
+        }
+        for id in mine {
+            http.post(format!("{}/api/collections.delete", c.url))
+                .bearer_auth(&c.token)
+                .json(&serde_json::json!({ "id": id }))
+                .send()
+                .await
+                .expect("collections.delete");
+        }
+    }
+}
+
 /// Delete the test collection (and every doc in it), if it exists.
 async fn drop_test_collection(http: &reqwest::Client, c: &Creds) {
     if let Some(id) = find_collection(http, c, TEST_COLLECTION).await {
@@ -213,6 +262,81 @@ async fn drop_test_collection(http: &reqwest::Client, c: &Creds) {
     }
 }
 
+/// **The Sessions contract, against real Outline, with no edit to the spec.**
+/// The same suite the fake satisfies — which is the proof that moving sessions
+/// out of Vikunja was a storage move and not a redesign.
+///
+/// A throwaway collection per case, because the spec assumes a store that
+/// starts empty. That is the same shape the Vikunja session suite used, for the
+/// same reason.
+///
+/// **`all_sessions` earns its own assertion afterwards.** It is what the handle
+/// registry is rebuilt from at startup, the previous review found it untested
+/// against a real adapter, and it is the one read that spans pages — so a bug
+/// in it is a restart that silently forgets every session of every bot but one.
+async fn assert_the_session_contract_holds(http: &reqwest::Client, c: &Creds) {
+    let next = AtomicU64::new(0);
+    let url = c.url.clone();
+    let token = c.token.clone();
+    let client = http.clone();
+    let fresh = move || {
+        let n = next.fetch_add(1, Ordering::SeqCst);
+        OutlineStore::with_collection(
+            client.clone(),
+            OutlineConfig {
+                base_url: url.clone(),
+                token: Secret::new(token.clone()),
+            },
+            format!("{SESSION_PREFIX}{n}"),
+        )
+        .sessions()
+    };
+    sessions::run_all(fresh).await;
+
+    // Two bots, two pages, one read. A registry rebuilt from this has to see
+    // both — the failure it guards against is a restart in which every bot but
+    // one loses its handles.
+    let store = OutlineStore::with_collection(
+        http.clone(),
+        OutlineConfig {
+            base_url: c.url.clone(),
+            token: Secret::new(c.token.clone()),
+        },
+        format!("{SESSION_PREFIX}across"),
+    )
+    .sessions();
+    let mut begun = Vec::new();
+    for (slug, handle) in [("gamma", "ab12"), ("delta", "cd34")] {
+        begun.push(
+            store
+                .begin(NewSession {
+                    bot: EntityId::new(EntityKind::Bot, slug),
+                    sid: Sid(handle.into()),
+                    focus: format!("what {slug} is doing"),
+                    started_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
+                })
+                .await
+                .expect("begin should succeed"),
+        );
+    }
+
+    let all = store
+        .all_sessions()
+        .await
+        .expect("all_sessions should succeed");
+    for session in &begun {
+        let seen = all
+            .iter()
+            .find(|s| s.id == session.id)
+            .unwrap_or_else(|| panic!("all_sessions must span pages, missing {}", session.id));
+        assert_eq!(
+            seen.sid, session.sid,
+            "the handle rides on the row, or a restart cannot rebuild the registry"
+        );
+        assert_eq!(seen.bot, session.bot, "and each knows whose run it is");
+    }
+}
+
 #[tokio::test]
 #[ignore = "hits real Outline; set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN"]
 async fn real_outline_satisfies_the_contract() {
@@ -224,6 +348,7 @@ async fn real_outline_satisfies_the_contract() {
     let http = reqwest::Client::new();
     // Clean slate, in case a prior run aborted before teardown.
     drop_test_collection(&http, &c).await;
+    drop_session_collections(&http, &c).await;
 
     // Fingerprint the real `jojobot` collection: the test must not touch it.
     let jojobot_before = doc_id_fingerprint(&http, &c, "jojobot").await;
@@ -256,10 +381,12 @@ async fn real_outline_satisfies_the_contract() {
     let outcome = tokio::spawn(async move {
         contract::run_all_searchable(&indexed).await;
         assert_a_child_page_is_nested(&http_for_spec, &creds_for_spec, &store).await;
+        assert_the_session_contract_holds(&http_for_spec, &creds_for_spec).await;
     })
     .await;
 
     drop_test_collection(&http, &c).await;
+    drop_session_collections(&http, &c).await;
 
     let jojobot_after = doc_id_fingerprint(&http, &c, "jojobot").await;
     assert_eq!(
