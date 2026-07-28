@@ -905,15 +905,30 @@ impl Jojobot {
         })))
     }
 
-    /// The live state of the box a bot owns — **reported, never opened.**
+    /// The live state of the box a bot owns — **and the one place jojobot heals
+    /// one that is missing.**
     ///
-    /// Booting used to mint a declared box that was missing. It doesn't now,
-    /// and there is nothing left for it to mint with: a box opens with its bot,
-    /// so a bot whose box is absent is damage rather than an unfinished setup.
+    /// A box opens with its bot, so a bot whose box is absent is damage: an
+    /// `add_entity` that wrote the identity and then failed to open the box, or
+    /// a record predating the rule. The operator's ruling is that jojobot fixes
+    /// it rather than filing it — *"the system should auto heal next time when
+    /// it notices it's not there but it should. and notify the agent that the
+    /// message/box wasn't created."*
     ///
-    /// So a missing box is *said*, plainly. A
-    /// bot whose box nobody has opened still boots: it is an identity that
-    /// cannot receive mail yet, and the honest thing is to tell it so.
+    /// **This is not rule 18 being bent.** The intentional act already happened:
+    /// somebody stood up the bot, and a bot's box is part of what a bot IS
+    /// rather than a second thing they forgot to ask for. Healing completes an
+    /// interrupted act; it mints nothing nobody asked for. The repair is only
+    /// legitimate because it needs no judgement — the owner is in hand and the
+    /// name is derived from it, so there is exactly one correct box.
+    ///
+    /// **Boot is the only place that heals**, and that is a deliberate limit.
+    /// `list_mailboxes` and the count scoping are pure reads of the board, and
+    /// healing there would make every read a potential write. `post_message`
+    /// names somebody *else's* box: writing another identity's infrastructure is
+    /// not this caller's act, and the owner heals it the moment it boots — which
+    /// is the next time anyone would drain it anyway. A message is not more
+    /// delivered for a box existing that nobody has booted to read.
     async fn owned_mailbox(&self, bot: &EntityId) -> Result<serde_json::Value, McpError> {
         // The mailbox half degrades on its own, exactly as the snapshot's does.
         // Hard-erroring here made every box-owning identity unbootable over an
@@ -948,13 +963,68 @@ impl Jojobot {
         // wherever it appears at all. `available` is the one question a reader
         // still has to branch on.
         let Some(mailbox) = boxes.into_iter().find(|b| &b.owner == bot) else {
-            return Ok(serde_json::Value::Null);
+            return Ok(self.heal_missing_box(bot).await);
         };
         let mut body = mailbox_json(&mailbox);
         if let Some(obj) = body.as_object_mut() {
             obj.insert("available".into(), true.into());
         }
         Ok(body)
+    }
+
+    /// Open the box this bot should have had, and **say that it was missing.**
+    ///
+    /// The notification is half the ruling, not a courtesy. A silent repair is
+    /// the thing this codebase forbids everywhere else — eliding is never
+    /// silent — and a session that cannot tell "your box is here" from "your box
+    /// was gone and is here now" cannot report the damage to anybody who could
+    /// ask why it happened.
+    ///
+    /// **One attempt, never a loop.** If the repair does not land, that is said
+    /// too, and the boot still returns whole: the charter and the rules are in
+    /// the other world entirely and are what a session most needs.
+    async fn heal_missing_box(&self, bot: &EntityId) -> serde_json::Value {
+        let name = MailboxName(bot.slug().to_string());
+        match self.mailboxes.create_mailbox(&name, bot, true).await {
+            Ok(mailbox::Guarded::Written(opened)) => {
+                let mut body = mailbox_json(&opened);
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("available".into(), true.into());
+                    obj.insert("healed".into(), true.into());
+                    obj.insert(
+                        "note".into(),
+                        format!(
+                            "YOUR BOX '{name}' was missing and jojobot has just opened it. A box \
+                             opens with its bot, so its absence means that creation was \
+                             interrupted — the identity existed with no way to receive mail. It \
+                             is repaired and this boot is otherwise normal, but anything posted \
+                             to you before now was refused as an unknown box and was never \
+                             stored: tell the operator, since only they can say what was lost."
+                        )
+                        .into(),
+                    );
+                }
+                body
+            }
+            // **The world answered and the box still is not there**, which is a
+            // different thing from the world being unreachable — so `available`
+            // stays true and `name` is null rather than claiming a box.
+            other => serde_json::json!({
+                "available": true,
+                "name": serde_json::Value::Null,
+                "healed": false,
+                "note": format!(
+                    "YOUR BOX '{name}' is missing and jojobot could not open it. You have an \
+                     identity with no way to receive mail, and this is damage rather than a \
+                     setup step: a box opens with its bot. Nothing you post is affected — \
+                     post_message needs no box of your own. Tell the operator.{}",
+                    match &other {
+                        Err(err) => format!(" The mailbox world said: {err}"),
+                        _ => String::new(),
+                    }
+                ),
+            }),
+        }
     }
 
     // ── sessions ────────────────────────────────────────────────────────────
@@ -3725,10 +3795,12 @@ fn no_box_for(attempted: &str, why: NoBox) -> CallToolResult {
         NoBox::Broken => format!(
             "Nothing was delivered, and nothing was created. '{attempted}' is a bot with no \
              mailbox, and that should not be possible: a box opens with the bot that owns it, so \
-             an identity without one was interrupted mid-creation or predates the rule. There is \
-             no verb that opens a box on its own — TELL THE OPERATOR, because repairing this \
-             takes a person. Posting into other boxes still works and needs none of it: \
-             post_message writes without reading."
+             an identity without one was interrupted mid-creation or predates the rule. \
+             BOOT AGAIN through start_here and jojobot will open it — the repair needs no verb \
+             of yours and no person, because the owner is known and the name is its handle. Tell \
+             the operator afterwards: mail sent to you before the repair was refused as an \
+             unknown box and was never stored. Posting into other boxes still works and needs \
+             none of this: post_message writes without reading."
         ),
     };
     let body = serde_json::json!({
@@ -6519,9 +6591,13 @@ mod tests {
                 .expect("an answer"),
         );
         let how = broken["how_to_proceed"].as_str().expect("advice");
+        // **The way out is the door that heals, not a person.** This advice
+        // named the operator until he ruled that jojobot repairs this itself;
+        // sending a session to a human for something the next boot fixes is a
+        // way forward that costs more than the problem.
         assert!(
-            how.contains("TELL THE OPERATOR"),
-            "a bot with no box is damage, and the way out is a person: {how}"
+            how.contains("start_here"),
+            "a bot with no box is damage the boot door repairs: {how}"
         );
         assert!(
             !how.contains("create_mailbox"),
@@ -8464,6 +8540,207 @@ mod tests {
         assert!(
             body["sid"].is_null(),
             "a refused boot hands back no handle: {body}"
+        );
+    }
+
+    /// A store that reads fine and refuses every creation — the shape the crash
+    /// window takes when the heal itself cannot land.
+    struct UnopenableMailboxes(InMemoryMailboxes);
+
+    #[async_trait]
+    impl mailbox::Mailboxes for UnopenableMailboxes {
+        async fn create_mailbox(
+            &self,
+            _: &mailbox::MailboxName,
+            _: &EntityId,
+            _: bool,
+        ) -> Result<mailbox::Guarded<mailbox::Mailbox>, mailbox::MailboxError> {
+            Err(mailbox::MailboxError::Store(
+                "the board refuses writes".into(),
+            ))
+        }
+        async fn list_mailboxes(&self) -> Result<Vec<mailbox::Mailbox>, mailbox::MailboxError> {
+            self.0.list_mailboxes().await
+        }
+        async fn post_message(
+            &self,
+            new: mailbox::NewMessage,
+        ) -> Result<mailbox::Guarded<mailbox::Message>, mailbox::MailboxError> {
+            self.0.post_message(new).await
+        }
+        async fn read_mailbox(
+            &self,
+            name: &mailbox::MailboxName,
+        ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
+            self.0.read_mailbox(name).await
+        }
+        async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
+            self.0.scan_messages().await
+        }
+        async fn read_message(
+            &self,
+            id: &mailbox::MessageId,
+        ) -> Result<mailbox::Delivered, mailbox::MailboxError> {
+            self.0.read_message(id).await
+        }
+        async fn mark_processed(
+            &self,
+            id: &mailbox::MessageId,
+            notes: Option<&str>,
+        ) -> Result<mailbox::Message, mailbox::MailboxError> {
+            self.0.mark_processed(id, notes).await
+        }
+    }
+
+    /// Write a bot straight to Memory, with no box — the damage the heal exists
+    /// to repair. The surface cannot produce this state, which is the point.
+    async fn broken_bot(jojobot: &Jojobot, slug: &str) {
+        jojobot
+            .memory
+            .add_entity(NewEntity {
+                id: EntityId::new(EntityKind::Bot, slug),
+                name: slug.into(),
+                aliases: Vec::new(),
+                source: "user-named".into(),
+                crm: None,
+                parent: None,
+                boot: Default::default(),
+                create_new: false,
+            })
+            .await
+            .expect("the store writes it");
+    }
+
+    /// **jojobot heals the box it notices is missing, and says so out loud.**
+    ///
+    /// The operator's ruling: *"the system should auto heal next time when it
+    /// notices it's not there but it should. and notify the agent that the
+    /// message/box wasn't created."* Two halves, and the second is the one that
+    /// is easy to drop — a silent repair is the class this codebase forbids
+    /// everywhere else, because a caller who has to infer "this was fixed" from
+    /// the absence of a complaint will eventually infer wrong.
+    #[tokio::test]
+    async fn booting_a_bot_whose_box_is_missing_opens_it_and_says_so() {
+        let jojobot = handler();
+        broken_bot(&jojobot, "gamma").await;
+
+        let owned = boot(&jojobot, "gamma").await["identity"]["owned_mailbox"].clone();
+        assert_eq!(owned["name"], "gamma", "the box is there now: {owned}");
+        assert_eq!(owned["available"], true);
+        assert_eq!(
+            owned["healed"], true,
+            "…and the repair is on the record, not silent: {owned}"
+        );
+        let note = owned["note"].as_str().expect("a note");
+        assert!(
+            note.contains("was missing"),
+            "the note says what was wrong, not just that something happened: {note}"
+        );
+
+        // It is a real box on the board, not a rendering.
+        let boxes = jojobot.mailboxes.list_mailboxes().await.expect("list ok");
+        assert_eq!(boxes.len(), 1, "{boxes:?}");
+        assert_eq!(boxes[0].owner, EntityId::new(EntityKind::Bot, "gamma"));
+
+        // …and the second boot is quiet, because there is nothing left to fix.
+        let again = boot(&jojobot, "gamma").await["identity"]["owned_mailbox"].clone();
+        assert!(
+            again["healed"].is_null(),
+            "a heal is news exactly once: {again}"
+        );
+    }
+
+    /// **The heal never conjures a box for a bot that does not exist.** An
+    /// unknown name is answered with the roster, and nothing is written — the
+    /// heal must not turn a typo'd boot into a new identity's infrastructure.
+    #[tokio::test]
+    async fn healing_opens_nothing_for_a_bot_that_does_not_exist() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        let body = boot(&jojobot, "gamm").await;
+        assert_eq!(
+            body["status"], "blocked",
+            "an unknown bot is refused: {body}"
+        );
+        let names: Vec<String> = jojobot
+            .mailboxes
+            .list_mailboxes()
+            .await
+            .expect("list ok")
+            .iter()
+            .map(|b| b.name.as_str().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            ["gamma"],
+            "no box was conjured for a name nobody owns"
+        );
+    }
+
+    /// **The heal never conjures a box for something that is not a bot.** A
+    /// person is not an addressee, and the door that heals only ever holds a
+    /// bot — this pins that rather than trusting it.
+    #[tokio::test]
+    async fn healing_opens_nothing_for_an_entity_that_is_not_a_bot() {
+        let jojobot = handler();
+        jojobot
+            .add_entity(Parameters(add_args("person", "milhouse", "Milhouse")))
+            .await
+            .expect("add_entity call ok");
+
+        // The one door refuses a non-bot handle outright, so the heal is never
+        // reached with one…
+        let err = jojobot
+            .start_here(Parameters(OrientArgs {
+                bot: Some("person:milhouse".into()),
+                brief: None,
+                resume: None,
+            }))
+            .await
+            .expect_err("this door boots bots");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+
+        // …and nothing was opened on the way to finding that out.
+        assert!(
+            jojobot
+                .mailboxes
+                .list_mailboxes()
+                .await
+                .expect("list ok")
+                .is_empty(),
+            "a person is not an addressee and never gets a box"
+        );
+    }
+
+    /// **A heal that cannot land is reported honestly, and is not retried into a
+    /// loop.** The boot still lands: the charter and the rules are the things a
+    /// session most needs and they are in the other world entirely.
+    #[tokio::test]
+    async fn a_heal_that_fails_is_reported_rather_than_spun_on() {
+        let memory = Arc::new(InMemoryMemory::new());
+        let jojobot = Jojobot::new(
+            memory,
+            Arc::new(SpySearch::default()),
+            Arc::new(UnopenableMailboxes(InMemoryMailboxes::knowing_any_owner())),
+            Arc::new(InMemorySessions::new()),
+            Arc::new(sid::SessionRegistry::new()),
+        );
+        broken_bot(&jojobot, "gamma").await;
+
+        let body = boot(&jojobot, "gamma").await;
+        assert_ne!(body["status"], "blocked", "the boot still lands: {body}");
+        assert_eq!(body["identity"]["bot"]["id"], "bot:gamma");
+
+        let owned = &body["identity"]["owned_mailbox"];
+        assert_eq!(
+            owned["healed"], false,
+            "the repair was attempted and did not land, and says so: {owned}"
+        );
+        let note = owned["note"].as_str().expect("a note");
+        assert!(
+            note.contains("could not"),
+            "an honest failure, not a silent absence: {note}"
         );
     }
 
@@ -11986,49 +12263,6 @@ mod tests {
             "the state of its own box: {owned}"
         );
         assert_eq!(owned["available"], true, "the box is there and says so");
-    }
-
-    /// **A bot with no box still boots, and booting does not give it one.**
-    ///
-    /// This used to say ownership was optional. It is not: a box opens with its
-    /// bot, so a bot without one is damage — an interrupted creation, or a
-    /// record predating the rule. The invariant under test is unchanged and is
-    /// the one that matters, because damage is exactly when a door is tempted
-    /// to be helpful: **boot reports, and invents nothing.** A door that minted
-    /// the missing box would be creation as a side effect of orientation.
-    ///
-    /// Written straight to the store, because the surface can no longer produce
-    /// this state.
-    #[tokio::test]
-    async fn a_bot_with_no_box_still_boots_and_boot_does_not_open_one() {
-        let jojobot = handler();
-        jojobot
-            .memory
-            .add_entity(NewEntity {
-                id: EntityId::new(EntityKind::Bot, "epsilon"),
-                name: "epsilon".into(),
-                aliases: Vec::new(),
-                source: "user-named".into(),
-                crm: None,
-                parent: None,
-                boot: Default::default(),
-                create_new: false,
-            })
-            .await
-            .expect("the store writes it");
-
-        let body = boot(&jojobot, "epsilon").await;
-        assert_eq!(body["identity"]["bot"]["id"], "bot:epsilon");
-        assert!(body["identity"]["owned_mailbox"].is_null(), "got {body}");
-        assert!(
-            jojobot
-                .mailboxes
-                .list_mailboxes()
-                .await
-                .expect("list ok")
-                .is_empty(),
-            "booting a boxless bot must not cause a box to appear"
-        );
     }
 
     /// A name that is no bot comes back in the guards' own shape — nothing was
