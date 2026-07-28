@@ -737,6 +737,23 @@ pub const FACTS_HEADER: &str = "### ⚙ facts";
 /// can quietly start a second journal.
 pub const JOURNAL_TITLE: &str = "Journal";
 
+/// The frontmatter field that marks a document as **jojobot's own machinery**
+/// rather than anybody's content: a bot's sessions page, and later its mailbox
+/// page. The value names which kind of machinery it is.
+///
+/// Named in the domain for the reason [`FACTS_HEADER`] and [`JOURNAL_TITLE`]
+/// are. This one string decides **what search can see**. jojobot's bookkeeping
+/// lives in the same collection as the entities — a sessions page is a child of
+/// its bot's page, which is the whole point of the tree — and the boot scan
+/// reads every document it finds, generously, because a page somebody wrote by
+/// hand is exactly the page worth finding. A machinery page is the opposite: it
+/// is jojobot talking to itself, and a search that surfaced it would answer a
+/// question about the operator's life with a session's focus line.
+///
+/// A store keeping a private copy of this is a store that can start indexing
+/// its own bookkeeping without anything noticing.
+pub const MACHINERY_FIELD: &str = "machinery";
+
 /// The lines a document reserves for its own structure. Prose may not carry
 /// one, whatever store it is bound for — see [`validate_prose`].
 ///

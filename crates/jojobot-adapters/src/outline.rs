@@ -36,9 +36,9 @@ use jojobot_domain::memory::{
 
 use api::{CollectionRec, DocRec, HttpOutline, OutlineApi, Unconfigured};
 use codec::{
-    next_fact_id, parse_entity, parse_facts_table, parse_id_marker, parse_prose, render_fact_row,
-    seeded_doc, with_fact_appended, with_frontmatter_replaced, with_prose_replaced,
-    with_row_replaced,
+    next_fact_id, parse_entity, parse_facts_table, parse_id_marker, parse_machinery, parse_prose,
+    render_fact_row, seeded_doc, with_fact_appended, with_frontmatter_replaced,
+    with_prose_replaced, with_row_replaced,
 };
 
 /// Outline's page cap for list endpoints. The store pages until a short page, so
@@ -845,9 +845,21 @@ impl Memory for OutlineStore {
     /// entities. A page the user wrote by hand carries no marker, so it is no
     /// entity and holds no facts; its prose is still worth finding, which is why
     /// it comes back rather than being filtered out here.
+    ///
+    /// **The one exception is jojobot's own machinery** — a bot's sessions page,
+    /// which is a child of the bot's page and so lives in this collection like
+    /// everything else. That generosity is the reason it has to be excluded by
+    /// name: a page with no marker is content by default, and jojobot's
+    /// bookkeeping would qualify. A search about the operator's life must not
+    /// come back with a session's focus line.
     async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
         let collection_id = self.resolve_collection().await?;
-        let mut docs = self.all_docs(&collection_id).await?;
+        let mut docs: Vec<DocRec> = self
+            .all_docs(&collection_id)
+            .await?
+            .into_iter()
+            .filter(|d| parse_machinery(&d.text).is_none())
+            .collect();
         // Canonical-first, so a double-created doc's twin can't shadow it.
         docs.sort_by(|a, b| {
             a.created_at
@@ -1339,6 +1351,46 @@ mod tests {
         assert!(
             matches!(&err, MemoryError::Store(m) if m.contains("under")),
             "the error says what did not happen: {err}"
+        );
+    }
+
+    /// **jojobot's own machinery is not content, and search must never see it.**
+    ///
+    /// A bot's sessions page is a child of the bot's page and therefore lives in
+    /// the same collection as every entity — that is what the tree is for. But
+    /// the boot scan reads every document it finds, deliberately generously,
+    /// because a page a human wrote by hand is exactly the page worth finding. A
+    /// machinery page is the opposite kind of thing: jojobot talking to itself.
+    /// Left in, a search about the operator's life would answer with a session's
+    /// focus line.
+    ///
+    /// The hand-written page in this fixture is the control: generosity is the
+    /// rule, and this is the one exception to it.
+    #[tokio::test]
+    async fn jojobots_own_machinery_is_not_scanned_into_the_index() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        fake.seed_document(&coll, "Alpha", &seeded_doc(&person("alpha")));
+        fake.seed_document(&coll, "A page somebody wrote", "notes nobody filed");
+        fake.seed_document(
+            &coll,
+            "Sessions",
+            "```yaml\nmachinery: sessions\nof: bot:gamma\n```\n\nthe rows live here\n",
+        );
+
+        let scanned = store(fake).scan().await.expect("scan should succeed");
+        let titles: Vec<&str> = scanned.iter().map(|d| d.title.as_str()).collect();
+        assert!(
+            titles.contains(&"A page somebody wrote"),
+            "a page with no marker is still content: {titles:?}"
+        );
+        assert!(
+            titles.contains(&"Alpha"),
+            "and an entity's page certainly is: {titles:?}"
+        );
+        assert!(
+            !titles.contains(&"Sessions"),
+            "jojobot's bookkeeping is not content and must not be indexed: {titles:?}"
         );
     }
 

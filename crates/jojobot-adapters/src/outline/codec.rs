@@ -16,7 +16,7 @@ use jojobot_domain::memory::{
 /// ([`validate_prose`]) has to bind the fake as hard as it binds this store.
 /// A private copy would be a second literal for one idea, and the copy this
 /// store enforced would be the only one anybody checked.
-pub(super) use jojobot_domain::memory::FACTS_HEADER;
+pub(super) use jojobot_domain::memory::{FACTS_HEADER, MACHINERY_FIELD};
 /// The table's column header row.
 pub(super) const TABLE_HEADER: &str =
     "| id | subject | content | details | provenance | status | date | edges |";
@@ -534,10 +534,17 @@ fn machine_block(lines: &[&str]) -> Option<(usize, usize)> {
         // paste YAML and frontmatter into their own docs, and a snippet with an
         // `id:` line would otherwise take the doc's identity with it — leaving
         // the real entity unresolvable and its facts unreachable.
-        if lines[i + 1..close]
-            .iter()
-            .any(|l| field_of(l, "id").is_some_and(|v| validate_subject(&EntityId(v)).is_ok()))
-        {
+        //
+        // A `machinery:` line identifies the block just as well, and is the only
+        // other thing that does. A page jojobot keeps for its own bookkeeping —
+        // a bot's sessions page — is not an entity and carries no handle, so
+        // without this its block would not be jojobot's by any test here and
+        // every field on it would be read out of the prose fallback, where the
+        // prose could forge one.
+        if lines[i + 1..close].iter().any(|l| {
+            field_of(l, "id").is_some_and(|v| validate_subject(&EntityId(v)).is_ok())
+                || field_of(l, MACHINERY_FIELD).is_some()
+        }) {
             return Some((i, close + 1));
         }
         i = close + 1;
@@ -638,6 +645,23 @@ pub(super) fn parse_entity(doc: &str) -> Option<Entity> {
         parent,
         boot: parse_field(doc, "boot").map_or(Boot::default(), |b| Boot::from_token(&b)),
     })
+}
+
+/// Which kind of **jojobot machinery** this page is, if it is any — a bot's
+/// sessions page says `sessions`.
+///
+/// Read only from **inside** the machine block, never from the prose fallback
+/// [`parse_field`] allows. The fallback exists so a hand-written page with a
+/// bare `id:` line above its fact table still identifies its entity, which is a
+/// generosity worth having; here it would be a hole, because a page that claims
+/// to be machinery is a page search never returns, and prose that could claim it
+/// could hide itself.
+pub(super) fn parse_machinery(doc: &str) -> Option<String> {
+    let lines: Vec<&str> = doc.lines().collect();
+    let (open, close) = machine_block(&lines)?;
+    lines[open + 1..close - 1]
+        .iter()
+        .find_map(|l| field_of(l, MACHINERY_FIELD))
 }
 
 /// The entity this doc's entity sits under, off its `parent:` line. `own` is
