@@ -190,11 +190,20 @@ Shipped and live:
 > **nowhere**, because it is a judgement about what is worth recording and no
 > length check can make it.
 
-Ahead: **M6** trace (claim → fact → receipt → evidence) →
-**M7** portraits (which generalize `set_charter` into the one prose verb) →
-**M8** attention (rules, rhythms, nags) → **M9** boot bundles (sessions boot
-from jojobot) → **M10** seeding (user-agnostic defaults, "batteries included,
-overrides win").
+Ahead, and **not a capability**: the **alignment release**. A redesign settled
+2026-07-27 changed what the code should look like, and some of what runs today
+is the previous mental model still running. The release removes it, in order:
+entities gain a tree · sessions and mailboxes become rows on their bot's child
+pages and Vikunja leaves jojobot entirely · wrap stops publishing and the shared
+journal goes · the repo's own docs stop teaching the old design · the code
+reshuffle (one file per verb) · the last raw error becomes a blocked answer ·
+the trash gets swept. **Nothing new is built until the repo is pristine.**
+
+Then the **surface** — redesigned from the catalogue of domain actions harvested
+from real use, fewer verbs doing more through domain-level parameters; the
+curated list lives in the README. The capabilities after it — events remembered
+where they happened · trace · portraits · attention · sessions booting from
+jojobot · batteries included — are ordered, not scheduled, in the roadmap.
 
 **Layering: engine + bot.** The engine (this repo) is user-agnostic code; a
 bot and its rules are *data* in the user's own store. Nothing about any
