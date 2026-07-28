@@ -10,6 +10,7 @@
 //! (`Person`, `memberOf`); nothing here accepts them back.
 
 use super::*;
+use jojobot_domain::memory::Boot;
 
 /// Parse the `shape`/`object` pair into an edge. **Half an edge is an error, not
 /// a shrug:** a shape with no object has nothing to point at, and an object with
@@ -145,6 +146,37 @@ pub(crate) fn parse_status(raw: &str) -> Result<FactStatus, McpError> {
         )),
         other => Err(McpError::invalid_params(
             format!("status must be 'active' or 'superseded', got '{other}'"),
+            None,
+        )),
+    }
+}
+
+/// Parse the `boot` argument; an unknown token is a client error, never a
+/// silent fall back to the default.
+///
+/// **The silence was the bug.** `Boot::from_token` maps anything but the exact
+/// `always` to `on-demand`, which is right for READING a stored field — a value
+/// a person hand-edited should not make an entity unreadable — and wrong for an
+/// argument, where it means a caller's token disappears with nothing said. It
+/// went unnoticed because this field's description belonged to a parameter that
+/// had been deleted, so callers were being invited to pass a mailbox name here.
+///
+/// A token that is no boot tier is a malformed call, exactly as a token that is
+/// no kind and a token that is no status are.
+pub(crate) fn parse_boot(raw: Option<&str>) -> Result<Boot, McpError> {
+    let Some(token) = raw.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Ok(Boot::default());
+    };
+    match token {
+        "always" => Ok(Boot::Always),
+        "on-demand" => Ok(Boot::OnDemand),
+        other => Err(McpError::invalid_params(
+            format!(
+                "boot must be `always` or `on-demand`, got '{other}'. `always` marks this entity \
+                 as part of the core an assistant loads every session; `on-demand` is the \
+                 default. It does not name a mailbox — a bot's box is opened with the bot and is \
+                 named for it."
+            ),
             None,
         )),
     }

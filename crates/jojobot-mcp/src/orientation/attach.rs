@@ -245,20 +245,26 @@ impl Jojobot {
                 format!(
                     "No session was started. That session is gone: '{answer}' is not a handle \
                  this jojobot is holding — a handle whose run never wrote a card has nothing \
-                 to be recovered from. The work on the board is untouched and still \
+                 to be recovered from. The work itself is untouched and still \
                  readable. Call start_here with your bot name again and take the offer it \
                  makes."
                 ),
             ));
         };
         if held.bot != *bot {
+            // **Refused without naming whose it is, and without offering the
+            // move.** This used to disclose the other identity and tell the
+            // caller to boot as it. That primes identity-switching as something
+            // an agent might do — and it contradicted itself inside one
+            // sentence, saying a session never switches and then how to switch.
+            // A handle that is not yours is simply not yours; the way forward
+            // is your own session.
             return Err(handle_declined(
                 answer,
                 format!(
-                    "No session was started. The handle '{answer}' belongs to {}, and a session \
-                 is bound to its identity at boot and never switches. Boot as {} to pick it \
-                 up, or call start_here as '{bot}' with no resume to see what is yours.",
-                    held.bot, held.bot,
+                    "No session was started. The handle '{answer}' is not yours — a session is \
+                     bound to its identity at boot and never switches. Call start_here as \
+                     '{bot}' with no resume to see what is."
                 ),
             ));
         }
@@ -310,7 +316,7 @@ impl Jojobot {
                         "No session was started, and nothing was changed. '{answer}' addresses a \
                      session that stopped, and jojobot could not reopen it: the session store \
                      refused. This is not something your call can fix by being different — \
-                     try again, and if it persists a person has to look at the board."
+                     try again, and if it persists a person has to look at the store."
                     ),
                 ))
             }
@@ -765,11 +771,24 @@ mod tests {
                 .await
                 .expect("somebody else's handle is an answer, not a protocol failure"),
         );
+        let advice = body["how_to_proceed"].as_str().expect("advice");
+        // **It refuses without naming whose it is, and without offering the
+        // move.** It used to disclose the other identity and say "boot as it to
+        // pick it up" — which primes identity-switching as a thing an agent
+        // might do, and rule 22 is explicit that this is not to be primed at
+        // all. A session is bound to its identity at boot and never switches;
+        // the way forward is the caller's own session, not somebody else's.
         assert!(
-            body["how_to_proceed"]
-                .as_str()
-                .is_some_and(|h| h.contains("bot:gamma")),
-            "the refusal names whose it is: {body}"
+            !advice.contains("gamma"),
+            "the refusal must not disclose the other identity: {advice}"
+        );
+        assert!(
+            !advice.to_lowercase().contains("boot as"),
+            "…nor offer booting as it: {advice}"
+        );
+        assert!(
+            advice.contains("delta"),
+            "…and it still points the caller at what IS theirs: {advice}"
         );
     }
 

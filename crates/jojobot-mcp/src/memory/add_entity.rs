@@ -29,10 +29,6 @@ pub struct AddEntityArgs {
     /// written `card:N`.
     #[serde(default)]
     pub crm: Option<String>,
-    /// The mailbox this entity owns — the box whose mail is its mail. **One box
-    /// has one owner**: claiming a box another entity already owns comes back
-    /// blocked naming that owner, and `create_new` does not override it. The box
-    /// need not exist yet.
     /// `always` marks this entity as part of the core an assistant loads at
     /// the start of every session; the default `on-demand` is fetched when the
     /// conversation reaches for it. Only the exact token `always` counts.
@@ -142,10 +138,7 @@ impl Jojobot {
             // reachable only from inside, so every write through the door is
             // a root.
             parent: None,
-            boot: args
-                .boot
-                .as_deref()
-                .map_or(Default::default(), jojobot_domain::memory::Boot::from_token),
+            boot: parse_boot(args.boot.as_deref())?,
             create_new: args.create_new.unwrap_or(false),
         };
         match self.memory.add_entity(new).await.map_err(memory_error)? {
@@ -172,6 +165,57 @@ impl Jojobot {
 mod tests {
     use super::*;
     use crate::harness::*;
+
+    /// **A `boot` token jojobot does not know is a client error, never a silent
+    /// default.**
+    ///
+    /// This field spent a release wearing the DELETED `mailbox` parameter's
+    /// description — "the mailbox this entity owns… the box need not exist
+    /// yet" — so an agent reading the schema would pass a box name here
+    /// intending to claim one. `Boot::from_token` maps anything but the exact
+    /// `always` to `on-demand`, so the value vanished: no error, no blocked
+    /// answer, the wrong boot tier written, and a caller believing it had
+    /// claimed a box.
+    ///
+    /// A token that is no boot tier is a malformed call, exactly as a token
+    /// that is no kind or no status is — the line the orientation essay draws
+    /// between an error and a blocked answer.
+    #[tokio::test]
+    async fn an_unknown_boot_token_is_a_client_error_rather_than_a_silent_default() {
+        let jojobot = handler();
+        let err = jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                boot: Some("gamma-inbox".into()),
+                ..add_args("bot", "gamma", "Gamma")
+            }))
+            .await
+            .expect_err("a token that is no boot tier is a malformed call");
+        assert!(
+            err.message.contains("boot") && err.message.contains("always"),
+            "the error names the field and the tokens it takes: {}",
+            err.message
+        );
+
+        // The two it does take still work, and `always` is not swallowed.
+        // Distinct handles AND distinct names: two entities called "Alpha"
+        // trip the name screen, which would answer blocked and prove nothing.
+        for (handle, name, token) in [
+            ("alpha-one", "Alpha One", "always"),
+            ("alpha-two", "Alpha Two", "on-demand"),
+        ] {
+            let body = json_of(
+                &jojobot
+                    .add_entity(Parameters(AddEntityArgs {
+                        boot: Some(token.into()),
+                        ..add_args("person", handle, name)
+                    }))
+                    .await
+                    .expect("a known token is accepted"),
+            );
+            assert_eq!(body["boot"], token, "{token} round-trips");
+        }
+    }
+
     use crate::memory::testing::*;
 
     /// `add_entity` creates any kind, and `list_entities` reads it back — the

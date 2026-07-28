@@ -18,7 +18,7 @@ pub struct PostMessageArgs {
     /// and identity that is merely declared is identity that can be wrong.
     pub sid: String,
     /// What this message is about, in one line — a title, not a summary.
-    /// Optional, and worth giving: it is what a reader sees on the card and on
+    /// Optional, and worth giving: it is what a reader sees in a listing and on
     /// a search hit before they open anything. Do NOT also repeat it as the
     /// body's first line.
     #[serde(default)]
@@ -43,7 +43,7 @@ impl Jojobot {
                        a name nobody drains. Returns the stored message, including the id that \
                        read_message and mark_processed later target. Give it a `subject`: one \
                        line saying what the message is about, which is what a reader sees on the \
-                       card and on a search hit before opening anything — put it there rather \
+                       listing and on a search hit before opening anything — put it there rather \
                        than on the body's first line. The `state` you get back is the state as \
                        it stands — it can already say `read` if a person picked the message up \
                        in between, and that is success, not a problem: the message exists and \
@@ -52,7 +52,7 @@ impl Jojobot {
                        can be posted under somebody else's name. A `sid` jojobot is not holding \
                        comes back status: blocked and nothing is written. YOUR BODY IS NOT \
                        ECHOED BACK — you wrote it, and \
-                       jojobot verified it by reading the stored card back, so the answer carries \
+                       jojobot verified it by reading the stored record back, so the answer carries \
                        the id, the state and body_bytes with body_elided: true rather than the \
                        text. `list_sent` with include_bodies returns it and takes no delivery. \
                        `in_reply_to` links this message to the one it \
@@ -102,7 +102,7 @@ impl Jojobot {
                     .await;
                 json_result(&message_receipt_json(
                     &message,
-                    "you wrote this body; jojobot verified it by reading the stored card back. \
+                    "you wrote this body; jojobot verified it by reading the stored record back. \
                      list_sent with include_bodies: true returns it, and takes no delivery",
                 ))
             }

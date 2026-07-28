@@ -53,13 +53,16 @@ impl Jojobot {
                        identity is, its hard lines, where its work lives), its rules as dated \
                        claims each carrying its own provenance (testimony is settled, inference \
                        is a hypothesis — read them that way), and the per-state counts of the \
-                       mailbox it owns. THIS DOOR MINTS NOTHING: a name that is no bot comes back \
-                       status: blocked, listing the bots that do exist and offering to boot as \
-                       one of them, and a mailbox a bot claims but nobody has opened is reported \
-                       missing rather than created. BOOTING STARTS OR RESUMES THAT BOT'S SESSION \
-                       — there is no separate start verb. It first sweeps that bot's sessions \
-                       that have gone a day without a beat to `abandoned` — which is the one \
-                       thing a boot writes. Name no bot at all and this is an orientation \
+                       mailbox it owns. THIS DOOR CREATES NO IDENTITY: a name that is no bot \
+                       comes back status: blocked, listing the bots that do exist and offering to \
+                       boot as one of them. It does REPAIR one thing: a bot whose box is missing \
+                       gets it opened here, because a box is part of what a bot is and its \
+                       absence is damage rather than a setup step — and the answer says so \
+                       plainly rather than reading as normal. BOOTING STARTS OR RESUMES THAT \
+                       BOT'S SESSION — there is no separate start verb. It first sweeps that \
+                       bot's sessions that have gone a day without a beat to `abandoned`. That \
+                       sweep and that repair are the only things a boot writes. Name no bot at \
+                       all and this is an orientation \
                        preview: read-only, the world and the snapshot, no identity and no \
                        session. Pass the `sid` you were handed on EVERY call, reads included — it \
                        is how jojobot knows which bot is asking."

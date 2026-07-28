@@ -578,3 +578,120 @@ fn the_orientation_teaches_the_two_endings_and_the_own_box_norm() {
 
     engine_generic("ORIENTATION", ORIENTATION);
 }
+
+/// **Every word an agent reads, gathered in one place** — tool descriptions,
+/// the argument-schema field docs, the orientation essay, and the server
+/// instructions.
+///
+/// **The schemas are the half that gets forgotten.** A doc comment on a public
+/// args field is not a comment: `schemars` renders it into the JSON schema, so
+/// it reaches a caller exactly as a description does. That is where `boot`
+/// spent a release describing the deleted `mailbox` parameter.
+fn agent_facing_text() -> Vec<(String, String)> {
+    let mut found = vec![
+        ("the orientation essay".to_string(), ORIENTATION.to_string()),
+        (
+            "the server instructions".to_string(),
+            Jojobot::new(
+                Arc::new(jojobot_domain::memory::testing::InMemoryMemory::new()),
+                Arc::new(crate::memory::testing::SpySearch::default()),
+                Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+                Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+                Arc::new(sid::SessionRegistry::new()),
+            )
+            .get_info()
+            .instructions
+            .unwrap_or_default(),
+        ),
+    ];
+    for tool in Jojobot::tool_router().list_all() {
+        found.push((
+            format!("{}'s description", tool.name),
+            tool.description.as_deref().unwrap_or_default().to_string(),
+        ));
+        found.push((
+            format!("{}'s argument schema", tool.name),
+            serde_json::to_string(&tool.input_schema).expect("a schema serializes"),
+        ));
+    }
+    found
+}
+
+/// **The prose an agent reads describes the system that exists.**
+///
+/// For an MCP server the prose IS the interface: a session boots, reads this
+/// text, and forms its whole world model from it. So text teaching a retired
+/// design is not a documentation lapse — it is a wrong interface, and an agent
+/// that believes it acts on it. The deploy-boundary review found six of these
+/// at once, all describing the pre-migration world, and one of them would have
+/// made a bot refuse to open its own inbox.
+///
+/// **The vocabulary below is retired, not merely unfashionable.** Mail and
+/// sessions used to live on a kanban board — a message was a card in a funnel
+/// column wearing a mailbox label. They are pages now. An agent must never be
+/// taught the store's shape (it is not its business and it will be wrong
+/// again), and must never be sent to repair something in a system that no
+/// longer holds it.
+///
+/// Six point-fixes would have left the seventh. This is the class.
+#[test]
+fn no_agent_facing_text_teaches_the_retired_store() {
+    // Each word, and what an agent wrongly concludes from meeting it.
+    const RETIRED: &[(&str, &str)] = &[
+        ("card", "a message is a row on a page, not a card"),
+        ("kanban", "the board is gone"),
+        ("funnel", "there are no columns to move between"),
+        ("task board", "mail left the task layer entirely"),
+        ("task system", "mail left the task layer entirely"),
+        (
+            "mailbox label",
+            "a box is a page owned by its bot, not a label",
+        ),
+    ];
+    // **The one legitimate use, allowlisted by name and by reason.** `crm` is a
+    // cross-link into the OPERATOR'S OWN task system — somebody else's store,
+    // which a caller must name correctly, and whose grammar is literally
+    // `card:N` (`jojobot_domain::memory::validate_crm`). The rule is that no
+    // text teaches JOJOBOT'S store; blanking the word here would turn a true
+    // sentence false. Each entry must actually be hit — a stale exception
+    // fails below, so this cannot quietly become a place to put new ones.
+    const ALLOWED: &[(&str, &str)] = &[
+        ("add_entity's argument schema", "card"),
+        ("update_entity's argument schema", "card"),
+        ("add_entity's argument schema", "task system"),
+        ("update_entity's argument schema", "task system"),
+    ];
+
+    let mut teaching: Vec<String> = Vec::new();
+    let mut unused: Vec<&(&str, &str)> = ALLOWED.iter().collect();
+    for (what, text) in agent_facing_text() {
+        let haystack = text.to_lowercase();
+        for (word, why) in RETIRED {
+            if !haystack.contains(word) {
+                continue;
+            }
+            if let Some(at) = unused.iter().position(|(w, x)| *w == what && x == word) {
+                unused.remove(at);
+                continue;
+            }
+            if ALLOWED.iter().any(|(w, x)| *w == what && x == word) {
+                continue;
+            }
+            teaching.push(format!("{what} says {word:?} — {why}"));
+        }
+    }
+    // **Every offender at once, not the first one.** This is a class, and a
+    // test that stops at the first instance turns fixing a class into six
+    // rounds of finding the next one.
+    assert!(
+        teaching.is_empty(),
+        "agent-facing text teaches a store that no longer exists. An agent reads this as the \
+         truth about the system it is calling, and acts on it:\n  {}",
+        teaching.join("\n  ")
+    );
+    assert!(
+        unused.is_empty(),
+        "these exceptions no longer match anything — delete them, or the allowlist stops being \
+         a record of what is here and becomes a hole nobody reviewed: {unused:?}"
+    );
+}

@@ -37,8 +37,8 @@ impl Jojobot {
                        arrived and whether anyone has read it — questions every other verb could \
                        only answer by taking delivery of the box you posted into. A `mailbox` \
                        that names no box comes back status: blocked with candidates, never an \
-                       empty list, because an empty list would read as 'it never arrived'. Cards \
-                       jojobot cannot read as messages are reported separately under \
+                       empty list, because an empty list would read as 'it never arrived'. Messages \
+                       jojobot cannot read are reported separately under \
                        `unreadable`: it cannot tell who sent them, so one of yours could be \
                        there. Newest first, each with its \
                        state (`new` = nobody has picked it up · `read` = delivered, not yet \
@@ -154,9 +154,9 @@ impl Jojobot {
             "mailbox": only,
             "count": sent.len(),
             "unreadable": unreadable,
-            "unreadable_note": "Cards jojobot cannot read as messages are not in the list above — \
+            "unreadable_note": "Messages jojobot cannot read are not in the list above — \
                                 it cannot tell who sent them. If one of yours is missing, it may \
-                                be here: a person has to repair the card on the board.",
+                                be here, and a person has to repair it before any verb can act on it.",
             "messages": sent
                 .iter()
                 .map(|m| if bodies {
@@ -316,7 +316,7 @@ mod tests {
         boxes.quarantine(
             &MailboxName("pm".into()),
             &MessageId("4212".into()),
-            "its description no longer carries a readable machine block",
+            "its row on the page cannot be read — a state or a sender has been edited past parsing",
         );
 
         let body = json_of(

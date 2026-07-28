@@ -37,7 +37,7 @@ impl Jojobot {
                        — READING IT IS THE ACTING, so process it with a note and move on; the \
                        order matters for work you still owe, not for work that was never owed. \
                        Write the outcome you actually have: a note \
-                       longer than the card holds is CUT to fit and says so (a trailing ellipsis, \
+                       longer than the record holds is CUT to fit and says so (a trailing ellipsis, \
                        and notes_truncated: true), never refused — the verb that retires a \
                        message will not fail over the length of its own record. The answer \
                        confirms the move — state, notes, id — WITHOUT echoing the message's body \
@@ -302,7 +302,7 @@ mod tests {
         store.quarantine(
             &MailboxName("inbox".into()),
             &MessageId("4212".into()),
-            "its description no longer carries a readable machine block",
+            "its row on the page cannot be read — a state or a sender has been edited past parsing",
         );
 
         let result = jojobot
@@ -318,14 +318,24 @@ mod tests {
         assert_eq!(body["wrote"], false);
         let reason = body["reason"].as_str().expect("a reason");
         assert!(
-            reason.contains("machine block"),
-            "the answer says why this card cannot be read: {reason}"
+            reason.contains("edited past parsing"),
+            "the answer says why this message cannot be read: {reason}"
         );
         let advice = body["how_to_proceed"].as_str().expect("advice");
         assert!(
-            advice.contains("4212") && advice.contains("PERSON"),
-            "…and that the way out is a human on the board, not a retry: {advice}"
+            advice.contains("4212")
+                && advice.contains("retrying will not help")
+                && advice.contains("operator"),
+            "…and that the way out is a person, not a retry: {advice}"
         );
+        // The same absence `read_message` pins: no store anatomy, no repair
+        // steps for a system that no longer holds the message.
+        for retired in ["card", "board", "column", "label"] {
+            assert!(
+                !advice.to_lowercase().contains(retired),
+                "the advice teaches the retired store ({retired:?}): {advice}"
+            );
+        }
 
         // Both wear the blocked shape now — but they are still different
         // answers, and the difference is the one that matters: a quarantined

@@ -16,7 +16,7 @@ pub struct WrapSessionArgs {
     pub sid: String,
 }
 
-/// End the session, telling its story into the Journal.
+/// End the session, telling its story into its own chronology.
 #[tool_router(router = wrap_session_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(

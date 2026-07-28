@@ -47,7 +47,7 @@ pub(crate) fn session_declined(e: SessionError) -> Result<CallToolResult, McpErr
         SessionError::UnknownSession { attempted } => blocked(
             &attempted.clone(),
             format!(
-                "Nothing was written. No session on jojobot's board has the id '{attempted}'. \
+                "Nothing was written. jojobot holds no session with the id '{attempted}'. \
                  Ids are minted by jojobot and handed back by start_here when you boot as your \
                  identity — use the sid it gives you rather than composing one."
             ),

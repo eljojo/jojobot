@@ -259,7 +259,7 @@ mod tests {
         store.quarantine(
             &MailboxName("inbox".into()),
             &MessageId("4212".into()),
-            "its description no longer carries a readable machine block",
+            "its row on the page cannot be read — a state or a sender has been edited past parsing",
         );
 
         let listed = drains(&jojobot, "inbox").await;

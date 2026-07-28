@@ -188,7 +188,7 @@ mod tests {
         store.quarantine(
             &MailboxName("inbox".into()),
             &MessageId(id.clone()),
-            "its description no longer carries a readable machine block",
+            "its row on the page cannot be read — a state or a sender has been edited past parsing",
         );
 
         let result = jojobot
@@ -203,11 +203,25 @@ mod tests {
         let reason = body["reason"]
             .as_str()
             .expect("a quarantined card says why");
-        assert!(reason.contains("machine block"), "got {reason}");
+        assert!(
+            reason.contains("edited past parsing"),
+            "the store's own account of the fault comes through: {reason}"
+        );
         let advice = body["how_to_proceed"].as_str().expect("advice");
         assert!(
-            advice.contains("PERSON"),
-            "retrying does not help — a person must repair it: {advice}"
+            advice.contains("retrying will not help") && advice.contains("operator"),
+            "retrying does not help and a person must repair it: {advice}"
         );
+        // **And it does not teach the store it no longer uses.** This advice
+        // used to hand over the anatomy of a kanban card and tell an agent
+        // which column to put it back in — a store's shape an agent must never
+        // learn, and repair steps for a system that no longer holds the
+        // message. Asserting the absence is the half that keeps it gone.
+        for retired in ["card", "board", "column", "label"] {
+            assert!(
+                !advice.to_lowercase().contains(retired),
+                "the advice teaches the retired store ({retired:?}): {advice}"
+            );
+        }
     }
 }

@@ -66,27 +66,33 @@ pub(crate) fn mailbox_blocked_body(
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
-/// **A quarantined card, answered in the guards' own shape.** The id is real —
-/// jojobot is looking straight at the card — but it cannot be read as a
-/// message, so no verb will act on it until a person repairs it. A successful result carrying a
-/// structured refusal, exactly like a blocked write: same `status` / `wrote` /
-/// `how_to_proceed` keys, so one client-side branch handles every "jojobot
-/// declined, here is what to do" answer in this context.
+/// **A message jojobot cannot read, answered in the guards' own shape.** The id
+/// is real — jojobot is looking straight at the record — but it cannot be read
+/// as a message, so no verb will act on it until a person repairs it. A
+/// successful result carrying a structured refusal, exactly like a blocked
+/// write: same `status` / `wrote` / `how_to_proceed` keys, so one client-side
+/// branch handles every "jojobot declined, here is what to do" answer here.
+///
+/// **It says what is wrong and stops.** It used to hand over repair steps — the
+/// three parts of a card, which column to put it back in, which label it was
+/// missing — for a store that no longer holds any of this. Two failures in one
+/// string: it taught an agent the shape of jojobot's store, which is never its
+/// business and was by then simply wrong, and it sent that agent to fix the
+/// message somewhere it does not live. The store's own words come through in
+/// `reason`, where they belong to whoever reads the log; what an agent needs is
+/// that retrying will not help and that the message is unhandled.
 pub(crate) fn mailbox_quarantined(attempted: &str, reason: &str) -> CallToolResult {
     let body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted,
         "wrote": false,
-        "reason": format!("card {attempted} is quarantined: {reason}"),
+        "reason": format!("message {attempted} cannot be read: {reason}"),
         "how_to_proceed": format!(
             "Nothing was written, and retrying will not help — this is not a missing message. \
-             Card {attempted} is on a jojobot mailbox board, but jojobot cannot read it as a \
-             message, so no verb will act on it. A PERSON has to open that card in the task board \
-             and put back whichever of the three things above is missing: its mailbox label, its \
-             machine block, or a place in one of the funnel's columns. **All three, not one** — a \
-             card moved into a funnel column while still missing its label reads as somebody \
-             else's note and goes invisible to jojobot entirely, which is worse than where it is \
-             now. Until then, treat the message it was carrying as unhandled and say so."
+             jojobot can see {attempted} but cannot read it as a message, so no verb will act \
+             on it. Repairing it takes a person, and it is not something you can do from here: \
+             tell the operator. Until then, treat whatever it was carrying as unhandled and say \
+             so rather than reporting it delivered."
         ),
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
