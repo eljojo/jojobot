@@ -266,6 +266,7 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
+    use crate::orientation::essay::ORIENTATION;
     use jojobot_domain::memory::{Boot, FactId};
 
     /// Every argument reaches the port as the typed query it means — including the

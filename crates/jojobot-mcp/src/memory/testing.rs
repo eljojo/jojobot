@@ -7,6 +7,8 @@
 
 use super::*;
 use crate::harness::*;
+use async_trait::async_trait;
+pub(crate) use jojobot_domain::memory::testing::InMemoryMemory;
 use std::sync::Mutex;
 
 impl Default for SpySearch {
@@ -203,5 +205,48 @@ pub(crate) fn search_args() -> SearchArgs {
         include_mail: None,
         limit: None,
         sid: None,
+    }
+}
+
+/// A handler whose mailbox world answers nothing, over a memory the caller
+/// may already have populated — a bot has to be stood up while the world is
+/// up, since a claim that cannot be screened is refused.
+/// A Memory whose ENTITY INDEX cannot be read, everything else working —
+/// the shape an Outline outage takes for the one read ownership depends on.
+pub(crate) struct UnindexedMemory(pub(crate) Arc<InMemoryMemory>);
+
+#[async_trait]
+impl Memory for UnindexedMemory {
+    async fn list_entities(&self, _: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
+        Err(MemoryError::Store("the entity index cannot be read".into()))
+    }
+    async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+        self.0.add_entity(new).await
+    }
+    async fn update_entity(
+        &self,
+        id: &EntityId,
+        patch: EntityPatch,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        self.0.update_entity(id, patch).await
+    }
+    async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        self.0.capture(fact).await
+    }
+    async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        self.0.recall(subject).await
+    }
+    async fn update_fact(
+        &self,
+        address: &FactAddress,
+        patch: FactPatch,
+    ) -> Result<Guarded<Fact>, MemoryError> {
+        self.0.update_fact(address, patch).await
+    }
+    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+        self.0.set_prose(entity, prose).await
+    }
+    async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
+        self.0.scan().await
     }
 }

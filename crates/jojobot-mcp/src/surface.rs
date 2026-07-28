@@ -9,6 +9,7 @@
 //! Test-only, and declared by `lib.rs`.
 
 use super::*;
+use crate::orientation::essay::ORIENTATION;
 
 /// **Every shipped `.rs` file in this crate, with its test half cut off.**
 ///
@@ -510,4 +511,70 @@ fn no_tool_description_carries_a_working_agreement() {
             );
         }
     }
+}
+
+/// **The norms a session cannot derive from the tool list are taught.**
+/// Each of these was a real session getting it wrong or having no way to
+/// know: wrapping a session whose work continues (so the next run started
+/// from nothing), treating `abandoned` as an ordinary ending, and reading a
+/// flat box listing as an invitation to survey a shared namespace.
+///
+/// Deliberately **engine-generic**: how long a given role's session should
+/// run, or which box a particular bot drains, is that bot's charter at
+/// seeding — not prose compiled into a user-agnostic server.
+#[test]
+fn the_orientation_teaches_the_two_endings_and_the_own_box_norm() {
+    // The two endings, and that they are a choice about the WORK.
+    assert!(
+        ORIENTATION.contains("CLEAR AND RESUME"),
+        "the continuing case is named"
+    );
+    assert!(
+        ORIENTATION.contains("do NOT wrap"),
+        "…and says which verb NOT to reach for, since wrapping is the tempting default"
+    );
+    assert!(
+        ORIENTATION.contains("resume note"),
+        "…and names the thing you leave for whoever picks it up"
+    );
+    assert!(
+        ORIENTATION.contains("exception to journal leanness"),
+        "…and exempts it from the leanness rule, or the rule suppresses it"
+    );
+    // **`abandoned` is not a failure**, and the essay must not teach it as
+    // one: it means the run was never wrapped up, and picking one back up
+    // is ordinary rather than recovery. What the essay still has to draw is
+    // the distinction that survives — a run that ENDED against one that
+    // merely STOPPED.
+    assert!(
+        ORIENTATION.contains("not a failure"),
+        "abandoned is a run nobody wrapped up, not a run that broke"
+    );
+    assert!(
+        !ORIENTATION.contains("failure path"),
+        "…so the old framing must be gone, not merely balanced by the new one"
+    );
+    assert!(
+        ORIENTATION.contains("merely stopped"),
+        "…and the distinction that does survive is ended against stopped"
+    );
+
+    // The own-box norm, and the affordance that tempted otherwise. It is no
+    // longer a norm a caller can decline — the read side takes no box name —
+    // so what the essay owes is that the reader knows which box opens.
+    assert!(ORIENTATION.contains("read your OWN mailbox"));
+    assert!(
+        ORIENTATION.contains("no name to pass"),
+        "the essay has to say the choice is gone, not merely discouraged"
+    );
+    assert!(
+        ORIENTATION.contains("not an invitation"),
+        "the flat listing is what posed the access question, so it is what gets answered"
+    );
+    assert!(
+        ORIENTATION.contains("post_message"),
+        "…and there is a sanctioned way to reach another box: write to it"
+    );
+
+    engine_generic("ORIENTATION", ORIENTATION);
 }

@@ -1,0 +1,72 @@
+//! **The world-model a fresh agent reads** — engine prose, and nothing else.
+//!
+//! It explains the method in role language only ("the operator"), and every
+//! example identity in it is fictional. It is a file of its own because it is
+//! 60 lines of text rather than code, and because the one-door test counts how
+//! many places reach for it: defined once, read once.
+
+/// What `start_here` hands a fresh agent. Engine prose: the method, in role
+/// language only — no operator specifics, fictional example identities.
+pub(crate) const ORIENTATION: &str = r#"# jojobot — start here
+
+jojobot is a personal-assistant server: the durable memory and message rail behind an assistant serving one person, the operator. You are one of possibly many AI sessions connected to it — jojobot itself never thinks; it stores, guards, and serves. What you write here outlives this conversation and will be read back as truth by sessions that cannot ask you what you meant. The rules below exist for them.
+
+## The two worlds
+
+**MEMORY** is a typed graph of the operator's life. An **entity** is a noun — person · project · place · event · work · thing · org · topic — with a permanent handle like `person:milhouse`. A **fact** is one dated claim about an entity, addressed `person:milhouse#3`, carrying a **provenance**: `testimony` (the operator said or confirmed it) or `inference` (an AI derived it). Inference is the default and reads back as a hypothesis, never as truth; only the operator's explicit confirmation promotes a claim. A fact may draw one typed **edge** at another entity — `location` · `membership` · `attendance` · `about` — and edges are what make cross-entity questions answerable. **`search` is the front door** to all of it — and to the messages in mailboxes too: one ranked list, one call.
+
+**MAILBOXES** are the async rail between sessions: named boxes where one session leaves a message another will find. A message is `new` → `read` → `processed`. Reading IS taking delivery (no peek); anything read but not yet processed comes back on the next read, flagged — so crashed work resurfaces on its own. `processed` means acted-on, and it is a terminal archive: nothing here is ever deleted. **A box is infrastructure, not data**: a permanent label in the operator's own task system, worth having only because some specific party is committed to draining it. A message is addressed to a box, never to you — there is no recipient field, and no box is "yours" unless you were told it is. **Messages are searchable**: `search` finds them beside the memory hits, in every state, `processed` archives included — so a finding somebody filed for another session is reachable by anyone who asks the right question, without knowing where to look. A hit says which box and which state; `read_message` takes that one message without making the rest of the box yours.
+
+## Working here, by example
+
+- *"Remember that Milhouse is allergic to shellfish"* → `search` for milhouse to find the handle → `capture` subject `person:milhouse`, content the claim, provenance `testimony` (the operator's own words back it) or `inference` (you concluded it). The gate is on promotion, not assertion — a first capture declares its own provenance on honour, so declare `testimony` only for the operator's words, and capture what a later session would need: a passing mention is not a fact.
+- *A person, place, org or event the operator named that jojobot doesn't know* → `add_entity`, then the write: two deliberate steps, nothing created as a side effect. This is the normal, welcome move — the graph is meant to grow with the operator's life.
+- *No mailbox fits what you want to leave* → **there is no verb that opens one.** A box is not a thing you make: it belongs to a bot, is named for it, and comes into being with it — so the only way a new box appears is that a new identity does, and standing up somebody's identity to file a note is not a move you make on your own. Use an existing, agreed box, or say plainly there is nowhere fitting and let the operator decide.
+- *"Which people are in Shelbyville?"* → `search` with kind `person` and edge `{shape: location, object: place:shelbyville}` — an edge walk, not a text match.
+- *"That was wrong"* → `recall` the subject, then `update_fact` rewrites the claim in place to state what is true NOW — including negative truth ("NOT allergic — confirmed by the operator"). The record is current truth, never a correction trail. *"That changed"* is a different move: the old claim was true in its day — mark it `superseded` and `capture` the new one.
+- *Leave word for another session* → `list_mailboxes` to see what exists and what is waiting, `post_message` into an agreed box with a body written for a reader with none of your context. jojobot records who sent it from the `sid` you pass, so there is nothing to declare and nothing to get wrong.
+- *Handle mail* → `read_mailbox`, which opens YOUR box — the `sid` you pass says which one, so there is no name to give and no way to reach into somebody else's. Reading takes delivery of every message in it; act, then `mark_processed`, ONLY after acting, with the outcome in notes. A failure is data to record, not a state to park in.
+- *One message, not a whole box* → `search` for it, then `read_message` on the id the hit carries. Draining your whole box makes every message in it owed work; `read_message` takes on the one you actually meant.
+
+When the right write is not obvious, ask the operator — an unasked write outlives the conversation that guessed it.
+
+## The answers that are not errors
+
+A **blocked** result is a SUCCESS whose body says `status: "blocked"`, `wrote: false`: nothing was written, and `how_to_proceed` says what to do next. Never retry one unchanged. Four gates produce it, with different ways out: **resemblance** (creating or renaming something that looks like what exists — pick the candidate you meant, or `create_new: true` only when you can say how the two differ; an exact handle or box name is never overridable), **absence** (you named something that is not there — the subject of a capture, an edge's object, the box of a post, a handle to read, an address to edit, a message id to retire; empty `candidates` means nothing even resembles it, not that your call was malformed; for an entity, creating it and retrying is usually right — for a mailbox it usually is not), **ownership** (a mailbox has exactly one owner, and a second claim on one is refused naming the holder; `create_new` does not clear this — it answers a question about names), and **unreadable** (`mark_processed` reached an item jojobot cannot read — no retry helps, a person must repair it; treat what it carried as unhandled and say so).
+
+A plain **error** is a malformed call — a token that is no kind, a string that is no address — or the store itself failing. **Absence is never an error here**: naming something that does not exist is an answer with candidates, not a broken server, so read `status` rather than branching on whether the call errored. And know what the guards do NOT cover: they catch resemblance, absence and ownership, never judgement — a wholly novel name sails through, and nothing will stop you standing up an entity nobody needed. That call is yours, and the store keeps whatever you decide.
+
+## Bots
+
+An **identity** is an entity of kind `bot`: a handle like `bot:gamma`, a **charter** (its prose — what this identity is, its hard lines, where its work lives), **rules** as ordinary facts about it (so each one carries its own provenance: an inferred rule is a hypothesis, not a policy), and **one owned mailbox**, named for it and opened with it — not optional, and not separately created: an identity that cannot be written to is not one. If you were told which identity you are, pass that name to `start_here` — the one door — and it hands over everything here plus that identity. Nothing about a bot is built into jojobot — a bot is data somebody wrote, like every other entity.
+
+## Sessions
+
+A bot is a **role**; a **session is one mortal run of it** — the unit of work, not the unit of connection. It outlives a disconnect and a device hop, because what makes two connections the same session is the `sid` you carry — hold it and keep passing it, on writes and reads alike.
+
+**Booting an identity starts or resumes its session; there is no separate verb.** `start_here` with your bot name sweeps that bot's stale sessions to `abandoned` (a day without a beat). If a resumable session remains you get the choice — what each one was working on, and whether it is still running or stopped without being wrapped up — and NO sid until you answer: choose resume and you inherit its chronology, choose new and a fresh sid is minted beside it, closing nothing. With nothing to resume the sid comes back straight away. Either way the card itself is written **lazily**, on your first real write, so a boot that does nothing leaves nothing behind.
+
+A session has two halves that answer different questions. Its **focus** is what it is working on NOW, one line, rewritten in place. Its **chronology** is what happened: append-only, oldest first, with only the newest entry amendable.
+
+- *Record a beat* → `journal` — **a literal journal, not a log.** What you set out to do, what you found, what you decided, what went wrong. NOT every tool call and not every file: a reader months from now wants the story, and a firehose buries it. Pass `focus` when what you are working on changes.
+- *Fix the beat you just wrote* → `amend_journal`. Only the most recent one; everything older is what it was.
+- *End* → `wrap_session` with the story, written for somebody with none of your context. It becomes your final entry and the session goes `wrapped` — terminal both ways. It is published NOWHERE: your chronology is the record, and it is the only one.
+
+jojobot also writes **its own beats** into your chronology: one per class of WRITE you make, its count kept current as you go. Reads are not journalled. They are marked apart (`beat` names the class) because what you said you were doing and what jojobot noticed you doing are different kinds of evidence.
+
+### The two endings, and they are not interchangeable
+
+**WRAP when the work is over.** Your run finished what it was for; the story is told and the card closes clean. Nothing appends to it afterwards.
+
+**CLEAR AND RESUME when the work continues on another agent.** You are stopping, the job is not done, and somebody — a later run of you, on another device, after a context reset — picks it up. Then **journal a resume note and do NOT wrap**: the next boot of this identity is offered this session by what it says it is working on, and whoever resumes it reads your chronology. Wrapping here would tell the story of something that has not happened yet and force the next run to start from nothing.
+
+The resume note is **the one sanctioned exception to journal leanness**. Everywhere else a beat is high-level; here, be dense and specific — where you got to, what you already ruled out, the exact next step, the thing that will bite whoever picks this up. Its only reader is somebody with your job and none of your context.
+
+`abandoned` is neither of these, and it is **not a failure**: it means the run was never wrapped up. A session stops without telling its story — a disconnect, a closed laptop, an agent that moved on — and the next boot a day later marks it so. Its chronology survives, it is still worth reading, and **resuming it is ordinary rather than recovery**. The difference between `wrapped` and `abandoned` is whether a run ended or merely stopped.
+
+### Your box is yours; the others are not
+
+**You read your OWN mailbox, and the surface offers no other.** `start_here`, booted as your identity, tells you which box you own, and `read_mailbox` opens that one — there is no name to pass. This used to be a norm you could ignore: reading IS delivery, so a look moved somebody's mail out of `new` and made it yours to finish, and a message you took but cannot act on is one its real consumer never sees as fresh. It is now simply not reachable.
+
+`list_mailboxes` reports every box on the server: that is a fact about the board and **not an invitation**. A box showing `new: 1` is not addressed to you unless it is yours. If you need something from another box, ask its owner or leave a message in it — `post_message` writes without reading, which is exactly the shape of a request.
+"#;

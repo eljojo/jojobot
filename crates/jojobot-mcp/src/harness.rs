@@ -13,6 +13,7 @@ use crate::memory::testing::{SpySearch, add_args};
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::session::testing::InMemorySessions;
+use rmcp::handler::server::wrapper::Parameters;
 
 pub(crate) fn handler() -> Jojobot {
     Jojobot::new(

@@ -13,6 +13,19 @@ use async_trait::async_trait;
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::session::Sid;
+
+/// A distinct, well-shaped handle for a fixture, from any number a call site
+/// has to hand — usually `line!()`.
+///
+/// **The bound is stated, not arithmetic.** This was `line!() % 1000` written
+/// inline, which reads as "keep it in range" and is a no-op whenever the file
+/// is under a thousand lines — so clippy calls it dead the moment the code
+/// moves to a lower line, which is exactly what the reshuffle did. A handle is
+/// [`SID_LEN`](jojobot_domain::session::SID_LEN) characters and that is the
+/// actual requirement.
+pub(crate) fn fixture_sid(nth: u32) -> Sid {
+    Sid(format!("t{:03}", nth % 1_000))
+}
 pub(crate) use jojobot_domain::session::testing::InMemorySessions;
 
 /// Boot as this bot and pick up the one run it is offered — what a reconnect
