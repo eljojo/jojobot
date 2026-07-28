@@ -178,11 +178,8 @@ Recorded so nobody proposes them again as fresh ideas.
   rare human act, taken outside this server.
 - **No peek at a mailbox.** Reading is delivery; a peek would silently strip the
   guarantee that unfinished work resurfaces.
-- **No second orientation door.** One existed, drifted from the first, and was
-  deleted. The rule that replaced it: a constraint that matters is written as a
-  claim a test can fail, never as a metaphor.
-- **No version marker on the orientation payload.** Rejected outright, every
-  variant — over-engineering for a problem that does not occur.
+- **No second orientation door.** There is one, and only one.
+- **No version marker on the orientation payload.**
 - **No per-identity tool surface.** Every identity sees the same tools. A
   charter shapes what an identity considers appropriate, never what it is
   permitted to call. This server aligns; it does not police.
@@ -208,7 +205,7 @@ Recorded so nobody proposes them again as fresh ideas.
 crates/
   jojobot-domain     pure domain — bounded contexts as modules, no I/O, no MCP
   jojobot-adapters   anti-corruption layer per fronted service (Outline, Vikunja)
-  jojobot-mcp        the MCP adapter — the only crate that imports rmcp
+  jojobot-mcp        the MCP adapter — the only crate that maps MCP calls to the domain
   jojobot            the binary: HTTP transport + resource-server auth
 ```
 
