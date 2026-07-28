@@ -786,15 +786,12 @@ impl Jojobot {
         // prose: is that unread one mine? An anonymous `start_here` owns
         // nothing, which is exactly right for a caller that only posts.
         let listed = self.mailboxes.list_mailboxes().await;
-        let mine = match &listed {
-            Ok(boxes) => self.ownership_of(boxes, bot),
-            Err(_) => Ownership::unknown(),
-        };
         let mailboxes = match listed {
-            Ok(boxes) => serde_json::json!({
+            Ok(boxes) => {
+                let mine = self.ownership_of(&boxes, bot);
+                serde_json::json!({
                 "available": true,
                 "counts_shown_for": mine.shown_for(&boxes),
-                "ownership_known": mine.known,
                 "note": mine.note(),
                 "boxes": boxes
                     .iter()
@@ -824,7 +821,8 @@ impl Jojobot {
                         }
                     })
                     .collect::<Vec<_>>(),
-            }),
+                })
+            }
             Err(_) => serde_json::json!({
                 "available": false,
                 "note": "the mailbox world is not reachable right now — its tools will say why",
@@ -2070,7 +2068,6 @@ impl Jojobot {
         let body = serde_json::json!({
             "count": boxes.len(),
             "counts_shown_for": mine.shown_for(&boxes),
-            "ownership_known": mine.known,
             "note": mine.note(),
             "mailboxes": boxes
                 .iter()
@@ -3521,34 +3518,30 @@ fn mailbox_json(mailbox: &Mailbox) -> serde_json::Value {
 /// The two are separate answers on purpose. "You drain none of these" and
 /// "jojobot cannot read the store that says which you drain" produce the same
 /// listing and mean opposite things, and a caller acts on both.
+/// **Ownership is never unknown here, and that is why there is no flag.** This
+/// used to carry a `known: bool`, because ownership was a read of Memory and
+/// the mailbox listing could arrive with nobody able to say whose was whose.
+/// The two are one read now: whoever renders a listing has already answered the
+/// ownership question, so the flag could only ever say `true` where it appeared
+/// — it was rendered inside the `Ok` arm of the very read whose `Err` arm set
+/// it false.
 struct Ownership {
-    /// The boxes this caller drains. Empty when they drain none — or when
-    /// nothing could be read, which is why `known` exists beside it.
+    /// The boxes this caller drains. Empty when they drain none.
     mine: Vec<String>,
-    /// Whether the ownership read succeeded at all.
-    known: bool,
 }
 
 impl Ownership {
     fn known(mine: Vec<String>) -> Self {
-        Ownership { mine, known: true }
-    }
-
-    fn unknown() -> Self {
-        Ownership {
-            mine: Vec::new(),
-            known: false,
-        }
+        Ownership { mine }
     }
 
     /// Whether this caller drains this box — and so whether its counts are
     /// theirs to see. **One question, not two.** It used to be two: a box
     /// nobody drained had no queue to shield, so its counts went to everybody.
     /// A box has an owner by construction now, so that second case cannot
-    /// arise. Never true when ownership could not be read; an unknown is not a
-    /// yes.
+    /// arise.
     fn drains(&self, name: &str) -> bool {
-        self.known && self.mine.iter().any(|m| m == name)
+        self.mine.iter().any(|m| m == name)
     }
 
     /// Which of the boxes actually on the board this answer counted.
@@ -3564,15 +3557,9 @@ impl Ownership {
     /// The clause that says what this listing's counts mean, including when it
     /// cannot say.
     fn note(&self) -> &'static str {
-        if self.known {
-            "Counts are shown for the boxes you drain. A box somebody else works is listed by \
-             name only — it exists and you can post into it; what is waiting in it belongs to \
-             whoever works it."
-        } else {
-            "OWNERSHIP IS UNKNOWN: the store that records which boxes you drain could not be \
-             read, so no counts are shown for any box — including your own. This is jojobot \
-             being unable to tell, NOT a statement that you drain nothing."
-        }
+        "Counts are shown for the boxes you drain. A box somebody else works is listed by \
+         name only — it exists and you can post into it; what is waiting in it belongs to \
+         whoever works it."
     }
 }
 
@@ -6907,6 +6894,14 @@ mod tests {
 
         let listed = drains(&jojobot, "gamma").await;
         assert_eq!(listed["count"], 2, "every box is still LISTED: {listed}");
+        // **No `ownership_known` flag.** It could only ever say `true` here: it
+        // was rendered inside the `Ok` arm of the very read whose `Err` arm was
+        // the only thing that set it false. A field that cannot vary is a
+        // question a reader branches on and learns nothing from.
+        assert!(
+            listed.get("ownership_known").is_none(),
+            "a flag that cannot be false is not an answer: {listed}"
+        );
         assert_eq!(
             listed["counts_shown_for"],
             serde_json::json!(["gamma"]),
