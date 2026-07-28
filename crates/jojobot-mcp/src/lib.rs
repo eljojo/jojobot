@@ -1991,7 +1991,10 @@ impl Jojobot {
         let subject = EntityId::person(&args.subject);
         let provenance = parse_provenance(args.provenance.as_deref())?;
         let date = parse_date(args.date.as_deref())?;
-        let edge = parse_edge(args.shape.as_deref(), args.object.as_deref())?;
+        let edge = match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
+            Ok(edge) => edge,
+            Err(refused) => return Ok(refused),
+        };
 
         let new = NewFact {
             subject,
@@ -2076,7 +2079,10 @@ impl Jojobot {
                 .map(parse_one_provenance)
                 .transpose()?,
             confirmed_by_user: args.confirmed_by_user.unwrap_or(false),
-            edge: parse_edge(args.shape.as_deref(), args.object.as_deref())?,
+            edge: match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
+                Ok(edge) => edge,
+                Err(refused) => return Ok(refused),
+            },
         };
         let written = match self.memory.update_fact(&address, patch).await {
             Ok(written) => written,
@@ -4075,28 +4081,40 @@ fn parse_shape(raw: &str) -> Result<EdgeShape, McpError> {
 /// a shrug:** a shape with no object has nothing to point at, and an object with
 /// no shape has no meaning — either way the caller meant an edge and did not get
 /// one, which is exactly the silence ask-across dies of.
-fn parse_edge(shape: Option<&str>, object: Option<&str>) -> Result<Option<Edge>, McpError> {
+/// **The two outcomes are different in kind, so the return type says so.** The
+/// outer `Err` is a malformed call — a token that is no shape, a handle the
+/// shape's kind rule forbids — and stays a protocol error, which is the line
+/// the orientation essay draws. The inner `Err` is a MISUSE: both arguments
+/// would have parsed, the mistake is that only one arrived, and the fix is the
+/// other one. That is a blocked answer, the same as every other misuse here.
+type ParsedEdge = Result<Result<Option<Edge>, CallToolResult>, McpError>;
+
+fn parse_edge(shape: Option<&str>, object: Option<&str>) -> ParsedEdge {
     match (
         shape.map(str::trim).filter(|s| !s.is_empty()),
         object.map(str::trim).filter(|s| !s.is_empty()),
     ) {
-        (None, None) => Ok(None),
+        (None, None) => Ok(Ok(None)),
         (Some(shape), Some(object)) => {
             let shape = parse_shape(shape)?;
             let edge = Edge::new(shape, EntityId(object.to_string()));
             // Grammar and the shape's kind rule, checked here so the caller hears
             // it as a client error rather than a store failure.
             validate_edge(&edge).map_err(memory_error)?;
-            Ok(Some(edge))
+            Ok(Ok(Some(edge)))
         }
-        (Some(_), None) => Err(McpError::invalid_params(
-            "shape needs an object: an edge is a shape AND the entity it points at".to_string(),
-            None,
-        )),
-        (None, Some(_)) => Err(McpError::invalid_params(
-            "object needs a shape: one of location, membership, attendance, about".to_string(),
-            None,
-        )),
+        (Some(_), None) => Ok(Err(misused(
+            "Nothing was written, and the edge you meant was not drawn. `shape` needs an \
+             `object`: an edge is a shape AND the entity it points at. Pass the object too, or \
+             drop the shape if you meant no edge."
+                .to_string(),
+        ))),
+        (None, Some(_)) => Ok(Err(misused(
+            "Nothing was written, and the edge you meant was not drawn. `object` needs a \
+             `shape` — one of location, membership, attendance, about — saying how this fact \
+             points at it. Pass the shape too, or drop the object if you meant no edge."
+                .to_string(),
+        ))),
     }
 }
 
@@ -5547,30 +5565,6 @@ mod tests {
                 .expect("recall ok"),
         );
         assert_eq!(recalled["facts"][0]["edge"]["type"], "memberOf");
-    }
-
-    /// Half an edge is a client error: a shape with nothing to point at, or an
-    /// object with no shape, means the caller asked for an edge and would have
-    /// got silence.
-    #[tokio::test]
-    async fn half_an_edge_is_a_client_error() {
-        let jojobot = handler();
-        let halves = [(Some("location"), None), (None, Some("place:north-trail"))];
-        for (shape, object) in halves {
-            let err = jojobot
-                .capture(Parameters(CaptureArgs {
-                    shape: shape.map(str::to_string),
-                    object: object.map(str::to_string),
-                    ..capture_args("alpha", "half an edge")
-                }))
-                .await
-                .expect_err("half an edge must be refused");
-            assert_eq!(
-                err.code,
-                ErrorCode::INVALID_PARAMS,
-                "for {shape:?}/{object:?}"
-            );
-        }
     }
 
     /// The shape set is closed, and the response spellings are not input tokens —
@@ -8742,6 +8736,69 @@ mod tests {
             note.contains("could not"),
             "an honest failure, not a silent absence: {note}"
         );
+    }
+
+    /// **Half an edge is a misuse, and misuses are answers here too.** Same
+    /// class as `resume` without a `bot`: `shape` and `object` each parse, the
+    /// mistake is the combination, and the fix is the other argument. It threw
+    /// `invalid_params`, so a caller reaching across entities got a protocol
+    /// failure where a next move belonged — and the edge it meant to draw was
+    /// silently not drawn, which is the silence ask-across dies of.
+    ///
+    /// Both halves, through both verbs that parse the pair.
+    #[tokio::test]
+    async fn half_an_edge_is_a_blocked_answer_through_every_verb_that_takes_one() {
+        let jojobot = handler();
+        ensure(&jojobot, "alpha").await;
+
+        // capture, shape with nothing to point at
+        let body = blocked(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    shape: Some("location".into()),
+                    object: None,
+                    ..capture_args("alpha", "was there")
+                }))
+                .await
+                .expect("a misuse is an answer, not a protocol failure"),
+        );
+        assert_eq!(body["wrote"], false, "{body}");
+        let how = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("object"),
+            "the advice names the argument that completes it: {how}"
+        );
+
+        // update_fact, an object with no shape to draw it as
+        let body = blocked(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    shape: None,
+                    object: Some("place:shelbyville".into()),
+                    ..update_args("person:alpha#1")
+                }))
+                .await
+                .expect("a misuse is an answer, not a protocol failure"),
+        );
+        assert_eq!(body["wrote"], false, "{body}");
+        let how = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("shape"),
+            "the advice names the argument that completes it: {how}"
+        );
+
+        // …and a token that is no shape stays a plain ERROR, because that is a
+        // malformed call rather than a combination — the line the orientation
+        // essay draws, and this pins that the conversion did not blur it.
+        let err = jojobot
+            .capture(Parameters(CaptureArgs {
+                shape: Some("nonsense".into()),
+                object: Some("place:shelbyville".into()),
+                ..capture_args("alpha", "was there")
+            }))
+            .await
+            .expect_err("a token outside a closed set is malformed");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     }
 
     // ── a bot and its box are one act ───────────────────────────────────────
