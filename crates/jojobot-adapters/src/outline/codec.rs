@@ -634,8 +634,28 @@ pub(super) fn parse_entity(doc: &str) -> Option<Entity> {
         source: parse_field(doc, "source").unwrap_or_default(),
         crm: parse_field(doc, "crm"),
         mailbox: parse_field(doc, "mailbox"),
+        parent: parse_parent(doc),
         boot: parse_field(doc, "boot").map_or(Boot::default(), |b| Boot::from_token(&b)),
     })
+}
+
+/// The entity this doc's entity sits under, off its `parent:` line.
+///
+/// **Read tolerantly, like an edges cell:** a value that isn't a well-formed
+/// handle costs the parentage, never the entity. A doc whose `parent:` line
+/// somebody hand-mangled still identifies whose page it is and still holds its
+/// facts; reading it as a root is the cheap, safe side, and the line is
+/// rewritten in the current spelling on the doc's next touch.
+///
+/// **This line is the truth, not the page's position in Outline.** The store
+/// also nests the page under its parent's, because that is what makes the wiki
+/// navigable to a human — but the two can drift the moment somebody drags a
+/// page in the browser, and jojobot's own schema is what jojobot reads. A moved
+/// page is a page in a different spot; a rewritten `parent:` line is a
+/// different parent.
+fn parse_parent(doc: &str) -> Option<EntityId> {
+    let parent = EntityId(parse_field(doc, "parent")?);
+    validate_subject(&parent).ok().map(|()| parent)
 }
 
 /// The other names an entity answers to, off its `aliases:` line — one
@@ -674,6 +694,9 @@ fn frontmatter(e: &Entity) -> String {
     }
     if let Some(mailbox) = &e.mailbox {
         out.push_str(&format!("mailbox: {mailbox}\n"));
+    }
+    if let Some(parent) = &e.parent {
+        out.push_str(&format!("parent: {parent}\n"));
     }
     out.push_str(&format!("boot: {}\n```", e.boot.as_token()));
     out
@@ -793,6 +816,7 @@ mod tests {
             source: "crm-card".into(),
             crm: Some("card:554".into()),
             mailbox: None,
+            parent: None,
             boot: Boot::OnDemand,
         }
     }
@@ -1460,6 +1484,78 @@ mod tests {
             touched.contains("mailbox: gamma-inbox"),
             "gained on touch: {touched}"
         );
+    }
+
+    /// **The entity a page sits under is written on the page.** One line in the
+    /// machine block, read back as written — so rebuilding the tree is a plain
+    /// re-read of the docs, with no second source to consult and nothing to
+    /// reconcile. A root writes no line, which is what most entities are.
+    #[test]
+    fn a_parent_round_trips_and_a_root_writes_no_line() {
+        let child = Entity {
+            id: EntityId("place:leftorium".into()),
+            kind: EntityKind::Place,
+            parent: Some(EntityId("org:guild".into())),
+            ..alpha()
+        };
+        let doc = seeded_doc(&child);
+        assert!(doc.contains("parent: org:guild"), "one legible line: {doc}");
+        assert_eq!(parse_entity(&doc).expect("the doc is an entity"), child);
+
+        assert!(
+            !seeded_doc(&alpha()).contains("parent"),
+            "a root sits under nothing, so nothing is written: {}",
+            seeded_doc(&alpha())
+        );
+
+        // A doc from before the field reads as a root, and gains the line on the
+        // next write that touches its block — the same lazy migration `aliases`,
+        // `details`, `edges` and `mailbox` each got. Nothing is swept.
+        let legacy = "```yaml\nid: place:leftorium\nkind: place\nname: Leftorium\n\
+                      source: user-named\nboot: on-demand\n```\n";
+        let read = parse_entity(legacy).expect("a legacy doc still identifies its entity");
+        assert_eq!(
+            read.parent, None,
+            "an absent field is a root, not a failure"
+        );
+        let touched = with_frontmatter_replaced(
+            legacy,
+            &Entity {
+                parent: Some(EntityId("org:guild".into())),
+                ..read
+            },
+        );
+        assert!(
+            touched.contains("parent: org:guild"),
+            "gained on touch: {touched}"
+        );
+    }
+
+    /// **A mangled `parent:` costs the parentage, never the entity** — the same
+    /// tolerance a garbled edges cell gets. These are hand-editable wiki pages,
+    /// and a page whose one bad line made it stop being an entity would take
+    /// every fact on it out of reach. Reading it as a root is the cheap, safe
+    /// side, and the next write that touches the block spells it correctly.
+    #[test]
+    fn a_parent_line_that_is_not_a_handle_reads_as_a_root() {
+        for bad in [
+            "Some Project", // a human typed a display name
+            "person:",      // a kind with no slug
+            "notakind:atlas",
+            "person:Alpha", // uppercase is not the handle grammar
+            "person:a b",
+        ] {
+            let doc = format!(
+                "```yaml\nid: place:leftorium\nkind: place\nname: Leftorium\n\
+                 source: user-named\nparent: {bad}\nboot: on-demand\n```\n"
+            );
+            let read = parse_entity(&doc).expect("the doc is still an entity");
+            assert_eq!(
+                read.parent, None,
+                "{bad:?} is not a handle, so it is no parentage — but the entity survives"
+            );
+            assert_eq!(read.name, "Leftorium", "…with everything else intact");
+        }
     }
 
     // --- the prose half of a doc ----------------------------------------------

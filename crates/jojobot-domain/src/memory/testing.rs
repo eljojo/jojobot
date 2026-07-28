@@ -58,6 +58,7 @@ impl Memory for InMemoryMemory {
             &new.source,
             new.crm.as_deref(),
             new.mailbox.as_deref(),
+            new.parent.as_ref(),
         )?;
         let index = self.index();
         if let Decision::Block(candidates) =
@@ -88,8 +89,21 @@ impl Memory for InMemoryMemory {
             source: new.source.trim().to_string(),
             crm: new.crm.map(|c| c.trim().to_string()),
             mailbox: new.mailbox.map(|m| m.trim().to_string()),
+            parent: new.parent,
             boot: new.boot,
         };
+        // The entity this one sits under must already exist, and must not be
+        // this one. Screened after the record is assembled because a
+        // self-parenting block reports the write itself, and this is where the
+        // write's own name and source live.
+        if let Some(parent) = &entity.parent
+            && let Decision::Block(candidates) = guard::decide_parent(&entity, parent, &index)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: parent.clone(),
+                candidates,
+            });
+        }
         self.entities
             .lock()
             .expect("fake mutex poisoned")
@@ -713,6 +727,211 @@ pub mod contract {
         assert_eq!(seen.source, "user-named");
         assert_eq!(seen.crm.as_deref(), Some("card:874"));
         assert_eq!(seen.boot, Boot::Always);
+    }
+
+    // --- the tree ------------------------------------------------------------
+
+    /// **An entity can name a parent, and it survives the read path.** A root
+    /// names none, which is what most entities are.
+    pub async fn a_child_names_its_parent_and_reads_back<M: Memory>(store: &M) {
+        let parent = EntityId::new(EntityKind::Project, "contract-monorail");
+        let child = EntityId::new(EntityKind::Project, "contract-monorail-funding");
+
+        let root = add(
+            store,
+            NewEntity::new(parent.clone(), "Contract Monorail", "contract-fixture"),
+        )
+        .await;
+        assert_eq!(root.parent, None, "an entity under nothing is a root");
+
+        let added = add(
+            store,
+            NewEntity {
+                parent: Some(parent.clone()),
+                ..NewEntity::new(child.clone(), "Monorail Funding", "contract-fixture")
+            },
+        )
+        .await;
+        assert_eq!(added.parent.as_ref(), Some(&parent));
+
+        let seen = read_entity(store, &child).await;
+        assert_eq!(
+            seen, added,
+            "the listed child must be byte-identical, parent included"
+        );
+        assert_eq!(
+            read_entity(store, &parent).await.parent,
+            None,
+            "…and the parent is still a root"
+        );
+    }
+
+    /// **Children come back as handles, one level down.** Zooming is the whole
+    /// point: a parent read hands back the branch names and nothing else, so
+    /// the caller pays only for the branch it descends into. A grandchild is
+    /// not a child, and a leaf has none.
+    pub async fn children_are_handles_and_one_level_deep<M: Memory>(store: &M) {
+        let root = EntityId::new(EntityKind::Project, "contract-springfield");
+        let track = EntityId::new(EntityKind::Project, "contract-springfield-track");
+        let cars = EntityId::new(EntityKind::Project, "contract-springfield-cars");
+        let brakes = EntityId::new(EntityKind::Project, "contract-springfield-brakes");
+
+        add(
+            store,
+            NewEntity::new(root.clone(), "Contract Springfield", "contract-fixture"),
+        )
+        .await;
+        for (id, name, under) in [
+            (&track, "Springfield Track", &root),
+            (&cars, "Springfield Cars", &root),
+            (&brakes, "Springfield Brakes", &cars),
+        ] {
+            add(
+                store,
+                NewEntity {
+                    parent: Some(under.clone()),
+                    ..NewEntity::new(id.clone(), name, "contract-fixture")
+                },
+            )
+            .await;
+        }
+
+        let mut got = store
+            .children(&root)
+            .await
+            .expect("children should succeed");
+        got.sort();
+        let mut want = vec![track.clone(), cars.clone()];
+        want.sort();
+        assert_eq!(
+            got, want,
+            "exactly the direct children — the grandchild is the next level's business"
+        );
+        assert_eq!(
+            store
+                .children(&cars)
+                .await
+                .expect("children should succeed"),
+            vec![brakes.clone()],
+            "the middle of the tree has children of its own"
+        );
+        assert_eq!(
+            store
+                .children(&brakes)
+                .await
+                .expect("children should succeed"),
+            Vec::<EntityId>::new(),
+            "a leaf has none, and says so with an empty list"
+        );
+    }
+
+    /// **A miss is a miss, not a leaf.** Asking for the children of something
+    /// that does not exist is an error carrying candidates — never an empty
+    /// list, which a caller would read as "this thing has nothing under it".
+    pub async fn children_of_an_unknown_entity_is_a_miss<M: Memory>(store: &M) {
+        let known = EntityId::new(EntityKind::Project, "contract-ghost-parent");
+        add(
+            store,
+            NewEntity::new(known.clone(), "Contract Ghost Parent", "contract-fixture"),
+        )
+        .await;
+
+        let typo = EntityId::new(EntityKind::Project, "contract-ghost-parnt");
+        let err = store
+            .children(&typo)
+            .await
+            .expect_err("an unknown parent must not read as childless");
+        let MemoryError::UnknownEntity { nearest, .. } = &err else {
+            panic!("an unknown parent is an unknown entity, got {err:?}");
+        };
+        assert!(
+            nearest.iter().any(|m| m.handle == known),
+            "the miss names what it might have meant: {nearest:?}"
+        );
+    }
+
+    /// **A parent must already exist.** Creating an entity under a handle
+    /// nothing resolves is blocked with candidates — and blocked means nothing
+    /// is written: not the child, and certainly not the parent it named.
+    /// Creation is an intentional act; naming a thing is not creating it.
+    pub async fn an_unnamed_parent_is_refused_and_provisions_nothing<M: Memory>(store: &M) {
+        let real = EntityId::new(EntityKind::Project, "contract-plant");
+        let typo = EntityId::new(EntityKind::Project, "contract-plnt");
+        let child = EntityId::new(EntityKind::Project, "contract-plant-shift");
+        add(
+            store,
+            NewEntity::new(real.clone(), "Contract Plant", "contract-fixture"),
+        )
+        .await;
+
+        let blocked = store
+            .add_entity(NewEntity {
+                parent: Some(typo.clone()),
+                // The same signal that clears a name collision must not
+                // conjure a parent: this is a write that NAMES an entity.
+                create_new: true,
+                ..NewEntity::new(child.clone(), "Plant Shift", "contract-fixture")
+            })
+            .await
+            .expect("an unresolvable parent is an answer, not a failure");
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = blocked
+        else {
+            panic!("a parent that does not exist must block");
+        };
+        assert_eq!(
+            attempted, typo,
+            "the block is about the parent, so that is the handle it reports"
+        );
+        assert!(
+            candidates.iter().any(|c| c.handle == real),
+            "the answer names what it might have meant: {candidates:?}"
+        );
+
+        let known = store
+            .list_entities(None)
+            .await
+            .expect("list_entities should succeed");
+        assert!(
+            !known.iter().any(|e| e.id == child || e.id == typo),
+            "a blocked write creates neither the child nor the parent it named"
+        );
+    }
+
+    /// **Nothing is its own parent.** Refused in the house shape — a blocked
+    /// result naming the offender, not a bare error — and never overridable,
+    /// because there is no honest "I checked, they're different" answer when
+    /// both handles are the same one.
+    pub async fn nothing_may_be_its_own_parent<M: Memory>(store: &M) {
+        let ouroboros = EntityId::new(EntityKind::Project, "contract-ouroboros");
+        let blocked = store
+            .add_entity(NewEntity {
+                parent: Some(ouroboros.clone()),
+                create_new: true,
+                ..NewEntity::new(ouroboros.clone(), "Contract Ouroboros", "contract-fixture")
+            })
+            .await
+            .expect("a self-parenting write is an answer, not a failure");
+        let Guarded::Blocked { candidates, .. } = blocked else {
+            panic!("an entity naming itself as its parent must block");
+        };
+        assert!(
+            candidates
+                .iter()
+                .any(|c| c.handle == ouroboros && c.reason == guard::MatchReason::SelfParent),
+            "the answer says WHICH refusal this is, or it reads as an unknown handle: {candidates:?}"
+        );
+        assert!(
+            !store
+                .list_entities(None)
+                .await
+                .expect("list_entities should succeed")
+                .iter()
+                .any(|e| e.id == ouroboros),
+            "a blocked write writes nothing at all"
+        );
     }
 
     /// **An identity owns a mailbox, and only one may.** The claim rides on the
@@ -2732,6 +2951,13 @@ pub mod contract {
 
         every_kind_holds_facts(store).await;
         an_entity_claims_a_mailbox_and_only_one_may(store).await;
+
+        a_child_names_its_parent_and_reads_back(store).await;
+        children_are_handles_and_one_level_deep(store).await;
+        children_of_an_unknown_entity_is_a_miss(store).await;
+        an_unnamed_parent_is_refused_and_provisions_nothing(store).await;
+        nothing_may_be_its_own_parent(store).await;
+
         prose_is_replaced_whole_and_reads_back(store).await;
         the_journal_appends_and_never_rewrites(store).await;
         an_empty_journal_entry_is_refused(store).await;

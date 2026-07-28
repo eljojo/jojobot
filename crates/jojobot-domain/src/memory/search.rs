@@ -542,6 +542,7 @@ mod tests {
             source: "test".into(),
             crm: None,
             mailbox: None,
+            parent: None,
             boot: Boot::OnDemand,
         };
         let row = |id: &str, subject: &str| Fact {
@@ -607,6 +608,7 @@ mod tests {
             source: "test".into(),
             crm: None,
             mailbox: None,
+            parent: None,
             boot: Boot::OnDemand,
         };
         let row = |id: &str, subject: &str| Fact {

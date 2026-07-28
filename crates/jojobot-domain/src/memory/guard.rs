@@ -27,6 +27,17 @@ pub enum MatchReason {
     /// This entity already owns the mailbox the incoming write claims. Never
     /// overridable, for the reason an exact handle isn't: a box has one owner.
     MailboxClaimed,
+    /// The write names **itself** as its own parent. Never overridable: unlike
+    /// a name collision there is no "I checked, they're different" to give,
+    /// because there is only one handle involved.
+    ///
+    /// The odd one out among these reasons, and deliberately so. Every other
+    /// reason reports an entity the write might have *meant*; this one reports
+    /// the write itself, because [`Decision::Block`] carries candidates and
+    /// nothing else — so a block with an empty list is the only alternative,
+    /// and that is exactly what an unresolvable parent already looks like. A
+    /// caller has to be able to tell "you named yourself" from "no such thing".
+    SelfParent,
     /// Same kind, and the names (or a name and the other's slug) agree once
     /// case and whitespace are folded.
     SameName,
@@ -361,6 +372,47 @@ pub fn decide_mailbox_claim(handle: &EntityId, mailbox: &str, index: &[Entity]) 
     }
 }
 
+/// The guard's decision on the entity a write wants to sit **under**.
+///
+/// Two refusals, in the order they can be answered.
+///
+/// **Nothing is its own parent.** A block naming the offender itself, with
+/// [`MatchReason::SelfParent`] — see that variant for why the candidate is the
+/// write rather than something it might have meant. Checked first because the
+/// existence gate would otherwise answer it wrongly-but-plausibly: a fresh
+/// entity naming itself has indeed not been created yet, so "no such entity"
+/// is technically true and completely unhelpful.
+///
+/// **A parent must already exist.** Beyond that this is [`decide_existing`] and
+/// nothing more: naming a parent is naming an entity, so it gets the same gate
+/// as a capture's subject or an edge's object, with the same absence of a
+/// create-new escape. Creation is an intentional act; a tree that grew its own
+/// branches on the way past would be exactly the auto-provisioning that rule
+/// exists to forbid.
+///
+/// **A cycle deeper than this cannot be reached**, so nothing here looks for
+/// one. Parentage is fixed at creation ([`super::NewEntity::parent`], with no
+/// counterpart on [`super::EntityPatch`]), and an entity being created has no
+/// children yet — so there is no descendant for it to be filed under. If
+/// reparenting ever lands it brings the ancestor walk with it; writing that
+/// walk now would be machinery guarding a case no caller can produce, and the
+/// test for it could only be written by reaching past the port.
+///
+/// Kinds are not consulted. The tree sorts by specificity, not taxonomy: a
+/// detail under a project is the whole point of it.
+pub fn decide_parent(child: &Entity, parent: &EntityId, index: &[Entity]) -> Decision {
+    if parent == &child.id {
+        return Decision::Block(vec![EntityMatch {
+            handle: child.id.clone(),
+            kind: child.kind,
+            name: child.name.clone(),
+            source: child.source.clone(),
+            reason: MatchReason::SelfParent,
+        }]);
+    }
+    decide_existing(parent, index)
+}
+
 /// The guard's decision on a **relabel** — a change to any of the names an
 /// entity answers to, its display name or its aliases alike.
 ///
@@ -427,6 +479,7 @@ mod tests {
             source: source.into(),
             crm: None,
             mailbox: None,
+            parent: None,
             boot: Default::default(),
         }
     }
@@ -985,6 +1038,72 @@ mod tests {
         let idx = vec![owning("bot:gamma", "Gamma", "gamma-inbox")];
         assert_eq!(
             decide_mailbox_claim(&EntityId("bot:delta".into()), "gamma-inbo", &idx),
+            Decision::Proceed
+        );
+    }
+
+    // --- a parent must exist, and must not be the child ----------------------
+
+    /// **A thing cannot be below itself.** Refused with a candidate naming the
+    /// offender rather than an empty list, because an empty list is what an
+    /// unresolvable parent already looks like and a caller must be able to tell
+    /// the two apart. No `create_new` reaches this: there is only one handle
+    /// involved, so there is nothing to have checked.
+    #[test]
+    fn nothing_is_its_own_parent() {
+        let child = entity("person:zenith", "Zenith", "user-named");
+        let Decision::Block(candidates) = decide_parent(&child, &child.id, &index()) else {
+            panic!("an entity naming itself as its parent must block");
+        };
+        assert_eq!(candidates.len(), 1, "one offender: {candidates:?}");
+        assert_eq!(candidates[0].handle, child.id);
+        assert_eq!(candidates[0].reason, MatchReason::SelfParent);
+        assert_eq!(
+            candidates[0].name, "Zenith",
+            "the candidate describes the write, which is the only place its name exists yet"
+        );
+    }
+
+    /// A parent is a handle the write only NAMES, so it faces the existence
+    /// gate every other named handle faces — near miss with candidates,
+    /// unrecognized with an empty list, and no create-new escape from either.
+    #[test]
+    fn a_parent_must_already_exist() {
+        let child = entity("person:zenith", "Zenith", "user-named");
+        assert_eq!(
+            decide_parent(&child, &EntityId("project:atlas".into()), &index()),
+            Decision::Proceed,
+            "an existing parent is waved through"
+        );
+
+        let Decision::Block(near) =
+            decide_parent(&child, &EntityId("person:alphaa".into()), &index())
+        else {
+            panic!("a near-miss parent must block");
+        };
+        assert_eq!(near[0].handle.as_str(), "person:alpha");
+        assert_eq!(
+            near[0].reason,
+            MatchReason::NearSlug,
+            "an ordinary existence miss keeps its ordinary reason"
+        );
+
+        let Decision::Block(none) =
+            decide_parent(&child, &EntityId("topic:widgets".into()), &index())
+        else {
+            panic!("a parent that resolves to nothing must block, not proceed");
+        };
+        assert!(none.is_empty(), "nothing to suggest: {none:?}");
+    }
+
+    /// A parent of another kind is ordinary. The tree is about specificity,
+    /// not taxonomy: a detail page under a project is the whole point, and
+    /// nothing here has an opinion about which kinds may nest.
+    #[test]
+    fn a_parent_of_another_kind_is_fine() {
+        let child = entity("person:zenith", "Zenith", "user-named");
+        assert_eq!(
+            decide_parent(&child, &EntityId("place:north-trail".into()), &index()),
             Decision::Proceed
         );
     }

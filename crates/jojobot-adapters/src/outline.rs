@@ -374,6 +374,7 @@ impl Memory for OutlineStore {
             &new.source,
             new.crm.as_deref(),
             new.mailbox.as_deref(),
+            new.parent.as_ref(),
         )?;
         let collection_id = self.resolve_collection().await?;
 
@@ -407,8 +408,21 @@ impl Memory for OutlineStore {
             source: new.source.trim().to_string(),
             crm: new.crm.map(|c| c.trim().to_string()),
             mailbox: new.mailbox.map(|m| m.trim().to_string()),
+            parent: new.parent,
             boot: new.boot,
         };
+        // The entity this one sits under must already exist, and must not be
+        // this one. Screened after the record is assembled because a
+        // self-parenting block reports the write itself, and this is where the
+        // write's own name and source live.
+        if let Some(parent) = &entity.parent
+            && let Decision::Block(candidates) = guard::decide_parent(&entity, parent, &index)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: parent.clone(),
+                candidates,
+            });
+        }
         self.create_entity_doc(&collection_id, &entity).await?;
 
         // Read-back: the entity is only added once the read path returns it.
@@ -1102,6 +1116,7 @@ mod tests {
             source: "capture".into(),
             crm: None,
             mailbox: None,
+            parent: None,
             boot: Default::default(),
         }
     }

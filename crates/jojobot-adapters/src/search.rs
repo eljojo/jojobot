@@ -1213,6 +1213,7 @@ mod tests {
             source: "user-named".into(),
             crm: None,
             mailbox: None,
+            parent: None,
             boot: Boot::OnDemand,
         }
     }

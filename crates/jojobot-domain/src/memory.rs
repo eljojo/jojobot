@@ -235,6 +235,23 @@ pub struct Entity {
     /// permission the mail rail has to enforce. Absent is the ordinary case.
     #[serde(default)]
     pub mailbox: Option<String>,
+    /// The entity this one sits **under**, if it sits under anything. A root
+    /// has none, and most entities are roots.
+    ///
+    /// **An entity can have children, and a fact lives on the most specific
+    /// entity it is about.** A flat entity silts the way a 10,000-line source
+    /// file silts: everything about it lands on one page. The tree is the fix —
+    /// detail moves down onto a child, and reading becomes zooming instead of
+    /// loading.
+    ///
+    /// Single-parent, and **the pointer lives on the child**. Upward is the
+    /// direction that is one value; downward is a set, and a set stored on the
+    /// parent would be a second place the same truth lives. Children are
+    /// therefore *derived* ([`Memory::children`]), never stored.
+    ///
+    /// Absent in docs written before the field existed, which read as a root.
+    #[serde(default)]
+    pub parent: Option<EntityId>,
     /// Boot tier.
     pub boot: Boot,
 }
@@ -272,6 +289,17 @@ pub struct NewEntity {
     /// The mailbox this entity claims to own. Screened for a rival claim by
     /// [`guard::decide_mailbox_claim`] — a box has exactly one owner.
     pub mailbox: Option<String>,
+    /// The entity to create this one **under**, if it is not a root. Screened
+    /// by [`guard::decide_parent`]: the parent must already exist, and nothing
+    /// may be its own parent.
+    ///
+    /// **Set here and nowhere else.** There is deliberately no `parent` on
+    /// [`EntityPatch`]: reparenting would have to move the child's page in the
+    /// store as well as rewrite its frontmatter, and that is a decision this
+    /// milestone does not make. Because parentage is fixed at creation, a cycle
+    /// deeper than self-parenting is unreachable — a fresh entity has no
+    /// children to be caught below.
+    pub parent: Option<EntityId>,
     /// Boot tier.
     pub boot: Boot,
     /// Set only after the guard reported candidates and the caller judged them
@@ -290,6 +318,7 @@ impl NewEntity {
             source: source.into(),
             crm: None,
             mailbox: None,
+            parent: None,
             boot: Boot::default(),
             create_new: false,
         }
@@ -783,8 +812,15 @@ pub fn validate_mailbox(name: &str) -> Result<(), MemoryError> {
 }
 
 /// Validate everything an entity write carries: the handle's grammar, its
-/// required labels, and the `crm` and `mailbox` pointers if present. Both
-/// adapters call this, so neither can accept a record the other would refuse.
+/// required labels, and the `crm`, `mailbox` and `parent` pointers if present.
+/// Both adapters call this, so neither can accept a record the other would
+/// refuse.
+///
+/// A `parent` is an entity handle, so it is held to the handle grammar — the
+/// same defence [`validate_subject`] gives every other id that reaches the
+/// store. Whether that handle *resolves*, and whether it is this entity's own,
+/// are the guard's questions ([`guard::decide_parent`]), not this one's: those
+/// come back blocked-with-candidates, and this comes back malformed.
 pub fn validate_entity(
     id: &EntityId,
     name: &str,
@@ -792,6 +828,7 @@ pub fn validate_entity(
     source: &str,
     crm: Option<&str>,
     mailbox: Option<&str>,
+    parent: Option<&EntityId>,
 ) -> Result<(), MemoryError> {
     validate_subject(id)?;
     validate_field("name", name)?;
@@ -802,6 +839,9 @@ pub fn validate_entity(
     }
     if let Some(mailbox) = mailbox {
         validate_mailbox(mailbox)?;
+    }
+    if let Some(parent) = parent {
+        validate_subject(parent)?;
     }
     Ok(())
 }
@@ -1172,6 +1212,49 @@ pub trait Memory: Send + Sync {
 
     /// Every entity jojobot knows, optionally filtered to one kind.
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError>;
+
+    /// The entities sitting directly under `parent` — **their handles, and
+    /// nothing else.**
+    ///
+    /// Handles are the whole point. Zooming is the reason the tree exists, and
+    /// a parent read that dragged its subtree along would be the silting it was
+    /// built to stop: the caller descends deliberately, one level at a time,
+    /// paying only for the branch it actually wants. Direct children only, for
+    /// the same reason — a level, not a subtree.
+    ///
+    /// **Derived, never stored.** The pointer lives on the child
+    /// ([`Entity::parent`]); this reads the other way down the same one edge,
+    /// so a parent and its children cannot come to disagree about who is whose.
+    ///
+    /// An unknown parent is [`MemoryError::UnknownEntity`], never an empty
+    /// list: "nothing is under it" and "there is no such thing" are different
+    /// answers, and a caller that cannot tell them apart will read a typo as a
+    /// leaf.
+    ///
+    /// Ordering carries no meaning — nothing records where a child sits among
+    /// its siblings. The handles come back sorted only so that two reads of an
+    /// unchanged store agree.
+    ///
+    /// Defaulted off [`list_entities`](Memory::list_entities), like
+    /// [`scan_entity`](Memory::scan_entity): an adapter that can do better
+    /// overrides it, and one that can't is still correct.
+    async fn children(&self, parent: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
+        validate_subject(parent)?;
+        let all = self.list_entities(None).await?;
+        if !all.iter().any(|e| &e.id == parent) {
+            return Err(MemoryError::UnknownEntity {
+                attempted: parent.to_string(),
+                nearest: guard::screen(parent, &[], &all),
+            });
+        }
+        let mut handles: Vec<EntityId> = all
+            .into_iter()
+            .filter(|e| e.parent.as_ref() == Some(parent))
+            .map(|e| e.id)
+            .collect();
+        handles.sort();
+        Ok(handles)
+    }
 
     /// Edit an entity's metadata in place. Never the handle. A change to what it
     /// is **called** — its name or its aliases — is screened by the write guard
@@ -1557,6 +1640,7 @@ mod tests {
             source: "user-named".into(),
             crm: None,
             mailbox: None,
+            parent: None,
             boot: Boot::OnDemand,
         };
 
@@ -1627,6 +1711,7 @@ mod tests {
             source: "user-named".into(),
             crm: None,
             mailbox: None,
+            parent: None,
             boot: Boot::OnDemand,
         };
         assert_eq!(

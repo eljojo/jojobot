@@ -1760,6 +1760,10 @@ impl Jojobot {
             source: args.source,
             crm: args.crm,
             mailbox: args.mailbox,
+            // The tool surface is unchanged this milestone: parentage is
+            // reachable only from inside, so every write through the door is
+            // a root.
+            parent: None,
             boot: args
                 .boot
                 .as_deref()
@@ -4998,6 +5002,7 @@ mod tests {
             source: "user-named".into(),
             crm: None,
             mailbox: None,
+            parent: None,
             boot: Boot::OnDemand,
         };
         let fact = Fact {
@@ -5022,6 +5027,7 @@ mod tests {
             source: "user-named".into(),
             crm: None,
             mailbox: None,
+            parent: None,
             boot: Boot::OnDemand,
         };
         let guild = Edge::new(EdgeShape::Membership, EntityId("org:guild".into()));
