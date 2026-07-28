@@ -1350,6 +1350,7 @@ dependencies = [
  "jiff",
  "jojobot-domain",
  "rmcp",
+ "rmcp-macros",
  "schemars",
  "serde",
  "serde_json",

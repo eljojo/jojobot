@@ -10,6 +10,10 @@ rust-version.workspace = true
 [dependencies]
 jojobot-domain.workspace = true
 rmcp.workspace = true
+# Not imported by name — see the workspace manifest. It is a dependency so that
+# the workspace's `=` pin on it is the one cargo resolves, holding it in step
+# with rmcp, which does not pin it itself.
+rmcp-macros.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

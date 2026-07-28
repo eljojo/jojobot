@@ -28,6 +28,14 @@ rmcp = { version = "=3.0.0-beta.1", features = [
     "transport-streamable-http-server",
     "schemars",
 ] }
+# **Pinned separately, because rmcp does not pin it.** rmcp's own requirement on
+# its macro crate is `3.0.0-beta.1` without the `=`, which admits beta.4 — and
+# beta.4's `#[tool_handler]` generates a `get_info` that does not typecheck
+# against beta.1's `ServerHandler`. Only the lockfile was holding the two in
+# step, so a `cargo update` broke the build with an error that reads as a macro
+# bug rather than a resolution one. It is a direct dependency solely so this `=`
+# can exist; nothing in the workspace imports it by name.
+rmcp-macros = "=3.0.0-beta.1"
 schemars = "1"
 
 # --- serialization ---
