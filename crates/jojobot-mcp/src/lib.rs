@@ -697,11 +697,14 @@ impl Jojobot {
         // malformed call rather than an absence — there is no session it could
         // be about, and honouring it would mean guessing whose it was.
         if resume.is_some() && bot.is_none() {
-            return Err(McpError::invalid_params(
+            // **The prose is unchanged; the CHANNEL is the fix.** A thrown error
+            // is not a value a caller can branch on, so advice naming two ways
+            // forward arrived somewhere nothing reads structurally. Blocked is
+            // the shape every other misuse here wears.
+            return Ok(misused(
                 "resume answers the choice a boot hands back, so it needs the bot you are booting \
                  as — pass `bot` too, or drop `resume` for an anonymous orientation"
                     .to_string(),
-                None,
             ));
         }
         self.orient(bot.as_ref(), args.brief.unwrap_or(false), resume)
@@ -3050,6 +3053,24 @@ fn session_unbound() -> CallToolResult {
                            address, and it is what tells jojobot which bot is asking: most \
                            clients open a fresh connection per tool call, so nothing about who \
                            you are survives from your last one.",
+    });
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
+/// **A call whose arguments are each fine and wrong together.** Not a malformed
+/// call — every token parsed — so it is not a protocol error: it is a caller
+/// mistake, and those are answers here.
+///
+/// **No `attempted` and no `candidates`, deliberately.** There is nothing that
+/// was nearly right to name and nothing that nearly matched; what a caller needs
+/// is the other call to make. [`session_unbound`] is the precedent — the shape
+/// has always carried a candidate-free refusal, so this fits it rather than
+/// stretching it into something that reads like a near miss.
+fn misused(how_to_proceed: String) -> CallToolResult {
+    let body = serde_json::json!({
+        "status": "blocked",
+        "wrote": false,
+        "how_to_proceed": how_to_proceed,
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -8410,6 +8431,45 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
         assert!(body["orientation"].as_str().is_some_and(|o| !o.is_empty()));
         assert_eq!(body["snapshot"]["mailboxes"]["available"], false);
+    }
+
+    /// **A misuse is an ANSWER, not a thrown error.** `resume` responds to an
+    /// offer only a named boot makes, so carrying one without a `bot` is a
+    /// caller mistake — and every other caller mistake on this surface comes
+    /// back as a blocked result a client can branch on. A thrown error is not a
+    /// value: the model on the other end gets a failure where it should get a
+    /// next move, and the prose telling it what to do instead is stranded in a
+    /// channel nothing reads structurally.
+    ///
+    /// **The prose was already right and is kept verbatim** — it names both ways
+    /// forward. Only the channel changes.
+    #[tokio::test]
+    async fn resume_without_a_bot_is_a_blocked_answer_rather_than_a_thrown_error() {
+        let jojobot = handler();
+        let out = jojobot
+            .start_here(Parameters(OrientArgs {
+                bot: None,
+                brief: None,
+                resume: Some("new".into()),
+            }))
+            .await
+            .expect("a misuse is an answer, not a protocol failure");
+        let body = blocked(&out);
+        assert_eq!(body["wrote"], false, "nothing was started: {body}");
+
+        // Both ways forward survive the move, because that is the whole value of
+        // the answer over the error.
+        let how = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("bot") && how.contains("resume"),
+            "the advice names both moves: {how}"
+        );
+
+        // …and no session was minted behind the refusal.
+        assert!(
+            body["sid"].is_null(),
+            "a refused boot hands back no handle: {body}"
+        );
     }
 
     // ── a bot and its box are one act ───────────────────────────────────────
