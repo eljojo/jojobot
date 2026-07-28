@@ -18,9 +18,12 @@
 
 mod api;
 mod codec;
+mod mailbox_codec;
+mod mailboxes;
 mod session_codec;
 mod sessions;
 
+pub use mailboxes::OutlineMailboxes;
 pub use sessions::OutlineSessions;
 
 use std::fmt;
@@ -263,6 +266,14 @@ impl OutlineStore {
     /// structural instead of remembered.
     pub fn sessions(&self) -> OutlineSessions {
         OutlineSessions::new(Arc::clone(&self.ws))
+    }
+
+    /// **A Mailboxes store over the same collection, and the same write lock.**
+    /// Built from this store for the reason [`sessions`](Self::sessions) is:
+    /// three stores now write different documents in one place, and a mutex
+    /// each would exclude nobody.
+    pub fn mailboxes(&self) -> OutlineMailboxes {
+        OutlineMailboxes::new(Arc::clone(&self.ws))
     }
 
     async fn resolve_collection(&self) -> Result<String, MemoryError> {
@@ -1522,6 +1533,97 @@ mod tests {
             "a short row is padded to the header's width: {:?}",
             lines[3]
         );
+    }
+
+    /// **Mail is in the index; the page it lives on is not.** Both halves, in
+    /// one test, because getting either wrong is silent and they fail in
+    /// opposite directions.
+    ///
+    /// Sessions are excluded from search on purpose and mail is included on
+    /// purpose, and both now live on pages in the collection the boot scan
+    /// reads. So the exclusion has to be surgical: exclude the page's raw
+    /// markdown as content, and let the messages through by their own path.
+    /// Exclude too much and mail vanishes from search; exclude too little and a
+    /// question about the operator's life comes back with the raw markdown of a
+    /// box, bodies quoted out of their envelopes.
+    #[tokio::test]
+    async fn mail_reaches_the_index_but_the_page_it_sits_on_does_not() {
+        use jojobot_domain::mailbox::{MailboxName, Mailboxes as _, NewMessage};
+        use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
+
+        let outline = store(FakeOutline::new());
+        let index = IndexedMemory::new(Arc::new(outline.clone())).expect("index opens");
+        let mail =
+            crate::search::IndexedMailboxes::new(Arc::new(outline.mailboxes()), index.index());
+
+        let inbox = MailboxName("dev".into());
+        mail.create_mailbox(&inbox, false)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("not blocked");
+        mail.post_message(NewMessage {
+            mailbox: inbox.clone(),
+            body: "the monorail contract needs a decision".into(),
+            subject: Some("monorail".into()),
+            sender: "gamma".into(),
+            sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
+            in_reply_to: None,
+        })
+        .await
+        .expect("post ok")
+        .written()
+        .expect("not blocked");
+
+        // **Direction one, through the BOOT path.** Searching the index this
+        // process has been writing to proves only that the incremental write
+        // works — it survives `scan_messages` returning nothing, which is the
+        // failure that matters: a restart rebuilds from that read, and a broken
+        // one loses every message older than the process while looking fine.
+        // So this is a restart: a fresh index, both halves rebuilt from the
+        // store, and only then the question.
+        let restarted = IndexedMemory::new(Arc::new(outline.clone())).expect("index opens");
+        restarted.rebuild().await.expect("memory rebuild ok");
+        let restarted_mail =
+            crate::search::IndexedMailboxes::new(Arc::new(outline.mailboxes()), restarted.index());
+        restarted_mail.rebuild().await.expect("mail rebuild ok");
+
+        let hits = restarted
+            .search(&SearchQuery {
+                text: Some("monorail".into()),
+                ..Default::default()
+            })
+            .expect("search ok");
+        assert!(
+            hits.iter().any(|h| matches!(h, Hit::Message { .. })),
+            "mail survives a restart and is in the one ranked list: {hits:?}"
+        );
+
+        // Direction two, on that same rebuilt index: the page carrying the mail
+        // is not content. The rebuild is what reads every document, so this is
+        // the path where a leak would appear.
+        let after = restarted
+            .search(&SearchQuery {
+                text: Some("monorail".into()),
+                ..Default::default()
+            })
+            .expect("search ok");
+        assert!(
+            !after
+                .iter()
+                .any(|h| matches!(h, Hit::Prose { .. } | Hit::Entity { .. })),
+            "the raw page must never surface as content: {after:?}"
+        );
+    }
+
+    /// **The Mailboxes contract, unchanged, over Outline.** Same claim as the
+    /// sessions one: the spec is untouched, so this was a storage move.
+    #[tokio::test]
+    async fn the_outline_mailbox_store_satisfies_the_contract() {
+        jojobot_domain::mailbox::testing::contract::run_all(|| {
+            store(FakeOutline::new()).mailboxes()
+        })
+        .await;
     }
 
     /// **The Sessions contract, unchanged, over Outline.** The same spec the
