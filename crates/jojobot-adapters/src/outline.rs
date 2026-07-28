@@ -1520,6 +1520,55 @@ mod tests {
         .await;
     }
 
+    /// **Two runs of one bot beginning at once do not collide.** Both reads see
+    /// the same page, both mint the next id off it, and both write the whole
+    /// table back — so without the lock the second write is built from a page
+    /// that no longer exists and one of the two sessions is simply gone, with
+    /// each caller holding a `Session` that says otherwise.
+    ///
+    /// Run through the yielding transport, which suspends **after** a write
+    /// commits as well as before, because that is where the network suspends: a
+    /// real create is a round trip and the page has changed server-side before
+    /// the response arrives. A double that only yields before the call would
+    /// pass this on broken code.
+    #[tokio::test]
+    async fn two_runs_of_one_bot_beginning_at_once_both_survive() {
+        use jojobot_domain::session::Sessions as _;
+
+        let fake = FakeOutline::new();
+        let sessions = Arc::new(OutlineStore::from_api(Arc::new(Yielding(fake)), COLL).sessions());
+        let bot = EntityId::new(EntityKind::Bot, "gamma");
+
+        let begin = |sid: &'static str, focus: &'static str| {
+            let sessions = Arc::clone(&sessions);
+            let bot = bot.clone();
+            async move {
+                sessions
+                    .begin(jojobot_domain::session::NewSession {
+                        bot,
+                        sid: jojobot_domain::session::Sid(sid.into()),
+                        focus: focus.into(),
+                        started_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
+                    })
+                    .await
+                    .expect("begin should succeed")
+            }
+        };
+        let (one, two) = tokio::join!(begin("ab12", "the first run"), begin("cd34", "the second"));
+
+        assert_ne!(one.id, two.id, "two runs are two rows, not one id twice");
+        let all = sessions.all_sessions().await.expect("all_sessions");
+        assert_eq!(all.len(), 2, "neither write was lost: {all:?}");
+        for begun in [&one, &two] {
+            let seen = all
+                .iter()
+                .find(|s| s.id == begun.id)
+                .unwrap_or_else(|| panic!("{} is not on the page", begun.id));
+            assert_eq!(seen.sid, begun.sid, "and each kept its own handle");
+            assert_eq!(seen.focus, begun.focus);
+        }
+    }
+
     /// …and the same contract **including retrieval**, with the search projection
     /// over the real store logic. The fake satisfies this suite too, which is what
     /// stops the two from drifting.
