@@ -161,8 +161,6 @@ discovered one at a time.
 
 | the action | why there is no verb yet |
 |---|---|
-| **Say what I am working on right now** | A run's focus is current truth about the session, distinct from its chronology. Today it can only be inferred from journal entries. |
-| **Read back the whole story of a run** | Its chronology is written, but there is no verb that reads it — a resuming session cannot ask what its predecessor did. |
 | **Walk the graph from a subject** | Retrieval reads one subject's own record. The typed edges exist and nothing traverses them, which is what would make this a graph rather than a table. |
 | **Read a thing's history as distinct from its current truth** | The two flavours of record are being separated; until then, chronology and truth read alike. |
 | **Ask why a claim is believed** | Records carry addresses, so the evidence chain exists; nothing follows it end to end. |
