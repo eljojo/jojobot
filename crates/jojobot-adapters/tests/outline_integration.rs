@@ -23,6 +23,7 @@ use std::sync::Arc;
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
 use jojobot_adapters::search::IndexedMemory;
 use jojobot_domain::memory::testing::contract;
+use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity};
 
 /// The collection this test owns end to end. NOT the real `jojobot` collection.
 const TEST_COLLECTION: &str = "jojobot-test";
@@ -103,6 +104,97 @@ async fn doc_id_fingerprint(http: &reqwest::Client, c: &Creds, name: &str) -> Ve
     ids
 }
 
+/// Every document in a collection, raw, as the API returns it — so an
+/// assertion about a doc's **position** reads Outline's own answer rather than
+/// anything the adapter believes.
+async fn raw_documents(http: &reqwest::Client, c: &Creds, name: &str) -> Vec<serde_json::Value> {
+    let Some(id) = find_collection(http, c, name).await else {
+        return Vec::new();
+    };
+    let mut docs = Vec::new();
+    let mut offset = 0u64;
+    loop {
+        let page: serde_json::Value = http
+            .post(format!("{}/api/documents.list", c.url))
+            .bearer_auth(&c.token)
+            .json(&serde_json::json!({ "collectionId": id, "offset": offset, "limit": 100 }))
+            .send()
+            .await
+            .expect("documents.list")
+            .json()
+            .await
+            .expect("documents.list body");
+        let items = page["data"].as_array().cloned().unwrap_or_default();
+        let n = items.len();
+        docs.extend(items);
+        if n < 100 {
+            break;
+        }
+        offset += 100;
+    }
+    docs
+}
+
+/// **A child entity's page is really nested under its parent's page.** The
+/// contract proves the tree round-trips; it cannot prove *where the page sits*,
+/// because that is Outline's word and no other store has one. This reads the
+/// raw `parentDocumentId` back off the API.
+///
+/// It also pins the assumption the whole index rests on: **`documents.list`
+/// returns nested documents too.** If it did not, every child would be missing
+/// from `entity_index` and jojobot would quietly forget half its store.
+async fn assert_a_child_page_is_nested(http: &reqwest::Client, c: &Creds, store: &OutlineStore) {
+    let parent = EntityId::new(EntityKind::Project, "integration-monorail");
+    let child = EntityId::new(EntityKind::Project, "integration-monorail-track");
+    for (id, name, under) in [
+        (&parent, "Integration Monorail", None),
+        (&child, "Integration Monorail Track", Some(parent.clone())),
+    ] {
+        store
+            .add_entity(NewEntity {
+                parent: under,
+                ..NewEntity::new(id.clone(), name, "integration-fixture")
+            })
+            .await
+            .expect("add_entity should succeed")
+            .written()
+            .unwrap_or_else(|| panic!("the guard must not block {id}"));
+    }
+
+    let docs = raw_documents(http, c, TEST_COLLECTION).await;
+    // The marker is matched as a WHOLE LINE. One handle here is a prefix of the
+    // other — which is the natural shape of a tree, a detail page named after
+    // the thing it details — so a `contains` picks the child's page when asked
+    // for the parent's, and the real store is where that showed up.
+    let doc_for = |handle: &EntityId| {
+        docs.iter()
+            .find(|d| {
+                d["text"]
+                    .as_str()
+                    .is_some_and(|t| t.lines().any(|l| l.trim() == format!("id: {handle}")))
+            })
+            .unwrap_or_else(|| {
+                panic!("documents.list must return {handle}'s page — nested pages included")
+            })
+    };
+
+    assert_eq!(
+        doc_for(&parent)["parentDocumentId"].as_str(),
+        None,
+        "a root sits at the top of the collection"
+    );
+    assert_eq!(
+        doc_for(&child)["parentDocumentId"].as_str(),
+        doc_for(&parent)["id"].as_str(),
+        "the child's page hangs off the parent's, by Outline's own account"
+    );
+    assert_eq!(
+        store.children(&parent).await.expect("children"),
+        vec![child.clone()],
+        "…and the tree reads back from the real store"
+    );
+}
+
 /// Delete the test collection (and every doc in it), if it exists.
 async fn drop_test_collection(http: &reqwest::Client, c: &Creds) {
     if let Some(id) = find_collection(http, c, TEST_COLLECTION).await {
@@ -148,12 +240,24 @@ async fn real_outline_satisfies_the_contract() {
     // The spec runs against the store **behind the search projection**, so the
     // retrieval half is proven against real Outline too: the index is fed by the
     // real scan (real prose, real fact tables), not by a fake's approximation.
-    let indexed = IndexedMemory::new(Arc::new(store)).expect("the search index opens");
+    let indexed = IndexedMemory::new(Arc::new(store.clone())).expect("the search index opens");
     indexed.rebuild().await.expect("the boot scan must succeed");
 
     // Run the shared spec in a task so a panic is caught — the test collection
-    // is dropped either way, so nothing is left behind.
-    let outcome = tokio::spawn(async move { contract::run_all_searchable(&indexed).await }).await;
+    // is dropped either way, so nothing is left behind. The page-nesting check
+    // rides in the same task, and after the spec: it is the one assertion the
+    // store-agnostic contract cannot make, because where a page SITS is
+    // Outline's word and no other store has one.
+    let http_for_spec = http.clone();
+    let creds_for_spec = Creds {
+        url: c.url.clone(),
+        token: c.token.clone(),
+    };
+    let outcome = tokio::spawn(async move {
+        contract::run_all_searchable(&indexed).await;
+        assert_a_child_page_is_nested(&http_for_spec, &creds_for_spec, &store).await;
+    })
+    .await;
 
     drop_test_collection(&http, &c).await;
 

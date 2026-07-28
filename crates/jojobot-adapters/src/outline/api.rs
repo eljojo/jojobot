@@ -27,7 +27,8 @@ pub(super) struct CollectionRec {
 }
 
 /// A document as the store needs it — including `text`, so a marker can be read
-/// without a second round-trip.
+/// without a second round-trip, and `parent_id`, because jojobot nests a child
+/// entity's page under its parent's and a list has to be able to show that.
 #[derive(Debug, Clone)]
 pub(super) struct DocRec {
     pub id: String,
@@ -38,6 +39,11 @@ pub(super) struct DocRec {
     pub title: String,
     pub text: String,
     pub created_at: String,
+    /// The document this one is nested under, if any. **Position, not truth**:
+    /// the entity's own `parent:` line is what the tree is read from, and this
+    /// is where the page happens to sit. A human dragging a page in the browser
+    /// moves this and says nothing about parentage.
+    pub parent_id: Option<String>,
 }
 
 /// The Outline operations the store depends on. One real adapter
@@ -60,11 +66,14 @@ pub(super) trait OutlineApi: Send + Sync {
         offset: u64,
         limit: u64,
     ) -> Result<Vec<DocRec>, MemoryError>;
+    /// Create a document, nested under `parent_id` when there is one and at the
+    /// top of the collection when there is not.
     async fn create_document(
         &self,
         collection_id: &str,
         title: &str,
         text: &str,
+        parent_id: Option<&str>,
     ) -> Result<DocRec, MemoryError>;
     async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError>;
 }
@@ -84,6 +93,7 @@ fn doc_rec(d: &Value) -> Option<DocRec> {
         title: d["title"].as_str().unwrap_or_default().to_string(),
         text: d["text"].as_str().unwrap_or_default().to_string(),
         created_at: d["createdAt"].as_str().unwrap_or_default().to_string(),
+        parent_id: d["parentDocumentId"].as_str().map(str::to_string),
     })
 }
 
@@ -189,18 +199,21 @@ impl OutlineApi for HttpOutline {
         collection_id: &str,
         title: &str,
         text: &str,
+        parent_id: Option<&str>,
     ) -> Result<DocRec, MemoryError> {
-        let v = self
-            .post(
-                "documents.create",
-                json!({
-                    "collectionId": collection_id,
-                    "title": title,
-                    "text": text,
-                    "publish": true,
-                }),
-            )
-            .await?;
+        // `parentDocumentId` is omitted rather than sent as null for a root:
+        // Outline reads an explicit null on some endpoints as "no opinion" and
+        // on others as an error, and omission means the same thing everywhere.
+        let mut body = json!({
+            "collectionId": collection_id,
+            "title": title,
+            "text": text,
+            "publish": true,
+        });
+        if let Some(parent_id) = parent_id {
+            body["parentDocumentId"] = json!(parent_id);
+        }
+        let v = self.post("documents.create", body).await?;
         doc_rec(&v["data"])
             .ok_or_else(|| MemoryError::Store("documents.create: malformed document".into()))
     }
@@ -235,7 +248,13 @@ impl OutlineApi for Unconfigured {
     async fn list_documents(&self, _: &str, _: u64, _: u64) -> Result<Vec<DocRec>, MemoryError> {
         Self::refuse()
     }
-    async fn create_document(&self, _: &str, _: &str, _: &str) -> Result<DocRec, MemoryError> {
+    async fn create_document(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: Option<&str>,
+    ) -> Result<DocRec, MemoryError> {
         Self::refuse()
     }
     async fn update_document(&self, _: &str, _: &str) -> Result<(), MemoryError> {

@@ -276,6 +276,19 @@ impl OutlineStore {
     /// re-listing so a concurrent double-create converges on the oldest rather
     /// than forking. The title is the human's handle on the doc and is purely
     /// cosmetic; the marker inside is what resolves it.
+    ///
+    /// **A child's page is created under its parent's.** The `parent:` line in
+    /// the frontmatter is what the tree is read back from, but a wiki whose
+    /// pages all sit in one flat list is not one a human can navigate, and the
+    /// whole point of the tree is that detail lives next to what it is about.
+    /// So the two are written together, once, at the only moment parentage is
+    /// ever set.
+    ///
+    /// A parent whose page cannot be found is a hard error, not a quiet
+    /// top-level create: the guard has already established that the parent
+    /// entity exists, so a missing page means the store changed under us, and
+    /// filing the child at the root would leave a page whose line and position
+    /// disagree with nobody told.
     async fn create_entity_doc(
         &self,
         collection_id: &str,
@@ -286,12 +299,39 @@ impl OutlineStore {
         } else {
             entity.name.clone()
         };
+        let under = match &entity.parent {
+            None => None,
+            Some(parent) => Some(
+                self.entity_doc(collection_id, parent)
+                    .await?
+                    .ok_or_else(|| {
+                        MemoryError::Store(format!(
+                            "{} is to sit under {parent}, which has no page to sit under",
+                            entity.id
+                        ))
+                    })?
+                    .id,
+            ),
+        };
         self.api
-            .create_document(collection_id, &title, &seeded_doc(entity))
+            .create_document(collection_id, &title, &seeded_doc(entity), under.as_deref())
             .await?;
-        self.entity_doc(collection_id, &entity.id)
+        let doc = self
+            .entity_doc(collection_id, &entity.id)
             .await?
-            .ok_or_else(|| MemoryError::Store("entity doc missing after create".into()))
+            .ok_or_else(|| MemoryError::Store("entity doc missing after create".into()))?;
+        // Read-back covers the page's POSITION too, not only its contents: the
+        // write asserted where the page goes, so the write verifies it. A store
+        // that drops the parent silently — Outline does, for a parent it will
+        // not nest under — would otherwise leave a page whose `parent:` line
+        // and whose place in the wiki disagree, reported as a success.
+        if doc.parent_id.as_deref() != under.as_deref() {
+            return Err(MemoryError::Store(format!(
+                "{} was created under {:?}, not under the page of {:?} as written",
+                entity.id, doc.parent_id, entity.parent
+            )));
+        }
+        Ok(doc)
     }
 
     /// Read one addressed fact back through the read path — the verification
@@ -756,7 +796,7 @@ impl Memory for OutlineStore {
             Some(doc) => doc,
             None => {
                 self.api
-                    .create_document(&collection_id, JOURNAL_TITLE, "")
+                    .create_document(&collection_id, JOURNAL_TITLE, "", None)
                     .await?;
                 pick_oldest(
                     self.all_docs(&collection_id)
@@ -959,8 +999,19 @@ mod tests {
             id
         }
 
-        /// Pre-seed a document; returns its id.
+        /// Pre-seed a document at the top of a collection; returns its id.
         fn seed_document(&self, collection_id: &str, title: &str, text: &str) -> String {
+            self.seed_document_under(collection_id, title, text, None)
+        }
+
+        /// Pre-seed a document, nested under `parent_id` when there is one.
+        fn seed_document_under(
+            &self,
+            collection_id: &str,
+            title: &str,
+            text: &str,
+            parent_id: Option<&str>,
+        ) -> String {
             let s = self.stamp();
             let id = format!("doc-{s}");
             self.documents.lock().unwrap().push((
@@ -970,6 +1021,7 @@ mod tests {
                     title: title.into(),
                     text: text.into(),
                     created_at: s,
+                    parent_id: parent_id.map(str::to_string),
                 },
             ));
             id
@@ -1065,8 +1117,16 @@ mod tests {
             collection_id: &str,
             title: &str,
             text: &str,
+            parent_id: Option<&str>,
         ) -> Result<DocRec, MemoryError> {
-            let id = self.seed_document(collection_id, title, &rectangularized(text));
+            // **`documents.list` returns nested docs too**, and the whole index
+            // rests on that: a fake that filed children somewhere the listing
+            // could not see would make every child vanish from `entity_index`
+            // while the suite stayed green. They go in the one flat list, each
+            // carrying the parent it hangs off — which is what the real
+            // endpoint returns.
+            let id =
+                self.seed_document_under(collection_id, title, &rectangularized(text), parent_id);
             Ok(self
                 .documents
                 .lock()
@@ -1155,6 +1215,131 @@ mod tests {
     #[tokio::test]
     async fn outline_store_satisfies_the_contract() {
         contract::run_all(&store(FakeOutline::new())).await;
+    }
+
+    /// **A child's page is nested under its parent's page.** The frontmatter
+    /// line is what jojobot reads the tree back from, but a wiki whose pages
+    /// all sit in one flat list is not a wiki anybody can navigate: the point
+    /// of the tree is that detail lives next to what it is about, and in
+    /// Outline "next to" means underneath. So the two agree at creation — the
+    /// line says it and the page is there.
+    ///
+    /// A root is created at the top of the collection, under nothing.
+    #[tokio::test]
+    async fn a_childs_page_is_created_under_its_parents_page() {
+        let fake = FakeOutline::new();
+        let store = store(fake.clone());
+        let parent = EntityId::new(EntityKind::Project, "atlas");
+        let child = EntityId::new(EntityKind::Place, "riverbend");
+
+        ensure(&store, &parent).await;
+        store
+            .add_entity(NewEntity {
+                parent: Some(parent.clone()),
+                ..NewEntity::new(child.clone(), "Riverbend", "test-fixture")
+            })
+            .await
+            .expect("add_entity should succeed")
+            .written()
+            .expect("the guard must not block this child");
+
+        let coll = store
+            .resolve_collection()
+            .await
+            .expect("the collection resolves");
+        let docs = fake.docs_in(&coll);
+        let doc_for = |id: &EntityId| {
+            docs.iter()
+                .find(|d| parse_id_marker(&d.text).as_deref() == Some(id.as_str()))
+                .unwrap_or_else(|| panic!("{id} has a doc"))
+        };
+
+        assert_eq!(
+            doc_for(&parent).parent_id,
+            None,
+            "a root sits at the top of the collection"
+        );
+        assert_eq!(
+            doc_for(&child).parent_id.as_deref(),
+            Some(doc_for(&parent).id.as_str()),
+            "the child's page hangs off the parent's, not off the collection"
+        );
+    }
+
+    /// A transport that files every page at the top of the collection, however
+    /// it was asked to nest it — Outline's own behaviour when the parent it is
+    /// handed is one it will not nest under. Silent: the create succeeds and
+    /// returns a document.
+    struct Flattening(Arc<dyn OutlineApi>);
+
+    #[async_trait]
+    impl OutlineApi for Flattening {
+        async fn list_collections(
+            &self,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<CollectionRec>, MemoryError> {
+            self.0.list_collections(offset, limit).await
+        }
+        async fn create_collection(
+            &self,
+            name: &str,
+            description: &str,
+        ) -> Result<CollectionRec, MemoryError> {
+            self.0.create_collection(name, description).await
+        }
+        async fn list_documents(
+            &self,
+            collection_id: &str,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<DocRec>, MemoryError> {
+            self.0.list_documents(collection_id, offset, limit).await
+        }
+        async fn create_document(
+            &self,
+            collection_id: &str,
+            title: &str,
+            text: &str,
+            _parent_id: Option<&str>,
+        ) -> Result<DocRec, MemoryError> {
+            self.0
+                .create_document(collection_id, title, text, None)
+                .await
+        }
+        async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            self.0.update_document(id, text).await
+        }
+    }
+
+    /// **A page that did not land where it was put is a failed write.** Nesting
+    /// is asserted by the write, so it is verified by the write — the read-back
+    /// rule that covers every other thing jojobot claims to have stored. A
+    /// store that drops the parent silently would otherwise leave a page whose
+    /// `parent:` line and whose position disagree, with the write reporting
+    /// success and nobody ever looking again.
+    #[tokio::test]
+    async fn a_child_that_did_not_land_under_its_parent_is_not_a_successful_write() {
+        let fake = FakeOutline::new();
+        let flat = OutlineStore::from_api(Arc::new(Flattening(fake.clone())), COLL);
+        let parent = EntityId::new(EntityKind::Project, "atlas");
+        ensure(&flat, &parent).await;
+
+        let err = flat
+            .add_entity(NewEntity {
+                parent: Some(parent.clone()),
+                ..NewEntity::new(
+                    EntityId::new(EntityKind::Place, "riverbend"),
+                    "Riverbend",
+                    "test-fixture",
+                )
+            })
+            .await
+            .expect_err("a page that did not nest must not report success");
+        assert!(
+            matches!(&err, MemoryError::Store(m) if m.contains("under")),
+            "the error says what did not happen: {err}"
+        );
     }
 
     /// The fake stores what the real Outline would store: the editor model
@@ -1318,9 +1503,13 @@ mod tests {
             collection_id: &str,
             title: &str,
             text: &str,
+            parent_id: Option<&str>,
         ) -> Result<DocRec, MemoryError> {
             tokio::task::yield_now().await;
-            let out = self.0.create_document(collection_id, title, text).await;
+            let out = self
+                .0
+                .create_document(collection_id, title, text, parent_id)
+                .await;
             tokio::task::yield_now().await;
             out
         }
