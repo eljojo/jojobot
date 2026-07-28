@@ -14,7 +14,7 @@ never runs inference of its own — the assistant is the only mind.
 > facts with provenance (testimony vs inference), a write guard that blocks
 > near-miss creations with candidates, structured edges, aliases, and
 > orienteering retrieval (every hit arrives with its surroundings) — and
-> **Mailboxes** — kanban-backed message boxes with `new → read → processed`
+> **Mailboxes** — message boxes with `new → read → processed`
 > state (read ≠ processed; processed is a terminal archive; no delete verbs —
 > the tool surface is pinned by test), each message optionally carrying a
 > `subject` and an `in_reply_to` link to what it answers, `read_message` taking
@@ -26,12 +26,12 @@ never runs inference of its own — the assistant is the only mind.
 > how to get it. **A queue belongs to whoever drains it**: every box is listed
 > by name, and its per-state counts go to the bot that owns it (or to anyone,
 > when nobody does), so a sender sees that a box exists without being handed
-> somebody else's workload — while an unreadable card is reported to everyone,
-> because that is a fault on the board rather than a queue.
+> somebody else's workload — while a quarantined message is reported to
+> everyone, because that is a fault in storage rather than a queue.
 > **`search` spans both**: one ranked list over entities, facts, prose and
 > messages, mail included by default and in every state (`processed` archives
 > too), each mail hit carrying its box, state, sender and id — and an answer
-> that could not see the board says so rather than reading as "nothing
+> that could not read the mail store says so rather than reading as "nothing
 > matched". On top of both, **bots**: an AI identity is an entity of kind `bot`
 > with a charter, rules, memory and one owned mailbox. **`start_here` is the one
 > door**: it takes an optional bot name, and naming one **starts or resumes that
@@ -40,9 +40,10 @@ never runs inference of its own — the assistant is the only mind.
 > handle behind it. **Sessions** live on a page of their bot's own, one row each:
 > a focus that is current truth, an append-only chronology (the session's own
 > beats plus jojobot's, marked apart), and `active` → `wrapped` | `abandoned` —
-> **`wrapped` is the last word, because wrapping publishes the story to the
-> operator's Journal, while `abandoned → active` is the one legal walk-back, since
-> a run nobody wrapped up published nothing.** A session begins lazily — no row
+> **`wrapped` is the last word, because wrapping folds the still-open focus into
+> the closing story as one last chronology entry, while `abandoned → active` is
+> the one legal walk-back, since a run nobody wrapped up left nothing to fold.**
+> A session begins lazily — no row
 > until the first write — resumes across a disconnect, and is swept to
 > `abandoned` after a day of silence. **The `sid` is the only address**: a short opaque handle the server
 > mints at the door, saying nothing about the work, and it rides every verb —
@@ -59,15 +60,13 @@ roadmap is a ladder of **capabilities** — each release is named "after this,
 I can ___", never after infrastructure.
 
 Shipped so far: memory, search and edges, mailboxes, bots (AI identities with a
-handle, charter, rules, memory and an owned mailbox), and every session on the
-record.
+handle, charter, rules, memory and an owned mailbox), every session on the
+record, and the alignment release that brought the repo in line with a design
+revision to where sessions and mailboxes live and what a wrap does — cleanup
+only, no new capability of its own.
 
-**In progress: an alignment release — cleanup only, no new capability.** A
-design revision moved where sessions and mailboxes live and how a bot's journal
-works, so part of what runs today reflects the previous model. Nothing ships
-until the repo matches the current one. Then: the surface redesign, events as a
-first-class flavour of fact, trace, portraits, attention, sessions booting from
-jojobot, and seeding.
+Next: the surface redesign, events as a first-class flavour of fact, trace,
+portraits, attention, sessions booting from jojobot, and seeding.
 
 Two layers hold it together: the **engine** (this repo — user-agnostic, golden
 tests) and **bots** (data in the user's own store). The design docs live with
@@ -141,7 +140,6 @@ Two consequences worth stating outright, because they surprise people:
 | `mark_processed` | Retiring a message once it has actually been acted on, with a note recording the outcome — including failure. Terminal; an archive, never a deletion. |
 | `list_mailboxes` | Checking what is waiting without taking delivery, so a poll that finds nothing costs nothing. |
 | `list_sent` | Checking whether what it sent arrived, and what became of it, without moving anything. |
-| `create_mailbox` | Bringing a channel into being. The only mint, with its full near-miss screen. |
 
 **Sessions — keeping the run's own record**
 
@@ -178,6 +176,10 @@ Recorded so nobody proposes them again as fresh ideas.
   rare human act, taken outside this server.
 - **No peek at a mailbox.** Reading is delivery; a peek would silently strip the
   guarantee that unfinished work resurfaces.
+- **No `create_mailbox`.** A box is not minted by a call of its own — it opens
+  with the bot that owns it, in the same act that creates the bot, and is named
+  for its handle. An unowned mailbox cannot exist, so there is nothing such a
+  verb would have jurisdiction over.
 - **No second orientation door.** There is one, and only one.
 - **No version marker on the orientation payload.**
 - **No per-identity tool surface.** Every identity sees the same tools. A
@@ -204,7 +206,7 @@ Recorded so nobody proposes them again as fresh ideas.
 ```
 crates/
   jojobot-domain     pure domain — bounded contexts as modules, no I/O, no MCP
-  jojobot-adapters   anti-corruption layer per fronted service (Outline, Vikunja)
+  jojobot-adapters   anti-corruption layer per fronted service (Outline)
   jojobot-mcp        the MCP adapter — the only crate that maps MCP calls to the domain
   jojobot            the binary: HTTP transport + resource-server auth
 ```
@@ -260,8 +262,7 @@ All configuration is environment-driven.
 | `JOJOBOT_JWKS_URI` | Explicit JWKS URI | discovered from issuer |
 | `JOJOBOT_ALLOW_NO_AUTH` | Set to `1` to run **without auth** (dev only) | unset |
 | `JOJOBOT_ALLOWED_SUBJECTS` | Optional comma-separated `sub` allowlist (requires auth) | unset = any valid token |
-| `JOJOBOT_OUTLINE_URL` / `JOJOBOT_OUTLINE_TOKEN` | The Outline instance Memory fronts | unset |
-| `JOJOBOT_VIKUNJA_URL` / `JOJOBOT_VIKUNJA_TOKEN` | The Vikunja instance Mailboxes front | unset |
+| `JOJOBOT_OUTLINE_URL` / `JOJOBOT_OUTLINE_TOKEN` | The Outline instance Memory, Mailboxes and Sessions front | unset |
 
 The server **fails closed**: with `JOJOBOT_ISSUER` unset it refuses to start
 unless `JOJOBOT_ALLOW_NO_AUTH=1` is set explicitly, and even then it refuses a

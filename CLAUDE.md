@@ -94,7 +94,7 @@ Shipped and live:
 > down at boot means mail is silently missing — so every answer carries
 > `mail: {searched}`, because "no message says that" and "jojobot has read no
 > messages" are different claims and a caller acts on both.
-- **M3** — Mailboxes: kanban-backed message boxes (`new → read → processed`;
+- **M3** — Mailboxes: message boxes (`new → read → processed`;
   read ≠ processed; processed is a terminal archive; no delete verbs — the
   tool surface is pinned by test). A message may carry a one-line `subject`
   and an `in_reply_to` link to the message it answers, and **`read_message`
@@ -122,34 +122,35 @@ Shipped and live:
 > storage is still an error rather than a success with mangled bytes.
 - **M4** — Bots: a ninth entity kind, `bot` — an AI identity is handle ·
   charter (its doc's prose, written through `set_charter`) · rules (plain
-  facts, so each carries its own provenance) · memory · one owned mailbox
-  (a `mailbox:` claim on the bot's own record, unique across entities).
+  facts, so each carries its own provenance) · memory · one owned mailbox,
+  opened with the bot in the same act and named for its handle.
   **`start_here` is the one orienting door** — the same verb with or without
   a bot: world-model and snapshot always, plus the identity when a bot is
-  named. It **creates nothing**: a declared box nobody has opened is reported
-  as missing, with `create_mailbox` named; an unknown bot name comes back with
-  the roster plus the offer to boot as a known bot and create the new one from
-  there. Anonymous boot gets orientation and no `sid` — an orientation preview,
-  with nothing usable behind it. Ownership is stated **on the mailbox**, and
-  read from there — the sentence that stood here said mailboxes stay
-  bot-ignorant and that ownership is a read of Memory, and both halves are now
-  false. It is still not an ACL: a box names its one owner, and nothing on the
-  mail rail enforces anything against it.
+  named. The door itself **mints no identity**: an unknown bot name comes back
+  with the roster plus the offer to boot as a known bot and create the new one
+  from there. Anonymous boot gets orientation and no `sid` — an orientation
+  preview, with nothing usable behind it. Ownership is stated **on the
+  mailbox**, an `owner` field set once when the box opens, so there is no
+  second copy anywhere to keep in step with it. It is not an ACL: a box names
+  its one owner, and nothing on the mail rail enforces anything against it.
+  A box a bot should have but does not — a record predating the rule, or a
+  creation interrupted partway — is healed the moment that bot next boots, and
+  the boot says so rather than repairing it silently.
 
-> **Creation is an intentional act.** `create_mailbox` is the only mint on
-> the surface, and the only place the full name screen runs. A claim written
-> by `add_entity`/`update_entity` is screened against the boxes that exist
-> (near miss → blocked with candidates; `create_new` clears similarity, never
-> an ownership collision) — but it never brings a box into being. Any future
-> verb that would create something as a side effect of doing something else
-> is the thing this rule exists to forbid.
+> **Creation is an intentional act.** A box is not minted by a call of its
+> own — it opens with the bot that owns it, inside the same `add_entity` that
+> creates the bot, and the near-miss screen that guards it is the bot handle's,
+> because the box is named for the handle and that is where the collision
+> actually happens. Any future verb that would create something as a side
+> effect of doing something else is the thing this rule exists to forbid.
 
 - **M5** — Sessions: a bot is a **role**, a session is **one mortal run of it**
   — the unit of work, not of connection, so it survives a disconnect or a
   device hop. **A page of its bot's own, one row per session**: the row carries
   **state** (`active` → `wrapped` | `abandoned`; **`wrapped` is the last word,
-  because wrapping PUBLISHES the story to the Journal — `abandoned → active` is
-  the one legal walk-back, since an abandoned run published nothing**) and the
+  because wrapping folds the still-open focus into the closing story as one
+  last chronology entry — `abandoned → active` is the one legal walk-back,
+  since a run nobody wrapped up left nothing to fold**) and the
   **focus as current truth**, rewritten in place; the **chronology is appended
   below it**, one block per entry (append-only, oldest first; only the newest
   entry amendable). The page is jojobot's own machinery, so the boot scan does
@@ -160,14 +161,15 @@ Shipped and live:
   and otherwise hands back the resume-or-new choice and no `sid` — the `sid`
   arriving once the caller picks. Booting sweeps that bot's sessions that have
   gone `ABANDONED_AFTER` (24h) without a beat, **offers** any resumable one
-  back as a choice, and otherwise begins one **lazily: no card until the first
+  back as a choice, and otherwise begins one **lazily: no row until the first
   write**, so a boot that does nothing leaves nothing behind. A session records
   what it is working on, so the offer can tell two of them apart — and a bot
   may have several running at once, because the `sid` is what tells them apart.
   Nothing ever auto-wraps a session: a new one never closes an old one, and
   wrapping is initiated from inside, by the bot that owns it. `journal` records a beat (and moves the focus),
-  `amend_journal` fixes the newest one, `wrap_session` tells the story into
-  the operator's **Journal** document and closes the card.
+  `amend_journal` fixes the newest one, `wrap_session` folds the still-open
+  focus into the story as one final chronology entry and closes the row —
+  publishing nowhere.
   jojobot writes **its own beats** too — one per verb class per session, count
   kept current, marked apart from what the session said about itself.
   Session records deliberately stay **out of the search index**.
@@ -194,14 +196,15 @@ Shipped and live:
 > **nowhere**, because it is a judgement about what is worth recording and no
 > length check can make it.
 
-Ahead, and **not a capability**: the **alignment release**. A redesign settled
-2026-07-27 changed what the code should look like, and some of what runs today
-is the previous mental model still running. The release removes it, in order:
-entities gain a tree · sessions and mailboxes become rows on their bot's child
-pages and Vikunja leaves jojobot entirely · wrap stops publishing and the shared
-journal goes · the repo's own docs stop teaching the old design · the code
-reshuffle (one file per verb) · the last raw error becomes a blocked answer ·
-the trash gets swept. **Nothing new is built until the repo is pristine.**
+Also shipped, and **not a capability**: the **alignment release**. A redesign
+settled 2026-07-27 changed what the code should look like, and parts of what
+ran were the previous mental model still running. The release removed them, in
+order: entities gained a tree · sessions and mailboxes became rows on their
+bot's child pages and Vikunja left jojobot entirely · wrap stopped publishing
+and the shared journal went · the code reshuffle (one file per verb) · the last
+raw error became a blocked answer · the trash got swept. **Nothing new is built
+until the repo is pristine**, and what remains of that is this documentation
+catching up and one review before the deploy.
 
 Then the **surface** — redesigned from the catalogue of domain actions harvested
 from real use, fewer verbs doing more through domain-level parameters; the
