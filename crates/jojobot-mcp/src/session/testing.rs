@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::session::Sid;
+use std::sync::Mutex;
 
 /// A distinct, well-shaped handle for a fixture, from any number a call site
 /// has to hand — usually `line!()`.
@@ -74,6 +75,19 @@ pub(crate) async fn abandoned_run(
         .await
         .expect("close ok");
     store.read_session(&begun.id).await.expect("read ok")
+}
+
+/// A handler over **any** `Sessions` implementation — the doubles that misbehave
+/// on purpose, which are not `InMemorySessions` and cannot go through
+/// [`with_sessions`].
+pub(crate) fn with_sessions_port(sessions: Arc<dyn Sessions>) -> Jojobot {
+    Jojobot::new(
+        Arc::new(InMemoryMemory::new()),
+        Arc::new(SpySearch::default()),
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        sessions,
+        Arc::new(sid::SessionRegistry::new()),
+    )
 }
 
 /// A handler over a session store the test still holds a typed handle to.
@@ -138,6 +152,76 @@ pub(crate) async fn journal_entry(jojobot: &Jojobot, sid: &str, entry: &str) -> 
     let body = json_of(&result);
     assert_ne!(body["status"], "blocked", "the guard blocked: {body}");
     body
+}
+
+/// A session store whose **first `begin` commits and then fails** — the shape
+/// a real store takes when its write lands and its read-back does not.
+///
+/// `put` is a write followed by a read: a dropped response or a transient fault
+/// on the second call returns `Err` with the row already on the page. Nothing
+/// distinguishes that from a write that never happened, so the caller retries
+/// with the handle it still holds. This double is the only way to see it.
+pub(crate) struct CommitsThenFails {
+    pub(crate) inner: Arc<InMemorySessions>,
+    pub(crate) failed_once: Mutex<bool>,
+}
+
+impl CommitsThenFails {
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: Arc::new(InMemorySessions::new()),
+            failed_once: Mutex::new(false),
+        }
+    }
+}
+
+#[async_trait]
+impl Sessions for CommitsThenFails {
+    async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+        // The write lands either way — that is the whole point.
+        let begun = self.inner.begin(new).await?;
+        let mut failed = self.failed_once.lock().expect("lock");
+        if !*failed {
+            *failed = true;
+            return Err(SessionError::Store(
+                "the row committed and the read-back did not".into(),
+            ));
+        }
+        Ok(begun)
+    }
+    async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+        self.inner.sessions_of(bot).await
+    }
+    async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+        self.inner.all_sessions().await
+    }
+    async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.inner.read_session(id).await
+    }
+    async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
+        self.inner.append(id, entry).await
+    }
+    async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+        self.inner.amend_last(id, text).await
+    }
+    async fn amend_beat(
+        &self,
+        id: &SessionId,
+        entry: &EntryId,
+        text: &str,
+        touched: jiff::Timestamp,
+    ) -> Result<JournalEntry, SessionError> {
+        self.inner.amend_beat(id, entry, text, touched).await
+    }
+    async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
+        self.inner.set_focus(id, focus).await
+    }
+    async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
+        self.inner.close(id, to).await
+    }
+    async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.inner.reopen(id).await
+    }
 }
 
 /// A session store whose `close` refuses until it is told not to — the

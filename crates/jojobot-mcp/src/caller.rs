@@ -990,3 +990,66 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod begin_retry {
+    //! **A `begin` that commits and then fails must not fork the run.**
+
+    use super::*;
+    use crate::harness::*;
+    use crate::session::testing::*;
+    use rmcp::handler::server::wrapper::Parameters;
+
+    /// Driven through the real `journal` verb, not through the port: the
+    /// failure the caller actually meets is a write it made, not a store call
+    /// it chose.
+    ///
+    /// A store's `begin` is a write followed by a read-back. When the write
+    /// lands and the read-back does not, `begin` returns `Err` with the row
+    /// committed — and the registry, which learns the card only on success,
+    /// still holds `card: None`. The agent still has its `sid`, so it journals
+    /// again. Nothing on the append path asked whether a run already carried
+    /// that handle, so a second row appeared under it: one sid, two active
+    /// runs, and the id the whole trace hangs from naming two things.
+    #[tokio::test]
+    async fn a_begin_that_commits_and_then_fails_leaves_one_run_under_one_sid() {
+        let store = Arc::new(CommitsThenFails::new());
+        let jojobot = with_sessions_port(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let entry = |text: &str| JournalArgs {
+            entry: text.into(),
+            focus: None,
+            sid: sid.clone(),
+        };
+
+        // The first write commits its row and reports failure.
+        let failed = jojobot.journal(Parameters(entry("the first beat"))).await;
+        assert!(
+            failed.is_err(),
+            "the double reports the read-back failure: {failed:?}"
+        );
+
+        // The agent still holds its sid, so it writes again — the retry.
+        jojobot
+            .journal(Parameters(entry("the same run, carrying on")))
+            .await
+            .expect("the retry lands");
+
+        let live: Vec<_> = store
+            .inner
+            .all_sessions()
+            .await
+            .expect("read ok")
+            .into_iter()
+            .filter(|s| s.sid.as_ref().is_some_and(|h| h.as_str() == sid))
+            .collect();
+        assert_eq!(
+            live.len(),
+            1,
+            "one sid must address one run — found {}: {live:?}",
+            live.len()
+        );
+    }
+}

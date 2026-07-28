@@ -117,6 +117,18 @@ impl Sessions for InMemorySessions {
 
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
         validate_focus(&new.focus)?;
+        // **One handle, one run.** A caller retrying a `begin` whose write
+        // committed before its read-back failed offers the same handle again;
+        // appending unconditionally would fork the run. See the contract case.
+        if let Some(held) = self
+            .sessions
+            .lock()
+            .expect("session lock")
+            .iter()
+            .find(|s| s.sid.as_ref() == Some(&new.sid) && !s.state.is_terminal())
+        {
+            return Ok(held.clone());
+        }
         let session = Session {
             id: SessionId(self.mint()),
             sid: Some(new.sid),
@@ -286,6 +298,54 @@ pub mod contract {
             .append(id, NewEntry::manual(text, at(at_offset)))
             .await
             .expect("append should succeed")
+    }
+
+    /// **A handle appears on at most one run, and `begin` is what has to hold
+    /// that.**
+    ///
+    /// A store commits its write and then reads it back. If the write LANDS and
+    /// the read-back fails — a dropped response, a transient fault on the
+    /// second call — `begin` returns `Err` with the row already committed, and
+    /// the caller still holds the handle it was going to attach. It retries.
+    /// A `begin` that appends unconditionally then puts a second run under one
+    /// handle, and the identity that the whole trace hangs from stops naming
+    /// one thing.
+    ///
+    /// So beginning again under a handle a run already carries hands that run
+    /// back rather than making another. The retry finishes what the first
+    /// attempt started — the same shape `wrap_session` uses for its own retry.
+    pub async fn beginning_twice_under_one_handle_yields_one_run(store: &dyn Sessions) {
+        let first = begin(store, "gamma", "reading the hand-off", 0).await;
+
+        // The same handle, offered again — as a caller retrying a `begin` whose
+        // read-back failed after the write committed would offer it.
+        let again = store
+            .begin(NewSession {
+                bot: bot("gamma"),
+                sid: sid(0),
+                focus: "reading the hand-off".to_string(),
+                started_at: at(0),
+            })
+            .await
+            .expect("beginning again under a live handle is not an error");
+
+        assert_eq!(
+            again.id, first.id,
+            "the run already carrying this handle comes back; a second one is a fork"
+        );
+        let mine: Vec<Session> = store
+            .sessions_of(&bot("gamma"))
+            .await
+            .expect("read ok")
+            .into_iter()
+            .filter(|s| s.sid == Some(sid(0)))
+            .collect();
+        assert_eq!(
+            mine.len(),
+            1,
+            "one handle, one run — found {}: {mine:?}",
+            mine.len()
+        );
     }
 
     /// A begun session is active, carries what it was begun with, and has no
@@ -877,6 +937,7 @@ pub mod contract {
     /// so nothing here depends on the order the others ran in.
     pub async fn run_all<S: Sessions, F: Fn() -> S>(fresh: F) {
         a_begun_session_is_active_and_empty(&fresh()).await;
+        beginning_twice_under_one_handle_yields_one_run(&fresh()).await;
         the_chronology_accrues_oldest_first(&fresh()).await;
         a_beat_is_stored_beside_manual_entries_and_stays_distinguishable(&fresh()).await;
         an_amend_rewrites_the_last_entry_and_nothing_else(&fresh()).await;

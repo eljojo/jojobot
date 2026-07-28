@@ -317,6 +317,27 @@ impl Sessions for OutlineSessions {
             None => self.create_page(&collection_id, &new.bot).await?,
         };
 
+        let mut rows = parse_rows(&doc.text);
+        // **One handle, one run — checked before the append, under the write
+        // lock.** `put` is a write followed by a read-back: if the write LANDS
+        // and the read-back fails (a dropped response, a transient fault on the
+        // second call), `begin` returns `Err` with the row already committed
+        // and the caller still holding the handle it meant to attach. It
+        // retries — and an unconditional append then puts a second run under
+        // one handle, which is the identity the whole trace hangs from naming
+        // two things. Handing the committed run back finishes what the first
+        // attempt started, the same shape `wrap_session`'s retry uses.
+        if let Some(held) = rows
+            .iter()
+            .find(|r| r.sid.as_ref() == Some(&new.sid) && !r.state.is_terminal())
+        {
+            let held = held.id.clone();
+            return Self::assemble(&new.bot, &doc)
+                .into_iter()
+                .find(|s| s.id == held)
+                .ok_or_else(|| store_msg(format!("session {held} did not read back")));
+        }
+
         let row = Row {
             id: next_session_id(&doc.text, &new.bot),
             sid: Some(new.sid),
@@ -324,7 +345,6 @@ impl Sessions for OutlineSessions {
             state: SessionState::Active,
             focus: new.focus.trim().to_string(),
         };
-        let mut rows = parse_rows(&doc.text);
         rows.push(row.clone());
         let updated = with_rows_replaced(&doc.text, &rows)
             .ok_or_else(|| store_msg(format!("the sessions page for {} has no table", new.bot)))?;

@@ -412,11 +412,16 @@ mod tests {
         let jojobot = with_sessions(store.clone());
         make_bot(&jojobot, "gamma").await;
 
-        for focus in ["reading the hand-off", "chasing the flaky test"] {
+        // A distinct handle per run — see the note in the two-handles test: one
+        // `line!()` inside a loop is one handle, and two runs cannot share one.
+        for (nth, focus) in ["reading the hand-off", "chasing the flaky test"]
+            .into_iter()
+            .enumerate()
+        {
             store
                 .begin(NewSession {
                     bot: EntityId("bot:gamma".into()),
-                    sid: fixture_sid(line!()),
+                    sid: fixture_sid(line!() + nth as u32),
                     focus: focus.into(),
                     started_at: jiff::Timestamp::now(),
                 })
@@ -802,11 +807,16 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
 
         let focus = "chasing the flaky test";
-        for _ in 0..2 {
+        // **A distinct handle per run, and the `nth` is why.** `fixture_sid`
+        // was called with `line!()` inside this loop, so both iterations asked
+        // for the SAME handle — and the store let a second run be created under
+        // it, which is the fork batch 2 removed. The test passed for the wrong
+        // reason: it was asserting two handles differ while setting up one.
+        for nth in 0..2 {
             store
                 .begin(NewSession {
                     bot: EntityId("bot:gamma".into()),
-                    sid: fixture_sid(line!()),
+                    sid: fixture_sid(line!() + nth),
                     focus: focus.into(),
                     started_at: jiff::Timestamp::now(),
                 })
