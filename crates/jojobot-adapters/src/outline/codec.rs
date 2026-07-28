@@ -626,6 +626,7 @@ fn parse_schema(doc: &str) -> Option<u32> {
 pub(super) fn parse_entity(doc: &str) -> Option<Entity> {
     let id = EntityId(parse_id_marker(doc)?);
     let kind = id.kind()?;
+    let parent = parse_parent(doc, &id);
     Some(Entity {
         id,
         kind,
@@ -634,12 +635,13 @@ pub(super) fn parse_entity(doc: &str) -> Option<Entity> {
         source: parse_field(doc, "source").unwrap_or_default(),
         crm: parse_field(doc, "crm"),
         mailbox: parse_field(doc, "mailbox"),
-        parent: parse_parent(doc),
+        parent,
         boot: parse_field(doc, "boot").map_or(Boot::default(), |b| Boot::from_token(&b)),
     })
 }
 
-/// The entity this doc's entity sits under, off its `parent:` line.
+/// The entity this doc's entity sits under, off its `parent:` line. `own` is
+/// the doc's own handle, which the line may not name.
 ///
 /// **Read tolerantly, like an edges cell:** a value that isn't a well-formed
 /// handle costs the parentage, never the entity. A doc whose `parent:` line
@@ -647,15 +649,22 @@ pub(super) fn parse_entity(doc: &str) -> Option<Entity> {
 /// facts; reading it as a root is the cheap, safe side, and the line is
 /// rewritten in the current spelling on the doc's next touch.
 ///
+/// **Nothing is below itself, and the reader enforces that too.** The write
+/// path already refuses it, but these are wiki pages a human edits, and the
+/// reader is the other door into the store — a `parent:` line naming the page's
+/// own handle is one keystroke from a legitimate one. Read as written it would
+/// make the entity its own child, and a level that descends into itself is not
+/// something a caller should have to defend against.
+///
 /// **This line is the truth, not the page's position in Outline.** The store
 /// also nests the page under its parent's, because that is what makes the wiki
 /// navigable to a human — but the two can drift the moment somebody drags a
 /// page in the browser, and jojobot's own schema is what jojobot reads. A moved
 /// page is a page in a different spot; a rewritten `parent:` line is a
 /// different parent.
-fn parse_parent(doc: &str) -> Option<EntityId> {
+fn parse_parent(doc: &str, own: &EntityId) -> Option<EntityId> {
     let parent = EntityId(parse_field(doc, "parent")?);
-    validate_subject(&parent).ok().map(|()| parent)
+    (&parent != own && validate_subject(&parent).is_ok()).then_some(parent)
 }
 
 /// The other names an entity answers to, off its `aliases:` line — one
@@ -1529,6 +1538,24 @@ mod tests {
             touched.contains("parent: org:guild"),
             "gained on touch: {touched}"
         );
+    }
+
+    /// **A page cannot hand-edit itself into being its own parent.** The write
+    /// path refuses it, and the reader is the other door into the store: these
+    /// are wiki pages a human edits, and a `parent:` line pointing at the
+    /// page's own handle is one keystroke away from a legitimate one. Read as
+    /// written it would make the entity its own child, so `children` would hand
+    /// a caller a level that descends into itself.
+    #[test]
+    fn a_page_naming_itself_as_its_parent_reads_as_a_root() {
+        let doc = "```yaml\nid: place:leftorium\nkind: place\nname: Leftorium\n\
+                   source: user-named\nparent: place:leftorium\nboot: on-demand\n```\n";
+        let read = parse_entity(doc).expect("the doc is still an entity");
+        assert_eq!(
+            read.parent, None,
+            "nothing is below itself, whoever typed the line"
+        );
+        assert_eq!(read.name, "Leftorium", "…with everything else intact");
     }
 
     /// **A mangled `parent:` costs the parentage, never the entity** — the same

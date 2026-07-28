@@ -885,6 +885,39 @@ pub mod contract {
         );
     }
 
+    /// **A malformed parent is malformed, not merely unresolvable.** The two
+    /// refusals have different shapes and a caller branches on them
+    /// differently: a handle that is not a handle comes back an error, and one
+    /// that is a handle but resolves to nothing comes back blocked with
+    /// candidates. Collapsing the first into the second would answer "I don't
+    /// know that one" to a caller whose real problem is that it never wrote a
+    /// handle at all.
+    pub async fn a_parent_that_is_not_a_handle_is_refused_before_the_guard<M: Memory>(store: &M) {
+        let child = EntityId::new(EntityKind::Project, "contract-bad-parent");
+        for bad in ["Some Project", "person:", "notakind:atlas", "person:Alpha"] {
+            let err = store
+                .add_entity(NewEntity {
+                    parent: Some(EntityId(bad.into())),
+                    ..NewEntity::new(child.clone(), "Contract Bad Parent", "contract-fixture")
+                })
+                .await
+                .expect_err("a parent that is not a handle is malformed, not a candidate search");
+            assert!(
+                matches!(err, MemoryError::InvalidSubject(_)),
+                "{bad:?} must be refused as a malformed id, got {err:?}"
+            );
+        }
+        assert!(
+            !store
+                .list_entities(None)
+                .await
+                .expect("list_entities should succeed")
+                .iter()
+                .any(|e| e.id == child),
+            "a refused write creates nothing"
+        );
+    }
+
     /// **A miss is a miss, not a leaf.** Asking for the children of something
     /// that does not exist is an error carrying candidates — never an empty
     /// list, which a caller would read as "this thing has nothing under it".
@@ -3015,6 +3048,7 @@ pub mod contract {
         a_child_names_its_parent_and_reads_back(store).await;
         children_are_handles_and_one_level_deep(store).await;
         a_write_that_rewrites_a_child_leaves_it_where_it_was(store).await;
+        a_parent_that_is_not_a_handle_is_refused_before_the_guard(store).await;
         children_of_an_unknown_entity_is_a_miss(store).await;
         an_unnamed_parent_is_refused_and_provisions_nothing(store).await;
         nothing_may_be_its_own_parent(store).await;
