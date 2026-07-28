@@ -37,8 +37,8 @@ use jojobot_domain::memory::{
     validate_edge,
 };
 use jojobot_domain::session::{
-    EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionState,
-    Sessions,
+    Board, EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId,
+    SessionState, Sessions, sweep_and_find,
 };
 use jojobot_domain::text::{self, FRESH_FOCUS};
 use rmcp::{
@@ -576,23 +576,6 @@ struct Caller {
     card: Option<SessionId>,
 }
 
-/// **What a boot found on the board**, after the sweep has run.
-///
-/// Named rather than a tuple because it grew a third thing the day an
-/// `abandoned` run became something a boot could offer back, and a
-/// `(Vec, Option, Vec)` at five call sites is a shape nobody can read.
-struct Board {
-    /// Every run still going, newest first. A bot may have several at once.
-    live: Vec<Session>,
-    /// **At most one** run that stopped without being wrapped up, recently
-    /// enough to be worth bringing up — see
-    /// [`OFFER_ABANDONED_WITHIN`](jojobot_domain::session::OFFER_ABANDONED_WITHIN).
-    /// One is a memory jog; a list of them is a history nobody asked for.
-    offerable: Option<Session>,
-    /// The ids this boot's sweep closed.
-    swept: Vec<String>,
-}
-
 /// A running tally of one verb class, as one chronology entry.
 #[derive(Debug, Clone)]
 struct Beat {
@@ -1080,11 +1063,16 @@ impl Jojobot {
         // the mutex is not reentrant.
         let gate = self.registry.gate(bot.as_str());
         let _serialized = gate.lock().await;
+        // The clock is read HERE and handed down: the sweep is domain policy
+        // and the domain is clock-free, so the instant it decides against is
+        // stamped at the edge exactly as a capture's date is.
+        let swept_at = jiff::Timestamp::now();
         let Board {
             live,
             offerable,
             swept,
-        } = match self.sweep_and_find(bot).await {
+            unswept,
+        } = match sweep_and_find(self.sessions.as_ref(), bot, swept_at).await {
             Ok(found) => found,
             Err(e) => {
                 tracing::warn!(error = %e, bot = %bot, "the session world is not reachable");
@@ -1101,6 +1089,16 @@ impl Jojobot {
                 }));
             }
         };
+        // **The domain named them; the log is this layer's.** A stale session
+        // the store refused to close is left active for the next boot, and the
+        // boot itself carries on — but it must not go quiet, because nothing
+        // else on the surface will ever mention it.
+        for (session, e) in &unswept {
+            tracing::warn!(
+                error = %e, %session,
+                "a stale session could not be swept — left active for the next boot"
+            );
+        }
 
         let mut block = match resume {
             // ── the caller answered the offer ───────────────────────────────
@@ -1439,69 +1437,6 @@ impl Jojobot {
                 ))
             }
         }
-    }
-
-    /// Sweep this bot's stale sessions and hand back what is live —
-    /// **the half of attaching that reads and writes the store.**
-    ///
-    /// **One caller: the boot.** This doc used to claim two — the boot, and a
-    /// first write retrying an attach the boot could not make — and to explain
-    /// how the two differed in what they did with the result. There is no such
-    /// write path anywhere in the crate, and no test for one; the phrase
-    /// survived only here. Whether it was removed or never built, describing a
-    /// caller that does not exist sent every reader looking for it.
-    ///
-    /// Binding is the caller's job: this returns what it found.
-    ///
-    /// **Every live session, not the newest one.** A bot may have several runs
-    /// at once — two devices, two pieces of work — so the boot's offer needs
-    /// them all.
-    async fn sweep_and_find(&self, bot: &EntityId) -> Result<Board, SessionError> {
-        let now = jiff::Timestamp::now();
-        let existing = self.sessions.sessions_of(bot).await?;
-
-        let mut swept = Vec::new();
-        for stale in existing.iter().filter(|s| s.is_stale(now)) {
-            match self
-                .sessions
-                .close(&stale.id, SessionState::Abandoned)
-                .await
-            {
-                Ok(_) => swept.push(stale.id.to_string()),
-                // A sweep that cannot close one session must not stop a boot:
-                // the session is left active and the next boot tries again.
-                Err(e) => tracing::warn!(
-                    error = %e, session = %stale.id,
-                    "a stale session could not be swept — left active for the next boot"
-                ),
-            }
-        }
-
-        // Newest first already, so the first live one is the newest.
-        let live: Vec<Session> = existing
-            .iter()
-            .filter(|s| !s.state.is_terminal() && !s.is_stale(now))
-            .cloned()
-            .collect();
-        // **Read AFTER the sweep, and through it.** The run this boot just
-        // marked `abandoned` is the archetypal "resume last session" — it is
-        // the one that stopped yesterday — so it has to be a candidate here,
-        // and the list jojobot is holding still says `active` for it.
-        let offerable = existing
-            .into_iter()
-            .map(|s| match swept.contains(&s.id.to_string()) {
-                true => Session {
-                    state: SessionState::Abandoned,
-                    ..s
-                },
-                false => s,
-            })
-            .find(|s| s.is_offerable(now));
-        Ok(Board {
-            live,
-            offerable,
-            swept,
-        })
     }
 
     /// **The session this call writes to, resolved from the handle it carries.**

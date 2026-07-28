@@ -638,6 +638,83 @@ pub trait Sessions: Send + Sync {
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError>;
 }
 
+/// **What a boot found on this bot's board**, after the sweep has run.
+///
+/// Named rather than a tuple because it grew a third thing the day an
+/// `abandoned` run became something a boot could offer back, and a
+/// `(Vec, Option, Vec)` at five call sites is a shape nobody can read.
+#[derive(Debug, Default)]
+pub struct Board {
+    /// Every run still working — **all of them, not the newest.** A bot may
+    /// have several at once (two devices, two pieces of work), so the offer
+    /// needs them all.
+    pub live: Vec<Session>,
+    /// The one stopped run worth bringing up, if there is one.
+    pub offerable: Option<Session>,
+    /// The ids this sweep closed.
+    pub swept: Vec<String>,
+    /// The stale runs the store **refused to close**, with why.
+    ///
+    /// Reported rather than logged, because the domain does not log: it says
+    /// what happened and the caller — which owns the log — decides what that is
+    /// worth saying. Each of these is left `active` for the next boot to try
+    /// again; a sweep that cannot close one session must not stop a boot.
+    pub unswept: Vec<(SessionId, SessionError)>,
+}
+
+/// Sweep this bot's stale sessions and hand back what is on its board.
+///
+/// **One caller: the boot.** Binding is the caller's job — this reads and
+/// writes the store, and returns what it found.
+///
+/// **`now` is an argument, not a reading.** The domain is clock-free: a date is
+/// stamped at the edge (`capture`), and so is an instant. That keeps the whole
+/// board decision — what to close, what is live, what to offer — a function of
+/// its arguments, and decidable at a chosen instant with no handler in the way.
+pub async fn sweep_and_find(
+    sessions: &dyn Sessions,
+    bot: &EntityId,
+    now: Timestamp,
+) -> Result<Board, SessionError> {
+    let existing = sessions.sessions_of(bot).await?;
+
+    let mut swept = Vec::new();
+    let mut unswept = Vec::new();
+    for stale in existing.iter().filter(|s| s.is_stale(now)) {
+        match sessions.close(&stale.id, SessionState::Abandoned).await {
+            Ok(_) => swept.push(stale.id.to_string()),
+            Err(e) => unswept.push((stale.id.clone(), e)),
+        }
+    }
+
+    // Newest first already, so the first live one is the newest.
+    let live: Vec<Session> = existing
+        .iter()
+        .filter(|s| !s.state.is_terminal() && !s.is_stale(now))
+        .cloned()
+        .collect();
+    // **Read AFTER the sweep, and through it.** The run this boot just marked
+    // `abandoned` is the archetypal "resume last session" — it is the one that
+    // stopped yesterday — so it has to be a candidate here, and the list read
+    // above still says `active` for it.
+    let offerable = existing
+        .into_iter()
+        .map(|s| match swept.contains(&s.id.to_string()) {
+            true => Session {
+                state: SessionState::Abandoned,
+                ..s
+            },
+            false => s,
+        })
+        .find(|s| s.is_offerable(now));
+    Ok(Board {
+        live,
+        offerable,
+        swept,
+        unswept,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::testing::{InMemorySessions, contract};
@@ -648,6 +725,161 @@ mod tests {
     #[tokio::test]
     async fn the_fake_satisfies_the_contract() {
         contract::run_all(InMemorySessions::new).await;
+    }
+
+    /// **The sweep reads a clock it is handed, so its answer is a function of
+    /// its arguments.** This is what the descent bought: the boot's whole
+    /// board decision — what to close, what is live, what to offer — is now
+    /// decidable at a chosen instant, with no handler and no wall clock.
+    /// A run of `bot:gamma` that last had something to show for itself
+    /// `hours_ago` before [`contract::epoch`].
+    async fn run(store: &dyn Sessions, nth: u8, focus: &str, hours_ago: i64) -> Session {
+        store
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid(format!("s{nth:03}")),
+                focus: focus.to_string(),
+                started_at: contract::epoch() - jiff::SignedDuration::from_hours(hours_ago),
+            })
+            .await
+            .expect("begin should succeed")
+    }
+
+    #[tokio::test]
+    async fn the_board_is_swept_and_read_at_the_instant_it_is_handed() {
+        let store = InMemorySessions::new();
+        let gamma = EntityId("bot:gamma".into());
+        let at = contract::epoch();
+
+        // Three runs of one bot, at three ages: a day and a half, an hour, and
+        // a fortnight. Only the middle one is still working.
+        let old = run(&store, 1, "the day before yesterday", 36).await;
+        let warm = run(&store, 2, "an hour ago", 1).await;
+        let ancient = run(&store, 3, "a fortnight ago", 24 * 15).await;
+
+        let board = sweep_and_find(&store, &gamma, at).await.expect("a board");
+
+        assert_eq!(
+            board.swept,
+            vec![old.id.to_string(), ancient.id.to_string()],
+            "both runs past ABANDONED_AFTER are closed, newest first"
+        );
+        assert_eq!(
+            board
+                .live
+                .iter()
+                .map(|s| s.id.to_string())
+                .collect::<Vec<_>>(),
+            vec![warm.id.to_string()],
+            "only the run that is still working stays live"
+        );
+        assert_eq!(
+            board.offerable.as_ref().map(|s| s.id.to_string()),
+            Some(old.id.to_string()),
+            "the run this very sweep closed is the one worth offering back — the \
+             fortnight-old one is past OFFER_ABANDONED_WITHIN"
+        );
+        assert_eq!(
+            board.offerable.as_ref().map(|s| s.state),
+            Some(SessionState::Abandoned),
+            "…and it is offered as what the sweep just made it, not as the \
+             `active` the pre-sweep read still says"
+        );
+        assert!(board.unswept.is_empty(), "nothing refused to close");
+
+        // The clock is the argument, not the wall: ask the same store at an
+        // earlier instant and nothing is stale yet.
+        let earlier = sweep_and_find(&store, &gamma, at - ABANDONED_AFTER)
+            .await
+            .expect("a board");
+        assert!(
+            earlier.swept.is_empty(),
+            "nothing is stale before it happens"
+        );
+    }
+
+    /// A session the store refuses to close does not stop a boot: it is left
+    /// active for the next one and reported, so the caller — which owns the log
+    /// — can say so. The domain names what happened; it does not log.
+    #[tokio::test]
+    async fn a_session_that_will_not_close_is_reported_and_left_active() {
+        struct RefusesToClose(InMemorySessions);
+
+        #[async_trait::async_trait]
+        impl Sessions for RefusesToClose {
+            async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+                self.0.sessions_of(bot).await
+            }
+            async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+                self.0.all_sessions().await
+            }
+            async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+                self.0.read_session(id).await
+            }
+            async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+                self.0.begin(new).await
+            }
+            async fn append(
+                &self,
+                id: &SessionId,
+                entry: NewEntry,
+            ) -> Result<JournalEntry, SessionError> {
+                self.0.append(id, entry).await
+            }
+            async fn amend_last(
+                &self,
+                id: &SessionId,
+                text: &str,
+            ) -> Result<JournalEntry, SessionError> {
+                self.0.amend_last(id, text).await
+            }
+            async fn amend_beat(
+                &self,
+                id: &SessionId,
+                entry: &EntryId,
+                text: &str,
+                touched: Timestamp,
+            ) -> Result<JournalEntry, SessionError> {
+                self.0.amend_beat(id, entry, text, touched).await
+            }
+            async fn set_focus(
+                &self,
+                id: &SessionId,
+                focus: &str,
+            ) -> Result<Session, SessionError> {
+                self.0.set_focus(id, focus).await
+            }
+            async fn close(&self, _: &SessionId, _: SessionState) -> Result<Session, SessionError> {
+                Err(SessionError::Store("the board said no".into()))
+            }
+            async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+                self.0.reopen(id).await
+            }
+        }
+
+        let store = RefusesToClose(InMemorySessions::new());
+        let gamma = EntityId("bot:gamma".into());
+        let stale = run(&store.0, 1, "yesterday's work", 36).await;
+
+        let board = sweep_and_find(&store, &gamma, contract::epoch())
+            .await
+            .expect("a refused close is not a failed boot");
+
+        assert!(board.swept.is_empty(), "nothing was actually closed");
+        assert_eq!(
+            board
+                .unswept
+                .iter()
+                .map(|(id, _)| id.to_string())
+                .collect::<Vec<_>>(),
+            vec![stale.id.to_string()],
+            "and the boot is told which one, rather than the sweep going quiet"
+        );
+        assert_eq!(
+            store.0.read_session(&stale.id).await.expect("read").state,
+            SessionState::Active,
+            "left active for the next boot to try again"
+        );
     }
 
     #[test]
