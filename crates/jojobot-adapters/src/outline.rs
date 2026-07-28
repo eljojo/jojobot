@@ -18,6 +18,10 @@
 
 mod api;
 mod codec;
+mod session_codec;
+mod sessions;
+
+pub use sessions::OutlineSessions;
 
 use std::fmt;
 use std::sync::Arc;
@@ -90,11 +94,16 @@ pub struct OutlineConfig {
 
 // --- the store --------------------------------------------------------------
 
-/// The real Memory adapter, fronting an Outline collection it manages by name.
-/// Stateless about CONTENT: it holds an API client and the collection *name*,
-/// never an id or a fact.
-#[derive(Clone)]
-pub struct OutlineStore {
+/// **The connection, the collection, and the one write lock** — everything a
+/// store needs to reach jojobot's Outline collection, and the thing that makes
+/// two stores over it one writer rather than two.
+///
+/// Memory and Sessions write different documents in the same collection. Two
+/// separate mutexes would therefore exclude nobody, and "keyed on the resource"
+/// would be a claim with nothing behind it. Sharing this by construction — a
+/// sessions store is built *from* a memory store — is what makes it true
+/// instead of remembered.
+pub(crate) struct Workspace {
     api: Arc<dyn OutlineApi>,
     collection: String,
     /// **Every write here is a read-modify-write over a whole document**, and
@@ -109,57 +118,27 @@ pub struct OutlineStore {
     /// conflating the two is how a lock ends up excluding everybody except the
     /// pair it was built for.
     ///
-    /// **One store-wide mutex, not a per-document map.** Write traffic here is
-    /// low and a keyed map is an optimization with its own way to be wrong —
+    /// **One workspace-wide mutex, not a per-document map.** Write traffic here
+    /// is low and a keyed map is an optimization with its own way to be wrong —
     /// every caller has to derive the same key, and a document is reached by
     /// title, by marker and by id. Narrow it when the simple one is shown to
     /// hurt.
-    ///
-    /// Shared across clones, so a cloned handle is the same writer rather than
-    /// a second one. Mirrors the lock the Vikunja adapter already holds.
     ///
     /// **What it does not cover:** writers this process cannot see — a person
     /// editing in the browser, a second instance across a deploy overlap. That
     /// is a document-revision check, a different protection, and it does not
     /// substitute for this one in either direction.
-    lock: Arc<tokio::sync::Mutex<()>>,
+    lock: tokio::sync::Mutex<()>,
 }
 
-impl OutlineStore {
-    /// The collection jojobot manages by default. A software constant — jojobot
-    /// creates and owns this collection; it never touches the user's own.
-    pub const DEFAULT_COLLECTION: &'static str = "jojobot";
-
-    /// A store pointed at Outline via credentials, managing the default
-    /// `jojobot` collection.
-    pub fn new(http: reqwest::Client, config: OutlineConfig) -> Self {
-        Self::with_collection(http, config, Self::DEFAULT_COLLECTION)
+impl Workspace {
+    fn api(&self) -> &dyn OutlineApi {
+        self.api.as_ref()
     }
 
-    /// A store managing a named collection (e.g. `jojobot-test` for the gated
-    /// integration test). jojobot only ever creates/manages its own collections.
-    pub fn with_collection(
-        http: reqwest::Client,
-        config: OutlineConfig,
-        collection: impl Into<String>,
-    ) -> Self {
-        let api = Arc::new(HttpOutline::new(http, config.base_url, config.token));
-        Self::from_api(api, collection)
-    }
-
-    /// A store with no credentials yet — every verb returns
-    /// [`MemoryError::NotConfigured`]. Lets the server boot (and keep serving
-    /// `ping`) before Outline is wired, without shipping a toy store.
-    pub fn unconfigured() -> Self {
-        Self::from_api(Arc::new(Unconfigured), Self::DEFAULT_COLLECTION)
-    }
-
-    fn from_api(api: Arc<dyn OutlineApi>, collection: impl Into<String>) -> Self {
-        Self {
-            api,
-            collection: collection.into(),
-            lock: Arc::new(tokio::sync::Mutex::new(())),
-        }
+    /// Take the write lock. Held for the whole of a read-modify-write.
+    async fn write(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.lock.lock().await
     }
 
     /// The description jojobot stamps on a collection it creates.
@@ -225,6 +204,73 @@ impl OutlineStore {
             offset += PAGE;
         }
         Ok(docs)
+    }
+}
+
+/// The real Memory adapter, fronting an Outline collection it manages by name.
+/// Stateless about CONTENT: it holds an API client and the collection *name*,
+/// never an id or a fact.
+#[derive(Clone)]
+pub struct OutlineStore {
+    ws: Arc<Workspace>,
+}
+
+impl OutlineStore {
+    /// The collection jojobot manages by default. A software constant — jojobot
+    /// creates and owns this collection; it never touches the user's own.
+    pub const DEFAULT_COLLECTION: &'static str = "jojobot";
+
+    /// A store pointed at Outline via credentials, managing the default
+    /// `jojobot` collection.
+    pub fn new(http: reqwest::Client, config: OutlineConfig) -> Self {
+        Self::with_collection(http, config, Self::DEFAULT_COLLECTION)
+    }
+
+    /// A store managing a named collection (e.g. `jojobot-test` for the gated
+    /// integration test). jojobot only ever creates/manages its own collections.
+    pub fn with_collection(
+        http: reqwest::Client,
+        config: OutlineConfig,
+        collection: impl Into<String>,
+    ) -> Self {
+        let api = Arc::new(HttpOutline::new(http, config.base_url, config.token));
+        Self::from_api(api, collection)
+    }
+
+    /// A store with no credentials yet — every verb returns
+    /// [`MemoryError::NotConfigured`]. Lets the server boot (and keep serving
+    /// `ping`) before Outline is wired, without shipping a toy store.
+    pub fn unconfigured() -> Self {
+        Self::from_api(Arc::new(Unconfigured), Self::DEFAULT_COLLECTION)
+    }
+
+    fn from_api(api: Arc<dyn OutlineApi>, collection: impl Into<String>) -> Self {
+        Self {
+            ws: Arc::new(Workspace {
+                api,
+                collection: collection.into(),
+                lock: tokio::sync::Mutex::new(()),
+            }),
+        }
+    }
+
+    /// **A Sessions store over the same collection, and the same write lock.**
+    ///
+    /// Built from this store rather than beside it, because the two write
+    /// different documents in one collection: separate locks would serialize
+    /// nothing, and "two writes to the same document are linearized" would be a
+    /// claim with no mechanism under it. Sharing the workspace makes it
+    /// structural instead of remembered.
+    pub fn sessions(&self) -> OutlineSessions {
+        OutlineSessions::new(Arc::clone(&self.ws))
+    }
+
+    async fn resolve_collection(&self) -> Result<String, MemoryError> {
+        self.ws.resolve_collection().await
+    }
+
+    async fn all_docs(&self, collection_id: &str) -> Result<Vec<DocRec>, MemoryError> {
+        self.ws.all_docs(collection_id).await
     }
 
     /// Every doc whose embedded `id:` marker is `subject`. Resolution keys on
@@ -313,7 +359,8 @@ impl OutlineStore {
                     .id,
             ),
         };
-        self.api
+        self.ws
+            .api()
             .create_document(collection_id, &title, &seeded_doc(entity), under.as_deref())
             .await?;
         let doc = self
@@ -368,7 +415,7 @@ impl OutlineStore {
     /// Best-effort: the returned clause lands in the error so the caller knows
     /// which state the page is actually in.
     async fn restore(&self, doc: &DocRec, verb: &str) -> String {
-        match self.api.update_document(&doc.id, &doc.text).await {
+        match self.ws.api().update_document(&doc.id, &doc.text).await {
             Ok(()) => format!("the page was restored to its state before this {verb}"),
             Err(e) => {
                 format!("AND restoring the page failed ({e}) — a half-written row may remain")
@@ -406,7 +453,7 @@ impl Memory for OutlineStore {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         // Serialized against every other write to this collection's
         // documents — see [`OutlineStore::lock`].
-        let _writing = self.lock.lock().await;
+        let _writing = self.ws.write().await;
         validate_entity(
             &new.id,
             &new.name,
@@ -493,7 +540,7 @@ impl Memory for OutlineStore {
     ) -> Result<Guarded<Entity>, MemoryError> {
         // Serialized against every other write to this collection's
         // documents — see [`OutlineStore::lock`].
-        let _writing = self.lock.lock().await;
+        let _writing = self.ws.write().await;
         validate_subject(handle)?;
         let collection_id = self.resolve_collection().await?;
         let index = self.entity_index(&collection_id).await?;
@@ -531,7 +578,7 @@ impl Memory for OutlineStore {
         apply_entity_patch(&mut entity, &patch)?;
 
         let updated = with_frontmatter_replaced(&doc.text, &entity);
-        self.api.update_document(&doc.id, &updated).await?;
+        self.ws.api().update_document(&doc.id, &updated).await?;
 
         let seen = self.read_entity(&collection_id, handle).await?;
         if seen != entity {
@@ -546,7 +593,7 @@ impl Memory for OutlineStore {
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         // Serialized against every other write to this collection's
         // documents — see [`OutlineStore::lock`].
-        let _writing = self.lock.lock().await;
+        let _writing = self.ws.write().await;
         validate_subject(&fact.subject)?;
         validate_content(&fact.content)?;
         validate_details(fact.details.as_deref())?;
@@ -615,7 +662,7 @@ impl Memory for OutlineStore {
             edge: fact.edge,
         };
         let updated = with_fact_appended(&doc.text, &render_fact_row(&stored));
-        self.api.update_document(&doc.id, &updated).await?;
+        self.ws.api().update_document(&doc.id, &updated).await?;
 
         // Read-back: a capture succeeds only if the read path returns the fact,
         // byte-identical. Writing is not recording.
@@ -661,7 +708,7 @@ impl Memory for OutlineStore {
     ) -> Result<Guarded<Fact>, MemoryError> {
         // Serialized against every other write to this collection's
         // documents — see [`OutlineStore::lock`].
-        let _writing = self.lock.lock().await;
+        let _writing = self.ws.write().await;
         validate_subject(&address.home)?;
         let collection_id = self.resolve_collection().await?;
 
@@ -710,7 +757,7 @@ impl Memory for OutlineStore {
             &render_fact_row(&fact),
         )
         .ok_or_else(|| unknown(facts.iter().map(|f| f.address().to_string()).collect()))?;
-        self.api.update_document(&doc.id, &updated).await?;
+        self.ws.api().update_document(&doc.id, &updated).await?;
 
         let seen = self.read_back_fact(address).await?;
         if seen != fact {
@@ -725,7 +772,7 @@ impl Memory for OutlineStore {
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
         // Serialized against every other write to this collection's
         // documents — see [`OutlineStore::lock`].
-        let _writing = self.lock.lock().await;
+        let _writing = self.ws.write().await;
         validate_subject(entity)?;
         validate_prose(prose)?;
         let collection_id = self.resolve_collection().await?;
@@ -750,7 +797,7 @@ impl Memory for OutlineStore {
                  it right and the prose can then be set"
             ))
         })?;
-        self.api.update_document(&doc.id, &updated).await?;
+        self.ws.api().update_document(&doc.id, &updated).await?;
 
         // Read-back: the prose is only written once the read path returns it,
         // byte-identical — the same invariant a fact write carries.
@@ -775,7 +822,7 @@ impl Memory for OutlineStore {
     ) -> Result<String, MemoryError> {
         // Serialized against every other write to this collection's
         // documents — see [`OutlineStore::lock`].
-        let _writing = self.lock.lock().await;
+        let _writing = self.ws.write().await;
         validate_prose(entry)?;
         let collection_id = self.resolve_collection().await?;
 
@@ -795,7 +842,8 @@ impl Memory for OutlineStore {
         let doc = match existing {
             Some(doc) => doc,
             None => {
-                self.api
+                self.ws
+                    .api()
                     .create_document(&collection_id, JOURNAL_TITLE, "", None)
                     .await?;
                 pick_oldest(
@@ -821,7 +869,7 @@ impl Memory for OutlineStore {
         } else {
             format!("{}\n\n{stored}", doc.text.trim_end())
         };
-        self.api.update_document(&doc.id, &appended).await?;
+        self.ws.api().update_document(&doc.id, &appended).await?;
 
         // Read-back: written only once the read path shows it, and the entries
         // that were already there are still there.
@@ -1149,6 +1197,27 @@ mod tests {
                 .unwrap())
         }
 
+        /// **Append the way Outline appends, which is not the way a caller
+        /// hopes.** Observed against the live API rather than assumed: the
+        /// appended text lands as its own BLOCK, joined to what was there with
+        /// a blank line, and both sides are trimmed on the way through —
+        /// `"LINE ONE\n"` + `"LINE TWO\n"` came back `"LINE ONE\n\nLINE TWO"`,
+        /// and a leading newline changed nothing. The document is re-serialized
+        /// too, so a table already on the page comes back padded.
+        ///
+        /// A polite fake that concatenated the bytes would let an adapter ship
+        /// believing it could append a table row.
+        async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            let mut docs = self.documents.lock().unwrap();
+            let d = docs
+                .iter_mut()
+                .find(|(_, d)| d.id == id)
+                .ok_or_else(|| MemoryError::Store(format!("append_document: no doc {id}")))?;
+            let joined = format!("{}\n\n{}", d.1.text.trim_end(), text.trim());
+            d.1.text = rectangularized(&joined);
+            Ok(())
+        }
+
         async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
             let text = if self.poison.swap(false, Ordering::SeqCst) {
                 with_last_cell_dropped(text)
@@ -1319,6 +1388,12 @@ mod tests {
                 .create_document(collection_id, title, text, None)
                 .await
         }
+        async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            tokio::task::yield_now().await;
+            let out = self.0.append_document(id, text).await;
+            tokio::task::yield_now().await;
+            out
+        }
         async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
             self.0.update_document(id, text).await
         }
@@ -1431,6 +1506,18 @@ mod tests {
             "a short row is padded to the header's width: {:?}",
             lines[3]
         );
+    }
+
+    /// **The Sessions contract, unchanged, over Outline.** The same spec the
+    /// fake satisfies and the Vikunja adapter satisfied — that it passes here
+    /// with no edit to it is the whole proof that this was a storage move and
+    /// not a redesign.
+    #[tokio::test]
+    async fn the_outline_sessions_store_satisfies_the_contract() {
+        jojobot_domain::session::testing::contract::run_all(|| {
+            store(FakeOutline::new()).sessions()
+        })
+        .await;
     }
 
     /// …and the same contract **including retrieval**, with the search projection
@@ -1564,6 +1651,9 @@ mod tests {
                 .await;
             tokio::task::yield_now().await;
             out
+        }
+        async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            self.0.append_document(id, text).await
         }
         async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
             tokio::task::yield_now().await;

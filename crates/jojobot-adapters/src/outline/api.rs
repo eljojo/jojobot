@@ -76,6 +76,18 @@ pub(super) trait OutlineApi: Send + Sync {
         parent_id: Option<&str>,
     ) -> Result<DocRec, MemoryError>;
     async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError>;
+
+    /// **Append to a document without rewriting it.** Outline's own append, not
+    /// a read-modify-write dressed as one — verified against the live API
+    /// before anything was built on it.
+    ///
+    /// Two observed behaviours every caller has to design around, because they
+    /// are the store's and not this port's to fix: the appended text lands as a
+    /// **new block**, separated by a blank line and never joined to the one
+    /// above, so an append cannot extend a table or a paragraph; and the
+    /// document is re-serialized by the editor model on the way through, so a
+    /// markdown table already on the page comes back padded.
+    async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError>;
 }
 
 fn collection_rec(c: &Value) -> Option<CollectionRec> {
@@ -223,6 +235,15 @@ impl OutlineApi for HttpOutline {
             .await
             .map(|_| ())
     }
+
+    async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+        self.post(
+            "documents.update",
+            json!({ "id": id, "text": text, "append": true }),
+        )
+        .await
+        .map(|_| ())
+    }
 }
 
 /// An adapter with no credentials — every call refuses. Lets the server boot and
@@ -258,6 +279,9 @@ impl OutlineApi for Unconfigured {
         Self::refuse()
     }
     async fn update_document(&self, _: &str, _: &str) -> Result<(), MemoryError> {
+        Self::refuse()
+    }
+    async fn append_document(&self, _: &str, _: &str) -> Result<(), MemoryError> {
         Self::refuse()
     }
 }
