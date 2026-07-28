@@ -1,0 +1,417 @@
+//! `journal` — Record one beat in this session's chronology, and move its focus.
+//!
+//! One verb, one file: its arguments, the description a caller reads,
+//! and an entrypoint that chains the systems below it.
+
+use super::*;
+
+/// Arguments to `journal`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct JournalArgs {
+    /// One high-level beat: what you set out to do, what you found, what you
+    /// decided, what went wrong. Prose — paragraphs are fine.
+    pub entry: String,
+    /// What you are working on NOW, in one line. Optional, and it **replaces**
+    /// the session's current focus rather than adding to it.
+    #[serde(default)]
+    pub focus: Option<String>,
+    /// **Your session id**, exactly as the boot door returned it. A session is
+    /// bound to the bot that booted it; there is no way to write into another
+    /// one.
+    pub sid: String,
+}
+
+/// Record one beat in this session's chronology, and optionally move what
+/// it says it is working on.
+#[tool_router(router = journal_router, vis = "pub(crate)")]
+impl Jojobot {
+    #[tool(
+        description = "Record ONE beat in your session's chronology — a literal journal, not a \
+                       log. High-level: what you set out to do, what you found, what you \
+                       decided, what went wrong. Not every tool call, not every file: a reader \
+                       months from now wants the story, and a firehose buries it. `focus` \
+                       rewrites what your session says it is working on RIGHT NOW, in place — \
+                       the chronology is history, the focus is the present, and they answer \
+                       different questions. The first journal entry (or the first write of any \
+                       kind) is what brings your session card into being, so a boot that does \
+                       nothing leaves nothing behind. PASS `sid` — the session id the boot door \
+                       gave you — ON EVERY CALL; it is the only address, and it is what tells \
+                       jojobot which bot is writing. A `sid` whose session is closed comes back \
+                       status: blocked: a closed session takes no more entries, whichever end it \
+                       reached. The two ends part company on what comes NEXT — a run that stopped \
+                       without being wrapped up is offered back at your next boot, and resuming \
+                       it continues this same record, while a wrapped one is the last word — its \
+                       story is told and nothing appends to it, so carrying on means a fresh \
+                       session."
+    )]
+    pub(crate) async fn journal(
+        &self,
+        Parameters(args): Parameters<JournalArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let focus = args.focus.as_deref();
+        let gate = self.registry.gate(&self.gate_key(Some(&args.sid)));
+        let _serialized = gate.lock().await;
+        // Resolved inside the gate: a racing write may have materialized this
+        // session's card since, and beginning a second one is the fork the lock
+        // exists to prevent.
+        let caller = match self.identified(Some(&args.sid)) {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
+        let session = self
+            .session_for(&_serialized, &caller, focus, Some(&args.entry))
+            .await?;
+        let entry = match self
+            .sessions
+            .append(
+                &session,
+                NewEntry::manual(args.entry, jiff::Timestamp::now()),
+            )
+            .await
+        {
+            Ok(entry) => entry,
+            Err(e) => return session_declined(e),
+        };
+        // The focus moves only once the beat is recorded: a session whose focus
+        // says it is doing something its chronology never mentions is a record
+        // that disagrees with itself.
+        let moved = match focus {
+            None => None,
+            Some(focus) => match self.sessions.set_focus(&session, focus).await {
+                Ok(session) => Some(session),
+                Err(e) => return session_declined(e),
+            },
+        };
+        json_result(&serde_json::json!({
+            "session": session.as_str(),
+            "entry": entry_json(&entry),
+            "focus": moved.map(|s| s.focus),
+        }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::harness::*;
+    use crate::session::testing::*;
+    use jojobot_domain::session::Sid;
+
+    /// **Writing to a closed run says something different depending on which
+    /// end it reached**, because the way forward is different.
+    ///
+    /// Both refusals used to read "closed is terminal both ways — nothing
+    /// appends to it, amends it, or reopens it", which is now false for half of
+    /// them: an abandoned run reopens, and telling its owner to start a new one
+    /// instead sends them to fork the work they were trying to continue.
+    #[tokio::test]
+    async fn writing_to_a_closed_run_says_which_end_it_reached() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+
+        let stopped = abandoned_run(&store, "gamma", "reading the hand-off", 30).await;
+        let told = store
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("t001".into()),
+                focus: "a finished piece of work".into(),
+                started_at: jiff::Timestamp::now(),
+            })
+            .await
+            .expect("begin ok");
+        store
+            .close(&told.id, SessionState::Wrapped)
+            .await
+            .expect("close ok");
+
+        let advice = |session: &SessionId| {
+            let jojobot = &jojobot;
+            let sid = as_run(jojobot, "gamma", session);
+            async move {
+                let body = blocked(
+                    &jojobot
+                        .journal(Parameters(JournalArgs {
+                            entry: "one more thing".into(),
+                            focus: None,
+                            sid,
+                        }))
+                        .await
+                        .expect("a closed session is an answer, not a protocol failure"),
+                );
+                body["how_to_proceed"].as_str().expect("advice").to_string()
+            }
+        };
+
+        let on_stopped = advice(&stopped.id).await;
+        assert!(
+            on_stopped.contains("resume") && on_stopped.contains("start_here"),
+            "a run that stopped is picked back up, not replaced: {on_stopped}"
+        );
+        assert!(
+            !on_stopped.contains("belongs to a new session"),
+            "…and it must not send the caller off to fork the work: {on_stopped}"
+        );
+
+        let on_told = advice(&told.id).await;
+        assert!(
+            on_told.contains("story has been told"),
+            "a told story names the reason this end is the last word: {on_told}"
+        );
+        assert!(
+            !on_told.contains("Journal"),
+            "…and never a shared Journal, which no longer exists: {on_told}"
+        );
+        assert!(
+            on_told.contains("new session"),
+            "…and there the next run really is the way forward: {on_told}"
+        );
+    }
+
+    /// **A boot that does nothing leaves nothing behind.** The card materializes
+    /// on the first write and never before, which is what keeps "creation is an
+    /// intentional act" true for the one verb whose job is to start something.
+    #[tokio::test]
+    async fn booting_writes_no_session_card_until_the_first_write() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+
+        let booted = boot(&jojobot, "gamma").await;
+        assert_eq!(booted["session"]["available"], true);
+        assert_eq!(booted["session"]["resumed"], false, "nothing was in flight");
+        assert!(
+            booted["session"]["session"].is_null(),
+            "…and no card was written"
+        );
+        assert!(
+            store
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok")
+                .is_empty(),
+            "a boot that never works must leave no card at all"
+        );
+
+        // The first beat is what brings it into being.
+        let sid = sid_of(&booted).expect("a handle");
+        let journalled = journal_entry(&jojobot, &sid, "read the hand-off").await;
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(live.len(), 1, "the first entry materializes the card");
+        assert_eq!(journalled["session"], live[0].id.as_str());
+        assert_eq!(live[0].entries.len(), 1);
+        assert_eq!(live[0].entries[0].text, "read the hand-off");
+        assert_eq!(
+            live[0].focus, "read the hand-off",
+            "with nothing else to go on, what it first recorded is what it is doing"
+        );
+    }
+
+    /// **THE BLOCKER: a first write is prose, and prose is not a focus.** The
+    /// card materializes with a focus derived from the entry, so the focus's
+    /// rules — one line, 200 characters, no backtick — were being applied to
+    /// text nobody offered as a focus. A multi-line entry, a long story, or a
+    /// one-liner naming code in backticks failed with `invalid entry` naming a
+    /// `focus` parameter the caller never passed; the entry was dropped and no
+    /// card appeared at all.
+    ///
+    /// The entry reaches the chronology **whole**. The focus is a glance, so it
+    /// is derived: flattened, cut, and stripped of what a one-line display field
+    /// cannot carry.
+    #[tokio::test]
+    async fn a_first_entry_is_prose_and_still_lands_whole() {
+        let backticked = "started on `working_session`, which was the wrong shape";
+        let long = "x".repeat(400);
+        let cut = format!("{}…", "x".repeat(199));
+        // The derived focus in full, not just its shape — a flatten that joined
+        // with nothing would glue the words either side of a paragraph break
+        // into one, and every rule-shaped assertion (no newline, no backtick,
+        // within the cap) still holds of the glued line.
+        let cases: [(&str, &str, &str); 3] = [
+            (
+                "multi-line",
+                "read the hand-off\n\nthen scoped the slice",
+                "read the hand-off then scoped the slice",
+            ),
+            (
+                "backticked",
+                backticked,
+                "started on working_session, which was the wrong shape",
+            ),
+            ("over-long", &long, &cut),
+        ];
+        for (shape, entry, focus) in cases {
+            let store = Arc::new(InMemorySessions::new());
+            let jojobot = with_sessions(store.clone());
+            make_bot(&jojobot, "gamma").await;
+            let sid = booted(&jojobot, "gamma").await;
+
+            let body = json_of(
+                &jojobot
+                    .journal(Parameters(JournalArgs {
+                        entry: entry.into(),
+                        focus: None,
+                        sid,
+                    }))
+                    .await
+                    .unwrap_or_else(|e| panic!("a {shape} first entry must not error: {e:?}")),
+            );
+            assert_ne!(body["status"], "blocked", "{shape}: {body}");
+
+            let live = store
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok");
+            assert_eq!(live.len(), 1, "{shape}: the card must materialize");
+            assert_eq!(
+                live[0].entries[0].text,
+                jojobot_domain::session::normalize_entry(entry),
+                "{shape}: the entry reaches the chronology whole"
+            );
+            assert_eq!(
+                live[0].focus, focus,
+                "{shape}: the derived focus is display text, word for word"
+            );
+            assert!(
+                live[0].focus.chars().count() <= 200,
+                "{shape}: …and it is cut to fit: {:?}",
+                live[0].focus
+            );
+        }
+    }
+
+    /// A focus the caller passed IS validated as a focus — the rules were never
+    /// wrong, only misapplied. Its refusal names the parameter they actually
+    /// sent.
+    #[tokio::test]
+    async fn an_explicit_focus_is_still_held_to_the_focus_rules() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let err = jojobot
+            .journal(Parameters(JournalArgs {
+                entry: "read the hand-off".into(),
+                focus: Some("two\nlines".into()),
+                sid,
+            }))
+            .await
+            .expect_err("a focus that is not one line must be refused");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    }
+
+    /// **The whole arc through the surface:** boot, journal with a focus, amend
+    /// the beat, wrap. The focus is current truth and the chronology is history,
+    /// and the wrap writes the story to both the session and the Journal.
+    #[tokio::test]
+    async fn the_session_arc_through_the_handler() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let first = json_of(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: "read the hand-off and scoped the slice".into(),
+                    focus: Some("building the session context".into()),
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("journal ok"),
+        );
+        assert_eq!(first["focus"], "building the session context");
+        assert!(
+            first["entry"]["beat"].is_null(),
+            "a session's own entry is not a beat"
+        );
+
+        let amended = json_of(
+            &jojobot
+                .amend_journal(Parameters(AmendJournalArgs {
+                    entry: "read the hand-off and scoped the slice properly".into(),
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("amend ok"),
+        );
+        assert_eq!(amended["entry"]["id"], first["entry"]["id"], "in place");
+
+        let wrapped = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "built the session context; the sweep is lazy until M8".into(),
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("wrap ok"),
+        );
+        assert_eq!(wrapped["session"]["state"], "wrapped");
+        // **Wrapping publishes NOWHERE.** It told the story into a shared
+        // Journal document, and his ruling deletes that: the journal goes dark
+        // until events land, and a wrap is the session's own record closing.
+        assert!(
+            wrapped.get("journal").is_none(),
+            "a wrap publishes nowhere, so it reports no publication: {wrapped}"
+        );
+        assert!(
+            !jojobot
+                .memory
+                .scan()
+                .await
+                .expect("scan ok")
+                .iter()
+                .any(|doc| doc.title.trim() == "Journal"),
+            "…and no shared Journal document was brought into being"
+        );
+
+        let read = store
+            .read_session(&SessionId(
+                first["session"].as_str().expect("a session id").to_string(),
+            ))
+            .await
+            .expect("read ok");
+        let texts: Vec<&str> = read.entries.iter().map(|e| e.text.as_str()).collect();
+        // The closing entry carries the unpublished focus folded into the
+        // story — one entry for one moment, which is his ruling.
+        assert_eq!(
+            texts,
+            vec![
+                "read the hand-off and scoped the slice properly",
+                "building the session context\n\nbuilt the session context; the sweep is lazy until M8",
+            ],
+            "two entries: the amended one, and the story with the flushed focus"
+        );
+    }
+
+    /// A session verb on a connection that never booted is blocked with the way
+    /// forward — jojobot will not guess which identity made the call.
+    #[tokio::test]
+    async fn a_session_verb_without_a_boot_is_blocked_with_the_way_forward() {
+        let jojobot = with_sessions(Arc::new(InMemorySessions::new()));
+        let body = json_of(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: "who am i".into(),
+                    focus: None,
+                    sid: String::new(),
+                }))
+                .await
+                .expect("call ok"),
+        );
+        assert_eq!(body["status"], "blocked");
+        let how = body["how_to_proceed"].as_str().expect("advice");
+        // **The remedy must be one that works on the caller's next call.** It
+        // used to say "call boot_bot" — a verb that bound a connection most clients
+        // do not keep, so the very next call landed back here. `bot` is the
+        // address that survives, and this is the message that has to say so.
+        assert!(
+            how.contains("`sid`"),
+            "the way out names the address: {how}"
+        );
+    }
+}
