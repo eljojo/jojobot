@@ -28,7 +28,6 @@
 mod api;
 mod board;
 mod codec;
-pub mod sessions;
 
 use std::fmt;
 use std::sync::Arc;
@@ -1426,7 +1425,7 @@ pub(super) mod tests {
     use jiff::Timestamp;
     use jojobot_domain::mailbox::testing::contract;
 
-    use super::api::{BucketRec, CommentRec, ProjectRec, ViewRec};
+    use super::api::{BucketRec, ProjectRec, ViewRec};
     use super::*;
 
     /// In-memory [`VikunjaApi`] double. Ids and creation stamps are a monotonic
@@ -1458,11 +1457,6 @@ pub(super) mod tests {
         labels: Mutex<Vec<LabelRec>>,
         /// task id → label ids.
         task_labels: Mutex<HashMap<u64, Vec<u64>>>,
-        /// Comments, in creation order across every card — a session's
-        /// chronology lives here. Stored as one list rather than per card, so
-        /// the fake cannot accidentally guarantee an ordering the real store
-        /// does not: the order comes out of the ids, as it does over HTTP.
-        comments: Mutex<Vec<(u64, CommentRec)>>,
         /// Arms a mangled description for the next `update_task`/`create_task` —
         /// the induced fault behind the restore contract.
         poison: AtomicBool,
@@ -2129,61 +2123,6 @@ pub(super) mod tests {
                 .insert(task_id, labels.to_vec());
             Ok(())
         }
-
-        /// **Deliberately not sorted here.** The store orders a chronology
-        /// itself; a fake that handed back a sorted list would let it ship
-        /// depending on an ordering Vikunja never promised.
-        async fn list_comments(&self, task_id: u64) -> Result<Vec<CommentRec>, MailboxError> {
-            self.maybe_fail("list_comments")?;
-            Ok(self
-                .comments
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|(card, _)| *card == task_id)
-                .map(|(_, c)| c.clone())
-                .collect())
-        }
-
-        async fn create_comment(
-            &self,
-            task_id: u64,
-            text: &str,
-        ) -> Result<CommentRec, MailboxError> {
-            self.maybe_fail("create_comment")?;
-            self.wrote(task_id);
-            let id = self.next_id();
-            let comment = CommentRec {
-                id,
-                // A comment goes through the same rich-text mangling a
-                // description does: the store has to survive both.
-                text: self.mangle(text),
-                created: format!("{id:012}"),
-            };
-            self.comments
-                .lock()
-                .unwrap()
-                .push((task_id, comment.clone()));
-            Ok(comment)
-        }
-
-        async fn update_comment(
-            &self,
-            task_id: u64,
-            comment_id: u64,
-            text: &str,
-        ) -> Result<(), MailboxError> {
-            self.maybe_fail("update_comment")?;
-            self.wrote(task_id);
-            let mangled = self.mangle(text);
-            let mut comments = self.comments.lock().unwrap();
-            let held = comments
-                .iter_mut()
-                .find(|(card, c)| *card == task_id && c.id == comment_id)
-                .ok_or_else(|| MailboxError::Store(format!("no comment {comment_id}")))?;
-            held.1.text = mangled;
-            Ok(())
-        }
     }
 
     /// A decorator over the fake that opens two seams the bare fake has not
@@ -2354,27 +2293,6 @@ pub(super) mod tests {
         async fn set_task_labels(&self, task_id: u64, labels: &[u64]) -> Result<(), MailboxError> {
             self.pause().await;
             self.inner.set_task_labels(task_id, labels).await
-        }
-        async fn list_comments(&self, task_id: u64) -> Result<Vec<CommentRec>, MailboxError> {
-            self.pause().await;
-            self.inner.list_comments(task_id).await
-        }
-        async fn create_comment(
-            &self,
-            task_id: u64,
-            text: &str,
-        ) -> Result<CommentRec, MailboxError> {
-            self.pause().await;
-            self.inner.create_comment(task_id, text).await
-        }
-        async fn update_comment(
-            &self,
-            task_id: u64,
-            comment_id: u64,
-            text: &str,
-        ) -> Result<(), MailboxError> {
-            self.pause().await;
-            self.inner.update_comment(task_id, comment_id, text).await
         }
     }
 

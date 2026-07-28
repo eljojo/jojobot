@@ -44,11 +44,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use jojobot_adapters::vikunja::sessions::VikunjaSessions;
 use jojobot_adapters::vikunja::{Secret, VikunjaConfig, VikunjaStore};
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::mailbox::testing::contract;
-use jojobot_domain::session::testing::contract as sessions;
 
 /// Every project this file creates is titled under this prefix. Deliberately
 /// distinct from [`VikunjaStore::DEFAULT_PROJECT`], so a run can never adopt or
@@ -62,11 +60,6 @@ const TEST_PREFIX: &str = "jojobot-mailboxes-itest-";
 const CONTRACT_PREFIX: &str = "jojobot-mailboxes-itest-c";
 /// The adoption test's own namespace. See [`CONTRACT_PREFIX`].
 const ADOPT_PREFIX: &str = "jojobot-mailboxes-itest-a";
-/// The session contract's own namespace. Under [`TEST_PREFIX`] like the others
-/// so one teardown rule covers every board this file creates — the *store* it
-/// exercises is the session one, but where its throwaway boards live is this
-/// file's business, not the store's.
-const SESSION_PREFIX: &str = "jojobot-mailboxes-itest-s";
 
 /// The tag jojobot stamps on what it creates. Teardown requires it as well as
 /// the name: two independent conditions, because one of them being wrong must
@@ -412,60 +405,6 @@ async fn real_vikunja_satisfies_the_contract() {
     );
 
     outcome.expect("the contract must hold against real Vikunja");
-}
-
-/// **The session contract, against real Vikunja.** The same spec the fake and
-/// the API double run — so the session board's own quirks are exercised where
-/// they actually live: comments as the chronology (created, listed, edited
-/// through the real endpoints), the description round trip through Vikunja's
-/// rich-text editor, and the done flag on `wrapped`.
-///
-/// A separate test rather than a case inside the mailbox one: two stores, two
-/// boards, and the isolation this file promises is per test.
-#[tokio::test]
-#[ignore = "hits real Vikunja; set JOJOBOT_VIKUNJA_URL and JOJOBOT_VIKUNJA_TOKEN"]
-async fn real_vikunja_satisfies_the_session_contract() {
-    let _serialized = GATE.lock().await;
-    let c = creds();
-
-    let http = http_client();
-    assert_disposable(&http, &c, SESSION_PREFIX).await;
-    ensure_home(&http, &c).await;
-    teardown(&http, &c, SESSION_PREFIX).await;
-
-    let before = foreign_fingerprint(&http, &c).await;
-
-    // A throwaway board per case, for the reason the mailbox contract needs one:
-    // the spec assumes a store that starts empty.
-    let next = AtomicU64::new(0);
-    let url = c.url.clone();
-    let token = c.token.clone();
-    let client = http.clone();
-    let fresh = move || {
-        let n = next.fetch_add(1, Ordering::SeqCst);
-        VikunjaSessions::with_project(
-            client.clone(),
-            VikunjaConfig {
-                base_url: url.clone(),
-                token: Secret::new(token.clone()),
-            },
-            format!("{SESSION_PREFIX}{n}"),
-        )
-    };
-
-    let outcome = tokio::spawn(async move { sessions::run_all(fresh).await }).await;
-
-    teardown(&http, &c, SESSION_PREFIX).await;
-
-    let after = foreign_fingerprint(&http, &c).await;
-    assert_eq!(
-        before, after,
-        "the set of projects and labels this test does not own changed \
-         (fingerprint {before:x} → {after:x}). Inspect the instance directly; \
-         titles are deliberately not printed here."
-    );
-
-    outcome.expect("the session contract must hold against real Vikunja");
 }
 
 /// The other half of the write-scope invariant, against the real API: a store is

@@ -12,7 +12,6 @@ use jojobot::{AppState, build_app};
 use jojobot_adapters::outline::OutlineStore;
 use jojobot_adapters::search::IndexedMemory;
 use jojobot_adapters::vikunja::VikunjaStore;
-use jojobot_adapters::vikunja::sessions::VikunjaSessions;
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::search::Search;
@@ -41,7 +40,7 @@ fn test_ports() -> TestPorts {
         indexed.clone(),
         indexed,
         Arc::new(VikunjaStore::unconfigured()),
-        Arc::new(VikunjaSessions::unconfigured()),
+        Arc::new(OutlineStore::unconfigured().sessions()),
     )
 }
 
@@ -341,7 +340,7 @@ fn searchable_state(addr: SocketAddr) -> AppState {
         memory: indexed.clone(),
         search: indexed,
         mailboxes: Arc::new(VikunjaStore::unconfigured()),
-        sessions: Arc::new(VikunjaSessions::unconfigured()),
+        sessions: Arc::new(OutlineStore::unconfigured().sessions()),
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
     }
 }

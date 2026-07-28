@@ -7,7 +7,6 @@ use std::sync::Arc;
 use anyhow::Context;
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory};
-use jojobot_adapters::vikunja::sessions::VikunjaSessions;
 use jojobot_adapters::vikunja::{Secret as VikunjaSecret, VikunjaConfig, VikunjaStore};
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::Memory;
@@ -71,19 +70,30 @@ async fn main() -> anyhow::Result<()> {
     // credentials. Unset credentials yield an unconfigured store: the server
     // still boots and serves `ping`, but `capture`/`recall` refuse loudly until
     // Outline is wired (see the fail-soft rationale in the handoff/report).
-    let store: Arc<dyn Memory> = match outline_from_env() {
+    let outline = match outline_from_env() {
         Some(cfg) => {
             tracing::info!(base_url = %cfg.base_url, "memory: Outline store wired");
-            Arc::new(OutlineStore::new(http.clone(), cfg))
+            OutlineStore::new(http.clone(), cfg)
         }
         None => {
             tracing::warn!(
                 "MEMORY DISABLED — set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN to enable \
                  capture/recall. Serving ping only; memory verbs return a NotConfigured error."
             );
-            Arc::new(OutlineStore::unconfigured())
+            OutlineStore::unconfigured()
         }
     };
+
+    // **The Sessions port, built FROM the memory store rather than beside it.**
+    // A bot's sessions are a page under the bot's own page, in the same
+    // collection as every entity — so the two stores write different documents
+    // in one place, and building this one from that one is what makes them
+    // share a write lock instead of each holding a lock that excludes nobody.
+    //
+    // It is not indexed: a sessions page declares itself jojobot's own
+    // machinery, and the boot scan skips those.
+    let sessions: Arc<dyn Sessions> = Arc::new(outline.sessions());
+    let store: Arc<dyn Memory> = Arc::new(outline);
 
     // The search projection sits in FRONT of the store, so every write through
     // the port keeps the index current. Boot is a plain full re-scan — and a
@@ -142,27 +152,6 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
     let mailboxes: Arc<dyn Mailboxes> = mailboxes;
-
-    // The Sessions port — a third context, on the same Vikunja but in **its own
-    // project**, discovered and provisioned by the same title convention. It is
-    // not indexed: session records deliberately stay out of `search` for now.
-    let sessions: Arc<dyn Sessions> = match vikunja_from_env() {
-        Some(cfg) => {
-            tracing::info!(
-                project = VikunjaSessions::DEFAULT_PROJECT,
-                "sessions: Vikunja store wired"
-            );
-            Arc::new(VikunjaSessions::new(http.clone(), cfg))
-        }
-        None => {
-            tracing::warn!(
-                "SESSIONS DISABLED — set JOJOBOT_VIKUNJA_URL and JOJOBOT_VIKUNJA_TOKEN to enable \
-                 them. start_here still boots an identity: its charter and its rules live in \
-                 Memory, and the session half says it does not know."
-            );
-            Arc::new(VikunjaSessions::unconfigured())
-        }
-    };
 
     // **The handle registry, filled from the board before anything is served.**
     // Eagerly rather than on first miss: a lazy rebuild would hand the first

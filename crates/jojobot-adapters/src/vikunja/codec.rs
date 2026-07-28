@@ -120,12 +120,6 @@ pub(super) fn split_description(
 ) -> Option<(String, Vec<String>)> {
     read_block(description, valid).or_else(|| read_block(&de_html(description), valid))
 }
-
-/// One `key: value` line out of a block's lines, if it is there.
-pub(super) fn field(lines: &[String], key: &str) -> Option<String> {
-    lines.iter().find_map(|l| field_of(l, key))
-}
-
 /// Render a card description: the prose a human reads, then a fenced block of
 /// `key: value` lines. Blank values are dropped — an absent line and a blank one
 /// say different things, and only one of them is true.
