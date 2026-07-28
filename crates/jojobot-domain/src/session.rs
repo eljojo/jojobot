@@ -183,13 +183,15 @@ impl SessionState {
     /// Whether this end is the last word — **the one place the two ends stop
     /// being the same.**
     ///
-    /// **`wrapped` is final because wrapping PUBLISHES.** The story goes into
-    /// the operator's Journal as one dated entry, and reopening the run would
-    /// make an already-published entry retroactively false — an account of a
-    /// thing that turns out not to have finished. That is what terminal-both-
-    /// ways is protecting, and it is a rationale about *this state*.
+    /// **`wrapped` is final because the run TOLD ITS STORY.** It used to be
+    /// because wrapping published that story into a shared Journal, and
+    /// reopening the run would have made an already-published entry
+    /// retroactively false. Nothing is published now — the journal is dark until
+    /// events land — and the asymmetry survives it intact, because it never
+    /// really rested on the audience: a run that said "here is what happened and
+    /// I am done" has ended, and a run that merely stopped has not.
     ///
-    /// `abandoned` published nothing, which is the entire content of "it wasn't
+    /// `abandoned` told no story, which is the entire content of "it wasn't
     /// wrapped up": a disconnect, a closed laptop, an agent that moved on. So
     /// [`Sessions::reopen`] takes it back to `active` and the record continues
     /// where it stopped. Picking one back up is ordinary rather than recovery.

@@ -1021,21 +1021,6 @@ impl Memory for IndexedMemory {
         Ok(stored)
     }
 
-    /// The Journal is a document in the same collection, so an entry written
-    /// here is searchable prose on the next call — the same read-back-covers-
-    /// search rule every other write follows. It is nobody's entity, so there is
-    /// no handle to re-scan by: the whole store is, which is cheap at this
-    /// corpus size and runs once per wrapped session.
-    async fn append_journal(
-        &self,
-        on: jiff::civil::Date,
-        entry: &str,
-    ) -> Result<String, MemoryError> {
-        let stored = self.inner.append_journal(on, entry).await?;
-        self.rebuild().await?;
-        Ok(stored)
-    }
-
     async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
         self.inner.scan().await
     }
@@ -2025,14 +2010,6 @@ mod tests {
     impl Memory for Scanned {
         async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
             Ok(self.docs.read().expect("docs poisoned").clone())
-        }
-
-        async fn append_journal(
-            &self,
-            _: jiff::civil::Date,
-            _: &str,
-        ) -> Result<String, MemoryError> {
-            unimplemented!("this double only scans")
         }
 
         /// Append a row to the subject's page and hand it back. **No guard** —

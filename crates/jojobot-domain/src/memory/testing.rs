@@ -15,7 +15,7 @@ use std::sync::Mutex;
 
 use super::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, Guarded,
-    JOURNAL_TITLE, Memory, MemoryError, NewEntity, NewFact, apply_entity_patch, apply_fact_patch,
+    Memory, MemoryError, NewEntity, NewFact, apply_entity_patch, apply_fact_patch,
     guard::{self, Decision},
     normalize_content, normalize_details, normalize_prose, screen_entity_patch, search,
     validate_content, validate_details, validate_edge, validate_entity, validate_prose,
@@ -32,8 +32,6 @@ pub struct InMemoryMemory {
     /// The human half of each entity's doc, keyed by handle — replaced whole by
     /// `set_prose`, exactly as the real store replaces the region.
     prose: Mutex<std::collections::HashMap<EntityId, String>>,
-    /// The Journal's entries, in the order they were appended.
-    journal: Mutex<Vec<String>>,
 }
 
 impl InMemoryMemory {
@@ -272,20 +270,6 @@ impl Memory for InMemoryMemory {
         Ok(stored)
     }
 
-    async fn append_journal(
-        &self,
-        on: jiff::civil::Date,
-        entry: &str,
-    ) -> Result<String, MemoryError> {
-        validate_prose(entry)?;
-        let stored = format!("## {on}\n\n{}", normalize_prose(entry));
-        self.journal
-            .lock()
-            .expect("fake mutex poisoned")
-            .push(stored.clone());
-        Ok(stored)
-    }
-
     /// A doc here is its frontmatter, whatever prose was written onto it, and
     /// its facts. The **handle doubles as the doc id**: in the fake an entity's
     /// handle IS the key its facts are filed under, so it is the honest answer
@@ -293,20 +277,11 @@ impl Memory for InMemoryMemory {
     async fn scan(&self) -> Result<Vec<search::DocScan>, MemoryError> {
         let facts = self.facts.lock().expect("fake mutex poisoned").clone();
         let prose = self.prose.lock().expect("fake mutex poisoned").clone();
-        // The Journal is a document in jojobot's collection like any other, so
-        // it scans — and is therefore searchable prose. A fake that kept it in a
-        // side channel would let the store ship with the operator's own record
-        // of what happened invisible to `search`.
-        let journal = self.journal.lock().expect("fake mutex poisoned").clone();
-        let journal_doc = (!journal.is_empty()).then(|| search::DocScan {
-            doc_id: JOURNAL_TITLE.to_string(),
-            title: JOURNAL_TITLE.to_string(),
-            prose: journal.join("\n\n"),
-            entity: None,
-            facts: Vec::new(),
-        });
-        Ok(journal_doc
-            .into_iter()
+        // **No Journal document.** There was one — a shared page every wrap
+        // published a story into, scanned like any other doc so `search` could
+        // find it. It is gone: a wrap publishes nowhere now, and the journal is
+        // dark until events land.
+        Ok(std::iter::empty()
             .chain(self.index().into_iter().map(|entity| {
                 search::DocScan {
                     doc_id: entity.id.to_string(),
@@ -998,84 +973,6 @@ pub mod contract {
                 .iter()
                 .any(|e| e.id == ouroboros),
             "a blocked write writes nothing at all"
-        );
-    }
-
-    /// **An entity's prose is writable, and it is replaced whole.** The prose
-    /// layer is the human half of a doc — a bot's charter lives there — and
-    /// this is the one mechanism that writes it, so a later portrait verb
-    /// generalizes this rather than growing a second one beside it.
-    ///
-    /// Three things bind: the write reads back through the ordinary read path
-    /// (an entity's own scan), a second write REPLACES rather than appends, and
-    /// the facts on the same page survive both — prose and facts share a doc,
-    /// and a writer that rebuilt the page from what it believed would take the
-    /// other half with it.
-    /// **The Journal accrues; it is never rewritten.** A wrap adds one dated
-    /// entry and touches nothing above it, so a document that has been running
-    /// for months keeps every entry it ever had — which is the only reason a
-    /// later session can ask what happened and be answered.
-    ///
-    /// The date is passed in rather than read off a clock, so the spec is
-    /// deterministic and a store cannot pass by stamping its own.
-    pub async fn the_journal_appends_and_never_rewrites<M: Memory>(store: &M) {
-        let first = store
-            .append_journal(date(2026, 7, 26), "wrapped the mail-search slice")
-            .await
-            .expect("append_journal ok");
-        assert!(
-            first.contains("wrapped the mail-search slice"),
-            "the entry comes back as stored: {first:?}"
-        );
-        assert!(first.contains("2026-07-26"), "…dated: {first:?}");
-
-        store
-            .append_journal(date(2026, 7, 27), "wrapped the session slice")
-            .await
-            .expect("append_journal ok");
-
-        // **One page, and it scans under its own title.** A reader that needs
-        // the Journal specifically — the wrap's retry guard is one — has nothing
-        // but the title to find it by, so a store whose scan filed these entries
-        // under some other heading would make that reader answer "not there"
-        // about entries sitting right in front of it.
-        let docs = store.scan().await.expect("scan ok");
-        let journal = docs
-            .iter()
-            .find(|d| d.title.trim() == JOURNAL_TITLE)
-            .map(|d| d.prose.clone())
-            .unwrap_or_else(|| {
-                panic!(
-                    "the Journal must scan under the title '{JOURNAL_TITLE}', not {:?}",
-                    docs.iter().map(|d| &d.title).collect::<Vec<_>>()
-                )
-            });
-
-        // Both entries are on the page, and the older one is untouched.
-        assert!(
-            journal.contains("wrapped the mail-search slice"),
-            "the first entry must still be there after the second: {journal}"
-        );
-        assert!(
-            journal.contains("wrapped the session slice"),
-            "…and the second one landed: {journal}"
-        );
-        assert!(
-            journal.find("mail-search").unwrap_or(usize::MAX)
-                < journal.find("session slice").unwrap_or(0),
-            "…in the order they happened: {journal}"
-        );
-    }
-
-    /// An empty entry is not an entry — the Journal is a record, and a blank
-    /// line in it says a session wrapped and had nothing to say, which is a
-    /// claim nobody made.
-    pub async fn an_empty_journal_entry_is_refused<M: Memory>(store: &M) {
-        assert!(
-            store
-                .append_journal(date(2026, 7, 26), "   ")
-                .await
-                .is_err()
         );
     }
 
@@ -2915,8 +2812,6 @@ pub mod contract {
         nothing_may_be_its_own_parent(store).await;
 
         prose_is_replaced_whole_and_reads_back(store).await;
-        the_journal_appends_and_never_rewrites(store).await;
-        an_empty_journal_entry_is_refused(store).await;
         add_entity_reads_back(store).await;
         list_entities_filters_by_kind(store).await;
         update_entity_edits_metadata_in_place(store).await;
