@@ -143,13 +143,14 @@ Shipped and live:
 
 - **M5** — Sessions: a bot is a **role**, a session is **one mortal run of it**
   — the unit of work, not of connection, so it survives a disconnect or a
-  device hop. Its own Vikunja project (never the mailbox one): one card per
-  session, **column = state** (`active` → `wrapped` | `abandoned`; **`wrapped`
-  is the last word, because wrapping PUBLISHES the story to the Journal —
-  `abandoned → active` is the one legal walk-back, since an abandoned run
-  published nothing**), **description = current truth** (the focus, rewritten
-  in place), **comments = the chronology** (append-only, oldest first; only
-  the newest entry amendable).
+  device hop. **A page of its bot's own, one row per session**: the row carries
+  **state** (`active` → `wrapped` | `abandoned`; **`wrapped` is the last word,
+  because wrapping PUBLISHES the story to the Journal — `abandoned → active` is
+  the one legal walk-back, since an abandoned run published nothing**) and the
+  **focus as current truth**, rewritten in place; the **chronology is appended
+  below it**, one block per entry (append-only, oldest first; only the newest
+  entry amendable). The page is jojobot's own machinery, so the boot scan does
+  not read it as content and `search` never sees it.
   **`start_here` is the start verb** — there is no `start_session`, because
   there is no moment between "I am gamma" and "gamma is working". Booting with
   a bot name hands back a `sid` immediately when there is nothing to resume,

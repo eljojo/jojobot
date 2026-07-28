@@ -37,18 +37,18 @@ never runs inference of its own — the assistant is the only mind.
 > door**: it takes an optional bot name, and naming one **starts or resumes that
 > bot's session**, because a bot is a role and a session is one mortal run of it.
 > Booting anonymously is legal and deliberately useless — orientation, and no
-> handle behind it. **Sessions** live on their own board: a focus that is current
-> truth, an append-only chronology (the session's own beats plus jojobot's,
-> marked apart), and `active` → `wrapped` | `abandoned` — **`wrapped` is the last
-> word, because wrapping publishes the story to the operator's Journal, while
-> `abandoned → active` is the one legal walk-back, since a run nobody wrapped up
-> published nothing.** A session begins lazily — no card until the first write —
-> resumes across a disconnect, and is swept to `abandoned` after a day of
-> silence. **The `sid` is the only address**: a short opaque handle the server
+> handle behind it. **Sessions** live on a page of their bot's own, one row each:
+> a focus that is current truth, an append-only chronology (the session's own
+> beats plus jojobot's, marked apart), and `active` → `wrapped` | `abandoned` —
+> **`wrapped` is the last word, because wrapping publishes the story to the
+> operator's Journal, while `abandoned → active` is the one legal walk-back, since
+> a run nobody wrapped up published nothing.** A session begins lazily — no row
+> until the first write — resumes across a disconnect, and is swept to
+> `abandoned` after a day of silence. **The `sid` is the only address**: a short opaque handle the server
 > mints at the door, saying nothing about the work, and it rides every verb —
 > reads included — because real MCP clients open a fresh connection per tool call
 > and a connection-held identity does not survive to the next one. It is written
-> on the session's own card, so a restart does not orphan it. All behind OAuth2
+> on the session's own row, so a restart does not orphan it. All behind OAuth2
 > resource-server auth, every write verified by read-back.
 
 ## Vision & roadmap
