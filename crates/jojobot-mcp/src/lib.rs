@@ -2529,6 +2529,39 @@ impl Jojobot {
         // by whether its own half is already done, and a retry finishes what the
         // first attempt started rather than repeating it.
         let story = jojobot_domain::session::normalize_entry(&args.story);
+        // **The current unpublished beat is flushed INTO the story, as ONE
+        // entry.** A session's focus is truth about the run, rewritten in place,
+        // and becomes chronology only once something has happened (rule 81).
+        // Wrapping is the last thing that happens, so the focus that never
+        // became a beat becomes one here.
+        //
+        // One entry, not two beside each other: the focus and the story are the
+        // same moment, and a chronology ending on two records of it leaves a
+        // reader unable to tell which is the account. Chronological inside —
+        // the focus is what the run was doing, the story is what became of it.
+        //
+        // Read before the guard below, so the retry looks for the composed text
+        // rather than the story alone. A retry that searched for half of what it
+        // wrote would tell it twice.
+        let focus = match self.sessions.read_session(&session).await {
+            Ok(read) => jojobot_domain::session::normalize_entry(&read.focus),
+            // Unreadable is not "no focus", but the append below fails in that
+            // verb's own words; guessing an empty one here only risks losing a
+            // line, never duplicating the story.
+            Err(_) => String::new(),
+        };
+        // **A focus DERIVED from this same story is not an unpublished beat.** A
+        // wrap that is the session's first write creates the card with a focus
+        // made out of the story itself (`display_line`), so folding it back in
+        // would tell the story twice inside one entry — and it would not compare
+        // equal, because the derived form is flattened to one display line.
+        // Compared through the same derivation, which is the only form the two
+        // can meet in.
+        let story = if focus.is_empty() || display_line(&story) == focus {
+            story
+        } else {
+            format!("{focus}\n\n{story}")
+        };
         // **Anywhere in the chronology, not just at its tail.** The retry is the
         // move left after a failed close, and the natural thing to write between
         // the two is a beat saying the wrap failed — which made the story no
@@ -8721,6 +8754,100 @@ mod tests {
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     }
 
+    /// **Wrapping flushes the current unpublished beat INTO the story, as one
+    /// entry.** His ruling, and the "one entry" half is the part a reasonable
+    /// implementation gets wrong: *"it should be both but it should be one
+    /// entry."*
+    ///
+    /// A session's `focus` is current truth, rewritten in place, and it becomes
+    /// chronology only once something has happened (rule 81). Wrapping IS
+    /// something happening — it is the last thing that happens — so the focus
+    /// that never became a beat becomes one. Writing it as a SECOND entry beside
+    /// the story would leave the chronology ending on two records of one moment,
+    /// and a reader unable to tell which was the account.
+    ///
+    /// Ordering is chronological: the focus was what the run was doing, the
+    /// story is the account of it, so the focus comes first inside the entry.
+    #[tokio::test]
+    async fn wrapping_flushes_the_unpublished_focus_into_the_story_as_one_entry() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let started = json_of(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: "read the hand-off".into(),
+                    focus: Some("cutting the codec seam".into()),
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("journal ok"),
+        );
+        let session = SessionId(
+            started["session"]
+                .as_str()
+                .expect("a session id")
+                .to_string(),
+        );
+
+        jojobot
+            .wrap_session(Parameters(WrapSessionArgs {
+                story: "the seam is cut and the suite is green".into(),
+                sid,
+            }))
+            .await
+            .expect("wrap ok");
+
+        let read = store.read_session(&session).await.expect("read ok");
+        let told: Vec<&str> = read
+            .entries
+            .iter()
+            .filter(|e| !e.is_auto())
+            .map(|e| e.text.as_str())
+            .collect();
+        assert_eq!(
+            told.len(),
+            2,
+            "the beat, then ONE closing entry — never two for one moment: {told:?}"
+        );
+        let last = told[1];
+        assert!(
+            last.contains("cutting the codec seam"),
+            "the unpublished focus was flushed: {last:?}"
+        );
+        assert!(
+            last.contains("the seam is cut and the suite is green"),
+            "…into the story, not beside it: {last:?}"
+        );
+        assert!(
+            last.find("cutting the codec seam") < last.find("the seam is cut"),
+            "…and in the order they happened: {last:?}"
+        );
+    }
+
+    /// A run that set no focus wraps on the story alone — nothing empty is
+    /// folded in, and no blank line is left where a flush would have been.
+    #[tokio::test]
+    async fn wrapping_with_no_unpublished_focus_tells_the_story_alone() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let wrapped = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "booted, found nothing to do".into(),
+                    sid,
+                }))
+                .await
+                .expect("wrap ok"),
+        );
+        assert_eq!(wrapped["entry"]["text"], "booted, found nothing to do");
+    }
+
     // ── a bot and its box are one act ───────────────────────────────────────
 
     /// **A box is what having an identity MEANS, not a thing you go and make.**
@@ -10746,13 +10873,15 @@ mod tests {
             .await
             .expect("read ok");
         let texts: Vec<&str> = read.entries.iter().map(|e| e.text.as_str()).collect();
+        // The closing entry carries the unpublished focus folded into the
+        // story — one entry for one moment, which is his ruling.
         assert_eq!(
             texts,
             vec![
                 "read the hand-off and scoped the slice properly",
-                "built the session context; the sweep is lazy until M8",
+                "building the session context\n\nbuilt the session context; the sweep is lazy until M8",
             ],
-            "two entries: the amended one and the story"
+            "two entries: the amended one, and the story with the flushed focus"
         );
     }
 
@@ -11549,8 +11678,16 @@ mod tests {
             .sessions_of(&EntityId("bot:gamma".into()))
             .await
             .expect("list ok");
+        // **Counted as occurrences, not as whole entries.** A wrap folds the
+        // session's unpublished focus into the story, so the closing entry is
+        // the story plus that line — the guard is about telling the story once,
+        // not about the entry equalling it.
         assert_eq!(
-            live[0].entries.iter().filter(|e| e.text == story).count(),
+            live[0]
+                .entries
+                .iter()
+                .filter(|e| e.text.contains(story))
+                .count(),
             1,
             "the story is told once in the chronology: {:?}",
             live[0].entries
@@ -11591,8 +11728,16 @@ mod tests {
             .sessions_of(&EntityId("bot:gamma".into()))
             .await
             .expect("list ok");
+        // **Counted as occurrences, not as whole entries.** A wrap folds the
+        // session's unpublished focus into the story, so the closing entry is
+        // the story plus that line — the guard is about telling the story once,
+        // not about the entry equalling it.
         assert_eq!(
-            live[0].entries.iter().filter(|e| e.text == story).count(),
+            live[0]
+                .entries
+                .iter()
+                .filter(|e| e.text.contains(story))
+                .count(),
             1,
             "the story is told once in the chronology: {:?}",
             live[0].entries
