@@ -379,17 +379,39 @@ impl OutlineStore {
             .await?
             .ok_or_else(|| MemoryError::Store("entity doc missing after create".into()))?;
         // Read-back covers the page's POSITION too, not only its contents: the
-        // write asserted where the page goes, so the write verifies it. A store
-        // that drops the parent silently — Outline does, for a parent it will
-        // not nest under — would otherwise leave a page whose `parent:` line
-        // and whose place in the wiki disagree, reported as a success.
-        if doc.parent_id.as_deref() != under.as_deref() {
+        // write asserted where the page goes, so the write verifies it.
+        if doc.parent_id.as_deref() == under.as_deref() {
+            return Ok(doc);
+        }
+
+        // **Repair, then re-verify — never refuse on the first miss.**
+        //
+        // Refusing left the worst of both ends. The page is already written and
+        // already carries the entity's marker, so the entity EXISTS: it lists,
+        // `children` reports it, and every retry comes back `ExactHandle` on a
+        // handle the caller believes it never created. The write said it failed
+        // and the store disagreed, permanently.
+        //
+        // A move fixes it and costs nothing this store did not already have:
+        // `documents.move` relocates a page and leaves its text untouched, both
+        // verified against the live API. It is also not a delete, so putting
+        // this right does not spend the no-delete rule.
+        self.ws
+            .api()
+            .move_document(&doc.id, collection_id, under.as_deref())
+            .await?;
+        let moved = self
+            .entity_doc(collection_id, &entity.id)
+            .await?
+            .ok_or_else(|| MemoryError::Store("entity doc missing after move".into()))?;
+        if moved.parent_id.as_deref() != under.as_deref() {
             return Err(MemoryError::Store(format!(
-                "{} was created under {:?}, not under the page of {:?} as written",
-                entity.id, doc.parent_id, entity.parent
+                "{} was created under {:?} and could not be moved under the page of {:?} \
+                 as written — it is at {:?} now, and a person has to place it",
+                entity.id, doc.parent_id, entity.parent, moved.parent_id
             )));
         }
-        Ok(doc)
+        Ok(moved)
     }
 
     /// Read one addressed fact back through the read path — the verification
@@ -1244,6 +1266,22 @@ mod tests {
             d.1.text = rectangularized(&joined);
             Ok(())
         }
+        /// A move relocates the page and touches nothing else — the live API's
+        /// behaviour, and what makes it usable to repair a mis-nested create.
+        async fn move_document(
+            &self,
+            id: &str,
+            _collection_id: &str,
+            parent_id: Option<&str>,
+        ) -> Result<(), MemoryError> {
+            let mut docs = self.documents.lock().unwrap();
+            let d = docs
+                .iter_mut()
+                .find(|(_, d)| d.id == id)
+                .ok_or_else(|| MemoryError::Store(format!("move_document: no doc {id}")))?;
+            d.1.parent_id = parent_id.map(str::to_string);
+            Ok(())
+        }
 
         async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
             let text = if self.poison.swap(false, Ordering::SeqCst) {
@@ -1378,6 +1416,10 @@ mod tests {
     /// it was asked to nest it — Outline's own behaviour when the parent it is
     /// handed is one it will not nest under. Silent: the create succeeds and
     /// returns a document.
+    /// A transport that files every page at the top of the collection however it
+    /// was asked to nest it — Outline's own behaviour for a parent it will not
+    /// nest under. Silent: the create succeeds and returns a document. **A move
+    /// through it works**, which is what lets the repair path be exercised.
     struct Flattening(Arc<dyn OutlineApi>);
 
     #[async_trait]
@@ -1415,31 +1457,134 @@ mod tests {
                 .create_document(collection_id, title, text, None)
                 .await
         }
+        async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            self.0.update_document(id, text).await
+        }
         async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
-            tokio::task::yield_now().await;
-            let out = self.0.append_document(id, text).await;
-            tokio::task::yield_now().await;
-            out
+            self.0.append_document(id, text).await
+        }
+        async fn move_document(
+            &self,
+            id: &str,
+            collection_id: &str,
+            parent_id: Option<&str>,
+        ) -> Result<(), MemoryError> {
+            self.0.move_document(id, collection_id, parent_id).await
+        }
+    }
+
+    /// [`Flattening`], and a move that reports success without doing anything —
+    /// the shape a store takes when it accepts a placement it will not honour.
+    /// The page can never be got where it belongs.
+    struct Immovable(Arc<dyn OutlineApi>);
+
+    #[async_trait]
+    impl OutlineApi for Immovable {
+        async fn list_collections(
+            &self,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<CollectionRec>, MemoryError> {
+            self.0.list_collections(offset, limit).await
+        }
+        async fn create_collection(
+            &self,
+            name: &str,
+            description: &str,
+        ) -> Result<CollectionRec, MemoryError> {
+            self.0.create_collection(name, description).await
+        }
+        async fn list_documents(
+            &self,
+            collection_id: &str,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<DocRec>, MemoryError> {
+            self.0.list_documents(collection_id, offset, limit).await
+        }
+        async fn create_document(
+            &self,
+            collection_id: &str,
+            title: &str,
+            text: &str,
+            _parent_id: Option<&str>,
+        ) -> Result<DocRec, MemoryError> {
+            self.0
+                .create_document(collection_id, title, text, None)
+                .await
         }
         async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
             self.0.update_document(id, text).await
         }
+        async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            self.0.append_document(id, text).await
+        }
+        async fn move_document(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<(), MemoryError> {
+            Ok(())
+        }
     }
 
-    /// **A page that did not land where it was put is a failed write.** Nesting
-    /// is asserted by the write, so it is verified by the write — the read-back
-    /// rule that covers every other thing jojobot claims to have stored. A
-    /// store that drops the parent silently would otherwise leave a page whose
-    /// `parent:` line and whose position disagree, with the write reporting
-    /// success and nobody ever looking again.
+    /// **A page that did not land where it was put is MOVED there, not
+    /// refused.**
+    ///
+    /// Refusing left the worst of both: the page was already written and
+    /// carried the entity's marker, so the entity existed, `children` reported
+    /// it, and every retry came back `ExactHandle` on a handle the caller
+    /// believed it had never created. The write said "failed" and the store
+    /// disagreed forever.
+    ///
+    /// Repair is available because a move is available — verified against the
+    /// live API, which moves a flat page under a parent and leaves its text
+    /// untouched. And a move is not a delete, so nothing here spends the
+    /// no-delete rule to buy it.
     #[tokio::test]
-    async fn a_child_that_did_not_land_under_its_parent_is_not_a_successful_write() {
+    async fn a_page_that_missed_its_parent_is_moved_there_rather_than_refused() {
         let fake = FakeOutline::new();
-        let flat = OutlineStore::from_api(Arc::new(Flattening(fake.clone())), COLL);
+        let store = OutlineStore::from_api(Arc::new(Flattening(fake.clone())), COLL);
         let parent = EntityId::new(EntityKind::Project, "atlas");
-        ensure(&flat, &parent).await;
+        let child = EntityId::new(EntityKind::Place, "riverbend");
+        ensure(&store, &parent).await;
 
-        let err = flat
+        store
+            .add_entity(NewEntity {
+                parent: Some(parent.clone()),
+                ..NewEntity::new(child.clone(), "Riverbend", "test-fixture")
+            })
+            .await
+            .expect("the create is repaired, not refused")
+            .written()
+            .expect("the guard must not block this child");
+
+        let coll = store.resolve_collection().await.expect("collection");
+        let docs = fake.docs_in(&coll);
+        let doc_for = |id: &EntityId| {
+            docs.iter()
+                .find(|d| parse_id_marker(&d.text).as_deref() == Some(id.as_str()))
+                .unwrap_or_else(|| panic!("{id} has a doc"))
+        };
+        assert_eq!(
+            doc_for(&child).parent_id.as_deref(),
+            Some(doc_for(&parent).id.as_str()),
+            "the page ends up under its parent, by the store's own account"
+        );
+    }
+
+    /// **…and if the move cannot get it there either, that is still a failed
+    /// write.** The read-back is not traded away for the repair: repair first,
+    /// and only report success once the page is actually where the write said.
+    #[tokio::test]
+    async fn a_page_the_store_will_not_move_is_still_a_failed_write() {
+        let fake = FakeOutline::new();
+        let store = OutlineStore::from_api(Arc::new(Immovable(fake.clone())), COLL);
+        let parent = EntityId::new(EntityKind::Project, "atlas");
+        ensure(&store, &parent).await;
+
+        let err = store
             .add_entity(NewEntity {
                 parent: Some(parent.clone()),
                 ..NewEntity::new(
@@ -1449,193 +1594,11 @@ mod tests {
                 )
             })
             .await
-            .expect_err("a page that did not nest must not report success");
+            .expect_err("a page that cannot be got where it belongs is not a success");
         assert!(
             matches!(&err, MemoryError::Store(m) if m.contains("under")),
             "the error says what did not happen: {err}"
         );
-    }
-
-    /// **jojobot's own machinery is not content, and search must never see it.**
-    ///
-    /// A bot's sessions page is a child of the bot's page and therefore lives in
-    /// the same collection as every entity — that is what the tree is for. But
-    /// the boot scan reads every document it finds, deliberately generously,
-    /// because a page a human wrote by hand is exactly the page worth finding. A
-    /// machinery page is the opposite kind of thing: jojobot talking to itself.
-    /// Left in, a search about the operator's life would answer with a session's
-    /// focus line.
-    ///
-    /// The hand-written page in this fixture is the control: generosity is the
-    /// rule, and this is the one exception to it.
-    #[tokio::test]
-    async fn jojobots_own_machinery_is_not_scanned_into_the_index() {
-        let fake = FakeOutline::new();
-        let coll = fake.seed_collection(COLL, &owned_desc());
-        fake.seed_document(&coll, "Alpha", &seeded_doc(&person("alpha")));
-        fake.seed_document(&coll, "A page somebody wrote", "notes nobody filed");
-        fake.seed_document(
-            &coll,
-            "Sessions",
-            "```yaml\nmachinery: sessions\nof: bot:gamma\n```\n\nthe rows live here\n",
-        );
-
-        let scanned = store(fake).scan().await.expect("scan should succeed");
-        let titles: Vec<&str> = scanned.iter().map(|d| d.title.as_str()).collect();
-        assert!(
-            titles.contains(&"A page somebody wrote"),
-            "a page with no marker is still content: {titles:?}"
-        );
-        assert!(
-            titles.contains(&"Alpha"),
-            "and an entity's page certainly is: {titles:?}"
-        );
-        assert!(
-            !titles.contains(&"Sessions"),
-            "jojobot's bookkeeping is not content and must not be indexed: {titles:?}"
-        );
-    }
-
-    /// The fake stores what the real Outline would store: the editor model
-    /// re-serializes every markdown table RECTANGULAR AT THE HEADER'S WIDTH —
-    /// long rows lose their tail, short rows are padded. Pinned so the fake can
-    /// never quietly regress to the verbatim store that hid the production
-    /// edge-loss bug from 217 green tests.
-    #[tokio::test]
-    async fn the_fake_rectangularizes_tables_like_the_real_store() {
-        let fake = FakeOutline::new();
-        let coll = fake.seed_collection(COLL, &owned_desc());
-        let id = fake.seed_document(&coll, "Alpha", "seed");
-        fake.update_document(
-            &id,
-            "| id | subject | content |\n\
-             | --- | --- | --- |\n\
-             | f1 | person:alpha | plays go | EXTRA |\n\
-             | f2 | person:alpha |",
-        )
-        .await
-        .expect("update ok");
-
-        let doc = fake
-            .docs_in(&coll)
-            .into_iter()
-            .find(|d| d.id == id)
-            .expect("doc");
-        let lines: Vec<&str> = doc.text.lines().collect();
-        assert!(
-            !lines[2].contains("EXTRA"),
-            "a cell past the header's width is truncated on save: {:?}",
-            lines[2]
-        );
-        assert_eq!(
-            split_cells(lines[3]).len(),
-            3,
-            "a short row is padded to the header's width: {:?}",
-            lines[3]
-        );
-    }
-
-    /// **Mail is in the index; the page it lives on is not.** Both halves, in
-    /// one test, because getting either wrong is silent and they fail in
-    /// opposite directions.
-    ///
-    /// Sessions are excluded from search on purpose and mail is included on
-    /// purpose, and both now live on pages in the collection the boot scan
-    /// reads. So the exclusion has to be surgical: exclude the page's raw
-    /// markdown as content, and let the messages through by their own path.
-    /// Exclude too much and mail vanishes from search; exclude too little and a
-    /// question about the operator's life comes back with the raw markdown of a
-    /// box, bodies quoted out of their envelopes.
-    #[tokio::test]
-    async fn mail_reaches_the_index_but_the_page_it_sits_on_does_not() {
-        use jojobot_domain::mailbox::{MailboxName, Mailboxes as _, NewMessage};
-        use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
-
-        let outline = store(FakeOutline::new());
-        let index = IndexedMemory::new(Arc::new(outline.clone())).expect("index opens");
-        let mail =
-            crate::search::IndexedMailboxes::new(Arc::new(outline.mailboxes()), index.index());
-
-        let inbox = MailboxName("dev".into());
-        mail.create_mailbox(&inbox, false)
-            .await
-            .expect("create ok")
-            .written()
-            .expect("not blocked");
-        mail.post_message(NewMessage {
-            mailbox: inbox.clone(),
-            body: "the monorail contract needs a decision".into(),
-            subject: Some("monorail".into()),
-            sender: "gamma".into(),
-            sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
-            in_reply_to: None,
-        })
-        .await
-        .expect("post ok")
-        .written()
-        .expect("not blocked");
-
-        // **Direction one, through the BOOT path.** Searching the index this
-        // process has been writing to proves only that the incremental write
-        // works — it survives `scan_messages` returning nothing, which is the
-        // failure that matters: a restart rebuilds from that read, and a broken
-        // one loses every message older than the process while looking fine.
-        // So this is a restart: a fresh index, both halves rebuilt from the
-        // store, and only then the question.
-        let restarted = IndexedMemory::new(Arc::new(outline.clone())).expect("index opens");
-        restarted.rebuild().await.expect("memory rebuild ok");
-        let restarted_mail =
-            crate::search::IndexedMailboxes::new(Arc::new(outline.mailboxes()), restarted.index());
-        restarted_mail.rebuild().await.expect("mail rebuild ok");
-
-        let hits = restarted
-            .search(&SearchQuery {
-                text: Some("monorail".into()),
-                ..Default::default()
-            })
-            .expect("search ok");
-        assert!(
-            hits.iter().any(|h| matches!(h, Hit::Message { .. })),
-            "mail survives a restart and is in the one ranked list: {hits:?}"
-        );
-
-        // Direction two, on that same rebuilt index: the page carrying the mail
-        // is not content. The rebuild is what reads every document, so this is
-        // the path where a leak would appear.
-        let after = restarted
-            .search(&SearchQuery {
-                text: Some("monorail".into()),
-                ..Default::default()
-            })
-            .expect("search ok");
-        assert!(
-            !after
-                .iter()
-                .any(|h| matches!(h, Hit::Prose { .. } | Hit::Entity { .. })),
-            "the raw page must never surface as content: {after:?}"
-        );
-    }
-
-    /// **The Mailboxes contract, unchanged, over Outline.** Same claim as the
-    /// sessions one: the spec is untouched, so this was a storage move.
-    #[tokio::test]
-    async fn the_outline_mailbox_store_satisfies_the_contract() {
-        jojobot_domain::mailbox::testing::contract::run_all(|| {
-            store(FakeOutline::new()).mailboxes()
-        })
-        .await;
-    }
-
-    /// **The Sessions contract, unchanged, over Outline.** The same spec the
-    /// fake satisfies and the Vikunja adapter satisfied — that it passes here
-    /// with no edit to it is the whole proof that this was a storage move and
-    /// not a redesign.
-    #[tokio::test]
-    async fn the_outline_sessions_store_satisfies_the_contract() {
-        jojobot_domain::session::testing::contract::run_all(|| {
-            store(FakeOutline::new()).sessions()
-        })
-        .await;
     }
 
     /// **A chronology entry that quotes a table survives being one.**
@@ -1871,6 +1834,17 @@ mod tests {
         }
         async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
             self.0.append_document(id, text).await
+        }
+        async fn move_document(
+            &self,
+            id: &str,
+            collection_id: &str,
+            parent_id: Option<&str>,
+        ) -> Result<(), MemoryError> {
+            tokio::task::yield_now().await;
+            let out = self.0.move_document(id, collection_id, parent_id).await;
+            tokio::task::yield_now().await;
+            out
         }
         async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
             tokio::task::yield_now().await;

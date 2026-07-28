@@ -88,6 +88,22 @@ pub(super) trait OutlineApi: Send + Sync {
     /// document is re-serialized by the editor model on the way through, so a
     /// markdown table already on the page comes back padded.
     async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError>;
+
+    /// Move a document under `parent_id`, or to the top of `collection_id` when
+    /// that is `None`.
+    ///
+    /// **Its answer is not the truth.** `documents.move` returns the affected
+    /// collections and documents rather than the moved document's own record,
+    /// so a caller that needs to know where the page ended up reads the listing
+    /// — which is what verifies the move here. Observed against the live API,
+    /// along with the fact that a move leaves the page's text untouched, which
+    /// is what makes it usable as a repair.
+    async fn move_document(
+        &self,
+        id: &str,
+        collection_id: &str,
+        parent_id: Option<&str>,
+    ) -> Result<(), MemoryError>;
 }
 
 fn collection_rec(c: &Value) -> Option<CollectionRec> {
@@ -244,6 +260,21 @@ impl OutlineApi for HttpOutline {
         .await
         .map(|_| ())
     }
+
+    async fn move_document(
+        &self,
+        id: &str,
+        collection_id: &str,
+        parent_id: Option<&str>,
+    ) -> Result<(), MemoryError> {
+        // One of the two, never both: a parent implies its collection, and
+        // sending a bare collection is how a page is put back at the top.
+        let body = match parent_id {
+            Some(parent) => json!({ "id": id, "parentDocumentId": parent }),
+            None => json!({ "id": id, "collectionId": collection_id }),
+        };
+        self.post("documents.move", body).await.map(|_| ())
+    }
 }
 
 /// An adapter with no credentials — every call refuses. Lets the server boot and
@@ -282,6 +313,9 @@ impl OutlineApi for Unconfigured {
         Self::refuse()
     }
     async fn append_document(&self, _: &str, _: &str) -> Result<(), MemoryError> {
+        Self::refuse()
+    }
+    async fn move_document(&self, _: &str, _: &str, _: Option<&str>) -> Result<(), MemoryError> {
         Self::refuse()
     }
 }
