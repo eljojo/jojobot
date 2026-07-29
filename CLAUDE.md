@@ -140,7 +140,9 @@ Shipped and live:
   a bot: world-model and snapshot always, plus the identity when a bot is
   named. The door itself **mints no identity**: an unknown bot name comes back
   with the roster plus the offer to boot as a known bot and create the new one
-  from there. Anonymous boot gets orientation and no `sid` — an orientation
+  from there — and the snapshot NAMES every bot, so that offer is reachable
+  from the door rather than only from a refusal you had to provoke. Names
+  only: a caller with no identity is choosing one, not weighing its work. Anonymous boot gets orientation and no `sid` — an orientation
   preview, with nothing usable behind it. Ownership is stated **on the
   mailbox**, an `owner` field set once when the box opens, so there is no
   second copy anywhere to keep in step with it. It is not an ACL: a box names
