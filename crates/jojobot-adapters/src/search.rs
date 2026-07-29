@@ -2969,6 +2969,77 @@ mod tests {
         );
     }
 
+    /// **An untyped edge is walkable, or rule 98 is unimplemented.**
+    ///
+    /// The whole claim of the fifth shape is that deferring what a link MEANS
+    /// does not defer that it EXISTS. A `connection` that could not be followed
+    /// would be a note-to-self rather than an edge, and "the pointer is real,
+    /// only its nature is deferred" would be a sentence with nothing under it.
+    ///
+    /// **Both ways of asking**, because they fail differently. Asking for the
+    /// shape by name proves it was indexed under its own token; asking with no
+    /// shape at all proves it is in the general connected-to answer rather than
+    /// only findable by somebody who already knew to ask for `connection` —
+    /// which is the query a reader actually writes when the question is "what
+    /// touches this?".
+    #[tokio::test]
+    async fn an_untyped_edge_is_walkable_like_any_other() {
+        let linked = Fact {
+            edge: Some(Edge::new(
+                EdgeShape::Connection,
+                EntityId("place:shelbyville".into()),
+            )),
+            ..fact(
+                "person:alpha",
+                "f1",
+                "was there when it happened",
+                date(2026, 1, 1),
+            )
+        };
+        let index = index_of(vec![scan(
+            "doc-1",
+            Some(entity("person:alpha", "Alpha")),
+            "Alpha's page.",
+            vec![linked.clone()],
+        )]);
+        let alpha = EntityRef::resolved(&entity("person:alpha", "Alpha"));
+        let expected = vec![Hit::Fact {
+            fact: linked,
+            subject: alpha.clone(),
+            home: alpha,
+        }];
+
+        for shape in [Some(EdgeShape::Connection), None] {
+            let hits = index
+                .search(&SearchQuery {
+                    edge: Some(EdgeFilter {
+                        shape,
+                        object: EntityId("place:shelbyville".into()),
+                    }),
+                    ..Default::default()
+                })
+                .expect("search ok");
+            assert_eq!(hits, expected, "shape filter {shape:?} did not walk it");
+        }
+
+        // **And it is not quietly an `about`.** Asking for the asserted shape
+        // must not return the admitted one, or the distinction the fifth shape
+        // exists for is erased at exactly the point somebody reads it.
+        let as_about = index
+            .search(&SearchQuery {
+                edge: Some(EdgeFilter {
+                    shape: Some(EdgeShape::About),
+                    object: EntityId("place:shelbyville".into()),
+                }),
+                ..Default::default()
+            })
+            .expect("search ok");
+        assert!(
+            as_about.is_empty(),
+            "an admitted link answered a query for an asserted one: {as_about:?}"
+        );
+    }
+
     /// An edge filter is a filter, not a text match: it finds the fact carrying
     /// the edge and not the one that merely names the object.
     #[tokio::test]

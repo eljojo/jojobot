@@ -442,15 +442,28 @@ pub enum EdgeShape {
     Attendance,
     /// The subject is about something — the open shape: any kind of object.
     About,
+    /// **The subject is connected to something, and nobody recorded how.**
+    ///
+    /// Not a weaker `about`, and the distinction is the reason it exists.
+    /// `about` asserts that the record is ABOUT that entity — a claim somebody
+    /// made, and one a reader is entitled to act on. This one admits only that
+    /// a link is there; its nature is deferred, not implied. Filing an unknown
+    /// link as `about` would launder it into an assertion nobody made, and
+    /// everything downstream would read it as one.
+    ///
+    /// Deferred is not absent: the pointer is real and walks like any other
+    /// edge, because an edge that cannot be followed is not an edge.
+    Connection,
 }
 
 impl EdgeShape {
     /// Every shape, in declaration order.
-    pub const ALL: [EdgeShape; 4] = [
+    pub const ALL: [EdgeShape; 5] = [
         EdgeShape::Location,
         EdgeShape::Membership,
         EdgeShape::Attendance,
         EdgeShape::About,
+        EdgeShape::Connection,
     ];
 
     /// The **input and storage** token — what a caller passes and what the
@@ -461,6 +474,7 @@ impl EdgeShape {
             EdgeShape::Membership => "membership",
             EdgeShape::Attendance => "attendance",
             EdgeShape::About => "about",
+            EdgeShape::Connection => "connection",
         }
     }
 
@@ -472,6 +486,10 @@ impl EdgeShape {
             EdgeShape::Membership => "memberOf",
             EdgeShape::Attendance => "attendee",
             EdgeShape::About => "about",
+            // **Not `about`, and not a synonym for it.** schema.org's own word
+            // for a link whose nature is unstated: it relates these two and
+            // says nothing more, which is exactly the claim being made.
+            EdgeShape::Connection => "relatedTo",
         }
     }
 
@@ -490,6 +508,10 @@ impl EdgeShape {
             EdgeShape::Membership => Some(EntityKind::Org),
             EdgeShape::Attendance => Some(EntityKind::Event),
             EdgeShape::About => None,
+            // Any kind, for the same reason `about` takes any kind — and a
+            // stronger one: refusing a kind here would be jojobot deciding what
+            // the link means, which is the one thing it does not know.
+            EdgeShape::Connection => None,
         }
     }
 }
@@ -1491,19 +1513,24 @@ mod tests {
     /// renders. `membership`/`memberOf` and `attendance`/`attendee` are where
     /// they diverge; input stays lowercase, always.
     #[test]
-    fn the_four_edge_shapes_round_trip_and_the_set_is_closed() {
+    fn the_edge_shapes_round_trip_and_the_set_is_closed() {
         let all = [
             (EdgeShape::Location, "location", "location"),
             (EdgeShape::Membership, "membership", "memberOf"),
             (EdgeShape::Attendance, "attendance", "attendee"),
             (EdgeShape::About, "about", "about"),
+            (EdgeShape::Connection, "connection", "relatedTo"),
         ];
         for (shape, token, name) in all {
             assert_eq!(shape.as_token(), token);
             assert_eq!(shape.as_name(), name);
             assert_eq!(EdgeShape::from_token(token), Some(shape));
         }
-        assert_eq!(EdgeShape::ALL.len(), 4, "four shapes in M2, no more");
+        assert_eq!(
+            EdgeShape::ALL.len(),
+            5,
+            "four shapes from M2, plus the untyped one events point with"
+        );
         // A response name is NOT an input token: the input grammar is unchanged.
         for unknown in ["memberOf", "attendee", "knows", "Location", "", "locaton"] {
             assert_eq!(
@@ -1512,6 +1539,53 @@ mod tests {
                 "{unknown:?} is not a shape token"
             );
         }
+    }
+
+    /// **The fifth shape, and the whole point of it is that it is not the
+    /// fourth.**
+    ///
+    /// An event may point at entities whose relationship nobody recorded. The
+    /// tempting move is to file those as `about`, since `about` already takes
+    /// any kind — and that is exactly the move this shape exists to refuse.
+    /// `about` ASSERTS that the record is about that entity, which is a claim
+    /// somebody made; a `connection` ADMITS a link whose meaning is unknown.
+    /// Collapsing the two launders an unknown into an assertion, and every
+    /// reader downstream then reads a claim nobody ever made.
+    ///
+    /// The pointer is real either way — that is the other half. Only the NATURE
+    /// of the link is deferred, so it must still be walkable, which is what
+    /// `an_untyped_edge_is_walkable_like_any_other` holds it to.
+    #[test]
+    fn the_untyped_shape_is_its_own_shape_and_never_about() {
+        assert_eq!(EdgeShape::Connection.as_token(), "connection");
+        assert_eq!(
+            EdgeShape::from_token("connection"),
+            Some(EdgeShape::Connection)
+        );
+        assert_ne!(
+            EdgeShape::Connection,
+            EdgeShape::About,
+            "an admitted link and an asserted one are not the same edge"
+        );
+        // …and they do not share a response name either, or a reader sorting by
+        // name would put them back together.
+        assert_ne!(EdgeShape::Connection.as_name(), EdgeShape::About.as_name());
+
+        // **Any kind, like `about`** — an event points at whatever it points at,
+        // and refusing a kind here would be jojobot deciding what the link
+        // means, which is the thing it does not know.
+        assert_eq!(EdgeShape::Connection.object_kind(), None);
+        for object in ["person:alpha", "place:north-trail", "event:winter-fest"] {
+            assert!(
+                validate_edge(&Edge::new(EdgeShape::Connection, EntityId(object.into()))).is_ok(),
+                "an untyped edge takes {object}"
+            );
+        }
+        // The id grammar is still enforced: unknown MEANING is not unknown SHAPE.
+        assert!(
+            validate_edge(&Edge::new(EdgeShape::Connection, EntityId("a|b".into()))).is_err(),
+            "a malformed handle is malformed whatever the link means"
+        );
     }
 
     /// Each shape pins its object's kind — `about` is the one open shape. A
