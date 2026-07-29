@@ -2664,6 +2664,98 @@ mod tests {
         .await;
     }
 
+    /// **The write lock is what makes two posts into one box two messages, and
+    /// nothing in this context was holding it to that.**
+    ///
+    /// Every mailbox write is a read-modify-write over a whole page: read it,
+    /// mint the next id off what is on it, append the body, then put the WHOLE
+    /// table back. Two posts running at once both read the same page, both mint
+    /// the same next id, and both write a table built from a page that no
+    /// longer exists — so the second put erases the first message and both
+    /// callers hold a `Message` saying otherwise. Nothing on the surface can
+    /// then find it: it is not `new`, not `read`, not quarantined, not
+    /// anywhere.
+    ///
+    /// **Deleting the lock from this whole context left the suite green.** That
+    /// is the finding — the mailbox tier had no test that could tell a
+    /// linearized store from a racing one, so the mechanism the rule rests on
+    /// was load-bearing and unguarded. Sessions had this test; mailboxes did
+    /// not, and they share the lock precisely because they write different
+    /// documents in one collection.
+    ///
+    /// Run through the yielding transport, which suspends **after** a write
+    /// commits as well as before, because that is where the network suspends: a
+    /// real put is a round trip and the page has changed server-side before the
+    /// response arrives. A double that only yielded before the call would pass
+    /// this on broken code.
+    #[tokio::test]
+    async fn two_messages_posted_at_once_into_one_box_both_survive() {
+        use jojobot_domain::mailbox::Mailboxes as _;
+
+        let fake = FakeOutline::new();
+        let outline = OutlineStore::from_api(Arc::new(Yielding(fake)), COLL);
+        let owner = EntityId::new(EntityKind::Bot, "gamma");
+        outline
+            .add_entity(jojobot_domain::memory::NewEntity {
+                id: owner.clone(),
+                name: "gamma".into(),
+                aliases: Vec::new(),
+                source: "user-named".into(),
+                crm: None,
+                parent: None,
+                boot: Default::default(),
+                create_new: false,
+            })
+            .await
+            .expect("the owner is written")
+            .written()
+            .expect("not blocked");
+        let mailboxes = Arc::new(outline.mailboxes());
+        let name = jojobot_domain::mailbox::MailboxName("gamma".into());
+        mailboxes
+            .create_mailbox(&name, &owner, false)
+            .await
+            .expect("the box opens")
+            .written()
+            .expect("not blocked");
+
+        let post = |sender: &'static str, body: &'static str| {
+            let mailboxes = Arc::clone(&mailboxes);
+            let mailbox = name.clone();
+            async move {
+                mailboxes
+                    .post_message(jojobot_domain::mailbox::NewMessage {
+                        mailbox,
+                        body: body.into(),
+                        subject: None,
+                        sender: sender.into(),
+                        sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
+                        in_reply_to: None,
+                    })
+                    .await
+                    .expect("post_message should succeed")
+                    .written()
+                    .expect("not blocked")
+            }
+        };
+        let (one, two) = tokio::join!(
+            post("bot:delta", "the first shipment landed"),
+            post("bot:epsilon", "the second shipment landed")
+        );
+
+        assert_ne!(one.id, two.id, "two messages are two ids, not one id twice");
+        let all = mailboxes.scan_messages().await.expect("scan_messages");
+        assert_eq!(all.len(), 2, "neither write was lost: {all:?}");
+        for posted in [&one, &two] {
+            let seen = all
+                .iter()
+                .find(|m| m.id == posted.id)
+                .unwrap_or_else(|| panic!("{} is not on the page: {all:?}", posted.id));
+            assert_eq!(seen.body, posted.body, "…and each kept its own body");
+            assert_eq!(seen.sender, posted.sender);
+        }
+    }
+
     /// **The Sessions contract, unchanged, over Outline.** The same spec the
     /// fake satisfies and the Vikunja adapter satisfied — that it passes here
     /// with no edit to it is the whole proof that this was a storage move and
