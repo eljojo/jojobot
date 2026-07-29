@@ -11,7 +11,11 @@
 
 // A test target's root file does not get the `foo.rs` + `foo/` convention, so
 // the folder is named explicitly.
+#[path = "user_stories/bikes.rs"]
+mod bikes;
 #[path = "user_stories/dsl.rs"]
 mod dsl;
 #[path = "user_stories/moving.rs"]
 mod moving;
+#[path = "user_stories/party.rs"]
+mod party;
