@@ -103,10 +103,26 @@ async fn keeping_track_of_bikes() {
     s.recall("thing:road-bike").await.says("basement");
     s.list("thing").await.says("thing:gravel-bike");
 
-    // GAP — custody. "Do I still have the floor pump or did I lend it to
-    // somebody?" A possession whose whereabouts is a PERSON, and which changes.
-    // No shape says that: `location` points at a place, and a person is not one.
-    // s.fact_about("thing:floor-pump", "lent out", "custody", "person:milhouse").await;
+    // Custody IS a fact: the pump is the entity, "loaned to" is the fact, and it
+    // connects to the person. And a fact is current truth rewritten in place,
+    // which is exactly right — where a thing is now has no business accumulating.
+    s.add("thing:floor-pump", "Floor Pump").await;
+    s.fact_about(
+        "thing:floor-pump",
+        "loaned to him, still not back",
+        "about",
+        "person:milhouse",
+    )
+    .await;
+    s.find("loaned").await.says("thing:floor-pump");
+    s.recall("thing:floor-pump").await.says("person:milhouse");
+
+    // GAP — but the shape is `about`, the vague catch-all, because there is no
+    // name for this link. So the edge is walkable and MEANINGLESS: "what have I
+    // lent out, and to whom" cannot be asked, only searched for in whatever words
+    // the note happened to use. What it wants is the annotation the payload work
+    // is already introducing — a KEY on the edge:
+    // s.fact_keyed("thing:floor-pump", "loaned-to", "person:milhouse").await;
 
     s.wrap("still riding").await;
 

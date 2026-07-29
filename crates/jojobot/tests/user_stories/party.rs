@@ -89,32 +89,36 @@ async fn throwing_a_birthday_party() {
 
     s.fact("person:patana", "coming to the party").await;
 
-    // The decline goes on the PERSON as prose, and it has to, which is the
-    // finding: an attendance edge is binary — it exists or it does not — so it
-    // can say Barney is attending and cannot say he was asked and said no.
-    // Recording the decline as an edge would assert the opposite of what happened.
-    s.fact(
+    // Not coming is information as load-bearing as coming, so it gets the same
+    // edge. The shape says these two stand in an attendance relation; it does not
+    // claim he is there, any more than `location` claims someone is still at a
+    // place. Which way it went lives in the fact.
+    s.fact_about(
         "person:barney-gumble",
-        "cannot make the party, away that weekend",
+        "cannot make it, away that weekend",
+        "attendance",
+        "event:birthday-party",
     )
     .await;
 
-    // So it is recorded, and it is findable — but only by asking the right words.
     s.find("cannot make").await.says("person:barney-gumble");
     s.recall("person:barney-gumble")
         .await
         .says("away that weekend");
 
-    // GAP — THE ONE THIS STORY EXISTS FOR. A guest list is a set whose members
-    // each carry a STATE that changes: invited, yes, no, silent. Recorded as
-    // facts, "coming" and "cannot make it" sit beside "invited" with nothing
-    // superseding anything, so the party still counts Barney among its guests.
-    // s.attendance("event:birthday-party").set("person:barney-gumble", "no").await;
+    // GAP — THE ONE THIS STORY EXISTS FOR, and it is the edge KEY again. Walking
+    // attendance from the party returns everyone who relates to it — coming, not
+    // coming, and never answered — and the edge carries nothing saying which. The
+    // answer is only in each fact's prose, so the one question worth asking costs
+    // a read per guest and a judgement per read.
+    // s.fact_keyed("person:barney-gumble", "rsvp", "no", "event:birthday-party").await;
 
-    // GAP — and the two questions that follow from it, asked every single time.
-    // Neither can be answered from the event, only by reading each guest by hand.
-    // s.attendance("event:birthday-party").declined().says("person:barney-gumble");
-    // s.attendance("event:birthday-party").still_silent().says("person:ned-flanders");
+    // GAP — and the two questions that follow, asked every single time:
+    // s.through("event:birthday-party", "attendance").where_key("rsvp", "no").says("person:barney-gumble");
+    // s.through("event:birthday-party", "attendance").missing_key("rsvp").says("person:ned-flanders");
+
+    // Third domain tonight to land on the same want: event fields (rule 93),
+    // custody in the bikes story, and now an RSVP. The edge needs a key.
 
     s.wrap("two replies in, one outstanding").await;
 
