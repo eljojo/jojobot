@@ -70,7 +70,37 @@ impl Jojobot {
             .await
         {
             Ok(entry) => entry,
-            Err(e) => return session_declined(e),
+            // **An append can fail with its write already on the page** — a
+            // reread that failed after the entry landed, or a rollback that
+            // failed too. A flat error reads as "nothing was written", and the
+            // natural next move is the retry that appends a second entry
+            // beside the first. That is the same hazard the focus case below
+            // fixes, one call earlier.
+            //
+            // Uncertain rather than partial: unlike the focus, nothing here
+            // knows whether the entry landed. So the answer says that plainly
+            // and sends the caller to look, which is the conservative reading
+            // and the only honest one.
+            // **Only a STORE failure can have written before it failed.**
+            // Every other variant is a clean refusal decided before anything
+            // was touched — a closed run, an unknown session, a malformed
+            // entry — and dressing those as uncertain would send a caller to
+            // go and look for a write that provably never happened.
+            Err(e) if !matches!(e, SessionError::Store(_) | SessionError::Stranded { .. }) => {
+                return session_declined(e);
+            }
+            Err(e) => {
+                return json_result(&serde_json::json!({
+                    "status": "uncertain",
+                    "wrote": "unknown",
+                    "session": session.as_str(),
+                    "why": e.to_string(),
+                    "how_to_proceed": "The entry may or may not have been recorded — this \
+                                       failure cannot tell you which. Do NOT send it again \
+                                       blind: read the session back first, and re-send only if \
+                                       your entry is not the newest one in its chronology.",
+                }));
+            }
         };
         // The focus moves only once the beat is recorded: a session whose focus
         // says it is doing something its chronology never mentions is a record
@@ -141,6 +171,58 @@ mod tests {
     use crate::harness::*;
     use crate::session::testing::*;
     use jojobot_domain::session::Sid;
+
+    /// **A failure that cannot say whether the write landed says THAT.**
+    ///
+    /// An append can fail with its entry already on the page — a reread that
+    /// failed after it landed, or a rollback that failed too. A flat error
+    /// reads as nothing-happened, and the retry it invites appends a second
+    /// entry. Nothing here knows which state it is in, so the answer says so
+    /// and sends the caller to look rather than guessing for them.
+    #[tokio::test]
+    async fn a_journal_whose_entry_fails_says_it_cannot_tell() {
+        let store = Arc::new(RefusingAppend(InMemorySessions::new()));
+        let jojobot = Jojobot::new(
+            Arc::new(crate::memory::testing::InMemoryMemory::new()),
+            Arc::new(crate::memory::testing::SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            store.clone(),
+            Arc::new(sid::SessionRegistry::new()),
+        );
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let body = json_of(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: "set out to read the box".into(),
+                    focus: None,
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("an uncertain outcome is an answer, not a protocol failure"),
+        );
+
+        assert_eq!(body["status"], "uncertain", "{body}");
+        assert_eq!(
+            body["wrote"], "unknown",
+            "neither true nor false: nothing here knows: {body}"
+        );
+        let how = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("Do NOT send it again blind"),
+            "the blind retry is the danger: {how}"
+        );
+        assert!(
+            how.contains("read the session back"),
+            "…and the way out is to look, not to guess: {how}"
+        );
+
+        let lowered = body.to_string().to_lowercase();
+        for leak in ["page", "table", "row", "column", "document"] {
+            assert!(!lowered.contains(leak), "a caller has no {leak}: {body}");
+        }
+    }
 
     /// **A call that half succeeded says so, and says which half.**
     ///
