@@ -1,0 +1,4 @@
+{
+  "cell": "<b>bold</b> & an [email@example.test](mailto:email@example.test)",
+  "block": "<b>bold</b> & an <email@example.test>"
+}

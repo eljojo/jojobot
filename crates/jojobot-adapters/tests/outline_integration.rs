@@ -666,3 +666,187 @@ async fn golden_cases(store: &OutlineStore) -> Vec<(String, EntityId)> {
 
     out
 }
+
+/// **The battery, kept in step with the crate's own copy by name.** The text
+/// lives in `outline::golden::BATTERY`, which the fast tests read; this is the
+/// recorder's view of the same list. It is duplicated deliberately rather than
+/// exported: the crate half is `#[cfg(test)]`, and widening a module's
+/// visibility so a recorder can see it would put test scaffolding into the
+/// shipped surface.
+const GOLDEN_BATTERY: &[(&str, &str)] = &[
+    ("tilde", "a ~ b ~ c"),
+    ("lettered-list", "a) first\nb) second\nc) third"),
+    ("numbered-list", "1. first\n2. second\n7. out of order"),
+    ("bulleted-list", "- first\n* second\n+ third"),
+    ("line-start-syntax", "# heading\n> quoted\n---"),
+    ("emphasis", "_under_ *star* **bold** `tick`"),
+    ("angle-brackets", "<b>bold</b> & an <email@example.test>"),
+    ("backslash", "c:\\dir\\file and a trailing \\"),
+    ("pipe", "a | b | c"),
+    ("indented", "    four spaces\n\tand a tab"),
+    ("unicode", "café — ünïcode ✓ 🎯"),
+    ("blank-lines", "first\n\n\nlast"),
+];
+
+/// Put a page up verbatim and read back exactly what the store made of it.
+///
+/// **The raw API on purpose.** Going through a port would run the read-back
+/// guard, and the guard refuses precisely the writes worth measuring — so the
+/// interesting page would never reach disk and the fixture would record only
+/// the cases nobody doubted.
+async fn round_trip_page(http: &reqwest::Client, c: &Creds, doc_id: &str, text: &str) -> String {
+    let resp = http
+        .post(format!("{}/api/documents.update", c.url))
+        .bearer_auth(&c.token)
+        .json(&serde_json::json!({ "id": doc_id, "text": text }))
+        .send()
+        .await
+        .expect("documents.update");
+    assert!(
+        resp.status().is_success(),
+        "update failed: {}",
+        resp.status()
+    );
+    let back: serde_json::Value = http
+        .post(format!("{}/api/documents.info", c.url))
+        .bearer_auth(&c.token)
+        .json(&serde_json::json!({ "id": doc_id }))
+        .send()
+        .await
+        .expect("documents.info")
+        .json()
+        .await
+        .expect("documents.info json");
+    back["data"]["text"]
+        .as_str()
+        .expect("the page comes back with text")
+        .to_string()
+}
+
+/// **Record the mail and session rails' golden pages.** Same gate and same
+/// reasoning as the fact-table recorder above: a golden that re-records itself
+/// inside the checking command is not a golden.
+#[tokio::test]
+#[ignore]
+async fn record_the_rail_goldens() {
+    if std::env::var("JOJOBOT_RECORD_GOLDENS")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .is_none()
+    {
+        println!("SKIPPED: set JOJOBOT_RECORD_GOLDENS=1 to rewrite the checked-in rail fixtures.");
+        return;
+    }
+    let c = creds().expect("the recorder needs credentials");
+    let http = reqwest::Client::new();
+    drop_test_collection(&http, &c).await;
+    drop_session_collections(&http, &c).await;
+
+    let store = OutlineStore::with_collection(
+        http.clone(),
+        OutlineConfig {
+            base_url: c.url.clone(),
+            token: Secret::new(c.token.clone()),
+        },
+        TEST_COLLECTION,
+    );
+    let owner = EntityId::new(EntityKind::Bot, "gamma");
+    store
+        .add_entity(NewEntity::new(owner.clone(), "Gamma", "golden"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+
+    // A benign message and a benign session, written through the PORTS — so
+    // the page SHAPE is the one production really produces, and only the text
+    // inside it is the battery's.
+    use jojobot_domain::mailbox::Mailboxes as _;
+    let boxes = store.mailboxes();
+    let sessions = store.sessions();
+    let anchor_subject = "SUBJECT-ANCHOR";
+    let anchor_body = "BODY-ANCHOR";
+    let anchor_focus = "FOCUS-ANCHOR";
+    let anchor_entry = "ENTRY-ANCHOR";
+
+    boxes
+        .create_mailbox(
+            &jojobot_domain::mailbox::MailboxName("gamma".into()),
+            &owner,
+            false,
+        )
+        .await
+        .expect("the box opens")
+        .written()
+        .expect("the owner exists, so it is not blocked");
+    boxes
+        .post_message(jojobot_domain::mailbox::NewMessage {
+            mailbox: jojobot_domain::mailbox::MailboxName("gamma".into()),
+            body: anchor_body.into(),
+            sender: owner.to_string(),
+            subject: Some(anchor_subject.into()),
+            sent_at: jiff::Timestamp::UNIX_EPOCH,
+            in_reply_to: None,
+        })
+        .await
+        .expect("the anchor message posts")
+        .written()
+        .expect("not blocked");
+
+    let session = sessions
+        .begin(NewSession {
+            bot: owner.clone(),
+            sid: Sid("aa11".into()),
+            focus: anchor_focus.into(),
+            started_at: jiff::Timestamp::UNIX_EPOCH,
+        })
+        .await
+        .expect("the anchor session begins");
+    sessions
+        .append(
+            &session.id,
+            jojobot_domain::session::NewEntry {
+                text: anchor_entry.into(),
+                at: jiff::Timestamp::UNIX_EPOCH,
+                beat: None,
+            },
+        )
+        .await
+        .expect("the anchor entry lands");
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+    for (rail, anchors) in [
+        ("mailboxes", [anchor_subject, anchor_body]),
+        ("sessions", [anchor_focus, anchor_entry]),
+    ] {
+        std::fs::create_dir_all(dir.join(rail)).expect("the fixture directory");
+        let docs = raw_documents(&http, &c, TEST_COLLECTION).await;
+        let page = docs
+            .iter()
+            .find(|d| {
+                d["text"]
+                    .as_str()
+                    .is_some_and(|t| t.contains(anchors[0]) && t.contains(anchors[1]))
+            })
+            .unwrap_or_else(|| panic!("{rail}'s anchor page must be on the board"));
+        let doc_id = page["id"].as_str().expect("a doc id").to_string();
+        let clean = page["text"].as_str().expect("text").to_string();
+
+        for (name, text) in GOLDEN_BATTERY {
+            // A cell is one line, so the cell position gets the text flattened
+            // — which is what the domain does to it anyway.
+            let flat = text.replace('\n', " ");
+            let put = clean.replace(anchors[0], &flat).replace(anchors[1], text);
+            let got = round_trip_page(&http, &c, &doc_id, &put).await;
+
+            std::fs::write(dir.join(rail).join(format!("{name}.md")), &got).expect("write");
+            println!("RECORDED {rail}/{name} ({} bytes)", got.len());
+        }
+        // Put the page back the way it was found, so the next rail's lookup is
+        // not confused by a page still wearing the last battery entry.
+        round_trip_page(&http, &c, &doc_id, &clean).await;
+    }
+
+    drop_test_collection(&http, &c).await;
+    drop_session_collections(&http, &c).await;
+}

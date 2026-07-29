@@ -18,6 +18,8 @@
 
 mod api;
 mod codec;
+#[cfg(test)]
+mod golden;
 mod mailbox_codec;
 mod mailboxes;
 mod session_codec;
