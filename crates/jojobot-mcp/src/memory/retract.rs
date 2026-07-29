@@ -11,10 +11,12 @@ pub struct RetractArgs {
     /// The event's global address, `kind:slug#local-id` — exactly as `recall`
     /// or a search hit returned it.
     pub address: String,
-    /// **Why it is being taken back**, in one line. Required: a record marked
-    /// taken-back with no account of why is a hole in the story, and a reader
-    /// months from now cannot tell it from damage.
-    pub reason: String,
+    /// Why it is being taken back, in one line. Optional — worth giving: a
+    /// record marked taken-back with no account of why is hard for a later
+    /// reader to tell from damage. Left out, the retraction says plainly that
+    /// no reason was given rather than inventing one.
+    #[serde(default)]
+    pub reason: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -30,8 +32,8 @@ impl Jojobot {
                        than a flag on an edit. Nothing is removed: the record keeps its address, \
                        its words and its place, and is marked retracted; beside it lands a dated \
                        record of the retraction itself, naming what it takes back and the reason \
-                       you give. The two then read as one story, which is why the reason is \
-                       required. A retracted record is out of every default read and out of \
+                       if you give one. The two then read as one story. A retracted record is \
+                       out of every default read and out of \
                        every later edit, INCLUDING a status flip back — there is no un-retract, \
                        so if you are unsure, capture what is so now instead. THIS IS FOR \
                        CHRONOLOGY ONLY. A fact is current truth and gets FIXED: to correct one, \
@@ -54,7 +56,11 @@ impl Jojobot {
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
         let date = parse_date(None)?;
 
-        let taken_back = match self.memory.retract(&address, &args.reason, date).await {
+        let taken_back = match self
+            .memory
+            .retract(&address, args.reason.as_deref(), date)
+            .await
+        {
             Ok(taken_back) => taken_back,
             Err(e) => return memory_declined("retract", e),
         };
@@ -92,7 +98,7 @@ mod tests {
     fn retract_args(address: &str, reason: &str) -> RetractArgs {
         RetractArgs {
             address: address.to_string(),
-            reason: reason.to_string(),
+            reason: Some(reason.to_string()),
             sid: None,
         }
     }
@@ -248,39 +254,6 @@ mod tests {
                 .expect("advice")
                 .contains("person:alpha#f1"),
             "the addresses that DO exist are what makes this repairable: {missed}"
-        );
-    }
-
-    /// An empty reason is refused: the account is the half that makes a marked
-    /// record legible, so a blank one is not a shorter answer, it is no answer.
-    #[tokio::test]
-    async fn a_retraction_with_no_reason_is_refused() {
-        let jojobot = handler();
-        let address = an_event(&jojobot, "it happened").await;
-
-        let err = jojobot
-            .retract(Parameters(retract_args(&address, "   ")))
-            .await
-            .expect_err("an empty reason must be refused");
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-
-        let recalled = json_of(
-            &jojobot
-                .recall(Parameters(RecallArgs {
-                    subject: "person:alpha".into(),
-                    sid: None,
-                }))
-                .await
-                .expect("recall ok"),
-        );
-        assert_eq!(
-            recalled["facts"][0]["status"], "active",
-            "a refused retraction marks nothing: {recalled}"
-        );
-        assert_eq!(
-            recalled["facts"].as_array().expect("a list").len(),
-            1,
-            "…and records nothing beside it: {recalled}"
         );
     }
 }

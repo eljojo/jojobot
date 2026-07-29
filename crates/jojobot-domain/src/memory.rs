@@ -1153,12 +1153,28 @@ pub fn check_retractable(fact: &Fact) -> Result<(), MemoryError> {
 /// directly. The retraction is a real act either way — what is a hypothesis is
 /// the REASON, and defaulting a reason to testimony would bless the retracting
 /// agent's own account of itself.
-pub fn retraction_of(target: &Fact, reason: &str, date: Date) -> Result<NewFact, MemoryError> {
+///
+/// **The reason is optional**, and when it is absent the record says that
+/// rather than inventing one. A row still needs content, so there is a
+/// sentence here either way; this one states only the act and the absence,
+/// which is the whole of what jojobot knows when nobody said why.
+pub fn retraction_of(
+    target: &Fact,
+    reason: Option<&str>,
+    date: Date,
+) -> Result<NewFact, MemoryError> {
     check_retractable(target)?;
-    validate_content(reason)?;
+    let reason = reason.map(str::trim).filter(|r| !r.is_empty());
+    if let Some(reason) = reason {
+        validate_content(reason)?;
+    }
+    let content = match reason {
+        Some(reason) => normalize_content(reason),
+        None => "retracted; no reason was given".to_string(),
+    };
     Ok(NewFact {
         event: Some(event::Event::retraction_of(&target.address().to_string())),
-        ..NewFact::about(target.subject.clone(), normalize_content(reason), date)
+        ..NewFact::about(target.subject.clone(), content, date)
     })
 }
 
@@ -1441,7 +1457,7 @@ pub trait Memory: Send + Sync {
     async fn retract(
         &self,
         address: &FactAddress,
-        reason: &str,
+        reason: Option<&str>,
         date: Date,
     ) -> Result<Retraction, MemoryError>;
 

@@ -283,7 +283,7 @@ impl Memory for InMemoryMemory {
     async fn retract(
         &self,
         address: &FactAddress,
-        reason: &str,
+        reason: Option<&str>,
         date: Date,
     ) -> Result<Retraction, MemoryError> {
         let index = self.index();
@@ -2136,7 +2136,11 @@ pub mod contract {
         .await;
 
         let taken_back = store
-            .retract(&event.address(), "it was rebooked twice", date(2026, 7, 4))
+            .retract(
+                &event.address(),
+                Some("it was rebooked twice"),
+                date(2026, 7, 4),
+            )
             .await
             .expect("retracting an event should succeed");
 
@@ -2185,12 +2189,16 @@ pub mod contract {
         )
         .await;
         let taken_back = store
-            .retract(&event.address(), "it did not, in fact", date(2026, 7, 4))
+            .retract(
+                &event.address(),
+                Some("it did not, in fact"),
+                date(2026, 7, 4),
+            )
             .await
             .expect("the first retraction lands");
 
         let again = store
-            .retract(&event.address(), "again", date(2026, 7, 5))
+            .retract(&event.address(), Some("again"), date(2026, 7, 5))
             .await;
         assert!(
             matches!(again, Err(MemoryError::NotRetractable { .. })),
@@ -2198,7 +2206,7 @@ pub mod contract {
         );
 
         let the_record = store
-            .retract(&taken_back.record.address(), "undo", date(2026, 7, 5))
+            .retract(&taken_back.record.address(), Some("undo"), date(2026, 7, 5))
             .await;
         assert!(
             matches!(the_record, Err(MemoryError::NotRetractable { .. })),
@@ -2238,7 +2246,7 @@ pub mod contract {
         .await;
 
         let refused = store
-            .retract(&fact.address(), "turns out not", date(2026, 7, 4))
+            .retract(&fact.address(), Some("turns out not"), date(2026, 7, 4))
             .await;
         let Err(MemoryError::NotRetractable { why, .. }) = refused else {
             panic!("a fact must not be retractable: {refused:?}");
@@ -2262,7 +2270,7 @@ pub mod contract {
         let missed = FactAddress::new(subject.clone(), FactId("f404".into()));
 
         let refused = store
-            .retract(&missed, "nothing here", date(2026, 7, 4))
+            .retract(&missed, Some("nothing here"), date(2026, 7, 4))
             .await;
         assert!(
             matches!(refused, Err(MemoryError::UnknownFact { .. })),
@@ -2846,7 +2854,11 @@ pub mod contract {
         )
         .await;
         store
-            .retract(&taken_back.address(), "it never happened", date(2026, 7, 3))
+            .retract(
+                &taken_back.address(),
+                Some("it never happened"),
+                date(2026, 7, 3),
+            )
             .await
             .expect("retracting an event should succeed");
 

@@ -249,7 +249,7 @@ impl Memory for UnindexedMemory {
     async fn retract(
         &self,
         address: &FactAddress,
-        reason: &str,
+        reason: Option<&str>,
         date: jiff::civil::Date,
     ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
         self.0.retract(address, reason, date).await

@@ -1053,7 +1053,7 @@ impl Memory for IndexedMemory {
     async fn retract(
         &self,
         address: &FactAddress,
-        reason: &str,
+        reason: Option<&str>,
         date: Date,
     ) -> Result<Retraction, MemoryError> {
         let taken_back = self.inner.retract(address, reason, date).await?;
@@ -2141,7 +2141,7 @@ mod tests {
         async fn retract(
             &self,
             _: &FactAddress,
-            _: &str,
+            _: Option<&str>,
             _: Date,
         ) -> Result<Retraction, MemoryError> {
             unimplemented!("this double only scans")

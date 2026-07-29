@@ -628,7 +628,7 @@ async fn golden_cases(store: &OutlineStore) -> Vec<(String, EntityId)> {
     store
         .retract(
             &event.address(),
-            "it was rebooked twice | and the pipe is deliberate",
+            Some("it was rebooked twice | and the pipe is deliberate"),
             jiff::civil::date(2026, 7, 29),
         )
         .await

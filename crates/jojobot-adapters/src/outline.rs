@@ -869,7 +869,7 @@ impl Memory for OutlineStore {
     async fn retract(
         &self,
         address: &FactAddress,
-        reason: &str,
+        reason: Option<&str>,
         date: Date,
     ) -> Result<Retraction, MemoryError> {
         // Serialized against every other write to this collection's
