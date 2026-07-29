@@ -199,10 +199,12 @@ pub const OUTCOME_NOTES: Fitted = Fitted {
 /// adversarial cases, so it stays byte-exact and gets nothing. The axis is
 /// where a value SITS, not what it is: a subject is prose and lives in a cell.
 ///
-/// **What it forgives is a backslash the store put in front of punctuation,
+/// **What it forgives is a backslash the store ADDED in front of punctuation,
 /// and nothing else.** A dropped character, a changed word, a truncation, a
-/// swapped value: all still fail, which is the half of the guard that has
-/// twice caught real data loss.
+/// swapped value all still fail — including a backslash the WRITER put there
+/// that came back missing, which an earlier version of this could not see
+/// because it normalized both sides and made the two kinds of backslash
+/// identical.
 pub fn same_cell_value(wrote: &str, read: &str) -> bool {
     fn without_added_escapes(cell: &str) -> String {
         let mut out = String::with_capacity(cell.len());
@@ -253,10 +255,22 @@ pub fn same_cell_value(wrote: &str, read: &str) -> bool {
             .collect()
     }
 
-    let same_after = |f: fn(&str) -> String| f(wrote) == f(read);
+    // **Only the READ side is un-escaped, and the asymmetry is the point.**
+    //
+    // What is being forgiven is an escape the STORE ADDED, so only the value
+    // that came back can have gained one. Normalizing both sides made a
+    // backslash the WRITER put before punctuation indistinguishable from one
+    // the store added — `5\% off` and `5% off` collapsed to the same string,
+    // so an escape the store had DROPPED read as a formatting difference and
+    // the write was accepted. Anything regex-shaped or path-shaped in a claim
+    // or a subject landed there.
+    //
+    // A writer's own `\~` coming back as `\\~` is refused by this, since
+    // stripping the read side takes both backslashes. That is the safe
+    // direction — a refusal a caller can see, rather than a silent loss.
     wrote == read
-        || same_after(without_added_escapes)
-        || same_after(|c| as_one_emphasis_marker(&without_added_escapes(c)))
+        || wrote == without_added_escapes(read)
+        || as_one_emphasis_marker(wrote) == as_one_emphasis_marker(&without_added_escapes(read))
 }
 
 /// How a field's two sides are compared — the caller knows which its field is,
@@ -489,6 +503,14 @@ mod tests {
             // A backslash the WRITER put before a letter is theirs, and losing
             // it is loss.
             ("c:\\dir", "c:dir"),
+            // **And so is one before PUNCTUATION.** Stripping escapes from
+            // both sides before comparing made this pair equal: the writer's
+            // backslash and the store's look identical once both are gone, so
+            // a dropped escape read as a formatting difference. Anything
+            // regex-shaped or path-shaped in a claim or a subject lands here.
+            ("5\\% off", "5% off"),
+            ("\\d+\\.\\d+", "d+.d+"),
+            ("a \\~ b", "a ~ b"),
         ] {
             assert!(
                 !same_cell_value(wrote, read),
