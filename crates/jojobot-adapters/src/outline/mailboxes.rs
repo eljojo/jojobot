@@ -160,7 +160,8 @@ impl OutlineMailboxes {
                 return Err(MailboxError::Quarantined {
                     attempted: id.to_string(),
                     reason: format!(
-                        "its row on the page for {name} cannot be read — a state, a sender or a                          timestamp has been edited past parsing. A person has to repair the row"
+                        "its row on the page for {name} cannot be read — a state, a sender or a \
+                         timestamp has been edited past parsing. A person has to repair the row"
                     ),
                 });
             }

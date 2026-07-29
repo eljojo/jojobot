@@ -533,21 +533,25 @@ pub enum MailboxError {
         /// The id that missed.
         attempted: String,
     },
-    /// The addressed id is a **quarantined card**: it is on a jojobot mailbox
-    /// board — `list_mailboxes` reports it under its box, whenever the card
-    /// still says which box that is — but it cannot be read as a message, so no
-    /// verb may act on it.
+    /// The addressed id is **quarantined**: jojobot can see that something with
+    /// that id is on a mailbox, and cannot read it as a message — so no verb may
+    /// act on it. It is reported wherever a box's counts are (a boot's snapshot,
+    /// and `read_mailbox` counting), because it is invisible everywhere else.
     ///
     /// Distinct from [`MailboxError::UnknownMessage`] on purpose. Answering
-    /// "no such message" here is a false statement about a card jojobot is
-    /// looking straight at, and it sends the caller looking for a lost message
-    /// instead of at the card that is sitting right there.
+    /// "no such message" here is a false statement about something jojobot is
+    /// looking straight at, and it sends the caller hunting a lost message
+    /// instead of reporting the damage that is sitting right there.
+    ///
+    /// **The text says what is wrong and who fixes it, and not where it lives.**
+    /// It used to give a repair procedure in the vocabulary of the board mail
+    /// sat on two stores ago — put back its mailbox label, its place in the
+    /// funnel — which was both a store describing itself to an agent and, by
+    /// then, instructions for a system that no longer existed.
     #[error(
-        "message '{attempted}' is a quarantined card: {reason}. jojobot will not act on a card it \
-         cannot read — a person needs to open card {attempted} on the mailbox board and put back \
-         whatever it is missing: its mailbox label, its machine block, and a place in the funnel. \
-         Moving it into a funnel column while it still has no mailbox label reads as somebody \
-         else's card and makes it invisible to jojobot altogether"
+        "message '{attempted}' cannot be read: {reason}. jojobot will not act on a record it \
+         cannot parse, and no retry will change that — a person has to repair it. Treat whatever \
+         it carried as unhandled and say so"
     )]
     Quarantined {
         /// The id that was addressed.
@@ -555,9 +559,9 @@ pub enum MailboxError {
         /// Why the card cannot be read.
         reason: String,
     },
-    /// **A write failed, and putting the card back failed too.** The card is
-    /// left mid-verb: not written, not restored, and not something the caller
-    /// can retry its way out of.
+    /// **A write failed, and putting the record back failed too.** It is left
+    /// mid-verb: not written, not restored, and not something the caller can
+    /// retry its way out of.
     ///
     /// Its own variant on purpose. Whether a rollback worked is the one thing a
     /// caller cannot infer from anything else in the answer, and the last time
@@ -565,15 +569,15 @@ pub enum MailboxError {
     /// meant string-matching that sentence — so rewording it silently broke the
     /// detection with every test green.
     #[error(
-        "{verb} failed ({cause}) AND putting it back failed ({rollback}) — card(s) {} are left \
-         mid-{verb}, and a person has to look at the board",
-        .cards.join(", ")
+        "{verb} failed ({cause}) AND putting it back failed ({rollback}) — {} is left mid-{verb}, \
+         and a person has to look",
+        .stranded.join(", ")
     )]
     Stranded {
         /// The verb that failed.
         verb: String,
-        /// The cards left mid-write.
-        cards: Vec<String>,
+        /// The ids left mid-write.
+        stranded: Vec<String>,
         /// What failed first.
         cause: String,
         /// Why the rollback could not undo it.
