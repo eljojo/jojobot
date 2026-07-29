@@ -385,14 +385,28 @@ pub(super) fn parse_bodies(doc: &str) -> Vec<(MessageId, String)> {
         {
             out.push((
                 MessageId(id),
-                unescape_body(&inside[blank + 1..].join("\n"))
-                    .trim()
-                    .to_string(),
+                unescape_body(&without_blank_edges(&inside[blank + 1..])),
             ));
         }
         i = close + 1;
     }
     out
+}
+
+/// **The blank lines around a body, not the whitespace inside it.**
+///
+/// This was a `.trim()` over the whole joined body, which is right about the
+/// padding the block format puts around the text and wrong about the text: it
+/// ate a message's leading indentation. The store had kept those spaces
+/// perfectly — the loss was ours, and the goldens found it the first time they
+/// ran.
+pub(super) fn without_blank_edges(lines: &[&str]) -> String {
+    let start = lines.iter().position(|l| !l.trim().is_empty());
+    let end = lines.iter().rposition(|l| !l.trim().is_empty());
+    match (start, end) {
+        (Some(start), Some(end)) => lines[start..=end].join("\n"),
+        _ => String::new(),
+    }
 }
 
 /// Assemble one row and its body into a message.

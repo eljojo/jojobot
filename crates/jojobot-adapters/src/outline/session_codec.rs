@@ -392,7 +392,7 @@ fn parse_entry(inside: &[&str]) -> Option<(SessionId, JournalEntry)> {
         JournalEntry {
             id,
             at: get("at")?.parse().ok()?,
-            text: unescape_text(&body.join("\n")).trim().to_string(),
+            text: unescape_text(&super::mailbox_codec::without_blank_edges(body)),
             touched: get("touched").and_then(|t| t.parse().ok()),
             beat: get("beat"),
         },

@@ -190,16 +190,15 @@ mod tests {
         );
     }
 
-    /// **A body's leading indentation is lost by THIS CRATE, not by the
-    /// store.** Pinned as the defect it is, against the recorded page that
-    /// proves where it happens: the four spaces are on the page and absent
-    /// from what the parser hands back.
+    /// **A body's leading indentation survives the reader.**
     ///
-    /// Recorded rather than fixed here — it is a parser defect the goldens
-    /// found on their first run, and it belongs to whoever scopes the next
-    /// piece rather than to the commit that discovered it.
+    /// It did not: the four spaces were on the recorded page and absent from
+    /// what `parse_bodies` returned, because the reader trimmed the whole
+    /// joined body rather than the blank lines around it. The store had kept
+    /// them perfectly. Found by the goldens on their first run, which is the
+    /// argument for having built them.
     #[test]
-    fn a_bodys_leading_indentation_is_dropped_by_the_reader_and_not_the_store() {
+    fn a_bodys_leading_indentation_survives_the_reader() {
         let page = fixture("mailboxes", "indented.md");
         assert!(
             page.contains("    four spaces"),
@@ -207,9 +206,8 @@ mod tests {
         );
         assert_eq!(
             parse("mailboxes", &page).block,
-            "four spaces\n\tand a tab",
-            "…and the reader drops the leading spaces while keeping the tab. If this now \
-             matches what was written, the defect is fixed and this test should go."
+            "    four spaces\n\tand a tab",
+            "…and so must the reader"
         );
     }
 
