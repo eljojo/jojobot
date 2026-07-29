@@ -1142,6 +1142,7 @@ mod tests {
         /// induced fault behind the restore-on-mismatch contract.
         poison: std::sync::atomic::AtomicBool,
         poison_body: std::sync::atomic::AtomicBool,
+        refuse_update: std::sync::atomic::AtomicBool,
     }
 
     /// What the real Outline does to a markdown table on save: the editor model
@@ -1296,6 +1297,13 @@ mod tests {
         /// is.
         fn poison_body_next_update(&self) {
             self.poison_body.store(true, Ordering::SeqCst);
+        }
+
+        /// **Fail the next `update_document` outright**, rather than mangling
+        /// it — the transport failure, as opposed to the corruption. It is
+        /// what reaches the early returns a read-back mismatch never gets to.
+        fn refuse_next_update(&self) {
+            self.refuse_update.store(true, Ordering::SeqCst);
         }
 
         fn stamp(&self) -> String {
@@ -1513,6 +1521,9 @@ mod tests {
         }
 
         async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            if self.refuse_update.swap(false, Ordering::SeqCst) {
+                return Err(MemoryError::Store("the write was refused".into()));
+            }
             let text = if self.poison.swap(false, Ordering::SeqCst) {
                 with_last_cell_dropped(text)
             } else {
@@ -2391,6 +2402,78 @@ mod tests {
             .written()
             .expect("not blocked");
         assert_eq!(posted.body, "the shipment landed");
+    }
+
+    /// **The orphan has a second door: the row write never happening at all.**
+    ///
+    /// A refused post was fixed for the case where the row reads back wrong.
+    /// The body lands first, so every path that leaves between the body
+    /// landing and the row's read-back leaves the same orphan — and those
+    /// paths returned on a question mark, so the rollback never ran.
+    ///
+    /// A surviving orphan is worse than debris now. A body is matched to a row
+    /// by id, ids are minted from ROWS only, so a body keyed to an id no row
+    /// claims is picked up by the next message to mint that id — which reads
+    /// back carrying somebody else's abandoned text instead of its own.
+    #[tokio::test]
+    async fn a_post_whose_row_write_fails_leaves_no_orphaned_body() {
+        use jojobot_domain::mailbox::Mailboxes as _;
+
+        let fake = FakeOutline::new();
+        let outline = OutlineStore::from_api(fake.clone(), COLL);
+        let owner = EntityId::new(EntityKind::Bot, "gamma");
+        ensure(&outline, &owner).await;
+        let mailboxes = outline.mailboxes();
+        let name = jojobot_domain::mailbox::MailboxName("gamma".into());
+        mailboxes
+            .create_mailbox(&name, &owner, false)
+            .await
+            .expect("the box opens")
+            .written()
+            .expect("not blocked");
+
+        let post = |body: &'static str| {
+            let mailboxes = outline.mailboxes();
+            let name = name.clone();
+            async move {
+                mailboxes
+                    .post_message(jojobot_domain::mailbox::NewMessage {
+                        mailbox: name,
+                        body: body.into(),
+                        subject: None,
+                        sender: "bot:delta".into(),
+                        sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
+                        in_reply_to: None,
+                    })
+                    .await
+            }
+        };
+
+        // The body append succeeds; the row write is refused outright.
+        fake.refuse_next_update();
+        assert!(
+            post("the abandoned body").await.is_err(),
+            "a refused row write must not report success"
+        );
+
+        let page = fake.text_of_mailbox_page(&name.to_string());
+        assert!(
+            !page.contains("the abandoned body"),
+            "the body it wrote first survived a path that never rolled back: {page}"
+        );
+
+        // **And the consequence, which is the reason this matters.** The next
+        // message mints the id the orphan was keyed to, so a surviving orphan
+        // would come back as this message's body.
+        let posted = post("its own body")
+            .await
+            .expect("the next post lands")
+            .written()
+            .expect("not blocked");
+        assert_eq!(
+            posted.body, "its own body",
+            "a message must never read back carrying somebody else's abandoned text"
+        );
     }
 
     /// **A failed rollback is a VARIANT, not a sentence**, in the mailbox

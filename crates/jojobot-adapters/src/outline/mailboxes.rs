@@ -446,7 +446,25 @@ impl Mailboxes for OutlineMailboxes {
             .append_document(&doc.id, &render_body(&id, &body))
             .await
             .map_err(store)?;
-        let doc = self.reread(&doc, "post_message").await?;
+
+        // **From here on the body is on the page, so no path may leave
+        // without putting it back.** Every early return between this point and
+        // the read-back used to exit on a question mark, and the rollback ran
+        // on none of them — the same orphan the read-back case leaves, through
+        // a door nobody had tried.
+        macro_rules! or_undo {
+            ($outcome:expr) => {
+                match $outcome {
+                    Ok(value) => value,
+                    Err(e) => {
+                        return Err(self
+                            .undo(&before, "post_message", vec![id.to_string()], e.to_string())
+                            .await);
+                    }
+                }
+            };
+        }
+        let doc = or_undo!(self.reread(&doc, "post_message").await);
 
         let row = Row {
             id: id.clone(),
@@ -459,14 +477,18 @@ impl Mailboxes for OutlineMailboxes {
         };
         let (mut rows, _) = parse_rows(&doc.text);
         rows.push(row.clone());
-        let updated = with_rows_replaced(&doc.text, &rows)
-            .ok_or_else(|| store_msg(format!("the page for {} has no table", new.mailbox)))?;
-        let seen = self.put(&before, &updated, "post_message").await?;
+        let updated = or_undo!(
+            with_rows_replaced(&doc.text, &rows)
+                .ok_or_else(|| store_msg(format!("the page for {} has no table", new.mailbox)))
+        );
+        let seen = or_undo!(self.put(&before, &updated, "post_message").await);
 
-        let back = Self::assemble(&new.mailbox, &seen)
-            .into_iter()
-            .find(|m| m.id == id)
-            .ok_or_else(|| store_msg(format!("message {id} did not read back")))?;
+        let back = or_undo!(
+            Self::assemble(&new.mailbox, &seen)
+                .into_iter()
+                .find(|m| m.id == id)
+                .ok_or_else(|| store_msg(format!("message {id} did not read back")))
+        );
         // **The subject is compared as a CELL and the body as bytes.** The
         // body is fenced and the store leaves a fence alone; the subject sits
         // where the store escapes what it reads as syntax. A byte comparison
