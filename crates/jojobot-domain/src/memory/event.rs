@@ -63,6 +63,36 @@ pub struct Event {
 }
 
 impl Event {
+    /// **Every entity this record points at — whatever key it sits under.**
+    ///
+    /// What makes a payload value a walkable reference is that it IS an entity
+    /// handle, not the key it happens to have. `ref=person:alpha` is the
+    /// unnamed case, used when there is nothing to call the relationship; a
+    /// later `mechanic=person:alpha` is the same link with the key doing the
+    /// annotating. **The key is the annotation** — so a projection keyed on the
+    /// literal word `ref` would silently miss every named reference the day the
+    /// first real type ships, and miss it invisibly, because nothing today has
+    /// a named field to notice with.
+    ///
+    /// That is also the boundary: a key annotates a link cheaply, and it does
+    /// not make the link a place to keep things. An edge growing its own fields
+    /// is a node that has not admitted it yet.
+    ///
+    /// Deduplicated and ordered, so two spellings of the same answer cannot
+    /// come back as two answers.
+    pub fn linked(&self) -> Vec<EntityId> {
+        let mut found: Vec<EntityId> = self.refs.clone();
+        found.extend(
+            self.metadata
+                .values()
+                .map(|v| EntityId(v.trim().to_string()))
+                .filter(|id| super::validate_subject(id).is_ok()),
+        );
+        found.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        found.dedup();
+        found
+    }
+
     /// An event of this type, with nothing else recorded.
     pub fn of(kind: &str) -> Self {
         Event {
@@ -244,6 +274,53 @@ mod tests {
                 "{empty:?} is a fact without an event, not a damaged one"
             );
         }
+    }
+
+    /// **What makes a payload value an edge is the VALUE, not the key.**
+    ///
+    /// `ref` is the unnamed member of a family, not the only member: when a
+    /// type eventually names its fields, `mechanic=person:x` is the same link
+    /// with the key doing the annotating. A projection that keyed on the
+    /// literal word `ref` would work perfectly today — nothing has named fields
+    /// yet — and would silently drop every named reference the day one ships.
+    /// That invisibility is the whole reason this is asserted now.
+    #[test]
+    fn any_value_that_is_a_handle_is_a_link_whatever_its_key() {
+        let recorded_event = recorded(
+            "a-thing-that-happened",
+            &[
+                // The named case, which does not exist yet and must still work.
+                ("mechanic", "person:milhouse"),
+                // Ordinary metadata: not a handle, so not a link.
+                ("mood", "delighted"),
+                ("count", "3"),
+                // Shaped like a handle but not a well-formed one.
+                ("nearly", "person:"),
+            ],
+            &["place:north-trail"],
+        );
+
+        assert_eq!(
+            recorded_event.linked(),
+            vec![
+                EntityId("person:milhouse".into()),
+                EntityId("place:north-trail".into()),
+            ],
+            "the named field links exactly as the unnamed one does"
+        );
+    }
+
+    /// The same entity named twice — once unnamed, once under a key — is one
+    /// link, not two. A reader asking what touches an entity must not have to
+    /// dedupe an answer.
+    #[test]
+    fn one_entity_named_twice_is_one_link() {
+        let twice = recorded(
+            "a-thing",
+            &[("mechanic", "person:milhouse")],
+            &["person:milhouse"],
+        );
+        assert_eq!(twice.linked(), vec![EntityId("person:milhouse".into())]);
     }
 
     /// The characters that would otherwise break the grammar survive it — a

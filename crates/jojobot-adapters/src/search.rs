@@ -28,8 +28,8 @@ use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term, doc};
 
 use jojobot_domain::mailbox::{MailboxError, Mailboxes, Message};
 use jojobot_domain::memory::{
-    Edge, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, Memory,
-    MemoryError, NewEntity, NewFact,
+    Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
+    Guarded, Memory, MemoryError, NewEntity, NewFact,
     guard::{self, MatchReason},
     search::{self, DocScan, EntityRef, Hit, MailCoverage, Search, SearchQuery},
 };
@@ -100,6 +100,14 @@ struct Fields {
     /// A fact's edge shape, and the handle its edge points at.
     edge_shape: Field,
     edge_object: Field,
+    /// **One term per edge, shape and object together.**
+    ///
+    /// A fact can carry several edges now — its own, plus one per entity its
+    /// event payload points at — and the two fields above are independent, so
+    /// `shape=location AND object=person:alpha` would match a fact holding a
+    /// location edge to somewhere else and an unrelated link to alpha. Neither
+    /// field is wrong; the pair is what the caller actually asked about.
+    edge_pair: Field,
     /// The stored [`Payload`], as JSON.
     payload: Field,
 }
@@ -118,6 +126,7 @@ impl Fields {
             provenance: b.add_text_field("provenance", STRING),
             edge_shape: b.add_text_field("edge_shape", STRING),
             edge_object: b.add_text_field("edge_object", STRING),
+            edge_pair: b.add_text_field("edge_pair", STRING),
             payload: b.add_text_field("payload", STORED),
         };
         (b.build(), fields)
@@ -428,9 +437,27 @@ impl FullTextIndex {
             if let Some(kind) = fact.subject.kind() {
                 document.add_text(f.kind, kind.as_token());
             }
-            if let Some(edge) = &fact.edge {
+            // **Every edge this fact draws**, its own and its event's. An
+            // event's links are `connection`s: the pointer is real, and what
+            // the link MEANS is deliberately unrecorded rather than guessed.
+            //
+            // What makes a payload value one of these is that it IS a handle,
+            // not the key it sits under — `ref=` is the unnamed case and a
+            // later named field is the same link annotated. Keying this on the
+            // literal word `ref` would work today and drop every named
+            // reference the day the first type ships.
+            let linked = fact
+                .event
+                .iter()
+                .flat_map(|e| e.linked())
+                .map(|object| Edge::new(EdgeShape::Connection, object));
+            for edge in fact.edge.iter().cloned().chain(linked) {
                 document.add_text(f.edge_shape, edge.shape.as_token());
                 document.add_text(f.edge_object, edge.object.as_str());
+                document.add_text(
+                    f.edge_pair,
+                    format!("{}={}", edge.shape.as_token(), edge.object),
+                );
             }
             writer.add_document(document).map_err(store_err)?;
         }
@@ -522,9 +549,16 @@ impl FullTextIndex {
             clauses.push(self.must_term(f.subject, subject.as_str()));
         }
         if let Some(edge) = &query.edge {
-            clauses.push(self.must_term(f.edge_object, edge.object.as_str()));
-            if let Some(shape) = edge.shape {
-                clauses.push(self.must_term(f.edge_shape, shape.as_token()));
+            // **The PAIR when a shape is named**, because the two halves are
+            // independent fields and a fact can carry several edges: matching
+            // them separately would answer "has a location edge, and separately
+            // touches alpha" to a caller who asked "is located at alpha".
+            match edge.shape {
+                Some(shape) => clauses.push(self.must_term(
+                    f.edge_pair,
+                    &format!("{}={}", shape.as_token(), edge.object),
+                )),
+                None => clauses.push(self.must_term(f.edge_object, edge.object.as_str())),
             }
         }
         clauses
@@ -1160,6 +1194,7 @@ mod tests {
     use jiff::civil::date;
     use jojobot_domain::mailbox::testing::{InMemoryMailboxes, contract as mail_contract};
     use jojobot_domain::mailbox::{MailboxName, Message, MessageId, MessageState};
+    use jojobot_domain::memory::event::Event;
     use jojobot_domain::memory::search::{DEFAULT_LIMIT, EdgeFilter, EntityRef};
     use jojobot_domain::memory::testing::{InMemoryMemory, contract};
     use jojobot_domain::memory::{Boot, Edge, EdgeShape, FactStatus, Provenance, validate_subject};
@@ -2971,6 +3006,156 @@ mod tests {
                 .expect("search ok")
                 .is_empty(),
             "a blocked post must leave nothing in the index either"
+        );
+    }
+
+    /// **The payload and the index agree about what is a link — checked, not
+    /// conventional.**
+    ///
+    /// An event's references live in the payload and are projected into the
+    /// index; the row's own edge column knows nothing about them. That split is
+    /// the right one — the payload is the general form and the edge column the
+    /// special case left from before fields existed — but a split held together
+    /// by convention reads fine today and is a bug in eighteen months. So it is
+    /// an invariant with a test on it: every payload value that is an entity
+    /// handle is walkable, and every value that is not is not.
+    ///
+    /// **Whatever its key**, which is the half that is invisible today. `ref` is
+    /// the unnamed member of a family; when types land, `mechanic=person:x` is
+    /// the same link with the key doing the annotating. Nothing in this slice
+    /// has a named field, so a projection keyed on the literal word `ref` would
+    /// pass every test here and silently drop every named reference the day the
+    /// first type ships.
+    #[tokio::test]
+    async fn every_payload_value_that_is_a_handle_is_walkable_and_nothing_else_is() {
+        let event = Fact {
+            event: Some(Event {
+                kind: "a-thing-that-happened".into(),
+                metadata: [
+                    // Named, and it must walk exactly as the unnamed one does.
+                    ("mechanic".to_string(), "person:milhouse".to_string()),
+                    // Not handles: these must NOT become edges.
+                    ("mood".to_string(), "delighted".to_string()),
+                    ("nearly".to_string(), "person:".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                refs: vec![EntityId("place:north-trail".into())],
+            }),
+            ..fact("person:alpha", "f1", "the kiln was lit", date(2026, 1, 1))
+        };
+        let index = index_of(vec![scan(
+            "doc-1",
+            Some(entity("person:alpha", "Alpha")),
+            "Alpha's page.",
+            vec![event.clone()],
+        )]);
+        let walks = |object: &str| {
+            !index
+                .search(&SearchQuery {
+                    edge: Some(EdgeFilter {
+                        shape: None,
+                        object: EntityId(object.into()),
+                    }),
+                    ..Default::default()
+                })
+                .expect("search ok")
+                .is_empty()
+        };
+
+        assert!(
+            walks("place:north-trail"),
+            "the unnamed reference is walkable"
+        );
+        assert!(
+            walks("person:milhouse"),
+            "…and so is the NAMED one, which is the case nothing else here covers"
+        );
+        // **The "and nothing else" half is asserted in the domain**, by
+        // `any_value_that_is_a_handle_is_a_link_whatever_its_key`, and it has
+        // to be: a value like "delighted" or "person:" is not a well-formed
+        // handle, so the query layer refuses to be asked about it at all. That
+        // refusal is the right behaviour and it means the index cannot be
+        // interrogated for a link it should never have made — `linked()` is
+        // where that boundary is observable.
+
+        // …and they are `connection`s: the link is admitted, never asserted.
+        assert!(
+            index
+                .search(&SearchQuery {
+                    edge: Some(EdgeFilter {
+                        shape: Some(EdgeShape::About),
+                        object: EntityId("person:milhouse".into()),
+                    }),
+                    ..Default::default()
+                })
+                .expect("search ok")
+                .is_empty(),
+            "an event's link must not answer a query for an asserted `about`"
+        );
+    }
+
+    /// **A shape and an object are asked about together, because a fact can now
+    /// carry several edges.**
+    ///
+    /// The two were independent fields, which was harmless while a fact had at
+    /// most one edge and is not any more: a fact located at one place and
+    /// linked by its payload to a person would match `shape=location AND
+    /// object=that person`. Neither half is wrong on its own, which is exactly
+    /// why the pair is what gets indexed.
+    #[tokio::test]
+    async fn a_shape_filter_does_not_match_a_different_edges_object() {
+        let mixed = Fact {
+            // **`about`, deliberately.** The kind-constrained shapes cannot
+            // demonstrate this: `location` + a person is refused by the query
+            // guard before any matching happens, so the confusion is
+            // unreachable there. `about` and `connection` both take any kind,
+            // which is exactly where an uncorrelated shape and object would
+            // quietly answer the wrong question.
+            edge: Some(Edge::new(
+                EdgeShape::About,
+                EntityId("topic:widgets".into()),
+            )),
+            event: Some(Event {
+                kind: "a-thing-that-happened".into(),
+                metadata: Default::default(),
+                refs: vec![EntityId("person:milhouse".into())],
+            }),
+            ..fact("person:alpha", "f1", "the kiln was lit", date(2026, 1, 1))
+        };
+        let index = index_of(vec![scan(
+            "doc-1",
+            Some(entity("person:alpha", "Alpha")),
+            "Alpha's page.",
+            vec![mixed],
+        )]);
+        let ask = |shape, object: &str| {
+            index
+                .search(&SearchQuery {
+                    edge: Some(EdgeFilter {
+                        shape: Some(shape),
+                        object: EntityId(object.into()),
+                    }),
+                    ..Default::default()
+                })
+                .expect("search ok")
+        };
+
+        assert!(
+            !ask(EdgeShape::About, "topic:widgets").is_empty(),
+            "the pair that exists is found"
+        );
+        assert!(
+            !ask(EdgeShape::Connection, "person:milhouse").is_empty(),
+            "…and so is the other one"
+        );
+        assert!(
+            ask(EdgeShape::About, "person:milhouse").is_empty(),
+            "a shape from one edge must not combine with an object from another"
+        );
+        assert!(
+            ask(EdgeShape::Connection, "topic:widgets").is_empty(),
+            "…in either direction"
         );
     }
 
