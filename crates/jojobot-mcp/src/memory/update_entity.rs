@@ -42,17 +42,17 @@ pub struct UpdateEntityArgs {
 #[tool_router(router = update_entity_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Edit what an entity is called, where it came from, or which mailbox it \
-                       owns (name/aliases/source/crm/mailbox), in place. The handle never \
-                       changes — there is no rename. Any change to what it is CALLED — name or \
-                       aliases — faces the same check a creation does, because an alias is a \
-                       name: it can come back status: blocked with candidates, and create_new: \
-                       true is how you confirm a genuinely shared name. Claiming a mailbox \
-                       another entity owns is also blocked, and create_new does NOT clear that \
-                       one — a box has exactly one owner. Passing `aliases` REPLACES the whole \
-                       set ([] clears it); source and crm edits are never questioned. A handle \
-                       that names nothing comes back blocked with the nearest handles — it \
-                       never creates."
+        description = "Edit what an entity is called and where it came from (name/aliases/source/\
+                       crm), in place. The handle never changes — there is no rename. THIS VERB \
+                       DOES NOT TOUCH MAILBOXES: a box is not a property of an entity that can \
+                       be edited or reassigned — it belongs to the bot it is named for and opens \
+                       with it, in add_entity, so there is nothing here to point at a different \
+                       one. Any change to what it is CALLED — name or aliases — faces the same \
+                       check a creation does, because an alias is a name: it can come back \
+                       status: blocked with candidates, and create_new: true is how you confirm a \
+                       genuinely shared name. Passing `aliases` REPLACES the whole set ([] clears \
+                       it); source and crm edits are never questioned. A handle that names \
+                       nothing comes back blocked with the nearest handles — it never creates."
     )]
     pub(crate) async fn update_entity(
         &self,
