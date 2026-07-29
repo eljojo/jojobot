@@ -21,8 +21,8 @@ use super::{
     apply_fact_patch,
     guard::{self, Decision},
     normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
-    search, validate_content, validate_details, validate_edge, validate_entity, validate_prose,
-    validate_subject,
+    search, validate_content, validate_details, validate_edge, validate_entity, validate_event,
+    validate_prose, validate_subject,
 };
 
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
@@ -142,6 +142,9 @@ impl Memory for InMemoryMemory {
         validate_details(fact.details.as_deref())?;
         if let Some(edge) = &fact.edge {
             validate_edge(edge)?;
+        }
+        if let Some(event) = &fact.event {
+            validate_event(event)?;
         }
 
         // Every entity this write names must already exist — the subject first,
@@ -2120,6 +2123,68 @@ pub mod contract {
         assert_nothing_recorded(store, &subject).await;
     }
 
+    /// **A metadata key the record's own grammar reserves is refused, not
+    /// silently eaten.**
+    ///
+    /// `type` and `ref` are the grammar's own tokens. A caller passing
+    /// `type` as metadata rendered two type tokens and the second won, so the
+    /// event's actual type was destroyed and the metadata key vanished with
+    /// it.
+    ///
+    /// **The fake and the real store disagreed on this input**, which is why
+    /// the spec belongs here: the real store renders and reparses, so the
+    /// guard caught a mismatch and refused a legitimate write with an opaque
+    /// error, while the fake holds the record in memory, never round-trips it,
+    /// and accepted it uncorrupted. A row that did reach disk in that shape
+    /// would be reparsed and re-rendered by table migration with nothing
+    /// comparing wrote against read, baking the loss in permanently.
+    pub async fn a_reserved_metadata_key_is_refused<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-reserved-key");
+        ensure(store, &subject).await;
+
+        for reserved in ["type", "ref"] {
+            let outcome = store
+                .capture(NewFact {
+                    event: Some(Event {
+                        metadata: [(reserved.to_string(), "something".to_string())]
+                            .into_iter()
+                            .collect(),
+                        ..Event::of("an-appointment")
+                    }),
+                    ..NewFact::about(subject.clone(), "it happened", date(2026, 7, 3))
+                })
+                .await;
+            assert!(
+                matches!(outcome, Err(MemoryError::InvalidFact(_))),
+                "a metadata key named {reserved:?} must be refused rather than \
+                 silently destroying the event's type: {outcome:?}"
+            );
+        }
+
+        // …and the ordinary keys beside them are untouched.
+        let landed = capture(
+            store,
+            NewFact {
+                event: Some(Event {
+                    metadata: [("kind".to_string(), "a value".to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..Event::of("an-appointment")
+                }),
+                ..NewFact::about(subject.clone(), "it happened later", date(2026, 7, 4))
+            },
+        )
+        .await;
+        assert_eq!(
+            landed
+                .event
+                .as_ref()
+                .and_then(|e| e.metadata.get("kind"))
+                .map(String::as_str),
+            Some("a value"),
+        );
+    }
+
     /// **Retraction: the record stays, marked, and the reason lands beside
     /// it.** Nothing is removed — that is the no-delete rule, and it is what
     /// makes this different from every store where taking something back means
@@ -3348,6 +3413,7 @@ pub mod contract {
 
         an_event_survives_capture(store).await;
         an_events_ref_is_screened_by_the_guard(store).await;
+        a_reserved_metadata_key_is_refused(store).await;
         retracting_an_event_marks_it_and_records_why(store).await;
         a_retraction_is_one_way(store).await;
         a_retraction_needs_no_reason(store).await;

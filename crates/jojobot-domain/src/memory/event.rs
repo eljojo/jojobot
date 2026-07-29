@@ -37,12 +37,18 @@ use serde::{Deserialize, Serialize};
 
 use super::EntityId;
 
-/// The metadata key reserved for the type name. Reserved rather than forbidden:
-/// it round-trips like any other key, it just has a field of its own.
-const TYPE: &str = "type";
+/// The metadata key reserved for the type name.
+///
+/// **Reserved in the code and not merely in this comment.** It used to say
+/// "reserved rather than forbidden: it round-trips like any other key" and
+/// nothing enforced it — a caller's `type` metadata rendered a second type
+/// token, and the reader took the last one, so the event's real type was
+/// destroyed and the key vanished with it. See [`reserved_key`].
+pub const TYPE: &str = "type";
 
-/// A reference to an entity, in the payload's own grammar.
-const REF: &str = "ref";
+/// A reference to an entity, in the payload's own grammar. Reserved exactly as
+/// [`TYPE`] is, and for the same reason.
+pub const REF: &str = "ref";
 
 /// **The one type name jojobot writes itself.** Everything else in this bag is
 /// the caller's own words; this is not, and it is the exception that has to be
@@ -58,6 +64,20 @@ pub const RETRACTION: &str = "retraction";
 /// not a handle, so it is deliberately not a walkable link: the target is a
 /// row, and rows are reached by address.
 const RETRACTS: &str = "retracts";
+
+/// **Whether a metadata key is one the grammar has already spent.**
+///
+/// The bag is flat and free, with exactly two exceptions: the tokens this
+/// record's own line format uses. A caller passing one of them is not
+/// describing an event, it is writing in the grammar — and the write that
+/// results destroys the field it collides with rather than the caller's key.
+///
+/// Refused rather than escaped or renamed. Renaming it would hand back a
+/// record the caller did not write, and the type of an event is derived from
+/// what accumulates here, so a silently moved key is a corrupted sample.
+pub fn reserved_key(key: &str) -> bool {
+    matches!(key.trim(), TYPE | REF)
+}
 
 /// **What an event is, as a record.** Not what it MEANS — nothing here
 /// interprets a type name, and jojobot never guesses one.

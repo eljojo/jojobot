@@ -866,6 +866,29 @@ fn breaks_the_row(value: &str) -> bool {
 
 /// A fact's content must be one non-empty line — a table cell is one line, and
 /// an empty claim is not a claim.
+/// **An event's metadata may not use the grammar's own tokens as keys.**
+///
+/// The bag is flat and free with exactly two exceptions, and they are the
+/// words the record's line format spends on itself. A caller's `type` key
+/// rendered a second type token and the reader took the last one, so the
+/// event's real type was destroyed and the key vanished with it.
+///
+/// Checked on the write path in the domain, so both adapters answer for it —
+/// the fake never round-trips a record, so it accepted this input happily
+/// while the real store refused it with an opaque read-back error. The two
+/// disagreeing about the same input is exactly what the shared contract
+/// exists to catch.
+pub fn validate_event(event: &event::Event) -> Result<(), MemoryError> {
+    if let Some(key) = event.metadata.keys().find(|k| event::reserved_key(k)) {
+        return Err(MemoryError::InvalidFact(format!(
+            "an event's metadata cannot use '{key}' as a key: that word belongs to the record's \
+             own grammar, and a value under it would overwrite the event's {key}. Rename the key \
+             — anything else is yours to choose."
+        )));
+    }
+    Ok(())
+}
+
 pub fn validate_content(content: &str) -> Result<(), MemoryError> {
     if content.trim().is_empty() {
         return Err(MemoryError::InvalidFact("content is empty".into()));

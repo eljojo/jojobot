@@ -39,8 +39,8 @@ use jojobot_domain::memory::{
     guard::{self, Decision},
     normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
     search::DocScan,
-    validate_content, validate_details, validate_edge, validate_entity, validate_prose,
-    validate_subject,
+    validate_content, validate_details, validate_edge, validate_entity, validate_event,
+    validate_prose, validate_subject,
 };
 
 use jiff::civil::Date;
@@ -715,6 +715,9 @@ impl Memory for OutlineStore {
         validate_details(fact.details.as_deref())?;
         if let Some(edge) = &fact.edge {
             validate_edge(edge)?;
+        }
+        if let Some(event) = &fact.event {
+            validate_event(event)?;
         }
         let collection_id = self.resolve_collection().await?;
 
