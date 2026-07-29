@@ -139,11 +139,31 @@ impl Jojobot {
                 // Not `null`, which is the answer for a bot that owns no box:
                 // jojobot does not know whether it owns one, and saying it does
                 // not would be a guess a session would act on.
+                // **What is unknowable is EXISTENCE, not the name.** A box is
+                // named for the bot that owns it, by construction — `add_entity`
+                // opens it that way and the heal repairs it that way — so a
+                // caller left with "jojobot cannot say which box is yours" was
+                // being told a mystery about the one half that is derivable
+                // from what it already holds. What jojobot genuinely cannot say
+                // is whether that box is there and what is in it, and the
+                // difference matters to a caller deciding whether to wait or to
+                // report damage.
+                //
+                // `name` stays null deliberately. Filling it in would be
+                // asserting a box exists that jojobot cannot see, and the store
+                // predates the name-is-the-handle rule — a box owned under some
+                // other name is a thing history can hold. The note says what is
+                // derivable; the field goes on saying only what is read.
                 return Ok(serde_json::json!({
                     "available": false,
-                    "note": "the mailbox world is not reachable right now, so jojobot cannot say \
-                             whether you own a box or what is waiting in it — its tools will \
-                             say why",
+                    "note": format!(
+                        "the mailbox world is not reachable right now, so jojobot cannot say \
+                         whether your box exists or what is waiting in it — its tools will say \
+                         why. What is not in doubt is its NAME: a box is named for the bot that \
+                         owns it, so yours is '{}'. Treat that as the name to expect, not as \
+                         confirmation it is there.",
+                        bot.slug()
+                    ),
                 }));
             }
         };
@@ -183,6 +203,23 @@ impl Jojobot {
     /// too, and the boot still returns whole: the charter and the rules are in
     /// the other world entirely and are what a session most needs.
     pub(crate) async fn heal_missing_box(&self, bot: &EntityId) -> serde_json::Value {
+        /// The repair did not land and the box is genuinely not there. Damage,
+        /// and it takes a person — so it says so, and says what still works.
+        fn still_missing(name: &MailboxName, said: Option<&str>) -> serde_json::Value {
+            serde_json::json!({
+                "available": true,
+                "name": serde_json::Value::Null,
+                "healed": false,
+                "note": format!(
+                    "YOUR BOX '{name}' is missing and jojobot could not open it. You have an \
+                     identity with no way to receive mail, and this is damage rather than a \
+                     setup step: a box opens with its bot. Nothing you post is affected — \
+                     post_message needs no box of your own. Tell the operator.{}",
+                    said.map(|s| format!(" The mailbox world said: {s}")).unwrap_or_default()
+                ),
+            })
+        }
+
         let name = MailboxName(bot.slug().to_string());
         match self.mailboxes.create_mailbox(&name, bot, true).await {
             Ok(mailbox::Guarded::Written(opened)) => {
@@ -205,25 +242,60 @@ impl Jojobot {
                 }
                 body
             }
+            // **Blocked on an exact name means somebody else just opened it.**
+            // Two boots of one bot can both find no box and both come here; the
+            // loser's create meets its own box and is refused, because an exact
+            // name can never be forced. Reading that as "the repair failed"
+            // told a session it had no way to receive mail about a box that was
+            // working, and sent it to a person over nothing. The box is right
+            // there — report it, with its counts, and say who opened it.
+            Ok(mailbox::Guarded::Blocked { .. }) => match self.mailbox_named(&name).await {
+                Some(mailbox) => {
+                    let mut body = mailbox_json(&mailbox);
+                    if let Some(obj) = body.as_object_mut() {
+                        obj.insert("available".into(), true.into());
+                        // Not `healed`, because this call did not open it — and
+                        // not silent either, because the box WAS missing when
+                        // this boot looked and a session that saw the gap is
+                        // owed the end of the story.
+                        obj.insert("healed".into(), false.into());
+                        obj.insert(
+                            "note".into(),
+                            format!(
+                                "YOUR BOX '{name}' was missing when this boot looked and is here \
+                                 now: another run of this same bot opened it while this one was \
+                                 starting. Nothing is wrong and there is nothing to report — \
+                                 anything posted to you before it existed was refused as an \
+                                 unknown box, and that window has closed."
+                            )
+                            .into(),
+                        );
+                    }
+                    body
+                }
+                // Blocked, and still not there: a near miss on the name rather
+                // than the box itself, which is a real failure and gets the
+                // same answer every other one gets.
+                None => still_missing(&name, None),
+            },
             // **The world answered and the box still is not there**, which is a
             // different thing from the world being unreachable — so `available`
             // stays true and `name` is null rather than claiming a box.
-            other => serde_json::json!({
-                "available": true,
-                "name": serde_json::Value::Null,
-                "healed": false,
-                "note": format!(
-                    "YOUR BOX '{name}' is missing and jojobot could not open it. You have an \
-                     identity with no way to receive mail, and this is damage rather than a \
-                     setup step: a box opens with its bot. Nothing you post is affected — \
-                     post_message needs no box of your own. Tell the operator.{}",
-                    match &other {
-                        Err(err) => format!(" The mailbox world said: {err}"),
-                        _ => String::new(),
-                    }
-                ),
-            }),
+            Err(err) => still_missing(&name, Some(&err.to_string())),
+            _ => still_missing(&name, None),
         }
+    }
+
+    /// The box with this name, or `None` — including when jojobot cannot read
+    /// the board at all, since for this caller "not there" and "cannot tell"
+    /// lead to the same next move.
+    async fn mailbox_named(&self, name: &MailboxName) -> Option<Mailbox> {
+        self.mailboxes
+            .list_mailboxes()
+            .await
+            .ok()?
+            .into_iter()
+            .find(|b| &b.name == name)
     }
 }
 
@@ -234,6 +306,62 @@ mod tests {
     use crate::mailboxes::testing::*;
     use crate::memory::testing::*;
     use crate::session::testing::*;
+
+    /// **The boot that loses a race to heal must not tell its agent the box is
+    /// missing — it is right there, opened a moment ago by the other one.**
+    ///
+    /// Reported as plausible rather than confirmed; it is confirmed. The window
+    /// is real: `owned_mailbox` finds no box and calls this, and between those
+    /// two moments another boot of the SAME bot can open it. The loser's
+    /// `create_mailbox` then meets an exact-name collision, which
+    /// `guard::decide_create` blocks whatever `create_new` says — an exact name
+    /// can never be forced, deliberately — and the old code read every
+    /// non-`Written` answer as "the repair failed". So the losing session was
+    /// told it had an identity with no way to receive mail, and to go and tell
+    /// the operator, about a box that was working.
+    ///
+    /// **Reproduced without a race, because the race is only how you arrive
+    /// here.** The state under test is "this call was going to open the box and
+    /// the box now exists", and calling the heal against a box that is already
+    /// there IS that state — deterministically, with no timing to get lucky
+    /// with. A test that had to win a scheduling coin toss to fail is a test
+    /// that will pass on the day it matters.
+    #[tokio::test]
+    async fn a_heal_that_lost_the_race_reports_the_box_rather_than_its_absence() {
+        let jojobot = handler();
+        // The other boot's work: the bot and its box are both already there.
+        make_bot(&jojobot, "gamma").await;
+
+        let healed = jojobot
+            .heal_missing_box(&EntityId::new(EntityKind::Bot, "gamma"))
+            .await;
+
+        assert_eq!(healed["available"], true, "{healed}");
+        assert_eq!(
+            healed["name"], "gamma",
+            "the box exists and must be named, not nulled: {healed}"
+        );
+        assert_eq!(
+            healed["healed"], false,
+            "this call did not open it — the other boot did: {healed}"
+        );
+        let note = healed["note"].as_str().expect("a note");
+        assert!(
+            !note.contains("no way to receive mail"),
+            "the one thing that must never be said about a box that is working: {note}"
+        );
+        assert!(
+            !note.contains("Tell the operator"),
+            "…and nobody is sent to a person over a repair that succeeded: {note}"
+        );
+        // The counts come with it, exactly as they do on any other boot: this is
+        // the box, not a placeholder standing in for one.
+        assert_eq!(healed["counts"]["total"], 0, "{healed}");
+
+        // And nothing was minted a second time.
+        let boxes = jojobot.mailboxes.list_mailboxes().await.expect("list ok");
+        assert_eq!(boxes.len(), 1, "{boxes:?}");
+    }
 
     /// **jojobot heals the box it notices is missing, and says so out loud.**
     ///

@@ -673,7 +673,21 @@ mod tests {
             owned["name"].is_null(),
             "a box it cannot read is not a box it can name: {owned}"
         );
-        assert!(owned["note"].as_str().is_some_and(|n| !n.is_empty()));
+        // **The FIELD stays null and the NOTE stops pretending.** Existence is
+        // what an outage hides; the name is derived from the handle the caller
+        // is already holding, and reporting it as equally unknown made a
+        // mystery of the half jojobot can work out from first principles. The
+        // note says which is which — expect this name, do not conclude it is
+        // there.
+        let note = owned["note"].as_str().expect("a note");
+        assert!(
+            note.contains("'gamma'"),
+            "the derivable half is named: {note}"
+        );
+        assert!(
+            note.contains("not as confirmation"),
+            "…and is fenced off from the half that is not: {note}"
+        );
 
         // …and the snapshot degrades beside it, exactly as it does anonymously.
         assert_eq!(body["snapshot"]["mailboxes"]["available"], false);
