@@ -378,7 +378,6 @@ mod tests {
         assert_eq!(booted["identity"]["bot"]["id"], "bot:delta", "{booted}");
     }
 
-
     /// **One response never contradicts itself about which boxes exist.**
     ///
     /// It could before: booting minted the declared box *between* taking the
