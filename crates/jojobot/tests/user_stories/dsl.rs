@@ -163,6 +163,22 @@ impl Session {
         .await;
     }
 
+    /// A fact carrying a date. **Which date it is, is the whole problem** — the
+    /// one field means when a claim became known, and a caller almost always
+    /// holds a date for when the thing HAPPENED. Rule 101; the answer is
+    /// `happened_at` and `recorded_at` as separate columns, not yet built.
+    pub async fn fact_on(&self, subject: &str, content: &str, date: &str) {
+        self.write(
+            &format!("a dated fact about {subject}"),
+            "capture",
+            json!({
+                "subject": subject, "content": content,
+                "provenance": "testimony", "date": date,
+            }),
+        )
+        .await;
+    }
+
     /// Something worked out rather than heard. Inference, and it reads back as one.
     pub async fn guess(&self, subject: &str, content: &str) {
         self.write(

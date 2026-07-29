@@ -16,13 +16,28 @@ async fn keeping_track_of_bikes() {
     let s = story.session().await;
 
     s.add("thing:gravel-bike", "Gravel Bike").await;
-    s.fact("thing:gravel-bike", "ridden most weeks; bought new in 2024")
+    s.fact("thing:gravel-bike", "ridden most weeks").await;
+
+    // The purchase is a fact, not a clause inside another sentence — and it is
+    // an EVENT, of type `purchased`. The date it carries is when it happened.
+    s.fact_on("thing:gravel-bike", "purchased new", "2024-04-11")
         .await;
     s.fact(
         "thing:gravel-bike",
         "frame warranty runs five years from purchase",
     )
     .await;
+
+    // GAP — that date went into the only date field there is, which means when
+    // the CLAIM became known. The purchase happened on it. Nothing distinguishes
+    // the two, so the store now holds a date whose meaning you can only recover
+    // by reading the sentence beside it. This is rule 101 in code rather than in
+    // prose, and it is what `happened_at` and `recorded_at` are for.
+    // s.event("thing:gravel-bike", "purchased", "happened_at", "2024-04-11").await;
+
+    // GAP — and the warranty's end is purchase plus five years, which is
+    // arithmetic on a date the system cannot see as a date. "What is still under
+    // warranty" is a query across every possession by a date property.
 
     s.add("thing:road-bike", "Road Bike").await;
     s.fact(

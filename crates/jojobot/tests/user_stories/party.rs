@@ -138,10 +138,24 @@ async fn throwing_a_birthday_party() {
     // holding the intermediate result rather than one walk.
     // s.through("event:birthday-party", "attendance").recall_all().says("vegetarian");
 
-    // GAP — the practical half, and it is the half a person actually worries
-    // about. Do I have enough chairs. Nothing counts, nothing knows what is
-    // owned, and the folding table may be at somebody else's house.
-    // s.have_enough("thing:folding-chairs", 12).await;
+    // The practical half, and the half a person actually worries about. It is
+    // not a verb — "do I have enough chairs" is arithmetic over two things
+    // already recorded, and the arithmetic is the agent's (rule 4).
+    s.add("thing:folding-chairs", "Folding Chairs").await;
+    s.fact(
+        "thing:folding-chairs",
+        "six of them, stacked in the basement",
+    )
+    .await;
+    s.find("chairs").await.says("thing:folding-chairs");
+
+    // GAP — but neither side of that sum is a number. "Six of them" is prose and
+    // so is "ten or twelve people", so the agent gets two sentences and has to
+    // parse quantities out of English it wrote itself. Same shape as the bike
+    // tallies and the warranty date: A FACT'S VALUE IS ALWAYS PROSE, so every
+    // question with arithmetic in it dies at the read. The want is the edge key
+    // again, with a value that is not a sentence:
+    // s.fact_keyed("thing:folding-chairs", "count", "6").await;
 
     s.wrap("menu still open").await;
 
