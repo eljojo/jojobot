@@ -121,42 +121,6 @@ pub fn decide_create(name: &MailboxName, existing: &[MailboxName], create_new: b
     }
 }
 
-/// The decision on a **claim** to a box by name — a write declaring that some
-/// box's mail belongs to it.
-///
-/// This gate is neither of the two above, and it disagrees with each of them on
-/// a different half. An **exact** name proceeds, where a creation is fatally
-/// blocked: claiming the box that already exists is the ordinary, intended
-/// case. A name **nothing resembles** proceeds, where posting is blocked: a
-/// claim is allowed to run ahead of its box, and neither this nor anything
-/// downstream mints one. What is left is the case this exists for — a **near
-/// miss**, `dev2` beside `dev`, which is how a claim ends up pointing at a box
-/// its mail will never arrive in.
-///
-/// `create_new` is the same signal, with the same meaning, that a creation
-/// takes: a deliberate sibling is claimable. It clears similarity only; nothing
-/// here can be forced past an ownership collision, which is a different gate in
-/// a different context and stays unclearable.
-///
-/// Pure, and it learns nothing about who is claiming: this is a decision about
-/// names against names. The caller that has both a claimant and a box list is
-/// the one that puts the two halves together.
-pub fn decide_claim(name: &MailboxName, existing: &[MailboxName], create_new: bool) -> Decision {
-    let candidates = screen(name, existing);
-    // An exact name settles it outright rather than merely being dropped from
-    // the list: a box named alongside near misses of its own — `dev2` claimed
-    // on a board that holds both `dev2` and `dev` — is the box, and the
-    // resemblance to its neighbour is no longer a question anyone need answer.
-    if candidates.iter().any(|m| m.reason == MatchReason::Exact) || create_new {
-        return Decision::Proceed;
-    }
-    if candidates.is_empty() {
-        Decision::Proceed
-    } else {
-        Decision::Block(candidates)
-    }
-}
-
 /// The decision on a box a write **names but must not create**. An exact name
 /// is the box, not a candidate for it; everything else blocks, with whatever
 /// the guard can suggest — which may be nothing at all.
@@ -299,68 +263,6 @@ mod tests {
         assert!(
             none.is_empty(),
             "nothing to suggest, nothing invented: {none:?}"
-        );
-    }
-
-    // --- claiming a box by name ----------------------------------------------
-
-    /// **The third gate, and it is neither of the other two.** Claiming a box —
-    /// declaring that its mail belongs to you — is not creating one and not
-    /// posting into one, and it agrees with each of them on a different half:
-    ///
-    /// * an **exact** name proceeds, where a creation would be fatally blocked:
-    ///   claiming the box that already exists is the ordinary, intended case;
-    /// * a name **nothing resembles** proceeds, where posting would be blocked:
-    ///   a claim may run ahead of its box, and nothing is minted either way;
-    /// * a **near miss** blocks, which is the whole point — `dev2` beside `dev`
-    ///   is how a bot ends up owning a box its mail will never arrive in.
-    #[test]
-    fn a_claim_proceeds_on_an_exact_name_and_on_one_nothing_resembles() {
-        let existing = boxes(&["dev", "errands"]);
-        assert_eq!(
-            decide_claim(&name("dev"), &existing, false),
-            Decision::Proceed,
-            "claiming the box that exists is the ordinary case"
-        );
-        assert_eq!(
-            decide_claim(&name("shipments"), &existing, false),
-            Decision::Proceed,
-            "a claim may name a box nobody has created yet"
-        );
-        // An exact name settles it even when the board also holds near misses
-        // of it — the box being claimed is right there, so its resemblance to a
-        // neighbour is not a question anyone still owes an answer to.
-        assert_eq!(
-            decide_claim(&name("dev"), &boxes(&["dev", "dev2"]), false),
-            Decision::Proceed,
-            "the box named exactly is the box, whatever else sits beside it"
-        );
-    }
-
-    /// The near miss the review found: `dev2` beside `dev` used to sail through
-    /// unscreened and then get minted. It blocks now, naming what it resembles.
-    #[test]
-    fn a_claim_that_is_a_near_miss_blocks_and_the_signal_clears_it() {
-        let existing = boxes(&["dev"]);
-        let Decision::Block(candidates) = decide_claim(&name("dev2"), &existing, false) else {
-            panic!("a near-miss claim must block");
-        };
-        assert_eq!(candidates[0].name.as_str(), "dev");
-        assert_eq!(candidates[0].reason, MatchReason::Near);
-
-        assert_eq!(
-            decide_claim(&name("dev2"), &existing, true),
-            Decision::Proceed,
-            "a deliberate sibling is claimable, on the same signal creation uses"
-        );
-
-        // Containment is the other confusion, and it screens the same way.
-        assert!(
-            matches!(
-                decide_claim(&name("dev-inbox"), &existing, false),
-                Decision::Block(_)
-            ),
-            "one name inside another is the confusion this gate exists for"
         );
     }
 
