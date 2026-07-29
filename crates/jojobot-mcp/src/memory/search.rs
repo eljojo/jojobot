@@ -173,7 +173,7 @@ fn mail_coverage(query: &SearchQuery, coverage: MailCoverage) -> serde_json::Val
         MailCoverage::Unread => excluded(
             "jojobot has not been able to read the mailbox world, so NO message is searchable \
              right now — this is not 'nothing matched'. The memory half of this answer is \
-             complete. list_mailboxes will say what is wrong.",
+             complete. start_here's snapshot says whether the mailbox world is reachable at all.",
         ),
         // Searched, and said so — hits are real. But the board read failed, so
         // only what this server has handled since is in there, and a caller
@@ -185,7 +185,7 @@ fn mail_coverage(query: &SearchQuery, coverage: MailCoverage) -> serde_json::Val
             "note": "PARTIAL: jojobot could not read the mailbox world at startup, so only \
                      messages it has handled since are searchable. Any hit here is real, but an \
                      older message may be missing — this is not a complete answer over mail. \
-                     list_mailboxes will say what is wrong.",
+                     start_here's snapshot says whether the mailbox world is reachable at all.",
         }),
         MailCoverage::Loaded => serde_json::json!({ "searched": true }),
     }

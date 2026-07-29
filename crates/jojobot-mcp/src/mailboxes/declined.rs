@@ -28,8 +28,9 @@ pub(crate) fn mailbox_blocked(
         BlockedBox::MustExist(verb) if candidates.is_empty() => format!(
             "Nothing was written. '{attempted}' is not a mailbox jojobot knows, and nothing \
              resembles it. {verb} cannot create one — and a new box is rarely the answer: a \
-             mailbox is a channel someone must be draining, so use list_mailboxes to pick an \
-             existing box, or tell the operator there is nowhere fitting to put this. A box is \
+             mailbox is a channel someone must be draining, so use start_here, whose snapshot \
+             names every box on the board, to pick an existing one — or tell the operator there \
+             is nowhere fitting to put this. A box is \
              opened only by standing up the bot that drains it, so if '{attempted}' should \
              exist, what is missing is that identity.",
         ),

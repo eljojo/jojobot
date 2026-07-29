@@ -101,7 +101,14 @@ Shipped and live:
   takes delivery of one by id** — draining a whole box makes every message in
   it owed work, which is the wrong price for wanting the single one a search
   hit named. **`list_sent` is the sender's own view**: where your mail got to
-  and whether anyone has read it, read-only and moving nothing.
+  and whether anyone has read it, read-only and moving nothing. And
+  **`read_mailbox` with `counts_only` is how you poll**: your box's per-state
+  counts and anything on it jojobot cannot read, taking delivery of nothing —
+  so a poll that finds an empty box costs nothing and owes nothing. It was a
+  verb of its own (`list_mailboxes`) and is an argument now; the surface grows
+  by packing flexibility onto the verbs that exist, not by adding verbs, and
+  the other job that verb did — every box on the board, by name — was always
+  `start_here`'s snapshot too.
 
 > **Delivery-awareness: serve the difference.** `seen_before` was the first
 > instance; the rule now runs across the surface. What a caller demonstrably

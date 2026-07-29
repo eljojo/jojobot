@@ -180,11 +180,14 @@ mod tests {
             Arc::new(InMemorySessions::new()),
             Arc::new(sid::SessionRegistry::new()),
         );
-        let listed = drains(&blind, "dev").await;
+        // **Read through the boot snapshot, which is where the scoping lives
+        // now.** The verb that used to render this listing is gone; the rule it
+        // enforced is not, and this is the door that still applies it.
+        let listed = boot(&blind, "dev").await["snapshot"]["mailboxes"].clone();
 
-        assert_eq!(listed["mailboxes"][0]["yours"], true, "{listed}");
+        assert_eq!(listed["boxes"][0]["yours"], true, "{listed}");
         assert_eq!(
-            listed["mailboxes"][0]["counts"]["new"], 1,
+            listed["boxes"][0]["counts"]["new"], 1,
             "the mail world knows whose box this is without asking Memory: {listed}"
         );
         assert_eq!(
@@ -192,6 +195,51 @@ mod tests {
             serde_json::json!(["dev"]),
             "{listed}"
         );
+    }
+
+    /// **A fault on the board is not somebody's queue, and it is not scoped
+    /// away with one.** What jojobot cannot read as a message is counted
+    /// nowhere and delivered nowhere, so the only caller who can act on knowing
+    /// it exists is often a SENDER — somebody who by definition does not drain
+    /// that box, and who would otherwise read the silence as "my message never
+    /// arrived". So the counts are withheld from a box that is not yours and
+    /// the unreadable report is not.
+    ///
+    /// **Moved here when `list_mailboxes` was retired**, because this is now
+    /// the only answer that renders a box the caller does not drain. It was
+    /// the one property of that verb with nowhere else to go: `read_mailbox`'s
+    /// counting mode is about your own box by construction, and `list_sent`
+    /// only reaches boxes you have posted into.
+    #[tokio::test]
+    async fn a_boot_shows_what_cannot_be_read_even_on_a_box_it_will_not_count() {
+        let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let jojobot = with_mailboxes(boxes.clone());
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
+        boxes.quarantine(
+            &MailboxName("delta".into()),
+            &MessageId("4212".into()),
+            "its row cannot be read — a state or a sender has been edited past parsing",
+        );
+
+        let booted = boot(&jojobot, "gamma").await;
+        let theirs = booted["snapshot"]["mailboxes"]["boxes"]
+            .as_array()
+            .expect("boxes")
+            .iter()
+            .find(|b| b["name"] == "delta")
+            .expect("delta's box")
+            .clone();
+        assert_eq!(theirs["yours"], false);
+        assert!(
+            theirs["counts"].is_null(),
+            "somebody else's queue stays theirs: {theirs}"
+        );
+        assert_eq!(
+            theirs["quarantined"]["count"], 1,
+            "…and the fault on it does not: {booted}"
+        );
+        assert_eq!(theirs["quarantined"]["ids"][0], "4212");
     }
 
     /// A boot sees its own box's counts in the snapshot, and names only for the
@@ -228,6 +276,18 @@ mod tests {
             "somebody else's, name only: {booted}"
         );
         assert_eq!(find("delta")["yours"], false);
+        // **No `ownership_known` flag.** It could only ever say `true` where it
+        // appeared: it was rendered inside the `Ok` arm of the very read whose
+        // `Err` arm was the only thing that set it false. A field that cannot
+        // vary is a question a reader branches on and learns nothing from. This
+        // assertion travelled here with the retirement of `list_mailboxes`,
+        // whose test it was.
+        assert!(
+            booted["snapshot"]["mailboxes"]
+                .get("ownership_known")
+                .is_none(),
+            "a flag that cannot be false is not an answer: {booted}"
+        );
 
         // The bot's own box still comes back in full under `identity`, which is
         // the whole point of booting as somebody.
@@ -355,6 +415,17 @@ mod tests {
                 .expect("start_here ok"),
         );
         assert!(counts_for(&anonymous)["counts"].is_null(), "{anonymous}");
+        assert_eq!(counts_for(&anonymous)["yours"], false);
+        // **Elided, never silently** — the same rule the whole surface keeps: a
+        // reader must not have to infer withheld from empty. This assertion
+        // travelled here when `list_mailboxes` was retired; it was that verb's
+        // test and this is the only answer that still renders the field.
+        assert_eq!(counts_for(&anonymous)["counts_elided"], true, "{anonymous}");
+        assert_eq!(
+            anonymous["snapshot"]["mailboxes"]["counts_shown_for"],
+            serde_json::json!([]),
+            "…and the answer names what it counted, which is nothing: {anonymous}"
+        );
 
         let identified = boot(&jojobot, "dev").await;
         assert_eq!(counts_for(&identified)["counts"]["new"], 1, "{identified}");

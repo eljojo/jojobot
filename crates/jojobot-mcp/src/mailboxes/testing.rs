@@ -29,15 +29,24 @@ pub(crate) fn with_mailboxes(mailboxes: Arc<InMemoryMailboxes>) -> Jojobot {
     )
 }
 
-/// The listing as the bot that drains those boxes sees it — counts are for
-/// your own boxes now, so a test that asserts one has to say whose it is.
-pub(crate) async fn drains(jojobot: &Jojobot, bot: &str) -> serde_json::Value {
+/// What is waiting in this bot's own box, without taking delivery of any of
+/// it — the read that used to be a verb of its own.
+///
+/// **A fixture that counted through the delivery path would poison every test
+/// that used it**: each call would quietly move the box's mail out of `new`,
+/// and an assertion about counts would be measuring the fixture rather than
+/// the code. It goes through the same `counts_only` a caller does.
+pub(crate) async fn counts(jojobot: &Jojobot, bot: &str) -> serde_json::Value {
     let sid = as_bot(jojobot, bot);
     json_of(
         &jojobot
-            .list_mailboxes(Parameters(ListMailboxesArgs { sid: Some(sid) }))
+            .read_mailbox(Parameters(ReadMailboxArgs {
+                counts_only: Some(true),
+                new_only: None,
+                sid: Some(sid),
+            }))
             .await
-            .expect("list ok"),
+            .expect("counting ok"),
     )
 }
 

@@ -145,14 +145,18 @@ fn the_tool_surface_is_exactly_this_list() {
     // Sorted, so the list is stable and a diff to it is legible — which
     // means it is NOT grouped by context, and any comment here claiming
     // otherwise would be describing a different list than the one below.
-    // The six mailbox verbs in it are list_mailboxes, list_sent,
-    // post_message, read_mailbox, read_message and mark_processed — there
-    // is deliberately no create_mailbox, because a box is not a thing you
-    // make: it opens with the bot that owns it, in `add_entity`, and a bot
-    // is the only thing that has one. The three session verbs are journal,
-    // amend_journal and wrap_session (there is deliberately no
-    // start_session — booting an identity IS starting its session); the
-    // rest are Memory's.
+    // The five mailbox verbs in it are list_sent, post_message,
+    // read_mailbox, read_message and mark_processed. There are two
+    // deliberate absences and they are different kinds of absence: no
+    // create_mailbox, because a box is not a thing you make — it opens with
+    // the bot that owns it, in `add_entity`, and a bot is the only thing
+    // that has one; and no list_mailboxes, RETIRED rather than never-built.
+    // Its two surviving jobs are `read_mailbox` with counts_only (your own
+    // box's counts and its unreadable report, taking delivery of nothing)
+    // and `start_here`'s snapshot (every box on the board by name). The
+    // three session verbs are journal, amend_journal and wrap_session (there
+    // is deliberately no start_session — booting an identity IS starting its
+    // session); the rest are Memory's.
     assert_eq!(
         names,
         [
@@ -161,7 +165,6 @@ fn the_tool_surface_is_exactly_this_list() {
             "capture",
             "journal",
             "list_entities",
-            "list_mailboxes",
             "list_sent",
             "mark_processed",
             "ping",
@@ -302,12 +305,17 @@ fn the_mark_processed_description_states_the_crash_contract() {
     );
 }
 
-/// **Polling is a read, and the surface has to say which verb reads.** A
-/// session whose standing loop was "check the box; if empty do nothing" paid
-/// ~14 state-changing deliveries of an empty box, because the only verb that
-/// visibly answers "is there anything waiting" is the one that takes
-/// delivery. `list_mailboxes` was the answer the whole time and nothing
-/// pointed at it from the place the caller was standing.
+/// **Polling is a read, and the surface has to say so where the expensive
+/// call is read.** A session whose standing loop was "check the box; if empty
+/// do nothing" paid ~14 state-changing deliveries of an empty box, because
+/// the only verb that visibly answered "is there anything waiting" was the
+/// one that takes delivery.
+///
+/// **The cheap answer used to be a second verb and is now this verb's own
+/// argument**, which does not retire the lesson: a caller standing at
+/// `read_mailbox` still has to be told, in this description, that there is a
+/// way to look without taking. It is asserted on the ARGUMENT rather than on
+/// a tool name, so it cannot be satisfied by pointing somewhere else again.
 #[test]
 fn the_read_mailbox_description_points_at_the_read_only_way_to_poll() {
     let tools = Jojobot::tool_router().list_all();
@@ -317,8 +325,15 @@ fn the_read_mailbox_description_points_at_the_read_only_way_to_poll() {
         .expect("read_mailbox is a tool");
     let description = read.description.as_deref().unwrap_or_default();
     assert!(
-        description.contains("list_mailboxes"),
-        "the cheaper verb must be named where the expensive one is read: {description}"
+        description.contains("counts_only"),
+        "the cheap read must be named where the expensive one is read: {description}"
+    );
+    // …and what makes it cheap, since that is the part a caller acts on: a
+    // poll that costs a delivery is the failure this exists to prevent.
+    assert!(
+        description.contains("nothing becomes yours to finish"),
+        "…and must say that polling owes nothing, which is the whole reason to \
+         reach for it: {description}"
     );
 }
 
@@ -341,7 +356,7 @@ fn the_session_verbs_are_described_by_the_one_address_they_take() {
         "journal",
         "amend_journal",
         "wrap_session",
-        "list_mailboxes",
+        "read_mailbox",
         "post_message",
     ] {
         let tool = tools
@@ -700,6 +715,129 @@ fn no_agent_facing_text_teaches_the_retired_store() {
     );
 }
 
+/// **Every string literal in the shipped half of this crate**, comments cut.
+///
+/// A blunt instrument on purpose: what it is looking for is prose an agent will
+/// read, and prose an agent will read is not only in the descriptions — a
+/// refusal's `how_to_proceed` is assembled at runtime and reaches the same
+/// reader with the same authority. Comments go first because they discuss the
+/// very names being searched for ("there is deliberately no create_mailbox"),
+/// and a doc comment saying a verb is gone is the opposite of the defect.
+fn shipped_literals() -> Vec<String> {
+    // **One pass over the whole text, not one per line.** Almost every
+    // description in this crate is a `\`-continued literal spanning twenty
+    // lines; a per-line scan reads the opening line, then meets the closing
+    // quote of line two with no state and takes it for an opening one — so
+    // every continuation is silently skipped and the scan quietly watches the
+    // first line of each. That is how this test passed while three stale
+    // mentions sat in exactly those continuations.
+    let source: String = shipped_source()
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<&str>>()
+        .join("\n");
+
+    let mut found = Vec::new();
+    let mut inside: Option<String> = None;
+    let mut chars = source.chars();
+    while let Some(c) = chars.next() {
+        match (c, &mut inside) {
+            ('\\', Some(open)) => {
+                // An escape and whatever it escapes, neither of which can close
+                // the literal. A `\` at end of line eats the newline, which is
+                // exactly the continuation this has to walk through.
+                open.push(c);
+                if let Some(escaped) = chars.next() {
+                    open.push(escaped);
+                }
+            }
+            ('"', Some(_)) => found.push(inside.take().expect("inside a literal")),
+            ('"', None) => inside = Some(String::new()),
+            (_, Some(open)) => open.push(c),
+            (_, None) => {}
+        }
+    }
+    found
+}
+
+/// **A verb this surface has retired is named nowhere an agent reads.**
+///
+/// The same defect class as a description advertising a parameter its schema
+/// does not have, and with a worse ending: a caller that believes the sentence
+/// emits a call for a tool that is not there, and an absent tool is a protocol
+/// error rather than a blocked answer with a way forward. So it escapes the one
+/// rule that says a caller mistake comes back as an answer.
+///
+/// **Both halves, or this only catches half the mistake.** A name must be off
+/// the surface AND out of the prose — a verb deleted while three descriptions
+/// go on pointing at it is the exact failure being prevented, and a verb still
+/// shipping while the prose calls it retired is the same lie the other way up.
+#[test]
+fn no_agent_facing_text_names_a_verb_this_surface_retired() {
+    // Each shipped once, so each is a name a client, a habit, or a description
+    // somebody forgot to edit may still reach for. `list_mailboxes`'s two
+    // surviving jobs are `read_mailbox`'s counting mode; `create_mailbox` never
+    // existed as a verb and is what a caller invents when told to make a box,
+    // which a box's opening with its bot makes impossible; `start_session` is
+    // what a caller invents when told to start one, and booting IS starting.
+    const RETIRED: &[(&str, &str)] = &[
+        (
+            "list_mailboxes",
+            "counting is read_mailbox with counts_only: true",
+        ),
+        (
+            "create_mailbox",
+            "a box opens with the bot that owns it, in add_entity",
+        ),
+        (
+            "start_session",
+            "booting an identity IS starting its session",
+        ),
+    ];
+
+    let surface: Vec<String> = Jojobot::tool_router()
+        .list_all()
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    let mut naming: Vec<String> = Vec::new();
+    for (verb, instead) in RETIRED {
+        if surface.iter().any(|name| name == verb) {
+            naming.push(format!("{verb} is still ON the surface — {instead}"));
+        }
+        for (what, text) in agent_facing_text() {
+            if text.contains(verb) {
+                naming.push(format!("{what} names {verb} — {instead}"));
+            }
+        }
+        // **Descriptions and the essay are not all of it.** The advice inside a
+        // REFUSAL is read by exactly the same caller for exactly the same
+        // purpose, and `agent_facing_text` cannot reach one: it is built at
+        // runtime, on a path a sweep only walks if it thought to provoke it.
+        // Three of this round's stale mentions were there — a blocked post, a
+        // degraded search's coverage note — and none of them is a description.
+        //
+        // So: every string literal that ships. **Literals only**, because these
+        // names are live Rust identifiers too — `Mailboxes::list_mailboxes` is
+        // the store port and stays, `create_mailbox` likewise — and a scan of
+        // raw source could not tell the port from the prose.
+        for literal in shipped_literals() {
+            if literal.contains(verb) {
+                naming.push(format!(
+                    "a shipped string names {verb} — {instead}: {literal:?}"
+                ));
+            }
+        }
+    }
+    assert!(
+        naming.is_empty(),
+        "agent-facing text sends a caller to a verb that is not there. An absent tool is a \
+         protocol error, not a blocked answer — the one caller mistake this surface cannot \
+         answer:\n  {}",
+        naming.join("\n  ")
+    );
+}
+
 /// Walk a whole answer — **keys as well as values**, since `card_ids` leaked
 /// through its key alone and its values were opaque ids.
 fn store_words_in(what: &str, body: &serde_json::Value, found: &mut Vec<String>) {
@@ -931,14 +1069,6 @@ async fn no_verb_answer_names_the_store() {
     );
     let message_id = posted["id"].as_str().expect("a posted message has an id");
     ask(
-        "list_mailboxes",
-        jojobot
-            .list_mailboxes(Parameters(ListMailboxesArgs { sid: some(&sid) }))
-            .await
-            .expect("list_mailboxes ok"),
-        &mut answers,
-    );
-    ask(
         "list_sent",
         jojobot
             .list_sent(Parameters(ListSentArgs {
@@ -966,6 +1096,7 @@ async fn no_verb_answer_names_the_store() {
         "read_mailbox",
         jojobot
             .read_mailbox(Parameters(ReadMailboxArgs {
+                counts_only: None,
                 new_only: Some(false),
                 sid: some(&sid),
             }))

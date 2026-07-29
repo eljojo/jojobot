@@ -4,7 +4,9 @@
 //! One file per verb, each holding its arguments, its description and an
 //! entrypoint. [`wire`] is the response vocabulary and [`declined`] the
 //! refusals; the machinery with a single caller lives with that caller —
-//! `my_box` in [`read_mailbox`], `Ownership` in [`list_mailboxes`].
+//! `my_box` in [`read_mailbox`]. `Ownership` is the exception and says why in
+//! [`wire`]: its verb was retired and its remaining caller is another
+//! context's.
 
 use rmcp::{
     ErrorData as McpError, handler::server::router::tool::ToolRouter,
@@ -14,7 +16,6 @@ use rmcp::{
 use crate::*;
 
 pub mod declined;
-pub mod list_mailboxes;
 pub mod list_sent;
 pub mod mark_processed;
 pub mod post_message;
@@ -24,7 +25,6 @@ pub mod read_message;
 pub mod testing;
 pub mod wire;
 
-pub use list_mailboxes::ListMailboxesArgs;
 pub use list_sent::ListSentArgs;
 pub use mark_processed::MarkProcessedArgs;
 pub use post_message::PostMessageArgs;
@@ -36,8 +36,7 @@ pub(crate) use wire::*;
 
 /// This context's half of the surface — one router per verb file, summed.
 pub(crate) fn router() -> ToolRouter<Jojobot> {
-    Jojobot::list_mailboxes_router()
-        + Jojobot::list_sent_router()
+    Jojobot::list_sent_router()
         + Jojobot::mark_processed_router()
         + Jojobot::post_message_router()
         + Jojobot::read_mailbox_router()

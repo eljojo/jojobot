@@ -4,8 +4,105 @@
 //! `read_mailbox` and `mark_processed` must not drift into three spellings of
 //! one message. The receipt renderer is here too, and it is where the rule that
 //! eliding is never silent is actually enforced.
+//!
+//! [`Ownership`] is here because its verb is gone. It scoped `list_mailboxes`'s
+//! counts and the boot snapshot's alike; with that verb retired its one caller
+//! is `orient`, which is another context's — and mailbox scoping written inside
+//! orientation would be worse than machinery kept beside the vocabulary it
+//! renders.
 
 use super::*;
+
+/// Which boxes a caller drains, and **whether jojobot could tell**.
+///
+/// The two are separate answers on purpose. "You drain none of these" and
+/// "jojobot cannot read the store that says which you drain" produce the same
+/// listing and mean opposite things, and a caller acts on both.
+/// **Ownership is never unknown here, and that is why there is no flag.** This
+/// used to carry a `known: bool`, because ownership was a read of Memory and
+/// the mailbox listing could arrive with nobody able to say whose was whose.
+/// The two are one read now: whoever renders a listing has already answered the
+/// ownership question, so the flag could only ever say `true` where it appeared
+/// — it was rendered inside the `Ok` arm of the very read whose `Err` arm set
+/// it false.
+pub(crate) struct Ownership {
+    /// The boxes this caller drains. Empty when they drain none.
+    mine: Vec<String>,
+}
+
+impl Ownership {
+    pub(crate) fn known(mine: Vec<String>) -> Self {
+        Ownership { mine }
+    }
+
+    /// Whether this caller drains this box — and so whether its counts are
+    /// theirs to see. **One question, not two.** It used to be two: a box
+    /// nobody drained had no queue to shield, so its counts went to everybody.
+    /// A box has an owner by construction now, so that second case cannot
+    /// arise.
+    pub(crate) fn drains(&self, name: &str) -> bool {
+        self.mine.iter().any(|m| m == name)
+    }
+
+    /// Which of the boxes actually on the board this answer counted.
+    pub(crate) fn shown_for(&self, boxes: &[Mailbox]) -> Vec<String> {
+        boxes
+            .iter()
+            .map(|b| b.name.as_str())
+            .filter(|name| self.drains(name))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// The clause that says what this listing's counts mean, including when it
+    /// cannot say.
+    pub(crate) fn note(&self) -> &'static str {
+        "Counts are shown for the boxes you drain. A box somebody else works is listed by \
+         name only — it exists and you can post into it; what is waiting in it belongs to \
+         whoever works it."
+    }
+}
+
+impl Jojobot {
+    /// Which boxes this caller drains, **off a listing already in hand**.
+    ///
+    /// **Ownership is a read of the boxes themselves, never an ACL and no
+    /// longer a read of Memory**: a box states its one owner, so the answer is
+    /// in the same listing being rendered. It used to be a `mailbox:` claim on
+    /// the bot's own entity record, which is why this once asked the entity
+    /// index — and why there was a separate `boxes_drained_by` that went and
+    /// fetched a listing of its own. Two reads of one world could disagree,
+    /// and the disagreement rendered as "jojobot cannot tell who drains what"
+    /// beside a listing that plainly said. One read, one answer.
+    ///
+    /// A caller that names no bot drains nothing — the right answer for a pure
+    /// sender, and for an anonymous `start_here`.
+    pub(crate) fn ownership_of(
+        &self,
+        boxes: &[mailbox::Mailbox],
+        named: Option<&EntityId>,
+    ) -> Ownership {
+        // **Whoever the caller says they are, and nobody by default.** There is
+        // no connection to fall back to any more: a caller with no handle owns
+        // nothing, which is exactly right for one that only posts.
+        let bot = named.cloned();
+        // **Every box has an owner now**, so the old "a box nobody owns has no
+        // queue to protect" case cannot arise: there is no unclaimed box to
+        // leave visible to everybody. The scoping is therefore simply what it
+        // always meant — a caller sees the counts of the boxes it drains, and
+        // every other box by name alone.
+        let Some(bot) = bot else {
+            return Ownership::known(Vec::new());
+        };
+        Ownership::known(
+            boxes
+                .iter()
+                .filter(|b| b.owner == bot)
+                .map(|b| b.name.to_string())
+                .collect(),
+        )
+    }
+}
 
 /// **The owner named does not exist.** Reported with what Memory's own screen
 /// found, so a typo comes back with the handle it probably meant.
@@ -63,6 +160,39 @@ pub(crate) fn quarantined_json(mailbox: &Mailbox) -> serde_json::Value {
         "count": mailbox.quarantined.len(),
         "ids": mailbox.quarantined.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
     })
+}
+
+/// **A poll's answer: what is waiting in your own box, and nothing taken.**
+///
+/// Built from [`mailbox_json`] rather than beside it, so the counts a poll sees
+/// and the counts a boot sees are one rendering — this is the job
+/// `list_mailboxes` used to do, and it landed here rather than on a verb of its
+/// own so the surface arrives one tool smaller instead of one tool renamed.
+///
+/// **`delivered: false` is not decoration.** A caller has to be able to tell a
+/// count from a delivery that happened to be empty, and the difference is
+/// whether it now owes anybody anything. Same rule as every other elision here:
+/// less came back, and the answer says so rather than leaving a reader to infer
+/// it from a key that is not there.
+pub(crate) fn counted_json(mailbox: &Mailbox) -> serde_json::Value {
+    let mut body = mailbox_json(mailbox);
+    if let Some(obj) = body.as_object_mut() {
+        // **`mailbox`, the spelling the delivery beside it uses.** `name` is
+        // right in a LISTING of boxes, where the field distinguishes one row
+        // from the next; here it is the same single answer `delivery_json`
+        // gives, from the same verb, about the same box — and one verb calling
+        // one thing two names is the drift this file exists to stop.
+        obj.remove("name");
+        obj.insert("mailbox".into(), mailbox.name.as_str().into());
+        obj.insert("delivered".into(), false.into());
+        obj.insert(
+            "note".into(),
+            "Nothing was delivered and nothing is owed: every message here is still waiting \
+             exactly as it was. Call read_mailbox again without counts_only to take delivery."
+                .into(),
+        );
+    }
+    body
 }
 
 /// A message on the wire. Rendered by hand rather than derived, so

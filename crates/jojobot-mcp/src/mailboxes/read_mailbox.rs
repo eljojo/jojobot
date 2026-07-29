@@ -8,6 +8,17 @@ use super::*;
 /// Arguments to `read_mailbox`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReadMailboxArgs {
+    /// **Count what is waiting and take delivery of none of it.** Off by
+    /// default: this verb delivers, and a caller that reaches for a delivery
+    /// verb wants the delivery.
+    ///
+    /// Pass `true` to poll. You get the per-state counts of your own box and
+    /// its unreadable report, nothing moves out of `new`, and nothing becomes
+    /// yours to finish — so a poll that finds an empty box costs nothing and
+    /// owes nothing. `new_only` has nothing to say here: no bodies are shipped
+    /// either way.
+    #[serde(default)]
+    pub counts_only: Option<bool>,
     /// Ship bodies only for messages nobody has taken yet — **the default**.
     /// Leftovers, the ones flagged `seen_before`, still come back, still
     /// counted, still owed; only their bodies are left out, and each says so.
@@ -98,7 +109,13 @@ impl Jojobot {
     /// no identity, jojobot cannot read who owns what, or the bot has no box at
     /// all. Each needs a different next move — and the last one used to be two,
     /// because a bot could claim a box nobody had opened. It cannot now.
-    pub(crate) async fn my_box(&self, sid: Option<&str>) -> Result<MailboxName, CallToolResult> {
+    /// **The whole record, not just its name.** Counting needs the box's
+    /// per-state counts and its unreadable report, and both are already in the
+    /// listing this read walks — fetching the name here and the counts again a
+    /// moment later would be two reads of one world, which is exactly the split
+    /// that once rendered "jojobot cannot tell who drains what" beside a listing
+    /// that plainly said.
+    pub(crate) async fn my_box(&self, sid: Option<&str>) -> Result<Mailbox, CallToolResult> {
         let caller = match self.caller(sid) {
             Ok(Some(caller)) => caller,
             Ok(None) => return Err(no_box_for("", NoBox::Anonymous)),
@@ -120,7 +137,6 @@ impl Jojobot {
         boxes
             .into_iter()
             .find(|b| b.owner == caller.bot)
-            .map(|b| b.name)
             .ok_or_else(|| no_box_for(caller.bot.as_str(), NoBox::Broken))
     }
 }
@@ -146,9 +162,11 @@ impl Jojobot {
                        moment ago. Act on what you receive, then call \
                        mark_processed for each. Draining a whole box makes every message in it \
                        yours to finish — use read_message when you want only one. ONLY CHECKING \
-                       WHETHER ANYTHING IS WAITING? Use list_mailboxes — it reads counts without \
-                       taking delivery, so a poll that finds an empty box costs nothing and owes \
-                       nothing. BY DEFAULT you get bodies for the messages nobody has taken yet: \
+                       WHETHER ANYTHING IS WAITING? Call this with counts_only: true — you get \
+                       your box's per-state counts and its unreadable report, NOTHING moves out \
+                       of new and nothing becomes yours to finish, so a poll that finds an empty \
+                       box costs nothing and owes nothing. BY DEFAULT you get bodies for the \
+                       messages nobody has taken yet: \
                        leftovers still come back, still counted, still flagged and still owed, \
                        but with their bodies left out (body_elided: true, plus body_bytes and the \
                        opening line) — because you were handed those bodies once already. Pass \
@@ -160,10 +178,20 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<ReadMailboxArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let name = match self.my_box(args.sid.as_deref()).await {
-            Ok(name) => name,
+        let mine = match self.my_box(args.sid.as_deref()).await {
+            Ok(mine) => mine,
             Err(refused) => return Ok(refused),
         };
+        // **Counting returns before the delivery path is entered at all.** Not
+        // "deliver, then render less" — that would move every message out of
+        // `new` and hand the caller work it only wanted to weigh, which is the
+        // one way this change could be worse than the verb it retires. The
+        // counts are read off the listing `my_box` already walked; nothing else
+        // is called.
+        if args.counts_only.unwrap_or(false) {
+            return json_result(&counted_json(&mine));
+        }
+        let name = mine.name;
         // **The safe branch is the default.** The cheap, common read is a poll
         // for news; re-shipping a body its reader already has is the expensive
         // case, and a caller that follows defaults rather than prose must land
@@ -199,6 +227,126 @@ mod tests {
     use crate::harness::*;
     use crate::mailboxes::testing::*;
 
+    /// **A poll costs nothing and owes nothing, and that is the whole point.**
+    ///
+    /// The job `list_mailboxes` was doing lands here, and the way it could land
+    /// wrong is by counting through the delivery path: if the count moves a
+    /// message out of `new`, the caller now owes work it only wanted to weigh,
+    /// and the crash contract has been inverted by the verb that replaced the
+    /// cheap one. That is worse than the verb it retired, so it is asserted
+    /// from the other side — not "the answer has no bodies in it", but "the box
+    /// afterwards is untouched, and the real read that follows still finds
+    /// fresh mail".
+    #[tokio::test]
+    async fn counting_takes_no_delivery_and_leaves_nothing_owed() {
+        let jojobot = mailbox_handler();
+        let reader = owning(&jojobot, "dev").await;
+        send(&jojobot, "dev", "epsilon", "the shipment landed").await;
+
+        let counted = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: Some(true),
+                    new_only: None,
+                    sid: Some(reader.clone()),
+                }))
+                .await
+                .expect("counting ok"),
+        );
+        assert_eq!(counted["mailbox"], "dev");
+        assert_eq!(counted["counts"]["new"], 1, "it counted: {counted}");
+        assert_eq!(counted["counts"]["read"], 0);
+        assert_eq!(counted["counts"]["total"], 1);
+        assert_eq!(
+            counted["delivered"], false,
+            "…and says it delivered nothing, rather than leaving a reader to \
+             infer it from an absent list: {counted}"
+        );
+        assert!(
+            counted["messages"].is_null(),
+            "a count is not a delivery with the bodies taken out: {counted}"
+        );
+
+        // **The proof is on the other side of the call.** A real read now has
+        // to find the message still fresh — not a leftover somebody already
+        // took delivery of and owes.
+        let delivery = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(reader),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(delivery["count"], 1);
+        assert_eq!(
+            delivery["messages"][0]["seen_before"], false,
+            "counting must not have taken delivery: {delivery}"
+        );
+        assert_eq!(delivery["messages"][0]["body"], "the shipment landed");
+    }
+
+    /// **The other job that had nowhere else to go.** What jojobot cannot read
+    /// as a message is counted nowhere, delivered nowhere and processable
+    /// nowhere, so the verb that reported it was the only place its existence
+    /// showed for the bot that drains the box. Retiring that verb without this
+    /// would have made a fault on somebody's own box silently invisible.
+    #[tokio::test]
+    async fn counting_reports_what_jojobot_cannot_read_on_your_own_box() {
+        let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let jojobot = with_mailboxes(boxes.clone());
+        let reader = owning(&jojobot, "dev").await;
+        send(&jojobot, "dev", "epsilon", "the shipment landed").await;
+        boxes.quarantine(
+            &MailboxName("dev".into()),
+            &MessageId("4212".into()),
+            "its row cannot be read — a state or a sender has been edited past parsing",
+        );
+
+        let counted = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: Some(true),
+                    new_only: None,
+                    sid: Some(reader),
+                }))
+                .await
+                .expect("counting ok"),
+        );
+        assert_eq!(counted["quarantined"]["count"], 1, "got {counted}");
+        assert_eq!(counted["quarantined"]["ids"][0], "4212");
+        assert_eq!(
+            counted["counts"]["total"], 1,
+            "what cannot be read is not a message and is never counted as one: {counted}"
+        );
+    }
+
+    /// **Counting is a read, and a read still has to know whose box.** The
+    /// refusals are `my_box`'s, unchanged — the point here is that the counting
+    /// branch goes through the same gate rather than around it, since a branch
+    /// that resolved the box its own way is how the two answers drift apart.
+    #[tokio::test]
+    async fn counting_with_no_box_to_open_is_refused_exactly_as_a_read_is() {
+        let jojobot = mailbox_handler();
+        let counted = blocked(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: Some(true),
+                    new_only: None,
+                    sid: None,
+                }))
+                .await
+                .expect("an answer, not a protocol failure"),
+        );
+        let how = counted["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("start_here"),
+            "an anonymous caller is sent to the door that gives it an identity: {how}"
+        );
+    }
+
     /// The whole arc through the MCP surface: make a box, leave a message, see
     /// it as new, take delivery, mark it handled.
     #[tokio::test]
@@ -228,14 +376,14 @@ mod tests {
             .expect("a message carries its id")
             .to_string();
 
-        let listed = drains(&jojobot, "inbox").await;
-        assert_eq!(listed["count"], 1);
-        assert_eq!(listed["mailboxes"][0]["name"], "inbox");
-        assert_eq!(listed["mailboxes"][0]["counts"]["new"], 1);
+        let counted = counts(&jojobot, "inbox").await;
+        assert_eq!(counted["mailbox"], "inbox");
+        assert_eq!(counted["counts"]["new"], 1);
 
         let delivery = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
                     new_only: None,
                     sid: Some(reader.clone()),
                 }))
@@ -274,6 +422,7 @@ mod tests {
         let after = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
                     new_only: None,
                     sid: Some(reader.clone()),
                 }))
@@ -295,6 +444,7 @@ mod tests {
         send(&jojobot, "inbox", "epsilon", "the shipment landed").await;
         jojobot
             .read_mailbox(Parameters(ReadMailboxArgs {
+                counts_only: None,
                 new_only: None,
                 sid: Some(reader.clone()),
             }))
@@ -304,6 +454,7 @@ mod tests {
         let again = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
                     new_only: None,
                     sid: Some(reader.clone()),
                 }))
@@ -331,6 +482,7 @@ mod tests {
         let delivery = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
                     new_only: None,
                     sid: Some(sid),
                 }))
@@ -343,23 +495,23 @@ mod tests {
 
         // …and the other box was not touched, which is the whole point: a
         // delivery it never took is still waiting in `new` for its own drainer.
+        // Counted by ITS OWN drainer, which is the only caller that can see
+        // those counts at all — and the right one to ask, since the question is
+        // whether delta's mail is still waiting for delta.
         let theirs = json_of(
             &jojobot
-                .list_mailboxes(Parameters(ListMailboxesArgs {
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: Some(true),
+                    new_only: None,
                     sid: Some(theirs_sid),
                 }))
                 .await
-                .expect("list ok"),
+                .expect("counting ok"),
         );
-        let mine = theirs["mailboxes"]
-            .as_array()
-            .expect("boxes")
-            .iter()
-            .find(|b| b["name"] == "delta")
-            .expect("delta's box");
+        assert_eq!(theirs["mailbox"], "delta");
         assert_eq!(
-            mine["counts"]["new"], 1,
-            "gamma's read must not have taken delivery of delta's mail: {mine}"
+            theirs["counts"]["new"], 1,
+            "gamma's read must not have taken delivery of delta's mail: {theirs}"
         );
     }
 
@@ -380,6 +532,7 @@ mod tests {
         let anonymous = blocked(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
                     new_only: None,
                     sid: None,
                 }))
@@ -413,6 +566,7 @@ mod tests {
         let broken = blocked(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
                     new_only: None,
                     sid: Some(as_bot(&jojobot, "gamma")),
                 }))
@@ -476,6 +630,7 @@ mod tests {
         json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
                     new_only: None,
                     sid: Some(reader.clone()),
                 }))
@@ -488,6 +643,7 @@ mod tests {
         let plain = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
                     new_only: None,
                     sid: Some(reader.clone()),
                 }))
@@ -526,6 +682,7 @@ mod tests {
         let whole = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
                     new_only: Some(false),
                     sid: Some(reader.clone()),
                 }))
@@ -576,6 +733,7 @@ mod tests {
         let first = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
                     new_only: None,
                     sid: Some(reader.clone()),
                 }))
@@ -593,6 +751,7 @@ mod tests {
         let poll = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
                     new_only: Some(true),
                     sid: Some(reader.clone()),
                 }))
@@ -659,6 +818,7 @@ mod tests {
         let delivery = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
                     new_only: None,
                     sid: Some(reader.clone()),
                 }))

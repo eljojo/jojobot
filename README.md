@@ -135,10 +135,9 @@ Two consequences worth stating outright, because they surprise people:
 | tool | what a caller is doing |
 |---|---|
 | `post_message` | Leaving word for someone not in this conversation. The one verb that reaches another box. |
-| `read_mailbox` | Taking delivery of everything waiting in its own channel. Leftovers from an interrupted read come back too, flagged and still owed. |
+| `read_mailbox` | Taking delivery of everything waiting in its own channel. Leftovers from an interrupted read come back too, flagged and still owed. With `counts_only`, checking what is waiting and taking delivery of none of it — so a poll that finds nothing costs nothing and owes nothing. |
 | `read_message` | Taking delivery of exactly one message, without draining the box. |
 | `mark_processed` | Retiring a message once it has actually been acted on, with a note recording the outcome — including failure. Terminal; an archive, never a deletion. |
-| `list_mailboxes` | Checking what is waiting without taking delivery, so a poll that finds nothing costs nothing. |
 | `list_sent` | Checking whether what it sent arrived, and what became of it, without moving anything. |
 
 **Sessions — keeping the run's own record**

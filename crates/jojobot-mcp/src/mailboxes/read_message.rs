@@ -78,6 +78,7 @@ mod tests {
         let delivery = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
                     new_only: None,
                     sid: Some(reader.clone()),
                 }))
@@ -130,10 +131,10 @@ mod tests {
         );
         assert_eq!(delivered["seen_before"], false);
 
-        let listed = drains(&jojobot, "inbox").await;
-        assert_eq!(listed["mailboxes"][0]["counts"]["read"], 1);
+        let counted = counts(&jojobot, "inbox").await;
+        assert_eq!(counted["counts"]["read"], 1);
         assert_eq!(
-            listed["mailboxes"][0]["counts"]["new"], 1,
+            counted["counts"]["new"], 1,
             "the rest of the box was not delivered with it"
         );
 

@@ -66,8 +66,7 @@ use jojobot_domain::text::{self, FRESH_FOCUS};
 // the split and something outside may name them; where a type LIVES is this
 // slice's business, where a caller finds it is not.
 pub use mailboxes::{
-    ListMailboxesArgs, ListSentArgs, MarkProcessedArgs, PostMessageArgs, ReadMailboxArgs,
-    ReadMessageArgs,
+    ListSentArgs, MarkProcessedArgs, PostMessageArgs, ReadMailboxArgs, ReadMessageArgs,
 };
 pub use memory::{
     AddEntityArgs, CaptureArgs, EdgeFilterArgs, ListEntitiesArgs, RecallArgs, SearchArgs,

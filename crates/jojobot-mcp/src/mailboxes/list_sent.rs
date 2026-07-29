@@ -238,13 +238,7 @@ mod tests {
         // itself: its body is built from a snapshot taken before it returns, so
         // a version that took delivery afterwards would still report `new`. The
         // counts come from the other side of the store.
-        let counted = drains(&jojobot, "pm").await;
-        let pm = counted["mailboxes"]
-            .as_array()
-            .expect("boxes")
-            .iter()
-            .find(|b| b["name"] == "pm")
-            .expect("the box");
+        let pm = counts(&jojobot, "pm").await;
         assert_eq!(
             pm["counts"]["read"], 0,
             "looking at your own outbox is not a delivery: {pm}"
