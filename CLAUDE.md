@@ -100,20 +100,16 @@ Shipped and live:
   and an `in_reply_to` link to the message it answers, and **`read_message`
   takes delivery of one by id** — draining a whole box makes every message in
   it owed work, which is the wrong price for wanting the single one a search
-  hit named. **It takes from your own box only**: the read side has no box
-  argument so that another bot's box cannot be opened, and a bare id reached
-  the same mail one message at a time — the door locked and the window open.
-  The guard is on the STATE CHANGE, not the bytes, so the terminal `processed`
-  archive stays readable from anywhere: reading one moves nothing, and it is
-  what a search hit over old mail points at. **`list_sent` is the sender's own view**: where your mail got to
-  and whether anyone has read it, read-only and moving nothing. And
-  **`read_mailbox` with `counts_only` is how you poll**: your box's per-state
-  counts and anything on it jojobot cannot read, taking delivery of nothing —
-  so a poll that finds an empty box costs nothing and owes nothing. It was a
-  verb of its own (`list_mailboxes`) and is an argument now; the surface grows
-  by packing flexibility onto the verbs that exist, not by adding verbs, and
-  the other job that verb did — every box on the board, by name — was always
-  `start_here`'s snapshot too.
+  hit named — **from its own box only**, the read side having no box argument
+  so another bot's cannot be opened. The guard is on the state change rather
+  than the bytes, so the terminal `processed` archive stays readable from
+  anywhere: reading history moves nothing. **`list_sent` is the sender's own
+  view**: where your mail got to and whether anyone has read it, read-only and
+  moving nothing. **`read_mailbox` with `counts_only` is how you poll**:
+  per-state counts and anything jojobot cannot read, taking delivery of none of
+  it, so a poll that finds an empty box costs nothing and owes nothing. It was
+  a verb of its own once — the surface grows by packing flexibility onto the
+  verbs that exist, not by adding verbs.
 
 > **Delivery-awareness: serve the difference.** `seen_before` was the first
 > instance; the rule now runs across the surface. What a caller demonstrably
@@ -140,9 +136,10 @@ Shipped and live:
   a bot: world-model and snapshot always, plus the identity when a bot is
   named. The door itself **mints no identity**: an unknown bot name comes back
   with the roster plus the offer to boot as a known bot and create the new one
-  from there — and the snapshot NAMES every bot, so that offer is reachable
-  from the door rather than only from a refusal you had to provoke. Names
-  only: a caller with no identity is choosing one, not weighing its work. Anonymous boot gets orientation and no `sid` — an orientation
+  from there. The snapshot **names** every bot, so that offer is reachable from
+  the door rather than only from a refusal you had to provoke — names only, a
+  caller with no identity being one that is choosing rather than weighing.
+  Anonymous boot gets orientation and no `sid` — an orientation
   preview, with nothing usable behind it. Ownership is stated **on the
   mailbox**, an `owner` field set once when the box opens, so there is no
   second copy anywhere to keep in step with it. It is not an ACL: a box names
@@ -150,13 +147,11 @@ Shipped and live:
   A box a bot should have but does not — a record predating the rule, or a
   creation interrupted partway — is healed the moment that bot next boots, and
   the boot says so rather than repairing it silently. **A repair scoped to
-  whoever boots cannot converge**, so the boot also reports the condition
-  across the whole server: `missing_boxes` names every identity without a box
-  and counts them. It reports and does not mass-repair — healing the bot in
-  front of you completes an act somebody took, while opening boxes for
-  identities nobody named is a boot with side effects. Each named one is one
-  boot away from repaired, and a roster jojobot cannot read comes back
-  `known: false` rather than as a count of none.
+  whoever boots cannot converge**, so the boot names every identity missing one
+  and reports rather than mass-repairing: healing the bot in front of you
+  completes an act somebody took, while opening boxes nobody named is a boot
+  with side effects. A roster jojobot cannot read says so, rather than counting
+  none.
 
 > **Creation is an intentional act.** A box is not minted by a call of its
 > own — it opens with the bot that owns it, inside the same `add_entity` that
@@ -187,8 +182,9 @@ Shipped and live:
   what it is working on, so the offer can tell two of them apart — and a bot
   may have several running at once, because the `sid` is what tells them apart.
   Nothing ever auto-wraps a session: a new one never closes an old one, and
-  wrapping is initiated from inside, by the bot that owns it. `journal` records a beat (and moves the focus),
-  `amend_journal` fixes the newest one, `wrap_session` folds the still-open
+  wrapping is initiated from inside, by the bot that owns it. `journal` records
+  a beat and moves the focus, `amend_journal` fixes the newest one,
+  `wrap_session` folds the still-open
   focus into the story as one final chronology entry and closes the row —
   publishing nowhere.
   jojobot writes **its own beats** too — one per verb class per session, count
