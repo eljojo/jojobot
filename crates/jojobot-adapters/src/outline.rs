@@ -682,6 +682,18 @@ impl Memory for OutlineStore {
                 candidates,
             });
         }
+        // **An event's refs are named entities like any other**, screened here
+        // rather than only in the fake — the hatch is ungated on its TYPE, and
+        // that is the only thing about it that is loose.
+        for object in fact.event.iter().flat_map(|e| &e.refs) {
+            validate_subject(object)?;
+            if let Decision::Block(candidates) = guard::decide_existing(object, &index) {
+                return Ok(Guarded::Blocked {
+                    attempted: object.clone(),
+                    candidates,
+                });
+            }
+        }
 
         // The gate passed, so the entity is in the index — and an entity is in
         // the index because a doc carries its marker. A miss here is a store
@@ -721,7 +733,13 @@ impl Memory for OutlineStore {
             status: fact.status,
             date: fact.date,
             edge: fact.edge,
-            event: None,
+            // **Built field by field, so a field forgotten here is a field the
+            // store never sees.** This one was, and read-back could not tell:
+            // it compares the row against `stored`, and `stored` was missing
+            // the payload in exactly the same way the row was. The invariant
+            // that catches a dropped field is the caller's record against the
+            // read one, which is a contract spec rather than anything here.
+            event: fact.event,
         };
         let updated = with_fact_appended(&doc.text, &render_fact_row(&stored));
         self.ws.api().update_document(&doc.id, &updated).await?;

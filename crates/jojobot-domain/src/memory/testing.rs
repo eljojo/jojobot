@@ -327,7 +327,9 @@ impl Memory for InMemoryMemory {
 pub mod contract {
     use super::*;
     use crate::memory::search::{EdgeFilter, Hit, Search, SearchQuery};
-    use crate::memory::{Boot, Edge, EdgeShape, FACTS_HEADER, FactStatus, Provenance};
+    use crate::memory::{
+        Boot, Edge, EdgeShape, FACTS_HEADER, FactStatus, Provenance, event::Event,
+    };
     use jiff::civil::{Date, date};
 
     /// Make sure `id` exists, so the write guard's **existence gate** is not
@@ -1924,6 +1926,122 @@ pub mod contract {
         );
     }
 
+    /// **An event survives capture through any store, payload and all.**
+    ///
+    /// Every other event spec in this workspace runs against something that
+    /// holds the record in memory, so all of them can pass while the one store
+    /// production actually writes to drops the payload on the floor. That is
+    /// not hypothetical: it is what the Outline adapter did — it built its
+    /// stored fact field by field and left the event at `None`, so a capture
+    /// answered with a record it had not written and a restart read back an
+    /// ordinary fact.
+    ///
+    /// **The read-back guard cannot catch this one**, which is why it needs a
+    /// spec of its own. Read-back compares what came back against what the
+    /// adapter *believed* it stored, and both halves were missing the payload
+    /// in the same way — so a lossy write passed its own invariant. The
+    /// comparison a dropped field cannot survive is against the CALLER's
+    /// record, and this is the only place that comparison is made.
+    pub async fn an_event_survives_capture<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-evented");
+        let touched = EntityId::new(EntityKind::Place, "contract-kiln-yard");
+        ensure(store, &touched).await;
+
+        let recorded = Event {
+            kind: "a-type-nobody-defined".into(),
+            metadata: [
+                ("mood".to_string(), "delighted".to_string()),
+                // A key no build has ever heard of, because the promise is
+                // that an unknown field is kept as written rather than that
+                // known fields survive.
+                (
+                    "a-field-from-a-later-build".to_string(),
+                    "and its value".to_string(),
+                ),
+                // **The punctuation battery, and it is not decoration.** A
+                // markdown store rewrites markdown, so the payload's own
+                // grammar is the thing most likely not to survive being
+                // stored — and every character below was mangled by real
+                // Outline at some point in this record's short life: a space
+                // and an `=` because the grammar escaped them with a
+                // backslash and the store re-serialized every backslash it
+                // saw, and a `~` because the store INSERTED an escape of its
+                // own in front of it. A fake that stores bytes verbatim finds
+                // none of this, which is why it rides in the shared contract
+                // rather than in an adapter's own tests.
+                (
+                    "punctuation".to_string(),
+                    "a = b, c~d, <e> & \"f\" — 100% ünïcode".to_string(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            refs: vec![touched.clone()],
+        };
+        let captured = capture(
+            store,
+            NewFact {
+                event: Some(recorded.clone()),
+                ..NewFact::about(
+                    subject.clone(),
+                    "the kiln was finally lit",
+                    date(2026, 7, 2),
+                )
+            },
+        )
+        .await;
+        assert_eq!(
+            captured.event.as_ref(),
+            Some(&recorded),
+            "capture answered with an event it did not store"
+        );
+
+        let seen = read_back(store, &subject, &captured.id).await;
+        assert_eq!(
+            seen, captured,
+            "the event must survive read-back byte-identical"
+        );
+        assert_eq!(
+            seen.event.as_ref(),
+            Some(&recorded),
+            "the payload is what makes this an event at all"
+        );
+        assert!(seen.is_event(), "…and the class filter has to see it");
+    }
+
+    /// **An event's refs name entities, so the guard screens them too.**
+    ///
+    /// The rule is not about edges, it is about naming: nothing a write
+    /// mentions is brought into being — or waved through unrecognized — as a
+    /// side effect of mentioning it. A store that screened the subject and the
+    /// edge object but not the refs would make the open hatch the one door on
+    /// this surface where naming a stranger was free, and the hatch is ungated
+    /// on its TYPE precisely so that everything else about it stays strict.
+    ///
+    /// And it takes the whole write with it: an event is one write, so a ref
+    /// that cannot be resolved leaves no half-recorded fact behind.
+    pub async fn an_events_ref_is_screened_by_the_guard<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-ref-guarded");
+        ensure(store, &subject).await;
+        let stranger = EntityId::person("contract-nobody-created-this");
+
+        let outcome = store
+            .capture(NewFact {
+                event: Some(Event {
+                    refs: vec![stranger.clone()],
+                    ..Event::of("a-thing-that-happened")
+                }),
+                ..NewFact::about(subject.clone(), "should not land", date(2026, 7, 2))
+            })
+            .await
+            .expect("the call itself succeeds; the guard answers in the result");
+        let Guarded::Blocked { attempted, .. } = outcome else {
+            panic!("a ref naming an entity nobody created must be blocked");
+        };
+        assert_eq!(attempted, stranger, "the guard names the handle it stopped");
+        assert_nothing_recorded(store, &subject).await;
+    }
+
     // --- the write guard, on the write path ----------------------------------
 
     /// The golden case: a second entity at an existing handle is blocked, and
@@ -2856,6 +2974,9 @@ pub mod contract {
         a_wrong_kind_edge_object_is_refused(store).await;
         an_edge_object_is_screened_by_the_guard(store).await;
         update_fact_attaches_an_edge(store).await;
+
+        an_event_survives_capture(store).await;
+        an_events_ref_is_screened_by_the_guard(store).await;
 
         facts_carry_a_usable_address(store).await;
         update_fact_edits_in_place(store).await;
