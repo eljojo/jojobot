@@ -1141,6 +1141,7 @@ mod tests {
         /// Arms [`with_last_cell_dropped`] for the next `update_document` — the
         /// induced fault behind the restore-on-mismatch contract.
         poison: std::sync::atomic::AtomicBool,
+        poison_body: std::sync::atomic::AtomicBool,
     }
 
     /// What the real Outline does to a markdown table on save: the editor model
@@ -1202,6 +1203,31 @@ mod tests {
         out.join("\n")
     }
 
+    /// The body half of the induced fault: the first line inside a fenced
+    /// block loses its last character. Small on purpose — a corruption the
+    /// read-back guard must notice is not the same as a page nobody could
+    /// parse.
+    fn with_a_body_line_clipped(text: &str) -> String {
+        let mut inside = false;
+        let mut clipped = false;
+        text.lines()
+            .map(|l| {
+                if l.trim_start().starts_with("```") {
+                    inside = !inside;
+                    return l.to_string();
+                }
+                if inside && !clipped && !l.trim().is_empty() && !l.contains(':') {
+                    clipped = true;
+                    let mut cut = l.to_string();
+                    cut.pop();
+                    return cut;
+                }
+                l.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// One write mangled at a layer the codec doesn't control — the induced
     /// fault for the restore contract: every data row loses its last cell.
     fn with_last_cell_dropped(text: &str) -> String {
@@ -1257,6 +1283,21 @@ mod tests {
             self.poison.store(true, Ordering::SeqCst);
         }
 
+        /// **Mangle the next write's fenced BODY instead of its rows.**
+        ///
+        /// Its own flag rather than a second effect on the row injector,
+        /// because they reach different write paths and arming both at once
+        /// would make a test's failure ambiguous about which one it caught.
+        ///
+        /// It exists because the row injector cannot corrupt a freshly posted
+        /// message at all: the last cell with anything in it is the `-`
+        /// placeholder, dropping it reads back as the same absent value, and
+        /// the write simply succeeds. A body is where a post's data actually
+        /// is.
+        fn poison_body_next_update(&self) {
+            self.poison_body.store(true, Ordering::SeqCst);
+        }
+
         fn stamp(&self) -> String {
             format!("{:020}", self.seq.fetch_add(1, Ordering::SeqCst))
         }
@@ -1275,6 +1316,28 @@ mod tests {
         }
 
         /// Pre-seed a document at the top of a collection; returns its id.
+        /// The text of one mailbox's page — how a test looks at what actually
+        /// landed, without going through a reader that might be the thing
+        /// under test.
+        ///
+        /// **Matched on the machinery marker as well as the name**, because a
+        /// bot's own entity page carries `name: gamma` too. The first version
+        /// of this matched on the name alone, found the entity page, and made
+        /// a test about an orphaned message body pass by looking somewhere
+        /// that could never have one.
+        fn text_of_mailbox_page(&self, what: &str) -> String {
+            self.documents
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(_, d)| d.text.clone())
+                .find(|t| {
+                    t.lines().any(|l| l.trim() == "machinery: mailbox")
+                        && t.lines().any(|l| l.trim() == format!("name: {what}"))
+                })
+                .unwrap_or_else(|| panic!("no mailbox page named {what}"))
+        }
+
         fn seed_document(&self, collection_id: &str, title: &str, text: &str) -> String {
             self.seed_document_under(collection_id, title, text, None)
         }
@@ -1454,6 +1517,11 @@ mod tests {
                 with_last_cell_dropped(text)
             } else {
                 text.to_string()
+            };
+            let text = if self.poison_body.swap(false, Ordering::SeqCst) {
+                with_a_body_line_clipped(&text)
+            } else {
+                text
             };
             let text = rectangularized(&text);
             let mut docs = self.documents.lock().unwrap();
@@ -2251,6 +2319,78 @@ mod tests {
         ) -> Result<(), MemoryError> {
             self.inner.move_document(id, collection_id, parent_id).await
         }
+    }
+
+    /// **A refused post leaves nothing behind — not even the body it wrote
+    /// first.**
+    ///
+    /// A post is two writes: the body block, then the row. When the row's
+    /// read-back failed, the rollback restored the page as it stood AFTER the
+    /// body had landed — so the body survived, keyed to an id no row claimed.
+    ///
+    /// Nothing in the system can see that debris. The listing verb reads rows,
+    /// and an orphaned body is not a row, so a sender checking for wreckage
+    /// before retrying gets a clean answer that is wrong. The next post then
+    /// mints the same id, reads the leftover body, and is refused for a
+    /// DIFFERENT reason than the first attempt was — which reads as one
+    /// recurring failure and is two. That is what turned a single escaped
+    /// character into a page the operator had to repair by hand.
+    #[tokio::test]
+    async fn a_refused_post_leaves_no_orphaned_body_behind() {
+        use jojobot_domain::mailbox::Mailboxes as _;
+
+        let fake = FakeOutline::new();
+        let outline = OutlineStore::from_api(fake.clone(), COLL);
+        let owner = EntityId::new(EntityKind::Bot, "gamma");
+        ensure(&outline, &owner).await;
+        let mailboxes = outline.mailboxes();
+        let name = jojobot_domain::mailbox::MailboxName("gamma".into());
+        mailboxes
+            .create_mailbox(&name, &owner, false)
+            .await
+            .expect("the box opens")
+            .written()
+            .expect("not blocked");
+
+        // The induced fault drops the row's last cell, so the row reads back
+        // changed and the post is refused.
+        fake.poison_body_next_update();
+        let refused = mailboxes
+            .post_message(jojobot_domain::mailbox::NewMessage {
+                mailbox: name.clone(),
+                body: "the shipment landed".into(),
+                subject: None,
+                sender: "bot:delta".into(),
+                sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
+                in_reply_to: None,
+            })
+            .await;
+        assert!(refused.is_err(), "the mangled row must be refused");
+
+        // **The page is as it was before the attempt.** Both halves: no row,
+        // and no body either — the second is the one that survived before.
+        let page = fake.text_of_mailbox_page(&name.to_string());
+        assert!(
+            !page.contains("the shipment landed"),
+            "the body it wrote first is still on the page: {page}"
+        );
+
+        // And the proof that it matters: the next post lands cleanly rather
+        // than meeting its predecessor's leftovers.
+        let posted = mailboxes
+            .post_message(jojobot_domain::mailbox::NewMessage {
+                mailbox: name,
+                body: "the shipment landed".into(),
+                subject: None,
+                sender: "bot:delta".into(),
+                sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
+                in_reply_to: None,
+            })
+            .await
+            .expect("the retry posts")
+            .written()
+            .expect("not blocked");
+        assert_eq!(posted.body, "the shipment landed");
     }
 
     /// **A failed rollback is a VARIANT, not a sentence**, in the mailbox

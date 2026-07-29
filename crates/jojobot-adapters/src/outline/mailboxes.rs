@@ -435,6 +435,13 @@ impl Mailboxes for OutlineMailboxes {
         // the survivor should be the harmless one: a body with no row is an
         // orphan block nothing reads, where a row with no body is a message
         // that exists and says nothing.
+        // **Keep the page as it stands BEFORE either write.** A post is two
+        // writes, so a refusal has two things to undo — and restoring the page
+        // as it looked after the body landed puts the body back, keyed to an
+        // id no row claims. Nothing in the system can see that: the listing
+        // reads rows, and an orphaned body is not a row, so a sender checking
+        // for wreckage before retrying gets a clean answer that is wrong.
+        let before = doc.clone();
         self.api()
             .append_document(&doc.id, &render_body(&id, &body))
             .await
@@ -454,7 +461,7 @@ impl Mailboxes for OutlineMailboxes {
         rows.push(row.clone());
         let updated = with_rows_replaced(&doc.text, &rows)
             .ok_or_else(|| store_msg(format!("the page for {} has no table", new.mailbox)))?;
-        let seen = self.put(&doc, &updated, "post_message").await?;
+        let seen = self.put(&before, &updated, "post_message").await?;
 
         let back = Self::assemble(&new.mailbox, &seen)
             .into_iter()
@@ -481,7 +488,7 @@ impl Mailboxes for OutlineMailboxes {
         ]) {
             return Err(self
                 .undo(
-                    &doc,
+                    &before,
                     "post_message",
                     vec![id.to_string()],
                     format!("message {id}: {changed}"),
