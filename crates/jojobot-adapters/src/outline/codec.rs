@@ -809,9 +809,19 @@ pub(super) fn with_prose_replaced(doc: &str, prose: &str) -> Option<String> {
 /// The markdown a freshly-created entity doc is seeded with: a note for the
 /// human, the entity's frontmatter (durable identity + metadata), and an empty
 /// fact table for jojobot to append to.
+///
+/// **The note is written for the one reader who is standing here.** Whatever it
+/// says is prose, and prose is indexed and searched — so it is read by an agent
+/// too, one that asked about something else and got a sentence about this page's
+/// insides. The note it replaced described the layout in a complete sentence
+/// ("facts about this entity are in the table at the bottom") and two separate
+/// sessions quoted it back as if it were content. So: the warning stays, because
+/// a human opening this needs it; the description of where things sit goes,
+/// because the software decides that and nobody else is owed it.
 pub(super) fn seeded_doc(entity: &Entity) -> String {
     format!(
-        "_Managed by jojobot. Facts about this entity are in the table at the bottom._\n\n\
+        "_Managed by jojobot — it rewrites this automatically. Anything you type here may be \
+         overwritten._\n\n\
          {}\n\n{FACTS_HEADER}\n\n{TABLE_HEADER}\n{TABLE_SEP}\n",
         frontmatter(entity)
     )
@@ -1539,6 +1549,42 @@ mod tests {
             "the machine block is not prose"
         );
         assert!(!prose.contains("plays go"), "a fact row is not prose");
+    }
+
+    /// **The boilerplate jojobot seeds is prose, and prose is searched.**
+    ///
+    /// The seeded line sits outside the machine block and outside the table, so
+    /// `parse_prose` keeps it, the index takes it, and `search` hands it to
+    /// whoever asks — which is how a sentence written for a human opening the
+    /// page ("facts about this entity are in the table at the bottom") reached
+    /// an agent that had no idea what it was reading and quoted it back. The
+    /// software decides where a fact lands; a caller must not learn where.
+    ///
+    /// **The warning stays, and that is the other half of this test.** Deleting
+    /// the line would pass the sweep and lose the thing it is for: a human who
+    /// opens the page has to know a machine rewrites it.
+    ///
+    /// The word list is `jojobot_domain::vocabulary`, shared with the sweep over
+    /// the MCP crate's answers — one list, both edges, because this edge leaks
+    /// through what is STORED and that one through what is ANSWERED, and neither
+    /// test can see the other's.
+    #[test]
+    fn nothing_seeded_into_an_entity_page_names_the_store() {
+        let prose = parse_prose(&seeded_doc(&alpha()));
+        assert!(
+            !prose.trim().is_empty(),
+            "a human opening this page still has to be told a machine maintains it"
+        );
+        let leaking: Vec<String> = jojobot_domain::vocabulary::store_words(&prose)
+            .into_iter()
+            .map(|(word, why)| format!("{word:?} — {why}"))
+            .collect();
+        assert!(
+            leaking.is_empty(),
+            "seeded prose teaches an agent where jojobot keeps things — it is searched, so it \
+             reaches one:\n  {prose:?}\n  {}",
+            leaking.join("\n  ")
+        );
     }
 
     /// **The gap between the header and the table is prose.** The reader finds

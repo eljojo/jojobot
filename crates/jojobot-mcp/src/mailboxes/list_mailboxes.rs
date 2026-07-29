@@ -265,7 +265,7 @@ mod tests {
         let listed = drains(&jojobot, "inbox").await;
         let inbox = &listed["mailboxes"][0];
         assert_eq!(inbox["quarantined"]["count"], 1, "got {listed}");
-        assert_eq!(inbox["quarantined"]["card_ids"][0], "4212");
+        assert_eq!(inbox["quarantined"]["ids"][0], "4212");
         assert_eq!(
             inbox["counts"]["total"], 1,
             "a quarantined card is not a message and is never counted as one: {listed}"

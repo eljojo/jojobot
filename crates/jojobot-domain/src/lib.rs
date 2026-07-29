@@ -16,3 +16,7 @@ pub mod memory;
 pub mod session;
 pub mod text;
 pub mod trust;
+/// The words jojobot never says to an agent — swept at both edges that can
+/// leak one. Test-only, like the shared contract spec beside it.
+#[cfg(feature = "testing")]
+pub mod vocabulary;

@@ -44,17 +44,24 @@ pub(crate) fn mailbox_json(mailbox: &Mailbox) -> serde_json::Value {
     })
 }
 
-/// The cards on a box that jojobot cannot read as messages.
+/// What is on a box that jojobot cannot read as a message.
 ///
 /// **Rendered apart from the counts, because it is scoped differently.** Counts
-/// are a queue and belong to whoever drains it; an unreadable card is a fault
-/// on the board that no verb can act on, and the caller who most needs to see
-/// it is a sender — somebody who does not drain this box, and who would
-/// otherwise read the silence as "my message was never sent".
+/// are a queue and belong to whoever drains it; something unreadable is a fault
+/// no verb can act on, and the caller who most needs to see it is a sender —
+/// somebody who does not drain this box, and who would otherwise read the
+/// silence as "my message was never sent".
+///
+/// **`ids`, not `card_ids`.** The old spelling was retired vocabulary from when
+/// mail lived on a task board, and it shipped on every mailbox payload
+/// including a boot — so a fresh session's first read of jojobot taught it that
+/// messages are cards, which is both wrong and not its business. What the field
+/// holds is the ids a person needs in order to repair these by hand, and that
+/// is now what it is called.
 pub(crate) fn quarantined_json(mailbox: &Mailbox) -> serde_json::Value {
     serde_json::json!({
         "count": mailbox.quarantined.len(),
-        "card_ids": mailbox.quarantined.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        "ids": mailbox.quarantined.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
     })
 }
 

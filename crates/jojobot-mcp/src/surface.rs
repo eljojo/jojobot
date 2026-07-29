@@ -9,7 +9,11 @@
 //! Test-only, and declared by `lib.rs`.
 
 use super::*;
+use crate::harness::*;
+use crate::mailboxes::testing::*;
+use crate::memory::testing::*;
 use crate::orientation::essay::ORIENTATION;
+use rmcp::handler::server::wrapper::Parameters;
 
 /// **Every shipped `.rs` file in this crate, with its test half cut off.**
 ///
@@ -693,5 +697,355 @@ fn no_agent_facing_text_teaches_the_retired_store() {
         unused.is_empty(),
         "these exceptions no longer match anything — delete them, or the allowlist stops being \
          a record of what is here and becomes a hole nobody reviewed: {unused:?}"
+    );
+}
+
+/// Walk a whole answer — **keys as well as values**, since `card_ids` leaked
+/// through its key alone and its values were opaque ids.
+fn store_words_in(what: &str, body: &serde_json::Value, found: &mut Vec<String>) {
+    use jojobot_domain::vocabulary::store_words;
+    match body {
+        serde_json::Value::Object(fields) => {
+            for (key, value) in fields {
+                for (_, why) in store_words(key) {
+                    found.push(format!("{what} has a field {key:?} — {why}"));
+                }
+                // **`crm` is the one link out, and it is the OPERATOR'S store,
+                // not jojobot's.** Its grammar is literally `card:N`
+                // (`jojobot_domain::memory::validate_crm`), a caller must get it
+                // right, and fronting the task layer is deliberate. The rule is
+                // that no answer teaches JOJOBOT'S store.
+                if key == "crm" {
+                    continue;
+                }
+                store_words_in(what, value, found);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                store_words_in(what, item, found);
+            }
+        }
+        serde_json::Value::String(text) => {
+            for (word, why) in store_words(text) {
+                found.push(format!("{what} says {word:?} — {why}"));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// **No answer tells a caller where jojobot put anything.**
+///
+/// The sibling of `no_agent_facing_text_teaches_the_retired_store`, over the
+/// other half of what an agent reads. That one watches the STATIC text —
+/// descriptions, schemas, the essay. This one watches what comes BACK, which is
+/// where the first production run found three leaks at once: an entity's page
+/// narrating its own layout in a complete sentence, a doc id on every search
+/// hit, and `card_ids` on every mailbox payload including a boot.
+///
+/// **One sweep over every verb, not three assertions at three call sites.**
+/// Three point-fixes leave the fourth, and the coverage assertion below is what
+/// makes a fourth verb arrive with this check already pointed at it: a tool on
+/// the surface that this sweep does not call fails here, in the test that would
+/// have caught its leak.
+#[tokio::test]
+async fn no_verb_answer_names_the_store() {
+    let alpha = Entity {
+        id: EntityId::person("alpha"),
+        kind: EntityKind::Person,
+        name: "Alpha".into(),
+        aliases: Vec::new(),
+        // **A real cross-link, on purpose.** The one legitimate `card:` on the
+        // wire has to be in the fixture, or the exception above is untested and
+        // the sweep passes for the wrong reason.
+        crm: Some("card:554".into()),
+        source: "user-named".into(),
+        parent: None,
+        boot: jojobot_domain::memory::Boot::OnDemand,
+    };
+    let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+    let jojobot = Jojobot::new(
+        Arc::new(jojobot_domain::memory::testing::InMemoryMemory::new()),
+        Arc::new(SpySearch::answering(vec![
+            Hit::Entity {
+                entity: alpha.clone(),
+                doc_id: "doc-alpha".into(),
+                edges: Vec::new(),
+            },
+            Hit::Prose {
+                doc_id: "doc-alpha".into(),
+                title: "Alpha".into(),
+                entity: Some(alpha.clone()),
+                edges: Vec::new(),
+                snippet: "a paragraph somebody wrote".into(),
+            },
+        ])),
+        boxes.clone(),
+        Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        Arc::new(sid::SessionRegistry::new()),
+    );
+
+    make_bot(&jojobot, "gamma").await;
+    // **A card nobody can read, because that branch is the one that leaked.**
+    // `list_sent` only renders its unreadable report when a box has one, so a
+    // clean fixture would sweep past the very payload this test exists for.
+    boxes.quarantine(
+        &MailboxName("gamma".into()),
+        &MessageId("4212".into()),
+        "its row on the page cannot be read — a state or a sender has been edited past parsing",
+    );
+    let sid = booted(&jojobot, "gamma").await;
+    let some = |s: &str| Some(s.to_string());
+
+    let mut answers: Vec<(&str, serde_json::Value)> = Vec::new();
+    let ask = |name: &'static str, result: CallToolResult, out: &mut Vec<_>| {
+        let body = json_of(&result);
+        out.push((name, body.clone()));
+        body
+    };
+
+    ask("ping", jojobot.ping().await.expect("ping ok"), &mut answers);
+    ask(
+        "start_here",
+        jojobot
+            .start_here(Parameters(OrientArgs {
+                bot: some("gamma"),
+                brief: None,
+                resume: None,
+            }))
+            .await
+            .expect("start_here ok"),
+        &mut answers,
+    );
+    ask(
+        "add_entity",
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                crm: some("card:554"),
+                sid: some(&sid),
+                ..add_args("person", "alpha", "Alpha")
+            }))
+            .await
+            .expect("add_entity ok"),
+        &mut answers,
+    );
+    let captured = ask(
+        "capture",
+        jojobot
+            .capture(Parameters(CaptureArgs {
+                sid: some(&sid),
+                ..capture_args("person:alpha", "moved to the coast")
+            }))
+            .await
+            .expect("capture ok"),
+        &mut answers,
+    );
+    ask(
+        "update_fact",
+        jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                content: some("moved to the coast in spring"),
+                sid: some(&sid),
+                ..update_args(&address_of(&captured))
+            }))
+            .await
+            .expect("update_fact ok"),
+        &mut answers,
+    );
+    ask(
+        "update_entity",
+        jojobot
+            .update_entity(Parameters(UpdateEntityArgs {
+                handle: "person:alpha".into(),
+                name: None,
+                aliases: None,
+                source: some("user-named"),
+                crm: some("card:554"),
+                create_new: None,
+                sid: some(&sid),
+            }))
+            .await
+            .expect("update_entity ok"),
+        &mut answers,
+    );
+    ask(
+        "recall",
+        jojobot
+            .recall(Parameters(RecallArgs {
+                subject: "person:alpha".into(),
+                sid: some(&sid),
+            }))
+            .await
+            .expect("recall ok"),
+        &mut answers,
+    );
+    ask(
+        "list_entities",
+        jojobot
+            .list_entities(Parameters(ListEntitiesArgs {
+                kind: None,
+                sid: some(&sid),
+            }))
+            .await
+            .expect("list_entities ok"),
+        &mut answers,
+    );
+    ask(
+        "search",
+        jojobot
+            .search(Parameters(SearchArgs {
+                query: some("alpha"),
+                sid: some(&sid),
+                ..search_args()
+            }))
+            .await
+            .expect("search ok"),
+        &mut answers,
+    );
+    ask(
+        "set_charter",
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "bot:gamma".into(),
+                prose: "the implementer".into(),
+                sid: some(&sid),
+            }))
+            .await
+            .expect("set_charter ok"),
+        &mut answers,
+    );
+    let posted = ask(
+        "post_message",
+        jojobot
+            .post_message(Parameters(PostMessageArgs {
+                mailbox: "gamma".into(),
+                sid: sid.clone(),
+                subject: some("the shipment landed"),
+                body: "it landed on the coast".into(),
+                in_reply_to: None,
+            }))
+            .await
+            .expect("post_message ok"),
+        &mut answers,
+    );
+    let message_id = posted["id"].as_str().expect("a posted message has an id");
+    ask(
+        "list_mailboxes",
+        jojobot
+            .list_mailboxes(Parameters(ListMailboxesArgs { sid: some(&sid) }))
+            .await
+            .expect("list_mailboxes ok"),
+        &mut answers,
+    );
+    ask(
+        "list_sent",
+        jojobot
+            .list_sent(Parameters(ListSentArgs {
+                sender: None,
+                mailbox: None,
+                include_bodies: Some(true),
+                sid: some(&sid),
+            }))
+            .await
+            .expect("list_sent ok"),
+        &mut answers,
+    );
+    ask(
+        "read_message",
+        jojobot
+            .read_message(Parameters(ReadMessageArgs {
+                message_id: message_id.to_string(),
+                sid: some(&sid),
+            }))
+            .await
+            .expect("read_message ok"),
+        &mut answers,
+    );
+    ask(
+        "read_mailbox",
+        jojobot
+            .read_mailbox(Parameters(ReadMailboxArgs {
+                new_only: Some(false),
+                sid: some(&sid),
+            }))
+            .await
+            .expect("read_mailbox ok"),
+        &mut answers,
+    );
+    ask(
+        "mark_processed",
+        jojobot
+            .mark_processed(Parameters(MarkProcessedArgs {
+                message_id: message_id.to_string(),
+                notes: some("acted on"),
+                sid: some(&sid),
+            }))
+            .await
+            .expect("mark_processed ok"),
+        &mut answers,
+    );
+    ask(
+        "journal",
+        jojobot
+            .journal(Parameters(JournalArgs {
+                entry: "set out to read the box".into(),
+                focus: some("reading the box"),
+                sid: sid.clone(),
+            }))
+            .await
+            .expect("journal ok"),
+        &mut answers,
+    );
+    ask(
+        "amend_journal",
+        jojobot
+            .amend_journal(Parameters(AmendJournalArgs {
+                entry: "set out to read the box, and did".into(),
+                sid: sid.clone(),
+            }))
+            .await
+            .expect("amend_journal ok"),
+        &mut answers,
+    );
+    // Last, because it closes the run every verb above was addressed through.
+    ask(
+        "wrap_session",
+        jojobot
+            .wrap_session(Parameters(WrapSessionArgs {
+                story: "read the box and acted on what was in it".into(),
+                sid: sid.clone(),
+            }))
+            .await
+            .expect("wrap_session ok"),
+        &mut answers,
+    );
+
+    // **Every verb, or this sweep is watching a fraction of the surface.** The
+    // three leaks were on three different verbs and nobody went looking on the
+    // fourth; a tool that ships without a call here fails at this line rather
+    // than silently going unwatched.
+    let mut swept: Vec<&str> = answers.iter().map(|(name, _)| *name).collect();
+    swept.sort_unstable();
+    let mut shipped: Vec<&str> = Jojobot::tool_router()
+        .list_all()
+        .iter()
+        .map(|t| Box::leak(t.name.to_string().into_boxed_str()) as &str)
+        .collect();
+    shipped.sort_unstable();
+    assert_eq!(
+        swept, shipped,
+        "every verb's answer is swept for the store's vocabulary — a new one is a new call above"
+    );
+
+    let mut leaking: Vec<String> = Vec::new();
+    for (name, body) in &answers {
+        store_words_in(&format!("{name}'s answer"), body, &mut leaking);
+    }
+    assert!(
+        leaking.is_empty(),
+        "answers tell a caller where jojobot keeps things. It is not their business and it will \
+         be wrong again:\n  {}",
+        leaking.join("\n  ")
     );
 }

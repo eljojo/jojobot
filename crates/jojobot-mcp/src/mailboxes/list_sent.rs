@@ -126,13 +126,14 @@ impl Jojobot {
                 .then_with(|| minted(&b.id).cmp(&minted(&a.id)))
         });
 
-        // **A card jojobot cannot read is not a message that was never sent.**
-        // The scan leaves quarantined cards out — it cannot parse them, so it
-        // has nothing to return — and this verb answers "did my report land".
-        // Staying silent about them means the honest answer ("something is
-        // wrong with a card here") arrives as a confident "no". Their senders
-        // are unreadable too, so they cannot be filtered to this caller; the
-        // count is reported per box and the ids are named.
+        // **Something jojobot cannot read is not a message that was never
+        // sent.** The scan leaves quarantined items out — it cannot parse them,
+        // so it has nothing to return — and this verb answers "did my report
+        // land". Staying silent about them means the honest answer ("something
+        // here is broken") arrives as a confident "no". Their senders are
+        // unreadable too, so they cannot be filtered to this caller; the count
+        // is reported per box and the ids are named — `ids`, in the same
+        // spelling `quarantined_json` uses, and for the same reason.
         let unreadable: Vec<serde_json::Value> = self
             .mailboxes
             .list_mailboxes()
@@ -144,7 +145,7 @@ impl Jojobot {
             .map(|b| {
                 serde_json::json!({
                     "mailbox": b.name.as_str(),
-                    "card_ids": b.quarantined.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+                    "ids": b.quarantined.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
                 })
             })
             .collect();
@@ -304,12 +305,12 @@ mod tests {
         );
     }
 
-    /// **A card jojobot cannot read is not a message that was never sent.** The
-    /// scan cannot parse a quarantined card, so it leaves it out — and this
-    /// verb would then answer "no, your report never landed" about a card
-    /// sitting on the board with the report on it.
+    /// **Something jojobot cannot read is not a message that was never sent.**
+    /// The scan cannot parse a quarantined item, so it leaves it out — and this
+    /// verb would then answer "no, your report never landed" while the report
+    /// sits right there, unreadable.
     #[tokio::test]
-    async fn list_sent_surfaces_cards_it_cannot_read_rather_than_answering_no() {
+    async fn list_sent_surfaces_what_it_cannot_read_rather_than_answering_no() {
         let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
         let jojobot = with_mailboxes(boxes.clone());
         make_box(&jojobot, "pm").await;
@@ -333,9 +334,9 @@ mod tests {
         assert_eq!(body["count"], 0, "nothing readable is theirs");
         assert_eq!(
             body["unreadable"][0]["mailbox"], "pm",
-            "…but the unreadable card is not silence: {body}"
+            "…but what cannot be read is not silence: {body}"
         );
-        assert_eq!(body["unreadable"][0]["card_ids"][0], "4212");
+        assert_eq!(body["unreadable"][0]["ids"][0], "4212");
         assert!(
             body["unreadable_note"]
                 .as_str()

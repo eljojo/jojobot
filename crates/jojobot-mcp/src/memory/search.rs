@@ -66,22 +66,25 @@ pub struct SearchArgs {
 /// row and address, prose the doc to open and the text around the match.
 ///
 /// **And every hit arrives with its surroundings.** A fact adds `about` and
-/// `home` — its subject and its home doc's entity, resolved to every name they
+/// `home` — its subject and its home entity, resolved to every name they
 /// answer to — and an
-/// entity or a prose doc adds `edges`, where it sits in the graph. The
+/// entity or a stretch of prose adds `edges`, where it sits in the graph. The
 /// enrichment is strictly additive: `subject` is still the same handle string
 /// here as in `recall`, so one record has one spelling across every verb.
+///
+/// **What a hit does NOT carry is the id of the thing it was stored in.** Both
+/// entity and prose hits shipped one, and it was the only place on the whole
+/// surface where a caller could learn that entities have documents at all. It
+/// is not an address a caller can use — every verb here is addressed by handle
+/// or by fact address — so nothing was lost by pulling it and a standing leak
+/// was closed. Internally the id is still what orders a hit list; that is the
+/// index's business (`jojobot_adapters::search::tiebreak`) and it stops there.
 fn hit_json(hit: &Hit) -> serde_json::Value {
     match hit {
-        Hit::Entity {
-            entity,
-            doc_id,
-            edges,
-        } => {
+        Hit::Entity { entity, edges, .. } => {
             let mut body = entity_json(entity);
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("hit".into(), "entity".into());
-                obj.insert("doc".into(), doc_id.clone().into());
                 obj.insert("edges".into(), edges.iter().map(edge_json).collect());
             }
             body
@@ -116,14 +119,13 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
             "snippet": snippet,
         }),
         Hit::Prose {
-            doc_id,
             title,
             entity,
             edges,
             snippet,
+            ..
         } => serde_json::json!({
             "hit": "prose",
-            "doc": doc_id,
             "title": title,
             "entity": entity.as_ref().map(entity_json),
             "edges": edges.iter().map(edge_json).collect::<Vec<_>>(),
@@ -770,7 +772,13 @@ mod tests {
         assert_eq!(results[0]["hit"], "entity");
         assert_eq!(results[0]["id"], "work:first-mix");
         assert_eq!(results[0]["type"], "CreativeWork", "the schema.org name");
-        assert_eq!(results[0]["doc"], "doc-9");
+        // **And no id of the thing it was stored in.** It was the one place a
+        // caller could learn that an entity has a document behind it, and it
+        // addressed nothing — every verb here takes a handle or a fact address.
+        assert!(
+            results[0]["doc"].is_null(),
+            "an entity hit says where it sits in the graph, never where it sits in a store"
+        );
         assert_eq!(
             results[0]["edges"][0]["type"], "memberOf",
             "where it sits in the graph"
@@ -808,7 +816,10 @@ mod tests {
         assert_eq!(results[1]["home"]["alternateName"][0], "Al");
 
         assert_eq!(results[2]["hit"], "prose");
-        assert_eq!(results[2]["doc"], "doc-1");
+        assert!(
+            results[2]["doc"].is_null(),
+            "…and neither does a stretch of prose: what a caller can act on is its entity"
+        );
         assert_eq!(results[2]["title"], "Alpha");
         assert_eq!(results[2]["entity"]["id"], "person:alpha");
         assert_eq!(results[2]["entity"]["name"], "Alpha");
