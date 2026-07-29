@@ -1124,6 +1124,31 @@ pub enum MemoryError {
          (confirmed_by_user); jojobot infers freely but never blesses on its own"
     )]
     UnconfirmedPromotion,
+    /// **A write failed, and putting the record back failed too.** It is left
+    /// mid-verb: not written, not restored, and not something the caller can
+    /// retry its way out of.
+    ///
+    /// Its own variant for the reason the mailbox and session contexts' are:
+    /// whether the rollback worked is the one thing a caller cannot infer from
+    /// anything else in the answer. This context had no such variant at all,
+    /// so a failed rollback here arrived as an ordinary [`MemoryError::Store`]
+    /// with the outcome written into the sentence — which is precisely the
+    /// shape the other two exist to prevent.
+    #[error(
+        "{verb} failed ({cause}) AND putting it back failed ({rollback}) — {} is left mid-{verb}, \
+         and a person has to look",
+        .stranded.join(", ")
+    )]
+    Stranded {
+        /// The verb that failed.
+        verb: String,
+        /// The ids left mid-write.
+        stranded: Vec<String>,
+        /// What failed first.
+        cause: String,
+        /// Why the rollback could not undo it.
+        rollback: String,
+    },
     /// The underlying store (Outline, or its network/parse layer) failed.
     #[error("store error: {0}")]
     Store(String),

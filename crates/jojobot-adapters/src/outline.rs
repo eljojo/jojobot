@@ -97,6 +97,26 @@ pub struct OutlineConfig {
 
 // --- the store --------------------------------------------------------------
 
+/// **What a rollback did — a value, never a sentence.**
+///
+/// Every context here writes, reads back, and puts the page back when the two
+/// disagree. Whether that put-back WORKED is the one thing a caller cannot
+/// infer from anything else in the answer: a restored page means retry, and a
+/// stranded one means a person. It was carried as prose inside a general store
+/// error once, detecting it meant string-matching that prose, and rewording it
+/// silently broke the detection with every test green. The `Stranded` variants
+/// were the fix; the storage move brought the prose back and left them
+/// unconstructed, which is the same bug wearing the same clothes.
+///
+/// Shared across all three contexts because all three restore identically, and
+/// three copies of this decision is how one of them drifts.
+pub(super) enum Restored {
+    /// The page is back exactly as it was found.
+    Undone,
+    /// The rollback failed too, with the store's own account of why.
+    Failed(String),
+}
+
 /// **The connection, the collection, and the one write lock** — everything a
 /// store needs to reach jojobot's Outline collection, and the thing that makes
 /// two stores over it one writer rather than two.
@@ -447,12 +467,41 @@ impl OutlineStore {
     /// value — but the PAGE must end the call in a state a retry can trust.
     /// Best-effort: the returned clause lands in the error so the caller knows
     /// which state the page is actually in.
-    async fn restore(&self, doc: &DocRec, verb: &str) -> String {
+    /// Put the page back, and report what happened **as a value**.
+    ///
+    /// See [`Restored`]: this used to hand back a sentence, and every caller
+    /// interpolated it into a general store error — which is the exact shape
+    /// the `Stranded` variants exist to prevent, re-introduced by the storage
+    /// move with every test green.
+    async fn restore(&self, doc: &DocRec) -> Restored {
         match self.ws.api().update_document(&doc.id, &doc.text).await {
-            Ok(()) => format!("the page was restored to its state before this {verb}"),
-            Err(e) => {
-                format!("AND restoring the page failed ({e}) — a half-written row may remain")
-            }
+            Ok(()) => Restored::Undone,
+            Err(e) => Restored::Failed(e.to_string()),
+        }
+    }
+
+    /// The error a failed write becomes, once the rollback has been attempted.
+    ///
+    /// **One place decides which of the two it is**, so the "restored" and
+    /// "stranded" answers cannot drift apart across four call sites — and so
+    /// that adding a fifth cannot quietly pick the wrong one.
+    async fn undo(
+        &self,
+        doc: &DocRec,
+        verb: &'static str,
+        stranded: Vec<String>,
+        cause: String,
+    ) -> MemoryError {
+        match self.restore(doc).await {
+            Restored::Undone => MemoryError::Store(format!(
+                "{verb} failed ({cause}); the page was restored to its state before it"
+            )),
+            Restored::Failed(rollback) => MemoryError::Stranded {
+                verb: verb.to_string(),
+                stranded,
+                cause,
+                rollback,
+            },
         }
     }
 
@@ -590,10 +639,14 @@ impl Memory for OutlineStore {
 
         let seen = self.read_entity(&collection_id, handle).await?;
         if seen != entity {
-            let restored = self.restore(&doc, "update_entity").await;
-            return Err(MemoryError::Store(format!(
-                "entity {handle} read back changed: wrote {entity:?}, read {seen:?}; {restored}"
-            )));
+            return Err(self
+                .undo(
+                    &doc,
+                    "update_entity",
+                    vec![handle.to_string()],
+                    format!("entity {handle} read back changed: wrote {entity:?}, read {seen:?}"),
+                )
+                .await);
         }
         Ok(Guarded::Written(seen))
     }
@@ -676,11 +729,17 @@ impl Memory for OutlineStore {
         // byte-identical. Writing is not recording.
         let seen = self.read_back_fact(&stored.address()).await?;
         if seen != stored {
-            let restored = self.restore(&doc, "capture").await;
-            return Err(MemoryError::Store(format!(
-                "fact {} read back changed: wrote {stored:?}, read {seen:?}; {restored}",
-                stored.address()
-            )));
+            return Err(self
+                .undo(
+                    &doc,
+                    "capture",
+                    vec![stored.address().to_string()],
+                    format!(
+                        "fact {} read back changed: wrote {stored:?}, read {seen:?}",
+                        stored.address()
+                    ),
+                )
+                .await);
         }
         Ok(Guarded::Written(seen))
     }
@@ -769,10 +828,14 @@ impl Memory for OutlineStore {
 
         let seen = self.read_back_fact(address).await?;
         if seen != fact {
-            let restored = self.restore(&doc, "update_fact").await;
-            return Err(MemoryError::Store(format!(
-                "fact {address} read back changed: wrote {fact:?}, read {seen:?}; {restored}"
-            )));
+            return Err(self
+                .undo(
+                    &doc,
+                    "update_fact",
+                    vec![address.to_string()],
+                    format!("fact {address} read back changed: wrote {fact:?}, read {seen:?}"),
+                )
+                .await);
         }
         Ok(Guarded::Written(seen))
     }
@@ -815,10 +878,14 @@ impl Memory for OutlineStore {
             .map(|d| parse_prose(&d.text))
             .ok_or_else(|| MemoryError::Store(format!("entity {entity} lost its doc mid-write")))?;
         if seen != stored {
-            let restored = self.restore(&doc, "set_prose").await;
-            return Err(MemoryError::Store(format!(
-                "prose on {entity} read back changed: wrote {stored:?}, read {seen:?}; {restored}"
-            )));
+            return Err(self
+                .undo(
+                    &doc,
+                    "set_prose",
+                    vec![entity.to_string()],
+                    format!("prose on {entity} read back changed: wrote {stored:?}, read {seen:?}"),
+                )
+                .await);
         }
         Ok(seen)
     }
@@ -1850,6 +1917,259 @@ mod tests {
             scanned.facts.iter().any(|f| f.content == "plays go"),
             "the fact was lost to a racing prose write: {:?}",
             scanned.facts
+        );
+    }
+
+    /// **The write mangles, and then the rollback fails too.**
+    ///
+    /// The one double that can reach a stranded record: the first
+    /// `update_document` goes through the poisoned fake, so the read-back
+    /// mismatches and a restore is attempted; every update after that is
+    /// refused, so the restore is the one that fails. A double that failed the
+    /// FIRST write would never reach a rollback at all, which is why this
+    /// counts rather than simply erroring.
+    struct RollbackFails {
+        inner: Arc<FakeOutline>,
+        armed: std::sync::atomic::AtomicBool,
+        mangled: std::sync::atomic::AtomicBool,
+    }
+
+    impl RollbackFails {
+        fn over(inner: Arc<FakeOutline>) -> Arc<Self> {
+            Arc::new(RollbackFails {
+                inner,
+                armed: std::sync::atomic::AtomicBool::new(false),
+                mangled: std::sync::atomic::AtomicBool::new(false),
+            })
+        }
+
+        /// **Armed by the test, after its fixture is in place.** Setting the
+        /// trap at construction would spring it on whatever the setup writes,
+        /// and the write under test would never reach a rollback at all.
+        fn arm(&self) {
+            self.armed.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl OutlineApi for RollbackFails {
+        async fn list_collections(
+            &self,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<CollectionRec>, MemoryError> {
+            self.inner.list_collections(offset, limit).await
+        }
+        async fn create_collection(
+            &self,
+            name: &str,
+            description: &str,
+        ) -> Result<CollectionRec, MemoryError> {
+            self.inner.create_collection(name, description).await
+        }
+        async fn list_documents(
+            &self,
+            collection_id: &str,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<DocRec>, MemoryError> {
+            self.inner
+                .list_documents(collection_id, offset, limit)
+                .await
+        }
+        async fn create_document(
+            &self,
+            collection_id: &str,
+            title: &str,
+            text: &str,
+            parent_id: Option<&str>,
+        ) -> Result<DocRec, MemoryError> {
+            self.inner
+                .create_document(collection_id, title, text, parent_id)
+                .await
+        }
+        async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            if !self.armed.load(Ordering::SeqCst) {
+                return self.inner.update_document(id, text).await;
+            }
+            // The write under test: it lands, mangled, so the read-back
+            // mismatches and a rollback is attempted.
+            if !self.mangled.swap(true, Ordering::SeqCst) {
+                self.inner.poison_next_update();
+                return self.inner.update_document(id, text).await;
+            }
+            // …and the rollback is the write that fails.
+            Err(MemoryError::Store("the store refuses this write".into()))
+        }
+        async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            self.inner.append_document(id, text).await
+        }
+        async fn move_document(
+            &self,
+            id: &str,
+            collection_id: &str,
+            parent_id: Option<&str>,
+        ) -> Result<(), MemoryError> {
+            self.inner.move_document(id, collection_id, parent_id).await
+        }
+    }
+
+    /// **A failed rollback is a VARIANT, not a sentence.**
+    ///
+    /// `MemoryError::Stranded` exists because the last time this was carried as
+    /// prose inside a general store error, detecting it meant string-matching
+    /// that prose — so rewording it silently broke the detection with every
+    /// test green. The storage move re-introduced exactly that: `restore`
+    /// returned a sentence and every call site interpolated it into a
+    /// `Store(...)`, and the variant went unconstructed. Same failure, same
+    /// clothes, same place.
+    ///
+    /// What makes this the test that matters is that it asserts on the SHAPE. A
+    /// version that gets the words right and the variant wrong fails here.
+    #[tokio::test]
+    async fn a_write_whose_rollback_also_fails_comes_back_as_the_stranded_variant() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        fake.seed_document(&coll, "Alpha", &seeded_doc(&person("alpha")));
+
+        let api = RollbackFails::over(fake);
+        let store = OutlineStore::from_api(api.clone(), COLL);
+        // **The edge is load-bearing in the fixture.** The induced fault drops
+        // every row's LAST cell and the store re-pads it; on a row whose edge
+        // cell is already empty that is a no-op, the read-back matches, and the
+        // write simply succeeds — no rollback, nothing to strand.
+        ensure(&store, &EntityId("place:shelbyville".into())).await;
+        api.arm();
+        let outcome = store
+            .capture(NewFact {
+                subject: EntityId::person("alpha"),
+                content: "spending the winter away".into(),
+                details: None,
+                provenance: Provenance::Testimony,
+                status: FactStatus::Active,
+                date: date(2026, 7, 2),
+                edge: Some(Edge::new(
+                    EdgeShape::Location,
+                    EntityId("place:shelbyville".into()),
+                )),
+            })
+            .await;
+
+        let Err(err) = outcome else {
+            panic!("a mangled write with a failed rollback must not report success");
+        };
+        let MemoryError::Stranded {
+            verb,
+            stranded,
+            rollback,
+            ..
+        } = &err
+        else {
+            panic!(
+                "a failed rollback must be its own variant, not a sentence inside a store \
+                 error — that is the bug this variant exists to prevent: {err:?}"
+            );
+        };
+        assert_eq!(verb, "capture");
+        assert!(
+            !stranded.is_empty(),
+            "the caller has to be told WHAT is left mid-write: {err:?}"
+        );
+        assert!(
+            !rollback.is_empty(),
+            "…and why it could not be put back: {err:?}"
+        );
+    }
+
+    /// **The same shape, in the mailbox context.** Three contexts restore
+    /// identically and each has its own `Stranded`; a test in one of them
+    /// proves nothing about the other two, and it was all three that had the
+    /// variant sitting unconstructed.
+    ///
+    /// `notes` is the last column of a message row, which is what makes
+    /// `mark_processed` with a note the write the induced fault can spoil.
+    #[tokio::test]
+    async fn a_mailbox_write_whose_rollback_also_fails_is_stranded_too() {
+        use jojobot_domain::mailbox::Mailboxes as _;
+
+        let fake = FakeOutline::new();
+        let api = RollbackFails::over(fake);
+        let outline = OutlineStore::from_api(api.clone(), COLL);
+        let owner = EntityId::new(EntityKind::Bot, "gamma");
+        ensure(&outline, &owner).await;
+        let mailboxes = outline.mailboxes();
+        let name = jojobot_domain::mailbox::MailboxName("gamma".into());
+        mailboxes
+            .create_mailbox(&name, &owner, false)
+            .await
+            .expect("the box opens")
+            .written()
+            .expect("not blocked");
+        let posted = mailboxes
+            .post_message(jojobot_domain::mailbox::NewMessage {
+                mailbox: name,
+                body: "the shipment landed".into(),
+                subject: None,
+                sender: "bot:delta".into(),
+                sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
+                in_reply_to: None,
+            })
+            .await
+            .expect("post ok")
+            .written()
+            .expect("not blocked");
+
+        api.arm();
+        let outcome = mailboxes.mark_processed(&posted.id, Some("acted on")).await;
+
+        let Err(err) = outcome else {
+            panic!("a mangled write with a failed rollback must not report success");
+        };
+        assert!(
+            matches!(err, jojobot_domain::mailbox::MailboxError::Stranded { .. }),
+            "a failed rollback must be its own variant, not a sentence inside a store error: \
+             {err:?}"
+        );
+    }
+
+    /// …and in the session context, where `focus` is the last column and
+    /// `begin` is the write that fills it.
+    #[tokio::test]
+    async fn a_session_write_whose_rollback_also_fails_is_stranded_too() {
+        use jojobot_domain::session::Sessions as _;
+
+        let fake = FakeOutline::new();
+        let api = RollbackFails::over(fake);
+        let sessions = OutlineStore::from_api(api.clone(), COLL).sessions();
+        let bot = EntityId::new(EntityKind::Bot, "gamma");
+        // One run first, so the page and its table exist before the trap is set.
+        sessions
+            .begin(jojobot_domain::session::NewSession {
+                bot: bot.clone(),
+                sid: jojobot_domain::session::Sid("ab12".into()),
+                focus: "the first run".into(),
+                started_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
+            })
+            .await
+            .expect("begin ok");
+
+        api.arm();
+        let outcome = sessions
+            .begin(jojobot_domain::session::NewSession {
+                bot,
+                sid: jojobot_domain::session::Sid("cd34".into()),
+                focus: "the second run".into(),
+                started_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
+            })
+            .await;
+
+        let Err(err) = outcome else {
+            panic!("a mangled write with a failed rollback must not report success");
+        };
+        assert!(
+            matches!(err, jojobot_domain::session::SessionError::Stranded { .. }),
+            "a failed rollback must be its own variant, not a sentence inside a store error: \
+             {err:?}"
         );
     }
 

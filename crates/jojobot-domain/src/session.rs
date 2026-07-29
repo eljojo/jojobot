@@ -522,19 +522,19 @@ pub enum SessionError {
         /// The session it is on.
         session: String,
     },
-    /// A write failed, and putting the card back failed too. Its own variant for
-    /// the reason the mailbox context's is: whether the rollback worked is the
-    /// one thing a caller cannot infer from anything else in the answer.
+    /// A write failed, and putting the record back failed too. Its own variant
+    /// for the reason the mailbox context's is: whether the rollback worked is
+    /// the one thing a caller cannot infer from anything else in the answer.
     #[error(
-        "{verb} failed ({cause}) AND putting it back failed ({rollback}) — card(s) {} are left \
-         mid-{verb}, and a person has to look at the board",
-        .cards.join(", ")
+        "{verb} failed ({cause}) AND putting it back failed ({rollback}) — {} is left mid-{verb}, \
+         and a person has to look",
+        .stranded.join(", ")
     )]
     Stranded {
         /// The verb that failed.
         verb: String,
-        /// The cards left mid-write.
-        cards: Vec<String>,
+        /// The ids left mid-write.
+        stranded: Vec<String>,
         /// What failed first.
         cause: String,
         /// Why the rollback could not undo it.

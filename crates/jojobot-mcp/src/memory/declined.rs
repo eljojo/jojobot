@@ -165,6 +165,11 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         MemoryError::NotConfigured(msg) => {
             McpError::internal_error(format!("memory not configured: {msg}"), None)
         }
+        // **Not a caller mistake and not fixable by calling differently**: a
+        // write failed and could not be undone, so a record is left mid-verb.
+        // Same side of the split the mailbox context puts its own on — an
+        // integrity condition that needs a person.
+        MemoryError::Stranded { .. } => McpError::internal_error(e.to_string(), None),
         MemoryError::Store(msg) => McpError::internal_error(msg, None),
     }
 }
