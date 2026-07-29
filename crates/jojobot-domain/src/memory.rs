@@ -20,6 +20,7 @@
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
+pub mod event;
 pub mod guard;
 pub mod search;
 
