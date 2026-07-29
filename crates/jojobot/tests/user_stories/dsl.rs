@@ -153,14 +153,18 @@ impl Session {
         .await;
     }
 
-    /// Something the person said. Testimony.
-    pub async fn fact(&self, subject: &str, content: &str) {
-        self.write(
-            &format!("a fact about {subject}"),
-            "capture",
-            json!({"subject": subject, "content": content, "provenance": "testimony"}),
-        )
-        .await;
+    /// Something the person said. Testimony. Hands back the fact's address,
+    /// which is what `correct` later edits it through — and what rule 15 calls
+    /// the receipt.
+    pub async fn fact(&self, subject: &str, content: &str) -> String {
+        let body = self
+            .write(
+                &format!("a fact about {subject}"),
+                "capture",
+                json!({"subject": subject, "content": content, "provenance": "testimony"}),
+            )
+            .await;
+        address_of(&body)
     }
 
     /// A fact carrying a date. **Which date it is, is the whole problem** — the
@@ -180,11 +184,25 @@ impl Session {
     }
 
     /// Something worked out rather than heard. Inference, and it reads back as one.
-    pub async fn guess(&self, subject: &str, content: &str) {
+    pub async fn guess(&self, subject: &str, content: &str) -> String {
+        let body = self
+            .write(
+                &format!("an inference about {subject}"),
+                "capture",
+                json!({"subject": subject, "content": content, "provenance": "inference"}),
+            )
+            .await;
+        address_of(&body)
+    }
+
+    /// Rewrite a claim that turned out to be wrong, in place — rule 58, which
+    /// says a refutation FIXES THE SOURCE rather than adding a contradiction
+    /// beside it. Anything less is two claims and a reader left to adjudicate.
+    pub async fn correct(&self, address: &str, content: &str) {
         self.write(
-            &format!("an inference about {subject}"),
-            "capture",
-            json!({"subject": subject, "content": content, "provenance": "inference"}),
+            &format!("correcting {address}"),
+            "update_fact",
+            json!({"address": address, "content": content}),
         )
         .await;
     }
@@ -252,6 +270,18 @@ pub struct Answer {
 }
 
 impl Answer {
+    /// The assertion that can actually fail on a correction: the old wording is
+    /// GONE, not merely outnumbered.
+    pub fn never_says(&self, needle: &str) -> &Self {
+        assert!(
+            !self.body.contains(needle),
+            "the {} still carries {needle:?}, so nothing was corrected: {}",
+            self.what,
+            self.body
+        );
+        self
+    }
+
     pub fn says(&self, needle: &str) -> &Self {
         assert!(
             self.body.contains(needle),
@@ -278,4 +308,13 @@ async fn call(client: &Client, tool: &str, args: Value) -> Value {
         .map(|t| t.text.clone())
         .unwrap_or_else(|| panic!("{tool} returned no text block"));
     serde_json::from_str(&text).unwrap_or_else(|_| json!({ "raw": text }))
+}
+
+/// The address a write handed back, which is how a claim is edited later.
+fn address_of(body: &Value) -> String {
+    body["address"]
+        .as_str()
+        .or_else(|| body["fact"]["address"].as_str())
+        .unwrap_or_else(|| panic!("a captured fact must hand back its address: {body}"))
+        .to_string()
 }
