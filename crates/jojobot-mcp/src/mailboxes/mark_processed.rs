@@ -295,7 +295,7 @@ mod tests {
     /// The answer takes the blocked shape the guards use, so one client-side
     /// branch handles every "declined, here is what to do" in this context.
     #[tokio::test]
-    async fn processing_a_quarantined_card_is_blocked_with_its_own_words() {
+    async fn processing_a_quarantined_card_is_blocked_without_the_stores_words() {
         let store = Arc::new(InMemoryMailboxes::knowing_any_owner());
         let jojobot = with_mailboxes(store.clone());
         make_box(&jojobot, "inbox").await;
@@ -317,9 +317,17 @@ mod tests {
         assert_eq!(body["attempted"], "4212");
         assert_eq!(body["wrote"], false);
         let reason = body["reason"].as_str().expect("a reason");
+        // **The store's own account does NOT come through**, which is what
+        // this used to assert. It names which field of which row failed to
+        // parse — what an operator repairing it needs, and what an agent must
+        // never be handed. It is logged instead.
         assert!(
-            reason.contains("edited past parsing"),
-            "the answer says why this message cannot be read: {reason}"
+            !reason.contains("edited past parsing"),
+            "the adapter's own words must not reach a caller: {reason}"
+        );
+        assert!(
+            reason.contains("only a person can put it back"),
+            "…and what the caller gets instead has to be an answer: {reason}"
         );
         let advice = body["how_to_proceed"].as_str().expect("advice");
         assert!(

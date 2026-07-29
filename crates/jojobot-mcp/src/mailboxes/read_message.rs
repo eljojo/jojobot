@@ -352,7 +352,7 @@ mod tests {
     /// words, not "no such message" — the distinction `mark_processed` draws,
     /// drawn by every verb that addresses a card by id.
     #[tokio::test]
-    async fn reading_a_quarantined_card_is_blocked_with_its_own_words() {
+    async fn reading_a_quarantined_card_is_blocked_without_the_stores_words() {
         let store = Arc::new(InMemoryMailboxes::knowing_any_owner());
         let jojobot = with_mailboxes(store.clone());
         make_box(&jojobot, "inbox").await;
@@ -376,9 +376,17 @@ mod tests {
         let reason = body["reason"]
             .as_str()
             .expect("a quarantined card says why");
+        // **The store's own account does NOT come through**, which is what
+        // this used to assert. That sentence names which field of which row on
+        // which page failed to parse — the detail an operator repairing it
+        // needs and the detail an agent must never be handed. It is logged.
         assert!(
-            reason.contains("edited past parsing"),
-            "the store's own account of the fault comes through: {reason}"
+            !reason.contains("edited past parsing"),
+            "the adapter's own words must not reach a caller: {reason}"
+        );
+        assert!(
+            reason.contains("only a person can put it back"),
+            "…and what the caller gets instead has to be an answer: {reason}"
         );
         let advice = body["how_to_proceed"].as_str().expect("advice");
         assert!(

@@ -111,8 +111,15 @@ pub(crate) fn session_error(e: SessionError) -> McpError {
         | SessionError::Closed { .. }
         | SessionError::NoEntries { .. }
         | SessionError::NotABeat { .. } => McpError::invalid_params(e.to_string(), None),
+        // **The adapter's own account does not cross.** It names pages and
+        // tables, which is its business and never a caller's — logged instead,
+        // where an operator debugging a real failure wants it. See
+        // [`crate::boundary`].
         SessionError::Stranded { .. } | SessionError::Store(_) | SessionError::NotConfigured(_) => {
-            McpError::internal_error(e.to_string(), None)
+            McpError::internal_error(
+                crate::boundary::store_failed("this call", &e.to_string()),
+                None,
+            )
         }
     }
 }

@@ -107,15 +107,20 @@ pub(crate) fn mailbox_blocked_body(
 /// missing — for a store that no longer holds any of this. Two failures in one
 /// string: it taught an agent the shape of jojobot's store, which is never its
 /// business and was by then simply wrong, and it sent that agent to fix the
-/// message somewhere it does not live. The store's own words come through in
-/// `reason`, where they belong to whoever reads the log; what an agent needs is
-/// that retrying will not help and that the message is unhandled.
+/// message somewhere it does not live.
+///
+/// **`reason` is returned to the calling agent**, so the adapter's own account
+/// of what is malformed does not go in it — that comment used to claim the
+/// field belonged to whoever reads the log, which was simply false and is the
+/// reason nobody looked at this path. The detail is logged; see
+/// [`crate::boundary`]. What an agent needs is that retrying will not help and
+/// that the message is unhandled.
 pub(crate) fn mailbox_quarantined(attempted: &str, reason: &str) -> CallToolResult {
     let body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted,
         "wrote": false,
-        "reason": format!("message {attempted} cannot be read: {reason}"),
+        "reason": crate::boundary::unreadable(&format!("message {attempted}"), reason),
         "how_to_proceed": format!(
             "Nothing was written, and retrying will not help — this is not a missing message. \
              jojobot can see {attempted} but cannot read it as a message, so no verb will act \
@@ -171,6 +176,8 @@ pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
         MailboxError::NotConfigured(msg) => {
             McpError::internal_error(format!("mailboxes not configured: {msg}"), None)
         }
-        MailboxError::Store(msg) => McpError::internal_error(msg, None),
+        MailboxError::Store(msg) => {
+            McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
+        }
     }
 }

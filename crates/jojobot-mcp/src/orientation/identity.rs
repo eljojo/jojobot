@@ -209,7 +209,14 @@ impl Jojobot {
                      identity with no way to receive mail, and this is damage rather than a \
                      setup step: a box opens with its bot. Nothing you post is affected — \
                      post_message needs no box of your own. Tell the operator.{}",
-                    said.map(|s| format!(" The mailbox world said: {s}")).unwrap_or_default()
+                    // **The failure's own words do not ride into a boot.** This
+                    // is the first thing a session reads, and the mailbox
+                    // world's account of what went wrong names pages and
+                    // tables — logged instead, see [`crate::boundary`].
+                    said.map(|s| {
+                        format!(" {}", crate::boundary::store_failed("opening it", s))
+                    })
+                    .unwrap_or_default()
                 ),
             })
         }

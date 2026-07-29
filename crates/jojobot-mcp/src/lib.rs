@@ -31,6 +31,7 @@ use std::sync::Arc;
 
 mod answer;
 mod beat;
+mod boundary;
 mod caller;
 pub mod mailboxes;
 pub mod memory;
