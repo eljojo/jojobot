@@ -725,6 +725,7 @@ mod tests {
                 EdgeShape::Membership,
                 EntityId("org:guild".into()),
             )),
+            event: None,
         };
         let alpha = Entity {
             id: EntityId::person("alpha"),

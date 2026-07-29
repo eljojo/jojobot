@@ -25,6 +25,26 @@ pub(crate) fn fact_json(fact: &Fact) -> serde_json::Value {
         "status": fact.status.as_token(),
         "date": fact.date.to_string(),
         "edge": fact.edge.as_ref().map(edge_json),
+        // **Absent-as-null, never an omitted key.** Most facts are not events,
+        // and a reader must not have to branch on whether the field is there to
+        // learn that this one is not one.
+        "event": fact.event.as_ref().map(event_json),
+    })
+}
+
+/// An event record on the wire — the type NAME, the bag as the caller wrote it,
+/// and the entities it touches.
+///
+/// **Rendered as its parts, never as the stored line.** The payload's text form
+/// is how the store keeps it, and handing that back would teach a caller a
+/// grammar it has no business knowing and no reason to parse.
+pub(crate) fn event_json(event: &Event) -> serde_json::Value {
+    serde_json::json!({
+        "type": event.kind,
+        "metadata": event.metadata,
+        // Links whose meaning is deliberately unrecorded — see
+        // `EdgeShape::Connection` for why these are not `about`.
+        "refs": event.refs.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
     })
 }
 

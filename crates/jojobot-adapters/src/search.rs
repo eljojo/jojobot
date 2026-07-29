@@ -1214,6 +1214,7 @@ mod tests {
             status: FactStatus::Active,
             date: on,
             edge: None,
+            event: None,
         }
     }
 
@@ -1563,12 +1564,14 @@ mod tests {
                 vec![
                     Fact {
                         edge: Some(shelbyville.clone()),
+                        event: None,
                         ..fact("person:alpha", "f1", "wintering", date(2026, 1, 1))
                     },
                     // Beta's row, homed on Alpha's page: Beta's edge, not Alpha's.
                     Fact {
                         subject: beta.id.clone(),
                         edge: Some(guild.clone()),
+                        event: None,
                         ..fact("person:alpha", "f2", "joined up", date(2026, 1, 2))
                     },
                 ],
@@ -1615,6 +1618,7 @@ mod tests {
             "Keeps a spare key under the third flowerpot; it came up once and never got filed.",
             vec![Fact {
                 edge: Some(shop.clone()),
+                event: None,
                 ..fact(
                     "person:ned-flanders",
                     "f1",
@@ -2031,6 +2035,7 @@ mod tests {
                 status: fact.status,
                 date: fact.date,
                 edge: fact.edge,
+                event: None,
             };
             doc.facts.push(stored.clone());
             Ok(Guarded::Written(stored))

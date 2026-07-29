@@ -721,6 +721,7 @@ impl Memory for OutlineStore {
             status: fact.status,
             date: fact.date,
             edge: fact.edge,
+            event: None,
         };
         let updated = with_fact_appended(&doc.text, &render_fact_row(&stored));
         self.ws.api().update_document(&doc.id, &updated).await?;
@@ -1722,6 +1723,7 @@ mod tests {
                 status: FactStatus::Active,
                 date: date(2026, 7, 2),
                 edge: Some(edge.clone()),
+                event: None,
             })
             .await
             .expect("capture succeeds against the hostile store")
@@ -2052,6 +2054,7 @@ mod tests {
                     EdgeShape::Location,
                     EntityId("place:shelbyville".into()),
                 )),
+                event: None,
             })
             .await;
 
@@ -2209,6 +2212,7 @@ mod tests {
                     EdgeShape::Location,
                     EntityId("place:shelbyville".into()),
                 )),
+                event: None,
             })
             .await;
         assert!(
@@ -2844,6 +2848,7 @@ mod tests {
                 status: Default::default(),
                 date: date(2026, 7, 1),
                 edge: None,
+                event: None,
             }),
         );
         fake.seed_document(&coll, "Totally Unrelated Title", &text);

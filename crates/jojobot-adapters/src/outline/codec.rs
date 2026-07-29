@@ -287,6 +287,10 @@ fn parse_fact_row_in(row: &str, home: &EntityId, declared: Option<u32>) -> Optio
         status,
         date,
         edge,
+        // Not read from a column yet — the payload gets its own, and until it
+        // does every row on disk is an ordinary fact, which every row on disk
+        // in fact is.
+        event: None,
     })
 }
 
@@ -844,6 +848,7 @@ mod tests {
             status: FactStatus::Active,
             date: d,
             edge: None,
+            event: None,
         }
     }
 
@@ -1669,6 +1674,7 @@ mod tests {
         for (shape, object) in objects {
             let f = Fact {
                 edge: Some(Edge::new(shape, EntityId(object.into()))),
+                event: None,
                 ..fact(
                     "f1",
                     "person:alpha",
@@ -2373,6 +2379,7 @@ mod bare_cr {
             status: FactStatus::Active,
             date: date(2026, 7, 25),
             edge: None,
+            event: None,
         };
         let mut doc = format!(
             "```yaml\nid: person:alpha\n```\n\n{FACTS_HEADER}\n\n{TABLE_HEADER}\n{TABLE_SEP}\n"

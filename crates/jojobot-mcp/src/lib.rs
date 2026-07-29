@@ -53,6 +53,7 @@ use jojobot_domain::mailbox::{
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
     FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance,
+    event::Event,
     guard::{self, EntityMatch},
     search::{DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, MailCoverage, Search, SearchQuery},
     validate_edge,

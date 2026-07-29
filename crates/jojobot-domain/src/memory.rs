@@ -1005,10 +1005,19 @@ pub struct NewFact {
     /// the fact: an edge is never a second, separately-failing write.
     ///
     /// There is deliberately **no `create_new` on this record.** Every entity a
-    /// capture names — its subject, its edge's object — must already exist (see
-    /// [`guard::decide_existing`]), so there is no suspicion for a caller to
-    /// wave away: a new entity is `add_entity` and then this, two steps.
+    /// capture names — its subject, its edge's object, an event's refs — must
+    /// already exist (see [`guard::decide_existing`]), so there is no suspicion
+    /// for a caller to wave away: a new entity is `add_entity` and then this,
+    /// two steps.
     pub edge: Option<Edge>,
+    /// **The marker that makes this fact an event**, or `None` for an ordinary
+    /// fact — which is the common case and the default.
+    ///
+    /// A fact is current truth and is rewritten in place; an event is
+    /// chronology and stays put. Nothing else distinguishes them, which is why
+    /// this rides on the same record and the same write rather than on a verb
+    /// of its own: an event IS a fact, with a date and this.
+    pub event: Option<event::Event>,
 }
 
 impl NewFact {
@@ -1023,6 +1032,7 @@ impl NewFact {
             status: FactStatus::default(),
             date,
             edge: None,
+            event: None,
         }
     }
 }
@@ -1051,6 +1061,18 @@ pub struct Fact {
     /// The typed edge this fact draws, if any. Read tolerantly: a cell the reader
     /// can't parse costs the edge, never the fact.
     pub edge: Option<Edge>,
+    /// The event record, when this fact is one. Read exactly as tolerantly as
+    /// the edge is, and for a stronger reason: a payload this build cannot make
+    /// sense of must still come back whole — see [`event::Event`].
+    pub event: Option<event::Event>,
+}
+
+impl Fact {
+    /// Whether this fact is an event. **The class filter's one question**, so
+    /// nothing downstream has to re-derive what "is an event" means.
+    pub fn is_event(&self) -> bool {
+        self.event.is_some()
+    }
 }
 
 impl Fact {

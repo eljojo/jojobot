@@ -554,6 +554,7 @@ mod tests {
             status: FactStatus::Active,
             date: date(2026, 7, 1),
             edge: None,
+            event: None,
         };
 
         let doc = DocScan {
@@ -619,6 +620,7 @@ mod tests {
             status: FactStatus::Active,
             date: date(2026, 7, 1),
             edge: None,
+            event: None,
         };
         let doc = DocScan {
             doc_id: "doc-1".into(),
