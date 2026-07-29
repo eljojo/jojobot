@@ -137,6 +137,71 @@ mod tests {
     use crate::session::testing::*;
     use rmcp::handler::server::wrapper::Parameters;
 
+    /// **A session's own entries come back e1, e3, e5 — and the gaps are
+    /// jojobot's beats, not lost writes.**
+    ///
+    /// Reported from a live run as "e1 then e3 with nothing written in between,
+    /// cause unknown", with a guess that a focus write was consuming an id. It
+    /// is not that, and nothing is missing. Entry ids are minted over the WHOLE
+    /// chronology, and jojobot's own beats are entries in it — so a caller
+    /// reading only the lines it wrote sees its own subsequence with the beats'
+    /// ids cut out of it. `next_entry_id` scans every id on the page precisely
+    /// so none is ever reused; a gap is the guarantee working, not a symptom.
+    ///
+    /// Written down as a test rather than as an answer in a report, because the
+    /// next person to notice it will notice it the same way and reason their way
+    /// to the same wrong guess.
+    #[tokio::test]
+    async fn a_gap_in_a_sessions_own_entry_ids_is_a_beat_and_not_a_lost_write() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        journal_entry(&jojobot, &sid, "read the hand-off").await;
+        // A write of a class jojobot beats about — the thing that lands between
+        // the caller's two entries without the caller writing it.
+        ensure_as(&jojobot, &sid, "alpha").await;
+        journal_entry(&jojobot, &sid, "scoped the slice").await;
+
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        let entries = &live[0].entries;
+
+        let mine: Vec<&str> = entries
+            .iter()
+            .filter(|e| e.beat.is_none())
+            .map(|e| e.id.as_str())
+            .collect();
+        let beats: Vec<&str> = entries
+            .iter()
+            .filter(|e| e.beat.is_some())
+            .map(|e| e.id.as_str())
+            .collect();
+        assert_eq!(mine.len(), 2, "the caller wrote two: {entries:?}");
+        assert_eq!(beats.len(), 1, "jojobot wrote one: {entries:?}");
+
+        // The whole point: the caller's own ids are NOT consecutive, and the
+        // id missing from its run is the beat's.
+        assert_ne!(
+            mine[1], beats[0],
+            "a beat is a different entry, not a relabelled one"
+        );
+        let all: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(
+            all.len(),
+            all.iter().collect::<std::collections::BTreeSet<_>>().len(),
+            "and no id is ever reused, which is what the gap is protecting: {all:?}"
+        );
+        let at = |id: &str| all.iter().position(|c| *c == id).expect("an entry");
+        assert!(
+            at(mine[0]) < at(beats[0]) && at(beats[0]) < at(mine[1]),
+            "the beat sits between them, which is why the caller sees a gap: {all:?}"
+        );
+    }
+
     /// **One beat per verb class, its count kept current.** jojobot's own
     /// footnotes are a tally, not a log: the second capture corrects the first
     /// beat rather than adding one, and they stay marked apart from what the

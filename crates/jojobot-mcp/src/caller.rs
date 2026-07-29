@@ -544,19 +544,32 @@ mod tests {
                 .is_empty(),
             "no card was written for an identity nobody created"
         );
-        // …and the Journal was not told a story by a bot that does not exist.
-        let journal: String = client
-            .memory
-            .scan()
+        // …and the refused wrap told its story nowhere.
+        //
+        // **This used to scan Memory's prose, and could no longer fail.** Wrap
+        // published into a shared Journal doc once; it does not publish
+        // anywhere now — the story is one last entry in the session's own
+        // chronology — so the wrap path never touches Memory at all and a clean
+        // Memory proved nothing about it. The assertion looked exactly as
+        // watchful as it does here while watching a world the code had left.
+        //
+        // It reads every session on the store rather than this bot's, because
+        // "this bot has no sessions" is already asserted above; what is left to
+        // rule out is the story landing in somebody ELSE's chronology, which is
+        // the failure a handle four characters from a live one would produce.
+        let told: Vec<String> = client
+            .sessions
+            .all_sessions()
             .await
-            .expect("scan ok")
+            .expect("all_sessions ok")
             .into_iter()
-            .map(|d| d.prose)
-            .collect::<Vec<_>>()
-            .join("\n");
+            .flat_map(|s| s.entries.into_iter().map(|e| e.text))
+            .collect();
         assert!(
-            !journal.contains("a story for nobody"),
-            "the Journal is untouched: {journal}"
+            !told
+                .iter()
+                .any(|entry| entry.contains("a story for nobody")),
+            "a refused wrap wrote its story into a chronology: {told:?}"
         );
     }
 
