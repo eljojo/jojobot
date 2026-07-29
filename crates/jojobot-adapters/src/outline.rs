@@ -106,9 +106,9 @@ pub struct OutlineConfig {
 /// infer from anything else in the answer: a restored page means retry, and a
 /// stranded one means a person. It was carried as prose inside a general store
 /// error once, detecting it meant string-matching that prose, and rewording it
-/// silently broke the detection with every test green. The `Stranded` variants
-/// were the fix; the storage move brought the prose back and left them
-/// unconstructed, which is the same bug wearing the same clothes.
+/// silently broke the detection with every test green — which is why the
+/// mailbox and session contexts answer with a `Stranded` variant rather than a
+/// sentence.
 ///
 /// Shared across all three contexts because all three restore identically, and
 /// three copies of this decision is how one of them drifts.
@@ -471,10 +471,9 @@ impl OutlineStore {
     /// which state the page is actually in.
     /// Put the page back, and report what happened **as a value**.
     ///
-    /// See [`Restored`]: this used to hand back a sentence, and every caller
-    /// interpolated it into a general store error — which is the exact shape
-    /// the `Stranded` variants exist to prevent, re-introduced by the storage
-    /// move with every test green.
+    /// See [`Restored`]: this hands back a value rather than a sentence, so a
+    /// caller decides what a failed rollback means instead of parsing prose for
+    /// it.
     async fn restore(&self, doc: &DocRec) -> Restored {
         match self.ws.api().update_document(&doc.id, &doc.text).await {
             Ok(()) => Restored::Undone,
@@ -484,26 +483,18 @@ impl OutlineStore {
 
     /// The error a failed write becomes, once the rollback has been attempted.
     ///
-    /// **One place decides which of the two it is**, so the "restored" and
-    /// "stranded" answers cannot drift apart across four call sites — and so
-    /// that adding a fifth cannot quietly pick the wrong one.
-    async fn undo(
-        &self,
-        doc: &DocRec,
-        verb: &'static str,
-        stranded: Vec<String>,
-        cause: String,
-    ) -> MemoryError {
+    /// **One place decides which of the two it is**, so the two answers cannot
+    /// drift apart across five call sites — and so that adding a sixth cannot
+    /// quietly pick the wrong one.
+    async fn undo(&self, doc: &DocRec, verb: &'static str, cause: String) -> MemoryError {
         match self.restore(doc).await {
             Restored::Undone => MemoryError::Store(format!(
                 "{verb} failed ({cause}); the page was restored to its state before it"
             )),
-            Restored::Failed(rollback) => MemoryError::Stranded {
-                verb: verb.to_string(),
-                stranded,
-                cause,
-                rollback,
-            },
+            Restored::Failed(rollback) => MemoryError::Store(format!(
+                "{verb} failed ({cause}) AND restoring the page failed ({rollback}) — a \
+                 half-written row may remain"
+            )),
         }
     }
 
@@ -645,7 +636,6 @@ impl Memory for OutlineStore {
                 .undo(
                     &doc,
                     "update_entity",
-                    vec![handle.to_string()],
                     format!("entity {handle} read back changed: wrote {entity:?}, read {seen:?}"),
                 )
                 .await);
@@ -754,7 +744,6 @@ impl Memory for OutlineStore {
                 .undo(
                     &doc,
                     "capture",
-                    vec![stored.address().to_string()],
                     format!(
                         "fact {} read back changed: wrote {stored:?}, read {seen:?}",
                         stored.address()
@@ -865,7 +854,6 @@ impl Memory for OutlineStore {
                 .undo(
                     &doc,
                     "update_fact",
-                    vec![address.to_string()],
                     format!("fact {address} read back changed: wrote {fact:?}, read {seen:?}"),
                 )
                 .await);
@@ -949,7 +937,6 @@ impl Memory for OutlineStore {
                 .undo(
                     &doc,
                     "retract",
-                    vec![address.to_string(), record.address().to_string()],
                     format!(
                         "retraction of {address} read back changed: wrote {retracted:?} and \
                          {record:?}, read {seen_retracted:?} and {seen_record:?}"
@@ -1005,7 +992,6 @@ impl Memory for OutlineStore {
                 .undo(
                     &doc,
                     "set_prose",
-                    vec![entity.to_string()],
                     format!("prose on {entity} read back changed: wrote {stored:?}, read {seen:?}"),
                 )
                 .await);
@@ -2157,78 +2143,11 @@ mod tests {
         }
     }
 
-    /// **A failed rollback is a VARIANT, not a sentence.**
-    ///
-    /// `MemoryError::Stranded` exists because the last time this was carried as
-    /// prose inside a general store error, detecting it meant string-matching
-    /// that prose — so rewording it silently broke the detection with every
-    /// test green. The storage move re-introduced exactly that: `restore`
-    /// returned a sentence and every call site interpolated it into a
-    /// `Store(...)`, and the variant went unconstructed. Same failure, same
-    /// clothes, same place.
-    ///
-    /// What makes this the test that matters is that it asserts on the SHAPE. A
-    /// version that gets the words right and the variant wrong fails here.
-    #[tokio::test]
-    async fn a_write_whose_rollback_also_fails_comes_back_as_the_stranded_variant() {
-        let fake = FakeOutline::new();
-        let coll = fake.seed_collection(COLL, &owned_desc());
-        fake.seed_document(&coll, "Alpha", &seeded_doc(&person("alpha")));
-
-        let api = RollbackFails::over(fake);
-        let store = OutlineStore::from_api(api.clone(), COLL);
-        // **The edge is load-bearing in the fixture.** The induced fault drops
-        // every row's LAST cell and the store re-pads it; on a row whose edge
-        // cell is already empty that is a no-op, the read-back matches, and the
-        // write simply succeeds — no rollback, nothing to strand.
-        ensure(&store, &EntityId("place:shelbyville".into())).await;
-        api.arm();
-        let outcome = store
-            .capture(NewFact {
-                subject: EntityId::person("alpha"),
-                content: "spending the winter away".into(),
-                details: None,
-                provenance: Provenance::Testimony,
-                status: FactStatus::Active,
-                date: date(2026, 7, 2),
-                edge: Some(Edge::new(
-                    EdgeShape::Location,
-                    EntityId("place:shelbyville".into()),
-                )),
-                event: None,
-            })
-            .await;
-
-        let Err(err) = outcome else {
-            panic!("a mangled write with a failed rollback must not report success");
-        };
-        let MemoryError::Stranded {
-            verb,
-            stranded,
-            rollback,
-            ..
-        } = &err
-        else {
-            panic!(
-                "a failed rollback must be its own variant, not a sentence inside a store \
-                 error — that is the bug this variant exists to prevent: {err:?}"
-            );
-        };
-        assert_eq!(verb, "capture");
-        assert!(
-            !stranded.is_empty(),
-            "the caller has to be told WHAT is left mid-write: {err:?}"
-        );
-        assert!(
-            !rollback.is_empty(),
-            "…and why it could not be put back: {err:?}"
-        );
-    }
-
-    /// **The same shape, in the mailbox context.** Three contexts restore
-    /// identically and each has its own `Stranded`; a test in one of them
-    /// proves nothing about the other two, and it was all three that had the
-    /// variant sitting unconstructed.
+    /// **A failed rollback is a VARIANT, not a sentence**, in the mailbox
+    /// context. Detecting it used to mean string-matching prose inside a
+    /// general store error, so rewording that prose silently broke the
+    /// detection with every test green. The session context has its own, and a
+    /// test in one proves nothing about the other.
     ///
     /// `notes` is the last column of a message row, which is what makes
     /// `mark_processed` with a note the write the induced fault can spoil.
