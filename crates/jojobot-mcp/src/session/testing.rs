@@ -249,6 +249,52 @@ pub(crate) async fn refusing_close() -> (Jojobot, Arc<RefusingClose>, Arc<InMemo
     (jojobot, store, memory, sid)
 }
 
+/// **A session store whose `set_focus` fails while `append` works** — the
+/// exact half-success a journal call met in production, and the only failure
+/// on this surface that leaves the caller holding a committed write behind an
+/// error.
+pub(crate) struct RefusingFocus(pub(crate) InMemorySessions);
+
+#[async_trait]
+impl Sessions for RefusingFocus {
+    async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+        self.0.sessions_of(bot).await
+    }
+    async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+        self.0.all_sessions().await
+    }
+    async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.0.read_session(id).await
+    }
+    async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+        self.0.begin(new).await
+    }
+    async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
+        self.0.append(id, entry).await
+    }
+    async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+        self.0.amend_last(id, text).await
+    }
+    async fn amend_beat(
+        &self,
+        id: &SessionId,
+        entry: &EntryId,
+        text: &str,
+        touched: jiff::Timestamp,
+    ) -> Result<JournalEntry, SessionError> {
+        self.0.amend_beat(id, entry, text, touched).await
+    }
+    async fn set_focus(&self, _: &SessionId, _: &str) -> Result<Session, SessionError> {
+        Err(SessionError::Store("the focus could not be written".into()))
+    }
+    async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
+        self.0.close(id, to).await
+    }
+    async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.0.reopen(id).await
+    }
+}
+
 /// A session store that hands the runtime a chance to run the other task at
 /// every call — what an HTTP round trip does, and what the in-memory fake
 /// never does on its own.

@@ -79,7 +79,52 @@ impl Jojobot {
             None => None,
             Some(focus) => match self.sessions.set_focus(&session, focus).await {
                 Ok(session) => Some(session),
-                Err(e) => return session_declined(e),
+                // **The entry is already recorded, so this is not a failed
+                // call — it is a call that half succeeded.**
+                //
+                // A flat error here reads as "nothing was written", which is
+                // the safe assumption for every other failure on this surface
+                // and the dangerous one here: the caller's natural next move is
+                // to repeat the whole call, and repeating it appends the entry
+                // a second time beside the one already recorded. That is not
+                // hypothetical — it is what a session did after exactly this
+                // failure, and it only avoided the duplicate because the error
+                // happened to carry enough of the record to see the entry in.
+                //
+                // So the answer says what LANDED first and what did not, and
+                // the way forward names the smaller call rather than the one
+                // just made.
+                // **The entry is already recorded, so this is not a failed
+                // call — it is a call that half succeeded.**
+                //
+                // A flat error here reads as "nothing was written", which is
+                // the safe assumption for every other failure on this surface
+                // and the dangerous one here: the caller's natural next move is
+                // to repeat the whole call, and repeating it appends the entry
+                // a second time beside the one already recorded. That is not
+                // hypothetical — it is what a session met after exactly this
+                // failure, and the duplicate was avoided only because the error
+                // happened to carry enough of the record to see the entry in.
+                //
+                // So the answer says what LANDED first, and the way forward
+                // names the smaller call rather than the one just made.
+                Err(e) => {
+                    return json_result(&serde_json::json!({
+                        "status": "partial",
+                        "wrote": true,
+                        "recorded": "entry",
+                        "not_recorded": "focus",
+                        "session": session.as_str(),
+                        "entry": entry_json(&entry),
+                        "why": e.to_string(),
+                        "how_to_proceed": "The entry IS recorded — do not send this call again, \
+                                           or the entry lands twice. Only the focus did not move. \
+                                           Set it on its own with a journal call carrying a focus \
+                                           and no entry, or leave it: the chronology is what \
+                                           outlives the session, and the focus is overwritten by \
+                                           the next beat anyway.",
+                    }));
+                }
             },
         };
         json_result(&serde_json::json!({
@@ -96,6 +141,80 @@ mod tests {
     use crate::harness::*;
     use crate::session::testing::*;
     use jojobot_domain::session::Sid;
+
+    /// **A call that half succeeded says so, and says which half.**
+    ///
+    /// One journal call carries an entry and a focus. In production the entry
+    /// committed, the focus rolled back, and the answer was a flat error —
+    /// indistinguishable from nothing-happened, which is the safe reading
+    /// everywhere else on this surface and the dangerous one here. The natural
+    /// retry appends the entry a second time beside the one already recorded.
+    ///
+    /// Both halves are asserted, because the obvious one passes on its own:
+    /// the caller learns the entry landed AND is told not to repeat the call.
+    #[tokio::test]
+    async fn a_journal_whose_focus_fails_says_the_entry_landed() {
+        let store = Arc::new(RefusingFocus(InMemorySessions::new()));
+        let jojobot = Jojobot::new(
+            Arc::new(crate::memory::testing::InMemoryMemory::new()),
+            Arc::new(crate::memory::testing::SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            store.clone(),
+            Arc::new(sid::SessionRegistry::new()),
+        );
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let body = json_of(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: "set out to read the box".into(),
+                    focus: Some("reading the box".into()),
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("a half-success is an answer, not a protocol failure"),
+        );
+
+        assert_eq!(body["status"], "partial", "{body}");
+        assert_eq!(
+            body["wrote"], true,
+            "the default reading must be that something LANDED: {body}"
+        );
+        assert_eq!(body["recorded"], "entry");
+        assert_eq!(body["not_recorded"], "focus");
+        assert!(
+            body["entry"]["text"] == "set out to read the box",
+            "the entry that landed comes back, so the caller can see it: {body}"
+        );
+
+        let how = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("do not send this call again"),
+            "the retry is the danger, so the advice has to forbid it: {how}"
+        );
+
+        // And it names no part of the store — the half that nearly shipped
+        // broken in the refusal commit.
+        let lowered = body.to_string().to_lowercase();
+        for leak in ["page", "table", "row", "column", "document"] {
+            assert!(!lowered.contains(leak), "a caller has no {leak}: {body}");
+        }
+
+        // The entry really is on the record, which is what makes a repeat a
+        // duplicate rather than a retry.
+        let session = store
+            .0
+            .read_session(&SessionId(
+                body["session"]
+                    .as_str()
+                    .expect("the answer names it")
+                    .into(),
+            ))
+            .await
+            .expect("the session reads");
+        assert_eq!(session.entries.len(), 1, "{session:?}");
+    }
 
     /// **Writing to a closed run says something different depending on which
     /// end it reached**, because the way forward is different.
