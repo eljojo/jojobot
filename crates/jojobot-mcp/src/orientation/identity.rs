@@ -119,12 +119,6 @@ impl Jojobot {
     /// not this caller's act, and the owner heals it the moment it boots — which
     /// is the next time anyone would drain it anyway. A message is not more
     /// delivered for a box existing that nobody has booted to read.
-    ///
-    /// **And healing only the bot in front of you cannot converge**, which is
-    /// why the boot's snapshot carries `missing_boxes` — the whole-server count,
-    /// named, reported and deliberately not repaired. See
-    /// [`crate::orientation::orient::missing_boxes`] for why reporting is the
-    /// right verb there and healing is the right verb here.
     pub(crate) async fn owned_mailbox(
         &self,
         bot: &EntityId,

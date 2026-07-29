@@ -6,62 +6,6 @@
 
 use super::*;
 
-/// **Every identity that has no box, as a whole-server condition.**
-///
-/// The heal is scoped to whoever is booting, which is right — it completes an
-/// interrupted act on the identity in front of it — and it therefore cannot
-/// converge on its own: a bot nobody boots stays broken forever, and until
-/// this, nothing said how many of those there were. After the cutover the
-/// answer was "all of them", and finding that out took booting as each identity
-/// in turn.
-///
-/// **It reports; it does not repair.** Opening boxes for identities this call
-/// was not made about would be a boot with side effects on things nobody named
-/// — the rule that nothing is created as a side effect, which is the same rule
-/// that makes the scoped heal legitimate. The names are what turn the count
-/// into an action: each one is one boot away from repaired.
-///
-/// **Unanswerable is not zero.** Without the roster jojobot cannot say, and
-/// reporting `0` there would tell a person the server is healthy at the exact
-/// moment it cannot see any of it.
-fn missing_boxes(index: Result<&[Entity], &MemoryError>, boxes: &[Mailbox]) -> serde_json::Value {
-    let Ok(index) = index else {
-        return serde_json::json!({
-            "known": false,
-            "count": serde_json::Value::Null,
-            "bots": serde_json::Value::Null,
-            "note": "jojobot cannot read the roster right now, so it cannot say how many \
-                     identities are missing a box — this is not a report of none.",
-        });
-    };
-    let mut missing: Vec<&str> = index
-        .iter()
-        .filter(|e| e.kind == EntityKind::Bot)
-        .filter(|e| !boxes.iter().any(|b| b.owner == e.id))
-        .map(|e| e.id.as_str())
-        .collect();
-    missing.sort_unstable();
-    serde_json::json!({
-        "known": true,
-        "count": missing.len(),
-        "bots": missing,
-        "note": if missing.is_empty() {
-            "Every identity has the box that comes with it.".to_string()
-        } else {
-            format!(
-                "{} of the identities here have no mailbox, and that is damage rather than a \
-                 setup step: a box opens with the bot that owns it, so an identity without one \
-                 was interrupted mid-creation or predates the rule. Mail sent to any of them is \
-                 refused as an unknown box and is never stored. Each is repaired by booting as \
-                 it — start_here with that name opens the box and says so. jojobot does not open \
-                 them here, because a boot must not create things it was not called about. Tell \
-                 the operator either way.",
-                missing.len()
-            )
-        },
-    })
-}
-
 impl Jojobot {
     /// The one orientation, anonymous or identified — **the one call site is
     /// the point.** Naming a bot adds the identity half to an answer that is
@@ -156,7 +100,6 @@ impl Jojobot {
                 "available": true,
                 "counts_shown_for": mine.shown_for(&boxes),
                 "note": mine.note(),
-                "missing_boxes": missing_boxes(index.as_deref(), &boxes),
                 "boxes": boxes
                     .iter()
                     .map(|b| {
@@ -435,126 +378,6 @@ mod tests {
         assert_eq!(booted["identity"]["bot"]["id"], "bot:delta", "{booted}");
     }
 
-    /// **A repair scoped to whoever happens to boot cannot converge, so the
-    /// boot reports the whole-server condition.**
-    ///
-    /// After the cutover every mailbox on the server was missing — not one, all
-    /// of them, across every identity. The heal is correct and honest, and it
-    /// only ever opens the box of the bot you happen to be: a bot nobody boots
-    /// stays broken indefinitely, and nothing anywhere says how much of this
-    /// there is. Five identities were repaired one boot at a time, by hand,
-    /// because finding out took booting as each of them in turn.
-    ///
-    /// **It reports and does not mass-repair, and that is rule 18 rather than
-    /// timidity.** Healing the box of the bot in front of you completes an
-    /// interrupted act somebody deliberately took; opening boxes for identities
-    /// nobody asked about is a boot with a side effect on things it was not
-    /// called about. The condition being visible is what a person needs; the
-    /// repair is one boot away and needs no verb.
-    #[tokio::test]
-    async fn a_boot_says_how_many_identities_have_no_box() {
-        let jojobot = mailbox_handler();
-        make_bot(&jojobot, "gamma").await;
-        // **Written straight to the store**, because the surface cannot produce
-        // this: `add_entity` opens the box with the bot. It is the shape of
-        // damage — an interrupted creation, or a record predating the rule.
-        broken_bot(&jojobot, "delta").await;
-        broken_bot(&jojobot, "epsilon").await;
-
-        let booted = boot(&jojobot, "gamma").await;
-        let missing = booted["snapshot"]["mailboxes"]["missing_boxes"].clone();
-        assert_eq!(missing["count"], 2, "got {booted}");
-        // **Named, not merely counted.** A count says how bad it is; the names
-        // say what to do about it, and the doing is booting as each of them.
-        assert_eq!(
-            missing["bots"],
-            serde_json::json!(["bot:delta", "bot:epsilon"]),
-            "{booted}"
-        );
-        assert!(
-            missing["note"]
-                .as_str()
-                .is_some_and(|n| n.contains("start_here")),
-            "…and says what repairs one: {booted}"
-        );
-        // Nothing was minted for them: reporting is not repairing.
-        let boxes = jojobot.mailboxes.list_mailboxes().await.expect("list ok");
-        assert_eq!(
-            boxes.len(),
-            1,
-            "only gamma's, which it already had: {boxes:?}"
-        );
-    }
-
-    /// **The healthy answer is the same shape, and says zero out loud.** A key
-    /// that appears only when something is wrong makes a reader infer health
-    /// from an absence, which is the inference this codebase refuses everywhere
-    /// else.
-    #[tokio::test]
-    async fn a_healthy_boot_still_says_nothing_is_missing() {
-        let jojobot = mailbox_handler();
-        make_bot(&jojobot, "gamma").await;
-        make_bot(&jojobot, "delta").await;
-
-        let booted = boot(&jojobot, "gamma").await;
-        let missing = booted["snapshot"]["mailboxes"]["missing_boxes"].clone();
-        assert_eq!(missing["count"], 0, "got {booted}");
-        assert_eq!(missing["bots"], serde_json::json!([]), "{booted}");
-    }
-
-    /// **A boot does not report a condition it has already fixed in the same
-    /// answer.** The booting bot's own box is healed on the identity half; a
-    /// count taken before that ran would name the caller as broken in one half
-    /// of a payload whose other half says it has just been repaired, and a
-    /// session has no way to tell which half to believe.
-    #[tokio::test]
-    async fn a_boot_that_heals_its_own_box_does_not_then_report_itself_missing() {
-        let jojobot = mailbox_handler();
-        broken_bot(&jojobot, "gamma").await;
-
-        let booted = boot(&jojobot, "gamma").await;
-        assert_eq!(
-            booted["identity"]["owned_mailbox"]["healed"], true,
-            "the boot repaired it: {booted}"
-        );
-        assert_eq!(
-            booted["snapshot"]["mailboxes"]["missing_boxes"]["count"], 0,
-            "…so the same answer must not still be calling it missing: {booted}"
-        );
-    }
-
-    /// **"How many are missing" is unanswerable without the entity index**, and
-    /// unanswerable is not zero. A boot over a memory outage that reported zero
-    /// missing boxes would tell a person the server is healthy at exactly the
-    /// moment jojobot cannot see any of it.
-    #[tokio::test]
-    async fn a_boot_that_cannot_read_the_roster_says_so_rather_than_reporting_none() {
-        let memory = Arc::new(InMemoryMemory::new());
-        let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
-        let seeded = Jojobot::new(
-            memory.clone(),
-            Arc::new(SpySearch::default()),
-            boxes.clone(),
-            Arc::new(InMemorySessions::new()),
-            Arc::new(sid::SessionRegistry::new()),
-        );
-        make_bot(&seeded, "gamma").await;
-
-        let blind = Jojobot::new(
-            Arc::new(UnindexedMemory(memory)),
-            Arc::new(SpySearch::default()),
-            boxes,
-            Arc::new(InMemorySessions::new()),
-            Arc::new(sid::SessionRegistry::new()),
-        );
-        let booted = boot(&blind, "gamma").await;
-        let missing = booted["snapshot"]["mailboxes"]["missing_boxes"].clone();
-        assert!(
-            missing["count"].is_null(),
-            "a count nobody could take is not a count of none: {booted}"
-        );
-        assert_eq!(missing["known"], false, "{booted}");
-    }
 
     /// **One response never contradicts itself about which boxes exist.**
     ///
