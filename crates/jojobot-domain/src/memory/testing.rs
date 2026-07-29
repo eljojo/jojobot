@@ -2174,6 +2174,57 @@ pub mod contract {
         assert_eq!(account, taken_back.record);
     }
 
+    /// **A retraction with no reason still records the act, and says the
+    /// reason is missing rather than inventing one.**
+    ///
+    /// The reason became optional when the requirement was cut, and a row
+    /// still has to carry content — so the absent case writes a sentence
+    /// either way. The risk it leaves behind is that the sentence is jojobot's
+    /// and not a caller's: it must state only what happened and that nobody
+    /// said why, because a plausible-sounding reason here would be
+    /// indistinguishable later from one somebody actually gave.
+    pub async fn a_retraction_needs_no_reason<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-unreasoned");
+        let event = capture(
+            store,
+            NewFact {
+                event: Some(Event::of("an-appointment")),
+                ..NewFact::about(subject.clone(), "it happened", date(2026, 7, 3))
+            },
+        )
+        .await;
+
+        let taken_back = store
+            .retract(&event.address(), None, date(2026, 7, 4))
+            .await
+            .expect("a retraction without a reason is still a retraction");
+
+        // The act landed in full: the row is marked and the account is a real
+        // record, linked, dated, and on the read path like any other.
+        assert_eq!(taken_back.retracted.status, FactStatus::Retracted);
+        assert_eq!(
+            taken_back.record.event.as_ref().and_then(Event::retracts),
+            Some(event.address().to_string().as_str()),
+        );
+        assert_eq!(
+            read_back(store, &subject, &taken_back.record.id).await,
+            taken_back.record,
+        );
+
+        // And the content says the reason is absent — it does not stand in for
+        // one. Asserted as the two things a later reader needs to be able to
+        // tell apart, rather than as an exact string nobody may reword.
+        let content = taken_back.record.content.to_lowercase();
+        assert!(
+            content.contains("retracted"),
+            "the record has to say what happened: {content:?}"
+        );
+        assert!(
+            content.contains("no reason"),
+            "…and that nobody gave a reason, rather than supplying one: {content:?}"
+        );
+    }
+
     /// **One-way, and the three ways of asking for the reverse are all
     /// refused.** Retracting twice, retracting the retraction, and editing the
     /// status back are the same wish wearing three faces — so no single one of
@@ -3299,6 +3350,7 @@ pub mod contract {
         an_events_ref_is_screened_by_the_guard(store).await;
         retracting_an_event_marks_it_and_records_why(store).await;
         a_retraction_is_one_way(store).await;
+        a_retraction_needs_no_reason(store).await;
         an_ordinary_fact_is_not_retractable(store).await;
         retracting_an_unknown_address_never_writes(store).await;
 
