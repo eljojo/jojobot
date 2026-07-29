@@ -113,12 +113,18 @@ impl Jojobot {
     /// name is derived from it, so there is exactly one correct box.
     ///
     /// **Boot is the only place that heals**, and that is a deliberate limit.
-    /// `list_mailboxes` and the count scoping are pure reads of the board, and
+    /// Counting a box and scoping a listing are pure reads of the board, and
     /// healing there would make every read a potential write. `post_message`
     /// names somebody *else's* box: writing another identity's infrastructure is
     /// not this caller's act, and the owner heals it the moment it boots — which
     /// is the next time anyone would drain it anyway. A message is not more
     /// delivered for a box existing that nobody has booted to read.
+    ///
+    /// **And healing only the bot in front of you cannot converge**, which is
+    /// why the boot's snapshot carries `missing_boxes` — the whole-server count,
+    /// named, reported and deliberately not repaired. See
+    /// [`crate::orientation::orient::missing_boxes`] for why reporting is the
+    /// right verb there and healing is the right verb here.
     pub(crate) async fn owned_mailbox(
         &self,
         bot: &EntityId,

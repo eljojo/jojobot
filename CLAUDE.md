@@ -142,7 +142,14 @@ Shipped and live:
   its one owner, and nothing on the mail rail enforces anything against it.
   A box a bot should have but does not — a record predating the rule, or a
   creation interrupted partway — is healed the moment that bot next boots, and
-  the boot says so rather than repairing it silently.
+  the boot says so rather than repairing it silently. **A repair scoped to
+  whoever boots cannot converge**, so the boot also reports the condition
+  across the whole server: `missing_boxes` names every identity without a box
+  and counts them. It reports and does not mass-repair — healing the bot in
+  front of you completes an act somebody took, while opening boxes for
+  identities nobody named is a boot with side effects. Each named one is one
+  boot away from repaired, and a roster jojobot cannot read comes back
+  `known: false` rather than as a count of none.
 
 > **Creation is an intentional act.** A box is not minted by a call of its
 > own — it opens with the bot that owns it, inside the same `add_entity` that
