@@ -45,6 +45,8 @@ use jojobot_domain::memory::{
 
 use jiff::civil::Date;
 
+use jojobot_domain::text::same_cell_value;
+
 use api::{CollectionRec, DocRec, HttpOutline, OutlineApi, Unconfigured};
 use codec::{
     next_fact_id, parse_entity, parse_facts_table, parse_id_marker, parse_machinery, parse_prose,
@@ -510,6 +512,32 @@ impl OutlineStore {
     }
 }
 
+/// **Whether a fact read back as the fact that was written.**
+///
+/// Its claim and its details ride in table cells, where the store escapes what
+/// it reads as markdown syntax; everything else on the row is machinery or is
+/// already escaped by a grammar of its own — an id, a date, a status, an edge,
+/// the event payload — and stays byte-exact. See
+/// [`jojobot_domain::text::same_cell_value`] for why a byte comparison on a
+/// cell refuses writes that succeeded.
+fn same_fact(wrote: &Fact, read: &Fact) -> bool {
+    let details_kept = match (&wrote.details, &read.details) {
+        (None, None) => true,
+        (Some(wrote), Some(read)) => same_cell_value(wrote, read),
+        _ => false,
+    };
+    same_cell_value(&wrote.content, &read.content)
+        && details_kept
+        && wrote.id == read.id
+        && wrote.home == read.home
+        && wrote.subject == read.subject
+        && wrote.provenance == read.provenance
+        && wrote.status == read.status
+        && wrote.date == read.date
+        && wrote.edge == read.edge
+        && wrote.event == read.event
+}
+
 /// The deterministic canonical winner: oldest by `created_at`, ties broken by
 /// `id`. Both are stable across list calls, so every session agrees.
 fn pick_oldest<T>(
@@ -741,7 +769,7 @@ impl Memory for OutlineStore {
         // Read-back: a capture succeeds only if the read path returns the fact,
         // byte-identical. Writing is not recording.
         let seen = self.read_back_fact(&stored.address()).await?;
-        if seen != stored {
+        if !same_fact(&stored, &seen) {
             return Err(self
                 .undo(
                     &doc,
@@ -851,7 +879,7 @@ impl Memory for OutlineStore {
         self.ws.api().update_document(&doc.id, &updated).await?;
 
         let seen = self.read_back_fact(address).await?;
-        if seen != fact {
+        if !same_fact(&fact, &seen) {
             return Err(self
                 .undo(
                     &doc,
@@ -934,7 +962,7 @@ impl Memory for OutlineStore {
         // must not leave behind.
         let seen_retracted = self.read_back_fact(address).await?;
         let seen_record = self.read_back_fact(&record.address()).await?;
-        if seen_retracted != retracted || seen_record != record {
+        if !same_fact(&retracted, &seen_retracted) || !same_fact(&record, &seen_record) {
             return Err(self
                 .undo(
                     &doc,

@@ -178,6 +178,53 @@ pub const OUTCOME_NOTES: Fitted = Fitted {
     when_empty: None,
 };
 
+/// **Whether a cell came back as the same VALUE, allowing for the store
+/// rewriting it.**
+///
+/// The read-back guard asserts that what was stored reads back as what was
+/// written. That is right, and comparing bytes is the wrong way to ask it: the
+/// store is a markdown editor, it re-serializes what it saves, and
+/// re-serialization is not identity. It escapes what it reads as syntax —
+/// measured, not assumed: a tilde, a leading `#`, a leading `-`, `<`, `\`,
+/// `|`, emphasis marks, and jojobot's own `-` placeholder, which comes back
+/// `\-`.
+///
+/// So four writes that SUCCEEDED were refused in production, and every byte of
+/// real damage came from rolling them back: orphaned bodies, consumed ids, a
+/// hand repair, a partial commit behind a flat error. The guard was firing on
+/// successes.
+///
+/// **Cells only.** Fenced content — a message body, a chronology entry — comes
+/// back from the store byte-identical, measured across two rails and twelve
+/// adversarial cases, so it stays byte-exact and gets nothing. The axis is
+/// where a value SITS, not what it is: a subject is prose and lives in a cell.
+///
+/// **What it forgives is a backslash the store put in front of punctuation,
+/// and nothing else.** A dropped character, a changed word, a truncation, a
+/// swapped value: all still fail, which is the half of the guard that has
+/// twice caught real data loss.
+pub fn same_cell_value(wrote: &str, read: &str) -> bool {
+    fn without_added_escapes(cell: &str) -> String {
+        let mut out = String::with_capacity(cell.len());
+        let mut chars = cell.chars().peekable();
+        while let Some(c) = chars.next() {
+            // A backslash before punctuation is the store's; a backslash
+            // before anything else — a letter, a digit, the end of the cell —
+            // is the writer's and stays.
+            if c == '\\'
+                && chars
+                    .peek()
+                    .is_some_and(|n| !n.is_alphanumeric() && !n.is_whitespace())
+            {
+                continue;
+            }
+            out.push(c);
+        }
+        out
+    }
+    wrote == read || without_added_escapes(wrote) == without_added_escapes(read)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,6 +329,59 @@ mod tests {
             ..BODY_DIGEST
         };
         assert_eq!(nothing.render("anything at all"), "…");
+    }
+
+    /// **The cells real Outline actually rewrote**, taken from the recorded
+    /// goldens rather than from an idea of what markdown escapes.
+    ///
+    /// The first draft of this test did the opposite and invented one: it
+    /// asserted that `_under_` comes back `\_under\_`. The store does not
+    /// escape it, it NORMALIZES it, to `*under*` — which the recorded golden
+    /// said all along and which this comparison does not forgive. That case is
+    /// deliberately absent here rather than hand-waved: an escape and a
+    /// semantic rewrite are different problems.
+    #[test]
+    fn a_cell_the_store_escaped_is_the_same_value() {
+        for (wrote, read) in [
+            ("a ~ b ~ c", "a \\~ b \\~ c"),
+            ("# heading > quoted ---", "\\# heading > quoted ---"),
+            (
+                "<b>bold</b> & an <email@example.test>",
+                "<b>bold</b> & an <email@example.test>",
+            ),
+            // jojobot's own placeholder, which the store escapes on every row
+            // it writes.
+            ("-", "\\-"),
+            ("c:\\dir\\file", "c:\\dir\\file"),
+        ] {
+            assert!(
+                same_cell_value(wrote, read),
+                "the store's own escaping must not read as a changed value: \
+                 {wrote:?} vs {read:?}"
+            );
+        }
+    }
+
+    /// **And the half that has to keep failing.** Forgiving an escape is not
+    /// forgiving a difference: this guard has caught real loss twice, and a
+    /// comparison that waved everything through would be worse than none.
+    #[test]
+    fn a_cell_that_really_changed_is_not_the_same_value() {
+        for (wrote, read) in [
+            ("moved to the 14th", "moved to the 15th"),
+            ("a value with spaces", "a value with"),
+            ("something", ""),
+            ("", "something"),
+            ("person:alpha", "person:beta"),
+            // A backslash the WRITER put before a letter is theirs, and losing
+            // it is loss.
+            ("c:\\dir", "c:dir"),
+        ] {
+            assert!(
+                !same_cell_value(wrote, read),
+                "a changed value must still be caught: {wrote:?} vs {read:?}"
+            );
+        }
     }
 
     /// An outcome record keeps the writer's own spacing — it is one line

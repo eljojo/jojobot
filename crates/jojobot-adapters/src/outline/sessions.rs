@@ -38,6 +38,8 @@ use jojobot_domain::session::{
     Sessions, normalize_entry, validate_entry, validate_focus, validate_session_id,
 };
 
+use jojobot_domain::text::same_cell_value;
+
 use super::api::{DocRec, OutlineApi};
 use super::session_codec::{
     Row, next_entry_id, next_session_id, parse_bot, parse_entries, parse_rows, render_entry,
@@ -275,7 +277,13 @@ impl OutlineSessions {
             .into_iter()
             .find(|s| &s.id == id)
             .ok_or_else(|| store_msg(format!("session {id} did not read back after {verb}")))?;
-        if back.state != wanted.state || back.focus != wanted.focus || back.sid != wanted.sid {
+        // The focus rides in a table cell — the third surface the store's
+        // escaping reached in production — so it is compared as one. State and
+        // sid are machinery and stay byte-exact.
+        if back.state != wanted.state
+            || !same_cell_value(&wanted.focus, &back.focus)
+            || back.sid != wanted.sid
+        {
             return Err(self
                 .undo(
                     &doc,
@@ -382,7 +390,10 @@ impl Sessions for OutlineSessions {
             .into_iter()
             .find(|s| s.id == row.id)
             .ok_or_else(|| store_msg(format!("session {} did not read back", row.id)))?;
-        if back.focus != row.focus || back.sid != row.sid || back.started_at != row.started_at {
+        if !same_cell_value(&row.focus, &back.focus)
+            || back.sid != row.sid
+            || back.started_at != row.started_at
+        {
             return Err(self
                 .undo(
                     &doc,

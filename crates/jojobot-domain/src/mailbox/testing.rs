@@ -651,6 +651,56 @@ pub mod contract {
         );
     }
 
+    /// **A subject the store rewrites still posts.**
+    ///
+    /// The message this is written from was refused three times in
+    /// production. Its subject carried a tilde; the store escaped it on the
+    /// way in; the read-back guard compared bytes, saw a difference, and
+    /// rolled a write back that had SUCCEEDED. The rollback is where the
+    /// damage came from — an orphaned body, a consumed id, a page a person
+    /// had to repair by hand.
+    ///
+    /// Every string below was escaped by real Outline in a recorded golden.
+    /// Against a store that rewrites nothing this passes trivially, which is
+    /// correct and is why it lives in the shared contract: the adapter that
+    /// has to survive it is the one standing in front of a markdown editor.
+    pub async fn a_subject_the_store_rewrites_still_posts(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        // **`_under_` is deliberately absent, and it is not fixed.** The store
+        // does two different things to a cell: it inserts escapes (`~` becomes
+        // `\~`), which the comparison forgives, and it NORMALIZES emphasis
+        // markers (`_under_` becomes `*under*`), which it does not. That
+        // second one is a semantic rewrite rather than an escape, and
+        // forgiving it needs a decision nobody has made yet.
+        for (n, subject) in [
+            "a ~ b ~ c",
+            "# heading",
+            "- a leading dash",
+            "a | pipe",
+            "<b>bold</b>",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let posted = titled(
+                store,
+                "inbox",
+                "alpha",
+                Some(subject),
+                "the body is fenced and was never at risk",
+                n as i64,
+            )
+            .await;
+            // The subject came back — the point is that the write was not
+            // refused. Whether the store escaped it on the page is the store's
+            // business, and forgiving exactly that is the fix.
+            assert!(
+                posted.subject.is_some(),
+                "a subject the store rewrites must still land: {subject:?}"
+            );
+        }
+    }
+
     /// **A subject survives every path a message travels.** It is written on
     /// the way in, comes back on the posted record, and is still there on the
     /// delivery and on the processed archive — a title that only existed at the
@@ -1357,6 +1407,7 @@ pub mod contract {
         a_confirmed_near_miss_creates_the_sibling_box(&fresh().await).await;
         a_posted_message_lands_in_new(&fresh().await).await;
         a_subject_rides_with_the_message(&fresh().await).await;
+        a_subject_the_store_rewrites_still_posts(&fresh().await).await;
         a_blank_subject_is_absent_and_a_broken_one_is_refused(&fresh().await).await;
         read_message_takes_one_and_leaves_the_rest(&fresh().await).await;
         read_message_leaves_a_processed_message_terminal(&fresh().await).await;

@@ -34,6 +34,7 @@ use jojobot_domain::mailbox::{
     validate_notes, validate_sender, validate_subject,
 };
 use jojobot_domain::memory::{Entity, EntityId, MemoryError, guard as memory_guard};
+use jojobot_domain::text::same_cell_value;
 
 use super::api::{DocRec, OutlineApi};
 use super::mailbox_codec::{
@@ -250,7 +251,13 @@ impl OutlineMailboxes {
                     )
                     .await);
             };
-            if got.state != wanted.state || got.notes != normalize_notes(wanted.notes.as_deref()) {
+            // Notes ride in a table cell, so they are compared as one.
+            let notes_kept = match (normalize_notes(wanted.notes.as_deref()), &got.notes) {
+                (None, None) => true,
+                (Some(wrote), Some(read)) => same_cell_value(&wrote, read),
+                _ => false,
+            };
+            if got.state != wanted.state || !notes_kept {
                 return Err(self
                     .undo(
                         doc,
@@ -449,7 +456,17 @@ impl Mailboxes for OutlineMailboxes {
             .into_iter()
             .find(|m| m.id == id)
             .ok_or_else(|| store_msg(format!("message {id} did not read back")))?;
-        if back.body != body || back.sender != row.sender || back.subject != row.subject {
+        // **The subject is compared as a CELL and the body as bytes.** The
+        // body is fenced and the store leaves a fence alone; the subject sits
+        // in a table row, where the store escapes what it reads as syntax. A
+        // byte comparison on the subject is what refused four writes that had
+        // succeeded — see `text::same_cell_value`.
+        let subject_kept = match (&row.subject, &back.subject) {
+            (None, None) => true,
+            (Some(wrote), Some(read)) => same_cell_value(wrote, read),
+            _ => false,
+        };
+        if back.body != body || back.sender != row.sender || !subject_kept {
             return Err(self
                 .undo(
                     &doc,
