@@ -1,0 +1,30 @@
+[
+  {
+    "id": "f1",
+    "home": "person:golden-punctuation",
+    "subject": "person:golden-punctuation",
+    "content": "an event whose payload is made of the store's own syntax",
+    "details": null,
+    "provenance": "inference",
+    "status": "active",
+    "date": "2026-07-29",
+    "edge": null,
+    "event": {
+      "kind": "a type with spaces",
+      "metadata": {
+        "backslash": "c:\\dir\\file",
+        "empty": "",
+        "equals": "a = b",
+        "markup": "<b>bold</b> & *starred* _under_",
+        "percent": "already %20 encoded",
+        "quoted": "\"double\" and 'single'",
+        "spaced": "a value with spaces",
+        "tilde": "a~b~c",
+        "unicode": "café — ünïcode ✓"
+      },
+      "refs": [
+        "person:golden-punctuation"
+      ]
+    }
+  }
+]

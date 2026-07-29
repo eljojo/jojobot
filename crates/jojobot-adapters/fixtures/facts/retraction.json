@@ -1,0 +1,36 @@
+[
+  {
+    "id": "f1",
+    "home": "person:golden-retraction",
+    "subject": "person:golden-retraction",
+    "content": "moved to the 14th",
+    "details": null,
+    "provenance": "inference",
+    "status": "retracted",
+    "date": "2026-07-28",
+    "edge": null,
+    "event": {
+      "kind": "an-appointment",
+      "metadata": {},
+      "refs": []
+    }
+  },
+  {
+    "id": "f2",
+    "home": "person:golden-retraction",
+    "subject": "person:golden-retraction",
+    "content": "it was rebooked twice | and the pipe is deliberate",
+    "details": null,
+    "provenance": "inference",
+    "status": "active",
+    "date": "2026-07-29",
+    "edge": null,
+    "event": {
+      "kind": "retraction",
+      "metadata": {
+        "retracts": "person:golden-retraction#f1"
+      },
+      "refs": []
+    }
+  }
+]

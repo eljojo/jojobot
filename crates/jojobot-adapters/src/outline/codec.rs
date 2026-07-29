@@ -2549,3 +2549,127 @@ mod bare_cr {
         );
     }
 }
+
+/// **The golden fixtures: pages recorded from real Outline, asserted to parse
+/// forever.**
+///
+/// Every other test in this file builds its own markdown, which means every
+/// other test agrees with this reader by construction — they prove the codec
+/// is self-consistent and cannot prove it reads what the store actually
+/// writes. This project has been bitten by that gap twice in one day: an event
+/// payload the adapter never stored (both halves of the read-back comparison
+/// missing it in the same way) and a grammar the store rewrote under it (every
+/// hand-built round trip green throughout).
+///
+/// So these bytes are not written here. They were produced by writing records
+/// through the live store and reading the page back verbatim
+/// (`record_the_golden_fixtures` in the integration suite), and the `.json`
+/// beside each one is what the store then returned through the read path.
+/// **The recorder is not run by the suite**, deliberately: a golden that
+/// re-records itself moves silently the day the store starts mangling
+/// something, and every test stays green while it does.
+#[cfg(test)]
+mod golden {
+    use super::*;
+
+    /// The recorded cases, by name. Named individually rather than walked, so
+    /// a fixture that goes missing fails here — a directory walk over an empty
+    /// directory asserts nothing and reports success.
+    const RECORDED: [&str; 3] = ["event-punctuation", "retraction", "plain-fact"];
+
+    fn fixture(name: &str, extension: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/facts")
+            .join(format!("{name}.{extension}"));
+        std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "the recorded fixture {} must be readable: {e}",
+                path.display()
+            )
+        })
+    }
+
+    /// **A page the real store wrote parses into exactly the records the real
+    /// store read back from it.**
+    #[test]
+    fn the_golden_pages_still_parse() {
+        for name in RECORDED {
+            let expected: Vec<Fact> = serde_json::from_str(&fixture(name, "json"))
+                .unwrap_or_else(|e| panic!("{name}'s expectation must deserialize: {e}"));
+            assert!(
+                !expected.is_empty(),
+                "{name} recorded no rows, so it is asserting nothing"
+            );
+            assert_eq!(
+                parse_facts_table(&fixture(name, "md")),
+                expected,
+                "{name}: the page real Outline returned no longer parses into what it held"
+            );
+        }
+    }
+
+    /// **The punctuation case earns its keep by carrying its values back
+    /// whole.** Equality above would pass if BOTH the page and the expectation
+    /// had been recorded from a broken build, so the values a human can check
+    /// are checked here against what was written, not against what was read.
+    #[test]
+    fn the_punctuation_a_markdown_store_rewrites_survives_a_real_round_trip() {
+        let facts = parse_facts_table(&fixture("event-punctuation", "md"));
+        let event = facts
+            .first()
+            .and_then(|f| f.event.as_ref())
+            .expect("the recorded page holds one event");
+
+        assert_eq!(event.kind, "a type with spaces");
+        for (key, written) in [
+            ("spaced", "a value with spaces"),
+            ("equals", "a = b"),
+            ("backslash", "c:\\dir\\file"),
+            ("tilde", "a~b~c"),
+            ("markup", "<b>bold</b> & *starred* _under_"),
+            ("quoted", "\"double\" and 'single'"),
+            ("unicode", "café — ünïcode ✓"),
+            // A value that was ALREADY percent-encoded when the caller wrote
+            // it: the one case where an escaping scheme eats its own tail.
+            ("percent", "already %20 encoded"),
+            ("empty", ""),
+        ] {
+            assert_eq!(
+                event.metadata.get(key).map(String::as_str),
+                Some(written),
+                "{key} did not survive the real store: {event:?}"
+            );
+        }
+    }
+
+    /// **A retraction is two rows on one page, and the page says so.** The mark
+    /// and the account of it went up in a single write; this is the proof that
+    /// what came back is a page a reader can still tell that story from.
+    #[test]
+    fn the_golden_retraction_reads_as_a_marked_row_and_its_account() {
+        let facts = parse_facts_table(&fixture("retraction", "md"));
+        assert_eq!(facts.len(), 2, "two rows: {facts:?}");
+
+        let taken_back = &facts[0];
+        assert_eq!(taken_back.status, FactStatus::Retracted);
+        assert_eq!(
+            taken_back.content, "moved to the 14th",
+            "marked, never edited"
+        );
+
+        let account = &facts[1];
+        assert_eq!(account.status, FactStatus::Active);
+        assert_eq!(
+            account.event.as_ref().and_then(Event::retracts),
+            Some(taken_back.address().to_string().as_str()),
+            "the account still names what it takes back"
+        );
+        // The reason carries a pipe, which is the cell separator — recorded on
+        // purpose, because a value that broke out of its cell would take the
+        // whole row's shape with it.
+        assert!(
+            account.content.contains(" | "),
+            "the pipe survived its cell: {account:?}"
+        );
+    }
+}

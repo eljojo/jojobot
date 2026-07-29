@@ -10,8 +10,9 @@
 //! No denylist exists anywhere: a list of forbidden names would re-embed the
 //! very strings this gate exists to keep out.
 //!
-//! Scope: handle-shaped string literals (`kind:slug`) in every `.rs` file
-//! under `crates/`, comments included — comments are where past leaks lived.
+//! Scope: handle-shaped text (`kind:slug`) in every `.rs`, `.md` and `.json`
+//! file under `crates/`, comments included — comments are where past leaks
+//! lived, and recorded fixtures are where they would live next.
 //! Bare slugs handed to constructors are out of reach for a text scan; the
 //! handle form is where every leak so far has entered.
 
@@ -56,6 +57,9 @@ const ROSTER: &[&str] = &[
     "person:frontdoor-probe",
     "person:ghost",
     "person:ghostly",
+    "person:golden-plain",
+    "person:golden-punctuation",
+    "person:golden-retraction",
     "person:hijacked",
     "person:homer",
     "person:homer-simpson",
@@ -77,6 +81,7 @@ const ROSTER: &[&str] = &[
     "place:bet",
     "place:capital-city",
     "place:far-country",
+    "place:golden-north-trail",
     "place:leftorium",
     "place:moes",
     "place:north-haverbrook",
@@ -101,15 +106,28 @@ const ROSTER: &[&str] = &[
     "work:first-mix",
 ];
 
-fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
+/// Every file in the workspace that can carry a handle.
+///
+/// **`.rs` is not the whole of it any more, and the day it stopped being was
+/// the day a fixture was recorded from a live store into the repo.** Those
+/// files are text, they carry handles by construction, and a gate that only
+/// reads source would have watched the leak vector this project has been
+/// burned by three times move into a file class it does not open. The
+/// recorder points at a disposable collection and writes its own entities —
+/// which is exactly the kind of reasoning that is true until somebody records
+/// against something else.
+fn scanned_sources(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).expect("readable source dir") {
         let path = entry.expect("readable dir entry").path();
         if path.is_dir() {
             if path.file_name().is_some_and(|n| n == "target") {
                 continue;
             }
-            rust_sources(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
+            scanned_sources(&path, out);
+        } else if path
+            .extension()
+            .is_some_and(|e| e == "rs" || e == "md" || e == "json")
+        {
             out.push(path);
         }
     }
@@ -157,7 +175,7 @@ fn handles_in(text: &str) -> Vec<String> {
 fn the_roster_carries_no_name_the_workspace_has_stopped_using() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates");
     let mut files = Vec::new();
-    rust_sources(&crates, &mut files);
+    scanned_sources(&crates, &mut files);
     let corpus: String = files
         .iter()
         .filter(|f| f.file_name().is_some_and(|n| n != "fixture_roster.rs"))
@@ -182,7 +200,7 @@ fn the_roster_carries_no_name_the_workspace_has_stopped_using() {
 fn every_handle_in_the_workspace_is_on_the_fictional_roster() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates");
     let mut files = Vec::new();
-    rust_sources(&crates, &mut files);
+    scanned_sources(&crates, &mut files);
     assert!(files.len() > 10, "the scan must actually see the workspace");
 
     let mut violations = Vec::new();

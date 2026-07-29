@@ -449,3 +449,220 @@ async fn real_outline_satisfies_the_contract() {
 
     outcome.expect("the contract must hold against real Outline");
 }
+
+/// **The golden fixture recorder — run by hand, never by the suite.**
+///
+/// It writes a battery of records through real Outline, reads the raw document
+/// text back exactly as the store returns it, and saves that text beside the
+/// records it should parse into. The fast tier then asserts those bytes parse
+/// forever ([`codec::tests::the_golden_fixtures_still_parse`]).
+///
+/// **Deliberately not part of `real_outline_satisfies_the_contract`.** A
+/// recorder that ran with the suite would rewrite the goldens to match
+/// whatever the store does today — so the day the store starts mangling
+/// something, the fixture would quietly move and every test would stay green.
+/// A golden that re-records itself is not a golden. Running this is a decision,
+/// and the diff it produces is the thing a reviewer reads.
+///
+/// **`#[ignore]` is not enough to hold that line**, which is why there is an
+/// env gate too: `make integration` runs the ignored tests, so on its first
+/// run the recorder rode along — rewriting the checked-in goldens inside the
+/// very command meant to be checking them, and racing the contract suite for
+/// the same collection while it did.
+///
+/// ```sh
+/// nix develop -c bash -c 'set -a; . ./.env; set +a; JOJOBOT_RECORD_GOLDENS=1 \
+///   cargo test -p jojobot-adapters --test outline_integration \
+///   record_the_golden_fixtures -- --ignored --nocapture'
+/// ```
+#[tokio::test]
+#[ignore]
+async fn record_the_golden_fixtures() {
+    // **Skipping is the right answer here and nowhere else in this file.**
+    // This is a TOOL, not a check: it verifies nothing, so a run that does not
+    // perform it has not failed to verify anything — which is the opposite of
+    // the suites the Makefile rule refuses to let skip.
+    if std::env::var("JOJOBOT_RECORD_GOLDENS")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .is_none()
+    {
+        println!(
+            "SKIPPED: the golden recorder rewrites checked-in fixtures, so it runs only when \
+             asked for by name — set JOJOBOT_RECORD_GOLDENS=1. Nothing was recorded."
+        );
+        return;
+    }
+    let c =
+        creds().expect("the recorder needs credentials — a skipped recording is not a recording");
+    let http = reqwest::Client::new();
+    drop_test_collection(&http, &c).await;
+
+    let store = OutlineStore::with_collection(
+        http.clone(),
+        OutlineConfig {
+            base_url: c.url.clone(),
+            token: Secret::new(c.token.clone()),
+        },
+        TEST_COLLECTION,
+    );
+
+    let mut recorded: Vec<(String, EntityId)> = Vec::new();
+    for (name, subject) in golden_cases(&store).await {
+        recorded.push((name, subject));
+    }
+
+    let docs = raw_documents(&http, &c, TEST_COLLECTION).await;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/facts");
+    std::fs::create_dir_all(&dir).expect("the fixture directory");
+
+    for (name, subject) in &recorded {
+        let text = docs
+            .iter()
+            .find(|d| {
+                d["text"]
+                    .as_str()
+                    .is_some_and(|t| t.lines().any(|l| l.trim() == format!("id: {subject}")))
+            })
+            .and_then(|d| d["text"].as_str())
+            .unwrap_or_else(|| panic!("{subject}'s page must come back"));
+
+        let facts = store.recall(subject).await.expect("recall should succeed");
+        std::fs::write(dir.join(format!("{name}.md")), text).expect("write the page");
+        std::fs::write(
+            dir.join(format!("{name}.json")),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&facts).expect("facts serialize")
+            ),
+        )
+        .expect("write the expectation");
+        println!("RECORDED {name} ({} rows)", facts.len());
+    }
+
+    drop_test_collection(&http, &c).await;
+}
+
+/// The battery, written through the store so that whatever it does to them is
+/// what lands in the fixture.
+///
+/// **Every case is something the code actually writes**, and the punctuation
+/// ones are not decoration: each character in them was mangled by real Outline
+/// at some point in this record's short life.
+async fn golden_cases(store: &OutlineStore) -> Vec<(String, EntityId)> {
+    use jojobot_domain::memory::event::Event;
+    use jojobot_domain::memory::{Edge, EdgeShape, NewFact, Provenance};
+
+    let mut out = Vec::new();
+    let ensure = |slug: &str| EntityId::person(slug);
+
+    // 1. An event carrying the punctuation the store has opinions about.
+    let punctuated = ensure("golden-punctuation");
+    store
+        .add_entity(NewEntity::new(
+            punctuated.clone(),
+            "Golden Punctuation",
+            "golden",
+        ))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let mut metadata = std::collections::BTreeMap::new();
+    metadata.insert("spaced".into(), "a value with spaces".to_string());
+    metadata.insert("equals".into(), "a = b".to_string());
+    metadata.insert("backslash".into(), "c:\\dir\\file".to_string());
+    metadata.insert("tilde".into(), "a~b~c".to_string());
+    metadata.insert(
+        "markup".into(),
+        "<b>bold</b> & *starred* _under_".to_string(),
+    );
+    metadata.insert("quoted".into(), "\"double\" and 'single'".to_string());
+    metadata.insert("unicode".into(), "café — ünïcode ✓".to_string());
+    metadata.insert("percent".into(), "already %20 encoded".to_string());
+    metadata.insert("empty".into(), String::new());
+    store
+        .capture(NewFact {
+            event: Some(Event {
+                kind: "a type with spaces".into(),
+                metadata,
+                refs: vec![punctuated.clone()],
+            }),
+            ..NewFact::about(
+                punctuated.clone(),
+                "an event whose payload is made of the store's own syntax",
+                jiff::civil::date(2026, 7, 29),
+            )
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    out.push(("event-punctuation".to_string(), punctuated));
+
+    // 2. A retraction: two rows, one marked, in one page.
+    let taken_back = ensure("golden-retraction");
+    store
+        .add_entity(NewEntity::new(
+            taken_back.clone(),
+            "Golden Retraction",
+            "golden",
+        ))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let event = store
+        .capture(NewFact {
+            event: Some(Event::of("an-appointment")),
+            ..NewFact::about(
+                taken_back.clone(),
+                "moved to the 14th",
+                jiff::civil::date(2026, 7, 28),
+            )
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    store
+        .retract(
+            &event.address(),
+            "it was rebooked twice | and the pipe is deliberate",
+            jiff::civil::date(2026, 7, 29),
+        )
+        .await
+        .expect("retract ok");
+    out.push(("retraction".to_string(), taken_back));
+
+    // 3. An ordinary fact table: an edge, testimony, details, a pipe in the
+    //    content — the shapes that predate events and must not regress.
+    let plain = ensure("golden-plain");
+    let place = EntityId::new(EntityKind::Place, "golden-north-trail");
+    for (id, name) in [(&plain, "Golden Plain"), (&place, "Golden North Trail")] {
+        store
+            .add_entity(NewEntity::new(id.clone(), name, "golden"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+    }
+    store
+        .capture(NewFact {
+            details: Some("with details | carrying a pipe".into()),
+            provenance: Provenance::Testimony,
+            edge: Some(Edge::new(EdgeShape::Location, place)),
+            ..NewFact::about(
+                plain.clone(),
+                "a claim | with a pipe in it",
+                jiff::civil::date(2026, 7, 27),
+            )
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    out.push(("plain-fact".to_string(), plain));
+
+    out
+}
