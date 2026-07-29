@@ -26,10 +26,11 @@ use tantivy::query::{AllQuery, BooleanQuery, Occur, Query, TermQuery};
 use tantivy::schema::{Field, IndexRecordOption, STORED, STRING, Schema, TEXT, Value};
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term, doc};
 
+use jiff::civil::Date;
 use jojobot_domain::mailbox::{MailboxError, Mailboxes, Message};
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
-    Guarded, Memory, MemoryError, NewEntity, NewFact,
+    Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction,
     guard::{self, MatchReason},
     search::{self, DocScan, EntityRef, Hit, MailCoverage, Search, SearchQuery},
 };
@@ -1043,6 +1044,21 @@ impl Memory for IndexedMemory {
             self.reindex(&fact.home).await?;
         }
         Ok(written)
+    }
+
+    /// One reindex, not two: a retraction writes both rows into the same
+    /// document, so re-reading that document once is what makes the marked row
+    /// and the account of it visible together. Re-reading twice would only
+    /// re-read the same page.
+    async fn retract(
+        &self,
+        address: &FactAddress,
+        reason: &str,
+        date: Date,
+    ) -> Result<Retraction, MemoryError> {
+        let taken_back = self.inner.retract(address, reason, date).await?;
+        self.reindex(&taken_back.retracted.home).await?;
+        Ok(taken_back)
     }
 
     /// Prose is indexed material, so a charter written here is findable on the
@@ -2119,6 +2135,15 @@ mod tests {
             _: &FactAddress,
             _: FactPatch,
         ) -> Result<Guarded<Fact>, MemoryError> {
+            unimplemented!("this double only scans")
+        }
+
+        async fn retract(
+            &self,
+            _: &FactAddress,
+            _: &str,
+            _: Date,
+        ) -> Result<Retraction, MemoryError> {
             unimplemented!("this double only scans")
         }
     }

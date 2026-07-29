@@ -172,6 +172,7 @@ fn the_tool_surface_is_exactly_this_list() {
             "read_mailbox",
             "read_message",
             "recall",
+            "retract",
             "search",
             "set_charter",
             "start_here",
@@ -255,6 +256,7 @@ fn the_verbs_whose_misses_are_blocked_all_say_so() {
     let tools = Jojobot::tool_router().list_all();
     for name in [
         "recall",
+        "retract",
         "update_entity",
         "update_fact",
         "mark_processed",
@@ -1127,6 +1129,33 @@ async fn no_verb_answer_names_the_store() {
             }))
             .await
             .expect("update_fact ok"),
+        &mut answers,
+    );
+    // An event of its own to take back, because retraction refuses a fact —
+    // and its answer carries two rows, which is twice the surface to leak from.
+    let event = ask(
+        "capture-an-event",
+        jojobot
+            .capture(Parameters(CaptureArgs {
+                event_type: some("an-appointment"),
+                sid: some(&sid),
+                ..capture_args("person:alpha", "moved to the 14th")
+            }))
+            .await
+            .expect("capture ok"),
+        &mut answers,
+    );
+    answers.retain(|(name, _)| *name != "capture-an-event");
+    ask(
+        "retract",
+        jojobot
+            .retract(Parameters(RetractArgs {
+                address: address_of(&event),
+                reason: "it was rebooked twice".into(),
+                sid: some(&sid),
+            }))
+            .await
+            .expect("retract ok"),
         &mut answers,
     );
     ask(

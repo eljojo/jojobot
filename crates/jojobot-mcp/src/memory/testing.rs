@@ -246,6 +246,14 @@ impl Memory for UnindexedMemory {
     ) -> Result<Guarded<Fact>, MemoryError> {
         self.0.update_fact(address, patch).await
     }
+    async fn retract(
+        &self,
+        address: &FactAddress,
+        reason: &str,
+        date: jiff::civil::Date,
+    ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
+        self.0.retract(address, reason, date).await
+    }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
         self.0.set_prose(entity, prose).await
     }

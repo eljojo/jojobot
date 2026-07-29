@@ -40,7 +40,7 @@ impl Jojobot {
                        fresh mail. Taking delivery is NOT handling: call mark_processed once you \
                        have acted, and only then. Three refusals wear the status: blocked shape — \
                        an id that names nothing at all, an id naming an item jojobot cannot read \
-                       (which comes with a `reason` and needs a person, not a retry), and a \
+                       (which comes back saying why, and needs a person rather than a retry), and a \
                        message that is not yours to take."
     )]
     pub(crate) async fn read_message(

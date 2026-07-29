@@ -13,12 +13,15 @@
 
 use std::sync::Mutex;
 
+use jiff::civil::Date;
+
 use super::{
-    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, Guarded,
-    Memory, MemoryError, NewEntity, NewFact, apply_entity_patch, apply_fact_patch,
+    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, FactStatus,
+    Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, apply_entity_patch,
+    apply_fact_patch,
     guard::{self, Decision},
-    normalize_content, normalize_details, normalize_prose, screen_entity_patch, search,
-    validate_content, validate_details, validate_edge, validate_entity, validate_prose,
+    normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
+    search, validate_content, validate_details, validate_edge, validate_entity, validate_prose,
     validate_subject,
 };
 
@@ -259,8 +262,83 @@ impl Memory for InMemoryMemory {
                 nearest,
             });
         };
+        // A retracted row is out of reach of an ordinary edit — checked here,
+        // beside the real store's copy, because one-way that holds in only one
+        // adapter holds until somebody switches adapters.
+        // A retracted row is out of reach of an ordinary edit — checked here,
+        // beside the real store's copy, because one-way that holds in only one
+        // adapter holds until somebody switches adapters.
+        if fact.status == FactStatus::Retracted {
+            return Err(MemoryError::NotRetractable {
+                attempted: address.to_string(),
+                why: "it is retracted, and a retracted record is not editable — retraction is \
+                      one-way. Capture what is so now as a new record"
+                    .to_string(),
+            });
+        }
         apply_fact_patch(fact, &patch)?;
         Ok(Guarded::Written(fact.clone()))
+    }
+
+    async fn retract(
+        &self,
+        address: &FactAddress,
+        reason: &str,
+        date: Date,
+    ) -> Result<Retraction, MemoryError> {
+        let index = self.index();
+        if !index.iter().any(|e| e.id == address.home) {
+            return Err(MemoryError::UnknownEntity {
+                attempted: address.home.to_string(),
+                nearest: guard::screen(&address.home, &[], &index),
+            });
+        }
+
+        // Everything is decided before anything moves, so a refusal leaves the
+        // row exactly as it was — the same shape `apply_fact_patch` has.
+        let mut facts = self.facts.lock().expect("fake mutex poisoned");
+        let nearest: Vec<String> = facts
+            .iter()
+            .filter(|f| f.home == address.home)
+            .map(|f| f.address().to_string())
+            .collect();
+        let Some(target) = facts
+            .iter()
+            .find(|f| f.home == address.home && f.id == address.local)
+            .cloned()
+        else {
+            return Err(MemoryError::UnknownFact {
+                attempted: address.to_string(),
+                nearest,
+            });
+        };
+        let account = retraction_of(&target, reason, date)?;
+
+        let home = target.home.clone();
+        let existing = facts.iter().filter(|f| f.home == home).count();
+        let record = Fact {
+            id: FactId(format!("f{}", existing + 1)),
+            home,
+            subject: account.subject,
+            content: account.content,
+            details: account.details,
+            provenance: account.provenance,
+            status: account.status,
+            date: account.date,
+            edge: account.edge,
+            event: account.event,
+        };
+        let retracted = Fact {
+            status: FactStatus::Retracted,
+            ..target
+        };
+        for fact in facts.iter_mut() {
+            if fact.home == address.home && fact.id == address.local {
+                *fact = retracted.clone();
+            }
+        }
+        facts.push(record.clone());
+        Ok(Retraction { retracted, record })
     }
 
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
@@ -2042,6 +2120,165 @@ pub mod contract {
         assert_nothing_recorded(store, &subject).await;
     }
 
+    /// **Retraction: the record stays, marked, and the reason lands beside
+    /// it.** Nothing is removed — that is the no-delete rule, and it is what
+    /// makes this different from every store where taking something back means
+    /// losing the evidence that it was ever said.
+    pub async fn retracting_an_event_marks_it_and_records_why<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-retracted");
+        let event = capture(
+            store,
+            NewFact {
+                event: Some(Event::of("an-appointment")),
+                ..NewFact::about(subject.clone(), "moved to the 14th", date(2026, 7, 3))
+            },
+        )
+        .await;
+
+        let taken_back = store
+            .retract(&event.address(), "it was rebooked twice", date(2026, 7, 4))
+            .await
+            .expect("retracting an event should succeed");
+
+        // The row it names: same id, same words, same place.
+        assert_eq!(taken_back.retracted.id, event.id);
+        assert_eq!(taken_back.retracted.content, event.content);
+        assert_eq!(taken_back.retracted.event, event.event);
+        assert_eq!(
+            taken_back.retracted.status,
+            FactStatus::Retracted,
+            "the row is marked rather than removed"
+        );
+
+        // And the account of why, as a record of its own.
+        assert_eq!(taken_back.record.content, "it was rebooked twice");
+        assert_eq!(taken_back.record.date, date(2026, 7, 4));
+        assert_eq!(
+            taken_back.record.event.as_ref().and_then(Event::retracts),
+            Some(event.address().to_string().as_str()),
+            "the retraction names what it takes back, or the two are not one story"
+        );
+
+        // Both are on the read path, which is what makes any of it durable.
+        let seen = read_back(store, &subject, &event.id).await;
+        assert_eq!(seen.status, FactStatus::Retracted);
+        assert_eq!(
+            seen.content, event.content,
+            "the words are untouched: it is marked, not edited"
+        );
+        let account = read_back(store, &subject, &taken_back.record.id).await;
+        assert_eq!(account, taken_back.record);
+    }
+
+    /// **One-way, and the three ways of asking for the reverse are all
+    /// refused.** Retracting twice, retracting the retraction, and editing the
+    /// status back are the same wish wearing three faces — so no single one of
+    /// them is the whole test.
+    pub async fn a_retraction_is_one_way<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-oneway");
+        let event = capture(
+            store,
+            NewFact {
+                event: Some(Event::of("a-thing-that-happened")),
+                ..NewFact::about(subject.clone(), "it happened", date(2026, 7, 3))
+            },
+        )
+        .await;
+        let taken_back = store
+            .retract(&event.address(), "it did not, in fact", date(2026, 7, 4))
+            .await
+            .expect("the first retraction lands");
+
+        let again = store
+            .retract(&event.address(), "again", date(2026, 7, 5))
+            .await;
+        assert!(
+            matches!(again, Err(MemoryError::NotRetractable { .. })),
+            "a second retraction must be refused: {again:?}"
+        );
+
+        let the_record = store
+            .retract(&taken_back.record.address(), "undo", date(2026, 7, 5))
+            .await;
+        assert!(
+            matches!(the_record, Err(MemoryError::NotRetractable { .. })),
+            "a retraction is not itself retractable: {the_record:?}"
+        );
+
+        // The edit path is the third face, and the one a caller reaches for
+        // without meaning anything by it.
+        let edited = store
+            .update_fact(
+                &event.address(),
+                FactPatch {
+                    status: Some(FactStatus::Active),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(
+            matches!(edited, Err(MemoryError::NotRetractable { .. })),
+            "a retracted row is not editable back to active: {edited:?}"
+        );
+        assert_eq!(
+            read_back(store, &subject, &event.id).await.status,
+            FactStatus::Retracted,
+            "and none of the three moved it"
+        );
+    }
+
+    /// **A fact is fixed, not retracted** — the boundary the whole model rests
+    /// on, and the refusal has to name the way forward or it is a wall.
+    pub async fn an_ordinary_fact_is_not_retractable<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-not-an-event");
+        let fact = capture(
+            store,
+            NewFact::about(subject.clone(), "plays the theremin", date(2026, 7, 3)),
+        )
+        .await;
+
+        let refused = store
+            .retract(&fact.address(), "turns out not", date(2026, 7, 4))
+            .await;
+        let Err(MemoryError::NotRetractable { why, .. }) = refused else {
+            panic!("a fact must not be retractable: {refused:?}");
+        };
+        assert!(
+            why.contains("update_fact"),
+            "the refusal must name what to do instead: {why}"
+        );
+
+        // Untouched, and still the current truth.
+        let seen = read_back(store, &subject, &fact.id).await;
+        assert_eq!(seen.status, FactStatus::Active);
+        assert_eq!(seen.content, "plays the theremin");
+    }
+
+    /// An address naming nothing is the same miss an edit's is — never a new
+    /// record, and never a silent success.
+    pub async fn retracting_an_unknown_address_never_writes<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-retract-miss");
+        ensure(store, &subject).await;
+        let missed = FactAddress::new(subject.clone(), FactId("f404".into()));
+
+        let refused = store
+            .retract(&missed, "nothing here", date(2026, 7, 4))
+            .await;
+        assert!(
+            matches!(refused, Err(MemoryError::UnknownFact { .. })),
+            "a missed address is a miss, not a create: {refused:?}"
+        );
+        assert!(
+            !store
+                .recall(&subject)
+                .await
+                .expect("recall should succeed")
+                .iter()
+                .any(|f| f.id == missed.local),
+            "nothing was written at the address that missed"
+        );
+    }
+
     // --- the write guard, on the write path ----------------------------------
 
     /// The golden case: a second entity at an existing handle is blocked, and
@@ -2576,6 +2813,76 @@ pub mod contract {
     ///
     /// This is the default-exclusion contract; only the negated variant had one
     /// before, and that variant is gone.
+    /// **A retracted record is out of a default search, and reachable when
+    /// asked for by name.** The same rule superseded lives under, for a
+    /// different reason: superseded says a later claim replaced this one,
+    /// retracted says it should not have been recorded — and neither is
+    /// something a reader should be handed as current truth.
+    ///
+    /// The reachable half matters more here than it does for superseded.
+    /// Nothing is deleted, so the record has to stay findable by somebody who
+    /// goes looking; a mark that hid a record from every possible read would
+    /// be a delete with extra steps.
+    pub async fn search_excludes_a_retracted_record_by_default<S: Memory + Search>(store: &S) {
+        let subject = EntityId::person("contract-search-retracted");
+        let live = capture(
+            store,
+            NewFact {
+                event: Some(Event::of("a-rehearsal")),
+                ..NewFact::about(subject.clone(), "the quartet rehearsed", date(2026, 7, 1))
+            },
+        )
+        .await;
+        let taken_back = capture(
+            store,
+            NewFact {
+                event: Some(Event::of("a-rehearsal")),
+                ..NewFact::about(
+                    subject.clone(),
+                    "the quartet rehearsed twice",
+                    date(2026, 7, 2),
+                )
+            },
+        )
+        .await;
+        store
+            .retract(&taken_back.address(), "it never happened", date(2026, 7, 3))
+            .await
+            .expect("retracting an event should succeed");
+
+        let addresses = |hits: &[Hit]| -> Vec<String> {
+            fact_hits(hits)
+                .iter()
+                .map(|f| f.address().to_string())
+                .collect()
+        };
+
+        let default = found(store, SearchQuery::text("rehearsed"));
+        let seen = addresses(&default);
+        // Both halves, because "not in the results" on its own passes just as
+        // well when the query matched nothing at all.
+        assert!(
+            seen.contains(&live.address().to_string()),
+            "the record that still stands must be found: {default:?}"
+        );
+        assert!(
+            !seen.contains(&taken_back.address().to_string()),
+            "a retracted record must not come back as current: {default:?}"
+        );
+
+        let asked = found(
+            store,
+            SearchQuery {
+                status: Some(FactStatus::Retracted),
+                ..SearchQuery::text("rehearsed")
+            },
+        );
+        assert!(
+            addresses(&asked).contains(&taken_back.address().to_string()),
+            "nothing was deleted, so asking for it by name finds it: {asked:?}"
+        );
+    }
+
     pub async fn search_excludes_superseded_by_default_and_lists_it_on_request<
         S: Memory + Search,
     >(
@@ -2927,6 +3234,7 @@ pub mod contract {
         search_finds_a_fact_captured_moments_ago(store).await;
         search_fact_hits_carry_an_address_and_provenance(store).await;
         search_excludes_superseded_by_default_and_lists_it_on_request(store).await;
+        search_excludes_a_retracted_record_by_default(store).await;
         search_answers_ask_across_by_kind_and_edge(store).await;
         search_by_edge_object_alone_finds_any_shape(store).await;
         search_pins_a_named_entity_first(store).await;
@@ -2977,6 +3285,10 @@ pub mod contract {
 
         an_event_survives_capture(store).await;
         an_events_ref_is_screened_by_the_guard(store).await;
+        retracting_an_event_marks_it_and_records_why(store).await;
+        a_retraction_is_one_way(store).await;
+        an_ordinary_fact_is_not_retractable(store).await;
+        retracting_an_unknown_address_never_writes(store).await;
 
         facts_carry_a_usable_address(store).await;
         update_fact_edits_in_place(store).await;

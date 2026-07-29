@@ -70,8 +70,8 @@ pub use mailboxes::{
     ListSentArgs, MarkProcessedArgs, PostMessageArgs, ReadMailboxArgs, ReadMessageArgs,
 };
 pub use memory::{
-    AddEntityArgs, CaptureArgs, EdgeFilterArgs, ListEntitiesArgs, RecallArgs, SearchArgs,
-    SetCharterArgs, UpdateEntityArgs, UpdateFactArgs,
+    AddEntityArgs, CaptureArgs, EdgeFilterArgs, ListEntitiesArgs, RecallArgs, RetractArgs,
+    SearchArgs, SetCharterArgs, UpdateEntityArgs, UpdateFactArgs,
 };
 pub use orientation::OrientArgs;
 pub use session::{AmendJournalArgs, JournalArgs, WrapSessionArgs};

@@ -44,6 +44,21 @@ const TYPE: &str = "type";
 /// A reference to an entity, in the payload's own grammar.
 const REF: &str = "ref";
 
+/// **The one type name jojobot writes itself.** Everything else in this bag is
+/// the caller's own words; this is not, and it is the exception that has to be
+/// legible as one when the real types are eventually derived from what
+/// accumulated here.
+///
+/// It earns the exception by being an event in its own right: taking something
+/// back is a thing that happened, on a day, for a reason, and a record of it is
+/// the only honest way to say so without editing the record it takes back.
+pub const RETRACTION: &str = "retraction";
+
+/// The key on a retraction record naming what it retracts — a fact ADDRESS,
+/// not a handle, so it is deliberately not a walkable link: the target is a
+/// row, and rows are reached by address.
+const RETRACTS: &str = "retracts";
+
 /// **What an event is, as a record.** Not what it MEANS — nothing here
 /// interprets a type name, and jojobot never guesses one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +115,36 @@ impl Event {
             metadata: BTreeMap::new(),
             refs: Vec::new(),
         }
+    }
+
+    /// The record of a retraction: what it takes back, named by address.
+    ///
+    /// **The link is written here, by jojobot, and never by a caller** — a
+    /// retraction that pointed wherever its author said would be a way to mark
+    /// somebody else's record taken back.
+    pub fn retraction_of(target: &str) -> Self {
+        Event {
+            metadata: [(RETRACTS.to_string(), target.to_string())]
+                .into_iter()
+                .collect(),
+            ..Event::of(RETRACTION)
+        }
+    }
+
+    /// Whether this record IS a retraction — the question [`Fact`] asks to
+    /// refuse retracting one, so the answer lives with the grammar that spells
+    /// it rather than being re-derived from a string comparison elsewhere.
+    ///
+    /// [`Fact`]: super::Fact
+    pub fn is_retraction(&self) -> bool {
+        self.kind == RETRACTION
+    }
+
+    /// The address this retraction takes back, if it is one and says so.
+    pub fn retracts(&self) -> Option<&str> {
+        self.is_retraction()
+            .then(|| self.metadata.get(RETRACTS).map(String::as_str))
+            .flatten()
     }
 
     /// The record as one line of text — **deterministic**, so the same record

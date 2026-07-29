@@ -577,6 +577,21 @@ pub enum FactStatus {
     Active,
     /// Replaced by a later fact; kept so references survive.
     Superseded,
+    /// **Taken back — one way, and only ever an event.**
+    ///
+    /// Not a third flavour of superseded. Superseded says a later claim
+    /// replaced this one and the row is kept so references survive; this says
+    /// the thing recorded here should not have been, and there is no
+    /// replacement. It arrives only through [`Memory::retract`], never through
+    /// an ordinary edit, and nothing takes a row back out of it — see
+    /// [`check_retractable`] for why one-way has to be enforced rather than
+    /// merely intended.
+    ///
+    /// A retracted row is still a row: the record stays, marked, exactly as
+    /// the no-delete rule requires. What it loses is its standing as
+    /// something a reader should act on, which is what keeping it out of a
+    /// default search buys.
+    Retracted,
 }
 
 impl FactStatus {
@@ -585,6 +600,7 @@ impl FactStatus {
         match self {
             FactStatus::Active => "active",
             FactStatus::Superseded => "superseded",
+            FactStatus::Retracted => "retracted",
         }
     }
 
@@ -601,6 +617,7 @@ impl FactStatus {
     pub fn from_token(cell: &str) -> Self {
         match cell.trim() {
             "superseded" | "negated" => FactStatus::Superseded,
+            "retracted" => FactStatus::Retracted,
             _ => FactStatus::Active,
         }
     }
@@ -1075,12 +1092,97 @@ impl Fact {
     }
 }
 
+/// **Whether this row can be taken back, and why not when it cannot.**
+///
+/// Three different mistakes with three different ways out, which is why they
+/// are three sentences rather than one refusal. It lives in the domain because
+/// both adapters call it: a rule enforced in one store and not the other is a
+/// rule that holds until somebody switches stores.
+///
+/// **One-way is enforced here rather than intended elsewhere.** Nothing takes
+/// a row out of [`FactStatus::Retracted`] — not this verb, which refuses a
+/// second pass, and not an ordinary edit, which refuses a retracted row
+/// outright. A rule that only lives in a tool description is a rule until the
+/// first caller who did not read it.
+pub fn check_retractable(fact: &Fact) -> Result<(), MemoryError> {
+    let refuse = |why: String| {
+        Err(MemoryError::NotRetractable {
+            attempted: fact.address().to_string(),
+            why,
+        })
+    };
+    if fact.status == FactStatus::Retracted {
+        return refuse(
+            "it is already retracted, and retraction is one-way — nothing takes a record back \
+             out of it, including a second retraction"
+                .to_string(),
+        );
+    }
+    if fact.event.as_ref().is_some_and(event::Event::is_retraction) {
+        return refuse(
+            "it is itself a retraction. A retraction is the last word on what it takes back; \
+             retracting one would be the reversal the one-way rule exists to forbid. If the \
+             retraction was a mistake, capture what is so now as a new record"
+                .to_string(),
+        );
+    }
+    if !fact.is_event() {
+        return refuse(
+            "it is a fact, not an event. Facts are current truth and get FIXED: rewrite the \
+             content with update_fact to state what is so — including the negative truth, if \
+             the claim turned out false. Only chronology is retracted, because only chronology \
+             stays put"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// The record a retraction leaves behind: **a dated event of its own**, homed
+/// with the record it takes back and naming it by address.
+///
+/// Two rows rather than one, and the shape follows from what an event is. An
+/// event stays put — if it needed amending it was never an event — so the
+/// reason cannot be written into the row being retracted without editing a
+/// record that is supposed to be immutable chronology. Taking something back
+/// is itself a thing that happened, on a day, so it gets recorded the way
+/// everything else that happened does. The two then read as one story: the
+/// retracted row is marked, and the row beside it says why.
+///
+/// Inference, like any other claim jojobot did not hear from the user
+/// directly. The retraction is a real act either way — what is a hypothesis is
+/// the REASON, and defaulting a reason to testimony would bless the retracting
+/// agent's own account of itself.
+pub fn retraction_of(target: &Fact, reason: &str, date: Date) -> Result<NewFact, MemoryError> {
+    check_retractable(target)?;
+    validate_content(reason)?;
+    Ok(NewFact {
+        event: Some(event::Event::retraction_of(&target.address().to_string())),
+        ..NewFact::about(target.subject.clone(), normalize_content(reason), date)
+    })
+}
+
 impl Fact {
     /// This fact's global address — returned with every read precisely so the
     /// caller can turn around and edit it.
     pub fn address(&self) -> FactAddress {
         FactAddress::new(self.home.clone(), self.id.clone())
     }
+}
+
+/// **What a retraction leaves behind: two rows, and both come back.**
+///
+/// The marked record and the account of why it was marked are one answer,
+/// because they are one story — handing back only the mark would leave the
+/// caller holding a record it could not explain, and handing back only the
+/// account would not prove the mark landed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Retraction {
+    /// The row that was taken back: same id, same content, same place, now
+    /// carrying [`FactStatus::Retracted`].
+    pub retracted: Fact,
+    /// The retraction itself — a dated event naming what it takes back.
+    pub record: Fact,
 }
 
 /// The result of a write that names an entity: it either happened, or the write
@@ -1162,6 +1264,19 @@ pub enum MemoryError {
         attempted: String,
         /// What the write guard found nearby.
         nearest: Vec<guard::EntityMatch>,
+    },
+    /// **The addressed row cannot be taken back**, and `why` says which of the
+    /// three reasons it is: already retracted, itself a retraction, or an
+    /// ordinary fact — which is fixed in place rather than retracted.
+    ///
+    /// A refusal rather than a no-op: a caller who asked to retract something
+    /// and got a shrug would reasonably believe it happened.
+    #[error("cannot retract '{attempted}': {why}")]
+    NotRetractable {
+        /// The address that was aimed at.
+        attempted: String,
+        /// Which reason, in a sentence that names the way forward.
+        why: String,
     },
     /// A claim can only become testimony on the user's explicit confirmation.
     #[error(
@@ -1320,11 +1435,40 @@ pub trait Memory: Send + Sync {
     /// [`MemoryError::UnknownFact`], never a create. A patch that attaches an
     /// **edge** names an entity, so it faces the write guard and can come back
     /// [`Guarded::Blocked`] — an edit is a write like any other.
+    ///
+    /// **A retracted row is not editable**, by anyone, for anything: that is
+    /// where one-way is actually enforced, since a status flip back to active
+    /// would otherwise be an ordinary patch away.
     async fn update_fact(
         &self,
         address: &FactAddress,
         patch: FactPatch,
     ) -> Result<Guarded<Fact>, MemoryError>;
+
+    /// **Take back an event** — one way, never reversed, and still a write.
+    ///
+    /// Nothing is removed: the addressed row keeps its id, its content and its
+    /// place, and gains [`FactStatus::Retracted`]. Beside it lands the
+    /// retraction itself, a dated record naming what it takes back and why
+    /// ([`retraction_of`]), so the two read as one story instead of a marked
+    /// row nobody can account for.
+    ///
+    /// **Both rows in one write.** They share a home document, so an adapter
+    /// that marks the row and then fails to record the reason has produced the
+    /// one state this verb must not leave behind — a record taken back with no
+    /// account of why. That is also why it is a verb of its own rather than a
+    /// flag on [`update_fact`](Memory::update_fact): the ceremony is the point,
+    /// and a boolean is what gets flipped by accident.
+    ///
+    /// [`check_retractable`] decides what may be taken back; a row that may not
+    /// is [`MemoryError::NotRetractable`], and an address naming nothing is
+    /// [`MemoryError::UnknownFact`] exactly as an edit's would be.
+    async fn retract(
+        &self,
+        address: &FactAddress,
+        reason: &str,
+        date: Date,
+    ) -> Result<Retraction, MemoryError>;
 
     /// Replace an entity's **prose** — the human half of its doc, everything
     /// that is neither jojobot's metadata nor its facts. A bot's charter is

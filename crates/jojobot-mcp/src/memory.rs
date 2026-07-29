@@ -19,6 +19,7 @@ pub mod declined;
 pub mod list_entities;
 pub mod parse;
 pub mod recall;
+pub mod retract;
 pub mod search;
 pub mod set_charter;
 #[cfg(test)]
@@ -35,6 +36,7 @@ pub use add_entity::AddEntityArgs;
 pub use capture::CaptureArgs;
 pub use list_entities::ListEntitiesArgs;
 pub use recall::RecallArgs;
+pub use retract::RetractArgs;
 pub use search::{EdgeFilterArgs, SearchArgs};
 pub use set_charter::SetCharterArgs;
 pub use update_entity::UpdateEntityArgs;
@@ -55,6 +57,7 @@ pub(crate) fn router() -> ToolRouter<Jojobot> {
         + Jojobot::capture_router()
         + Jojobot::list_entities_router()
         + Jojobot::recall_router()
+        + Jojobot::retract_router()
         + Jojobot::search_router()
         + Jojobot::set_charter_router()
         + Jojobot::update_entity_router()

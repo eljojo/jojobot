@@ -47,7 +47,7 @@ impl Jojobot {
                        processed straight from `new`, no delivery first. Two refusals wear the \
                        same status: blocked shape and mean different things: an id that names \
                        nothing at all (use one read_mailbox or post_message handed you), and an \
-                       id naming an item jojobot cannot read, which comes with a `reason` — \
+                       id naming an item jojobot cannot read, which comes back saying why — \
                        retrying that one will not help, a person has to repair it, and until \
                        then treat whatever it carried as unhandled and say so."
     )]

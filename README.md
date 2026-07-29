@@ -127,6 +127,7 @@ Two consequences worth stating outright, because they surprise people:
 | `add_entity` | Bringing a new thing into memory. Screened against near-misses first, so a typo never mints a duplicate. |
 | `update_entity` | Maintaining what a thing is called, and its other metadata. |
 | `update_fact` | Correcting something recorded wrong — rewritten in place, never as an addendum. Also how a claim gets confirmed, or a refutation recorded as standing truth. |
+| `retract` | Taking back an EVENT — one way, never reversed, and never a flag on an edit. Nothing is removed: the record is marked and a dated account of why lands beside it, so the two read as one story. Facts are not retracted; they are fixed. |
 | `list_entities` | Seeing what exists, by kind. |
 | `set_charter` | Writing an identity's charter — the orienting text that says what it is and where its work lives. |
 

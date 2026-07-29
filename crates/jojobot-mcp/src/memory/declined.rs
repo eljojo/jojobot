@@ -143,6 +143,17 @@ pub(crate) fn memory_declined(
                 ),
             ))
         }
+        // **A refusal, not a failure**: the row is there and the caller named
+        // it correctly — jojobot is declining to do this to THAT row. The
+        // domain already wrote the sentence that says which of the three
+        // reasons it is and what to do instead, so it is carried through
+        // rather than re-worded here, where it would drift from the rule it
+        // describes.
+        MemoryError::NotRetractable { attempted, why } => Ok(blocked_body(
+            &EntityId(attempted.clone()),
+            &[],
+            format!("Nothing was written. '{attempted}' cannot be retracted: {why}."),
+        )),
         other => Err(memory_error(other)),
     }
 }
@@ -161,6 +172,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::InvalidQuery(_)
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
+        | MemoryError::NotRetractable { .. }
         | MemoryError::UnconfirmedPromotion => McpError::invalid_params(e.to_string(), None),
         MemoryError::NotConfigured(msg) => {
             McpError::internal_error(format!("memory not configured: {msg}"), None)

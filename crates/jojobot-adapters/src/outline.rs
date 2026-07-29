@@ -32,14 +32,16 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use jojobot_domain::memory::{
-    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, Memory,
-    MemoryError, NewEntity, NewFact, apply_entity_patch, apply_fact_patch,
+    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, FactStatus, Guarded,
+    Memory, MemoryError, NewEntity, NewFact, Retraction, apply_entity_patch, apply_fact_patch,
     guard::{self, Decision},
-    normalize_content, normalize_details, normalize_prose, screen_entity_patch,
+    normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
     search::DocScan,
     validate_content, validate_details, validate_edge, validate_entity, validate_prose,
     validate_subject,
 };
+
+use jiff::civil::Date;
 
 use api::{CollectionRec, DocRec, HttpOutline, OutlineApi, Unconfigured};
 use codec::{
@@ -830,6 +832,18 @@ impl Memory for OutlineStore {
                 facts.iter().map(|f| f.address().to_string()).collect(),
             ));
         };
+        // **Where one-way is actually enforced.** `retract` refusing a second
+        // pass is only half of it: without this, a status flip back to active
+        // is an ordinary patch away, and the ceremony on the retract verb would
+        // be guarding a door with the window open.
+        if fact.status == FactStatus::Retracted {
+            return Err(MemoryError::NotRetractable {
+                attempted: address.to_string(),
+                why: "it is retracted, and a retracted record is not editable — retraction is \
+                      one-way. Capture what is so now as a new record"
+                    .to_string(),
+            });
+        }
         apply_fact_patch(&mut fact, &patch)?;
 
         // The row is rewritten where it stands — fix the source, never an
@@ -857,6 +871,96 @@ impl Memory for OutlineStore {
                 .await);
         }
         Ok(Guarded::Written(seen))
+    }
+
+    /// **Two rows, one document write.** The marked row and the account of why
+    /// it was marked share a home page, so they go up in a single PUT — which
+    /// is the whole reason this is a port verb rather than an edit followed by
+    /// a capture. Two calls could leave the state this verb must never produce:
+    /// a record taken back with nothing anywhere saying why.
+    async fn retract(
+        &self,
+        address: &FactAddress,
+        reason: &str,
+        date: Date,
+    ) -> Result<Retraction, MemoryError> {
+        // Serialized against every other write to this collection's
+        // documents — see [`OutlineStore::lock`].
+        let _writing = self.ws.write().await;
+        validate_subject(&address.home)?;
+        let collection_id = self.resolve_collection().await?;
+
+        let Some(doc) = self.entity_doc(&collection_id, &address.home).await? else {
+            let index = self.entity_index(&collection_id).await?;
+            return Err(MemoryError::UnknownEntity {
+                attempted: address.home.to_string(),
+                nearest: guard::screen(&address.home, &[], &index),
+            });
+        };
+        let facts = parse_facts_table(&doc.text);
+        let Some(target) = facts.iter().find(|f| f.id == address.local).cloned() else {
+            return Err(MemoryError::UnknownFact {
+                attempted: address.to_string(),
+                nearest: facts.iter().map(|f| f.address().to_string()).collect(),
+            });
+        };
+        // Everything that can refuse, refuses before the page is touched.
+        let account = retraction_of(&target, reason, date)?;
+
+        let retracted = Fact {
+            status: FactStatus::Retracted,
+            ..target
+        };
+        let marked = with_row_replaced(
+            &doc.text,
+            &address.home,
+            &address.local,
+            &render_fact_row(&retracted),
+        )
+        .ok_or_else(|| MemoryError::UnknownFact {
+            attempted: address.to_string(),
+            nearest: facts.iter().map(|f| f.address().to_string()).collect(),
+        })?;
+
+        // Minted off the page as it will stand WITH the row already marked —
+        // the id comes from the doc's text, and the text is what changed.
+        let record = Fact {
+            id: next_fact_id(&marked),
+            home: address.home.clone(),
+            subject: account.subject,
+            content: account.content,
+            details: account.details,
+            provenance: account.provenance,
+            status: account.status,
+            date: account.date,
+            edge: account.edge,
+            event: account.event,
+        };
+        let updated = with_fact_appended(&marked, &render_fact_row(&record));
+        self.ws.api().update_document(&doc.id, &updated).await?;
+
+        // **Both rows are read back, because both were written.** Confirming
+        // only the mark would confirm exactly half of the one state this verb
+        // must not leave behind.
+        let seen_retracted = self.read_back_fact(address).await?;
+        let seen_record = self.read_back_fact(&record.address()).await?;
+        if seen_retracted != retracted || seen_record != record {
+            return Err(self
+                .undo(
+                    &doc,
+                    "retract",
+                    vec![address.to_string(), record.address().to_string()],
+                    format!(
+                        "retraction of {address} read back changed: wrote {retracted:?} and \
+                         {record:?}, read {seen_retracted:?} and {seen_record:?}"
+                    ),
+                )
+                .await);
+        }
+        Ok(Retraction {
+            retracted: seen_retracted,
+            record: seen_record,
+        })
     }
 
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
