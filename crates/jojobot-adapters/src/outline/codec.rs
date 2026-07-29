@@ -6,8 +6,8 @@
 use jiff::civil::Date;
 
 use jojobot_domain::memory::{
-    Boot, Edge, EdgeShape, Entity, EntityId, Fact, FactId, FactStatus, Provenance, validate_prose,
-    validate_subject,
+    Boot, Edge, EdgeShape, Entity, EntityId, Fact, FactId, FactStatus, Provenance, event::Event,
+    validate_prose, validate_subject,
 };
 
 /// The header that marks the machine-readable fact table at the bottom of a
@@ -19,9 +19,9 @@ use jojobot_domain::memory::{
 pub(super) use jojobot_domain::memory::{FACTS_HEADER, MACHINERY_FIELD};
 /// The table's column header row.
 pub(super) const TABLE_HEADER: &str =
-    "| id | subject | content | details | provenance | status | date | edges |";
+    "| id | subject | content | details | provenance | status | date | edges | event |";
 /// The markdown table separator under the header.
-pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | --- |";
+pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | --- | --- |";
 /// The doc schema's CURRENT version, stamped into the machine block (`schema:`)
 /// by every write. Schema evolution is a standing condition of this system —
 /// long-lived docs, written by every era of this software — so the eras are
@@ -30,7 +30,8 @@ pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | 
 ///   0 — slice 1:      `id | subject | content | status | date | edges`
 ///   1 — pre-details:  `id | subject | content | provenance | status | date`
 ///   2 — details (M1): `id | subject | content | details | provenance | status | date`
-///   3 — edges (M2):   the current 8-column [`TABLE_HEADER`]
+///   3 — edges (M2):   8 columns, through the surface release
+///   4 — event:        the current 9-column [`TABLE_HEADER`]
 ///
 /// A doc with no `schema:` line predates the field; its rows read by structural
 /// inference ([`layout_of`]), which is kept forever — hand-written and ancient
@@ -40,7 +41,7 @@ pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | 
 /// at all. Upgrades today are reparse + re-render ([`migrated_region`]); the
 /// first version whose upgrade can't be that gets its explicit step registered
 /// alongside this constant.
-pub(super) const SCHEMA_CURRENT: u32 = 3;
+pub(super) const SCHEMA_CURRENT: u32 = 4;
 
 /// Where each field sits in a row. **Four layouts exist on disk** — the schema
 /// grew twice and was reshuffled once — and rows written under every one of them
@@ -63,6 +64,10 @@ struct Layout {
     date: usize,
     /// Absent in the two shapes written between slice 1 and the `edges` column.
     edges: Option<usize>,
+    /// The event payload. Absent in every layout before schema 4 — which is
+    /// every row written before this slice, and most rows forever, because most
+    /// facts are not events.
+    event: Option<usize>,
 }
 
 /// The layout of a row, or `None` if it is not a fact row at all.
@@ -85,12 +90,21 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
             .is_some_and(|c| c.trim().parse::<Date>().is_ok())
     };
     match cells.len() {
+        9 => Some(Layout {
+            details: Some(3),
+            provenance: Some(4),
+            status: 5,
+            date: 6,
+            edges: Some(7),
+            event: Some(8),
+        }),
         8 => Some(Layout {
             details: Some(3),
             provenance: Some(4),
             status: 5,
             date: 6,
             edges: Some(7),
+            event: None,
         }),
         7 => Some(Layout {
             details: Some(3),
@@ -98,6 +112,7 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
             status: 5,
             date: 6,
             edges: None,
+            event: None,
         }),
         // Pre-`details`: … | provenance | status | date
         6 if is_date(5) && !is_date(4) => Some(Layout {
@@ -106,6 +121,7 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
             status: 4,
             date: 5,
             edges: None,
+            event: None,
         }),
         // Slice 1: … | status | date | edges
         6 if is_date(4) && !is_date(5) => Some(Layout {
@@ -114,6 +130,7 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
             status: 3,
             date: 4,
             edges: Some(5),
+            event: None,
         }),
         _ => None,
     }
@@ -125,12 +142,21 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
 /// read but never lose a row.
 fn era_layout(version: u32, width: usize) -> Option<Layout> {
     match (version, width) {
+        (4, 9) => Some(Layout {
+            details: Some(3),
+            provenance: Some(4),
+            status: 5,
+            date: 6,
+            edges: Some(7),
+            event: Some(8),
+        }),
         (3, 8) => Some(Layout {
             details: Some(3),
             provenance: Some(4),
             status: 5,
             date: 6,
             edges: Some(7),
+            event: None,
         }),
         (2, 7) => Some(Layout {
             details: Some(3),
@@ -138,6 +164,7 @@ fn era_layout(version: u32, width: usize) -> Option<Layout> {
             status: 5,
             date: 6,
             edges: None,
+            event: None,
         }),
         (1, 6) => Some(Layout {
             details: None,
@@ -145,6 +172,7 @@ fn era_layout(version: u32, width: usize) -> Option<Layout> {
             status: 4,
             date: 5,
             edges: None,
+            event: None,
         }),
         (0, 6) => Some(Layout {
             details: None,
@@ -152,6 +180,7 @@ fn era_layout(version: u32, width: usize) -> Option<Layout> {
             status: 3,
             date: 4,
             edges: Some(5),
+            event: None,
         }),
         _ => None,
     }
@@ -215,7 +244,7 @@ pub(super) fn split_cells(row: &str) -> Vec<String> {
 /// never folded into content.
 pub(super) fn render_fact_row(f: &Fact) -> String {
     format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} |",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
         f.id,
         escape_cell(&f.subject.to_string()),
         escape_cell(&f.content),
@@ -224,6 +253,7 @@ pub(super) fn render_fact_row(f: &Fact) -> String {
         f.status.as_token(),
         f.date,
         escape_cell(&render_edge(f.edge.as_ref())),
+        escape_cell(&f.event.as_ref().map(Event::render).unwrap_or_default()),
     )
 }
 
@@ -276,6 +306,12 @@ fn parse_fact_row_in(row: &str, home: &EntityId, declared: Option<u32>) -> Optio
     let status = FactStatus::from_token(cell(at.status));
     let date: Date = cells[at.date].trim().parse().ok()?;
     let edge = at.edges.and_then(|i| parse_edge(cell(i)));
+    // **Read exactly as tolerantly as the edge cell is**, and for a stronger
+    // reason: a payload this build cannot make sense of must still come back
+    // whole. `Event::parse` is total on anything carrying a type, and `None`
+    // means this row is an ordinary fact — which is what every row written
+    // before schema 4 is, and what most rows will always be.
+    let event = at.event.and_then(|i| Event::parse(cell(i)));
 
     Some(Fact {
         id: FactId(id.to_string()),
@@ -287,10 +323,7 @@ fn parse_fact_row_in(row: &str, home: &EntityId, declared: Option<u32>) -> Optio
         status,
         date,
         edge,
-        // Not read from a column yet — the payload gets its own, and until it
-        // does every row on disk is an ordinary fact, which every row on disk
-        // in fact is.
-        event: None,
+        event,
     })
 }
 
@@ -450,9 +483,17 @@ pub(super) fn with_row_replaced(
 /// reader can't parse still holds its id and can never be handed out twice.
 fn row_id(row: &str) -> Option<String> {
     let cells = split_cells(row);
-    // Width alone, on purpose: this is deliberately wider than `layout_of`, so a
-    // row the reader gives up on still holds its id and can never be re-minted.
-    if !matches!(cells.len(), 6..=8) {
+    // Width alone, on purpose: a row the READER gives up on must still hold its
+    // id, so this accepts widths `layout_of` may refuse to interpret.
+    //
+    // **The upper bound tracks the header rather than being a literal**, and it
+    // is the header for a reason that cost a debugging session: adding the
+    // event column widened `layout_of` and left this at `6..=8`, so every
+    // freshly-written row was invisible to the id minter. `next_fact_id`
+    // restarted at f1, handed out ids the page was already using, and the store
+    // then refused reads with "its doc holds more than one row with that id" —
+    // an address collision, from a range nobody remembered to widen.
+    if !(6..=split_cells(TABLE_HEADER).len()).contains(&cells.len()) {
         return None;
     }
     let id = cells[0].trim();
@@ -1710,7 +1751,7 @@ mod tests {
         assert_eq!(
             render_fact_row(&f),
             "| f2 | person:alpha | rides with the club |  | testimony | active | 2026-07-24 | \
-             membership=org:north-trail-club |"
+             membership=org:north-trail-club |  |"
         );
     }
 
@@ -1836,7 +1877,7 @@ mod tests {
             }
             assert_eq!(
                 split_cells(line).len(),
-                8,
+                split_cells(TABLE_HEADER).len(),
                 "every rewritten table line is full-width so the store's \
                  rectangularizer has nothing to truncate: {line:?}"
             );
@@ -2207,7 +2248,7 @@ mod tests {
         );
         assert_eq!(
             render_fact_row(&f),
-            "| f1 | person:alpha | keeps a paper notebook |  | inference | active | 2026-07-24 |  |"
+            "| f1 | person:alpha | keeps a paper notebook |  | inference | active | 2026-07-24 |  |  |"
         );
     }
 
@@ -2277,6 +2318,97 @@ mod tests {
         let home = EntityId::person("alpha");
         assert!(parse_fact_row(TABLE_HEADER, &home).is_none());
         assert!(parse_fact_row(TABLE_SEP, &home).is_none());
+    }
+
+    /// **An event survives the row it is stored in, and the links survive with
+    /// it.**
+    ///
+    /// The invariant test over in `search` builds its `Fact` in memory, so it
+    /// proves the PROJECTION and nothing about the storage underneath: if the
+    /// codec ever stopped reading this column the links would stop walking and
+    /// that test would keep passing. This is the other end — a row that has
+    /// been rendered and parsed back, with the payload intact and `linked()`
+    /// still finding what it should.
+    ///
+    /// Byte-identity is asserted on the RE-RENDER rather than only on equality,
+    /// because that is what the next write puts back on the page.
+    #[test]
+    fn an_event_survives_a_round_trip_through_the_row() {
+        let mut recorded = Event::of("a-type-nobody-defined");
+        recorded
+            .metadata
+            .insert("mood".into(), "delighted, and = punctuated".into());
+        recorded
+            .metadata
+            .insert("mechanic".into(), "person:milhouse".into());
+        recorded.refs.push(EntityId("place:north-trail".into()));
+
+        let stored = Fact {
+            event: Some(recorded.clone()),
+            ..fact(
+                "f1",
+                "person:alpha",
+                "the kiln was lit",
+                Provenance::Testimony,
+                date(2026, 7, 1),
+            )
+        };
+
+        let row = render_fact_row(&stored);
+        let back = parse_fact_row(&row, &EntityId::person("alpha")).expect("the row reads");
+        assert_eq!(back.event.as_ref(), Some(&recorded), "the payload survived");
+        assert_eq!(
+            render_fact_row(&back),
+            row,
+            "…and re-renders to the same bytes, which is what the next write stores"
+        );
+
+        // The links are still findable off the row that came back — named and
+        // unnamed alike, which is what the projection consumes.
+        assert_eq!(
+            back.event.expect("an event").linked(),
+            vec![
+                EntityId("person:milhouse".into()),
+                EntityId("place:north-trail".into()),
+            ],
+            "a link that does not survive storage is not a link"
+        );
+    }
+
+    /// **The id minter must see a row of the CURRENT width, and this is the
+    /// test that says so out loud.**
+    ///
+    /// `row_id` is what reserves an id so it can never be handed out twice, and
+    /// it screens on width. Adding the event column widened `layout_of` and
+    /// left that screen at `6..=8`: every freshly-written row became invisible
+    /// to the minter, `next_fact_id` restarted at f1, and the page ended up with
+    /// two rows sharing one address — which the store reports as
+    /// "its doc holds more than one row with that id", a long way from the
+    /// range that caused it.
+    ///
+    /// Asserted against the header rather than a number, so the next column to
+    /// arrive is covered by this test on the day it lands rather than by
+    /// somebody remembering.
+    #[test]
+    fn a_row_of_the_current_width_reserves_its_id() {
+        let widest = split_cells(TABLE_HEADER).len();
+        let row = render_fact_row(&fact(
+            "f7",
+            "person:alpha",
+            "a claim",
+            Provenance::Testimony,
+            date(2026, 1, 1),
+        ));
+        assert_eq!(
+            split_cells(&row).len(),
+            widest,
+            "a rendered row is exactly as wide as the header it sits under"
+        );
+        assert_eq!(
+            row_id(&row).as_deref(),
+            Some("f7"),
+            "…and its id is reserved, or the minter will hand it out again"
+        );
     }
 
     #[test]

@@ -1057,7 +1057,26 @@ mod tests {
                 if is_header || is_sep {
                     return l.to_string();
                 }
-                cells.pop();
+                // **Drop the last cell that HAS something in it.**
+                //
+                // This is a fault injector, not a model of the store: its job
+                // is to produce a corruption the read-back guard must notice.
+                // Dropping the literal last cell stopped doing that the moment
+                // a column was added whose value is usually empty — the mangle
+                // removed nothing, the read-back matched, and two tests about
+                // failed writes started reporting success. A trailing empty
+                // cell is exactly the case where truncation is invisible, which
+                // is true of the real store too and precisely why it is the
+                // wrong thing to inject.
+                let last = cells.iter().rposition(|c| !c.trim().is_empty());
+                match last {
+                    Some(at) => {
+                        cells.remove(at);
+                    }
+                    None => {
+                        cells.pop();
+                    }
+                }
                 let cells: Vec<String> = cells.iter().map(|c| escape_cell(c)).collect();
                 format!("| {} |", cells.join(" | "))
             })
@@ -2186,7 +2205,12 @@ mod tests {
         let coll = fake.seed_collection(COLL, &owned_desc());
         let doc0 = with_fact_appended(
             &seeded_doc(&person("alpha")),
-            "| f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |  |",
+            // Full-width, because this test asserts a BYTE-IDENTICAL restore.
+            // The store pads any short row out to the header on write, so a
+            // legacy-width seed comes back one cell wider than it went in and
+            // the restore looks like a corruption when it is the ordinary
+            // migration doing its job.
+            "| f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |  |  |",
         );
         let id = fake.seed_document(&coll, "Alpha", &doc0);
 
