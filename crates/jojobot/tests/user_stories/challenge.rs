@@ -60,9 +60,17 @@ async fn where_did_you_get_that() {
     // THE ASSERTION THAT CAN ACTUALLY FAIL, and it is the point of the story:
     // the wrong wording is GONE, not outvoted. If a correction left the old
     // claim reachable, every later session would find both and pick one.
-    s.recall("place:moes").await.never_says("until 2am");
-    s.find("Sundays").await.never_says("until 2am");
-    s.recall("place:moes").await.says("closes at 6");
+    // Each negative is PAIRED with the positive it needs. A bare "it is not in
+    // the results" cannot tell a correction that worked from a read that
+    // returned nothing at all — and the second is the failure worth catching.
+    s.recall("place:moes")
+        .await
+        .says("closes at 6")
+        .never_says("until 2am");
+    s.find("Sundays")
+        .await
+        .says("place:moes")
+        .never_says("until 2am");
 
     // And the thing he actually said is untouched by the correction.
     s.recall("place:moes").await.says("week has been long");
