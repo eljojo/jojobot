@@ -45,7 +45,8 @@ use jojobot_domain::memory::{
 
 use jiff::civil::Date;
 
-use jojobot_domain::text::same_cell_value;
+use jojobot_domain::memory::event::Event;
+use jojobot_domain::text::{Changed, Compare, first_changed};
 
 use api::{CollectionRec, DocRec, HttpOutline, OutlineApi, Unconfigured};
 use codec::{
@@ -493,11 +494,11 @@ impl OutlineStore {
     async fn undo(&self, doc: &DocRec, verb: &'static str, cause: String) -> MemoryError {
         match self.restore(doc).await {
             Restored::Undone => MemoryError::Store(format!(
-                "{verb} failed ({cause}); the page was restored to its state before it"
+                "{verb} failed ({cause}); nothing was written and the record is as it was"
             )),
             Restored::Failed(rollback) => MemoryError::Store(format!(
-                "{verb} failed ({cause}) AND restoring the page failed ({rollback}) — a \
-                 half-written row may remain"
+                "{verb} failed ({cause}) AND undoing it failed ({rollback}) — part of it may \
+                 remain, and a person has to look"
             )),
         }
     }
@@ -520,22 +521,54 @@ impl OutlineStore {
 /// the event payload — and stays byte-exact. See
 /// [`jojobot_domain::text::same_cell_value`] for why a byte comparison on a
 /// cell refuses writes that succeeded.
-fn same_fact(wrote: &Fact, read: &Fact) -> bool {
-    let details_kept = match (&wrote.details, &read.details) {
-        (None, None) => true,
-        (Some(wrote), Some(read)) => same_cell_value(wrote, read),
-        _ => false,
+fn fact_changed(wrote: &Fact, read: &Fact) -> Option<Changed> {
+    let edge = |f: &Fact| {
+        f.edge
+            .as_ref()
+            .map(|e| format!("{} {}", e.shape, e.object))
+            .unwrap_or_default()
     };
-    same_cell_value(&wrote.content, &read.content)
-        && details_kept
-        && wrote.id == read.id
-        && wrote.home == read.home
-        && wrote.subject == read.subject
-        && wrote.provenance == read.provenance
-        && wrote.status == read.status
-        && wrote.date == read.date
-        && wrote.edge == read.edge
-        && wrote.event == read.event
+    let event = |f: &Fact| f.event.as_ref().map(Event::render).unwrap_or_default();
+    first_changed(&[
+        (
+            "claim",
+            Compare::Cell,
+            wrote.content.clone(),
+            read.content.clone(),
+        ),
+        (
+            "details",
+            Compare::Cell,
+            wrote.details.clone().unwrap_or_default(),
+            read.details.clone().unwrap_or_default(),
+        ),
+        (
+            "subject",
+            Compare::Exact,
+            wrote.subject.to_string(),
+            read.subject.to_string(),
+        ),
+        (
+            "provenance",
+            Compare::Exact,
+            wrote.provenance.as_token().to_string(),
+            read.provenance.as_token().to_string(),
+        ),
+        (
+            "status",
+            Compare::Exact,
+            wrote.status.as_token().to_string(),
+            read.status.as_token().to_string(),
+        ),
+        (
+            "date",
+            Compare::Exact,
+            wrote.date.to_string(),
+            read.date.to_string(),
+        ),
+        ("edge", Compare::Exact, edge(wrote), edge(read)),
+        ("event", Compare::Exact, event(wrote), event(read)),
+    ])
 }
 
 /// The deterministic canonical winner: oldest by `created_at`, ties broken by
@@ -769,15 +802,12 @@ impl Memory for OutlineStore {
         // Read-back: a capture succeeds only if the read path returns the fact,
         // byte-identical. Writing is not recording.
         let seen = self.read_back_fact(&stored.address()).await?;
-        if !same_fact(&stored, &seen) {
+        if let Some(changed) = fact_changed(&stored, &seen) {
             return Err(self
                 .undo(
                     &doc,
                     "capture",
-                    format!(
-                        "fact {} read back changed: wrote {stored:?}, read {seen:?}",
-                        stored.address()
-                    ),
+                    format!("fact {}: {changed}", stored.address()),
                 )
                 .await);
         }
@@ -879,13 +909,9 @@ impl Memory for OutlineStore {
         self.ws.api().update_document(&doc.id, &updated).await?;
 
         let seen = self.read_back_fact(address).await?;
-        if !same_fact(&fact, &seen) {
+        if let Some(changed) = fact_changed(&fact, &seen) {
             return Err(self
-                .undo(
-                    &doc,
-                    "update_fact",
-                    format!("fact {address} read back changed: wrote {fact:?}, read {seen:?}"),
-                )
+                .undo(&doc, "update_fact", format!("fact {address}: {changed}"))
                 .await);
         }
         Ok(Guarded::Written(seen))
@@ -962,15 +988,14 @@ impl Memory for OutlineStore {
         // must not leave behind.
         let seen_retracted = self.read_back_fact(address).await?;
         let seen_record = self.read_back_fact(&record.address()).await?;
-        if !same_fact(&retracted, &seen_retracted) || !same_fact(&record, &seen_record) {
+        if let Some(changed) = fact_changed(&retracted, &seen_retracted)
+            .or_else(|| fact_changed(&record, &seen_record))
+        {
             return Err(self
                 .undo(
                     &doc,
                     "retract",
-                    format!(
-                        "retraction of {address} read back changed: wrote {retracted:?} and \
-                         {record:?}, read {seen_retracted:?} and {seen_record:?}"
-                    ),
+                    format!("retraction of {address}: {changed}"),
                 )
                 .await);
         }
@@ -2077,6 +2102,61 @@ mod tests {
             "the fact was lost to a racing prose write: {:?}",
             scanned.facts
         );
+    }
+
+    /// **A refusal names the field that changed, and not the store.**
+    ///
+    /// It used to interpolate two whole records and leave the reader to diff
+    /// them. In production that cost two failed writes, a page a person had to
+    /// repair by hand, and a wrong cause passed on as established — all
+    /// because nobody could see WHICH field had differed.
+    ///
+    /// Both halves are asserted: the field is named, and no part of the store
+    /// is. The second is the one a future edit is likely to break, since the
+    /// easiest way to make an error more helpful is to say where the thing
+    /// sits.
+    #[tokio::test]
+    async fn a_read_back_refusal_names_the_field_and_never_the_store() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        fake.seed_document(&coll, "Alpha", &seeded_doc(&person("alpha")));
+        let store = store(fake.clone());
+        ensure(&store, &EntityId("place:shelbyville".into())).await;
+
+        // The induced fault drops the row's last cell, so the fixture needs a
+        // last cell worth dropping — see the Stranded test below for why an
+        // already-empty one makes the mangle a no-op.
+        fake.poison_next_update();
+        let outcome = store
+            .capture(NewFact {
+                edge: Some(Edge::new(
+                    EdgeShape::Location,
+                    EntityId("place:shelbyville".into()),
+                )),
+                ..NewFact::about(
+                    EntityId::person("alpha"),
+                    "spending the winter away",
+                    date(2026, 7, 2),
+                )
+            })
+            .await;
+
+        let Err(err) = outcome else {
+            panic!("a mangled write must not report success");
+        };
+        let said = err.to_string();
+        assert!(
+            said.contains("edge came back changed"),
+            "the refusal must name the field that differed: {said}"
+        );
+        let lowered = said.to_lowercase();
+        for leak in ["page", "table", "row", "cell", "column", "document"] {
+            assert!(
+                !lowered.contains(leak),
+                "a refusal must not name {leak:?} — the store is not an agent's \
+                 business: {said}"
+            );
+        }
     }
 
     /// **The write mangles, and then the rollback fails too.**

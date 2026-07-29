@@ -34,7 +34,7 @@ use jojobot_domain::mailbox::{
     validate_notes, validate_sender, validate_subject,
 };
 use jojobot_domain::memory::{Entity, EntityId, MemoryError, guard as memory_guard};
-use jojobot_domain::text::same_cell_value;
+use jojobot_domain::text::{Compare, first_changed};
 
 use super::api::{DocRec, OutlineApi};
 use super::mailbox_codec::{
@@ -212,7 +212,7 @@ impl OutlineMailboxes {
     ) -> MailboxError {
         match self.restore(doc).await {
             Restored::Undone => store_msg(format!(
-                "{verb} failed ({cause}); the page was restored to its state before it"
+                "{verb} failed ({cause}); nothing was written and the record is as it was"
             )),
             Restored::Failed(rollback) => MailboxError::Stranded {
                 verb: verb.to_string(),
@@ -251,22 +251,26 @@ impl OutlineMailboxes {
                     )
                     .await);
             };
-            // Notes ride in a table cell, so they are compared as one.
-            let notes_kept = match (normalize_notes(wanted.notes.as_deref()), &got.notes) {
-                (None, None) => true,
-                (Some(wrote), Some(read)) => same_cell_value(&wrote, read),
-                _ => false,
-            };
-            if got.state != wanted.state || !notes_kept {
+            if let Some(changed) = first_changed(&[
+                (
+                    "state",
+                    Compare::Exact,
+                    wanted.state.as_token().to_string(),
+                    got.state.as_token().to_string(),
+                ),
+                (
+                    "notes",
+                    Compare::Cell,
+                    normalize_notes(wanted.notes.as_deref()).unwrap_or_default(),
+                    got.notes.clone().unwrap_or_default(),
+                ),
+            ]) {
                 return Err(self
                     .undo(
                         doc,
                         verb,
                         vec![wanted.id.to_string()],
-                        format!(
-                            "message {} read back changed: wrote {wanted:?}, read {got:?}",
-                            wanted.id
-                        ),
+                        format!("message {}: {changed}", wanted.id),
                     )
                     .await);
             }
@@ -458,23 +462,29 @@ impl Mailboxes for OutlineMailboxes {
             .ok_or_else(|| store_msg(format!("message {id} did not read back")))?;
         // **The subject is compared as a CELL and the body as bytes.** The
         // body is fenced and the store leaves a fence alone; the subject sits
-        // in a table row, where the store escapes what it reads as syntax. A
-        // byte comparison on the subject is what refused four writes that had
-        // succeeded — see `text::same_cell_value`.
-        let subject_kept = match (&row.subject, &back.subject) {
-            (None, None) => true,
-            (Some(wrote), Some(read)) => same_cell_value(wrote, read),
-            _ => false,
-        };
-        if back.body != body || back.sender != row.sender || !subject_kept {
+        // where the store escapes what it reads as syntax. A byte comparison
+        // on the subject is what refused four writes that had succeeded.
+        if let Some(changed) = first_changed(&[
+            ("body", Compare::Exact, body.clone(), back.body.clone()),
+            (
+                "sender",
+                Compare::Exact,
+                row.sender.clone(),
+                back.sender.clone(),
+            ),
+            (
+                "subject",
+                Compare::Cell,
+                row.subject.clone().unwrap_or_default(),
+                back.subject.clone().unwrap_or_default(),
+            ),
+        ]) {
             return Err(self
                 .undo(
                     &doc,
                     "post_message",
                     vec![id.to_string()],
-                    format!(
-                        "message {id} read back changed: wrote {row:?} / {body:?}, read {back:?}"
-                    ),
+                    format!("message {id}: {changed}"),
                 )
                 .await);
         }

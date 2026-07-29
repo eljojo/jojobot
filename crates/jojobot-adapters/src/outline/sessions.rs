@@ -38,7 +38,7 @@ use jojobot_domain::session::{
     Sessions, normalize_entry, validate_entry, validate_focus, validate_session_id,
 };
 
-use jojobot_domain::text::same_cell_value;
+use jojobot_domain::text::{Compare, first_changed};
 
 use super::api::{DocRec, OutlineApi};
 use super::session_codec::{
@@ -234,7 +234,7 @@ impl OutlineSessions {
     ) -> SessionError {
         match self.restore(doc).await {
             Restored::Undone => store_msg(format!(
-                "{verb} failed ({cause}); the page was restored to its state before it"
+                "{verb} failed ({cause}); nothing was written and the record is as it was"
             )),
             Restored::Failed(rollback) => SessionError::Stranded {
                 verb: verb.to_string(),
@@ -277,19 +277,39 @@ impl OutlineSessions {
             .into_iter()
             .find(|s| &s.id == id)
             .ok_or_else(|| store_msg(format!("session {id} did not read back after {verb}")))?;
-        // The focus rides in a table cell — the third surface the store's
-        // escaping reached in production — so it is compared as one. State and
-        // sid are machinery and stay byte-exact.
-        if back.state != wanted.state
-            || !same_cell_value(&wanted.focus, &back.focus)
-            || back.sid != wanted.sid
-        {
+        // The focus is the third surface the store's escaping reached in
+        // production, so it is compared as a cell; state and sid are machinery
+        // and stay byte-exact.
+        if let Some(changed) = first_changed(&[
+            (
+                "state",
+                Compare::Exact,
+                wanted.state.as_token().to_string(),
+                back.state.as_token().to_string(),
+            ),
+            (
+                "focus",
+                Compare::Cell,
+                wanted.focus.clone(),
+                back.focus.clone(),
+            ),
+            (
+                "session id",
+                Compare::Exact,
+                wanted
+                    .sid
+                    .as_ref()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default(),
+                back.sid.as_ref().map(|s| s.to_string()).unwrap_or_default(),
+            ),
+        ]) {
             return Err(self
                 .undo(
                     &doc,
                     verb,
                     vec![id.to_string()],
-                    format!("session {id} read back changed: wrote {wanted:?}, read {back:?}"),
+                    format!("session {id}: {changed}"),
                 )
                 .await);
         }
@@ -390,19 +410,32 @@ impl Sessions for OutlineSessions {
             .into_iter()
             .find(|s| s.id == row.id)
             .ok_or_else(|| store_msg(format!("session {} did not read back", row.id)))?;
-        if !same_cell_value(&row.focus, &back.focus)
-            || back.sid != row.sid
-            || back.started_at != row.started_at
-        {
+        if let Some(changed) = first_changed(&[
+            (
+                "focus",
+                Compare::Cell,
+                row.focus.clone(),
+                back.focus.clone(),
+            ),
+            (
+                "session id",
+                Compare::Exact,
+                row.sid.as_ref().map(|s| s.to_string()).unwrap_or_default(),
+                back.sid.as_ref().map(|s| s.to_string()).unwrap_or_default(),
+            ),
+            (
+                "start time",
+                Compare::Exact,
+                row.started_at.to_string(),
+                back.started_at.to_string(),
+            ),
+        ]) {
             return Err(self
                 .undo(
                     &doc,
                     "begin",
                     vec![row.id.to_string()],
-                    format!(
-                        "session {} read back changed: wrote {row:?}, read {back:?}",
-                        row.id
-                    ),
+                    format!("session {}: {changed}", row.id),
                 )
                 .await);
         }

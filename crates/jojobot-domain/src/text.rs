@@ -259,6 +259,72 @@ pub fn same_cell_value(wrote: &str, read: &str) -> bool {
         || same_after(|c| as_one_emphasis_marker(&without_added_escapes(c)))
 }
 
+/// How a field's two sides are compared — the caller knows which its field is,
+/// and this is the only place the choice is spelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Compare {
+    /// A value that rides in a table cell, so the store's own escaping and
+    /// marker respelling do not count as a change. See [`same_cell_value`].
+    Cell,
+    /// Machinery, or content the store leaves alone: an id, a date, a state, a
+    /// fenced body. Byte-exact.
+    Exact,
+}
+
+/// **The one field that did not survive, and the bytes on each side.**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Changed {
+    /// What the field is called to a caller — never where it is kept.
+    pub field: &'static str,
+    /// What was written.
+    pub wrote: String,
+    /// What came back.
+    pub read: String,
+}
+
+impl std::fmt::Display for Changed {
+    /// **Names the field and shows the bytes, and says nothing about where the
+    /// value sits.** A page, a table, a row or a cell in this sentence would be
+    /// jojobot telling a caller about its store, which is the one thing no
+    /// answer does.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the {} came back changed: wrote {:?}, read {:?}",
+            self.field, self.wrote, self.read
+        )
+    }
+}
+
+/// **The first field that changed, or `None` if the record survived.**
+///
+/// One mechanism for every guard on every rail, rather than one per rail —
+/// three copies of this decision is how one of them comes to disagree about
+/// what counts as a change.
+///
+/// It exists because of what a refusal used to say. A read-back mismatch
+/// interpolated two whole records into a sentence and left the reader to diff
+/// them: in production that cost two failed writes, a page a person had to
+/// repair by hand, and a wrong cause passed on as established, all because
+/// nobody could see WHICH field differed. One field and its two values is the
+/// whole of what a caller needs to act.
+///
+/// First rather than all, deliberately: the caller's next move is the same
+/// whichever one it is, and a list invites diffing again.
+pub fn first_changed(fields: &[(&'static str, Compare, String, String)]) -> Option<Changed> {
+    fields
+        .iter()
+        .find(|(_, how, wrote, read)| match how {
+            Compare::Cell => !same_cell_value(wrote, read),
+            Compare::Exact => wrote != read,
+        })
+        .map(|(field, _, wrote, read)| Changed {
+            field,
+            wrote: wrote.clone(),
+            read: read.clone(),
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,6 +493,55 @@ mod tests {
             assert!(
                 !same_cell_value(wrote, read),
                 "a changed value must still be caught: {wrote:?} vs {read:?}"
+            );
+        }
+    }
+
+    /// **A refusal names one field and its two values.**
+    #[test]
+    fn the_first_changed_field_is_named_with_its_bytes() {
+        let survived = first_changed(&[
+            ("subject", Compare::Cell, "a ~ b".into(), "a \\~ b".into()),
+            (
+                "body",
+                Compare::Exact,
+                "unchanged".into(),
+                "unchanged".into(),
+            ),
+        ]);
+        assert_eq!(survived, None, "the store's own escaping is not a change");
+
+        let changed = first_changed(&[
+            ("subject", Compare::Cell, "a ~ b".into(), "a \\~ b".into()),
+            (
+                "body",
+                Compare::Exact,
+                "as written".into(),
+                "as stored".into(),
+            ),
+        ])
+        .expect("a changed field is found");
+        assert_eq!(changed.field, "body");
+        assert_eq!(
+            changed.to_string(),
+            "the body came back changed: wrote \"as written\", read \"as stored\""
+        );
+    }
+
+    /// **A refusal says nothing about where the value is kept.** The sentence
+    /// reaches an agent, and jojobot's storage is not an agent's business.
+    #[test]
+    fn a_refusal_names_no_part_of_the_store() {
+        let said = first_changed(&[("focus", Compare::Exact, "before".into(), "after".into())])
+            .expect("a change")
+            .to_string()
+            .to_lowercase();
+        for leak in [
+            "page", "table", "row", "cell", "column", "document", "fence",
+        ] {
+            assert!(
+                !said.contains(leak),
+                "a refusal must not name {leak:?}: {said}"
             );
         }
     }
