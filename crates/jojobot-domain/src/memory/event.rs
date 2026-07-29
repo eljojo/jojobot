@@ -109,6 +109,10 @@ impl Event {
     /// with the value escaped, `type` first because a reader wants it first, and
     /// `ref` repeated once per reference. Ordering is not cosmetic: it is what
     /// makes the round trip byte-identical rather than merely equivalent.
+    ///
+    /// The space and the `=` in here are **structure**: [`escape`] guarantees
+    /// neither can appear inside a key or a value, so splitting needs no
+    /// lookahead and a value can never break out of its own token.
     pub fn render(&self) -> String {
         let mut out = vec![format!("{TYPE}={}", escape(&self.kind))];
         for (key, value) in &self.metadata {
@@ -152,50 +156,89 @@ impl Event {
     }
 }
 
-/// Escape a value into one whitespace-free token.
+/// Whether a character may ride into the record raw.
 ///
-/// Four characters cannot ride raw: the backslash that does the escaping, the
-/// space that separates tokens, the `=` that separates a key from its value,
-/// and a newline. Everything else is left exactly as the caller wrote it — a
-/// record is the operator's text, not this module's.
+/// **An allowlist, and the reason it is one is empirical.** This record lands
+/// in a markdown table cell in a store that rewrites markdown on every save,
+/// and a denylist can only name the rewrites somebody thought to look for. The
+/// real store was found doing two of them: it re-serializes a literal
+/// backslash as `\\`, and it INSERTS an escape of its own in front of
+/// characters it reads as syntax (`~` became `\~` with nobody asking). The
+/// first corrupted every escape sequence this module wrote; the second
+/// corrupts characters it never touched at all.
+///
+/// So nothing rides raw on the strength of an argument about what markdown
+/// means. Letters and digits do — including non-ASCII ones, so an ordinary
+/// word stays an ordinary word on a page the operator reads — plus four
+/// punctuation marks that carry the handles this record is mostly made of
+/// (`kind:slug`, `some-slug`, a date, a path). Everything else is encoded,
+/// including characters that are probably fine: probably-fine is what a
+/// polite fake tells you.
+fn rides_raw(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '-' | '.' | ':' | '/')
+}
+
+/// Escape a value into one token that survives both this grammar and the
+/// store under it.
+///
+/// **Percent-encoding, not backslashes**, and the swap is not cosmetic. The
+/// grammar needs the space and the `=` back — they separate tokens and split a
+/// key from its value — and it used a backslash to buy them. A backslash is
+/// the one character a markdown store is guaranteed to have opinions about, so
+/// the escape mechanism was the thing that could not survive being stored. A
+/// `%` is inert everywhere the record travels, and the encoding is
+/// self-terminating: two hex digits, no lookahead, nothing a later character
+/// can change the meaning of.
+///
+/// Bytes rather than chars, so a multi-byte character encodes and decodes as
+/// exactly the bytes it is made of.
 fn escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            ' ' => out.push_str("\\s"),
-            '=' => out.push_str("\\e"),
-            '\n' => out.push_str("\\n"),
-            _ => out.push(c),
+        if rides_raw(c) {
+            out.push(c);
+            continue;
+        }
+        let mut buf = [0u8; 4];
+        for byte in c.encode_utf8(&mut buf).as_bytes() {
+            out.push_str(&format!("%{byte:02X}"));
         }
     }
     out
 }
 
-/// The inverse of [`escape`]. A trailing lone backslash, or an escape this
-/// build does not know, is kept **as written** rather than dropped: losing a
-/// byte to tidy up a malformed one is the failure this whole module is against.
+/// The inverse of [`escape`]. A `%` that does not begin a well-formed pair is
+/// kept **as written** rather than dropped: losing a byte to tidy up a
+/// malformed one is the failure this whole module is against, and a stray `%`
+/// is exactly what a hand edit leaves behind.
+///
+/// Decoded as BYTES and validated once at the end, because a multi-byte
+/// character arrives as several pairs and decoding them one at a time cannot
+/// see the character they spell. A sequence that is not valid UTF-8 falls back
+/// to the token as written — mangled input comes back mangled rather than
+/// silently becoming a replacement glyph.
 fn unescape(token: &str) -> String {
-    let mut out = String::with_capacity(token.len());
-    let mut chars = token.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('\\') => out.push('\\'),
-            Some('s') => out.push(' '),
-            Some('e') => out.push('='),
-            Some('n') => out.push('\n'),
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
+    let raw = token.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        let pair = (raw[i] == b'%')
+            .then(|| raw.get(i + 1..i + 3))
+            .flatten()
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        match pair {
+            Some(byte) => {
+                out.push(byte);
+                i += 3;
             }
-            None => out.push('\\'),
+            None => {
+                out.push(raw[i]);
+                i += 1;
+            }
         }
     }
-    out
+    String::from_utf8(out).unwrap_or_else(|_| token.to_string())
 }
 
 #[cfg(test)]
@@ -321,6 +364,87 @@ mod tests {
             &["person:milhouse"],
         );
         assert_eq!(twice.linked(), vec![EntityId("person:milhouse".into())]);
+    }
+
+    /// **The rendered record is made of characters the store cannot rewrite.**
+    ///
+    /// The property the round-trip tests cannot see: they hand the record
+    /// straight back to this module, so a grammar that is byte-perfect here and
+    /// unstorable in production passes every one of them. It did. The previous
+    /// grammar escaped with backslashes, real Outline re-serialized every one
+    /// of them as `\\`, and the first event ever written through the real store
+    /// came back with `a\sb` where the operator had typed `a b`.
+    ///
+    /// So this asserts the shape of the OUTPUT rather than the round trip: only
+    /// the allowlist reaches the page. It is the one test in this module that
+    /// would have failed before the store was ever called.
+    #[test]
+    fn a_rendered_record_carries_only_characters_that_survive_a_markdown_store() {
+        let nasty = recorded(
+            "a type with spaces",
+            &[
+                ("equation", "a = b"),
+                ("path", "c:\\dir"),
+                // The two the real store rewrote, one it inserted an escape in
+                // front of, and a sample of the punctuation nobody has probed.
+                ("tilde", "a~b~c"),
+                ("emphasis", "_underscored_ and *starred*"),
+                ("markup", "<b>bold</b> & 'quoted'"),
+                ("unicode", "café — ünïcode ✓"),
+                ("empty", ""),
+            ],
+            &["person:alpha", "place:north-trail"],
+        );
+
+        // **The safe set is written out here, not read off `rides_raw`.** An
+        // assertion phrased in terms of the allowlist it is guarding is not an
+        // assertion: widening the allowlist widens the test in lockstep, and
+        // adding one character to `rides_raw` passed this test while putting
+        // that character straight onto the page. So the alphabet is named
+        // literally, and the only way to widen what ships is to widen it here,
+        // in a diff a reviewer reads as exactly what it is.
+        //
+        // Letters and digits by Rust's own definition (`café` stays `café`),
+        // the four punctuation marks handles are made of, the two structural
+        // characters, and `%` — which is the escape and therefore the point.
+        let safe = |c: char| c.is_alphanumeric() || "-.:/ =%".contains(c);
+
+        let rendered = nasty.render();
+        let stray: Vec<char> = rendered.chars().filter(|c| !safe(*c)).collect();
+        assert!(
+            stray.is_empty(),
+            "these reached the page raw, and the store gets a say in every one of them: \
+             {stray:?} in {rendered}"
+        );
+        // …and it is still the caller's text underneath.
+        assert_eq!(Event::parse(&rendered).as_ref(), Some(&nasty));
+        assert_eq!(
+            Event::parse(&rendered).expect("reads").render(),
+            rendered,
+            "byte-identical, punctuation and all"
+        );
+    }
+
+    /// A `%` that begins nothing is kept as written — this module writes no
+    /// such token itself, but a hand edit leaves them behind and losing a byte
+    /// to tidy one up is the failure the whole module is against.
+    #[test]
+    fn a_malformed_escape_survives_as_the_bytes_it_is() {
+        for (token, expected) in [
+            ("100%", "100%"),
+            ("%zz", "%zz"),
+            ("%", "%"),
+            ("%2", "%2"),
+            // The first `%` begins nothing and stays; the second is a real pair.
+            ("a%%20b", "a% b"),
+        ] {
+            let read = Event::parse(&format!("type=t v={token}")).expect("reads");
+            assert_eq!(
+                read.metadata.get("v").map(String::as_str),
+                Some(expected),
+                "a malformed escape is data, not an error: {token}"
+            );
+        }
     }
 
     /// The characters that would otherwise break the grammar survive it — a
