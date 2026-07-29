@@ -88,17 +88,32 @@ async fn throwing_a_birthday_party() {
     let s = story.session().await;
 
     s.fact("person:patana", "coming to the party").await;
-    s.fact("person:barney-gumble", "cannot make the party")
-        .await;
+
+    // The decline goes on the PERSON as prose, and it has to, which is the
+    // finding: an attendance edge is binary — it exists or it does not — so it
+    // can say Barney is attending and cannot say he was asked and said no.
+    // Recording the decline as an edge would assert the opposite of what happened.
+    s.fact(
+        "person:barney-gumble",
+        "cannot make the party, away that weekend",
+    )
+    .await;
+
+    // So it is recorded, and it is findable — but only by asking the right words.
+    s.find("cannot make").await.says("person:barney-gumble");
+    s.recall("person:barney-gumble")
+        .await
+        .says("away that weekend");
 
     // GAP — THE ONE THIS STORY EXISTS FOR. A guest list is a set whose members
     // each carry a STATE that changes: invited, yes, no, silent. Recorded as
     // facts, "coming" and "cannot make it" sit beside "invited" with nothing
-    // superseding anything, and Ned — who has not answered — is indistinguishable
-    // from Ned before he was asked.
-    // s.attendance("event:birthday-party").set("person:patana", "yes").await;
+    // superseding anything, so the party still counts Barney among its guests.
+    // s.attendance("event:birthday-party").set("person:barney-gumble", "no").await;
 
-    // GAP — and therefore the question actually asked, every single time:
+    // GAP — and the two questions that follow from it, asked every single time.
+    // Neither can be answered from the event, only by reading each guest by hand.
+    // s.attendance("event:birthday-party").declined().says("person:barney-gumble");
     // s.attendance("event:birthday-party").still_silent().says("person:ned-flanders");
 
     s.wrap("two replies in, one outstanding").await;
