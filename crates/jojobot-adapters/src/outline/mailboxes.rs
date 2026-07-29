@@ -40,7 +40,7 @@ use super::mailbox_codec::{
     Row, message, next_message_id, parse_bodies, parse_name, parse_rows, render_body, seeded_page,
     with_rows_replaced,
 };
-use super::{Workspace, parse_entity, parse_id_marker};
+use super::{Restored, Workspace, parse_entity, parse_id_marker};
 
 /// The real Mailboxes adapter, over Outline.
 pub struct OutlineMailboxes {
@@ -190,10 +190,35 @@ impl OutlineMailboxes {
         self.reread(doc, verb).await
     }
 
-    async fn restore(&self, doc: &DocRec, verb: &str) -> String {
+    /// Put the page back, and report what happened as a value — see
+    /// [`super::Restored`].
+    async fn restore(&self, doc: &DocRec) -> Restored {
         match self.api().update_document(&doc.id, &doc.text).await {
-            Ok(()) => format!("the page was restored to its state before this {verb}"),
-            Err(e) => format!("AND restoring the page failed ({e}) — the page is mid-{verb}"),
+            Ok(()) => Restored::Undone,
+            Err(e) => Restored::Failed(e.to_string()),
+        }
+    }
+
+    /// The error a failed write becomes once the rollback has been attempted.
+    /// One place decides which of the two it is, so three call sites cannot
+    /// drift on what "stranded" means.
+    async fn undo(
+        &self,
+        doc: &DocRec,
+        verb: &str,
+        stranded: Vec<String>,
+        cause: String,
+    ) -> MailboxError {
+        match self.restore(doc).await {
+            Restored::Undone => store_msg(format!(
+                "{verb} failed ({cause}); the page was restored to its state before it"
+            )),
+            Restored::Failed(rollback) => MailboxError::Stranded {
+                verb: verb.to_string(),
+                stranded,
+                cause,
+                rollback,
+            },
         }
     }
 
@@ -216,19 +241,27 @@ impl OutlineMailboxes {
         let back = Self::assemble(name, &seen);
         for wanted in &rows {
             let Some(got) = back.iter().find(|m| m.id == wanted.id) else {
-                let restored = self.restore(doc, verb).await;
-                return Err(store_msg(format!(
-                    "message {} did not read back after {verb}; {restored}",
-                    wanted.id
-                )));
+                return Err(self
+                    .undo(
+                        doc,
+                        verb,
+                        vec![wanted.id.to_string()],
+                        format!("message {} did not read back", wanted.id),
+                    )
+                    .await);
             };
             if got.state != wanted.state || got.notes != normalize_notes(wanted.notes.as_deref()) {
-                let restored = self.restore(doc, verb).await;
-                return Err(store_msg(format!(
-                    "message {} read back changed after {verb}: wrote {wanted:?}, read \
-                     {got:?}; {restored}",
-                    wanted.id
-                )));
+                return Err(self
+                    .undo(
+                        doc,
+                        verb,
+                        vec![wanted.id.to_string()],
+                        format!(
+                            "message {} read back changed: wrote {wanted:?}, read {got:?}",
+                            wanted.id
+                        ),
+                    )
+                    .await);
             }
         }
         Ok(back)
@@ -417,11 +450,16 @@ impl Mailboxes for OutlineMailboxes {
             .find(|m| m.id == id)
             .ok_or_else(|| store_msg(format!("message {id} did not read back")))?;
         if back.body != body || back.sender != row.sender || back.subject != row.subject {
-            let restored = self.restore(&doc, "post_message").await;
-            return Err(store_msg(format!(
-                "message {id} read back changed: wrote {row:?} / {body:?}, read {back:?}; \
-                 {restored}"
-            )));
+            return Err(self
+                .undo(
+                    &doc,
+                    "post_message",
+                    vec![id.to_string()],
+                    format!(
+                        "message {id} read back changed: wrote {row:?} / {body:?}, read {back:?}"
+                    ),
+                )
+                .await);
         }
         // The title is cosmetic and best-effort, exactly as an entity doc's is.
         let _ = message_title(&back.sender, back.subject.as_deref(), &back.body);

@@ -20,6 +20,7 @@
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
+pub mod event;
 pub mod guard;
 pub mod search;
 
@@ -442,15 +443,28 @@ pub enum EdgeShape {
     Attendance,
     /// The subject is about something — the open shape: any kind of object.
     About,
+    /// **The subject is connected to something, and nobody recorded how.**
+    ///
+    /// Not a weaker `about`, and the distinction is the reason it exists.
+    /// `about` asserts that the record is ABOUT that entity — a claim somebody
+    /// made, and one a reader is entitled to act on. This one admits only that
+    /// a link is there; its nature is deferred, not implied. Filing an unknown
+    /// link as `about` would launder it into an assertion nobody made, and
+    /// everything downstream would read it as one.
+    ///
+    /// Deferred is not absent: the pointer is real and walks like any other
+    /// edge, because an edge that cannot be followed is not an edge.
+    Connection,
 }
 
 impl EdgeShape {
     /// Every shape, in declaration order.
-    pub const ALL: [EdgeShape; 4] = [
+    pub const ALL: [EdgeShape; 5] = [
         EdgeShape::Location,
         EdgeShape::Membership,
         EdgeShape::Attendance,
         EdgeShape::About,
+        EdgeShape::Connection,
     ];
 
     /// The **input and storage** token — what a caller passes and what the
@@ -461,6 +475,7 @@ impl EdgeShape {
             EdgeShape::Membership => "membership",
             EdgeShape::Attendance => "attendance",
             EdgeShape::About => "about",
+            EdgeShape::Connection => "connection",
         }
     }
 
@@ -472,6 +487,10 @@ impl EdgeShape {
             EdgeShape::Membership => "memberOf",
             EdgeShape::Attendance => "attendee",
             EdgeShape::About => "about",
+            // **Not `about`, and not a synonym for it.** schema.org's own word
+            // for a link whose nature is unstated: it relates these two and
+            // says nothing more, which is exactly the claim being made.
+            EdgeShape::Connection => "relatedTo",
         }
     }
 
@@ -490,6 +509,10 @@ impl EdgeShape {
             EdgeShape::Membership => Some(EntityKind::Org),
             EdgeShape::Attendance => Some(EntityKind::Event),
             EdgeShape::About => None,
+            // Any kind, for the same reason `about` takes any kind — and a
+            // stronger one: refusing a kind here would be jojobot deciding what
+            // the link means, which is the one thing it does not know.
+            EdgeShape::Connection => None,
         }
     }
 }
@@ -982,10 +1005,19 @@ pub struct NewFact {
     /// the fact: an edge is never a second, separately-failing write.
     ///
     /// There is deliberately **no `create_new` on this record.** Every entity a
-    /// capture names — its subject, its edge's object — must already exist (see
-    /// [`guard::decide_existing`]), so there is no suspicion for a caller to
-    /// wave away: a new entity is `add_entity` and then this, two steps.
+    /// capture names — its subject, its edge's object, an event's refs — must
+    /// already exist (see [`guard::decide_existing`]), so there is no suspicion
+    /// for a caller to wave away: a new entity is `add_entity` and then this,
+    /// two steps.
     pub edge: Option<Edge>,
+    /// **The marker that makes this fact an event**, or `None` for an ordinary
+    /// fact — which is the common case and the default.
+    ///
+    /// A fact is current truth and is rewritten in place; an event is
+    /// chronology and stays put. Nothing else distinguishes them, which is why
+    /// this rides on the same record and the same write rather than on a verb
+    /// of its own: an event IS a fact, with a date and this.
+    pub event: Option<event::Event>,
 }
 
 impl NewFact {
@@ -1000,6 +1032,7 @@ impl NewFact {
             status: FactStatus::default(),
             date,
             edge: None,
+            event: None,
         }
     }
 }
@@ -1028,6 +1061,18 @@ pub struct Fact {
     /// The typed edge this fact draws, if any. Read tolerantly: a cell the reader
     /// can't parse costs the edge, never the fact.
     pub edge: Option<Edge>,
+    /// The event record, when this fact is one. Read exactly as tolerantly as
+    /// the edge is, and for a stronger reason: a payload this build cannot make
+    /// sense of must still come back whole — see [`event::Event`].
+    pub event: Option<event::Event>,
+}
+
+impl Fact {
+    /// Whether this fact is an event. **The class filter's one question**, so
+    /// nothing downstream has to re-derive what "is an event" means.
+    pub fn is_event(&self) -> bool {
+        self.event.is_some()
+    }
 }
 
 impl Fact {
@@ -1124,6 +1169,31 @@ pub enum MemoryError {
          (confirmed_by_user); jojobot infers freely but never blesses on its own"
     )]
     UnconfirmedPromotion,
+    /// **A write failed, and putting the record back failed too.** It is left
+    /// mid-verb: not written, not restored, and not something the caller can
+    /// retry its way out of.
+    ///
+    /// Its own variant for the reason the mailbox and session contexts' are:
+    /// whether the rollback worked is the one thing a caller cannot infer from
+    /// anything else in the answer. This context had no such variant at all,
+    /// so a failed rollback here arrived as an ordinary [`MemoryError::Store`]
+    /// with the outcome written into the sentence — which is precisely the
+    /// shape the other two exist to prevent.
+    #[error(
+        "{verb} failed ({cause}) AND putting it back failed ({rollback}) — {} is left mid-{verb}, \
+         and a person has to look",
+        .stranded.join(", ")
+    )]
+    Stranded {
+        /// The verb that failed.
+        verb: String,
+        /// The ids left mid-write.
+        stranded: Vec<String>,
+        /// What failed first.
+        cause: String,
+        /// Why the rollback could not undo it.
+        rollback: String,
+    },
     /// The underlying store (Outline, or its network/parse layer) failed.
     #[error("store error: {0}")]
     Store(String),
@@ -1466,19 +1536,24 @@ mod tests {
     /// renders. `membership`/`memberOf` and `attendance`/`attendee` are where
     /// they diverge; input stays lowercase, always.
     #[test]
-    fn the_four_edge_shapes_round_trip_and_the_set_is_closed() {
+    fn the_edge_shapes_round_trip_and_the_set_is_closed() {
         let all = [
             (EdgeShape::Location, "location", "location"),
             (EdgeShape::Membership, "membership", "memberOf"),
             (EdgeShape::Attendance, "attendance", "attendee"),
             (EdgeShape::About, "about", "about"),
+            (EdgeShape::Connection, "connection", "relatedTo"),
         ];
         for (shape, token, name) in all {
             assert_eq!(shape.as_token(), token);
             assert_eq!(shape.as_name(), name);
             assert_eq!(EdgeShape::from_token(token), Some(shape));
         }
-        assert_eq!(EdgeShape::ALL.len(), 4, "four shapes in M2, no more");
+        assert_eq!(
+            EdgeShape::ALL.len(),
+            5,
+            "four shapes from M2, plus the untyped one events point with"
+        );
         // A response name is NOT an input token: the input grammar is unchanged.
         for unknown in ["memberOf", "attendee", "knows", "Location", "", "locaton"] {
             assert_eq!(
@@ -1487,6 +1562,53 @@ mod tests {
                 "{unknown:?} is not a shape token"
             );
         }
+    }
+
+    /// **The fifth shape, and the whole point of it is that it is not the
+    /// fourth.**
+    ///
+    /// An event may point at entities whose relationship nobody recorded. The
+    /// tempting move is to file those as `about`, since `about` already takes
+    /// any kind — and that is exactly the move this shape exists to refuse.
+    /// `about` ASSERTS that the record is about that entity, which is a claim
+    /// somebody made; a `connection` ADMITS a link whose meaning is unknown.
+    /// Collapsing the two launders an unknown into an assertion, and every
+    /// reader downstream then reads a claim nobody ever made.
+    ///
+    /// The pointer is real either way — that is the other half. Only the NATURE
+    /// of the link is deferred, so it must still be walkable, which is what
+    /// `an_untyped_edge_is_walkable_like_any_other` holds it to.
+    #[test]
+    fn the_untyped_shape_is_its_own_shape_and_never_about() {
+        assert_eq!(EdgeShape::Connection.as_token(), "connection");
+        assert_eq!(
+            EdgeShape::from_token("connection"),
+            Some(EdgeShape::Connection)
+        );
+        assert_ne!(
+            EdgeShape::Connection,
+            EdgeShape::About,
+            "an admitted link and an asserted one are not the same edge"
+        );
+        // …and they do not share a response name either, or a reader sorting by
+        // name would put them back together.
+        assert_ne!(EdgeShape::Connection.as_name(), EdgeShape::About.as_name());
+
+        // **Any kind, like `about`** — an event points at whatever it points at,
+        // and refusing a kind here would be jojobot deciding what the link
+        // means, which is the thing it does not know.
+        assert_eq!(EdgeShape::Connection.object_kind(), None);
+        for object in ["person:alpha", "place:north-trail", "event:winter-fest"] {
+            assert!(
+                validate_edge(&Edge::new(EdgeShape::Connection, EntityId(object.into()))).is_ok(),
+                "an untyped edge takes {object}"
+            );
+        }
+        // The id grammar is still enforced: unknown MEANING is not unknown SHAPE.
+        assert!(
+            validate_edge(&Edge::new(EdgeShape::Connection, EntityId("a|b".into()))).is_err(),
+            "a malformed handle is malformed whatever the link means"
+        );
     }
 
     /// Each shape pins its object's kind — `about` is the one open shape. A

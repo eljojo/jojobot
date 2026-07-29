@@ -158,6 +158,20 @@ impl Memory for InMemoryMemory {
                 candidates,
             });
         }
+        // **An event's refs are named entities like any other.** The rule is
+        // not about edges, it is about naming: nothing a write mentions is
+        // brought into being as a side effect of mentioning it. A ref that
+        // provisioned its own entity would make the open hatch the one place on
+        // the surface where that stopped being true.
+        for object in fact.event.iter().flat_map(|e| &e.refs) {
+            validate_subject(object)?;
+            if let Decision::Block(candidates) = guard::decide_existing(object, &index) {
+                return Ok(Guarded::Blocked {
+                    attempted: object.clone(),
+                    candidates,
+                });
+            }
+        }
 
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
         let home = fact.subject.clone();
@@ -174,6 +188,7 @@ impl Memory for InMemoryMemory {
             status: fact.status,
             date: fact.date,
             edge: fact.edge,
+            event: fact.event,
         };
         facts.push(stored.clone());
         Ok(Guarded::Written(stored))
@@ -425,6 +440,7 @@ pub mod contract {
             status: FactStatus::Active,
             date: date(2026, 3, 9),
             edge: None,
+            event: None,
         };
         let captured = capture(store, new).await;
         assert_eq!(captured.subject, subject);
@@ -1736,6 +1752,7 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(edge.clone()),
+                event: None,
                 ..NewFact::about(
                     subject.clone(),
                     "spending the winter away",
@@ -1769,6 +1786,7 @@ pub mod contract {
                 store,
                 NewFact {
                     edge: Some(Edge::new(shape, object.clone())),
+                    event: None,
                     ..NewFact::about(
                         subject.clone(),
                         format!("a {shape} claim"),
@@ -1842,6 +1860,7 @@ pub mod contract {
         let outcome = store
             .capture(NewFact {
                 edge: Some(Edge::new(EdgeShape::Location, typo.clone())),
+                event: None,
                 ..NewFact::about(subject.clone(), "should not land yet", date(2026, 7, 1))
             })
             .await
@@ -1865,6 +1884,7 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Location, object.clone())),
+                event: None,
                 ..NewFact::about(subject.clone(), "now it lands", date(2026, 7, 1))
             },
         )
@@ -2096,6 +2116,7 @@ pub mod contract {
         let outcome = store
             .capture(NewFact {
                 edge: Some(Edge::new(EdgeShape::Attendance, stranger.clone())),
+                event: None,
                 ..NewFact::about(subject.clone(), "should not land", date(2026, 7, 1))
             })
             .await
@@ -2132,6 +2153,7 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Attendance, stranger.clone())),
+                event: None,
                 ..NewFact::about(subject.clone(), "went both nights", date(2026, 7, 1))
             },
         )
@@ -2527,6 +2549,7 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Location, far.clone())),
+                event: None,
                 ..NewFact::about(
                     project.clone(),
                     "runs out of contract-faraway",
@@ -2569,6 +2592,7 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Attendance, fest.clone())),
+                event: None,
                 ..NewFact::about(
                     EntityId::person("contract-conn-one"),
                     "went both nights",
@@ -2581,6 +2605,7 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::About, fest.clone())),
+                event: None,
                 ..NewFact::about(
                     EntityId::new(EntityKind::Work, "contract-conn-mix"),
                     "recorded live that weekend",
@@ -2737,6 +2762,7 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Location, hall.clone())),
+                event: None,
                 ..NewFact::about(
                     handle.clone(),
                     "meets on the first Sunday",
@@ -2767,6 +2793,7 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Location, place.clone())),
+                event: None,
                 ..NewFact::about(EntityId::person(who), "spending the season there", on)
             },
         )

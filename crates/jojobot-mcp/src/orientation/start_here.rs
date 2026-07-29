@@ -43,8 +43,9 @@ impl Jojobot {
         description = "New here? Call this first — it is the ONE door, whether or not you have an \
                        identity. Explains what jojobot is and how its world fits together — \
                        entities, facts, provenance, edges, mailboxes — with worked examples, and \
-                       returns a live snapshot of what exists right now (entities by kind, and \
-                       every mailbox by name — with counts for the ones you drain), so you start \
+                       returns a live snapshot of what exists right now (entities by kind, EVERY \
+                       BOT NAMED so you can see which identities you could boot as, and every \
+                       mailbox by name — with counts for the ones you drain), so you start \
                        oriented instead of guessing. CALLED THIS \
                        BEFORE? Pass brief: true and you get the snapshot without the essay — the \
                        essay is the only part that does not change between calls, and calling \

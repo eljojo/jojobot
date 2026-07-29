@@ -43,7 +43,7 @@ use super::session_codec::{
     Row, next_entry_id, next_session_id, parse_bot, parse_entries, parse_rows, render_entry,
     seeded_page, with_entry_replaced, with_rows_replaced,
 };
-use super::{Workspace, parse_id_marker};
+use super::{Restored, Workspace, parse_id_marker};
 
 /// The title a sessions page is created with. Cosmetic, exactly as an entity
 /// doc's title is: the `of:` line resolves the page, so an operator may rename
@@ -211,10 +211,35 @@ impl OutlineSessions {
     /// Put a page back the way a failed write found it — the same best-effort
     /// restore the Memory store makes, and reported the same way: whether the
     /// rollback worked is the one thing a caller cannot infer.
-    async fn restore(&self, doc: &DocRec, verb: &str) -> String {
+    /// Put the page back, and report what happened as a value — see
+    /// [`super::Restored`].
+    async fn restore(&self, doc: &DocRec) -> Restored {
         match self.api().update_document(&doc.id, &doc.text).await {
-            Ok(()) => format!("the page was restored to its state before this {verb}"),
-            Err(e) => format!("AND restoring the page failed ({e}) — the page is mid-{verb}"),
+            Ok(()) => Restored::Undone,
+            Err(e) => Restored::Failed(e.to_string()),
+        }
+    }
+
+    /// The error a failed write becomes once the rollback has been attempted.
+    /// One place decides which of the two it is, so four call sites cannot
+    /// drift on what "stranded" means.
+    async fn undo(
+        &self,
+        doc: &DocRec,
+        verb: &str,
+        stranded: Vec<String>,
+        cause: String,
+    ) -> SessionError {
+        match self.restore(doc).await {
+            Restored::Undone => store_msg(format!(
+                "{verb} failed ({cause}); the page was restored to its state before it"
+            )),
+            Restored::Failed(rollback) => SessionError::Stranded {
+                verb: verb.to_string(),
+                stranded,
+                cause,
+                rollback,
+            },
         }
     }
 
@@ -251,11 +276,14 @@ impl OutlineSessions {
             .find(|s| &s.id == id)
             .ok_or_else(|| store_msg(format!("session {id} did not read back after {verb}")))?;
         if back.state != wanted.state || back.focus != wanted.focus || back.sid != wanted.sid {
-            let restored = self.restore(&doc, verb).await;
-            return Err(store_msg(format!(
-                "session {id} read back changed after {verb}: wrote {wanted:?}, read \
-                 {back:?}; {restored}"
-            )));
+            return Err(self
+                .undo(
+                    &doc,
+                    verb,
+                    vec![id.to_string()],
+                    format!("session {id} read back changed: wrote {wanted:?}, read {back:?}"),
+                )
+                .await);
         }
         Ok(back)
     }
@@ -355,11 +383,17 @@ impl Sessions for OutlineSessions {
             .find(|s| s.id == row.id)
             .ok_or_else(|| store_msg(format!("session {} did not read back", row.id)))?;
         if back.focus != row.focus || back.sid != row.sid || back.started_at != row.started_at {
-            let restored = self.restore(&doc, "begin").await;
-            return Err(store_msg(format!(
-                "session {} read back changed: wrote {row:?}, read {back:?}; {restored}",
-                row.id
-            )));
+            return Err(self
+                .undo(
+                    &doc,
+                    "begin",
+                    vec![row.id.to_string()],
+                    format!(
+                        "session {} read back changed: wrote {row:?}, read {back:?}",
+                        row.id
+                    ),
+                )
+                .await);
         }
         Ok(back)
     }
@@ -393,11 +427,17 @@ impl Sessions for OutlineSessions {
             .map(|(_, e)| e)
             .ok_or_else(|| store_msg(format!("entry {} did not read back", written.id)))?;
         if back != written {
-            let restored = self.restore(&doc, "append").await;
-            return Err(store_msg(format!(
-                "entry {} read back changed: wrote {written:?}, read {back:?}; {restored}",
-                written.id
-            )));
+            return Err(self
+                .undo(
+                    &doc,
+                    "append",
+                    vec![written.id.to_string()],
+                    format!(
+                        "entry {} read back changed: wrote {written:?}, read {back:?}",
+                        written.id
+                    ),
+                )
+                .await);
         }
         Ok(back)
     }
@@ -507,11 +547,17 @@ impl OutlineSessions {
             .map(|(_, e)| e)
             .ok_or_else(|| store_msg(format!("entry {} did not read back", amended.id)))?;
         if &back != amended {
-            let restored = self.restore(doc, verb).await;
-            return Err(store_msg(format!(
-                "entry {} read back changed: wrote {amended:?}, read {back:?}; {restored}",
-                amended.id
-            )));
+            return Err(self
+                .undo(
+                    doc,
+                    verb,
+                    vec![amended.id.to_string()],
+                    format!(
+                        "entry {} read back changed: wrote {amended:?}, read {back:?}",
+                        amended.id
+                    ),
+                )
+                .await);
         }
         Ok(back)
     }

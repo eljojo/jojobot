@@ -89,10 +89,29 @@ impl Jojobot {
                     let kind = e.id.as_str().split(':').next().unwrap_or("unknown");
                     *by_kind.entry(kind).or_default() += 1;
                 }
+                // **The one kind that is NAMED and not merely counted**, because
+                // it is the only one this door asks you to pick from. An
+                // anonymous boot could see that five identities exist and could
+                // not learn one to boot as — while the refusal for an unknown
+                // bot lists every real one, so the only route to a usable name
+                // was to guess a wrong one and read it off the complaint. The
+                // door's own suggested next step was unreachable from the door.
+                //
+                // **Names only, and the refusal's own spelling.** Counts and
+                // charters belong to a caller weighing its own work; this one
+                // owns nothing and is choosing an identity. `bots`, full
+                // handles, so one record has one shape wherever it appears.
+                let mut bots: Vec<&str> = entities
+                    .iter()
+                    .filter(|e| e.kind == EntityKind::Bot)
+                    .map(|e| e.id.as_str())
+                    .collect();
+                bots.sort_unstable();
                 serde_json::json!({
                     "available": true,
                     "count": entities.len(),
                     "by_kind": by_kind,
+                    "bots": bots,
                 })
             }
             Err(_) => serde_json::json!({
@@ -358,6 +377,62 @@ mod tests {
         // The bot's own box still comes back in full under `identity`, which is
         // the whole point of booting as somebody.
         assert_eq!(booted["identity"]["owned_mailbox"]["counts"]["new"], 1);
+    }
+
+    /// **The door's own next step was unreachable from the door.**
+    ///
+    /// An anonymous boot counted the bots and named none of them, so a caller
+    /// with no identity — which is exactly the caller this answer is for — could
+    /// see that five identities exist and could not pick one. Meanwhile the
+    /// refusal for an unknown bot lists every real one. So the only way to learn
+    /// a name you could boot with was to guess a name that does not exist and
+    /// read it off the complaint, and a context-free runner did precisely that.
+    ///
+    /// The surface was inconsistent with itself rather than minimal. Naming them
+    /// here adds no tool and no second call to the first call anybody makes.
+    ///
+    /// **Names only.** Not counts, not charters: an anonymous caller owns
+    /// nothing and is weighing nothing, and the same spelling the refusal uses
+    /// (`bots`, full handles) so one record has one shape across the surface.
+    #[tokio::test]
+    async fn the_snapshot_names_the_bots_a_caller_could_boot_as() {
+        let jojobot = mailbox_handler();
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
+        ensure(&jojobot, "alpha").await;
+
+        let anonymous = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    bot: None,
+                    brief: None,
+                    resume: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let entities = &anonymous["snapshot"]["entities"];
+        assert_eq!(
+            entities["bots"],
+            serde_json::json!(["bot:delta", "bot:gamma"]),
+            "the door has to name what it counts: {anonymous}"
+        );
+        // A person is not an identity you can boot as, so the roster is not
+        // simply the index with a different key on it.
+        assert_eq!(entities["by_kind"]["person"], 1, "{anonymous}");
+
+        // **Named, never weighed.** The counts belong to whoever drains the
+        // box; an anonymous caller drains none and is choosing an identity, not
+        // grading one.
+        let listed = entities["bots"].as_array().expect("a roster");
+        assert!(
+            listed.iter().all(serde_json::Value::is_string),
+            "names, not records carrying counts or charters: {anonymous}"
+        );
+
+        // …and the name it hands over actually boots, which is the whole claim.
+        let booted = boot(&jojobot, "delta").await;
+        assert_eq!(booted["identity"]["bot"]["id"], "bot:delta", "{booted}");
     }
 
     /// **A repair scoped to whoever happens to boot cannot converge, so the
