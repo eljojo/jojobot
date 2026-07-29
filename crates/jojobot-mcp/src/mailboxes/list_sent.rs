@@ -252,7 +252,10 @@ mod tests {
                 &jojobot
                     .read_message(Parameters(ReadMessageArgs {
                         message_id: theirs["id"].as_str().expect("an id").to_string(),
-                        sid: None
+                        // Asked of the box's OWN drainer, which is the only
+                        // caller that can take delivery — and the only one whose
+                        // `seen_before` answers the question being put here.
+                        sid: Some(as_bot(&jojobot, "pm"))
                     }))
                     .await
                     .expect("read ok")

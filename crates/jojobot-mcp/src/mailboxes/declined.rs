@@ -1,11 +1,39 @@
 //! **The mailbox context's refusals.**
 //!
-//! Three shapes wearing one envelope, because the way out of each differs: a
-//! name that resembles a box, an id that names nothing at all, and a card
-//! jojobot cannot read as a message — that last one needs a person, not a
-//! retry. All are successful results whose body says `status: "blocked"`.
+//! Four shapes wearing one envelope, because the way out of each differs: a
+//! name that resembles a box, an id that names nothing at all, something
+//! jojobot cannot read as a message — that one needs a person, not a retry —
+//! and a message that is somebody else's to take delivery of. All are
+//! successful results whose body says `status: "blocked"`.
 
 use super::*;
+
+/// **Somebody else's message, addressed by id.**
+///
+/// The read side has no box argument at all, so a caller cannot open another
+/// bot's box; this closed the same move made one message at a time. What the
+/// refusal owes is the legitimate alternative, because a session that needs
+/// something out of another box and is told only "no" will find a worse way.
+/// Writing INTO that box is the sanctioned shape, and it is the shape of a
+/// request rather than a taking.
+pub(crate) fn not_yours(id: &MessageId, theirs: &MailboxName) -> CallToolResult {
+    let body = serde_json::json!({
+        "status": "blocked",
+        "attempted": id.as_str(),
+        "wrote": false,
+        "mailbox": theirs.as_str(),
+        "how_to_proceed": format!(
+            "Nothing was delivered and nothing moved. Message '{id}' is in '{theirs}', which is \
+             not your box — and reading IS taking delivery, so opening it would move somebody \
+             else's mail out of `new` and it would never look fresh to the bot it was sent to \
+             again. Ids are a plain counter, so the one beside yours is somebody else's; this is \
+             not a permission you can be granted. To reach that box, post_message writes into it \
+             without reading it, which is the shape of a request — ask its owner for what you \
+             need. Your own mail is read_mailbox, which needs no id and no name."
+        ),
+    });
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
 
 /// **One gate left, because there is one way to meet a box name: by naming one
 /// that must already exist.** There used to be a `Creating` arm for the mint;

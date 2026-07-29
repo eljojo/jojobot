@@ -136,7 +136,7 @@ Two consequences worth stating outright, because they surprise people:
 |---|---|
 | `post_message` | Leaving word for someone not in this conversation. The one verb that reaches another box. |
 | `read_mailbox` | Taking delivery of everything waiting in its own channel. Leftovers from an interrupted read come back too, flagged and still owed. With `counts_only`, checking what is waiting and taking delivery of none of it — so a poll that finds nothing costs nothing and owes nothing. |
-| `read_message` | Taking delivery of exactly one message, without draining the box. |
+| `read_message` | Taking delivery of exactly one message from its own box, without draining the rest. A live message in somebody else's box is refused; the `processed` archive is readable from anywhere, because reading history moves nothing. |
 | `mark_processed` | Retiring a message once it has actually been acted on, with a note recording the outcome — including failure. Terminal; an archive, never a deletion. |
 | `list_sent` | Checking whether what it sent arrived, and what became of it, without moving anything. |
 

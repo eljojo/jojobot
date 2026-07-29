@@ -100,7 +100,12 @@ Shipped and live:
   and an `in_reply_to` link to the message it answers, and **`read_message`
   takes delivery of one by id** — draining a whole box makes every message in
   it owed work, which is the wrong price for wanting the single one a search
-  hit named. **`list_sent` is the sender's own view**: where your mail got to
+  hit named. **It takes from your own box only**: the read side has no box
+  argument so that another bot's box cannot be opened, and a bare id reached
+  the same mail one message at a time — the door locked and the window open.
+  The guard is on the STATE CHANGE, not the bytes, so the terminal `processed`
+  archive stays readable from anywhere: reading one moves nothing, and it is
+  what a search hit over old mail points at. **`list_sent` is the sender's own view**: where your mail got to
   and whether anyone has read it, read-only and moving nothing. And
   **`read_mailbox` with `counts_only` is how you poll**: your box's per-state
   counts and anything on it jojobot cannot read, taking delivery of nothing —

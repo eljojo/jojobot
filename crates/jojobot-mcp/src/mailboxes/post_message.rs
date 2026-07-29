@@ -295,7 +295,9 @@ mod tests {
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
                     message_id: reply["id"].as_str().expect("an id").to_string(),
-                    sid: None,
+                    // Read by the box's own drainer: taking delivery is the
+                    // owner's move now, and this reply landed in pm's box.
+                    sid: Some(as_bot(&jojobot, "pm")),
                 }))
                 .await
                 .expect("read_message ok"),
