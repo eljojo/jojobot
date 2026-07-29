@@ -666,13 +666,13 @@ pub mod contract {
     /// has to survive it is the one standing in front of a markdown editor.
     pub async fn a_subject_the_store_rewrites_still_posts(store: &dyn Mailboxes) {
         create(store, "inbox").await;
-        // **`_under_` is deliberately absent, and it is not fixed.** The store
-        // does two different things to a cell: it inserts escapes (`~` becomes
-        // `\~`), which the comparison forgives, and it NORMALIZES emphasis
-        // markers (`_under_` becomes `*under*`), which it does not. That
-        // second one is a semantic rewrite rather than an escape, and
-        // forgiving it needs a decision nobody has made yet.
+        // Both things the store does to a cell are here: an inserted escape,
+        // and a respelled emphasis marker. The snake-cased one is the case
+        // that decides whether ordinary technical subjects are writable at
+        // all, and the store leaves it alone.
         for (n, subject) in [
+            "_under_ emphasis",
+            "parse_bodies and same_cell_value",
             "a ~ b ~ c",
             "# heading",
             "- a leading dash",

@@ -680,6 +680,14 @@ const GOLDEN_BATTERY: &[(&str, &str)] = &[
     ("bulleted-list", "- first\n* second\n+ third"),
     ("line-start-syntax", "# heading\n> quoted\n---"),
     ("emphasis", "_under_ *star* **bold** `tick`"),
+    // **Snake case, because our own cells are full of it** — identifiers,
+    // test names, function names. If the store reads a snake-cased token as an
+    // emphasis run, the class of subjects that cannot be written is most of
+    // what this project writes rather than an exotic corner.
+    (
+        "snake-case",
+        "parse_bodies and same_cell_value in mailbox_codec",
+    ),
     ("angle-brackets", "<b>bold</b> & an <email@example.test>"),
     ("backslash", "c:\\dir\\file and a trailing \\"),
     ("pipe", "a | b | c"),

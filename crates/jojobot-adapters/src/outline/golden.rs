@@ -60,6 +60,13 @@ pub(super) const BATTERY: &[(&str, &str)] = &[
     // A heading, a quote and a rule: all line-start syntax, all re-serialized.
     ("line-start-syntax", "# heading\n> quoted\n---"),
     ("emphasis", "_under_ *star* **bold** `tick`"),
+    // Our own cells are full of snake case, so whether the store reads it as
+    // an emphasis run decides whether a whole class of ordinary technical
+    // subjects can be written at all.
+    (
+        "snake-case",
+        "parse_bodies and same_cell_value in mailbox_codec",
+    ),
     ("angle-brackets", "<b>bold</b> & an <email@example.test>"),
     ("backslash", "c:\\dir\\file and a trailing \\"),
     ("pipe", "a | b | c"),

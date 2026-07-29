@@ -222,7 +222,41 @@ pub fn same_cell_value(wrote: &str, read: &str) -> bool {
         }
         out
     }
-    wrote == read || without_added_escapes(wrote) == without_added_escapes(read)
+    /// **One named case, and the goldens are its floor.** The store respells
+    /// underscore-emphasis as asterisk-emphasis: `_under_` comes back
+    /// `*under*`. Nothing is escaped and nothing is lost — it is the same
+    /// emphasis run wearing the other marker.
+    ///
+    /// **Intraword underscores are left alone, and that is measured rather
+    /// than assumed.** `parse_bodies` comes back untouched, so a `_` with a
+    /// letter on both sides is not a delimiter and is not respelled. That
+    /// matters more than it looks: our own subjects are full of identifiers,
+    /// and forgiving those would be forgiving a difference in a name.
+    ///
+    /// This is deliberately not a model of markdown. It forgives what the
+    /// recording shows and nothing else, and a rule that cannot point at a
+    /// golden does not belong here.
+    fn as_one_emphasis_marker(cell: &str) -> String {
+        let chars: Vec<char> = cell.chars().collect();
+        chars
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                if *c != '_' {
+                    return *c;
+                }
+                let inside_a_word = i > 0
+                    && chars[i - 1].is_alphanumeric()
+                    && chars.get(i + 1).is_some_and(|n| n.is_alphanumeric());
+                if inside_a_word { '_' } else { '*' }
+            })
+            .collect()
+    }
+
+    let same_after = |f: fn(&str) -> String| f(wrote) == f(read);
+    wrote == read
+        || same_after(without_added_escapes)
+        || same_after(|c| as_one_emphasis_marker(&without_added_escapes(c)))
 }
 
 #[cfg(test)]
@@ -344,6 +378,13 @@ mod tests {
     fn a_cell_the_store_escaped_is_the_same_value() {
         for (wrote, read) in [
             ("a ~ b ~ c", "a \\~ b \\~ c"),
+            // Read from fixtures/mailboxes/emphasis.parsed.json, not from an
+            // idea of what markdown does — the first draft of this test
+            // invented the wrong transformation for exactly this case.
+            (
+                "_under_ *star* **bold** `tick`",
+                "*under* *star* **bold** `tick`",
+            ),
             ("# heading > quoted ---", "\\# heading > quoted ---"),
             (
                 "<b>bold</b> & an <email@example.test>",
@@ -373,6 +414,12 @@ mod tests {
             ("something", ""),
             ("", "something"),
             ("person:alpha", "person:beta"),
+            // An underscore INSIDE a word is a name, not a marker, and the
+            // store leaves it alone — measured in
+            // fixtures/mailboxes/snake-case.parsed.json. So a difference in
+            // one is a difference in a name.
+            ("parse_bodies", "parse*bodies"),
+            ("same_cell_value", "same_cell_valve"),
             // A backslash the WRITER put before a letter is theirs, and losing
             // it is loss.
             ("c:\\dir", "c:dir"),
