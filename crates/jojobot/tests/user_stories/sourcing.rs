@@ -7,6 +7,9 @@
 //! sessions, each a real moment, each recorded the way it would actually
 //! happen, to see what pointing at a source needs.
 //!
+//! The subject is a place, never a person — people-related content
+//! migrates last, unconditionally (rule 78), and nothing here needs one.
+//!
 //! `// GAP —` marks a call that cannot be made today.
 
 use super::dsl::Story;
@@ -18,42 +21,41 @@ async fn a_claim_names_where_it_came_from() {
     // ── session 1 · a claim from a source ───────────────────────────────────
     let s = story.session().await;
 
-    s.add("person:milhouse", "Milhouse").await;
+    s.add("place:north-trail", "North Trail").await;
 
     // Three conceptual steps — create the source, record the claim, point
     // at the source — land as two calls, not three: `capture` already
     // carries an edge in the same call as its content, so recording the
     // claim and pointing it at the source are one write, not two. No batch
     // verb used or needed here.
-    s.add("thing:marathon-email", "An Email From Milhouse")
-        .await;
+    s.add("thing:trail-email", "An Email About The Trail").await;
     s.fact_about(
-        "person:milhouse",
-        "running a marathon in October, per his email",
+        "place:north-trail",
+        "closed for resurfacing until spring, per an email",
         "about",
-        "thing:marathon-email",
+        "thing:trail-email",
     )
     .await;
 
-    s.wrap("the marathon is on record, and where it came from")
+    s.wrap("the closure is on record, and where it came from")
         .await;
 
     // ── session 2 · a claim derived from a claim ────────────────────────────
     let s = story.session().await;
 
     s.guess(
-        "person:milhouse",
-        "won't want a heavy dinner the week before the marathon",
+        "place:north-trail",
+        "the loop will be busy with cyclists once it reopens",
     )
     .await;
 
-    // GAP — this claim is derived FROM the marathon claim above, not from
+    // GAP — this claim is derived FROM the closure claim above, not from
     // an entity, and there is nothing to point it at. An edge's object is
     // a kind:slug entity id; a fact's own address is not one. Pointing a
     // claim at another claim needs something an entity-to-entity edge does
     // not give: this is the fact-to-fact case the recorded design has not
     // named yet.
-    // s.sourced_from("the dinner claim", "the marathon claim").await;
+    // s.sourced_from("the cyclists claim", "the closure claim").await;
 
     s.wrap("worked out, and untraceable to what it was worked out from")
         .await;
@@ -63,83 +65,79 @@ async fn a_claim_names_where_it_came_from() {
 
     // The event, and its result as a fact about it — this half already
     // works today: `event` is an entity kind like any other, and a fact
-    // can be about an event exactly as it can about a person.
-    s.add("event:allergy-screening", "Allergy Screening").await;
-    s.fact("event:allergy-screening", "came back positive for peanuts")
+    // can be about an event exactly as it can about a place.
+    s.add("event:trail-survey", "Trail Survey").await;
+    s.fact("event:trail-survey", "found the loop safe for hikers")
         .await;
 
-    // The claim about the person, pointing at the event as its source —
+    // The claim about the place, pointing at the event as its source —
     // same shape as session 1, because the source here is an entity too.
-    let allergy = s
+    let cleared = s
         .fact_about(
-            "person:milhouse",
-            "allergic to peanuts, per the test",
+            "place:north-trail",
+            "cleared for hiking, per the survey",
             "about",
-            "event:allergy-screening",
+            "event:trail-survey",
         )
         .await;
 
-    s.wrap("the allergy is on record, and where it came from")
+    s.wrap("the clearance is on record, and where it came from")
         .await;
 
     // ── session 4 · the brief, and the challenge ────────────────────────────
     let s = story.session().await;
 
-    // The brief: everything about him, testimony and inference side by
+    // The brief: everything about it, testimony and inference side by
     // side, in one read.
-    s.recall("person:milhouse")
+    s.recall("place:north-trail")
         .await
         .says("testimony")
         .says("inference");
 
-    // The challenge: where did the allergy claim come from? Named, not a
+    // The challenge: where did the clearance claim come from? Named, not a
     // bare id — the entity it traces to is right there in the same read
     // that shows the claim itself.
-    s.recall("person:milhouse")
+    s.recall("place:north-trail")
         .await
-        .says("allergic to peanuts")
-        .says("event:allergy-screening");
+        .says("cleared for hiking")
+        .says("event:trail-survey");
 
-    // GAP — and the dinner claim has no answer to the same question. It
-    // reads as an inference, same as the allergy claim, but nothing traces
-    // it to what it was worked out from — there is nothing to trace it to,
-    // because what it was derived from is a claim, not an entity.
+    // GAP — and the cyclists claim has no answer to the same question. It
+    // reads as an inference, same as the clearance claim, but nothing
+    // traces it to what it was worked out from — there is nothing to trace
+    // it to, because what it was derived from is a claim, not an entity.
 
-    s.wrap("caught up before dinner, mostly traceable").await;
+    s.wrap("caught up, mostly traceable").await;
 
-    // ── session 5 · years later, the test is redone ─────────────────────────
+    // ── session 5 · years later, conditions change ──────────────────────────
     let s = story.session().await;
 
-    s.add("event:allergy-clearance", "Allergy Clearance").await;
-    s.fact("event:allergy-clearance", "came back negative for peanuts")
+    s.add("event:erosion-review", "Erosion Review").await;
+    s.fact("event:erosion-review", "found erosion along the loop")
         .await;
 
-    // Not a refutation — the first test was not wrong, the world changed.
+    // Not a refutation — the survey was not wrong, conditions changed.
     // Both events stand; the claim is rewritten to the current truth, and
     // its edge is re-pointed in the same call, so it does not go on tracing
-    // to a test that no longer matches what the claim now says.
+    // to a survey that no longer matches what the claim now says.
     s.correct_with_source(
-        &allergy,
-        "no longer allergic to peanuts, per the followup test",
-        "event:allergy-clearance",
+        &cleared,
+        "closed pending repair, per the erosion review",
+        "event:erosion-review",
     )
     .await;
 
-    s.recall("person:milhouse")
+    s.recall("place:north-trail")
         .await
-        .says("no longer allergic")
-        .says("event:allergy-clearance")
-        .never_says("event:allergy-screening");
+        .says("closed pending repair")
+        .says("event:erosion-review")
+        .never_says("event:trail-survey");
 
-    // Neither test is retracted — both happened, and both stay findable.
-    s.find("allergy-screening")
-        .await
-        .says("event:allergy-screening");
-    s.find("allergy-clearance")
-        .await
-        .says("event:allergy-clearance");
+    // Neither event is retracted — both happened, and both stay findable.
+    s.find("trail-survey").await.says("event:trail-survey");
+    s.find("erosion-review").await.says("event:erosion-review");
 
-    s.wrap("the record changed cleanly, and both tests still stand")
+    s.wrap("the record changed cleanly, and both events still stand")
         .await;
 
     story.finish().await;
