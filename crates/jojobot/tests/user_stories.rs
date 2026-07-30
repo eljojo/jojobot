@@ -13,6 +13,8 @@
 // the folder is named explicitly.
 #[path = "user_stories/bikes.rs"]
 mod bikes;
+#[path = "user_stories/challenge.rs"]
+mod challenge;
 #[path = "user_stories/dsl.rs"]
 mod dsl;
 #[path = "user_stories/moving.rs"]
