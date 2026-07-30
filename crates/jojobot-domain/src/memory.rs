@@ -1334,7 +1334,33 @@ pub enum MemoryError {
          (confirmed_by_user); jojobot infers freely but never blesses on its own"
     )]
     UnconfirmedPromotion,
+    /// **A write failed, and putting the record back failed too.** It is left
+    /// mid-verb: not written, not restored, and not something the caller can
+    /// retry its way out of. Its own variant for the same reason the mailbox
+    /// and session rails have one: whether a rollback worked is the one thing
+    /// a caller cannot infer from anything else in the answer, and carrying
+    /// it as a sentence inside a general store error means detecting it is
+    /// string-matching that sentence — so rewording it silently breaks the
+    /// detection with every test green.
+    #[error(
+        "{verb} failed ({cause}) AND putting it back failed ({rollback}) — {} is left mid-{verb}, \
+         and a person has to look",
+        .stranded.join(", ")
+    )]
+    Stranded {
+        /// The verb that failed.
+        verb: String,
+        /// The ids left mid-write.
+        stranded: Vec<String>,
+        /// What failed first.
+        cause: String,
+        /// Why the rollback could not undo it.
+        rollback: String,
+    },
     /// The underlying store (Outline, or its network/parse layer) failed.
+    /// **A clean failure, not a stranded one**: nothing was written and the
+    /// record is as it was, so retrying is a reasonable next move — which is
+    /// exactly what tells this variant apart from [`MemoryError::Stranded`].
     #[error("store error: {0}")]
     Store(String),
     /// The store isn't configured (no credentials). Production fronts real

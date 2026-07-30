@@ -490,16 +490,28 @@ impl OutlineStore {
     ///
     /// **One place decides which of the two it is**, so the two answers cannot
     /// drift apart across five call sites — and so that adding a sixth cannot
-    /// quietly pick the wrong one.
-    async fn undo(&self, doc: &DocRec, verb: &'static str, cause: String) -> MemoryError {
+    /// quietly pick the wrong one. A restored page is a clean [`Store`
+    /// failure](MemoryError::Store): nothing written, retrying is reasonable.
+    /// A rollback that also failed is [`Stranded`](MemoryError::Stranded):
+    /// part of it may remain, and retrying is not a safe next move — the same
+    /// distinction the mailbox and session rails already draw.
+    async fn undo(
+        &self,
+        doc: &DocRec,
+        verb: &'static str,
+        stranded: Vec<String>,
+        cause: String,
+    ) -> MemoryError {
         match self.restore(doc).await {
             Restored::Undone => MemoryError::Store(format!(
                 "{verb} failed ({cause}); nothing was written and the record is as it was"
             )),
-            Restored::Failed(rollback) => MemoryError::Store(format!(
-                "{verb} failed ({cause}) AND undoing it failed ({rollback}) — part of it may \
-                 remain, and a person has to look"
-            )),
+            Restored::Failed(rollback) => MemoryError::Stranded {
+                verb: verb.to_string(),
+                stranded,
+                cause,
+                rollback,
+            },
         }
     }
 
@@ -699,6 +711,7 @@ impl Memory for OutlineStore {
                 .undo(
                     &doc,
                     "update_entity",
+                    vec![handle.to_string()],
                     format!("entity {handle} read back changed: wrote {entity:?}, read {seen:?}"),
                 )
                 .await);
@@ -811,6 +824,7 @@ impl Memory for OutlineStore {
                 .undo(
                     &doc,
                     "capture",
+                    vec![stored.address().to_string()],
                     format!("fact {}: {changed}", stored.address()),
                 )
                 .await);
@@ -915,7 +929,12 @@ impl Memory for OutlineStore {
         let seen = self.read_back_fact(address).await?;
         if let Some(changed) = fact_changed(&fact, &seen) {
             return Err(self
-                .undo(&doc, "update_fact", format!("fact {address}: {changed}"))
+                .undo(
+                    &doc,
+                    "update_fact",
+                    vec![address.to_string()],
+                    format!("fact {address}: {changed}"),
+                )
                 .await);
         }
         Ok(Guarded::Written(seen))
@@ -1000,6 +1019,7 @@ impl Memory for OutlineStore {
                 .undo(
                     &doc,
                     "retract",
+                    vec![address.to_string(), record.address().to_string()],
                     format!("retraction of {address}: {changed}"),
                 )
                 .await);
@@ -1052,6 +1072,7 @@ impl Memory for OutlineStore {
                 .undo(
                     &doc,
                     "set_prose",
+                    vec![entity.to_string()],
                     format!("prose on {entity} read back changed: wrote {stored:?}, read {seen:?}"),
                 )
                 .await);

@@ -165,7 +165,7 @@ pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
         // failed and could not be undone, leaving a card mid-verb. Both are
         // integrity conditions on the server side that need a person.
         MailboxError::Stranded { .. } => McpError::internal_error(
-            crate::boundary::store_failed("this call", &e.to_string()),
+            crate::boundary::stranded("this call", &e.to_string()),
             None,
         ),
         MailboxError::NotConfigured(msg) => {
@@ -199,9 +199,22 @@ mod tests {
             "the adapter's own words crossed: {}",
             err.message
         );
+        // **Not "Try once more."** A stranded write may have half-landed, so a
+        // repeat could double it — the caller needs to be told not to retry,
+        // never the opposite.
         assert!(
-            err.message.contains("Try once more"),
-            "a caller needs its next move: {}",
+            !err.message.contains("Try once more"),
+            "a stranded write must not invite a retry: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("Do not try again"),
+            "…and must say so plainly: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("Tell the operator") || err.message.contains("tell the operator"),
+            "a caller needs the way out that is actually safe: {}",
             err.message
         );
     }

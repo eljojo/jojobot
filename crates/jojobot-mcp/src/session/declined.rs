@@ -115,11 +115,51 @@ pub(crate) fn session_error(e: SessionError) -> McpError {
         // tables, which is its business and never a caller's — logged instead,
         // where an operator debugging a real failure wants it. See
         // [`crate::boundary`].
-        SessionError::Stranded { .. } | SessionError::Store(_) | SessionError::NotConfigured(_) => {
-            McpError::internal_error(
-                crate::boundary::store_failed("this call", &e.to_string()),
-                None,
-            )
+        SessionError::Store(_) | SessionError::NotConfigured(_) => McpError::internal_error(
+            crate::boundary::store_failed("this call", &e.to_string()),
+            None,
+        ),
+        SessionError::Stranded { .. } => {
+            McpError::internal_error(crate::boundary::stranded("this call", &e.to_string()), None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stranded write must never be told to retry — it may have
+    /// half-landed, and a repeat could double whatever did.
+    #[test]
+    fn a_stranded_write_does_not_invite_a_retry() {
+        let leaky_cause = "the page for gamma has no table";
+        let leaky_rollback = "the row vanished from the document";
+        let err = session_error(SessionError::Stranded {
+            verb: "journal".into(),
+            stranded: vec!["gamma-4".into()],
+            cause: leaky_cause.into(),
+            rollback: leaky_rollback.into(),
+        });
+        assert!(
+            !err.message.contains(leaky_cause) && !err.message.contains(leaky_rollback),
+            "the adapter's own words crossed: {}",
+            err.message
+        );
+        assert!(
+            !err.message.contains("Try once more"),
+            "a stranded write must not invite a retry: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("Do not try again"),
+            "…and must say so plainly: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("Tell the operator"),
+            "a caller needs the way out that is actually safe: {}",
+            err.message
+        );
     }
 }

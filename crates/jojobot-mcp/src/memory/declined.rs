@@ -180,6 +180,9 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
         }
+        MemoryError::Stranded { .. } => {
+            McpError::internal_error(crate::boundary::stranded("this call", &e.to_string()), None)
+        }
     }
 }
 
@@ -202,6 +205,42 @@ mod tests {
         assert!(
             err.message.contains("Try once more"),
             "a caller needs its next move: {}",
+            err.message
+        );
+    }
+
+    /// A stranded write must never be told to retry — it may have
+    /// half-landed, and a repeat could double whatever did. A genuinely
+    /// different class from a clean `Store` failure, so it must not share
+    /// that failure's "Try once more" advice.
+    #[test]
+    fn a_stranded_write_does_not_invite_a_retry() {
+        let leaky_cause = "the page for gamma has no table";
+        let leaky_rollback = "the row vanished from the document";
+        let err = memory_error(MemoryError::Stranded {
+            verb: "capture".into(),
+            stranded: vec!["person:alpha#f4".into()],
+            cause: leaky_cause.into(),
+            rollback: leaky_rollback.into(),
+        });
+        assert!(
+            !err.message.contains(leaky_cause) && !err.message.contains(leaky_rollback),
+            "the adapter's own words crossed: {}",
+            err.message
+        );
+        assert!(
+            !err.message.contains("Try once more"),
+            "a stranded write must not invite a retry: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("Do not try again"),
+            "…and must say so plainly: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("Tell the operator"),
+            "a caller needs the way out that is actually safe: {}",
             err.message
         );
     }
