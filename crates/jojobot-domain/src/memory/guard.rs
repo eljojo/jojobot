@@ -855,10 +855,9 @@ mod tests {
         );
     }
 
-    /// **The door the rename gate left open.** An alias is a name, so claiming
-    /// one another entity already answers to is the same collision — and it
-    /// arrives on a patch that renames nothing, which is exactly why nothing
-    /// used to screen it.
+    /// The door the rename gate must also close: an alias is a name, so
+    /// claiming one another entity already answers to is the same collision,
+    /// even though the patch renames nothing.
     #[test]
     fn an_added_alias_is_screened_like_a_rename() {
         let idx = vec![

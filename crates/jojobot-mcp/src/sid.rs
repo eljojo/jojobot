@@ -1,9 +1,8 @@
 //! The **session handle** — `sid`: server-minted, opaque, four characters.
 //!
-//! A session's id used to be the store's card id, which meant a caller could
-//! only address a session that had already been written. The handle is minted
-//! by jojobot instead, at the door, before any card exists — and the registry
-//! here is what maps it to a card once one does.
+//! The handle is minted by jojobot at the door, before any card exists, so a
+//! caller can address a session before anything has been written for it. The
+//! registry here maps it to a card once one does.
 //!
 //! Three properties, each load-bearing:
 //!

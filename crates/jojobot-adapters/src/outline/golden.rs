@@ -158,13 +158,10 @@ mod tests {
 
     /// **A fenced block survives THE STORE verbatim; a table cell does not.**
     ///
-    /// This is the finding the rest of the slice is designed from, and it is
-    /// asserted against the recorded PAGE — the store's own bytes — rather
-    /// than against what this crate then parses out of it. The two are
-    /// different claims and conflating them hid a defect of ours behind a
-    /// statement about Outline: the first version of this test compared the
-    /// PARSED body and failed on the indented case, which the store had in
-    /// fact preserved perfectly.
+    /// This must be asserted against the recorded PAGE — the store's own
+    /// bytes — never against what this crate then parses out of it:
+    /// conflating the two hides a defect of ours behind a statement about
+    /// Outline.
     ///
     /// It is the whole argument for fixing the comparison rather than escaping
     /// every cell: the store's damage is confined to cells, and the operator's

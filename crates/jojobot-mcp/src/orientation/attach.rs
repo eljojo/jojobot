@@ -29,9 +29,8 @@ impl Jojobot {
     ///   resumable run, each named by what it was working on, because that is
     ///   the only thing that tells two runs of one identity apart. The handle
     ///   arrives when the caller answers — `resume` with one of them, or `new`.
-    ///   Attaching silently was the old behaviour and it decided for the caller;
-    ///   worse, it decided for the caller who had deliberately left the run open
-    ///   for somebody else.
+    ///   Never attach silently: that decides for the caller, and worse, for a
+    ///   caller who deliberately left the run open for somebody else.
     ///
     /// Either way the **card stays lazy**: no card until the first write, so a
     /// boot that never works leaves no trace — which is what keeps "creation is
@@ -252,13 +251,11 @@ impl Jojobot {
             ));
         };
         if held.bot != *bot {
-            // **Refused without naming whose it is, and without offering the
-            // move.** This used to disclose the other identity and tell the
-            // caller to boot as it. That primes identity-switching as something
-            // an agent might do — and it contradicted itself inside one
-            // sentence, saying a session never switches and then how to switch.
-            // A handle that is not yours is simply not yours; the way forward
-            // is your own session.
+            // Refused without naming whose it is, and without offering a way
+            // to switch: disclosing the other identity would prime
+            // identity-switching as something an agent might do. A handle
+            // that is not yours is simply not yours; the way forward is your
+            // own session.
             return Err(handle_declined(
                 answer,
                 format!(
@@ -283,10 +280,9 @@ impl Jojobot {
         // someone kept can still reach.
         match self.sessions.reopen(&card).await {
             Ok(session) => Ok((handle, Some(session))),
-            // The one end that is the last word. Wrapping publishes nothing
-            // now, so the reason is no longer a published account going stale —
-            // it is that a run which told its story is over, and its chronology
-            // stands as the record of what happened.
+            // The one end that is the last word: a run which told its story
+            // is over, and its chronology stands as the record of what
+            // happened.
             Err(SessionError::Closed { state, .. }) => Err(handle_declined(
                 answer,
                 format!(
@@ -402,10 +398,10 @@ mod tests {
         );
     }
 
-    /// **Something to resume, so the choice comes first and the handle waits.**
-    /// Attaching silently was the old behaviour and it decided for the caller;
-    /// each option is named by what it was working on, because that is the only
-    /// thing that tells two runs of one identity apart.
+    /// Something to resume, so the choice comes first and the handle waits.
+    /// Never attach silently — that decides for the caller. Each option is
+    /// named by what it was working on, because that is the only thing that
+    /// tells two runs of one identity apart.
     #[tokio::test]
     async fn a_resumable_session_comes_back_as_a_choice_and_no_handle() {
         let store = Arc::new(InMemorySessions::new());
@@ -777,12 +773,11 @@ mod tests {
                 .expect("somebody else's handle is an answer, not a protocol failure"),
         );
         let advice = body["how_to_proceed"].as_str().expect("advice");
-        // **It refuses without naming whose it is, and without offering the
-        // move.** It used to disclose the other identity and say "boot as it to
-        // pick it up" — which primes identity-switching as a thing an agent
-        // might do, and rule 22 is explicit that this is not to be primed at
-        // all. A session is bound to its identity at boot and never switches;
-        // the way forward is the caller's own session, not somebody else's.
+        // It refuses without naming whose it is, and without offering a way
+        // to switch: disclosing the other identity would prime
+        // identity-switching, which rule 22 forbids. A session is bound to
+        // its identity at boot and never switches; the way forward is the
+        // caller's own session, not somebody else's.
         assert!(
             !advice.contains("gamma"),
             "the refusal must not disclose the other identity: {advice}"
@@ -1272,17 +1267,13 @@ mod tests {
     /// overlap: sweeping a stale card is an await sitting inside the boot's
     /// board read, and that is exactly when the racing write gets to run.
     ///
-    /// The old name promised a race this can no longer run. It forked because
-    /// the boot wrote a connection binding at the end of that span, clearing the
-    /// session the write had just materialized and rolling the tally back to
-    /// what the stale read saw; the next write then minted a second card for a
-    /// session already running. **The binding is gone** — the boot writes no
-    /// identity anywhere a write reads from, so there is nothing left for it to
-    /// clobber. What is pinned here is that: whatever the interleaving, the
-    /// handle keeps addressing one card and the next write keeps accruing to it.
-    /// The remaining overlap between the two — a boot reading the board inside
-    /// the gap a first write leaves — is a different defect with its own test
-    /// below.
+    /// The boot writes no identity anywhere a write reads from, so there is
+    /// nothing for it to clobber. What is pinned here: whatever the
+    /// interleaving between a boot and a racing first write, the handle keeps
+    /// addressing one card and the next write keeps accruing to it. The
+    /// remaining overlap between the two — a boot reading the board inside
+    /// the gap a first write leaves — is a different defect with its own
+    /// test below.
     ///
     /// **Both orders, because only one of them forked.** `tokio::join!` rotates
     /// which future it polls first, so a single ordering proves whichever

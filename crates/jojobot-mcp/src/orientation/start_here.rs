@@ -30,10 +30,9 @@ pub struct OrientArgs {
 /// in prose, a live snapshot of what exists, and — when a bot is named —
 /// that identity and its session.
 ///
-/// There is deliberately no second verb for the identified case. The two
-/// used to be separate doors over this same function, which is one text and
-/// one snapshot by construction but two surfaces to keep true, and the
-/// second one drifted.
+/// There is deliberately no second verb for the identified case: one
+/// function producing one text and one snapshot, kept true by construction.
+/// Two surfaces would drift.
 ///
 /// The prose below is ENGINE material: it explains the method, names only
 /// roles ("the operator"), and every example identity is fictional.
@@ -171,9 +170,9 @@ mod tests {
         let boxes = body["snapshot"]["mailboxes"]["boxes"]
             .as_array()
             .expect("mailboxes listed");
-        // **Anonymous orientation drains nothing, so it sees no queue.** There
-        // is no longer a second case: every box has a drainer, so a box is
-        // either yours or somebody's, and this caller is nobody.
+        // Anonymous orientation drains nothing, so it sees no queue: every
+        // box has a drainer, so a box is either yours or somebody's, and
+        // this caller is nobody.
         assert_eq!(boxes[0]["name"], "inbox");
         assert_eq!(
             boxes[0]["yours"], false,
@@ -230,9 +229,9 @@ mod tests {
             "…and the marker says which of the two answers this is: {full}"
         );
 
-        // **How to get it back is on the surface a caller reads**, since the
-        // payload no longer carries a nudge of its own — an elision nobody can
-        // undo is an elision that costs the reader the thing it saved.
+        // How to get it back must be on the surface a caller reads: an
+        // elision nobody can undo is an elision that costs the reader the
+        // thing it saved.
         let tools = Jojobot::tool_router().list_all();
         let door = tools
             .iter()
@@ -250,18 +249,14 @@ mod tests {
         assert!(brief["snapshot"]["mailboxes"].is_object());
     }
 
-    /// **The orientation stamp is gone, whole.** It was a version on the essay
-    /// so a returning session could tell whether the copy it held was current —
-    /// and it was rejected outright, along with every proposed way of keeping
-    /// the check honest (a prose hash, a derived version, a hand-maintained
-    /// one). A number a human has to remember to bump is a number that lies,
-    /// and what it bought did not pay for that.
+    /// There is no version stamp on the essay, deliberately: every way of
+    /// keeping a freshness check honest (a prose hash, a derived version, a
+    /// hand-maintained one) was rejected, because a number a human has to
+    /// remember to bump is a number that lies.
     ///
-    /// **Asserted over the whole payload and the whole surface**, not over the
-    /// two keys that used to carry it: the failure this guards against is the
-    /// idea coming back somewhere adjacent, and a key-by-key check would miss
-    /// it in a note or an arg doc. `brief` survives, as a plain caller-chosen
-    /// option with nothing to compare.
+    /// Asserted over the whole payload and the whole surface, not over one
+    /// or two specific keys: a key-by-key check would miss the idea
+    /// reappearing somewhere adjacent, in a note or an arg doc.
     #[tokio::test]
     async fn nothing_on_the_surface_stamps_the_orientation_with_a_version() {
         let store = Arc::new(InMemorySessions::new());

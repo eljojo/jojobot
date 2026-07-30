@@ -4,9 +4,8 @@
 //! One file per verb, each holding its arguments, its description and an
 //! entrypoint. [`wire`] is the response vocabulary and [`declined`] the
 //! refusals; the machinery with a single caller lives with that caller —
-//! `my_box` in [`read_mailbox`]. `Ownership` is the exception and says why in
-//! [`wire`]: its verb was retired and its remaining caller is another
-//! context's.
+//! `my_box` in [`read_mailbox`]. `Ownership` is the exception and lives in
+//! [`wire`] instead; see its doc comment for why.
 
 use rmcp::{
     ErrorData as McpError, handler::server::router::tool::ToolRouter,

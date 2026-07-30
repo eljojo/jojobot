@@ -106,26 +106,24 @@ impl Jojobot {
     /// asymmetry is the design.
     ///
     /// Three ways to have no box, and they are not one answer: the caller has
-    /// no identity, jojobot cannot read who owns what, or the bot has no box at
-    /// all. Each needs a different next move — and the last one used to be two,
-    /// because a bot could claim a box nobody had opened. It cannot now.
-    /// **The whole record, not just its name.** Counting needs the box's
-    /// per-state counts and its unreadable report, and both are already in the
-    /// listing this read walks — fetching the name here and the counts again a
-    /// moment later would be two reads of one world, which is exactly the split
-    /// that once rendered "jojobot cannot tell who drains what" beside a listing
-    /// that plainly said.
+    /// no identity, jojobot cannot read who owns what, or the bot has no box
+    /// at all. A bot can never claim a box nobody has opened, so that is not
+    /// a fourth case.
+    ///
+    /// The whole record, not just its name. Counting needs the box's
+    /// per-state counts and its unreadable report, and both are already in
+    /// the listing this read walks — fetching the name here and the counts
+    /// again a moment later would be two reads of one world that can
+    /// disagree with each other.
     pub(crate) async fn my_box(&self, sid: Option<&str>) -> Result<Mailbox, CallToolResult> {
         let caller = match self.caller(sid) {
             Ok(Some(caller)) => caller,
             Ok(None) => return Err(no_box_for("", NoBox::Anonymous)),
             Err(refused) => return Err(refused),
         };
-        // **One read, of one world.** Which box is mine is a lookup by owner
-        // over the boxes themselves — it used to be a claim read off this bot's
-        // entity record, so this path needed Memory up as well as Mailboxes and
-        // had a "claimed but never opened" answer to give. Owning a box and it
-        // existing are the same fact now.
+        // One read, of one world: which box is mine is a lookup by owner
+        // over the boxes themselves, not a claim read off this bot's entity
+        // record — this path needs only Mailboxes, not Memory.
         //
         // **A world that is down is not an answer of "no".** An outage means
         // jojobot cannot say whose box this is; rendering that as "you have
@@ -227,16 +225,12 @@ mod tests {
     use crate::harness::*;
     use crate::mailboxes::testing::*;
 
-    /// **A poll costs nothing and owes nothing, and that is the whole point.**
-    ///
-    /// The job `list_mailboxes` was doing lands here, and the way it could land
-    /// wrong is by counting through the delivery path: if the count moves a
-    /// message out of `new`, the caller now owes work it only wanted to weigh,
-    /// and the crash contract has been inverted by the verb that replaced the
-    /// cheap one. That is worse than the verb it retired, so it is asserted
-    /// from the other side — not "the answer has no bodies in it", but "the box
-    /// afterwards is untouched, and the real read that follows still finds
-    /// fresh mail".
+    /// A poll costs nothing and owes nothing, and that is the whole point. If
+    /// counting moved a message out of `new`, the caller would owe work it
+    /// only wanted to weigh — worse than not being able to poll at all. So
+    /// this is asserted from the other side: not "the answer has no bodies in
+    /// it", but "the box afterwards is untouched, and the real read that
+    /// follows still finds fresh mail".
     #[tokio::test]
     async fn counting_takes_no_delivery_and_leaves_nothing_owed() {
         let jojobot = mailbox_handler();
@@ -519,11 +513,9 @@ mod tests {
     /// one miss would be advice that fits neither: a caller with no identity has
     /// to boot, and a bot with no box is BROKEN and needs a person.
     ///
-    /// **There used to be three.** The third was "a claim nobody has opened" —
-    /// a bot naming a box that did not exist — and it is unreachable now: a box
-    /// opens with its bot, so a claim cannot outlive the thing it claims. The
-    /// second case survives only as damage, which is why its advice names the
-    /// operator rather than a verb; there is no verb.
+    /// A claim nobody has opened is unreachable: a box opens with its bot, so
+    /// a claim cannot outlive the thing it claims. The remaining broken case
+    /// survives only as damage, so its advice names the operator, not a verb.
     #[tokio::test]
     async fn a_read_with_no_box_to_open_says_which_kind_of_nothing_it_found() {
         let jojobot = mailbox_handler();

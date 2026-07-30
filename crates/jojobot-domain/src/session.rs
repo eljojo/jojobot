@@ -183,13 +183,10 @@ impl SessionState {
     /// Whether this end is the last word — **the one place the two ends stop
     /// being the same.**
     ///
-    /// **`wrapped` is final because the run TOLD ITS STORY.** It used to be
-    /// because wrapping published that story into a shared Journal, and
-    /// reopening the run would have made an already-published entry
-    /// retroactively false. Nothing is published now — the journal is dark until
-    /// events land — and the asymmetry survives it intact, because it never
-    /// really rested on the audience: a run that said "here is what happened and
-    /// I am done" has ended, and a run that merely stopped has not.
+    /// `wrapped` is final because the run TOLD ITS STORY — not because
+    /// wrapping publishes anything (it does not). The asymmetry never really
+    /// rested on an audience: a run that said "here is what happened and I am
+    /// done" has ended; a run that merely stopped has not.
     ///
     /// `abandoned` told no story, which is the entire content of "it wasn't
     /// wrapped up": a disconnect, a closed laptop, an agent that moved on. So
@@ -737,9 +734,8 @@ pub fn beats_of(session: &Session) -> std::collections::HashMap<&'static str, Be
 
 /// **What a boot found on this bot's board**, after the sweep has run.
 ///
-/// Named rather than a tuple because it grew a third thing the day an
-/// `abandoned` run became something a boot could offer back, and a
-/// `(Vec, Option, Vec)` at five call sites is a shape nobody can read.
+/// Named rather than a tuple: a `(Vec, Option, Vec)` at five call sites is a
+/// shape nobody can read.
 #[derive(Debug, Default)]
 pub struct Board {
     /// Every run still working — **all of them, not the newest.** A bot may

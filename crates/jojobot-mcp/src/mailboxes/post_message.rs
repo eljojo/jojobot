@@ -150,10 +150,8 @@ mod tests {
         assert_eq!(body["candidates"][0]["name"], "inbox");
         assert_eq!(body["candidates"][0]["reason"], "near");
         let advice = body["how_to_proceed"].as_str().expect("advice");
-        // **The way out is a candidate, because there is no verb.** This used to
-        // assert the advice named `create_mailbox` — the escape hatch for a box
-        // that genuinely should exist. Nothing opens a box on its own now, so an
-        // advice naming a verb would be pointing at nothing.
+        // The way out is a candidate, because there is no verb: nothing opens
+        // a box on its own, so advice naming one would point at nothing.
         assert!(
             advice.contains("bot"),
             "…and it says why: a box is some bot's own: {advice}"
@@ -166,12 +164,6 @@ mod tests {
 
     /// Malformed input is a client error that says what the grammar is, rather
     /// than a store failure or a silently-normalized name.
-    ///
-    /// **The box half of this test is gone with the verb it called.** It
-    /// refused `Inbox` — a name outside `[a-z0-9-]+` — through `create_mailbox`.
-    /// A box name is not an input any more: it is the bot's handle, and
-    /// `entity_id` screens that grammar one layer up, which is the same check
-    /// running once instead of twice.
     #[tokio::test]
     async fn malformed_mailbox_input_is_a_client_error() {
         let jojobot = mailbox_handler();

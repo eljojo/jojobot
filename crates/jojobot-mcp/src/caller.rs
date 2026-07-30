@@ -1,9 +1,8 @@
 //! **Who is calling**, resolved from the handle they carry — and the session
 //! their write lands in.
 //!
-//! This replaces the per-connection binding outright. The binding assumed a
-//! client holds one MCP connection across a conversation; none do, so an
-//! identity written on the connection was gone before the next request arrived.
+//! No client holds one MCP connection across a conversation, so an identity
+//! written on the connection would be gone before the next request arrives.
 //! **The handle is the only address**: it rides every verb, and jojobot looks
 //! the caller up rather than remembering them.
 //!
@@ -16,12 +15,11 @@ use super::*;
 
 /// **Who is calling**, resolved from the handle they carry.
 ///
-/// This replaces the per-connection binding outright. The binding assumed a
-/// client holds one MCP connection across a conversation; none do — claude.ai
-/// and ChatGPT both open what jojobot sees as a fresh, unbound connection per
-/// tool call — so an identity written on the connection was gone before the
-/// next request arrived. **The handle is the only address**, it rides every
-/// verb, and jojobot looks the caller up rather than remembering them.
+/// No client holds one MCP connection across a conversation — claude.ai and
+/// ChatGPT both open a fresh, unbound connection per tool call — so an
+/// identity written on the connection would be gone before the next request
+/// arrives. **The handle is the only address**: it rides every verb, and
+/// jojobot looks the caller up rather than remembering them.
 #[derive(Debug, Clone)]
 pub(crate) struct Caller {
     /// The handle itself, exactly as the caller passed it.
@@ -136,12 +134,11 @@ impl Jojobot {
     /// optional.**
     ///
     /// The write verbs outside the session surface take an optional `sid`:
-    /// carrying none is legitimate — a reader, a poster that never booted — and
-    /// costs only the automatic beat. Carrying a DEAD one is a different thing
-    /// and used to cost nothing at all, because [`Jojobot::beat`] was the only
-    /// place those verbs looked at the handle, and `beat` is silent by design.
-    /// The refusal went out with the silence: the write landed, the caller's
-    /// chronology stopped, and it found out at wrap or never.
+    /// carrying none is legitimate — a reader, a poster that never booted —
+    /// and costs only the automatic beat. Carrying a DEAD one must be
+    /// refused up front: leaving it to [`Jojobot::beat`] (silent by design)
+    /// would mean the write lands, the caller's chronology stops, and they
+    /// find out only at wrap, if ever.
     ///
     /// Called BEFORE the write, never after. `beat` runs once the store has
     /// already answered, and `blocked` means `wrote: false` everywhere on this
@@ -334,12 +331,9 @@ mod tests {
         );
     }
 
-    /// **Writing with another identity's `sid` does not move mine.** The
-    /// connection used to carry the identity, and one `journal` addressed at
-    /// another bot rebound the whole thing: every later call, and every
-    /// automatic beat, attributed to delta while gamma's own beats orphaned. A
-    /// `sid` cannot do that — it addresses one run and says nothing about the
-    /// caller's other handles — and this pins that it stays so.
+    /// Writing with another identity's `sid` must never move mine: a `sid`
+    /// addresses one run only and says nothing about the caller's other
+    /// handles.
     ///
     /// This is the stateful-transport shape — stdio, where connections really
     /// do persist — so it holds one handler across calls on purpose: the shape
@@ -396,13 +390,10 @@ mod tests {
         assert_eq!(delta[0].entries.len(), 1);
     }
 
-    /// **Two identities alive on ONE connection each keep their own session.**
-    /// There used to be a per-connection binding here, and a short-circuit that
-    /// read it instead of the board; the risk it carried was a cache that
-    /// answered for whichever identity spoke last. Nothing remembers anything
-    /// between calls now, so the answer comes from the `sid` every time — and
-    /// this holds one handler across all of it, which is the transport shape
-    /// where such a cache could have existed at all.
+    /// Two identities alive on ONE connection must each keep their own
+    /// session: nothing may be remembered between calls — the answer must
+    /// always come from the `sid`, never from whichever identity spoke last
+    /// on this connection.
     #[tokio::test]
     async fn two_identities_on_one_connection_each_keep_their_own_session() {
         let store = Arc::new(InMemorySessions::new());
@@ -545,13 +536,6 @@ mod tests {
             "no card was written for an identity nobody created"
         );
         // …and the refused wrap told its story nowhere.
-        //
-        // **This used to scan Memory's prose, and could no longer fail.** Wrap
-        // published into a shared Journal doc once; it does not publish
-        // anywhere now — the story is one last entry in the session's own
-        // chronology — so the wrap path never touches Memory at all and a clean
-        // Memory proved nothing about it. The assertion looked exactly as
-        // watchful as it does here while watching a world the code had left.
         //
         // It reads every session on the store rather than this bot's, because
         // "this bot has no sessions" is already asserted above; what is left to

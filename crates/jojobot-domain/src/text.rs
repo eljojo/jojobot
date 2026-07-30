@@ -199,12 +199,11 @@ pub const OUTCOME_NOTES: Fitted = Fitted {
 /// adversarial cases, so it stays byte-exact and gets nothing. The axis is
 /// where a value SITS, not what it is: a subject is prose and lives in a cell.
 ///
-/// **What it forgives is a backslash the store ADDED in front of punctuation,
-/// and nothing else.** A dropped character, a changed word, a truncation, a
+/// What it forgives is a backslash the store ADDED in front of punctuation,
+/// and nothing else. A dropped character, a changed word, a truncation, a
 /// swapped value all still fail — including a backslash the WRITER put there
-/// that came back missing, which an earlier version of this could not see
-/// because it normalized both sides and made the two kinds of backslash
-/// identical.
+/// that came back missing. Never normalize both sides before comparing: that
+/// makes the two kinds of backslash indistinguishable and hides this case.
 pub fn same_cell_value(wrote: &str, read: &str) -> bool {
     fn without_added_escapes(cell: &str) -> String {
         let mut out = String::with_capacity(cell.len());
@@ -316,12 +315,11 @@ impl std::fmt::Display for Changed {
 /// three copies of this decision is how one of them comes to disagree about
 /// what counts as a change.
 ///
-/// It exists because of what a refusal used to say. A read-back mismatch
-/// interpolated two whole records into a sentence and left the reader to diff
-/// them: in production that cost two failed writes, a page a person had to
-/// repair by hand, and a wrong cause passed on as established, all because
-/// nobody could see WHICH field differed. One field and its two values is the
-/// whole of what a caller needs to act.
+/// A refusal must never interpolate two whole records into a sentence and
+/// leave the reader to diff them: that once cost two failed writes, a page a
+/// person had to repair by hand, and a wrong cause passed on as established,
+/// all because nobody could see WHICH field differed. One field and its two
+/// values is the whole of what a caller needs to act.
 ///
 /// First rather than all, deliberately: the caller's next move is the same
 /// whichever one it is, and a list invites diffing again.

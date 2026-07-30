@@ -326,15 +326,11 @@ fn blank_is_absent(text: Option<&str>) -> Option<String> {
 pub struct Mailbox {
     /// The box's name.
     pub name: MailboxName,
-    /// **Whose box it is.** Stated once, here, and nowhere else — a mailbox
-    /// cannot exist without an owner, so this is never absent.
-    ///
-    /// It used to live on the owner's own entity record as a `mailbox:` claim,
-    /// which made two places hold one truth and left the mail context needing a
-    /// story about boxes nobody had claimed. There are no such boxes: the model
-    /// says a bot's children are its sessions and its mailbox, and a child with
-    /// no parent is not an edge case to place gracefully but a state the system
-    /// refuses to enter.
+    /// Whose box it is. Stated once, here, and nowhere else — a mailbox
+    /// cannot exist without an owner, so this is never absent. It must never
+    /// also live as a claim on the owner's own entity record: a bot's
+    /// children are its sessions and its mailbox, and a child with no parent
+    /// is a state the system refuses to enter.
     pub owner: EntityId,
     /// How many messages sit in each state.
     pub counts: StateCounts,
@@ -543,11 +539,9 @@ pub enum MailboxError {
     /// looking straight at, and it sends the caller hunting a lost message
     /// instead of reporting the damage that is sitting right there.
     ///
-    /// **The text says what is wrong and who fixes it, and not where it lives.**
-    /// It used to give a repair procedure in the vocabulary of the board mail
-    /// sat on two stores ago — put back its mailbox label, its place in the
-    /// funnel — which was both a store describing itself to an agent and, by
-    /// then, instructions for a system that no longer existed.
+    /// The text says what is wrong and who fixes it, never where it lives —
+    /// it must not describe repair in the store's own vocabulary, which
+    /// leaks store internals to an agent that must never learn them.
     #[error(
         "message '{attempted}' cannot be read: {reason}. jojobot will not act on a record it \
          cannot parse, and no retry will change that — a person has to repair it. Treat whatever \

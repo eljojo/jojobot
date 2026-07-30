@@ -11,14 +11,13 @@
 use super::*;
 use crate::orientation::essay::ORIENTATION;
 
-/// **Every shipped `.rs` file in this crate, with its test half cut off.**
+/// Every shipped `.rs` file in this crate, with its test half cut off.
 ///
-/// The constraints below are about what SHIPS, and the way they are asserted is
-/// by counting occurrences in the source — so what counts as "the source" is
-/// load-bearing. This used to be `include_str!("lib.rs")`, which was right while
-/// the crate was one file and became a lie the moment it was not: a second door
-/// added in `orientation/start_here.rs` would not have been counted, and the
-/// test would have gone on passing while watching a fraction of the crate.
+/// The constraints below are about what SHIPS, and the way they are asserted
+/// is by counting occurrences in the source — so what counts as "the source"
+/// is load-bearing. This must count every shipped file, not just `lib.rs`:
+/// counting one file only would silently stop covering new ones, letting the
+/// test pass while watching a fraction of the crate.
 ///
 /// Two halves are cut, and they are cut differently.
 ///
@@ -309,11 +308,10 @@ fn the_mark_processed_description_states_the_crash_contract() {
 /// the only verb that visibly answered "is there anything waiting" was the
 /// one that takes delivery.
 ///
-/// **The cheap answer used to be a second verb and is now this verb's own
-/// argument**, which does not retire the lesson: a caller standing at
-/// `read_mailbox` still has to be told, in this description, that there is a
-/// way to look without taking. It is asserted on the ARGUMENT rather than on
-/// a tool name, so it cannot be satisfied by pointing somewhere else again.
+/// A caller standing at `read_mailbox` must be told, in this description,
+/// that there is a way to look without taking. Asserted on the ARGUMENT
+/// rather than on a tool name, so it cannot be satisfied by pointing at a
+/// different tool.
 #[test]
 fn the_read_mailbox_description_points_at_the_read_only_way_to_poll() {
     let tools = Jojobot::tool_router().list_all();
@@ -643,12 +641,9 @@ fn agent_facing_text() -> Vec<(String, String)> {
 /// at once, all describing the pre-migration world, and one of them would have
 /// made a bot refuse to open its own inbox.
 ///
-/// **The vocabulary below is retired, not merely unfashionable.** Mail and
-/// sessions used to live on a kanban board — a message was a card in a funnel
-/// column wearing a mailbox label. They are pages now. An agent must never be
-/// taught the store's shape (it is not its business and it will be wrong
-/// again), and must never be sent to repair something in a system that no
-/// longer holds it.
+/// An agent must never be taught the store's shape — not its business, and
+/// it will be wrong again — and must never be sent to repair something in a
+/// system that does not hold it.
 ///
 /// Six point-fixes would have left the seventh. This is the class.
 #[test]

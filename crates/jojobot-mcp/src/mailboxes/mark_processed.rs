@@ -261,9 +261,9 @@ mod tests {
         assert_eq!(body["notes_truncated"], false, "{body}");
     }
 
-    /// **An id that names nothing is an answer, not a failure** — and no longer
-    /// a protocol error either: naming something that does not exist is the
-    /// same kind of answer whichever gate catches it, so it wears one shape.
+    /// An id that names nothing is an answer, not a protocol error: naming
+    /// something that does not exist is the same kind of answer whichever
+    /// gate catches it, so it wears one shape.
     #[tokio::test]
     async fn processing_an_unknown_message_is_blocked_not_an_error() {
         let jojobot = mailbox_handler();
@@ -317,10 +317,9 @@ mod tests {
         assert_eq!(body["attempted"], "4212");
         assert_eq!(body["wrote"], false);
         let reason = body["reason"].as_str().expect("a reason");
-        // **The store's own account does NOT come through**, which is what
-        // this used to assert. It names which field of which row failed to
-        // parse — what an operator repairing it needs, and what an agent must
-        // never be handed. It is logged instead.
+        // The store's own account does NOT come through: it names which
+        // field of which row failed to parse, which an operator repairing it
+        // needs and an agent must never be handed. It is logged instead.
         assert!(
             !reason.contains("edited past parsing"),
             "the adapter's own words must not reach a caller: {reason}"
@@ -336,8 +335,8 @@ mod tests {
                 && advice.contains("operator"),
             "…and that the way out is a person, not a retry: {advice}"
         );
-        // The same absence `read_message` pins: no store anatomy, no repair
-        // steps for a system that no longer holds the message.
+        // The advice must never describe repair in the store's own
+        // vocabulary — not an agent's business, and not accurate either.
         for retired in ["card", "board", "column", "label"] {
             assert!(
                 !advice.to_lowercase().contains(retired),

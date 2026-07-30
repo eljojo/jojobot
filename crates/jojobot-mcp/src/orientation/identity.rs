@@ -8,14 +8,13 @@
 
 use super::*;
 
-/// **The boot door's own refusal: the roster, and an offer.**
+/// The boot door's own refusal: the roster, and an offer.
 ///
-/// It used to reuse the generic absence gate — "nothing resembles it, call
-/// add_entity first" — and that answer is wrong here in two ways. Its candidate
-/// list is near misses only, so a name that resembles nothing came back with an
-/// empty list, which reads as a broken server rather than as "you are not one
-/// of these"; and its advice sends a caller who has no identity off to make one
-/// through a verb that needs a session it does not have.
+/// This must not reuse the generic absence gate ("nothing resembles it, call
+/// add_entity first"): its candidate list is near misses only, so a name that
+/// resembles nothing would come back with an empty list — reading as a broken
+/// server rather than "you are not one of these" — and its advice would send
+/// a caller with no identity to a verb that needs a session it does not have.
 ///
 /// So this says what a caller in that position actually needs: here is who
 /// exists, boot as one of them, and create the identity you wanted from inside
@@ -166,15 +165,10 @@ impl Jojobot {
         // somebody, so ownership is stated once on the box itself — there is no
         // second field on the bot's record to keep in step with it.
         //
-        // Which also deletes a state: there used to be a "declared but never
-        // opened" answer, for a claim naming a box nobody had created. A claim
-        // can no longer outlive the thing it claims, so a box this bot owns is
-        // a box that exists, and the branch reporting otherwise is gone rather
-        // than left unreachable.
-        // Which also takes `exists` with it: it told a claim's box apart from a
-        // box, and a box is the only thing left to report, so it now says `true`
-        // wherever it appears at all. `available` is the one question a reader
-        // still has to branch on.
+        // A box this bot owns is a box that exists — ownership is stated on
+        // the box, so there is no separate "claimed but not yet created" state
+        // to handle, and no `exists` field either: `available` is the only
+        // question a reader still has to branch on.
         let Some(mailbox) = boxes.into_iter().find(|b| &b.owner == bot) else {
             return Ok(self.heal_missing_box(bot).await);
         };
@@ -308,25 +302,20 @@ mod tests {
     use crate::memory::testing::*;
     use crate::session::testing::*;
 
-    /// **The boot that loses a race to heal must not tell its agent the box is
-    /// missing — it is right there, opened a moment ago by the other one.**
+    /// The boot that loses a race to heal must not tell its agent the box is
+    /// missing — it is right there, opened a moment ago by the other one. The
+    /// window is real: `owned_mailbox` finds no box and calls this, and
+    /// between those two moments another boot of the SAME bot can open it.
+    /// The loser's `create_mailbox` then meets an exact-name collision, which
+    /// `guard::decide_create` blocks whatever `create_new` says — an exact
+    /// name can never be forced. A non-`Written` answer must be checked for
+    /// that collision before it is read as "the repair failed".
     ///
-    /// Reported as plausible rather than confirmed; it is confirmed. The window
-    /// is real: `owned_mailbox` finds no box and calls this, and between those
-    /// two moments another boot of the SAME bot can open it. The loser's
-    /// `create_mailbox` then meets an exact-name collision, which
-    /// `guard::decide_create` blocks whatever `create_new` says — an exact name
-    /// can never be forced, deliberately — and the old code read every
-    /// non-`Written` answer as "the repair failed". So the losing session was
-    /// told it had an identity with no way to receive mail, and to go and tell
-    /// the operator, about a box that was working.
-    ///
-    /// **Reproduced without a race, because the race is only how you arrive
-    /// here.** The state under test is "this call was going to open the box and
-    /// the box now exists", and calling the heal against a box that is already
-    /// there IS that state — deterministically, with no timing to get lucky
-    /// with. A test that had to win a scheduling coin toss to fail is a test
-    /// that will pass on the day it matters.
+    /// Reproduced without a race, because the race is only how you arrive
+    /// here: the state under test is "this call was going to open the box and
+    /// the box now exists", and calling the heal against a box that is
+    /// already there IS that state — deterministically, with no timing to
+    /// get lucky with.
     #[tokio::test]
     async fn a_heal_that_lost_the_race_reports_the_box_rather_than_its_absence() {
         let jojobot = handler();

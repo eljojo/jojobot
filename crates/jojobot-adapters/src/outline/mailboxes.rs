@@ -309,10 +309,9 @@ impl Mailboxes for OutlineMailboxes {
         // near-miss advice about a box name is advice about a box the caller may
         // have no business creating at all.
         //
-        // This is the mail context reading Memory, which it used not to do. It
-        // reads it because a box now belongs to somebody by construction — the
-        // claim that used to sit on the owner's own record, as a second place
-        // for one truth, is gone.
+        // This is the mail context reading Memory: it must, because a box
+        // belongs to somebody by construction, and that is never also stored
+        // as a claim on the owner's own record.
         let entities = self.entities(&collection_id).await?;
         if !entities.iter().any(|e| &e.id == owner) {
             return Ok(Guarded::UnknownOwner {
@@ -447,11 +446,10 @@ impl Mailboxes for OutlineMailboxes {
             .await
             .map_err(store)?;
 
-        // **From here on the body is on the page, so no path may leave
-        // without putting it back.** Every early return between this point and
-        // the read-back used to exit on a question mark, and the rollback ran
-        // on none of them — the same orphan the read-back case leaves, through
-        // a door nobody had tried.
+        // From here on the body is on the page, so no path may leave without
+        // putting it back: every early return here must go through the
+        // rollback macro below, not a bare `?`, or it leaves the same kind of
+        // orphan the read-back failure case does.
         macro_rules! or_undo {
             ($outcome:expr) => {
                 match $outcome {

@@ -96,11 +96,10 @@ pub(crate) fn as_bot(jojobot: &Jojobot, bot: &str) -> String {
 /// Stand up a bot the way an operator would: an entity of kind `bot`, its
 /// charter as prose, its rules as facts.
 ///
-/// **The box is not a parameter, because it is not a choice.** It used to
-/// take one — first a name to claim, then a name to open — and both were
-/// the same mistake in different coats: a second string, next to the
-/// handle, that could name a different box than the bot's. A bot's box is
-/// its handle, so standing the bot up IS opening it.
+/// The box is not a parameter, because it is not a choice: a bot's box is
+/// its handle, so standing the bot up IS opening it. A second string, next
+/// to the handle, could name a different box than the bot's own — never
+/// accept one.
 pub(crate) async fn make_bot(jojobot: &Jojobot, slug: &str) {
     let result = jojobot
         .add_entity(Parameters(add_args("bot", slug, slug)))

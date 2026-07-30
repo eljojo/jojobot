@@ -376,10 +376,10 @@ mod tests {
         let reason = body["reason"]
             .as_str()
             .expect("a quarantined card says why");
-        // **The store's own account does NOT come through**, which is what
-        // this used to assert. That sentence names which field of which row on
-        // which page failed to parse — the detail an operator repairing it
-        // needs and the detail an agent must never be handed. It is logged.
+        // The store's own account does NOT come through: it names which
+        // field of which row failed to parse, the detail an operator
+        // repairing it needs and an agent must never be handed. It is
+        // logged instead.
         assert!(
             !reason.contains("edited past parsing"),
             "the adapter's own words must not reach a caller: {reason}"
@@ -393,11 +393,9 @@ mod tests {
             advice.contains("retrying will not help") && advice.contains("operator"),
             "retrying does not help and a person must repair it: {advice}"
         );
-        // **And it does not teach the store it no longer uses.** This advice
-        // used to hand over the anatomy of a kanban card and tell an agent
-        // which column to put it back in — a store's shape an agent must never
-        // learn, and repair steps for a system that no longer holds the
-        // message. Asserting the absence is the half that keeps it gone.
+        // The advice must never teach the store's own shape or give repair
+        // steps in its vocabulary — not an agent's business, and not
+        // accurate either.
         for retired in ["card", "board", "column", "label"] {
             assert!(
                 !advice.to_lowercase().contains(retired),

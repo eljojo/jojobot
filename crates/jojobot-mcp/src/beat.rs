@@ -30,22 +30,15 @@ impl Jojobot {
     /// did land; reporting it as failed because its footnote could not be
     /// written would make the record wrong in the more damaging direction.
     ///
-    /// **That first case used to be every call on a client with no session
-    /// affinity, and is not any more.** The verbs jojobot beats about — captures,
-    /// entity writes, mailbox writes — carried no identity of their own, so the
-    /// only one available to them was the connection's, and most clients open a
-    /// fresh connection per tool call: for those clients the tally simply never
-    /// appeared. The `sid` rides every verb now, so a caller that keeps passing
-    /// it is beaten about wherever it writes, whatever its client does with
+    /// The `sid` rides every verb, so a caller that keeps passing it is
+    /// beaten about wherever it writes, whatever its client does with
     /// connections. What is left in the first case is a caller carrying no
-    /// `sid`, which is a caller that has not asked to be recorded anywhere.
+    /// `sid` at all, which has not asked to be recorded anywhere.
     ///
-    /// **A handle that is DEAD is not one of the silent cases**, and this used
-    /// to swallow it along with them — the verb wrote, the chronology stopped,
-    /// and nothing said so. That refusal is made before the write now, by
-    /// [`Jojobot::attributable`]. What is left here is the sliver where a
-    /// handle died between that check and this call, and silence is right for
-    /// it: the write has already landed.
+    /// A handle that is DEAD is not one of the silent cases: that refusal is
+    /// made before the write, by [`Jojobot::attributable`]. What is left here
+    /// is the sliver where a handle died between that check and this call,
+    /// and silence is right for it — the write has already landed.
     pub(crate) async fn beat(&self, class: &'static str, example: &str, sid: Option<&str>) {
         // **No caller, no beat.** jojobot does not guess which identity made a
         // call, and an anonymous one is legitimate — a reader, a poster who
@@ -78,11 +71,9 @@ impl Jojobot {
             return;
         };
 
-        // **The tally is read back off the session, never cached.** It used to
-        // live on the connection, which meant it died with one — and a
-        // reconnect then appended a second beat for a class that already had
-        // one. The session is where it lives, so the session is what it is read
-        // from.
+        // The tally is read back off the session, never cached: caching it
+        // on the connection would let a reconnect append a second beat for a
+        // class that already has one.
         let held = match self.sessions.read_session(&session).await {
             Ok(read) => beats_of(&read).get(class).cloned(),
             Err(e) => {

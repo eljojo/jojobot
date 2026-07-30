@@ -446,12 +446,10 @@ pub(super) fn with_schema_stamped(doc: &str) -> String {
 /// turns it into an error rather than appending a row nobody asked for. The
 /// whole table migrates to the current layout on the way ([`migrated_region`]).
 ///
-/// **Only a row the reader can parse is a target.** The writer used to match on
-/// the id cell alone, a wider predicate than [`parse_fact_row`]'s: an edit could
-/// then land on a row no read had ever returned — silently destroying a fact the
-/// caller never saw, and passing read-back, because the verification matched
-/// that same wrong row. A row the reader skips is inert: unreadable, and now
-/// unwritable too.
+/// Only a row the reader can parse is a target — the writer's predicate must
+/// never be wider than [`parse_fact_row`]'s, or an edit can land on a row no
+/// read ever returned, silently destroying a fact the caller never saw while
+/// passing read-back, because the verification matches that same wrong row.
 pub(super) fn with_row_replaced(
     doc: &str,
     home: &EntityId,
@@ -634,12 +632,11 @@ fn parse_field(doc: &str, key: &str) -> Option<String> {
 /// Read generously: a doc with no marker and no table is prose from end to end,
 /// because a page the user wrote by hand is exactly the page worth finding.
 ///
-/// **The boundary is the table, not the header.** [`facts_region`] finds the
-/// table wherever it sits under the header — deliberately, because humans type
-/// notes in that gap — but prose used to stop at the header line, so anything in
-/// the gap belonged to no hit class at all: a write preserved it forever and no
-/// search could ever surface it. Text below the table is prose for the same
-/// reason.
+/// The boundary is the table, not the header: [`facts_region`] must find the
+/// table wherever it sits under the header, because humans type notes in
+/// that gap — treating prose as stopping at the header line would mean a
+/// write preserves that gap forever but no search can surface it. Text below
+/// the table is prose for the same reason.
 pub(super) fn parse_prose(doc: &str) -> String {
     let lines: Vec<&str> = doc.lines().collect();
     let header = lines.iter().position(|l| l.trim() == FACTS_HEADER);
@@ -1070,10 +1067,9 @@ mod tests {
     }
 
     /// A user pasting a YAML/frontmatter snippet into their own doc must not
-    /// hand that doc's identity to it. Any fence with an `id:` line used to be
-    /// adopted as the machine block — the mirror image of the bug the
-    /// marker-anchored lookup was written to fix, and worse: the doc stops
-    /// resolving to its entity, so its facts become unreachable.
+    /// hand that doc's identity to it. Adopting any fence with an `id:` line
+    /// as the machine block would do exactly that: the doc stops resolving
+    /// to its entity, so its facts become unreachable.
     #[test]
     fn a_decoy_fence_cannot_steal_the_docs_identity() {
         let doc = format!(

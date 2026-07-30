@@ -642,11 +642,11 @@ mod tests {
         );
     }
 
-    /// **The one claim `search`'s description is not allowed to keep making.**
-    /// It used to disclose that mail was unreachable from here; that is now
-    /// false, and a description that says so sends a caller to a second verb
-    /// that does not exist. Pinned rather than fixed once, because the sentence
-    /// is exactly the kind that survives a rewrite by being plausible.
+    /// `search`'s description must never claim mail is unreachable from
+    /// here — that is false, and it would send a caller to a second verb
+    /// that does not exist. Pinned rather than fixed once, because the
+    /// sentence is exactly the kind that survives a rewrite by being
+    /// plausible.
     #[test]
     fn the_search_description_no_longer_says_mail_is_unsearchable() {
         let tools = Jojobot::tool_router().list_all();

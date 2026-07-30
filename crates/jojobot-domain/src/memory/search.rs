@@ -55,9 +55,9 @@ pub struct DocScan {
 ///
 /// A row is legitimately homed in its doc and legitimately about another entity;
 /// what is never legitimate is a subject cell naming something that does not
-/// exist. That is a hand edit gone wrong, and it used to be invisible: the row
-/// stayed reachable through its home (which is why nothing broke) while quietly
-/// projecting onto a handle no other read would ever agree on.
+/// exist. That is a hand edit gone wrong, and it stays invisible otherwise:
+/// the row stays reachable through its home (so nothing breaks) while
+/// quietly projecting onto a handle no other read would ever agree on.
 ///
 /// Counting is all this does. **A scan must never hard-fail on one, and must
 /// never drop it** — the row is a fact somebody wrote. Surfacing the quarantine
@@ -363,9 +363,9 @@ pub enum MailCoverage {
     /// than this process is missing, and a caller who is looking for an old
     /// message has to be told that rather than shown an empty list.
     ///
-    /// This is what a failed boot scan leaves behind, and it is exactly the
-    /// state that used to report [`Unread`](Self::Unread) — an answer carrying
-    /// message hits while saying no message was searched.
+    /// This is what a failed boot scan leaves behind. Never collapse it into
+    /// [`Unread`](Self::Unread): that would answer with message hits while
+    /// saying no message was searched.
     Partial,
     /// The board was read: everything on it is searchable.
     Loaded,

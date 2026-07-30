@@ -298,12 +298,9 @@ mod tests {
         assert_eq!(session.entries.len(), 1, "{session:?}");
     }
 
-    /// **Writing to a closed run says something different depending on which
-    /// end it reached**, because the way forward is different.
-    ///
-    /// Both refusals used to read "closed is terminal both ways — nothing
-    /// appends to it, amends it, or reopens it", which is now false for half of
-    /// them: an abandoned run reopens, and telling its owner to start a new one
+    /// Writing to a closed run must say something different depending on
+    /// which end it reached, because the way forward is different: an
+    /// abandoned run reopens, and telling its owner to start a new one
     /// instead sends them to fork the work they were trying to continue.
     #[tokio::test]
     async fn writing_to_a_closed_run_says_which_end_it_reached() {
@@ -606,10 +603,9 @@ mod tests {
         );
         assert_eq!(body["status"], "blocked");
         let how = body["how_to_proceed"].as_str().expect("advice");
-        // **The remedy must be one that works on the caller's next call.** It
-        // used to say "call boot_bot" — a verb that bound a connection most clients
-        // do not keep, so the very next call landed back here. `bot` is the
-        // address that survives, and this is the message that has to say so.
+        // The remedy must be one that works on the caller's next call: it
+        // must name `bot`, the address that survives a fresh connection, or
+        // the very next call lands back here.
         assert!(
             how.contains("`sid`"),
             "the way out names the address: {how}"

@@ -17,11 +17,11 @@ impl Jojobot {
         brief: bool,
         resume: Option<&str>,
     ) -> Result<CallToolResult, McpError> {
-        // **The entity index is read ONCE for the whole answer.** Three parts of
+        // The entity index is read ONCE for the whole answer. Three parts of
         // a boot need it — the counts by kind, which boxes the caller drains,
-        // and the identity itself — and each used to fetch it, which is three
-        // remote round trips per boot AND three reads that can disagree with
-        // one another inside a single payload.
+        // and the identity itself — and reading it three times would mean
+        // three remote round trips per boot, and three reads that can
+        // disagree with one another inside a single payload.
         //
         // Best-effort per world: orientation must land even when one world is
         // down — a fresh agent on a half-configured server still gets the map.
@@ -174,19 +174,12 @@ mod tests {
     use crate::memory::testing::*;
     use crate::session::testing::*;
 
-    /// **The two worlds came apart, and this is the test that says so.**
-    ///
-    /// It used to assert the opposite, and correctly: ownership was a `mailbox:`
-    /// claim on the bot's entity record, so an unreadable entity index meant
-    /// jojobot could not say what anybody drained, and the listing said
-    /// OWNERSHIP IS UNKNOWN rather than telling every bot its own queue was
-    /// somebody else's.
-    ///
-    /// Ownership is stated on the box now. The entity index is no longer on
-    /// that path at all, so an outage in it takes the charter, the rules and
-    /// the roster with it — and leaves the mail scoping standing. Inverted
-    /// deliberately: the old assertion passing would mean the claim field was
-    /// still being read.
+    /// The two worlds are apart, and this is the test that says so. Ownership
+    /// is stated on the box, so an unreadable entity index takes the
+    /// charter, the rules and the roster with it, and leaves the mail
+    /// scoping standing. If this assertion's polarity ever flips back, that
+    /// means ownership is being read off the entity record again — a
+    /// regression.
     #[tokio::test]
     async fn an_unreadable_entity_index_no_longer_hides_who_drains_what() {
         let memory = Arc::new(InMemoryMemory::new());
@@ -208,9 +201,8 @@ mod tests {
             Arc::new(InMemorySessions::new()),
             Arc::new(sid::SessionRegistry::new()),
         );
-        // **Read through the boot snapshot, which is where the scoping lives
-        // now.** The verb that used to render this listing is gone; the rule it
-        // enforced is not, and this is the door that still applies it.
+        // Read through the boot snapshot, which is where the scoping lives:
+        // this is the door that applies the ownership rule.
         let listed = boot(&blind, "dev").await["snapshot"]["mailboxes"].clone();
 
         assert_eq!(listed["boxes"][0]["yours"], true, "{listed}");
@@ -233,11 +225,9 @@ mod tests {
     /// arrived". So the counts are withheld from a box that is not yours and
     /// the unreadable report is not.
     ///
-    /// **Moved here when `list_mailboxes` was retired**, because this is now
-    /// the only answer that renders a box the caller does not drain. It was
-    /// the one property of that verb with nowhere else to go: `read_mailbox`'s
-    /// counting mode is about your own box by construction, and `list_sent`
-    /// only reaches boxes you have posted into.
+    /// This is the only answer that renders a box the caller does not drain:
+    /// `read_mailbox`'s counting mode is about your own box by construction,
+    /// and `list_sent` only reaches boxes you have posted into.
     #[tokio::test]
     async fn a_boot_shows_what_cannot_be_read_even_on_a_box_it_will_not_count() {
         let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
@@ -304,12 +294,11 @@ mod tests {
             "somebody else's, name only: {booted}"
         );
         assert_eq!(find("delta")["yours"], false);
-        // **No `ownership_known` flag.** It could only ever say `true` where it
-        // appeared: it was rendered inside the `Ok` arm of the very read whose
-        // `Err` arm was the only thing that set it false. A field that cannot
-        // vary is a question a reader branches on and learns nothing from. This
-        // assertion travelled here with the retirement of `list_mailboxes`,
-        // whose test it was.
+        // No `ownership_known` flag: it could only ever say `true` where it
+        // appeared, since it would be rendered inside the `Ok` arm of the
+        // very read whose `Err` arm is the only thing that would set it
+        // false. A field that cannot vary is a question a reader branches on
+        // and learns nothing from.
         assert!(
             booted["snapshot"]["mailboxes"]
                 .get("ownership_known")
@@ -387,11 +376,9 @@ mod tests {
     /// believe. Both halves are reads of the same world now; this holds them to
     /// agreeing.
     ///
-    /// **The "before" half of this test is gone with the state it described.**
-    /// It used to boot a bot whose box nobody had opened and assert both halves
-    /// called it absent. There is no such bot: a box opens with its owner, so
-    /// the disagreement now reachable is the opposite one — an identity naming
-    /// a box the snapshot beside it does not list.
+    /// There is no such thing as a bot whose box nobody has opened — a box
+    /// opens with its owner — so the reachable disagreement is the opposite
+    /// one: an identity naming a box the snapshot beside it does not list.
     #[tokio::test]
     async fn a_boot_never_disagrees_with_its_own_snapshot_about_a_box() {
         let jojobot = handler();
@@ -444,12 +431,12 @@ mod tests {
             anonymous["snapshot"]["entities"], identified["snapshot"]["entities"],
             "what exists is one answer, whoever asks"
         );
-        // **The mailbox half is deliberately NOT equal once a bot drains a
-        // box** — that is the whole point of scoping counts to the caller — so
-        // the shared invariant is the set of boxes, not their contents. The
-        // fixture used to give gamma no mailbox, which made a stale assertion
-        // of full equality pass for a reason that had nothing to do with the
-        // invariant it claimed.
+        // The mailbox half is deliberately NOT equal once a bot drains a
+        // box — that is the whole point of scoping counts to the caller — so
+        // the shared invariant is the set of boxes, not their contents. Make
+        // sure the fixture actually exercises this (give gamma a mailbox), or
+        // a full-equality assertion could pass for a reason that has nothing
+        // to do with the invariant being claimed.
         let names = |body: &serde_json::Value| -> Vec<String> {
             body["snapshot"]["mailboxes"]["boxes"]
                 .as_array()
@@ -500,10 +487,8 @@ mod tests {
         );
         assert!(counts_for(&anonymous)["counts"].is_null(), "{anonymous}");
         assert_eq!(counts_for(&anonymous)["yours"], false);
-        // **Elided, never silently** — the same rule the whole surface keeps: a
-        // reader must not have to infer withheld from empty. This assertion
-        // travelled here when `list_mailboxes` was retired; it was that verb's
-        // test and this is the only answer that still renders the field.
+        // Elided, never silently — the same rule the whole surface keeps: a
+        // reader must not have to infer withheld from empty.
         assert_eq!(counts_for(&anonymous)["counts_elided"], true, "{anonymous}");
         assert_eq!(
             anonymous["snapshot"]["mailboxes"]["counts_shown_for"],
@@ -558,12 +543,10 @@ mod tests {
             "the half that is up arrives whole"
         );
 
-        // **WHICH WORLD KNOWS THIS HAS FLIPPED.** Ownership used to be a claim
-        // on the bot's own record, so a mailbox outage left the *name* known
-        // and only its contents unknown. Ownership is stated on the box now, so
-        // an unreachable mailbox world means jojobot cannot say which box is
-        // yours, or whether you have one — and it says exactly that instead of
-        // naming a box it cannot see.
+        // Ownership is stated on the box, not the bot's own record, so an
+        // unreachable mailbox world means jojobot cannot say which box is
+        // yours, or whether you have one — and it must say exactly that
+        // instead of naming a box it cannot see.
         let owned = &me["owned_mailbox"];
         assert_eq!(owned["available"], false, "got {owned}");
         assert!(

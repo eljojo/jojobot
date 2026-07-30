@@ -189,8 +189,8 @@ mod tests {
         assert_eq!(forced["name"], "Alpha");
     }
 
-    /// **The guard's last door, through the real handler.** A patch carrying
-    /// only aliases renames nothing, so nothing used to screen it — and the
+    /// The guard's last door, through the real handler: a patch carrying
+    /// only aliases renames nothing, so it must still be screened, and the
     /// advice it gets back must not describe a rename the caller never made.
     #[tokio::test]
     async fn an_alias_onto_a_taken_name_is_blocked_and_says_so_in_its_own_words() {

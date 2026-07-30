@@ -30,7 +30,7 @@ pub(crate) fn with_mailboxes(mailboxes: Arc<InMemoryMailboxes>) -> Jojobot {
 }
 
 /// What is waiting in this bot's own box, without taking delivery of any of
-/// it — the read that used to be a verb of its own.
+/// it.
 ///
 /// **A fixture that counted through the delivery path would poison every test
 /// that used it**: each call would quietly move the box's mail out of `new`,

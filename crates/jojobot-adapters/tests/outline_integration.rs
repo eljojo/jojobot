@@ -265,24 +265,19 @@ async fn drop_test_collection(http: &reqwest::Client, c: &Creds) {
 }
 
 /// **The Sessions contract, against real Outline, with no edit to the spec.**
-/// The same suite the fake satisfies — which is the proof that moving sessions
-/// out of Vikunja was a storage move and not a redesign.
+/// The same suite the fake satisfies.
 ///
 /// A throwaway collection per case, because the spec assumes a store that
-/// starts empty. That is the same shape the Vikunja session suite used, for the
-/// same reason.
+/// starts empty.
 ///
-/// **`all_sessions` earns its own assertion afterwards.** It is what the handle
-/// registry is rebuilt from at startup, the previous review found it untested
-/// against a real adapter, and it is the one read that spans pages — so a bug
-/// in it is a restart that silently forgets every session of every bot but one.
+/// `all_sessions` earns its own assertion afterwards: it is what the handle
+/// registry is rebuilt from at startup, and it is the one read that spans
+/// pages — so a bug in it is a restart that silently forgets every session
+/// of every bot but one.
 /// **The Mailboxes contract, against real Outline.**
 ///
-/// It ran nowhere at any tier until this round: `64d54bf` deleted the fast-tier
-/// run and this suite was never extended, so the only thing between the
-/// operator's mail and markdown normalization had no test at all. A break in
-/// body escaping, cell escaping, id minting over ragged rows or notes
-/// flattening shipped with the whole workspace green.
+/// A break in body escaping, cell escaping, id minting over ragged rows or
+/// notes flattening must never ship with the whole workspace green.
 ///
 /// A collection per case, like the sessions run: the spec wants a fresh store
 /// each time, and the owners are written into each because a box belongs to a

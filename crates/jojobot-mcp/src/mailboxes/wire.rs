@@ -5,9 +5,8 @@
 //! one message. The receipt renderer is here too, and it is where the rule that
 //! eliding is never silent is actually enforced.
 //!
-//! [`Ownership`] is here because its verb is gone. It scoped `list_mailboxes`'s
-//! counts and the boot snapshot's alike; with that verb retired its one caller
-//! is `orient`, which is another context's — and mailbox scoping written inside
+//! [`Ownership`] lives here, not in `orient`: it scopes both the boot
+//! snapshot and a poll's counts alike, and mailbox scoping written inside
 //! orientation would be worse than machinery kept beside the vocabulary it
 //! renders.
 
@@ -18,13 +17,9 @@ use super::*;
 /// The two are separate answers on purpose. "You drain none of these" and
 /// "jojobot cannot read the store that says which you drain" produce the same
 /// listing and mean opposite things, and a caller acts on both.
-/// **Ownership is never unknown here, and that is why there is no flag.** This
-/// used to carry a `known: bool`, because ownership was a read of Memory and
-/// the mailbox listing could arrive with nobody able to say whose was whose.
-/// The two are one read now: whoever renders a listing has already answered the
-/// ownership question, so the flag could only ever say `true` where it appeared
-/// — it was rendered inside the `Ok` arm of the very read whose `Err` arm set
-/// it false.
+/// Ownership is never unknown here, so there is no flag for it: whoever
+/// renders a listing has already answered the ownership question by
+/// construction.
 pub(crate) struct Ownership {
     /// The boxes this caller drains. Empty when they drain none.
     mine: Vec<String>,
@@ -36,10 +31,9 @@ impl Ownership {
     }
 
     /// Whether this caller drains this box — and so whether its counts are
-    /// theirs to see. **One question, not two.** It used to be two: a box
-    /// nobody drained had no queue to shield, so its counts went to everybody.
-    /// A box has an owner by construction now, so that second case cannot
-    /// arise.
+    /// theirs to see. One question, not two, because every box has an owner
+    /// by construction: there is no "nobody drains it, show counts to
+    /// everybody" case.
     pub(crate) fn drains(&self, name: &str) -> bool {
         self.mine.iter().any(|m| m == name)
     }
@@ -66,14 +60,11 @@ impl Ownership {
 impl Jojobot {
     /// Which boxes this caller drains, **off a listing already in hand**.
     ///
-    /// **Ownership is a read of the boxes themselves, never an ACL and no
-    /// longer a read of Memory**: a box states its one owner, so the answer is
-    /// in the same listing being rendered. It used to be a `mailbox:` claim on
-    /// the bot's own entity record, which is why this once asked the entity
-    /// index — and why there was a separate `boxes_drained_by` that went and
-    /// fetched a listing of its own. Two reads of one world could disagree,
-    /// and the disagreement rendered as "jojobot cannot tell who drains what"
-    /// beside a listing that plainly said. One read, one answer.
+    /// Ownership is a read of the boxes themselves, never an ACL and never a
+    /// read of Memory: a box states its one owner, so the answer is in the
+    /// same listing being rendered. Never split this into two reads of one
+    /// world — they can disagree, rendering as "jojobot cannot tell who
+    /// drains what" beside a listing that plainly said.
     ///
     /// A caller that names no bot drains nothing — the right answer for a pure
     /// sender, and for an anonymous `start_here`.
@@ -86,11 +77,9 @@ impl Jojobot {
         // no connection to fall back to any more: a caller with no handle owns
         // nothing, which is exactly right for one that only posts.
         let bot = named.cloned();
-        // **Every box has an owner now**, so the old "a box nobody owns has no
-        // queue to protect" case cannot arise: there is no unclaimed box to
-        // leave visible to everybody. The scoping is therefore simply what it
-        // always meant — a caller sees the counts of the boxes it drains, and
-        // every other box by name alone.
+        // Every box has an owner, so there is no unclaimed box that should be
+        // visible to everybody: a caller sees counts only for boxes it
+        // drains, and every other box by name alone.
         let Some(bot) = bot else {
             return Ownership::known(Vec::new());
         };
@@ -149,12 +138,9 @@ pub(crate) fn mailbox_json(mailbox: &Mailbox) -> serde_json::Value {
 /// somebody who does not drain this box, and who would otherwise read the
 /// silence as "my message was never sent".
 ///
-/// **`ids`, not `card_ids`.** The old spelling was retired vocabulary from when
-/// mail lived on a task board, and it shipped on every mailbox payload
-/// including a boot — so a fresh session's first read of jojobot taught it that
-/// messages are cards, which is both wrong and not its business. What the field
-/// holds is the ids a person needs in order to repair these by hand, and that
-/// is now what it is called.
+/// This field is named `ids`, never `card_ids` or other board vocabulary — it
+/// must never teach a fresh session that messages are cards. What it holds
+/// is the ids a person needs to repair these by hand.
 pub(crate) fn quarantined_json(mailbox: &Mailbox) -> serde_json::Value {
     serde_json::json!({
         "count": mailbox.quarantined.len(),
@@ -164,10 +150,10 @@ pub(crate) fn quarantined_json(mailbox: &Mailbox) -> serde_json::Value {
 
 /// **A poll's answer: what is waiting in your own box, and nothing taken.**
 ///
-/// Built from [`mailbox_json`] rather than beside it, so the counts a poll sees
-/// and the counts a boot sees are one rendering — this is the job
-/// `list_mailboxes` used to do, and it landed here rather than on a verb of its
-/// own so the surface arrives one tool smaller instead of one tool renamed.
+/// Built from [`mailbox_json`] rather than beside it, so the counts a poll
+/// sees and the counts a boot sees are one rendering. Kept here rather than
+/// as its own verb, so the surface stays one tool smaller instead of gaining
+/// a renamed duplicate.
 ///
 /// **`delivered: false` is not decoration.** A caller has to be able to tell a
 /// count from a delivery that happened to be empty, and the difference is
@@ -227,10 +213,10 @@ pub(crate) fn message_json(message: &Message) -> serde_json::Value {
 /// infer from a missing key whether a body was withheld or empty is a reader
 /// that will eventually infer wrong.
 ///
-/// The write is still verified: the store's read-back invariant means a body
-/// that did not survive storage is an error rather than a success with mangled
-/// bytes, so what the full echo used to prove is proven server-side. What the
-/// echo added was shipping a 4-8 KB report back to the one caller who wrote it.
+/// The write is still verified server-side: the store's read-back invariant
+/// means a body that did not survive storage is an error, not a mangled
+/// success. Dropping the full echo only drops the 4-8 KB report shipped back
+/// to the writer.
 pub(crate) fn message_receipt_json(message: &Message, how_to_read: &str) -> serde_json::Value {
     let mut body = message_json(message);
     if let Some(obj) = body.as_object_mut() {

@@ -12,11 +12,11 @@ pub(crate) fn session_nothing_to_amend() -> CallToolResult {
     let body = serde_json::json!({
         "status": "blocked",
         "wrote": false,
-        // **True of both ways to get here.** A bot with no session at all has
+        // True of both ways to get here: a bot with no session at all has
         // nothing written yet; a bot whose last session was wrapped or swept
-        // has a record that is closed and no longer amendable. Saying "not even
-        // written to disk" was false for the second, and it sent a caller
-        // looking for entries that are sitting right there, closed.
+        // has a record that is closed and no longer amendable. Never say "not
+        // even written to disk" — that sends a caller looking for entries
+        // that are sitting right there, closed.
         "how_to_proceed": "Nothing was written. There is no OPEN session to amend: either this \
                            identity has not written anything yet — a session's record begins on \
                            its first beat — or its last session is closed, and closed is \
@@ -52,10 +52,10 @@ pub(crate) fn session_declined(e: SessionError) -> Result<CallToolResult, McpErr
                  identity — use the sid it gives you rather than composing one."
             ),
         ),
-        // **The two ends part company here, because the way forward does.** One
-        // paragraph for both used to tell the owner of a run that merely
-        // stopped that their work belonged to a new session — which is advice
-        // to fork the very thing they were trying to continue.
+        // The two ends part company here, because the way forward does: the
+        // message for an abandoned run must never tell its owner their work
+        // belongs to a new session — that is advice to fork the very thing
+        // they were trying to continue.
         SessionError::Closed {
             attempted,
             state: SessionState::Abandoned,

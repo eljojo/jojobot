@@ -721,10 +721,10 @@ impl Memory for OutlineStore {
         }
         let collection_id = self.resolve_collection().await?;
 
-        // Every entity this write names must already exist — the subject first,
-        // then the edge's object. **Nothing here provisions.** A novel subject
-        // used to spawn a nameless doc, so every typo and every plausible handle
-        // an AI produced became a permanent entity nobody chose.
+        // Every entity this write names must already exist — the subject
+        // first, then the edge's object. Nothing here provisions: letting a
+        // novel subject spawn a nameless doc would turn every typo or
+        // plausible AI-produced handle into a permanent entity nobody chose.
         let index = self.entity_index(&collection_id).await?;
         if let Decision::Block(candidates) = guard::decide_existing(&fact.subject, &index) {
             return Ok(Guarded::Blocked {
@@ -1331,9 +1331,9 @@ mod tests {
         /// landed, without going through a reader that might be the thing
         /// under test.
         ///
-        /// **Matched on the machinery marker as well as the name**, because a
-        /// bot's own entity page carries `name: gamma` too. The first version
-        /// of this matched on the name alone, found the entity page, and made
+        /// Matched on the machinery marker as well as the name, because a
+        /// bot's own entity page also carries `name: gamma` — matching on
+        /// the name alone would find the entity page instead, and could make
         /// a test about an orphaned message body pass by looking somewhere
         /// that could never have one.
         fn text_of_mailbox_page(&self, what: &str) -> String {
@@ -1603,8 +1603,7 @@ mod tests {
     }
 
     /// The whole real store logic (provisioning + codec) against a fake
-    /// transport — the fast/CI coverage that used to exist only in the gated
-    /// integration test.
+    /// transport.
     #[tokio::test]
     async fn outline_store_satisfies_the_contract() {
         contract::run_all(&store(FakeOutline::new())).await;
@@ -2186,12 +2185,11 @@ mod tests {
         );
     }
 
-    /// **A refusal names the field that changed, and not the store.**
-    ///
-    /// It used to interpolate two whole records and leave the reader to diff
-    /// them. In production that cost two failed writes, a page a person had to
-    /// repair by hand, and a wrong cause passed on as established — all
-    /// because nobody could see WHICH field had differed.
+    /// A refusal must name the field that changed, never interpolate whole
+    /// records into the message: that once cost two failed writes in
+    /// production, a page a person had to repair by hand, and a wrong cause
+    /// passed on as established, all because nobody could see WHICH field
+    /// differed.
     ///
     /// Both halves are asserted: the field is named, and no part of the store
     /// is. The second is the one a future edit is likely to break, since the
@@ -2479,11 +2477,11 @@ mod tests {
         );
     }
 
-    /// **A failed rollback is a VARIANT, not a sentence**, in the mailbox
-    /// context. Detecting it used to mean string-matching prose inside a
-    /// general store error, so rewording that prose silently broke the
-    /// detection with every test green. The session context has its own, and a
-    /// test in one proves nothing about the other.
+    /// A failed rollback is a VARIANT, not a sentence, in the mailbox
+    /// context: string-matching prose inside a general store error would let
+    /// rewording that prose silently break detection while every test stays
+    /// green. The session context has its own, and a test in one proves
+    /// nothing about the other.
     ///
     /// `notes` is the last column of a message row, which is what makes
     /// `mark_processed` with a note the write the induced fault can spoil.
@@ -2701,11 +2699,10 @@ mod tests {
         );
     }
 
-    /// **A note typed in the gap under `### ⚙ facts` is findable.** The reader
-    /// tolerates it and the writer preserves it — so before this, that text was
-    /// kept forever and searchable never: it belonged to no hit class at all.
-    /// The user's most likely place to leave a note was the one place the front
-    /// door could not see.
+    /// A note typed in the gap under `### ⚙ facts` must be findable — the
+    /// reader tolerates it and the writer preserves it. Without this, such a
+    /// note is kept forever but searchable never, even though it is the most
+    /// likely place a user leaves one.
     #[tokio::test]
     async fn a_note_under_the_facts_header_is_findable_as_prose() {
         let fake = FakeOutline::new();
@@ -2894,10 +2891,11 @@ mod tests {
 
     // --- hand-edited docs: the adversarial-review regressions -----------------
     //
-    // These pages are user-visible wiki docs, so a retyped date or a stray note
-    // is normal. Each of these scenarios used to destroy data AND report
-    // success, because the write path read the doc with a looser predicate than
-    // the read path did — so the verification confirmed the wrong row.
+    // These pages are user-visible wiki docs, so a retyped date or a stray
+    // note is normal. The write path's predicate for matching a row must be
+    // exactly the read path's — a looser write predicate lets the
+    // verification confirm the wrong row, silently destroying data while
+    // reporting success.
 
     /// A row this reader can't parse must be inert: it keeps its id (so nothing
     /// collides with it) and it is never the row an edit lands on.

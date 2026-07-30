@@ -388,11 +388,9 @@ mod tests {
             assert_eq!(body["status"], "blocked", "{verb} must be blocked: {body}");
             assert_eq!(body["wrote"], false);
             let how = body["how_to_proceed"].as_str().expect("advice");
-            // **Why this end is the last word, not merely that it is.** The
-            // reason used to be a published account that reopening would
-            // falsify; wrapping publishes nothing now, and the reason survives
-            // it: a run that told its story has ended, which is what makes this
-            // refusal different from the one an abandoned run gets.
+            // This end is the last word because the run told its story —
+            // that, not a published account, is what makes this refusal
+            // different from the one an abandoned run gets.
             assert!(
                 how.contains("story has been told"),
                 "{verb} has to say why: {how}"
@@ -441,17 +439,10 @@ mod tests {
         );
     }
 
-    /// **Wrapping one session leaves every other one running.** A wrap reaches
-    /// exactly the run its handle addresses: the session it closes, the story it
-    /// tells, and nothing else. It used to clear the connection's binding
-    /// regardless of which session it had been pointed at, orphaning the live
-    /// one, losing its tally, and making the next write mint a second card for a
-    /// session that was already running.
-    ///
-    /// **The binding is gone, so that mechanism cannot recur** — what is pinned
-    /// here is the invariant it broke, now that a handle is the only address:
-    /// closing somebody else's run leaves this one's card, tally and chronology
-    /// exactly where they were.
+    /// Wrapping one session leaves every other one running: a wrap reaches
+    /// exactly the run its handle addresses — the session it closes, the story
+    /// it tells, and nothing else. Closing somebody else's run must leave this
+    /// one's card, tally and chronology exactly where they were.
     #[tokio::test]
     async fn wrapping_another_session_leaves_this_one_running() {
         let store = Arc::new(InMemorySessions::new());

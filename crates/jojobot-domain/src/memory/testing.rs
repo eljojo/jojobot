@@ -373,10 +373,9 @@ impl Memory for InMemoryMemory {
     async fn scan(&self) -> Result<Vec<search::DocScan>, MemoryError> {
         let facts = self.facts.lock().expect("fake mutex poisoned").clone();
         let prose = self.prose.lock().expect("fake mutex poisoned").clone();
-        // **No Journal document.** There was one — a shared page every wrap
-        // published a story into, scanned like any other doc so `search` could
-        // find it. It is gone: a wrap publishes nowhere now, and the journal is
-        // dark until events land.
+        // No Journal document: a wrap publishes nowhere, so the journal stays
+        // dark until events land — there is no shared page for `search` to
+        // scan here.
         Ok(std::iter::empty()
             .chain(self.index().into_iter().map(|entity| {
                 search::DocScan {
@@ -1349,11 +1348,11 @@ pub mod contract {
 
     /// Editing metadata that isn't the name is never screened — an entity's own
     /// name must not trip the guard against itself.
-    /// **An alias is a name.** Claiming one that another entity already answers
-    /// to is the same collision a rename is, so it faces the same gate — and it
-    /// is the gate's last door: `add_entity` under a taken name is blocked, but
-    /// an alias patch onto some *other* entity used to walk straight through,
-    /// and search then indexed two entities answering to one word.
+    ///
+    /// An alias is a name: claiming one that another entity already answers
+    /// to is the same collision a rename is, so it must face the same gate,
+    /// even on a patch that renames nothing — otherwise search would index
+    /// two entities answering to one word.
     pub async fn update_entity_screens_a_colliding_alias<M: Memory>(store: &M) {
         let owner = EntityId::person("contract-alias-owner");
         add(
@@ -2477,15 +2476,12 @@ pub mod contract {
         assert_eq!(forced.id, typo);
     }
 
-    /// **Capture's subject must already exist.** Not "must not look like
-    /// something else" — must *be* something.
-    ///
-    /// A novel subject used to self-provision a nameless entity, so every typo
-    /// and every plausible-looking handle an AI produced became a permanent
-    /// record nobody chose, indistinguishable from a real one at a glance. There
-    /// is no create-new escape on this path either: a genuinely new entity is
-    /// `add_entity` and then the capture, two deliberate steps, and the second
-    /// is what proves the first was meant.
+    /// Capture's subject must already exist. Not "must not look like
+    /// something else" — must *be* something: letting a novel subject
+    /// self-provision a nameless entity would turn every typo or
+    /// plausible-looking AI handle into a permanent record nobody chose.
+    /// There is no create-new escape on this path either: a genuinely new
+    /// entity is `add_entity`, then the capture — two deliberate steps.
     pub async fn capture_requires_an_existing_subject<M: Memory>(store: &M) {
         let known = EntityId::person("contract-zenith");
         add(store, NewEntity::new(known.clone(), "Zenith", "user-named")).await;
@@ -2516,8 +2512,8 @@ pub mod contract {
             "got {candidates:?}"
         );
 
-        // …and a handle nothing resembles blocks just the same, with nothing to
-        // suggest. This is the case that used to sail through and provision.
+        // …and a handle nothing resembles blocks just the same, with nothing
+        // to suggest.
         let stranger = EntityId::new(EntityKind::Work, "contract-first-mix");
         let outcome = store
             .capture(NewFact::about(
@@ -2935,8 +2931,7 @@ pub mod contract {
     /// at all — and `status: superseded` is how it is reached deliberately, so
     /// nothing is destroyed, only demoted.
     ///
-    /// This is the default-exclusion contract; only the negated variant had one
-    /// before, and that variant is gone.
+    /// This is the default-exclusion contract.
     /// **A retracted record is out of a default search, and reachable when
     /// asked for by name.** The same rule superseded lives under, for a
     /// different reason: superseded says a later claim replaced this one,

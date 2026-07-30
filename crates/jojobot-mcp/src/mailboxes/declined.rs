@@ -35,9 +35,8 @@ pub(crate) fn not_yours(id: &MessageId, theirs: &MailboxName) -> CallToolResult 
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
-/// **One gate left, because there is one way to meet a box name: by naming one
-/// that must already exist.** There used to be a `Creating` arm for the mint;
-/// nothing mints, so nothing creates a box by name.
+/// One gate, because there is one way to meet a box name: by naming one that
+/// must already exist. Nothing mints a box, so nothing creates one by name.
 pub(crate) enum BlockedBox {
     /// A write that only **names** a box. It cannot create one.
     MustExist(&'static str),
@@ -102,19 +101,14 @@ pub(crate) fn mailbox_blocked_body(
 /// write: same `status` / `wrote` / `how_to_proceed` keys, so one client-side
 /// branch handles every "jojobot declined, here is what to do" answer here.
 ///
-/// **It says what is wrong and stops.** It used to hand over repair steps — the
-/// three parts of a card, which column to put it back in, which label it was
-/// missing — for a store that no longer holds any of this. Two failures in one
-/// string: it taught an agent the shape of jojobot's store, which is never its
-/// business and was by then simply wrong, and it sent that agent to fix the
-/// message somewhere it does not live.
+/// It says what is wrong and stops. It must never hand over repair steps in
+/// the store's own vocabulary: that teaches an agent a shape that is never
+/// its business, and sends it to fix the message somewhere it does not live.
 ///
-/// **`reason` is returned to the calling agent**, so the adapter's own account
-/// of what is malformed does not go in it — that comment used to claim the
-/// field belonged to whoever reads the log, which was simply false and is the
-/// reason nobody looked at this path. The detail is logged; see
-/// [`crate::boundary`]. What an agent needs is that retrying will not help and
-/// that the message is unhandled.
+/// `reason` is returned to the calling agent, so the adapter's own account of
+/// what is malformed does not go in it. The detail is logged instead; see
+/// [`crate::boundary`]. What an agent needs is that retrying will not help
+/// and that the message is unhandled.
 pub(crate) fn mailbox_quarantined(attempted: &str, reason: &str) -> CallToolResult {
     let body = serde_json::json!({
         "status": "blocked",

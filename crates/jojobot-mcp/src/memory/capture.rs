@@ -344,7 +344,6 @@ mod tests {
         );
     }
 
-    /// A subject of any kind captures — facts are no longer people-only.
     #[tokio::test]
     async fn a_fact_can_be_about_any_kind() {
         let jojobot = handler();
@@ -356,11 +355,10 @@ mod tests {
         assert_eq!(captured["subject"], "place:north-trail");
     }
 
-    /// **Capture's subject must exist**, near miss or complete stranger, and the
-    /// way through is `add_entity` — never a flag. The advice in the payload has
-    /// to say that, because the AI reading it is the only thing that acts on it:
-    /// telling it to pass a `create_new` that no longer exists on this verb
-    /// would send it round a loop it can't get out of.
+    /// Capture's subject must exist, near miss or complete stranger, and the
+    /// way through is `add_entity` — never a flag. The advice must say
+    /// `add_entity`: `create_new` is not a parameter on this verb, and telling
+    /// the caller to pass it would send it round a loop it cannot leave.
     #[tokio::test]
     async fn a_blocked_capture_says_to_add_the_entity_first() {
         let jojobot = handler();

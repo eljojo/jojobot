@@ -39,11 +39,9 @@ use super::EntityId;
 
 /// The metadata key reserved for the type name.
 ///
-/// **Reserved in the code and not merely in this comment.** It used to say
-/// "reserved rather than forbidden: it round-trips like any other key" and
-/// nothing enforced it — a caller's `type` metadata rendered a second type
-/// token, and the reader took the last one, so the event's real type was
-/// destroyed and the key vanished with it. See [`reserved_key`].
+/// Reserved in the code, not merely in this comment: unchecked `type`
+/// metadata renders a second type token, the reader takes the last one, and
+/// the event's real type is silently destroyed. See [`reserved_key`].
 pub const TYPE: &str = "type";
 
 /// A reference to an entity, in the payload's own grammar. Reserved exactly as
