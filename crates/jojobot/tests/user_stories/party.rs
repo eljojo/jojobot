@@ -4,7 +4,7 @@
 //! people whose state changes, a walk from an event to its guests to what they
 //! eat, and one person reached only through another.
 //!
-//! `// GAP:` marks a call that cannot be made today.
+//! `// GAP —` marks a call that cannot be made today.
 
 use super::dsl::Story;
 

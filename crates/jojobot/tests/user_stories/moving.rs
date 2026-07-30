@@ -3,7 +3,7 @@
 //! Follows a real conversation: an open question, some constraints, research,
 //! a shortlist, then the cascade of things that have to get done. Months of it.
 //!
-//! `// GAP:` marks a call that cannot be made today. Those blocks are the roadmap.
+//! `// GAP —` marks a call that cannot be made today. Those blocks are the roadmap.
 
 use super::dsl::Story;
 

@@ -4,7 +4,7 @@
 //! accumulation: the same measurement year after year, parts replaced under it,
 //! and the questions you ask months later.
 //!
-//! `// GAP:` marks a call that cannot be made today.
+//! `// GAP —` marks a call that cannot be made today.
 
 use super::dsl::Story;
 

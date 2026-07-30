@@ -20,7 +20,7 @@
 //!
 //! Milestone: "I can ask why, and the answer holds."
 //!
-//! `// GAP:` marks a call that cannot be made today.
+//! `// GAP —` marks a call that cannot be made today.
 
 use super::dsl::Story;
 

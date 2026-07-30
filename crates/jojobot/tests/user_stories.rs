@@ -3,7 +3,7 @@
 //! Run through the served surface as a real client, because the last field
 //! failure was invisible to every in-process test.
 //!
-//! What cannot be done yet is commented out in place, marked `// GAP:`. Those
+//! What cannot be done yet is commented out in place, marked `// GAP —`. Those
 //! blocks are the roadmap's raw material. A story that runs clean tells us less
 //! than one that stops.
 //!
