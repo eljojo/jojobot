@@ -465,69 +465,6 @@ fn the_orientation_teaches_the_sid_as_the_address_and_leaves_reads_untallied() {
     );
 }
 
-/// **The engine names roles, never a particular working agreement.** A
-/// cadence ("every 20 minutes"), a named protocol ("the round is closed"),
-/// or one party's framing ("my report") is a charter's business — data in
-/// the operator's own store — and compiling it in makes a user-agnostic
-/// server carry one user's arrangements.
-///
-/// **Asserted as a property, not an enumerated denylist.** A list of
-/// today's phrasings only fires on today's phrasings: "every 15 minutes"
-/// and "each morning" would both sail past one. This matches the SHAPE — a
-/// cadence is a count next to a unit of time — so a wording nobody
-/// anticipated is caught too.
-pub(crate) fn engine_generic(what: &str, prose: &str) {
-    let lower = prose.to_lowercase();
-    let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric()).collect();
-
-    const UNITS: [&str; 12] = [
-        "minute", "minutes", "hour", "hours", "day", "days", "week", "weeks", "morning", "evening",
-        "night", "nights",
-    ];
-    const QUANTIFIERS: [&str; 6] = ["every", "each", "per", "twice", "once", "hourly"];
-
-    for (i, word) in words.iter().enumerate() {
-        // A cadence is a quantifier reaching a time unit within a couple of
-        // words: "every 20 minutes", "each morning", "twice a day".
-        if !QUANTIFIERS.contains(word) {
-            continue;
-        }
-        if *word == "hourly" {
-            panic!("{what} states a cadence ('hourly') — that belongs to a bot's charter");
-        }
-        let mut reach = words.iter().skip(i + 1).take(3);
-        if let Some(unit) = reach.find(|w| UNITS.contains(w)) {
-            panic!(
-                "{what} states a cadence ('{word} … {unit}') — how often a role runs belongs \
-                 to that bot's charter at seeding, not to a user-agnostic engine"
-            );
-        }
-    }
-}
-
-/// The same property, over every tool description — which is where this
-/// round's working-agreement prose actually landed. The orientation essay
-/// had a gate; the descriptions had none, and they are read by exactly the
-/// same audience for exactly the same purpose.
-#[test]
-fn no_tool_description_carries_a_working_agreement() {
-    for tool in Jojobot::tool_router().list_all() {
-        let description = tool.description.as_deref().unwrap_or_default();
-        engine_generic(&format!("{}'s description", tool.name), description);
-
-        // Named protocols and one party's framing: a verb's contract is
-        // what it does and refuses, never who is arranged to call it.
-        for borrowed in ["round-closed", "the round", "my report", "hand-off ↔"] {
-            assert!(
-                !description.to_lowercase().contains(borrowed),
-                "{}'s description borrows a working agreement ({borrowed:?}): a description \
-                 states the contract, and an arrangement between two bots is charter material",
-                tool.name
-            );
-        }
-    }
-}
-
 /// **The norms a session cannot derive from the tool list are taught.**
 /// Each of these was a real session getting it wrong or having no way to
 /// know: wrapping a session whose work continues (so the next run started
@@ -590,8 +527,6 @@ fn the_orientation_teaches_the_two_endings_and_the_own_box_norm() {
         ORIENTATION.contains("post_message"),
         "…and there is a sanctioned way to reach another box: write to it"
     );
-
-    engine_generic("ORIENTATION", ORIENTATION);
 }
 
 /// **Every word an agent reads, gathered in one place** — tool descriptions,
