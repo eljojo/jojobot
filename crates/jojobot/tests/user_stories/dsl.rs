@@ -108,6 +108,20 @@ impl Story {
         Session { client, sid }
     }
 
+    /// A new session's own boot, whole — the essay included. `.session()`
+    /// takes `brief` on every other story, because they act after booting;
+    /// this exists for a story whose whole point is what a full boot itself
+    /// hands over, before anything else is asked of it.
+    pub async fn full_boot(&self) -> (Value, Session) {
+        let client = self.connect().await;
+        let booted = call(&client, "start_here", json!({"bot": self.bot})).await;
+        let sid = booted["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("boot handed back no handle: {booted}"))
+            .to_string();
+        (booted, Session { client, sid })
+    }
+
     pub async fn finish(self) {
         self.ct.cancel();
     }
