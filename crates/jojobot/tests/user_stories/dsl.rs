@@ -221,13 +221,36 @@ impl Session {
         .await;
     }
 
-    pub async fn fact_about(&self, subject: &str, content: &str, shape: &str, object: &str) {
+    pub async fn fact_about(
+        &self,
+        subject: &str,
+        content: &str,
+        shape: &str,
+        object: &str,
+    ) -> String {
+        let body = self
+            .write(
+                &format!("a fact linking {subject} to {object}"),
+                "capture",
+                json!({
+                    "subject": subject, "content": content,
+                    "provenance": "testimony", "shape": shape, "object": object,
+                }),
+            )
+            .await;
+        address_of(&body)
+    }
+
+    /// Rewrite a claim in place AND re-point its edge — for the case where
+    /// what changed is not just the wording but which thing the claim now
+    /// traces to, so the edge does not go on naming what used to be true.
+    pub async fn correct_with_source(&self, address: &str, content: &str, object: &str) {
         self.write(
-            &format!("a fact linking {subject} to {object}"),
-            "capture",
+            &format!("correcting {address} and its source"),
+            "update_fact",
             json!({
-                "subject": subject, "content": content,
-                "provenance": "testimony", "shape": shape, "object": object,
+                "address": address, "content": content,
+                "shape": "about", "object": object,
             }),
         )
         .await;

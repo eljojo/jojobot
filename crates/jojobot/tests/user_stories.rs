@@ -23,3 +23,5 @@ mod dsl;
 mod moving;
 #[path = "user_stories/party.rs"]
 mod party;
+#[path = "user_stories/sourcing.rs"]
+mod sourcing;
