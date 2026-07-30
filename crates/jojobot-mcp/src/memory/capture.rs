@@ -1,4 +1,6 @@
-//! `capture` — Remember one fact about an entity, with its provenance and at most one edge.
+//! `capture` — Remember one fact about an entity, with its provenance, at
+//! most one edge, and — when it was derived from another claim rather than
+//! from an entity — the claim it traces to.
 //!
 //! One verb, one file: its arguments, the description a caller reads,
 //! and an entrypoint that chains the systems below it.
@@ -35,6 +37,13 @@ pub struct CaptureArgs {
     /// how a cross-entity question quietly starts coming back empty.
     #[serde(default)]
     pub object: Option<String>,
+    /// **The claim this one was derived from**, as its address
+    /// (`kind:slug#local-id`), when it was derived from another claim rather
+    /// than from an entity. An edge's object is an entity; this is not an
+    /// edge, because a claim has no entity to point at when what it came from
+    /// is itself a claim.
+    #[serde(default)]
+    pub derived_from: Option<String>,
     /// **What makes this an EVENT rather than a fact** — the type name, free
     /// text, required to record one and never interpreted.
     ///
@@ -139,7 +148,8 @@ impl Jojobot {
                        assert nothing, which is what makes them not `about` edges. Metadata or \
                        refs WITHOUT an event_type comes back blocked: jojobot will not invent a \
                        type, because one it guessed would be indistinguishable later from one you \
-                       chose."
+                       chose. derived_from names the claim this one was worked out from, as its \
+                       address — use it when the source is another claim, not an entity."
     )]
     pub(crate) async fn capture(
         &self,
@@ -162,6 +172,12 @@ impl Jojobot {
             Ok(event) => event,
             Err(refused) => return Ok(refused),
         };
+        let derived_from = args
+            .derived_from
+            .as_deref()
+            .map(FactAddress::parse)
+            .transpose()
+            .map_err(memory_error)?;
 
         let new = NewFact {
             subject,
@@ -172,6 +188,7 @@ impl Jojobot {
             date,
             edge,
             event,
+            derived_from,
         };
         match self.memory.capture(new).await.map_err(memory_error)? {
             Guarded::Written(fact) => {

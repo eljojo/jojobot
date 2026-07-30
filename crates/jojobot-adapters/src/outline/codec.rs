@@ -6,8 +6,8 @@
 use jiff::civil::Date;
 
 use jojobot_domain::memory::{
-    Boot, Edge, EdgeShape, Entity, EntityId, Fact, FactId, FactStatus, Provenance, event::Event,
-    validate_prose, validate_subject,
+    Boot, Edge, EdgeShape, Entity, EntityId, Fact, FactAddress, FactId, FactStatus, Provenance,
+    event::Event, validate_prose, validate_subject,
 };
 
 /// The header that marks the machine-readable fact table at the bottom of a
@@ -18,10 +18,9 @@ use jojobot_domain::memory::{
 /// store enforced would be the only one anybody checked.
 pub(super) use jojobot_domain::memory::{FACTS_HEADER, MACHINERY_FIELD};
 /// The table's column header row.
-pub(super) const TABLE_HEADER: &str =
-    "| id | subject | content | details | provenance | status | date | edges | event |";
+pub(super) const TABLE_HEADER: &str = "| id | subject | content | details | provenance | status | date | edges | event | derived_from |";
 /// The markdown table separator under the header.
-pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | --- | --- |";
+pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |";
 /// The doc schema's CURRENT version, stamped into the machine block (`schema:`)
 /// by every write. Schema evolution is a standing condition of this system —
 /// long-lived docs, written by every era of this software — so the eras are
@@ -31,7 +30,8 @@ pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | 
 ///   1 — pre-details:  `id | subject | content | provenance | status | date`
 ///   2 — details (M1): `id | subject | content | details | provenance | status | date`
 ///   3 — edges (M2):   8 columns, through the surface release
-///   4 — event:        the current 9-column [`TABLE_HEADER`]
+///   4 — event:        9 columns, through the alignment release
+///   5 — derived_from: the current 10-column [`TABLE_HEADER`]
 ///
 /// A doc with no `schema:` line predates the field; its rows read by structural
 /// inference ([`layout_of`]), which is kept forever — hand-written and ancient
@@ -41,7 +41,7 @@ pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | 
 /// at all. Upgrades today are reparse + re-render ([`migrated_region`]); the
 /// first version whose upgrade can't be that gets its explicit step registered
 /// alongside this constant.
-pub(super) const SCHEMA_CURRENT: u32 = 4;
+pub(super) const SCHEMA_CURRENT: u32 = 5;
 
 /// Where each field sits in a row. **Four layouts exist on disk** — the schema
 /// grew twice and was reshuffled once — and rows written under every one of them
@@ -64,10 +64,12 @@ struct Layout {
     date: usize,
     /// Absent in the two shapes written between slice 1 and the `edges` column.
     edges: Option<usize>,
-    /// The event payload. Absent in every layout before schema 4 — which is
-    /// every row written before this slice, and most rows forever, because most
-    /// facts are not events.
+    /// The event payload. Absent in every layout before schema 4.
     event: Option<usize>,
+    /// The claim this one was derived from, if any. Absent in every layout
+    /// before schema 5 — which is every row written before this slice, and
+    /// most rows forever, because most facts are not derived from a claim.
+    derived_from: Option<usize>,
 }
 
 /// The layout of a row, or `None` if it is not a fact row at all.
@@ -90,6 +92,15 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
             .is_some_and(|c| c.trim().parse::<Date>().is_ok())
     };
     match cells.len() {
+        10 => Some(Layout {
+            details: Some(3),
+            provenance: Some(4),
+            status: 5,
+            date: 6,
+            edges: Some(7),
+            event: Some(8),
+            derived_from: Some(9),
+        }),
         9 => Some(Layout {
             details: Some(3),
             provenance: Some(4),
@@ -97,6 +108,7 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
             date: 6,
             edges: Some(7),
             event: Some(8),
+            derived_from: None,
         }),
         8 => Some(Layout {
             details: Some(3),
@@ -105,6 +117,7 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
             date: 6,
             edges: Some(7),
             event: None,
+            derived_from: None,
         }),
         7 => Some(Layout {
             details: Some(3),
@@ -113,6 +126,7 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
             date: 6,
             edges: None,
             event: None,
+            derived_from: None,
         }),
         // Pre-`details`: … | provenance | status | date
         6 if is_date(5) && !is_date(4) => Some(Layout {
@@ -122,6 +136,7 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
             date: 5,
             edges: None,
             event: None,
+            derived_from: None,
         }),
         // Slice 1: … | status | date | edges
         6 if is_date(4) && !is_date(5) => Some(Layout {
@@ -131,6 +146,7 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
             date: 4,
             edges: Some(5),
             event: None,
+            derived_from: None,
         }),
         _ => None,
     }
@@ -142,6 +158,15 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
 /// read but never lose a row.
 fn era_layout(version: u32, width: usize) -> Option<Layout> {
     match (version, width) {
+        (5, 10) => Some(Layout {
+            details: Some(3),
+            provenance: Some(4),
+            status: 5,
+            date: 6,
+            edges: Some(7),
+            event: Some(8),
+            derived_from: Some(9),
+        }),
         (4, 9) => Some(Layout {
             details: Some(3),
             provenance: Some(4),
@@ -149,6 +174,7 @@ fn era_layout(version: u32, width: usize) -> Option<Layout> {
             date: 6,
             edges: Some(7),
             event: Some(8),
+            derived_from: None,
         }),
         (3, 8) => Some(Layout {
             details: Some(3),
@@ -157,6 +183,7 @@ fn era_layout(version: u32, width: usize) -> Option<Layout> {
             date: 6,
             edges: Some(7),
             event: None,
+            derived_from: None,
         }),
         (2, 7) => Some(Layout {
             details: Some(3),
@@ -165,6 +192,7 @@ fn era_layout(version: u32, width: usize) -> Option<Layout> {
             date: 6,
             edges: None,
             event: None,
+            derived_from: None,
         }),
         (1, 6) => Some(Layout {
             details: None,
@@ -173,6 +201,7 @@ fn era_layout(version: u32, width: usize) -> Option<Layout> {
             date: 5,
             edges: None,
             event: None,
+            derived_from: None,
         }),
         (0, 6) => Some(Layout {
             details: None,
@@ -181,6 +210,7 @@ fn era_layout(version: u32, width: usize) -> Option<Layout> {
             date: 4,
             edges: Some(5),
             event: None,
+            derived_from: None,
         }),
         _ => None,
     }
@@ -202,6 +232,24 @@ fn parse_edge(cell: &str) -> Option<Edge> {
     let object = EntityId(object.trim().to_string());
     validate_subject(&object).ok()?;
     Some(Edge::new(shape, object))
+}
+
+/// Render `derived_from` for its cell: the parent claim's address, empty when
+/// there is none. One link, its own cell — not folded into `edges`, whose
+/// object is always an entity, never another fact's address.
+fn render_derived_from(derived_from: Option<&FactAddress>) -> String {
+    derived_from.map(|a| a.to_string()).unwrap_or_default()
+}
+
+/// Parse a `derived_from` cell. Tolerant in the same direction `edges` is: a
+/// cell that doesn't parse as `kind:slug#local-id` costs the reference, never
+/// the fact.
+fn parse_derived_from(cell: &str) -> Option<FactAddress> {
+    let cell = cell.trim();
+    if cell.is_empty() {
+        return None;
+    }
+    FactAddress::parse(cell).ok()
 }
 
 /// Escape a value for a markdown table cell — the one character a cell can't
@@ -244,7 +292,7 @@ pub(super) fn split_cells(row: &str) -> Vec<String> {
 /// never folded into content.
 pub(super) fn render_fact_row(f: &Fact) -> String {
     format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
         f.id,
         escape_cell(&f.subject.to_string()),
         escape_cell(&f.content),
@@ -254,6 +302,7 @@ pub(super) fn render_fact_row(f: &Fact) -> String {
         f.date,
         escape_cell(&render_edge(f.edge.as_ref())),
         escape_cell(&f.event.as_ref().map(Event::render).unwrap_or_default()),
+        escape_cell(&render_derived_from(f.derived_from.as_ref())),
     )
 }
 
@@ -312,6 +361,9 @@ fn parse_fact_row_in(row: &str, home: &EntityId, declared: Option<u32>) -> Optio
     // means this row is an ordinary fact — which is what every row written
     // before schema 4 is, and what most rows will always be.
     let event = at.event.and_then(|i| Event::parse(cell(i)));
+    // Read exactly as tolerantly as the edge cell: a cell this build cannot
+    // parse as an address costs the reference, never the fact.
+    let derived_from = at.derived_from.and_then(|i| parse_derived_from(cell(i)));
 
     Some(Fact {
         id: FactId(id.to_string()),
@@ -324,6 +376,7 @@ fn parse_fact_row_in(row: &str, home: &EntityId, declared: Option<u32>) -> Optio
         date,
         edge,
         event,
+        derived_from,
     })
 }
 
@@ -887,6 +940,7 @@ mod tests {
             date: d,
             edge: None,
             event: None,
+            derived_from: None,
         }
     }
 
@@ -1711,7 +1765,7 @@ mod tests {
         assert_eq!(
             render_fact_row(&f),
             "| f2 | person:alpha | rides with the club |  | testimony | active | 2026-07-24 | \
-             membership=org:north-trail-club |  |"
+             membership=org:north-trail-club |  |  |"
         );
     }
 
@@ -2208,7 +2262,7 @@ mod tests {
         );
         assert_eq!(
             render_fact_row(&f),
-            "| f1 | person:alpha | keeps a paper notebook |  | inference | active | 2026-07-24 |  |  |"
+            "| f1 | person:alpha | keeps a paper notebook |  | inference | active | 2026-07-24 |  |  |  |"
         );
     }
 
@@ -2472,6 +2526,7 @@ mod bare_cr {
             date: date(2026, 7, 25),
             edge: None,
             event: None,
+            derived_from: None,
         };
         let mut doc = format!(
             "```yaml\nid: person:alpha\n```\n\n{FACTS_HEADER}\n\n{TABLE_HEADER}\n{TABLE_SEP}\n"

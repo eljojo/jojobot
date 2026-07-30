@@ -88,6 +88,7 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
         date: None,
         shape: None,
         object: None,
+        derived_from: None,
         event_type: None,
         metadata: None,
         refs: None,

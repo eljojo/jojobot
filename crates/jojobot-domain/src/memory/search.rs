@@ -555,6 +555,7 @@ mod tests {
             date: date(2026, 7, 1),
             edge: None,
             event: None,
+            derived_from: None,
         };
 
         let doc = DocScan {
@@ -621,6 +622,7 @@ mod tests {
             date: date(2026, 7, 1),
             edge: None,
             event: None,
+            derived_from: None,
         };
         let doc = DocScan {
             doc_id: "doc-1".into(),

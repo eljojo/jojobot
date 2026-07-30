@@ -209,6 +209,22 @@ impl Session {
         address_of(&body)
     }
 
+    /// Something worked out from ANOTHER CLAIM, not from an entity — the
+    /// fact-to-fact link. `source` is the parent claim's own address.
+    pub async fn guess_from(&self, subject: &str, content: &str, source: &str) -> String {
+        let body = self
+            .write(
+                &format!("an inference about {subject}, sourced from {source}"),
+                "capture",
+                json!({
+                    "subject": subject, "content": content,
+                    "provenance": "inference", "derived_from": source,
+                }),
+            )
+            .await;
+        address_of(&body)
+    }
+
     /// Rewrite a claim that turned out to be wrong, in place — rule 58, which
     /// says a refutation FIXES THE SOURCE rather than adding a contradiction
     /// beside it. Anything less is two claims and a reader left to adjudicate.

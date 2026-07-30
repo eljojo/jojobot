@@ -54,6 +54,7 @@ const ROSTER: &[&str] = &[
     "person:bet",
     "person:beta",
     "person:bodoque",
+    "person:contract-fields",
     "person:contract-orient",
     "person:cosme-fulanito",
     "person:frontdoor-probe",

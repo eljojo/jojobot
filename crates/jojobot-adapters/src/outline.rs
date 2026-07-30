@@ -798,6 +798,7 @@ impl Memory for OutlineStore {
             // that catches a dropped field is the caller's record against the
             // read one, which is a contract spec rather than anything here.
             event: fact.event,
+            derived_from: fact.derived_from,
         };
         let updated = with_fact_appended(&doc.text, &render_fact_row(&stored));
         self.ws.api().update_document(&doc.id, &updated).await?;
@@ -982,6 +983,7 @@ impl Memory for OutlineStore {
             date: account.date,
             edge: account.edge,
             event: account.event,
+            derived_from: account.derived_from,
         };
         let updated = with_fact_appended(&marked, &render_fact_row(&record));
         self.ws.api().update_document(&doc.id, &updated).await?;
@@ -1987,6 +1989,7 @@ mod tests {
                 date: date(2026, 7, 2),
                 edge: Some(edge.clone()),
                 event: None,
+                derived_from: None,
             })
             .await
             .expect("capture succeeds against the hostile store")
@@ -2585,7 +2588,7 @@ mod tests {
             // legacy-width seed comes back one cell wider than it went in and
             // the restore looks like a corruption when it is the ordinary
             // migration doing its job.
-            "| f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |  |  |",
+            "| f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |  |  |  |",
         );
         let id = fake.seed_document(&coll, "Alpha", &doc0);
 
@@ -2612,6 +2615,7 @@ mod tests {
                     EntityId("place:shelbyville".into()),
                 )),
                 event: None,
+                derived_from: None,
             })
             .await;
         assert!(
@@ -3248,6 +3252,7 @@ mod tests {
                 date: date(2026, 7, 1),
                 edge: None,
                 event: None,
+                derived_from: None,
             }),
         );
         fake.seed_document(&coll, "Totally Unrelated Title", &text);

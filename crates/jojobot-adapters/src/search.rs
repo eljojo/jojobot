@@ -1266,6 +1266,7 @@ mod tests {
             date: on,
             edge: None,
             event: None,
+            derived_from: None,
         }
     }
 
@@ -2087,6 +2088,7 @@ mod tests {
                 date: fact.date,
                 edge: fact.edge,
                 event: None,
+                derived_from: fact.derived_from,
             };
             doc.facts.push(stored.clone());
             Ok(Guarded::Written(stored))

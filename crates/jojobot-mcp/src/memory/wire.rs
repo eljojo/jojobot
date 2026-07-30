@@ -29,6 +29,9 @@ pub(crate) fn fact_json(fact: &Fact) -> serde_json::Value {
         // and a reader must not have to branch on whether the field is there to
         // learn that this one is not one.
         "event": fact.event.as_ref().map(event_json),
+        // Same rule: most claims are not derived from another claim, and a
+        // reader must not have to branch on a missing key to learn that.
+        "derived_from": fact.derived_from.as_ref().map(|a| a.to_string()),
     })
 }
 

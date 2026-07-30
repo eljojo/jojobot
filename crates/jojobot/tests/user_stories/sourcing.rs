@@ -1,11 +1,11 @@
 //! Where a claim came from, and whether it can still be answered.
 //!
-//! The recorded design says every edge carries provenance, that only four
-//! shapes may be written today, and that naming the fact-to-fact set — a
-//! claim pointing at another claim — is the open design task. This story
-//! answers that from the transcript rather than from the model: five
-//! sessions, each a real moment, each recorded the way it would actually
-//! happen, to see what pointing at a source needs.
+//! Five sessions, each a real moment, each recorded the way it would
+//! actually happen. A claim's source is either an entity (session 1's
+//! email, session 3's survey) or another claim (session 2's derived
+//! claim) — two different shapes of reference, not one wider one: an
+//! edge's object is an entity id, and a claim derived from a claim has no
+//! entity to point at.
 //!
 //! The subject is a place, never a person — people-related content
 //! migrates last, unconditionally (rule 78), and nothing here needs one.
@@ -29,13 +29,14 @@ async fn a_claim_names_where_it_came_from() {
     // claim and pointing it at the source are one write, not two. No batch
     // verb used or needed here.
     s.add("thing:trail-email", "An Email About The Trail").await;
-    s.fact_about(
-        "place:north-trail",
-        "closed for resurfacing until spring, per an email",
-        "about",
-        "thing:trail-email",
-    )
-    .await;
+    let closure = s
+        .fact_about(
+            "place:north-trail",
+            "closed for resurfacing until spring, per an email",
+            "about",
+            "thing:trail-email",
+        )
+        .await;
 
     s.wrap("the closure is on record, and where it came from")
         .await;
@@ -43,21 +44,17 @@ async fn a_claim_names_where_it_came_from() {
     // ── session 2 · a claim derived from a claim ────────────────────────────
     let s = story.session().await;
 
-    s.guess(
+    // Derived FROM the closure claim above, not from an entity — the
+    // fact-to-fact link `guess_from` carries via `derived_from`, an
+    // address, never an edge's `object`.
+    s.guess_from(
         "place:north-trail",
         "the loop will be busy with cyclists once it reopens",
+        &closure,
     )
     .await;
 
-    // GAP — this claim is derived FROM the closure claim above, not from
-    // an entity, and there is nothing to point it at. An edge's object is
-    // a kind:slug entity id; a fact's own address is not one. Pointing a
-    // claim at another claim needs something an entity-to-entity edge does
-    // not give: this is the fact-to-fact case the recorded design has not
-    // named yet.
-    // s.sourced_from("the cyclists claim", "the closure claim").await;
-
-    s.wrap("worked out, and untraceable to what it was worked out from")
+    s.wrap("worked out, and traceable to what it was worked out from")
         .await;
 
     // ── session 3 · a claim from an event ───────────────────────────────────
@@ -102,12 +99,19 @@ async fn a_claim_names_where_it_came_from() {
         .says("cleared for hiking")
         .says("event:trail-survey");
 
-    // GAP — and the cyclists claim has no answer to the same question. It
-    // reads as an inference, same as the clearance claim, but nothing
-    // traces it to what it was worked out from — there is nothing to trace
-    // it to, because what it was derived from is a claim, not an entity.
+    // And the cyclists claim answers the same question, even though what
+    // it traces to is another claim rather than an entity: named as that
+    // claim's own address, not a bare id. Checked as the exact field
+    // rendering — the closure claim's own address is present in this read
+    // regardless (it is a fact in its own right), so a bare substring
+    // check on the address alone would pass whether or not the cyclists
+    // claim's `derived_from` actually carries it.
+    s.recall("place:north-trail")
+        .await
+        .says("busy with cyclists")
+        .says(&format!("\"derived_from\":\"{closure}\""));
 
-    s.wrap("caught up, mostly traceable").await;
+    s.wrap("caught up, and traceable").await;
 
     // ── session 5 · years later, conditions change ──────────────────────────
     let s = story.session().await;

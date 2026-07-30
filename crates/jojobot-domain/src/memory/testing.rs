@@ -195,6 +195,7 @@ impl Memory for InMemoryMemory {
             date: fact.date,
             edge: fact.edge,
             event: fact.event,
+            derived_from: fact.derived_from,
         };
         facts.push(stored.clone());
         Ok(Guarded::Written(stored))
@@ -330,6 +331,7 @@ impl Memory for InMemoryMemory {
             date: account.date,
             edge: account.edge,
             event: account.event,
+            derived_from: account.derived_from,
         };
         let retracted = Fact {
             status: FactStatus::Retracted,
@@ -511,9 +513,12 @@ pub mod contract {
         assert_eq!(seen, captured, "recalled fact must be byte-identical");
     }
 
-    /// Every field survives capture→recall unchanged and byte-identical.
+    /// Every field survives capture→recall unchanged and byte-identical —
+    /// `derived_from` included, since it is a fact field like any other and
+    /// this is the one test that pins ALL of them at once.
     pub async fn preserves_all_fields<M: Memory>(store: &M) {
         let subject = EntityId::person("contract-fields");
+        let source = FactAddress::parse("person:contract-fields#f1").expect("well-formed");
         let new = NewFact {
             subject: subject.clone(),
             content: "prefers a café table".into(),
@@ -523,6 +528,7 @@ pub mod contract {
             date: date(2026, 3, 9),
             edge: None,
             event: None,
+            derived_from: Some(source.clone()),
         };
         let captured = capture(store, new).await;
         assert_eq!(captured.subject, subject);
@@ -530,6 +536,7 @@ pub mod contract {
         assert_eq!(captured.details.as_deref(), Some("mentioned it twice"));
         assert_eq!(captured.provenance, Provenance::Testimony);
         assert_eq!(captured.date, date(2026, 3, 9));
+        assert_eq!(captured.derived_from, Some(source));
 
         let seen = read_back(store, &subject, &captured.id).await;
         assert_eq!(seen, captured);

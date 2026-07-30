@@ -1058,6 +1058,9 @@ pub struct NewFact {
     /// this rides on the same record and the same write rather than on a verb
     /// of its own: an event IS a fact, with a date and this.
     pub event: Option<event::Event>,
+    /// The claim this one was derived from, if any — see [`Fact::derived_from`].
+    /// Written atomically with the fact, exactly as an edge is.
+    pub derived_from: Option<FactAddress>,
 }
 
 impl NewFact {
@@ -1073,6 +1076,7 @@ impl NewFact {
             date,
             edge: None,
             event: None,
+            derived_from: None,
         }
     }
 }
@@ -1105,6 +1109,13 @@ pub struct Fact {
     /// the edge is, and for a stronger reason: a payload this build cannot make
     /// sense of must still come back whole — see [`event::Event`].
     pub event: Option<event::Event>,
+    /// **The claim this one was derived from, if it was derived from a claim
+    /// rather than from an entity.** An edge's object is an [`EntityId`]; a
+    /// claim derived from another claim has no entity to point at, only the
+    /// other claim's own [`FactAddress`] — a different shape of reference,
+    /// not a wider one. One link, with one fixed meaning: this is not a
+    /// vocabulary of relations, and it draws no edge of its own.
+    pub derived_from: Option<FactAddress>,
 }
 
 impl Fact {
