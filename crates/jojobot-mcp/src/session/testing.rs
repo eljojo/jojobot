@@ -285,7 +285,9 @@ impl Sessions for RefusingFocus {
         self.0.amend_beat(id, entry, text, touched).await
     }
     async fn set_focus(&self, _: &SessionId, _: &str) -> Result<Session, SessionError> {
-        Err(SessionError::Store("the focus could not be written".into()))
+        Err(SessionError::Store(
+            "the focus cell on the page could not be written".into(),
+        ))
     }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.0.close(id, to).await
@@ -314,7 +316,9 @@ impl Sessions for RefusingAppend {
         self.0.begin(new).await
     }
     async fn append(&self, _: &SessionId, _: NewEntry) -> Result<JournalEntry, SessionError> {
-        Err(SessionError::Store("the entry could not be written".into()))
+        Err(SessionError::Store(
+            "the entry row on the page could not be written".into(),
+        ))
     }
     async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
         self.0.amend_last(id, text).await

@@ -164,14 +164,45 @@ pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
         // own board that belongs to another project and refused, or a write
         // failed and could not be undone, leaving a card mid-verb. Both are
         // integrity conditions on the server side that need a person.
-        MailboxError::Stranded { .. } => {
-            McpError::internal_error(e.to_string(), None)
-        }
+        MailboxError::Stranded { .. } => McpError::internal_error(
+            crate::boundary::store_failed("this call", &e.to_string()),
+            None,
+        ),
         MailboxError::NotConfigured(msg) => {
             McpError::internal_error(format!("mailboxes not configured: {msg}"), None)
         }
         MailboxError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stranded write's cause and rollback account are the adapter's own
+    /// words about pages and rows — they must not reach the caller, same as
+    /// every other store-class failure on this rail.
+    #[test]
+    fn a_stranded_write_does_not_carry_the_adapters_own_words() {
+        let leaky_cause = "the page for gamma has no table";
+        let leaky_rollback = "the row vanished from the document";
+        let err = mailbox_error(MailboxError::Stranded {
+            verb: "post_message".into(),
+            stranded: vec!["gamma-4".into()],
+            cause: leaky_cause.into(),
+            rollback: leaky_rollback.into(),
+        });
+        assert!(
+            !err.message.contains(leaky_cause) && !err.message.contains(leaky_rollback),
+            "the adapter's own words crossed: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("Try once more"),
+            "a caller needs its next move: {}",
+            err.message
+        );
     }
 }

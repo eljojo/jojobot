@@ -177,6 +177,32 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         MemoryError::NotConfigured(msg) => {
             McpError::internal_error(format!("memory not configured: {msg}"), None)
         }
-        MemoryError::Store(msg) => McpError::internal_error(msg, None),
+        MemoryError::Store(msg) => {
+            McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A store failure's own account must not reach the caller — the same
+    /// invariant the mailbox and session rails hold, through the same
+    /// function.
+    #[test]
+    fn a_store_failure_does_not_carry_the_adapters_own_words() {
+        let leaky = "the page for gamma has no table, and the row vanished from the document";
+        let err = memory_error(MemoryError::Store(leaky.into()));
+        assert!(
+            !err.message.contains(leaky),
+            "the adapter's own words crossed: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("Try once more"),
+            "a caller needs its next move: {}",
+            err.message
+        );
     }
 }

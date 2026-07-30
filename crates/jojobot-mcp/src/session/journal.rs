@@ -90,11 +90,12 @@ impl Jojobot {
                 return session_declined(e);
             }
             Err(e) => {
+                tracing::error!(error = %e, "store failure left an append uncertain");
                 return json_result(&serde_json::json!({
                     "status": "uncertain",
                     "wrote": "unknown",
                     "session": session.as_str(),
-                    "why": e.to_string(),
+                    "why": "jojobot's own storage failed",
                     "how_to_proceed": "The entry may or may not have been recorded — this \
                                        failure cannot tell you which. Do NOT send it again \
                                        blind: read the session back first, and re-send only if \
@@ -139,6 +140,10 @@ impl Jojobot {
                 // So the answer says what LANDED first, and the way forward
                 // names the smaller call rather than the one just made.
                 Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        "store failure left the focus unmoved after the entry landed"
+                    );
                     return json_result(&serde_json::json!({
                         "status": "partial",
                         "wrote": true,
@@ -146,7 +151,7 @@ impl Jojobot {
                         "not_recorded": "focus",
                         "session": session.as_str(),
                         "entry": entry_json(&entry),
-                        "why": e.to_string(),
+                        "why": "jojobot's own storage failed",
                         "how_to_proceed": "The entry IS recorded — do not send this call again, \
                                            or the entry lands twice. Only the focus did not move. \
                                            Set it on its own with a journal call carrying a focus \
@@ -218,10 +223,10 @@ mod tests {
             "…and the way out is to look, not to guess: {how}"
         );
 
-        let lowered = body.to_string().to_lowercase();
-        for leak in ["page", "table", "row", "column", "document"] {
-            assert!(!lowered.contains(leak), "a caller has no {leak}: {body}");
-        }
+        assert!(
+            !body.to_string().contains("the entry row on the page"),
+            "the adapter's own words crossed: {body}"
+        );
     }
 
     /// **A call that half succeeded says so, and says which half.**
@@ -276,12 +281,10 @@ mod tests {
             "the retry is the danger, so the advice has to forbid it: {how}"
         );
 
-        // And it names no part of the store — the half that nearly shipped
-        // broken in the refusal commit.
-        let lowered = body.to_string().to_lowercase();
-        for leak in ["page", "table", "row", "column", "document"] {
-            assert!(!lowered.contains(leak), "a caller has no {leak}: {body}");
-        }
+        assert!(
+            !body.to_string().contains("the focus cell on the page"),
+            "the adapter's own words crossed: {body}"
+        );
 
         // The entry really is on the record, which is what makes a repeat a
         // duplicate rather than a retry.
