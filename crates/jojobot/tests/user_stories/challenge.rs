@@ -1,22 +1,12 @@
-//! ⚠️ UNFINISHED DRAFT — IGNORED, AND IT DOES NOT COUNT AS COVERAGE.
+//! What this story proves: a corrected claim stops being visible to a
+//! session that asks for it, and a session that reaches the same wrong
+//! conclusion again is not left with two answers and a judgement call.
 //!
-//! It runs only with `--ignored`, deliberately, and its passing means nothing:
-//! it is parked mid-thought rather than finished. **This repo has been bitten
-//! before by an `#[ignore]`d test treated as if it ran**, so the marker is loud
-//! on purpose. Finish it or delete it; do not let it sit here looking green.
-//!
-//! What is unresolved: the incident class it is about happens in the AGENT'S
-//! MOUTH, not in jojobot's storage. jojobot can hold provenance perfectly and a
-//! session can still state a guess as fact. So a test at this surface cannot
-//! reach the failure — it can only check that jojobot handed over enough to
-//! avoid it, which is real but far smaller than the story implies.
-//!
-//! "Where did you get that?" — jojobot said something, he acted on it, it was wrong.
-//!
-//! The incident class this whole project is blocked on: a claim nobody heard
-//! from anybody, stated confidently, acted on, and false. The question is not
-//! whether jojobot can store a correction. It is whether the wrong claim can
-//! still hurt somebody after it has been corrected.
+//! What it does not prove: a claim can still be acted on wrongly in a
+//! session's own reasoning, never in jojobot's storage, so no test at this
+//! surface can reach that failure. This story checks only that jojobot
+//! hands over enough to avoid it — provenance on the claim, and one
+//! reachable answer after a correction.
 //!
 //! Milestone: "I can ask why, and the answer holds."
 //!
@@ -25,7 +15,6 @@
 use super::dsl::Story;
 
 #[tokio::test]
-#[ignore = "UNFINISHED DRAFT — parked mid-thought; passing proves nothing"]
 async fn where_did_you_get_that() {
     let story = Story::begin("bot:otto").await;
 
