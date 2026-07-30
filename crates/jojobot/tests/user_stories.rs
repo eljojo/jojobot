@@ -17,6 +17,8 @@ mod bikes;
 mod boot;
 #[path = "user_stories/challenge.rs"]
 mod challenge;
+#[path = "user_stories/curveball.rs"]
+mod curveball;
 #[path = "user_stories/dsl.rs"]
 mod dsl;
 #[path = "user_stories/moving.rs"]
