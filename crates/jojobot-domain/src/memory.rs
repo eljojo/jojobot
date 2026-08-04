@@ -519,11 +519,14 @@ pub fn standing_of(new: &NewFact) -> Standing {
         .unwrap_or(Standing::default_for(new.provenance))
 }
 
-/// The shape of a fact's structured edge — a **closed** set of four, and the only
-/// shapes this milestone writes. The general edges vocabulary (`receiptOf`,
-/// `supersedes`, `derivedFrom`, …) arrives with the graph milestone.
+/// The shape of a fact's structured edge — a **closed** set of five, and the
+/// only shapes this milestone writes. The general edges vocabulary
+/// (`receiptOf`, `supersedes`, `derivedFrom`, …) still arrives with the graph
+/// milestone: [`EdgeShape::Connection`] is not that vocabulary arriving early,
+/// because it names no relation at all. It is the shape for a link whose
+/// nature was never recorded.
 ///
-/// These four exist because ask-across — "which friends are in Shelbyville?", "what's
+/// These exist because ask-across — "which friends are in Shelbyville?", "what's
 /// connected to Duff Fest?" — must never rest on an AI scanning prose. A fact that
 /// puts an entity somewhere, in something, at something, or about something
 /// produces a typed edge **at capture**, so a cross-entity question is an edge

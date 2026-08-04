@@ -38,8 +38,9 @@ pub struct CaptureArgs {
     #[serde(default)]
     pub date: Option<String>,
     /// The shape of the edge this fact draws: `location` (object is a place) ·
-    /// `membership` (an org) · `attendance` (an event) · `about` (any kind).
-    /// Requires `object`; neither works alone.
+    /// `membership` (an org) · `attendance` (an event) · `about` (any kind) ·
+    /// `connection` (any kind — a link is there and how it relates was not
+    /// recorded). Requires `object`; neither works alone.
     #[serde(default)]
     pub shape: Option<String>,
     /// The entity the edge points at, as `kind:slug`. **It must already exist**,

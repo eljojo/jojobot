@@ -8,7 +8,8 @@ use super::*;
 /// The `edge` filter of a `search` — a shape and the entity it points at.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct EdgeFilterArgs {
-    /// Narrow to one shape (`location` · `membership` · `attendance` · `about`).
+    /// Narrow to one shape (`location` · `membership` · `attendance` · `about` ·
+    /// `connection`).
     /// Omit for **any** edge pointing at `object` — "what's connected to X".
     #[serde(default)]
     pub shape: Option<String>,

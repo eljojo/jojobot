@@ -181,7 +181,8 @@ impl ServerHandler for Jojobot {
                  (you derived it). **Inference is the default and reads back as a hypothesis, \
                  never as truth**; only the user's explicit confirmation promotes a claim. A \
                  fact may also draw one typed **edge** at another entity — `location` · \
-                 `membership` · `attendance` · `about` — and edges are what make cross-entity \
+                 `membership` · `attendance` · `about` · `connection` (a link is there and how \
+                 it relates was not recorded) — and edges are what make cross-entity \
                  questions (\"which people are in X\") answerable without reading everything. \
                  **Start with `search`**: one ranked list over entities, facts, free prose and \
                  mailbox messages at once, every hit arriving with its surroundings.\

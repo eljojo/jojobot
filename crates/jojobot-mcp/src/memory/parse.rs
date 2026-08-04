@@ -117,7 +117,8 @@ pub(crate) fn parse_edge(shape: Option<&str>, object: Option<&str>) -> ParsedEdg
         ))),
         (None, Some(_)) => Ok(Err(misused(
             "Nothing was written, and the edge you meant was not drawn. `object` needs a \
-             `shape` — one of location, membership, attendance, about — saying how this fact \
+             `shape` — one of location, membership, attendance, about, connection — saying how \
+             this fact \
              points at it. Pass the shape too, or drop the object if you meant no edge."
                 .to_string(),
         ))),

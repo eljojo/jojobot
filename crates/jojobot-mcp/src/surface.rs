@@ -640,6 +640,42 @@ fn no_agent_facing_text_teaches_the_retired_store() {
     );
 }
 
+/// **A shape the code can write is a shape the surface names.**
+///
+/// A session forms its world model from the served text alone. An edge shape
+/// that exists in `EdgeShape::ALL` and appears in no description is a
+/// capability nobody can reach on purpose: the session picks the nearest shape
+/// it was told about, which for an unrecorded link is `about` — and that
+/// launders an admission into a claim (rule 98).
+///
+/// Driven by `ALL`, so a sixth shape fails here the day it is added rather
+/// than the day somebody notices it is missing from the essay.
+#[test]
+fn every_edge_shape_is_named_on_the_surface() {
+    // **The needle is the token in its served register, `` `shape` ``, never
+    // the bare word.** Three of the five tokens are ordinary English — the
+    // essay calls a session "the unit of connection", and `about` and
+    // `location` appear in running prose everywhere — so a bare-substring
+    // needle passes on text that teaches the caller nothing about edges. The
+    // backticked form is how every shape is offered to a caller, and it is
+    // what a caller copies.
+    let mut unnamed: Vec<String> = Vec::new();
+    for shape in EdgeShape::ALL {
+        let needle = format!("`{}`", shape.as_token());
+        let named = agent_facing_text()
+            .iter()
+            .any(|(_, text)| text.to_lowercase().contains(&needle));
+        if !named {
+            unnamed.push(needle);
+        }
+    }
+    assert!(
+        unnamed.is_empty(),
+        "these edge shapes are built and invisible — a caller cannot ask for what nothing names, \
+         so the shape it reaches for instead says something the record does not: {unnamed:?}"
+    );
+}
+
 /// **A memory write carries an identity, or it does not land.**
 ///
 /// Every tool schema says the `sid` rides every call because it is what tells

@@ -36,7 +36,8 @@ pub struct UpdateFactArgs {
     #[serde(default)]
     pub confirmed_by_user: Option<bool>,
     /// The shape of an edge to attach: `location` · `membership` · `attendance` ·
-    /// `about`. Requires `object`; neither works alone.
+    /// `about` · `connection` (a link is there and how it relates was not
+    /// recorded). Requires `object`; neither works alone.
     #[serde(default)]
     pub shape: Option<String>,
     /// The entity the edge points at, as `kind:slug`. **It must already exist** —
