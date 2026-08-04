@@ -86,17 +86,21 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
     // none: a fresh session that has not been told a name has nothing yet to
     // recall or search for.
     //   s.whose_assistant_am_i().says("person:tulio").await;
+    s.has_no_verb("whose_assistant", &["start_here", "search"])
+        .await;
 
     // GAP — no verb composes "what matters right now" for a person or a topic
     // once a name is in hand. Search and recall return hits; putting them into
     // one picture is left to whoever asked.
     //   s.brief("person:ned-flanders").await;
+    s.has_no_verb("brief", &["search", "recall"]).await;
 
     // GAP — and nothing reaches outside jojobot's own memory and mail. A
     // calendar, a task board, a link library, a message waiting in another
     // inbox: a fresh session can reach only what jojobot itself holds, which
     // is the half of the life layer that has been migrated so far.
     //   s.today().await;
+    s.has_no_verb("today", &["search", "read_mailbox"]).await;
 
     s.wrap("oriented, memory intact, still waiting to be told who is asking")
         .await;

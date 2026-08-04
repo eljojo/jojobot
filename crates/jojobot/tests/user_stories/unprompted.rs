@@ -88,10 +88,14 @@ async fn a_session_records_a_claim_with_its_source_unprompted() {
     // jojobot could have referenced.
     //   s.add_from_links("the diner's menu, saved last week").await;
     //   s.add_from_calendar("the tasting on the 3rd").await;
+    s.has_no_verb("add_from_links", &["add_entity", "capture"])
+        .await;
 
     // GAP — and nothing said the claim needed a source at all. The operator
     // volunteered one; had they not, nothing in the boot would have prompted
     // the session to ask.
+    s.has_no_verb("require_source", &["capture", "update_fact"])
+        .await;
 
     s.wrap("recorded the special and what it came from").await;
 

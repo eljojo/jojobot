@@ -208,6 +208,73 @@ impl Session {
         }
     }
 
+    /// **The tripwire for a gap the SURFACE has, rather than a record.**
+    ///
+    /// A gap marker says a capability is missing. Where the missing thing
+    /// would be a verb or an argument, the evidence is the served surface
+    /// itself: this reads the verb list a client is given and asserts the verb
+    /// is not on it. The positive half is that the list arrived at all and
+    /// carries the verbs the story just used — without it the assertion passes
+    /// identically on an empty answer.
+    ///
+    /// It goes red on the day the verb ships, which is the point.
+    pub async fn has_no_verb(&self, verb: &str, alongside: &[&str]) {
+        let listed = self.client.list_tools(None).await.expect("the verb list");
+        let names: Vec<&str> = listed.tools.iter().map(|t| t.name.as_ref()).collect();
+        for known in alongside {
+            assert!(
+                names.contains(known),
+                "the verb list must carry {known:?} — without it this proves nothing: {names:?}"
+            );
+        }
+        assert!(
+            !names.contains(&verb),
+            "jojobot now serves {verb:?} — the gap is closed, so flip this assertion: {names:?}"
+        );
+    }
+
+    /// **The tripwire for a write jojobot refuses today.**
+    ///
+    /// Returns the refusal so a story can say what it named. Unlike every
+    /// other write here, a `blocked` answer is the expected one — this is the
+    /// one place a story asserts a use case is NOT reachable, and it fails on
+    /// the day the write starts landing.
+    pub async fn refused(&self, tool: &str, mut args: Value) -> Answer {
+        args["sid"] = self.sid.clone().into();
+        // **Both refusal shapes count, and they are different answers.** A
+        // domain refusal comes back as a `blocked` body with a way forward; an
+        // argument jojobot's schema does not admit is a client error and never
+        // reaches the domain at all. A tripwire that accepted only one would
+        // pass the day a refusal moved from one shape to the other.
+        let body = match self
+            .client
+            .call_tool(
+                CallToolRequestParams::new(tool.to_string())
+                    .with_arguments(args.as_object().expect("arguments are an object").clone()),
+            )
+            .await
+        {
+            Err(e) => json!({"status": "blocked", "client_error": e.to_string()}),
+            Ok(result) => {
+                let text = result
+                    .content
+                    .first()
+                    .and_then(|b| b.as_text())
+                    .map(|t| t.text.clone())
+                    .unwrap_or_default();
+                serde_json::from_str(&text).unwrap_or_else(|_| json!({ "raw": text }))
+            }
+        };
+        assert_eq!(
+            body["status"], "blocked",
+            "{tool} was accepted — the gap is closed, so flip this assertion: {body}"
+        );
+        Answer {
+            what: format!("the refusal from {tool}"),
+            body: body.to_string(),
+        }
+    }
+
     /// Takes the whole `kind:slug` handle, deliberately: **the fixture-roster
     /// gate scans source text for handle-shaped literals**, so a story that
     /// passed its kind and slug separately would create entities the one guard

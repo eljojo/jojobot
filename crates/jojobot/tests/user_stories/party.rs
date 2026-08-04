@@ -8,6 +8,8 @@
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
 //! call is the missing capability, written the way it would be asked for.
 
+use serde_json::json;
+
 use super::dsl::Story;
 
 #[tokio::test]
@@ -43,11 +45,14 @@ async fn throwing_a_birthday_party() {
     // candidates, rank them, or record one as ruled out, and choosing is what
     // planning mostly is.
     //   s.shortlist("the venue", &["place:moes"]).await;
+    s.has_no_verb("shortlist", &["capture", "search"]).await;
 
     // GAP — the party has no date, because there is no field for one. A
     // claim's date is when it became known, and neither the 14th nor the 21st
     // has happened yet.
     //   s.happens_on("event:birthday-party", "2027-01-14").await;
+    s.has_no_verb("happens_on", &["capture", "add_entity"])
+        .await;
 
     s.wrap("party sketched").await;
 
@@ -94,6 +99,16 @@ async fn throwing_a_birthday_party() {
     // between two people, so partner, colleague and "does not get along with"
     // are the same edge, and telling them apart means reading each claim.
     //   s.fact_about("person:ned-flanders", "their partner", "relation", "person:maude").await;
+    s.refused(
+        "capture",
+        json!({
+            "subject": "person:ned-flanders", "content": "their partner",
+            "provenance": "testimony", "shape": "relation",
+            "object": "person:maude",
+        }),
+    )
+    .await
+    .says("relation");
 
     s.wrap("invitations out").await;
 
@@ -125,6 +140,7 @@ async fn throwing_a_birthday_party() {
     // has not answered come back indistinguishable, because the edge carries
     // nothing but its shape. The answer is only in each fact's prose, so the
     // question worth asking costs a read per guest and a judgement per read.
+    s.has_no_verb("rsvp", &["capture", "search"]).await;
     let guests = s
         .through("attendance", "event:birthday-party", "person")
         .await;
@@ -152,6 +168,7 @@ async fn throwing_a_birthday_party() {
     // attendees → their dietary facts, which is two calls and a session
     // holding the intermediate result rather than one walk.
     //   s.through("attendance", "event:birthday-party").recall_all().await;
+    s.has_no_verb("recall_all", &["search", "recall"]).await;
 
     // The practical half, and the one actually worried about. It is not a
     // verb: "do I have enough chairs" is arithmetic over two things already
@@ -170,6 +187,7 @@ async fn throwing_a_birthday_party() {
     // is always prose, so every question with arithmetic in it dies at the
     // read.
     //   s.fact_keyed("thing:folding-chairs", "count", "6").await;
+    s.has_no_verb("count_of", &["capture", "search"]).await;
 
     s.wrap("menu still open").await;
 

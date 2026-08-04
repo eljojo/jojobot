@@ -35,6 +35,7 @@ async fn a_curveball_collides_with_the_week() {
     // The one date a claim carries is when it became known, not when the thing
     // it describes happens, so neither commitment has a day the system can see.
     //   s.due("project:atlas", "2027-01-14").await;
+    s.has_no_verb("schedule", &["capture", "search"]).await;
 
     s.wrap("the week as it already stood").await;
 
@@ -67,6 +68,7 @@ async fn a_curveball_collides_with_the_week() {
     // word. The collision was found by the wording matching, not by jojobot
     // knowing the two happen at once.
     //   s.on_day("2027-01-14").says("event:winter-fest").await;
+    s.has_no_verb("on_day", &["search", "recall"]).await;
 
     s.wrap("both commitments in view, side by side by luck of the wording")
         .await;
@@ -104,6 +106,7 @@ async fn a_curveball_collides_with_the_week() {
     // decided and cannot say what it was decided AGAINST, so the reasoning
     // that survives is three unconnected sentences. A decision has nowhere to
     // name what it chose over what.
+    s.has_no_verb("decide", &["capture", "update_fact"]).await;
     let _ = &accepted;
     //   s.decided(&accepted, over: &[&winter_fest], because: "the draft is fixed").await;
 
@@ -123,6 +126,7 @@ async fn a_curveball_collides_with_the_week() {
     // not one call. Composing them is the session's job; having something to
     // compose is jojobot's.
     //   s.week_of("2027-01-11").await;
+    s.has_no_verb("week_of", &["search", "recall"]).await;
 
     s.wrap("the week has a new shape, told in three pieces")
         .await;

@@ -72,11 +72,17 @@ async fn where_did_you_get_that() {
     // writes an inference with nothing behind it is refused by nothing, and
     // the claim above is unfalsifiable exactly as a fabrication would be.
     //   s.why(&claim).says("a search summary, session 1").await;
+    s.recall("place:moes")
+        .await
+        .claim(&claim)
+        .says("\"provenance\":\"inference\"")
+        .says("\"derived_from\":null");
 
     // GAP — and nothing records that a claim was ACTED ON. A wrong guess that
     // sat unread and a wrong guess that sent somebody across town on a Sunday
     // are the same object here.
     //   s.acted_on(&claim, "they went").await;
+    s.has_no_verb("acted_on", &["update_fact", "recall"]).await;
 
     s.wrap("corrected, and we still cannot say where it came from")
         .await;
@@ -96,6 +102,7 @@ async fn where_did_you_get_that() {
     // a durable negative that later derivations subtract, or the same
     // correction gets made forever and eventually stops being trusted.
     //   s.rejected(&claim).so_that(&again).is_blocked().await;
+    s.has_no_verb("reject", &["update_fact", "retract"]).await;
 
     // Cleaning up by hand, which is what a session would have to do every time.
     s.correct(
@@ -145,6 +152,7 @@ async fn where_did_you_get_that() {
     // no way to mark a source as unreliable, so each claim resting on it has
     // to be found by that walk and rewritten one at a time.
     //   s.discredit("thing:that-search-summary", "the listing was stale").await;
+    s.has_no_verb("discredit", &["update_fact", "search"]).await;
 
     s.wrap("one bad source, two claims, and no way to reach the second")
         .await;

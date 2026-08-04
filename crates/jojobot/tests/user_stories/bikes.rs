@@ -35,12 +35,18 @@ async fn keeping_track_of_bikes() {
     // distinguishes the two, so the store holds a date whose meaning can only
     // be recovered by reading the sentence beside it.
     //   s.event("thing:gravel-bike", "purchased", happened_at: "2024-04-11").await;
+    s.has_no_verb("record_occurrence", &["capture", "recall"])
+        .await;
 
     // GAP — and the warranty's end is purchase plus five years, arithmetic on
     // a date the system cannot see as a date. "What is still under warranty"
     // is a query across every possession by a date property, and there is no
     // property to query.
     //   s.fact_with("thing:gravel-bike", "frame warranty", "expires", "2029-04-11").await;
+    s.recall("thing:gravel-bike")
+        .await
+        .says("frame warranty runs five years from purchase")
+        .never_says("2029-04-11");
 
     s.add("thing:road-bike", "Road Bike").await;
     s.fact(
@@ -54,6 +60,10 @@ async fn keeping_track_of_bikes() {
     // GAP — both of those are STATES rather than descriptions. Nothing carries
     // state, so they read as permanent truths about the bike and will still
     // read that way after it is sold.
+    s.recall("thing:road-bike")
+        .await
+        .says("hanging in the basement")
+        .never_says("\"state\"");
 
     s.wrap("both bikes recorded").await;
 
@@ -104,11 +114,19 @@ async fn keeping_track_of_bikes() {
     // service it" comes back as every service ever recorded, and the session
     // picks the latest date out by reading them.
     //   s.latest("thing:gravel-bike", event_type: "service").await;
+    s.has_no_verb("latest", &["search", "recall"]).await;
 
     // GAP — the chain is a PART of the bike, not a fact about it. Parentage is
     // not reachable, so it cannot be its own thing with its own history, and
     // "how many km on the chain since I fitted it" has nothing to hang on.
     //   s.add_under("thing:gravel-bike", "thing:bike-chain", "Chain").await;
+    // The chain goes in as its own thing and lands flat: nothing on the
+    // created record says what it is part of.
+    s.add("thing:bike-chain", "Chain").await;
+    s.list("thing")
+        .await
+        .says("thing:bike-chain")
+        .never_says("parent");
 
     s.wrap("service history, such as it is").await;
 
@@ -127,6 +145,7 @@ async fn keeping_track_of_bikes() {
     // Comparing them is the session's job; having something to compare is
     // jojobot's, and that is the half missing.
     //   s.series("thing:gravel-bike", "km ridden", &[("2025", "3800")]).await;
+    s.has_no_verb("series", &["capture", "search"]).await;
 
     s.wrap("tallies in").await;
 
@@ -186,6 +205,8 @@ async fn keeping_track_of_bikes() {
     // both wrong: rewrite each claim into the past, which destroys the record,
     // or leave them, which is what happened here.
     //   s.closed("thing:road-bike", "sold in March").await;
+    s.has_no_verb("close_entity", &["update_entity", "list_entities"])
+        .await;
 
     s.wrap("one sold, and the record cannot tell").await;
 

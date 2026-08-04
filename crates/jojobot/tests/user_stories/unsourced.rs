@@ -88,6 +88,7 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     // searching for a word both return every place in the store, with nothing
     // saying which are being weighed against each other.
     //   s.shortlist("the Thursday dinner pick", &["place:leftorium", "place:riverbend"]).await;
+    s.has_no_verb("shortlist", &["capture", "search"]).await;
 
     s.wrap("looked at both, one visibly sourced and one not")
         .await;
@@ -107,6 +108,7 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     // unexamined guess from a checked dead end, so the next session pays for
     // the phone call again.
     //   s.checked(&riverbend_guess, found: "nothing to source it to").await;
+    s.has_no_verb("checked", &["update_fact", "capture"]).await;
 
     s.wrap("checked the unsourced one, and could not record that it was checked")
         .await;
@@ -132,6 +134,7 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     // it is suspect and each has to be found and rewritten by hand; nothing
     // marks a source as discredited or reaches the claims that lean on it.
     //   s.discredit("thing:leftorium-menu", "last season's menu").await;
+    s.has_no_verb("discredit", &["search", "update_fact"]).await;
 
     s.wrap("acted on the sourced one").await;
 

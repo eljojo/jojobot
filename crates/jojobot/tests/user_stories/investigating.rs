@@ -23,6 +23,12 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // alongside the bike pump and the folding chairs, so listing things gives
     // back no fleet and nothing marks these four as the same sort of object.
     //   s.add("host:sigma", "Sigma").await;
+    s.refused(
+        "add_entity",
+        json!({"kind": "host", "handle": "sigma", "name": "Sigma", "source": "user-named"}),
+    )
+    .await
+    .says("host");
     for host in ["thing:sigma", "thing:tau", "thing:upsilon", "thing:phi"] {
         s.add(host, host.split_once(':').expect("kind:slug").1)
             .await;
@@ -37,6 +43,11 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // claim was reached, so a hunch drawn from three correlated samples and a
     // status word decoded off the host itself arrive wearing the same word.
     //   s.guess_by("thing:sigma", "…", method: "correlation over three samples").await;
+    s.recall("thing:sigma")
+        .await
+        .claim(&bursty)
+        .says("\"provenance\":\"inference\"")
+        .never_says("\"method\"");
 
     s.wrap("read what the last run believed").await;
 
@@ -66,6 +77,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // no query over a metadata value, so "which outages lasted over thirty
     // seconds" reads every event and parses the numbers again.
     //   s.events_where("down_seconds", greater_than: 30).await;
+    s.has_no_verb("events_where", &["search", "recall"]).await;
 
     // The diagnosis was the bits, so a paraphrase is not re-checkable: the
     // literal status word and the command that produced it are typed fields on
@@ -107,6 +119,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // current, and nothing connects the two, so the reader who acts on the
     // conclusion never learns its evidence was withdrawn.
     //   s.retract(&reading, "…").cascading_to_derivations().await;
+    s.has_no_verb("cascade", &["retract", "update_fact"]).await;
 
     s.wrap("took back a measurement, and its conclusions stayed")
         .await;
@@ -140,6 +153,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // but not rebooted comes up on the newest generation however it goes down.
     // The next investigator can repeat the inference for free.
     //   s.refuted(&deliberate, because: "…", reasoning_error: "…").await;
+    s.has_no_verb("refute", &["update_fact", "retract"]).await;
 
     s.wrap("was wrong, and said so").await;
 
@@ -188,6 +202,10 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // and acting on it is worse off than one that knew nothing. Facts about
     // machines go stale in a way facts about people do not.
     //   s.fact_until("thing:upsilon", "…", stale_after: "the next boot").await;
+    s.recall("thing:upsilon")
+        .await
+        .says("staged for next boot")
+        .never_says("stale_after");
 
     s.wrap("recorded state that will quietly stop being true")
         .await;
@@ -203,6 +221,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // host inside it. "Did these two fail together" has to be re-assembled by
     // hand, one subject at a time, by whoever thinks to ask.
     //   s.events_between("2026-08-04T02:00Z", "2026-08-04T03:00Z").await;
+    s.has_no_verb("events_between", &["search", "recall"]).await;
 
     // Topology turned a four-host outage into one: two of the four were guests
     // on a third. Of the typed shapes, `location` points at a place,
@@ -230,6 +249,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // going down takes the other with it, which is the entire content of the
     // finding that collapsed a four-host outage into one.
     //   s.fact_about("thing:upsilon", "…", "runs-on", "thing:sigma").await;
+    s.has_no_verb("depends_on", &["capture", "search"]).await;
 
     // A decision that constrains future work.
     s.add("project:jojobot-server", "The Server Build").await;
@@ -244,6 +264,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // constraint that has to be searched for gets re-litigated by every session
     // that does not know to look.
     //   s.decided("project:jojobot-server", "do not run the crash test", binds: …).await;
+    s.has_no_verb("decision", &["capture", "search"]).await;
 
     s.wrap("asked what the record could not answer").await;
 

@@ -118,6 +118,7 @@ const ROSTER: &[&str] = &[
     "thing:that-search-summary",
     "thing:red-bikee",
     "thing:road-bike",
+    "thing:bike-chain",
     "thing:commit-omicron",
     "thing:tau",
     "thing:trail-email",

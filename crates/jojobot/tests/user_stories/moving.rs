@@ -41,6 +41,7 @@ async fn moving_abroad() {
     // GAP — there is no entity for the operator, so outside this story those
     // three claims have no subject at all. A system modelling a life has no
     // node for the person whose life it is, and every preference needs one.
+    s.list("person").await.never_says("\"operator\"");
 
     // Research: inference, not testimony, and it reads back marked as such.
     s.add("place:far-country", "Far Country").await;
@@ -72,6 +73,7 @@ async fn moving_abroad() {
     // ahead. The graph can say what is true of each and cannot say either is
     // being considered, ranked, or ruled out.
     //   s.shortlist("project:atlas", &["place:capital-city", "place:north-haverbrook"]).await;
+    s.has_no_verb("shortlist", &["capture", "search"]).await;
 
     // A place DOES sit inside another: `location` constrains what an edge
     // points AT, never what it points from, so a city in a country is an
@@ -95,6 +97,7 @@ async fn moving_abroad() {
     // Nothing says this edge means "inside" rather than "near" or "flies
     // to", so a walk finds the pair and a reader still has to read each
     // sentence to learn what the link was.
+    s.has_no_verb("contains", &["capture", "search"]).await;
 
     s.wrap("two cities on the table").await;
 
@@ -124,6 +127,16 @@ async fn moving_abroad() {
     // rather than a walk. Compare the same question about a company, which is
     // one call.
     //   s.fact_about("person:patana", "handling the visa", "role", "project:atlas").await;
+    s.refused(
+        "capture",
+        json!({
+            "subject": "person:patana", "content": "handling the visa",
+            "provenance": "testimony", "shape": "membership",
+            "object": "project:atlas",
+        }),
+    )
+    .await
+    .says("membership");
 
     // Everything listed goes in as prose, because prose is all there is.
     s.fact(
@@ -157,16 +170,19 @@ async fn moving_abroad() {
     // outstanding. Facts are current truth by design; a task is a thing whose
     // state changes and whose history matters.
     //   s.task("project:atlas", "take the visa photo").before("book the appointment").await;
+    s.has_no_verb("task", &["capture", "update_fact"]).await;
 
     // GAP — and the appointment date has nowhere to go. Putting January the
     // first in a claim's date field redefines that field for every other claim
     // in the system.
     //   s.task("project:atlas", "embassy appointment").due("2027-01-01").await;
+    s.has_no_verb("due", &["capture", "update_fact"]).await;
 
     // GAP — the visa, the housing, the shipping and the money are CHILDREN of
     // the move. Parentage is not reachable from the surface, so they sit flat
     // as six sentences on one node instead of being zoomable.
     //   s.add_under("project:atlas", "project:atlas-visa", "Visa").await;
+    s.list("project").await.never_says("parent");
 
     s.wrap("the list exists; nothing is done").await;
 
@@ -189,6 +205,15 @@ async fn moving_abroad() {
     // vaccines, the import permit and the crate booking have nowhere honest to
     // live.
     //   s.add("pet:snowball", "Snowball").await;
+    s.refused(
+        "add_entity",
+        json!({
+            "kind": "pet", "handle": "snowball", "name": "Snowball",
+            "source": "user-named",
+        }),
+    )
+    .await
+    .says("pet");
 
     s.add("event:departure-flight", "Departure").await;
     s.fact(
@@ -219,6 +244,7 @@ async fn moving_abroad() {
     // happening in February" has to read every event's claims rather than the
     // events.
     //   s.happens_on("event:departure-flight", "2027-02-09").await;
+    s.list("event").await.never_says("\"happens_on\"");
 
     s.wrap("movers quoted, flight sketched").await;
 
@@ -249,6 +275,7 @@ async fn moving_abroad() {
     // GAP — the question actually asked at this point. Nothing can answer
     // "what is still open", because nothing here has a state.
     //   s.open_under("project:atlas").says("visa photo").await;
+    s.has_no_verb("open_under", &["search", "recall"]).await;
 
     // The appointment moved, and the claim that held before it moved is put
     // past rather than rewritten or taken back: it was true in its day, so it
@@ -278,6 +305,11 @@ async fn moving_abroad() {
     // it was moved past and not what moved past it, so a reader reconstructing
     // the sequence matches the wording by hand.
     //   s.superseded_by("project:atlas#f3", &rebooked).await;
+    s.recall("project:atlas")
+        .await
+        .claim(&first_date)
+        .says("superseded")
+        .never_says("superseded_by");
 
     s.wrap("still in progress").await;
 

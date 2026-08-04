@@ -54,6 +54,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // same class of incident agree on no word and no field names, so nothing
     // can compare their records.
     //   s.incident("project:jojobot-server", touched: &[…], closed_by: …).await;
+    s.has_no_verb("incident", &["capture", "search"]).await;
 
     s.wrap("recorded the defect where the next session will find it")
         .await;
@@ -75,6 +76,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // way to keep the quote is to put it in the claim text and hope nobody
     // tidies it.
     //   s.quoted("project:jojobot-server", verbatim: "…").await;
+    s.has_no_verb("quote", &["capture", "recall"]).await;
 
     s.wrap("recorded the ruling").await;
 
@@ -114,6 +116,8 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // every message in order and inferring, which is the work a record is
     // supposed to remove.
     //   s.slice("build the second field").dispatched_to("gamma").accepted().await;
+    s.has_no_verb("slice", &["post_message", "mark_processed"])
+        .await;
 
     s.wrap("took the report").await;
 
@@ -159,10 +163,13 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // commit a ruling called for from a commit that merely mentions it, so the
     // chain is walkable and its meaning is still a reading job.
     //   s.commit("thing:commit-omicron", authorized_by: &ruling).await;
+    s.has_no_verb("authorized_by", &["capture", "search"]).await;
 
     // GAP — the defect has the same problem from the other end: nothing
     // connects it to the commit that closed it. The event is on the page, the
     // fix is in the history, and only a person knows they are the same story.
+    s.has_no_verb("closed_by", &["capture", "update_fact"])
+        .await;
     s.recall("project:jojobot-server")
         .await
         .says("could not be written at all");
@@ -193,6 +200,8 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // indistinguishable, and so are a read one and a slice half built. The
     // coordinator's own question — who is blocked — has no read behind it.
     //   s.in_flight("project:jojobot-server").says("delta").await;
+    s.has_no_verb("in_flight", &["read_mailbox", "list_sent"])
+        .await;
 
     s.wrap("two slices out").await;
 
@@ -215,6 +224,8 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // shipped and what is waiting on somebody. That is the question this
     // persona opens with every time.
     //   s.standing("project:jojobot-server").says("delta is mid-slice").await;
+    s.has_no_verb("standing_of_work", &["start_here", "search"])
+        .await;
 
     s.wrap("caught up on the build without being re-told").await;
 

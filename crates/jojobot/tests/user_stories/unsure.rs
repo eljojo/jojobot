@@ -58,6 +58,11 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     // can name one, so the trail it leaves is not the trail it has. Which
     // parent to drop is a judgement the field forces and does not record.
     //   s.guess_from_all("place:moes", "…", &[hedged, breakfast]).await;
+    s.recall("place:moes")
+        .await
+        .claim(&derived)
+        .says("\"derived_from\"")
+        .never_says("\"derived_from\":[");
 
     s.wrap("worked out a third claim from the first two").await;
 
@@ -125,6 +130,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     // The link is intact and says nothing about that. It is harmless here,
     // because a promotion only makes the conclusion safer — and it would read
     // exactly the same if the parent had been refuted instead.
+    s.has_no_verb("restate", &["update_fact", "recall"]).await;
     s.recall("place:moes")
         .await
         .says(&format!("\"address\":\"{derived}\""))
@@ -157,6 +163,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     // claim that has moved twice and one written correctly the first time are
     // indistinguishable — and the derived claim below still rests on a parent
     // that has since reversed.
+    s.has_no_verb("history_of", &["recall", "search"]).await;
     walked_back
         .claim(&derived)
         .says("a Sunday visit should be earlier")
