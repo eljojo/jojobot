@@ -17,15 +17,23 @@ mod bikes;
 mod boot;
 #[path = "user_stories/challenge.rs"]
 mod challenge;
+#[path = "user_stories/coordinating.rs"]
+mod coordinating;
 #[path = "user_stories/curveball.rs"]
 mod curveball;
 #[path = "user_stories/dsl.rs"]
 mod dsl;
+#[path = "user_stories/investigating.rs"]
+mod investigating;
 #[path = "user_stories/moving.rs"]
 mod moving;
 #[path = "user_stories/party.rs"]
 mod party;
 #[path = "user_stories/sourcing.rs"]
 mod sourcing;
+#[path = "user_stories/unprompted.rs"]
+mod unprompted;
 #[path = "user_stories/unsourced.rs"]
 mod unsourced;
+#[path = "user_stories/unsure.rs"]
+mod unsure;

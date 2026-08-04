@@ -1,16 +1,13 @@
-//! What this story proves: a corrected claim stops being visible to a
-//! session that asks for it, and a session that reaches the same wrong
-//! conclusion again is not left with two answers and a judgement call.
+//! "You told me it was open till 2am. I went, it was shut. Where did you get
+//! that — and don't tell me the same thing again next month."
 //!
-//! What it does not prove: a claim can still be acted on wrongly in a
-//! session's own reasoning, never in jojobot's storage, so no test at this
-//! surface can reach that failure. This story checks only that jojobot
-//! hands over enough to avoid it — provenance on the claim, and one
+//! A claim can still be acted on wrongly inside a session's own reasoning,
+//! which is not a failure jojobot's storage can reach. What it can be held to
+//! is handing over enough to avoid it: provenance on the claim, and one
 //! reachable answer after a correction.
 //!
-//! Milestone: "I can ask why, and the answer holds."
-//!
-//! `// GAP —` marks a call that cannot be made today.
+//! `// GAP —` marks what a beat needed and could not have. The commented-out
+//! call is the missing capability, written the way it would be asked for.
 
 use super::dsl::Story;
 
@@ -23,35 +20,33 @@ async fn where_did_you_get_that() {
 
     s.add("place:moes", "Moe's").await;
 
-    // Testimony and inference, side by side, about the same place. He said the
+    // Testimony and inference about the same place. The operator said the
     // first. Nobody said the second — it came out of a search summary, which is
-    // the exact door rule 47 calls prompt injection.
+    // the door prompt injection walks through.
     s.fact(
         "place:moes",
-        "he likes it, goes there when the week has been long",
+        "a favourite of theirs, they go when the week has been long",
     )
     .await;
     let claim = s.guess("place:moes", "open until 2am on Sundays").await;
 
-    s.wrap("one thing he said, one thing we worked out").await;
+    s.wrap("one thing the operator said, one thing we worked out")
+        .await;
 
-    // ── session 2 · he went. it was shut. ───────────────────────────────────
+    // ── session 2 · they went. it was shut. ─────────────────────────────────
     let s = story.session().await;
 
-    // The correction, done properly: the claim is REWRITTEN in place, so a
-    // reader gets one answer rather than two and a judgement. Rule 58.
+    // The claim is rewritten in place, so a reader gets one answer rather than
+    // two and a judgement.
     s.correct(
         &claim,
-        "closes at 6 on Sundays — he went on a Sunday and it was shut",
+        "closes at 6 on Sundays — they went on a Sunday and it was shut",
     )
     .await;
 
-    // THE ASSERTION THAT CAN ACTUALLY FAIL, and it is the point of the story:
-    // the wrong wording is GONE, not outvoted. If a correction left the old
-    // claim reachable, every later session would find both and pick one.
-    // Each negative is PAIRED with the positive it needs. A bare "it is not in
-    // the results" cannot tell a correction that worked from a read that
-    // returned nothing at all — and the second is the failure worth catching.
+    // The old wording is gone, not outvoted. Each negative is paired with the
+    // positive it depends on: a bare absence cannot tell a correction that
+    // worked from a read that returned nothing at all.
     s.recall("place:moes")
         .await
         .says("closes at 6")
@@ -61,46 +56,40 @@ async fn where_did_you_get_that() {
         .says("place:moes")
         .never_says("until 2am");
 
-    // And the thing he actually said is untouched by the correction.
+    // And what the operator actually said is untouched by the correction.
     s.recall("place:moes").await.says("week has been long");
 
-    // GAP — "where did you get that" is still unanswerable. The claim reads back
-    // as an inference, which says it was DERIVED and not what from. There is no
-    // source, no session, no earlier fact — and an inference with no visible
-    // parent is exactly as unfalsifiable as a fabrication, which is what this
-    // project is blocked on.
-    // s.why(&claim).says("a search summary, session 1");
+    // GAP — "where did you get that" is still unanswerable for this claim. It
+    // reads back as an inference, which says it was derived and not what from.
+    // No source, no session, no earlier fact: an inference with no visible
+    // parent is exactly as unfalsifiable as a fabrication.
+    //   s.why(&claim).says("a search summary, session 1").await;
 
-    // GAP — AND THE ONE I HAD NOT SEEN UNTIL THE STORY HAD STAKES. Nothing
-    // records that a claim was ACTED ON. A wrong guess that sat unread and a
-    // wrong guess that sent him across town on a Sunday are the same object
-    // here. That difference is the whole difference between a tidy graph and a
-    // wasted evening, and it is the difference the incidents in his history are
-    // made of.
-    // s.acted_on(&claim, "he went").await;
+    // GAP — and nothing records that a claim was ACTED ON. A wrong guess that
+    // sat unread and a wrong guess that sent somebody across town on a Sunday
+    // are the same object here.
+    //   s.acted_on(&claim, "they went").await;
 
     s.wrap("corrected, and we still cannot say where it came from")
         .await;
 
-    // ── session 3 · a fresh session, weeks later, reaches the same conclusion ─
+    // ── session 3 · weeks later, a fresh session reaches the same conclusion ─
     let s = story.session().await;
 
     // Nothing stops it. The corrected fact states the negative truth, but a new
-    // session doing new research will infer the old claim again — and this time
-    // it will be a NEW fact, not a rewrite, so the correction it never saw does
-    // not apply to it.
+    // session doing new research infers the old claim again — and this time it
+    // is a NEW fact, not a rewrite, so the correction it never saw does not
+    // apply to it.
     let again = s.guess("place:moes", "open until 2am on Sundays").await;
     s.recall("place:moes").await.says("until 2am");
 
     // GAP — the corrected claim and the re-inferred one now sit side by side,
-    // and the graph cannot tell which one he already rejected. A rejection has
-    // to be a durable negative that later derivations SUBTRACT, or he corrects
-    // the same thing forever and eventually stops trusting the correction.
-    // s.rejected(&claim).so_that(&again).is_blocked().await;
+    // and nothing can say which one was already rejected. A rejection has to be
+    // a durable negative that later derivations subtract, or the same
+    // correction gets made forever and eventually stops being trusted.
+    //   s.rejected(&claim).so_that(&again).is_blocked().await;
 
-    // Cleaning up after ourselves, since this is his real store's shape: the
-    // re-inference is itself corrected, which is what a session would have to
-    // do by hand every single time.
+    // Cleaning up by hand, which is what a session would have to do every time.
     s.correct(
         &again,
         "closes at 6 on Sundays — already established, do not re-derive",
@@ -108,6 +97,35 @@ async fn where_did_you_get_that() {
     .await;
 
     s.wrap("the same wrong claim, twice, from the same absence")
+        .await;
+
+    // ── session 4 · what else came from that summary? ───────────────────────
+    let s = story.session().await;
+
+    // The same search summary produced a second claim, about a different
+    // place, and that one is still standing.
+    s.add("place:riverbend", "Riverbend Grill").await;
+    s.guess("place:riverbend", "serves food until midnight")
+        .await;
+
+    // What CAN be asked is everything nobody vouched for, across the store, in
+    // one call — a question about provenance rather than about wording, so
+    // both guesses come back and what the operator actually said does not.
+    s.unbacked()
+        .await
+        .says("place:riverbend")
+        .says("closes at 6 on Sundays")
+        .never_says("week has been long");
+
+    // GAP — but not by where they came from. Both guesses came out of one
+    // summary and neither says so, so discrediting the summary reaches
+    // nothing: there is no handle for it, no edge to it, and no way to ask
+    // what else it produced. Every claim it fathered has to be remembered by a
+    // person.
+    //   s.add("thing:that-search-summary", "The Search Summary").await;
+    //   s.through("about", "thing:that-search-summary", "place").says("place:riverbend");
+
+    s.wrap("one bad source, two claims, and no way to reach the second")
         .await;
 
     story.finish().await;

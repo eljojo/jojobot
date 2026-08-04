@@ -24,7 +24,15 @@ const KINDS: [&str; 9] = [
 ];
 
 /// The complete allowlist. Keep it sorted; keep it fictional.
+///
+/// **`bot:assistant` is the one entry that is not a fixture**, and it is here
+/// deliberately rather than by drift. It is the default identity jojobot ships
+/// with — engine material, naming a ROLE the way the orientation essay names
+/// "the operator". It identifies nobody's instance and nobody's life, which is
+/// the line this file exists to hold. Every other name here is fictional and
+/// must stay that way.
 const ROSTER: &[&str] = &[
+    "bot:assistant",
     "bot:delta",
     "bot:epsilon",
     "bot:gamm",
@@ -97,16 +105,22 @@ const ROSTER: &[&str] = &[
     "place:trail-spot",
     "place:x",
     "project:atlas",
+    "project:atlas-visa",
     "project:jojobot-server",
     "thing:bike-chain",
+    "thing:phi",
     "thing:floor-pump",
     "thing:folding-chairs",
     "thing:gravel-bike",
     "thing:leftorium-menu",
     "thing:red-bike",
+    "thing:sigma",
+    "thing:that-search-summary",
     "thing:red-bikee",
     "thing:road-bike",
+    "thing:tau",
     "thing:trail-email",
+    "thing:upsilon",
     "topic:widgets",
     "work:first-mix",
 ];

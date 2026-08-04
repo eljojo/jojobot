@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use jojobot::{AppState, build_app};
-use jojobot_adapters::search::IndexedMemory;
+use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory};
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::session::testing::InMemorySessions;
@@ -41,6 +41,16 @@ impl Story {
         let addr = listener.local_addr().unwrap();
         let indexed =
             Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens"));
+        let indexed_for_seed = indexed.clone();
+        // **Mail goes through the search index, exactly as the binary wires
+        // it.** Both worlds sit behind one `search`, so a fixture holding the
+        // raw store would serve a jojobot whose mail no story could see —
+        // poorer than the deployment it stands for, and silently so.
+        let boxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> = Arc::new(IndexedMailboxes::new(
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            indexed.index(),
+        ));
+        let boxes_for_seed = boxes.clone();
         let state = AppState {
             resource: format!("http://{addr}/mcp"),
             issuer: None,
@@ -48,7 +58,7 @@ impl Story {
             metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
             memory: indexed.clone(),
             search: indexed,
-            mailboxes: Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            mailboxes: boxes,
             sessions: Arc::new(InMemorySessions::new()),
             registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         };
@@ -62,17 +72,41 @@ impl Story {
                 .unwrap();
         });
 
+        // **A fresh jojobot arrives with its default identity**, exactly as a
+        // real one does — seeded before anything serves. Every story runs
+        // against a server that has one, because every real server does.
+        let seed_memory: Arc<dyn jojobot_domain::memory::Memory> = indexed_for_seed;
+        jojobot_mcp::seed::ensure_default_identity(&seed_memory, &boxes_for_seed).await;
+
         let story = Self {
             addr,
             ct,
             bot: bot.to_string(),
         };
         // The bot exists before anything boots as it; its box opens with it.
+        //
+        // **Created BY the default identity**, because a memory write carries
+        // one. This is the real bootstrap and not a fixture trick: every
+        // jojobot arrives with `assistant`, so the first act on a fresh server
+        // is somebody booting as it and standing up whoever else is needed.
         let client = story.connect().await;
+        let booted = call(
+            &client,
+            "start_here",
+            json!({"bot": jojobot_mcp::seed::DEFAULT_BOT, "brief": true}),
+        )
+        .await;
+        let sid = booted["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the default identity must boot: {booted}"))
+            .to_string();
         let made = call(
             &client,
             "add_entity",
-            json!({"kind": "bot", "handle": bot, "name": bot, "source": "user-named"}),
+            json!({
+                "kind": "bot", "handle": bot, "name": bot,
+                "source": "user-named", "sid": sid,
+            }),
         )
         .await;
         assert_ne!(made["status"], "blocked", "the story's bot: {made}");
@@ -122,6 +156,28 @@ impl Story {
         (booted, Session { client, sid })
     }
 
+    /// A session of ANOTHER bot on this same server — the other side of a
+    /// dispatch. Its own connection, which never met the first bot's.
+    pub async fn as_bot(&self, bot: &str) -> Session {
+        let bot = bot.strip_prefix("bot:").unwrap_or(bot);
+        let client = self.connect().await;
+        let booted = call(&client, "start_here", json!({"bot": bot, "brief": true})).await;
+        let sid = booted["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("boot handed back no handle: {booted}"))
+            .to_string();
+        Session { client, sid }
+    }
+
+    /// Fetch a shipped procedure by name, through the same door a boot uses.
+    /// No bot and no session: reading a skill starts nothing.
+    pub async fn skill(&self, name: &str) -> Value {
+        let client = self.connect().await;
+        let body = call(&client, "start_here", json!({"skill": name})).await;
+        client.cancel().await.unwrap();
+        body
+    }
+
     pub async fn finish(self) {
         self.ct.cancel();
     }
@@ -152,11 +208,10 @@ impl Session {
         }
     }
 
-    /// Takes the whole `kind:slug` handle, deliberately — **split into two
-    /// arguments it writes no handle-shaped literal, and the fixture-roster gate
-    /// scans for exactly that.** Every entity a story created would have been
-    /// invisible to the one guard that keeps life specifics out of the files most
-    /// likely to carry them.
+    /// Takes the whole `kind:slug` handle, deliberately: **the fixture-roster
+    /// gate scans source text for handle-shaped literals**, so a story that
+    /// passed its kind and slug separately would create entities the one guard
+    /// against life specifics cannot see.
     pub async fn add(&self, handle: &str, name: &str) {
         let (kind, slug) = handle.split_once(':').expect("a handle is kind:slug");
         self.write(
@@ -207,6 +262,45 @@ impl Session {
             )
             .await;
         address_of(&body)
+    }
+
+    /// **A claim the operator made and is not sure of.**
+    ///
+    /// Both halves are recorded, because they are two questions. `provenance`
+    /// says WHO BACKS IT, and the answer is `testimony`: the operator said it.
+    /// `standing` says HOW SURE, and the answer is `open`: they said they were
+    /// not sure. It is the one pairing no default can produce.
+    pub async fn hedged(&self, subject: &str, content: &str) -> String {
+        let body = self
+            .write(
+                &format!("a hedged claim about {subject}"),
+                "capture",
+                json!({
+                    "subject": subject, "content": content,
+                    "provenance": "testimony", "standing": "open",
+                }),
+            )
+            .await;
+        address_of(&body)
+    }
+
+    /// The operator confirms a claim that was standing as a hypothesis, and it
+    /// becomes settled. Promotion is gated on exactly this — `confirmed_by_user`
+    /// is refused unless it is true, so nothing can promote itself.
+    pub async fn confirm(&self, address: &str) {
+        self.write(
+            &format!("confirming {address}"),
+            "update_fact",
+            // **Naming `standing` is what routes this through the settling
+            // gate.** A restatement of the provenance would close the hedge
+            // through the ungated default instead, and never reach the gate.
+            json!({
+                "address": address,
+                "standing": "settled",
+                "confirmed_by_user": true,
+            }),
+        )
+        .await;
     }
 
     /// Something worked out from ANOTHER CLAIM, not from an entity — the
@@ -290,6 +384,39 @@ impl Session {
         .await
     }
 
+    /// Every claim nobody vouched for, across the whole store — the filter
+    /// asks about provenance rather than about words.
+    pub async fn unbacked(&self) -> Answer {
+        self.read(
+            "everything nobody vouched for".to_string(),
+            "search",
+            json!({"provenance": "inference"}),
+        )
+        .await
+    }
+
+    /// Walk an edge backwards: every entity of `kind` whose fact draws a
+    /// `shape` edge at `object`. The cross-entity question, in one call.
+    pub async fn through(&self, shape: &str, object: &str, kind: &str) -> Answer {
+        self.read(
+            format!("{kind}s linked to {object} by {shape}"),
+            "search",
+            json!({"kind": kind, "edge": {"shape": shape, "object": object}}),
+        )
+        .await
+    }
+
+    /// Take an event back. One way, chronology only: a fact is corrected
+    /// instead, because the negative truth is still the truth.
+    pub async fn retract(&self, address: &str, reason: &str) {
+        self.write(
+            &format!("retracting {address}"),
+            "retract",
+            json!({"address": address, "reason": reason}),
+        )
+        .await;
+    }
+
     pub async fn list(&self, kind: &str) -> Answer {
         self.read(
             format!("listing of {kind}"),
@@ -302,6 +429,56 @@ impl Session {
     pub async fn journal(&self, entry: &str) {
         self.write("a journal entry", "journal", json!({"entry": entry}))
             .await;
+    }
+
+    /// A record of something that HAPPENED, rather than something that is
+    /// true now. `kind` is free text and jojobot interprets none of it, so two
+    /// sessions recording the same class of thing need not agree on the word.
+    pub async fn event(&self, subject: &str, content: &str, kind: &str) -> String {
+        let body = self
+            .write(
+                &format!("an event about {subject}"),
+                "capture",
+                json!({
+                    "subject": subject, "content": content,
+                    "provenance": "testimony", "event_type": kind,
+                }),
+            )
+            .await;
+        address_of(&body)
+    }
+
+    /// Leave work in another bot's box. The shape of a request: it writes
+    /// without reading, so it takes no delivery and obliges nobody.
+    pub async fn post(&self, mailbox: &str, subject: &str, body: &str) -> String {
+        let sent = self
+            .write(
+                &format!("posting to {mailbox}"),
+                "post_message",
+                json!({"mailbox": mailbox, "subject": subject, "body": body}),
+            )
+            .await;
+        sent["id"]
+            .as_str()
+            .expect("a post hands back its id")
+            .to_string()
+    }
+
+    /// Take delivery of everything in YOUR OWN box. There is no box argument —
+    /// the sid says who is asking, and a bot drains the box it owns.
+    pub async fn drain(&self) -> Answer {
+        self.read("my mailbox".to_string(), "read_mailbox", json!({}))
+            .await
+    }
+
+    /// Retire a message once it has been acted on, with the outcome.
+    pub async fn processed(&self, id: &str, notes: &str) {
+        self.write(
+            &format!("processing {id}"),
+            "mark_processed",
+            json!({"message_id": id, "notes": notes}),
+        )
+        .await;
     }
 
     /// Ends the session and the connection with it.
@@ -333,6 +510,32 @@ impl Answer {
             self.body
         );
         self
+    }
+
+    /// **What ONE claim says, picked by its address.** `says` is a substring
+    /// over the whole answer, so on a subject holding two facts it proves only
+    /// that a token appears SOMEWHERE — which is how a story about two claims
+    /// that must differ can pass while they are identical, and how a dropped
+    /// argument can hide behind a neighbour supplying the same word.
+    pub fn claim(&self, address: &str) -> Answer {
+        let body: Value = serde_json::from_str(&self.body)
+            .unwrap_or_else(|e| panic!("the {} is not json: {e}: {}", self.what, self.body));
+        let fact = body["facts"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the {} carries no facts: {}", self.what, self.body))
+            .iter()
+            .find(|f| f["address"] == address)
+            .unwrap_or_else(|| {
+                panic!(
+                    "the {} holds no claim at {address}: {}",
+                    self.what, self.body
+                )
+            })
+            .clone();
+        Answer {
+            what: format!("claim {address}"),
+            body: fact.to_string(),
+        }
     }
 
     pub fn says(&self, needle: &str) -> &Self {

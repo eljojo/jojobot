@@ -1,10 +1,12 @@
-//! "I want to throw a birthday party." Who comes, what to eat, where.
+//! "I want to throw a birthday party. Help me work out who comes, what to
+//! cook, and where."
 //!
-//! Probes the things a graph should be best at and mostly is not: a set of
-//! people whose state changes, a walk from an event to its guests to what they
-//! eat, and one person reached only through another.
+//! What it probes is what a graph should be best at: a set of people whose
+//! state changes, a walk from an event to its guests to what they eat, and one
+//! person reachable only through another.
 //!
-//! `// GAP —` marks a call that cannot be made today.
+//! `// GAP —` marks what a beat needed and could not have. The commented-out
+//! call is the missing capability, written the way it would be asked for.
 
 use super::dsl::Story;
 
@@ -19,7 +21,7 @@ async fn throwing_a_birthday_party() {
     s.add("event:birthday-party", "Bodoque's Birthday").await;
     s.fact_about(
         "event:birthday-party",
-        "a birthday party for him, ten or twelve people",
+        "a birthday party for them, ten or twelve people",
         "about",
         "person:bodoque",
     )
@@ -37,15 +39,15 @@ async fn throwing_a_birthday_party() {
     )
     .await;
 
-    // GAP — two venues and two dates, both under evaluation. Same shape as the
-    // shortlist in the moving story and it recurs because CHOOSING is what
-    // planning is. Nothing can hold candidates, rank them, or record one as
-    // ruled out.
+    // GAP — two venues and two dates, both under evaluation. Nothing can hold
+    // candidates, rank them, or record one as ruled out, and choosing is what
+    // planning mostly is.
+    //   s.shortlist("the venue", &["place:moes"]).await;
 
-    // GAP — the party has no date, because there is no field for one. A fact's
-    // date is when a claim became known, and neither the 14th nor the 21st has
-    // happened. This is the third domain in three stories where a forward date
-    // has nowhere to go.
+    // GAP — the party has no date, because there is no field for one. A
+    // claim's date is when it became known, and neither the 14th nor the 21st
+    // has happened yet.
+    //   s.happens_on("event:birthday-party", "2027-01-14").await;
 
     s.wrap("party sketched").await;
 
@@ -72,15 +74,15 @@ async fn throwing_a_birthday_party() {
 
     s.fact("person:patana", "vegetarian").await;
     s.fact("person:barney-gumble", "does not drink").await;
-    s.fact("person:ned-flanders", "bringing his partner").await;
+    s.fact("person:ned-flanders", "bringing a partner").await;
 
-    // GAP — "his partner" is a PERSON, reachable only through Ned, and there is
-    // no shape that says one person stands in a relation to another. The four
-    // shapes point at a place, an org, an event, or vaguely at anything. For a
-    // system whose hardest content is people, nothing models people to people —
-    // so "who is Ned bringing" and "does anybody here not get along" are the
-    // same missing edge.
-    // s.fact_about("person:ned-flanders", "his partner", "relation", "person:maude").await;
+    // GAP — that partner is a PERSON, reachable only through Ned, and no shape
+    // says one person stands in a relation to another: the four point at a
+    // place, an org, an event, or vaguely at anything. For a system whose
+    // hardest content is people, nothing models people to people, so "who is
+    // Ned bringing" and "does anybody here not get along" are the same missing
+    // edge.
+    //   s.fact_about("person:ned-flanders", "their partner", "relation", "person:maude").await;
 
     s.wrap("invitations out").await;
 
@@ -90,9 +92,9 @@ async fn throwing_a_birthday_party() {
     s.fact("person:patana", "coming to the party").await;
 
     // Not coming is information as load-bearing as coming, so it gets the same
-    // edge. The shape says these two stand in an attendance relation; it does not
-    // claim he is there, any more than `location` claims someone is still at a
-    // place. Which way it went lives in the fact.
+    // edge. The shape says these two stand in an attendance relation; it does
+    // not claim anybody is there, any more than `location` claims somebody is
+    // still at a place. Which way it went lives in the fact.
     s.fact_about(
         "person:barney-gumble",
         "cannot make it, away that weekend",
@@ -106,41 +108,43 @@ async fn throwing_a_birthday_party() {
         .await
         .says("away that weekend");
 
-    // GAP — THE ONE THIS STORY EXISTS FOR, and it is the edge KEY again. Walking
-    // attendance from the party returns everyone who relates to it — coming, not
-    // coming, and never answered — and the edge carries nothing saying which. The
-    // answer is only in each fact's prose, so the one question worth asking costs
-    // a read per guest and a judgement per read.
-    // s.fact_keyed("person:barney-gumble", "rsvp", "no", "event:birthday-party").await;
-
-    // GAP — and the two questions that follow, asked every single time:
-    // s.through("event:birthday-party", "attendance").where_key("rsvp", "no").says("person:barney-gumble");
-    // s.through("event:birthday-party", "attendance").missing_key("rsvp").says("person:ned-flanders");
-
-    // Third domain tonight to land on the same want: event fields (rule 93),
-    // custody in the bikes story, and now an RSVP. The edge needs a key.
+    // GAP — and here is what the walk costs. Asking the party for its guests
+    // returns everyone who relates to it in one call, which is the graph doing
+    // its job — and the one who is coming, the one who is not, and the one who
+    // has not answered come back indistinguishable, because the edge carries
+    // nothing but its shape. The answer is only in each fact's prose, so the
+    // question worth asking costs a read per guest and a judgement per read.
+    let guests = s
+        .through("attendance", "event:birthday-party", "person")
+        .await;
+    guests
+        .says("person:patana")
+        .says("person:barney-gumble")
+        .says("person:ned-flanders");
+    //   s.through("attendance", "event:birthday-party").where_key("rsvp", "no").await;
+    //   s.through("attendance", "event:birthday-party").missing_key("rsvp").await;
 
     s.wrap("two replies in, one outstanding").await;
 
     // ── session 4 · what to cook ────────────────────────────────────────────
     let s = story.session().await;
 
-    // The multi-hop this story is for: from the party, to who is attending, to
-    // what they eat. The attendance edges exist, so some of this walk is real
-    // today — worth proving rather than assuming, since a story that finds
-    // something WORKING is as useful as one that finds a hole.
-    s.find("party").await.says("event:birthday-party");
-    s.find("vegetarian").await.says("person:patana");
+    // The multi-hop: from the party, to who is attending, to what they eat.
+    // The first hop is one call and the second is real too.
+    s.through("attendance", "event:birthday-party", "person")
+        .await
+        .says("person:patana");
     s.recall("person:patana").await.says("vegetarian");
+    s.find("vegetarian").await.says("person:patana");
 
     // GAP — but not in one question. "What do my guests eat" is event →
-    // attendees → their dietary facts, and it takes three reads and an agent
+    // attendees → their dietary facts, which is two calls and a session
     // holding the intermediate result rather than one walk.
-    // s.through("event:birthday-party", "attendance").recall_all().says("vegetarian");
+    //   s.through("attendance", "event:birthday-party").recall_all().await;
 
-    // The practical half, and the half a person actually worries about. It is
-    // not a verb — "do I have enough chairs" is arithmetic over two things
-    // already recorded, and the arithmetic is the agent's (rule 4).
+    // The practical half, and the one actually worried about. It is not a
+    // verb: "do I have enough chairs" is arithmetic over two things already
+    // recorded, and the arithmetic is the session's.
     s.add("thing:folding-chairs", "Folding Chairs").await;
     s.fact(
         "thing:folding-chairs",
@@ -149,13 +153,12 @@ async fn throwing_a_birthday_party() {
     .await;
     s.find("chairs").await.says("thing:folding-chairs");
 
-    // GAP — but neither side of that sum is a number. "Six of them" is prose and
-    // so is "ten or twelve people", so the agent gets two sentences and has to
-    // parse quantities out of English it wrote itself. Same shape as the bike
-    // tallies and the warranty date: A FACT'S VALUE IS ALWAYS PROSE, so every
-    // question with arithmetic in it dies at the read. The want is the edge key
-    // again, with a value that is not a sentence:
-    // s.fact_keyed("thing:folding-chairs", "count", "6").await;
+    // GAP — but neither side of that sum is a number. "Six of them" is prose
+    // and so is "ten or twelve people", so the session gets two sentences and
+    // has to parse quantities out of English it wrote itself. A claim's value
+    // is always prose, so every question with arithmetic in it dies at the
+    // read.
+    //   s.fact_keyed("thing:folding-chairs", "count", "6").await;
 
     s.wrap("menu still open").await;
 

@@ -1,16 +1,12 @@
-//! Where a claim came from, and whether it can still be answered.
+//! "Where did that come from? Not now — in two years, when I've forgotten I
+//! ever told you, and the thing it came from has changed."
 //!
-//! Five sessions, each a real moment, each recorded the way it would
-//! actually happen. A claim's source is either an entity (session 1's
-//! email, session 3's survey) or another claim (session 2's derived
-//! claim) — two different shapes of reference, not one wider one: an
-//! edge's object is an entity id, and a claim derived from a claim has no
-//! entity to point at.
+//! A claim's source is either an entity or another claim: two shapes of
+//! reference, not one wider one. An edge's object is an entity handle, and a
+//! claim worked out from a claim has no entity to point at.
 //!
-//! The subject is a place, never a person — people-related content
-//! migrates last, unconditionally (rule 78), and nothing here needs one.
-//!
-//! `// GAP —` marks a call that cannot be made today.
+//! `// GAP —` marks what a beat needed and could not have. The commented-out
+//! call is the missing capability, written the way it would be asked for.
 
 use super::dsl::Story;
 
@@ -23,11 +19,9 @@ async fn a_claim_names_where_it_came_from() {
 
     s.add("place:north-trail", "North Trail").await;
 
-    // Three conceptual steps — create the source, record the claim, point
-    // at the source — land as two calls, not three: `capture` already
-    // carries an edge in the same call as its content, so recording the
-    // claim and pointing it at the source are one write, not two. No batch
-    // verb used or needed here.
+    // Three conceptual steps land as two calls: `capture` carries the edge in
+    // the same write as the content, so recording the claim and pointing it at
+    // its source are one act.
     s.add("thing:trail-email", "An Email About The Trail").await;
     let closure = s
         .fact_about(
@@ -44,9 +38,8 @@ async fn a_claim_names_where_it_came_from() {
     // ── session 2 · a claim derived from a claim ────────────────────────────
     let s = story.session().await;
 
-    // Derived FROM the closure claim above, not from an entity — the
-    // fact-to-fact link `guess_from` carries via `derived_from`, an
-    // address, never an edge's `object`.
+    // Derived from the closure claim rather than from an entity: the
+    // fact-to-fact link is an address, never an edge's object.
     s.guess_from(
         "place:north-trail",
         "the loop will be busy with cyclists once it reopens",
@@ -60,15 +53,12 @@ async fn a_claim_names_where_it_came_from() {
     // ── session 3 · a claim from an event ───────────────────────────────────
     let s = story.session().await;
 
-    // The event, and its result as a fact about it — this half already
-    // works today: `event` is an entity kind like any other, and a fact
-    // can be about an event exactly as it can about a place.
+    // An event is an entity kind like any other, and a fact can be about one
+    // exactly as it can about a place.
     s.add("event:trail-survey", "Trail Survey").await;
     s.fact("event:trail-survey", "found the loop safe for hikers")
         .await;
 
-    // The claim about the place, pointing at the event as its source —
-    // same shape as session 1, because the source here is an entity too.
     let cleared = s
         .fact_about(
             "place:north-trail",
@@ -78,40 +68,62 @@ async fn a_claim_names_where_it_came_from() {
         )
         .await;
 
+    // A second claim from the same survey, so the source has more than one
+    // thing resting on it.
+    s.add("org:north-trail-club", "North Trail Club").await;
+    s.fact_about(
+        "org:north-trail-club",
+        "reopened its Sunday walks, per the survey",
+        "about",
+        "event:trail-survey",
+    )
+    .await;
+
     s.wrap("the clearance is on record, and where it came from")
         .await;
 
     // ── session 4 · the brief, and the challenge ────────────────────────────
     let s = story.session().await;
 
-    // The brief: everything about it, testimony and inference side by
-    // side, in one read.
+    // Everything about the place, testimony and inference side by side, in one
+    // read.
     s.recall("place:north-trail")
         .await
         .says("testimony")
         .says("inference");
 
-    // The challenge: where did the clearance claim come from? Named, not a
-    // bare id — the entity it traces to is right there in the same read
-    // that shows the claim itself.
+    // Where did the clearance come from? Named, not a bare id — the entity it
+    // traces to is in the same read as the claim itself.
     s.recall("place:north-trail")
         .await
         .says("cleared for hiking")
         .says("event:trail-survey");
 
-    // And the cyclists claim answers the same question, even though what
-    // it traces to is another claim rather than an entity: named as that
-    // claim's own address, not a bare id. Checked as the exact field
-    // rendering — the closure claim's own address is present in this read
-    // regardless (it is a fact in its own right), so a bare substring
-    // check on the address alone would pass whether or not the cyclists
-    // claim's `derived_from` actually carries it.
+    // The cyclists claim answers the same question even though what it traces
+    // to is another claim. Checked as the field rather than as a loose
+    // substring: the closure claim's address is in this read anyway, being a
+    // fact in its own right.
     s.recall("place:north-trail")
         .await
         .says("busy with cyclists")
         .says(&format!("\"derived_from\":\"{closure}\""));
 
-    s.wrap("caught up, and traceable").await;
+    // And the question from the other end — what rests on this survey? — is
+    // one walk, across kinds, without knowing either subject in advance.
+    s.through("about", "event:trail-survey", "place")
+        .await
+        .says("place:north-trail");
+    s.through("about", "event:trail-survey", "org")
+        .await
+        .says("org:north-trail-club");
+
+    // GAP — one walk per kind, because the filter narrows to a kind and there
+    // is no way to ask for every subject regardless. "What rests on this" is a
+    // question about the source, and answering it means knowing beforehand
+    // what sorts of thing might be resting.
+    //   s.through_any("about", "event:trail-survey").await;
+
+    s.wrap("caught up, and traceable in both directions").await;
 
     // ── session 5 · years later, conditions change ──────────────────────────
     let s = story.session().await;
@@ -120,10 +132,10 @@ async fn a_claim_names_where_it_came_from() {
     s.fact("event:erosion-review", "found erosion along the loop")
         .await;
 
-    // Not a refutation — the survey was not wrong, conditions changed.
-    // Both events stand; the claim is rewritten to the current truth, and
-    // its edge is re-pointed in the same call, so it does not go on tracing
-    // to a survey that no longer matches what the claim now says.
+    // Not a refutation — the survey was not wrong, conditions changed. Both
+    // events stand; the claim is rewritten to current truth and its edge
+    // re-pointed in the same call, so it does not go on tracing to a survey
+    // that no longer matches what it says.
     s.correct_with_source(
         &cleared,
         "closed pending repair, per the erosion review",
@@ -141,7 +153,17 @@ async fn a_claim_names_where_it_came_from() {
     s.find("trail-survey").await.says("event:trail-survey");
     s.find("erosion-review").await.says("event:erosion-review");
 
-    s.wrap("the record changed cleanly, and both events still stand")
+    // GAP — and the club's walks still rest on the survey, untouched. One
+    // claim was re-pointed by the session that happened to be looking at it;
+    // the walk above would have found the other, and nothing ran it. A source
+    // that stops holding does not reach what was built on it, so staleness
+    // spreads exactly as far as somebody remembers to look.
+    s.through("about", "event:trail-survey", "org")
+        .await
+        .says("org:north-trail-club");
+    //   s.superseded("event:trail-survey", by: "event:erosion-review").await;
+
+    s.wrap("the record changed cleanly, and one claim was left behind")
         .await;
 
     story.finish().await;
