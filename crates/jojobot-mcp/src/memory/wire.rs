@@ -22,6 +22,11 @@ pub(crate) fn fact_json(fact: &Fact) -> serde_json::Value {
         "content": fact.content,
         "details": fact.details,
         "provenance": fact.provenance.as_token(),
+        // **Always present, beside its twin.** The two answer different
+        // questions — who backs this, and how sure is anyone — and a reader
+        // deciding what to trust needs both or it is back to inferring one
+        // from the other, which is the bug this field exists to end.
+        "standing": fact.standing.as_token(),
         "status": fact.status.as_token(),
         "date": fact.date.to_string(),
         "edge": fact.edge.as_ref().map(edge_json),

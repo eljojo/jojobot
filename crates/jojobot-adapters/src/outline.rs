@@ -39,8 +39,8 @@ use jojobot_domain::memory::{
     guard::{self, Decision},
     normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
     search::DocScan,
-    validate_content, validate_details, validate_edge, validate_entity, validate_event,
-    validate_prose, validate_subject,
+    standing_of, validate_content, validate_details, validate_edge, validate_entity,
+    validate_event, validate_prose, validate_subject,
 };
 
 use jiff::civil::Date;
@@ -578,6 +578,31 @@ fn fact_changed(wrote: &Fact, read: &Fact) -> Option<Changed> {
             wrote.date.to_string(),
             read.date.to_string(),
         ),
+        // **Both of these were unwatched, and one of them is this release's
+        // own field.** A guard that omits a field cannot refuse a write that
+        // lost it: a mangled `standing` cell reads back empty, resolves to the
+        // default for the claim's provenance, and a hedge that was never
+        // recorded answers `Written`. `derived_from` had the same hole and
+        // predates this batch.
+        (
+            "standing",
+            Compare::Exact,
+            wrote.standing.as_token().to_string(),
+            read.standing.as_token().to_string(),
+        ),
+        (
+            "derived from",
+            Compare::Exact,
+            wrote
+                .derived_from
+                .as_ref()
+                .map(|a| a.to_string())
+                .unwrap_or_default(),
+            read.derived_from
+                .as_ref()
+                .map(|a| a.to_string())
+                .unwrap_or_default(),
+        ),
         ("edge", Compare::Exact, edge(wrote), edge(read)),
         ("event", Compare::Exact, event(wrote), event(read)),
     ])
@@ -732,6 +757,7 @@ impl Memory for OutlineStore {
         if let Some(event) = &fact.event {
             validate_event(event)?;
         }
+        let standing = standing_of(&fact);
         let collection_id = self.resolve_collection().await?;
 
         // Every entity this write names must already exist — the subject
@@ -801,6 +827,7 @@ impl Memory for OutlineStore {
             content: normalize_content(&fact.content),
             details: normalize_details(fact.details.as_deref()),
             provenance: fact.provenance,
+            standing,
             status: fact.status,
             date: fact.date,
             edge: fact.edge,
@@ -973,6 +1000,7 @@ impl Memory for OutlineStore {
         };
         // Everything that can refuse, refuses before the page is touched.
         let account = retraction_of(&target, reason, date)?;
+        let account_standing = standing_of(&account);
 
         let retracted = Fact {
             status: FactStatus::Retracted,
@@ -998,6 +1026,7 @@ impl Memory for OutlineStore {
             content: account.content,
             details: account.details,
             provenance: account.provenance,
+            standing: account_standing,
             status: account.status,
             date: account.date,
             edge: account.edge,
@@ -1067,13 +1096,25 @@ impl Memory for OutlineStore {
             .await?
             .map(|d| parse_prose(&d.text))
             .ok_or_else(|| MemoryError::Store(format!("entity {entity} lost its doc mid-write")))?;
-        if seen != stored {
+        // **Through `first_changed`, like every other guard on every rail.**
+        // This one compared byte-exact and interpolated both whole records into
+        // its message — the shape `first_changed`'s own docstring says cost
+        // this project two failed writes and a hand repair, left standing here
+        // because prose is one field and the helper looked like overkill.
+        //
+        // Byte-exact was the reason an ordinary sentence with a path in it
+        // could not be written at all: the store parses prose as markdown and
+        // re-emits it, so it comes back rewritten in ways that lost nothing.
+        // `Compare::Prose` forgives exactly what was measured and nothing else.
+        if let Some(changed) =
+            first_changed(&[("prose", Compare::Prose, stored.clone(), seen.clone())])
+        {
             return Err(self
                 .undo(
                     &doc,
                     "set_prose",
                     vec![entity.to_string()],
-                    format!("prose on {entity} read back changed: wrote {stored:?}, read {seen:?}"),
+                    format!("prose on {entity}: {changed}"),
                 )
                 .await);
         }
@@ -1150,7 +1191,7 @@ mod tests {
     use jiff::civil::date;
     use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
     use jojobot_domain::memory::testing::contract;
-    use jojobot_domain::memory::{Edge, EdgeShape, FactStatus, Provenance};
+    use jojobot_domain::memory::{Edge, EdgeShape, FactStatus, Provenance, Standing};
 
     use super::codec::{TABLE_HEADER, TABLE_SEP, escape_cell, split_cells};
     use super::*;
@@ -1177,6 +1218,52 @@ mod tests {
     /// edge-loss bug lived exactly in the gap between this and a verbatim fake,
     /// so the fake is hostile on purpose. Seeds stay verbatim: a seed models
     /// whatever history already left on disk.
+    /// **What real Outline does to a table cell**, applied independently of
+    /// the codec so the fake can DISAGREE with it.
+    ///
+    /// Measured, not modelled — every rule here has a recorded case behind it
+    /// from `characterise_what_the_store_does_to_text`. The store parses a cell
+    /// as markdown and re-emits it, so what survives is a fixed point of
+    /// parse-then-emit:
+    ///
+    /// * a backslash that IS a valid escape is consumed (`\"` comes back `"`),
+    /// * a backslash that is NOT is preserved by being escaped (`c:\dir`
+    ///   comes back `c:\\dir`),
+    /// * so `\\` is stable, which is the whole reason escaping the escape
+    ///   works.
+    ///
+    /// Nothing else from the measurement is here yet. This is the axis the
+    /// codec defends and the one a regression would travel on; the emphasis
+    /// respelling and the added escapes belong with the prose comparison work.
+    fn rewritten_like_the_store(cell: &str) -> String {
+        let mut out = String::with_capacity(cell.len());
+        let mut chars = cell.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '\\' {
+                out.push(c);
+                continue;
+            }
+            match chars.peek() {
+                // **`\|` is the TABLE's escape, not markdown's, and it
+                // survives.** Measured the other way round: the codec writes
+                // `\|` for a pipe in a value and the real-store contract
+                // passes, so the store keeps it. An unescaped pipe is what
+                // truncates a row.
+                Some('|') => {
+                    out.push('\\');
+                    out.push(chars.next().expect("peeked"));
+                }
+                // A valid escape: the backslash did its job and is spent.
+                Some(n) if n.is_ascii_punctuation() => {
+                    out.push(chars.next().expect("peeked"));
+                }
+                // A literal backslash: kept, and kept literal by escaping it.
+                _ => out.push_str("\\\\"),
+            }
+        }
+        out
+    }
+
     fn rectangularized(text: &str) -> String {
         let lines: Vec<&str> = text.lines().collect();
         let mut out: Vec<String> = Vec::with_capacity(lines.len());
@@ -1208,6 +1295,16 @@ mod tests {
                 let mut cells = split_cells(lines[i]);
                 cells.resize(width, String::new());
                 let cells: Vec<String> = cells.iter().map(|c| escape_cell(c)).collect();
+                // **And then the store's OWN transformation, built from the
+                // measurement rather than from the codec.** Everything above
+                // this line is `split_cells` composed with `escape_cell` —
+                // which is the identity for anything the codec round-trips
+                // with itself, so it cannot catch the codec being wrong. It
+                // did not: with the backslash escape reverted, the shared
+                // contract stayed green against this fake and the production
+                // bug came back invisibly.
+                let cells: Vec<String> =
+                    cells.iter().map(|c| rewritten_like_the_store(c)).collect();
                 // **A lone `-` comes back `\-`, and that is not cosmetic.**
                 // The editor model escapes a cell that would otherwise read as
                 // markdown, and a bare dash is one — verified against live
@@ -2006,6 +2103,7 @@ mod tests {
                 content: "spending the winter away".into(),
                 details: None,
                 provenance: Provenance::Testimony,
+                standing: None,
                 status: FactStatus::Active,
                 date: date(2026, 7, 2),
                 edge: Some(edge.clone()),
@@ -2609,7 +2707,7 @@ mod tests {
             // legacy-width seed comes back one cell wider than it went in and
             // the restore looks like a corruption when it is the ordinary
             // migration doing its job.
-            "| f1 | person:alpha | plays go |  | testimony | active | 2026-07-01 |  |  |  |",
+            "| f1 | person:alpha | plays go |  | testimony | settled | active | 2026-07-01 |  |  |  |",
         );
         let id = fake.seed_document(&coll, "Alpha", &doc0);
 
@@ -2629,6 +2727,7 @@ mod tests {
                 content: "spending the winter away".into(),
                 details: None,
                 provenance: Provenance::Testimony,
+                standing: None,
                 status: FactStatus::Active,
                 date: date(2026, 7, 2),
                 edge: Some(Edge::new(
@@ -3269,6 +3368,7 @@ mod tests {
                 content: "plays go".into(),
                 details: None,
                 provenance: jojobot_domain::memory::Provenance::Testimony,
+                standing: Standing::Open,
                 status: Default::default(),
                 date: date(2026, 7, 1),
                 edge: None,

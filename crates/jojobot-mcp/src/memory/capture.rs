@@ -24,6 +24,16 @@ pub struct CaptureArgs {
     /// `inference`: anything not tied to the user's words is a hypothesis.
     #[serde(default)]
     pub provenance: Option<String>,
+    /// `settled` or `open` — **how sure anyone is**, which is a different
+    /// question from `provenance`'s *who backs it*.
+    ///
+    /// Leave it off and it follows the provenance: the operator's word is
+    /// `settled`, a claim you worked out is `open`. Set it only when the two
+    /// come apart — and the case that matters is **the operator saying
+    /// something first-hand and hedging it**: that is
+    /// `provenance: testimony` with `standing: open`.
+    #[serde(default)]
+    pub standing: Option<String>,
     /// The fact's freshness date, `YYYY-MM-DD`. Defaults to today (UTC).
     #[serde(default)]
     pub date: Option<String>,
@@ -130,7 +140,13 @@ impl Jojobot {
     #[tool(
         description = "Remember one fact about an entity: the claim, when it became true, and \
                        whether it is testimony or inference (default inference — a hypothesis, \
-                       not a finding). It may also draw one typed edge at another entity. \
+                       not a finding). PROVENANCE AND STANDING ARE TWO QUESTIONS: provenance says \
+                       WHO BACKS IT, standing says HOW SURE anyone is (settled or open). Leave \
+                       standing off and it follows the provenance. Set it when the two come \
+                       apart, and the case that matters is the operator stating something \
+                       first-hand and hedging it — that is provenance testimony with \
+                       standing open, and there is no other way to record it. It may also draw \
+                       one typed edge at another entity. \
                        Returns the stored fact with the address you later edit it through. \
                        Every entity it names — the subject, and an edge's object — must \
                        ALREADY EXIST: one jojobot doesn't know comes back status: blocked with \
@@ -157,7 +173,7 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+        if let Err(refused) = self.identified(args.sid.as_deref()) {
             return Ok(refused);
         }
         let subject = EntityId::person(&args.subject);
@@ -184,6 +200,7 @@ impl Jojobot {
             content: args.content,
             details: args.details,
             provenance,
+            standing: args.standing.as_deref().map(parse_standing).transpose()?,
             status: Default::default(),
             date,
             edge,
@@ -593,6 +610,65 @@ mod tests {
         let jojobot = handler();
         let captured = capture_ok(&jojobot, capture_args("alpha", "maybe a morning person")).await;
         assert_eq!(captured["provenance"], "inference");
+    }
+
+    /// **The `standing` argument reaches the store, and comes back.**
+    ///
+    /// Nothing tested this. The domain contract builds `NewFact { standing }`
+    /// directly and never touches `parse_standing`; the argument builders only
+    /// ever sent `None`; and the story that exercises the field asserts with a
+    /// substring over a response holding two facts, so it cannot see the
+    /// argument dropped. Setting this verb's `standing` to `None` — the MCP
+    /// layer silently discarding what the caller asked for — left the entire
+    /// suite green.
+    ///
+    /// The hedge is the case that matters: `testimony` with `open` is the one
+    /// pairing a default cannot produce, so it is the only one that proves the
+    /// argument travelled rather than being re-derived at the far end.
+    #[tokio::test]
+    async fn the_standing_argument_travels_and_reads_back() {
+        let jojobot = handler();
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                standing: Some("open".into()),
+                ..capture_args("alpha", "thinks it shuts early")
+            },
+        )
+        .await;
+        // Paired: both halves, because `open` alone is what a default would
+        // give an inference and `testimony` alone is what the provenance
+        // argument already proves.
+        assert_eq!(captured["provenance"], "testimony");
+        assert_eq!(captured["standing"], "open");
+
+        // …and it is on the page, not just in the answer.
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: "person:alpha".into(),
+                    sid: None,
+                }))
+                .await
+                .expect("recall answers"),
+        );
+        assert_eq!(recalled["facts"][0]["standing"], "open", "{recalled}");
+    }
+
+    /// An unknown `standing` is a client error, not a silent default — a
+    /// caller who wrote something else meant something, and guessing which of
+    /// two values they meant is how a hedge becomes a settled fact.
+    #[tokio::test]
+    async fn an_unknown_standing_is_a_client_error() {
+        let jojobot = handler();
+        let refused = jojobot
+            .capture(Parameters(CaptureArgs {
+                standing: Some("maybe".into()),
+                ..capture_args("alpha", "something")
+            }))
+            .await;
+        assert!(refused.is_err(), "an unknown standing must be refused");
     }
 
     /// Omitting `date` defaults to today in UTC.

@@ -6,6 +6,7 @@
     "content": "a claim | with a pipe in it",
     "details": "with details | carrying a pipe",
     "provenance": "testimony",
+    "standing": "settled",
     "status": "active",
     "date": "2026-07-27",
     "edge": {

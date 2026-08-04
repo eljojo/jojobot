@@ -173,7 +173,8 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NotRetractable { .. }
-        | MemoryError::UnconfirmedPromotion => McpError::invalid_params(e.to_string(), None),
+        | MemoryError::UnconfirmedPromotion
+        | MemoryError::UnconfirmedSettling => McpError::invalid_params(e.to_string(), None),
         MemoryError::NotConfigured(msg) => {
             McpError::internal_error(format!("memory not configured: {msg}"), None)
         }

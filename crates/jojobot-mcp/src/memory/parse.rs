@@ -206,6 +206,23 @@ pub(crate) fn parse_provenance(raw: Option<&str>) -> Result<Provenance, McpError
     }
 }
 
+/// Parse the standing argument. **`None` is not a default here**: it means the
+/// caller said nothing, and what a silence means depends on the claim's
+/// provenance — the domain resolves it ([`standing_of`]), so this hands the
+/// silence through rather than deciding it. An unknown value is a client error,
+/// because a caller who wrote `maybe` meant something and guessing which of two
+/// values they meant is how a hedge becomes a settled fact.
+pub(crate) fn parse_standing(raw: &str) -> Result<Standing, McpError> {
+    match raw.trim() {
+        "settled" => Ok(Standing::Settled),
+        "open" => Ok(Standing::Open),
+        other => Err(McpError::invalid_params(
+            format!("standing must be 'settled' or 'open', got '{other}'"),
+            None,
+        )),
+    }
+}
+
 /// Parse the date argument, or default to today in UTC. The UTC default keeps
 /// the domain clock-free while giving `capture` a sensible freshness stamp.
 pub(crate) fn parse_date(raw: Option<&str>) -> Result<jiff::civil::Date, McpError> {

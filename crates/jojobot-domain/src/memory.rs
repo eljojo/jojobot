@@ -362,11 +362,16 @@ pub struct FactPatch {
     /// New provenance. Promoting inference → testimony additionally requires
     /// [`FactPatch::confirmed_by_user`].
     pub provenance: Option<Provenance>,
+    /// New standing. Settling an open claim additionally requires
+    /// [`FactPatch::confirmed_by_user`], and a claim nobody backs cannot be
+    /// settled at all — see [`check_standing`]. Reopening is free.
+    pub standing: Option<Standing>,
     /// A typed edge to attach. `None` leaves any existing edge alone; this
     /// milestone writes one edge per fact, so setting it replaces.
     pub edge: Option<Edge>,
     /// The user's explicit confirmation, required to promote a claim to
-    /// testimony. jojobot infers freely; it never blesses on its own.
+    /// testimony AND to settle one that is open. jojobot infers freely; it
+    /// never blesses on its own, on either axis.
     pub confirmed_by_user: bool,
 }
 
@@ -402,7 +407,7 @@ pub enum Provenance {
 }
 
 impl Provenance {
-    /// The wire token written to the table's `provenance` column.
+    /// The wire token this provenance is written and read back as.
     pub fn as_token(self) -> &'static str {
         match self {
             Provenance::Testimony => "testimony",
@@ -421,6 +426,96 @@ impl Provenance {
             _ => Provenance::Inference,
         }
     }
+}
+
+/// **How sure anyone is of a claim.** [`Provenance`] answers who backs it;
+/// this answers how sure they are. The two are independent, which is why they
+/// are two fields: the operator stating something first-hand and hedging it has
+/// no honest single-field answer.
+///
+/// **Two values, and it stays two.** Open or settled — not a confidence level,
+/// a score, or a degree. Whether a claim is still open to being wrong is a fact
+/// about it rather than a measurement of it.
+///
+/// All four pairings are legal. Settling is gated on the operator's
+/// confirmation ([`check_standing`]) and nothing else, so a derived claim
+/// somebody has since confirmed says exactly that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Standing {
+    /// Nobody is treating this as open to question.
+    Settled,
+    /// Still open to being wrong — a hedge, or an inference nobody confirmed.
+    Open,
+}
+
+impl Standing {
+    /// The wire token this standing is written and read back as.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            Standing::Settled => "settled",
+            Standing::Open => "open",
+        }
+    }
+
+    /// Read a standing back **in the light of the claim's provenance**: an
+    /// absent cell means what that claim meant before the column existed, so
+    /// a record from an earlier era keeps saying what it always said without
+    /// being rewritten. A garbled value degrades to `open`, never toward a
+    /// claim being more settled than the record can vouch for.
+    pub fn parse(cell: &str, provenance: Provenance) -> Self {
+        match cell.trim() {
+            "" => Standing::default_for(provenance),
+            "settled" => Standing::Settled,
+            _ => Standing::Open,
+        }
+    }
+
+    /// What a claim's standing is when nobody said. Derived from provenance
+    /// rather than flat: the operator's word is settled unless it is hedged, a
+    /// session's guess is open until the operator confirms it. A flat `Settled`
+    /// would declare every old guess a fact, and a flat `Open` would reopen
+    /// every claim the operator ever stated flatly.
+    pub fn default_for(provenance: Provenance) -> Self {
+        match provenance {
+            Provenance::Testimony => Standing::Settled,
+            Provenance::Inference => Standing::Open,
+        }
+    }
+}
+
+/// The standing gate, and the twin of [`check_promotion`].
+///
+/// **Settling a claim is the user's move**: closing an open claim needs the
+/// same explicit confirmation promoting one does, because withdrawing a hedge
+/// is a statement only the operator can make.
+///
+/// It says nothing about provenance. The two fields answer different questions
+/// — who backs a claim, and how sure anyone is — so a derived claim somebody
+/// has since confirmed is an ordinary row rather than a refused one.
+///
+/// Reopening is free, exactly as demotion to inference is free. Nothing is
+/// risked by a claim admitting it might be wrong.
+pub fn check_standing(
+    current: Standing,
+    requested: Standing,
+    confirmed_by_user: bool,
+) -> Result<(), MemoryError> {
+    let settling = current == Standing::Open && requested == Standing::Settled;
+    if settling && !confirmed_by_user {
+        return Err(MemoryError::UnconfirmedSettling);
+    }
+    Ok(())
+}
+
+/// **The standing a fresh capture lands on.** One function so the fake and the
+/// real store cannot come to disagree about what a silent `standing` means.
+///
+/// A capture declares its standing on honour, exactly as it declares its
+/// provenance on honour: the gate is on promotion, never on assertion.
+pub fn standing_of(new: &NewFact) -> Standing {
+    new.standing
+        .unwrap_or(Standing::default_for(new.provenance))
 }
 
 /// The shape of a fact's structured edge — a **closed** set of four, and the only
@@ -595,7 +690,7 @@ pub enum FactStatus {
 }
 
 impl FactStatus {
-    /// The wire token written to the table's `status` column.
+    /// The wire token this status is written and read back as.
     pub fn as_token(self) -> &'static str {
         match self {
             FactStatus::Active => "active",
@@ -920,6 +1015,9 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     if let Some(requested) = patch.provenance {
         check_promotion(fact.provenance, requested, patch.confirmed_by_user)?;
     }
+    if let Some(requested) = patch.standing {
+        check_standing(fact.standing, requested, patch.confirmed_by_user)?;
+    }
     if let Some(content) = &patch.content {
         validate_content(content)?;
     }
@@ -939,6 +1037,13 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     }
     if let Some(provenance) = patch.provenance {
         fact.provenance = provenance;
+    }
+    // **A patch moves the axis it names and no other.** The two fields answer
+    // different questions, so a promotion carrying a standing with it would be
+    // the coupling `standing` exists to remove — and it would move it without
+    // passing the gate that guards it. A caller meaning both says both.
+    if let Some(standing) = patch.standing {
+        fact.standing = standing;
     }
     if let Some(edge) = &patch.edge {
         fact.edge = Some(edge.clone());
@@ -1035,8 +1140,12 @@ pub struct NewFact {
     pub content: String,
     /// Nuance / why / merge notes — the description under the title.
     pub details: Option<String>,
-    /// Testimony vs inference; defaults to inference.
+    /// Who backs it; defaults to inference.
     pub provenance: Provenance,
+    /// How sure anyone is. A caller that says nothing gets
+    /// [`Standing::default_for`] its provenance, which is what every claim
+    /// written before this field meant — so only a hedge has to be asked for.
+    pub standing: Option<Standing>,
     /// Lifecycle state; a fresh capture is [`FactStatus::Active`].
     pub status: FactStatus,
     /// The fact's own freshness stamp, authoritative in the source.
@@ -1072,6 +1181,7 @@ impl NewFact {
             content: content.into(),
             details: None,
             provenance: Provenance::default(),
+            standing: None,
             status: FactStatus::default(),
             date,
             edge: None,
@@ -1096,8 +1206,11 @@ pub struct Fact {
     pub content: String,
     /// Nuance / why / merge notes.
     pub details: Option<String>,
-    /// Testimony vs inference.
+    /// Who backs this claim — testimony vs inference.
     pub provenance: Provenance,
+    /// How sure anyone is — settled vs open. The other axis, and independent
+    /// of [`Fact::provenance`]; see [`Standing`].
+    pub standing: Standing,
     /// Lifecycle state.
     pub status: FactStatus,
     /// The fact's own freshness stamp.
@@ -1334,6 +1447,13 @@ pub enum MemoryError {
          (confirmed_by_user); jojobot infers freely but never blesses on its own"
     )]
     UnconfirmedPromotion,
+    /// An open claim was asked to be settled without the user saying so.
+    #[error(
+        "settling an open claim requires the user's explicit confirmation \
+         (confirmed_by_user); the operator hedged this claim, and only the operator can \
+         withdraw the hedge"
+    )]
+    UnconfirmedSettling,
     /// **A write failed, and putting the record back failed too.** It is left
     /// mid-verb: not written, not restored, and not something the caller can
     /// retry its way out of. Its own variant for the same reason the mailbox

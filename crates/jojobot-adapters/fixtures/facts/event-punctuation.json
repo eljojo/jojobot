@@ -6,6 +6,7 @@
     "content": "an event whose payload is made of the store's own syntax",
     "details": null,
     "provenance": "inference",
+    "standing": "open",
     "status": "active",
     "date": "2026-07-29",
     "edge": null,

@@ -1213,7 +1213,9 @@ mod tests {
     use jojobot_domain::memory::event::Event;
     use jojobot_domain::memory::search::{DEFAULT_LIMIT, EdgeFilter, EntityRef};
     use jojobot_domain::memory::testing::{InMemoryMemory, contract};
-    use jojobot_domain::memory::{Boot, Edge, EdgeShape, FactStatus, Provenance, validate_subject};
+    use jojobot_domain::memory::{
+        Boot, Edge, EdgeShape, FactStatus, Provenance, Standing, validate_subject,
+    };
 
     use super::*;
 
@@ -1262,6 +1264,7 @@ mod tests {
             content: content.into(),
             details: None,
             provenance: Provenance::Inference,
+            standing: Standing::Open,
             status: FactStatus::Active,
             date: on,
             edge: None,
@@ -2084,6 +2087,7 @@ mod tests {
                 content: fact.content,
                 details: fact.details,
                 provenance: fact.provenance,
+                standing: Standing::Open,
                 status: fact.status,
                 date: fact.date,
                 edge: fact.edge,

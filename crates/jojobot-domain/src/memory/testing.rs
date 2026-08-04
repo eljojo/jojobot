@@ -17,12 +17,12 @@ use jiff::civil::Date;
 
 use super::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, FactStatus,
-    Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, apply_entity_patch,
+    Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, Standing, apply_entity_patch,
     apply_fact_patch,
     guard::{self, Decision},
     normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
-    search, validate_content, validate_details, validate_edge, validate_entity, validate_event,
-    validate_prose, validate_subject,
+    search, standing_of, validate_content, validate_details, validate_edge, validate_entity,
+    validate_event, validate_prose, validate_subject,
 };
 
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
@@ -146,6 +146,7 @@ impl Memory for InMemoryMemory {
         if let Some(event) = &fact.event {
             validate_event(event)?;
         }
+        let standing = standing_of(&fact);
 
         // Every entity this write names must already exist — the subject first,
         // then the edge's object. Nothing here provisions.
@@ -191,6 +192,7 @@ impl Memory for InMemoryMemory {
             content: normalize_content(&fact.content),
             details: normalize_details(fact.details.as_deref()),
             provenance: fact.provenance,
+            standing,
             status: fact.status,
             date: fact.date,
             edge: fact.edge,
@@ -317,6 +319,7 @@ impl Memory for InMemoryMemory {
             });
         };
         let account = retraction_of(&target, reason, date)?;
+        let standing = standing_of(&account);
 
         let home = target.home.clone();
         let existing = facts.iter().filter(|f| f.home == home).count();
@@ -327,6 +330,7 @@ impl Memory for InMemoryMemory {
             content: account.content,
             details: account.details,
             provenance: account.provenance,
+            standing,
             status: account.status,
             date: account.date,
             edge: account.edge,
@@ -524,6 +528,7 @@ pub mod contract {
             content: "prefers a café table".into(),
             details: Some("mentioned it twice".into()),
             provenance: Provenance::Testimony,
+            standing: Some(Standing::Open),
             status: FactStatus::Active,
             date: date(2026, 3, 9),
             edge: None,
@@ -535,6 +540,7 @@ pub mod contract {
         assert_eq!(captured.content, "prefers a café table");
         assert_eq!(captured.details.as_deref(), Some("mentioned it twice"));
         assert_eq!(captured.provenance, Provenance::Testimony);
+        assert_eq!(captured.standing, Standing::Open);
         assert_eq!(captured.date, date(2026, 3, 9));
         assert_eq!(captured.derived_from, Some(source));
 
@@ -559,6 +565,37 @@ pub mod contract {
         )
         .await;
         assert_eq!(captured.content, "reads a|b|c pipe notation");
+        let seen = read_back(store, &subject, &captured.id).await;
+        assert_eq!(seen, captured);
+    }
+
+    /// A backslash in content or details survives the round-trip — byte-identical.
+    ///
+    /// A contract case rather than a codec unit test, because it is a claim
+    /// about STORAGE: a fake keeping bytes verbatim answers yes whatever the
+    /// codec does, and only the real store can say the escape holds.
+    pub async fn a_backslash_in_content_round_trips<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-backslash");
+        let captured = capture(
+            store,
+            NewFact {
+                details: Some(r#"quoted it as \"exactly this\""#.into()),
+                ..NewFact::about(
+                    subject.clone(),
+                    r"the path is c:\dir\file and a trailing \",
+                    date(2026, 7, 24),
+                )
+            },
+        )
+        .await;
+        assert_eq!(
+            captured.content,
+            r"the path is c:\dir\file and a trailing \"
+        );
+        assert_eq!(
+            captured.details.as_deref(),
+            Some(r#"quoted it as \"exactly this\""#)
+        );
         let seen = read_back(store, &subject, &captured.id).await;
         assert_eq!(seen, captured);
     }
@@ -1696,6 +1733,263 @@ pub mod contract {
             read_back(store, &subject, &captured.id).await.provenance,
             Provenance::Testimony
         );
+    }
+
+    /// **A hedge round-trips as itself.** The claim the second field exists
+    /// for: the operator says something and says he is not sure of it, so
+    /// `testimony` (he backs it) and `open` (he is not sure) are both true and
+    /// both stored. Before this there was one field for two questions and a
+    /// session had to pick which one to be wrong about.
+    pub async fn a_hedged_claim_round_trips<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-hedged-word");
+        let captured = capture(
+            store,
+            NewFact {
+                provenance: Provenance::Testimony,
+                standing: Some(Standing::Open),
+                ..NewFact::about(
+                    subject.clone(),
+                    "thinks the shop shuts early",
+                    date(2026, 7, 1),
+                )
+            },
+        )
+        .await;
+        assert_eq!(captured.provenance, Provenance::Testimony);
+        assert_eq!(captured.standing, Standing::Open);
+        assert_eq!(read_back(store, &subject, &captured.id).await, captured);
+    }
+
+    /// **A silent standing follows the provenance**, which is what every claim
+    /// written before this field meant — so only a hedge has to be asked for,
+    /// and no existing row changed meaning when the column arrived.
+    pub async fn standing_defaults_to_what_the_provenance_implies<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-silent-standing");
+        let said = capture(
+            store,
+            NewFact {
+                provenance: Provenance::Testimony,
+                ..NewFact::about(subject.clone(), "opens at seven", date(2026, 7, 1))
+            },
+        )
+        .await;
+        assert_eq!(
+            said.standing,
+            Standing::Settled,
+            "the operator's word is settled unless he hedges it"
+        );
+
+        let guessed = capture(
+            store,
+            NewFact::about(
+                subject.clone(),
+                "probably busy on Fridays",
+                date(2026, 7, 2),
+            ),
+        )
+        .await;
+        assert_eq!(
+            guessed.standing,
+            Standing::Open,
+            "a claim nobody confirmed is open"
+        );
+
+        // Both survive storage, not just the values the domain computed.
+        assert_eq!(
+            read_back(store, &subject, &said.id).await.standing,
+            Standing::Settled
+        );
+        assert_eq!(
+            read_back(store, &subject, &guessed.id).await.standing,
+            Standing::Open
+        );
+    }
+
+    /// **A capture declares its own standing**, on honour, exactly as it
+    /// declares its provenance. A derived claim the operator has since
+    /// confirmed is an ordinary row: the axes are independent, and the gate is
+    /// on settling an open claim rather than on the pairing.
+    pub async fn a_capture_declares_its_own_standing<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-unbacked-guess");
+        ensure(store, &subject).await;
+        let settled = capture(
+            store,
+            NewFact {
+                provenance: Provenance::Inference,
+                standing: Some(Standing::Settled),
+                ..NewFact::about(subject.clone(), "certainly shuts at nine", date(2026, 7, 1))
+            },
+        )
+        .await;
+        assert_eq!(settled.provenance, Provenance::Inference);
+        assert_eq!(settled.standing, Standing::Settled);
+
+        // Paired with the default it did not take: silence still resolves from
+        // the provenance, so declaring a standing is a choice rather than the
+        // only way to get one.
+        let open = capture(
+            store,
+            NewFact::about(subject.clone(), "certainly shuts at nine", date(2026, 7, 1)),
+        )
+        .await;
+        assert_eq!(open.standing, Standing::Open);
+    }
+
+    /// **Settling is the user's move, and it leaves provenance alone.**
+    ///
+    /// This is the half the story found by accident: promotion used to "work"
+    /// only because a hedge had been mis-stored as inference, so there was a
+    /// provenance to promote. Stored honestly, the claim is testimony from the
+    /// start — and there must still be something for confirmation to close.
+    pub async fn settling_a_hedge_needs_confirmation_and_keeps_its_provenance<M: Memory>(
+        store: &M,
+    ) {
+        let subject = EntityId::person("contract-settle-gate");
+        let hedged = capture(
+            store,
+            NewFact {
+                provenance: Provenance::Testimony,
+                standing: Some(Standing::Open),
+                ..NewFact::about(subject.clone(), "thinks it shuts early", date(2026, 7, 1))
+            },
+        )
+        .await;
+
+        let err = store
+            .update_fact(
+                &hedged.address(),
+                FactPatch {
+                    standing: Some(Standing::Settled),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("an unconfirmed settling must be refused");
+        assert!(
+            matches!(err, MemoryError::UnconfirmedSettling),
+            "expected UnconfirmedSettling, got {err:?}"
+        );
+        assert_eq!(
+            read_back(store, &subject, &hedged.id).await.standing,
+            Standing::Open,
+            "a refused settling must leave the claim untouched"
+        );
+
+        let settled = edit(
+            store,
+            &hedged.address(),
+            FactPatch {
+                standing: Some(Standing::Settled),
+                confirmed_by_user: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(settled.standing, Standing::Settled);
+        assert_eq!(
+            settled.provenance,
+            Provenance::Testimony,
+            "confirmation closes the hedge; it does not restate who backed the claim"
+        );
+        let seen = read_back(store, &subject, &hedged.id).await;
+        assert_eq!(seen.standing, Standing::Settled);
+        assert_eq!(seen.provenance, Provenance::Testimony);
+    }
+
+    /// **Reopening is free**, exactly as demotion to inference is free. Nothing
+    /// is risked by a claim admitting it might be wrong.
+    pub async fn reopening_a_settled_claim_needs_no_ceremony<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-reopening");
+        let settled = capture(
+            store,
+            NewFact {
+                provenance: Provenance::Testimony,
+                ..NewFact::about(subject.clone(), "opens at seven", date(2026, 7, 1))
+            },
+        )
+        .await;
+        assert_eq!(settled.standing, Standing::Settled);
+
+        let reopened = edit(
+            store,
+            &settled.address(),
+            FactPatch {
+                standing: Some(Standing::Open),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(reopened.standing, Standing::Open);
+        assert_eq!(
+            read_back(store, &subject, &settled.id).await.standing,
+            Standing::Open
+        );
+    }
+
+    /// **One axis moves at a time.** A patch names what it changes: promoting a
+    /// guess says who backs it now and nothing about how sure anyone is, so a
+    /// caller who means both says both. The alternative is the coupling the
+    /// second field exists to remove — move one and the other follows.
+    pub async fn a_patch_moves_only_the_axis_it_names<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-confirmed-guess");
+        let guess = capture(
+            store,
+            NewFact::about(subject.clone(), "probably shuts at nine", date(2026, 7, 1)),
+        )
+        .await;
+        assert_eq!(guess.provenance, Provenance::Inference);
+        assert_eq!(guess.standing, Standing::Open);
+
+        let promoted = edit(
+            store,
+            &guess.address(),
+            FactPatch {
+                provenance: Some(Provenance::Testimony),
+                confirmed_by_user: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(promoted.provenance, Provenance::Testimony);
+        assert_eq!(
+            promoted.standing,
+            Standing::Open,
+            "a promotion that said nothing about standing moved it anyway"
+        );
+        assert_eq!(
+            read_back(store, &subject, &guess.id).await.standing,
+            Standing::Open,
+            "…and it reached the store that way"
+        );
+
+        // Paired with the positive: naming both is what lands both, so the
+        // assertion above is about the silence rather than about a claim that
+        // cannot be settled at all.
+        let settled = edit(
+            store,
+            &guess.address(),
+            FactPatch {
+                standing: Some(Standing::Settled),
+                confirmed_by_user: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(settled.provenance, Provenance::Testimony);
+        assert_eq!(settled.standing, Standing::Settled);
+
+        // And the reverse silence too: demoting says nothing about standing.
+        let demoted = edit(
+            store,
+            &guess.address(),
+            FactPatch {
+                provenance: Some(Provenance::Inference),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(demoted.provenance, Provenance::Inference);
+        assert_eq!(demoted.standing, Standing::Settled);
     }
 
     /// Demotion needs no ceremony — only promotion is gated.
@@ -3377,6 +3671,7 @@ pub mod contract {
         capture_reads_back(store).await;
         preserves_all_fields(store).await;
         pipe_in_content_round_trips(store).await;
+        a_backslash_in_content_round_trips(store).await;
         both_provenances_survive(store).await;
         edge_whitespace_is_normalized(store).await;
         multiple_facts_all_recallable(store).await;
@@ -3427,6 +3722,13 @@ pub mod contract {
         a_refutation_is_an_ordinary_content_edit(store).await;
         promotion_to_testimony_needs_confirmation(store).await;
         demotion_to_inference_is_free(store).await;
+
+        a_hedged_claim_round_trips(store).await;
+        standing_defaults_to_what_the_provenance_implies(store).await;
+        a_capture_declares_its_own_standing(store).await;
+        settling_a_hedge_needs_confirmation_and_keeps_its_provenance(store).await;
+        reopening_a_settled_claim_needs_no_ceremony(store).await;
+        a_patch_moves_only_the_axis_it_names(store).await;
         update_fact_unknown_address_never_creates(store).await;
         update_fact_tells_an_unknown_handle_from_an_empty_entity(store).await;
 

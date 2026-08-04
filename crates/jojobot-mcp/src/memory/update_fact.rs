@@ -25,8 +25,14 @@ pub struct UpdateFactArgs {
     /// `testimony` or `inference`.
     #[serde(default)]
     pub provenance: Option<String>,
-    /// Required to promote a claim from inference to testimony: set it only
-    /// when the user has actually confirmed the claim.
+    /// `settled` or `open`. **Settling an open claim requires
+    /// `confirmed_by_user`** — the operator hedged the claim, and only the
+    /// operator can withdraw the hedge. Reopening is free.
+    #[serde(default)]
+    pub standing: Option<String>,
+    /// Required to promote a claim from inference to testimony, AND to settle
+    /// one that is open: set it only when the user has actually confirmed the
+    /// claim.
     #[serde(default)]
     pub confirmed_by_user: Option<bool>,
     /// The shape of an edge to attach: `location` · `membership` · `attendance` ·
@@ -47,21 +53,25 @@ pub struct UpdateFactArgs {
 /// Edit one addressed fact in place — fix the source, never an addendum.
 #[tool_router(router = update_fact_router, vis = "pub(crate)")]
 impl Jojobot {
-    #[tool(
-        description = "Edit an addressed fact in place (content/details/status/provenance). \
-                       To record that something is NOT so, rewrite content to state the \
-                       negative truth — that is an ordinary edit and the fact stays active; \
-                       there is no negated status. Promoting inference → testimony requires \
-                       confirmed_by_user. An address that names no fact comes back status: \
-                       blocked with the addresses that do exist — it never creates."
-    )]
+    #[tool(description = "Edit an addressed fact in place \
+                       (content/details/status/provenance/standing). To record that something \
+                       is NOT so, rewrite content to state the negative truth — that is an \
+                       ordinary edit and the fact stays active; there is no negated status. \
+                       TWO MOVES NEED confirmed_by_user, and they are different: promoting \
+                       inference → testimony (who backs it), and settling a claim that is open \
+                       (how sure anyone is). THIS IS HOW A HEDGE IS CONFIRMED — the \
+                       operator hedged the claim and no longer does, so set standing settled \
+                       and leave provenance alone; the claim was theirs from the start. \
+                       Reopening is free. An address that \
+                       names no fact comes back status: blocked with the addresses that do \
+                       exist — it never creates.")]
     pub(crate) async fn update_fact(
         &self,
         Parameters(args): Parameters<UpdateFactArgs>,
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+        if let Err(refused) = self.identified(args.sid.as_deref()) {
             return Ok(refused);
         }
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
@@ -74,6 +84,7 @@ impl Jojobot {
                 .as_deref()
                 .map(parse_one_provenance)
                 .transpose()?,
+            standing: args.standing.as_deref().map(parse_standing).transpose()?,
             confirmed_by_user: args.confirmed_by_user.unwrap_or(false),
             edge: match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
                 Ok(edge) => edge,

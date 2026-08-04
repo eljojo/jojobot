@@ -387,6 +387,7 @@ pub trait Search: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use super::super::Standing;
     use super::*;
 
     #[test]
@@ -551,6 +552,7 @@ mod tests {
             content: "a claim".into(),
             details: None,
             provenance: Provenance::Inference,
+            standing: Standing::Open,
             status: FactStatus::Active,
             date: date(2026, 7, 1),
             edge: None,
@@ -618,6 +620,7 @@ mod tests {
             content: "a claim".into(),
             details: None,
             provenance: Provenance::Inference,
+            standing: Standing::Open,
             status: FactStatus::Active,
             date: date(2026, 7, 1),
             edge: None,
