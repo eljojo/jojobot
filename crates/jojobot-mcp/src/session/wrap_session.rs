@@ -153,9 +153,9 @@ mod tests {
     use jojobot_domain::session::Sid;
 
     /// **Wrapping flushes the current unpublished beat INTO the story, as one
-    /// entry.** His ruling, and the "one entry" half is the part a reasonable
-    /// implementation gets wrong: *"it should be both but it should be one
-    /// entry."*
+    /// entry.** The operator's ruling, and the "one entry" half is the part a
+    /// reasonable implementation gets wrong: *"it should be both but it should
+    /// be one entry."*
     ///
     /// A session's `focus` is current truth, rewritten in place, and it becomes
     /// chronology only once something has happened (rule 81). Wrapping IS

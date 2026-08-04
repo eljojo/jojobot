@@ -1736,9 +1736,9 @@ pub mod contract {
     }
 
     /// **A hedge round-trips as itself.** The claim the second field exists
-    /// for: the operator says something and says he is not sure of it, so
-    /// `testimony` (he backs it) and `open` (he is not sure) are both true and
-    /// both stored. Before this there was one field for two questions and a
+    /// for: the operator says something and says they are not sure of it, so
+    /// `testimony` (they back it) and `open` (they are not sure) are both true
+    /// and both stored. Before this there was one field for two questions and a
     /// session had to pick which one to be wrong about.
     pub async fn a_hedged_claim_round_trips<M: Memory>(store: &M) {
         let subject = EntityId::person("contract-hedged-word");
@@ -1776,7 +1776,7 @@ pub mod contract {
         assert_eq!(
             said.standing,
             Standing::Settled,
-            "the operator's word is settled unless he hedges it"
+            "the operator's word is settled unless they hedge it"
         );
 
         let guessed = capture(

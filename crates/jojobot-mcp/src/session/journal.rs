@@ -553,8 +553,9 @@ mod tests {
         );
         assert_eq!(wrapped["session"]["state"], "wrapped");
         // **Wrapping publishes NOWHERE.** It told the story into a shared
-        // Journal document, and his ruling deletes that: the journal goes dark
-        // until events land, and a wrap is the session's own record closing.
+        // Journal document, and the operator's ruling deletes that: the journal
+        // goes dark until events land, and a wrap is the session's own record
+        // closing.
         assert!(
             wrapped.get("journal").is_none(),
             "a wrap publishes nowhere, so it reports no publication: {wrapped}"
@@ -578,7 +579,7 @@ mod tests {
             .expect("read ok");
         let texts: Vec<&str> = read.entries.iter().map(|e| e.text.as_str()).collect();
         // The closing entry carries the unpublished focus folded into the
-        // story — one entry for one moment, which is his ruling.
+        // story — one entry for one moment, which is the operator's ruling.
         assert_eq!(
             texts,
             vec![

@@ -14,8 +14,8 @@
 //!
 //! It does not write a charter. What this identity is TOLD to be is a separate
 //! question with the operator's name on it, and a shipped charter would put a
-//! voice he has not approved into every future instance. The bot exists, it can
-//! be booted as, and it can write. That is all.
+//! voice they have not approved into every future instance. The bot exists, it
+//! can be booted as, and it can write. That is all.
 
 use std::sync::Arc;
 

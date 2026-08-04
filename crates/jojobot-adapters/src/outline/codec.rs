@@ -1324,7 +1324,7 @@ mod tests {
         assert_eq!(
             said.standing,
             Standing::Settled,
-            "what he stated was settled before this column existed and still is"
+            "what the operator stated was settled before this column existed and still is"
         );
 
         let guessed = parse_fact_row(

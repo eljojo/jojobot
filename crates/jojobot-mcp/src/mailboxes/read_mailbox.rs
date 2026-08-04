@@ -567,7 +567,7 @@ mod tests {
         );
         let how = broken["how_to_proceed"].as_str().expect("advice");
         // **The way out is the door that heals, not a person.** This advice
-        // named the operator until he ruled that jojobot repairs this itself;
+        // named the operator until they ruled that jojobot repairs this itself;
         // sending a session to a human for something the next boot fixes is a
         // way forward that costs more than the problem.
         assert!(

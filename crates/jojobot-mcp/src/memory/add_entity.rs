@@ -312,7 +312,7 @@ mod tests {
 
     /// **A box is what having an identity MEANS, not a thing you go and make.**
     ///
-    /// The operator's ruling, and he gave it twice — once as "an unowned mailbox
+    /// The operator's ruling, and they gave it twice — once as "an unowned mailbox
     /// should not be creatable at all", and then, when the answer to that was a
     /// mint verb that takes an owner, again and harder: *"it makes no sense for
     /// us to be able to create mailboxes because there's nothing to attach them
