@@ -44,7 +44,11 @@ pub(crate) fn session_unbound() -> CallToolResult {
                            get one, then pass it on every call — reads included. It is the only \
                            address, and it is what tells jojobot which bot is asking: most \
                            clients open a fresh connection per tool call, so nothing about who \
-                           you are survives from your last one.",
+                           you are survives from your last one. IF START_HERE ALSO HANDS BACK NO \
+                           HANDLE, this is not a call you can fix: the session world is \
+                           unreachable, so no identity can be issued and no write can be \
+                           attributed until it is back. Tell the operator — nothing is lost and \
+                           nothing was written.",
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -459,6 +463,16 @@ mod tests {
     async fn a_session_verb_carrying_an_unheld_handle_blocks_and_writes_nothing() {
         let client = NoAffinity::new();
         make_bot(&client.call(), "gamma").await;
+
+        // **A live chronology first, and it is what makes the last assertion
+        // in this test mean anything.** Without it there is no session on the
+        // board at all, so "the story landed in nobody's chronology" is true
+        // of an empty sweep and stays true however badly a refused wrap
+        // behaves. The negative below needs somewhere the story COULD have
+        // wrongly landed.
+        let live = as_bot(&client.call(), "gamma");
+        journal_entry(&client.call(), &live, "a real beat from the real run").await;
+
         // A well-formed handle jojobot never minted — the nearest thing left to
         // the typo this spec was about.
         let typo = "gamm";
@@ -549,6 +563,14 @@ mod tests {
             .into_iter()
             .flat_map(|s| s.entries.into_iter().map(|e| e.text))
             .collect();
+        // The positive the negative rests on: there IS a chronology here, so
+        // the sweep below is looking at something.
+        assert!(
+            told.iter()
+                .any(|e| e.contains("a real beat from the real run")),
+            "the live run's own entry must be in the sweep, or the check below reads nothing: \
+             {told:?}"
+        );
         assert!(
             !told
                 .iter()
@@ -1011,8 +1033,11 @@ mod begin_retry {
     #[tokio::test]
     async fn a_begin_that_commits_and_then_fails_leaves_one_run_under_one_sid() {
         let store = Arc::new(CommitsThenFails::new());
-        let jojobot = with_sessions_port(store.clone());
-        make_bot(&jojobot, "gamma").await;
+        // Provisioned below the surface: the double fails on a counted
+        // `begin`, and standing a bot up through the gated verb would spend
+        // that count on the fixture instead of on the journal below.
+        let (jojobot, memory) = with_sessions_port_and_memory(store.clone());
+        seed_bot(&memory, "gamma").await;
         let sid = booted(&jojobot, "gamma").await;
 
         let entry = |text: &str| JournalArgs {

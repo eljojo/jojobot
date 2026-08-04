@@ -178,6 +178,61 @@ pub const OUTCOME_NOTES: Fitted = Fitted {
     when_empty: None,
 };
 
+/// **One named case, and the goldens are its floor.** The store respells
+/// underscore-emphasis as asterisk-emphasis: `_under_` comes back
+/// `*under*`. Nothing is escaped and nothing is lost — it is the same
+/// emphasis run wearing the other marker.
+///
+/// **Intraword underscores are left alone, and that is measured rather
+/// than assumed.** `parse_bodies` comes back untouched, so a `_` with a
+/// letter on both sides is not a delimiter and is not respelled. That
+/// matters more than it looks: our own subjects are full of identifiers,
+/// and forgiving those would be forgiving a difference in a name.
+///
+/// This is deliberately not a model of markdown. It forgives what the
+/// recording shows and nothing else, and a rule that cannot point at a
+/// golden does not belong here.
+fn as_one_emphasis_marker(cell: &str) -> String {
+    let chars: Vec<char> = cell.chars().collect();
+    chars
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            if *c != '_' {
+                return *c;
+            }
+            let inside_a_word = i > 0
+                && chars[i - 1].is_alphanumeric()
+                && chars.get(i + 1).is_some_and(|n| n.is_alphanumeric());
+            if inside_a_word { '_' } else { '*' }
+        })
+        .collect()
+}
+
+/// A backslash the store put in front of punctuation, removed.
+///
+/// **Only ever applied to the value that came BACK.** Both callers depend on
+/// that asymmetry, and [`same_cell_value`] says why breaking it hides real
+/// loss.
+fn without_added_escapes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        // A backslash before punctuation is the store's; a backslash before
+        // anything else — a letter, a digit, the end of the text — is the
+        // writer's and stays.
+        if c == '\\'
+            && chars
+                .peek()
+                .is_some_and(|n| !n.is_alphanumeric() && !n.is_whitespace())
+        {
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// **Whether a cell came back as the same VALUE, allowing for the store
 /// rewriting it.**
 ///
@@ -205,55 +260,6 @@ pub const OUTCOME_NOTES: Fitted = Fitted {
 /// that came back missing. Never normalize both sides before comparing: that
 /// makes the two kinds of backslash indistinguishable and hides this case.
 pub fn same_cell_value(wrote: &str, read: &str) -> bool {
-    fn without_added_escapes(cell: &str) -> String {
-        let mut out = String::with_capacity(cell.len());
-        let mut chars = cell.chars().peekable();
-        while let Some(c) = chars.next() {
-            // A backslash before punctuation is the store's; a backslash
-            // before anything else — a letter, a digit, the end of the cell —
-            // is the writer's and stays.
-            if c == '\\'
-                && chars
-                    .peek()
-                    .is_some_and(|n| !n.is_alphanumeric() && !n.is_whitespace())
-            {
-                continue;
-            }
-            out.push(c);
-        }
-        out
-    }
-    /// **One named case, and the goldens are its floor.** The store respells
-    /// underscore-emphasis as asterisk-emphasis: `_under_` comes back
-    /// `*under*`. Nothing is escaped and nothing is lost — it is the same
-    /// emphasis run wearing the other marker.
-    ///
-    /// **Intraword underscores are left alone, and that is measured rather
-    /// than assumed.** `parse_bodies` comes back untouched, so a `_` with a
-    /// letter on both sides is not a delimiter and is not respelled. That
-    /// matters more than it looks: our own subjects are full of identifiers,
-    /// and forgiving those would be forgiving a difference in a name.
-    ///
-    /// This is deliberately not a model of markdown. It forgives what the
-    /// recording shows and nothing else, and a rule that cannot point at a
-    /// golden does not belong here.
-    fn as_one_emphasis_marker(cell: &str) -> String {
-        let chars: Vec<char> = cell.chars().collect();
-        chars
-            .iter()
-            .enumerate()
-            .map(|(i, c)| {
-                if *c != '_' {
-                    return *c;
-                }
-                let inside_a_word = i > 0
-                    && chars[i - 1].is_alphanumeric()
-                    && chars.get(i + 1).is_some_and(|n| n.is_alphanumeric());
-                if inside_a_word { '_' } else { '*' }
-            })
-            .collect()
-    }
-
     // **Only the READ side is un-escaped, and the asymmetry is the point.**
     //
     // What is being forgiven is an escape the STORE ADDED, so only the value
@@ -272,6 +278,48 @@ pub fn same_cell_value(wrote: &str, read: &str) -> bool {
         || as_one_emphasis_marker(wrote) == as_one_emphasis_marker(&without_added_escapes(read))
 }
 
+/// **Did this prose survive the store?**
+///
+/// Prose is free markdown by intent, so it cannot be defended the way a cell
+/// is: escaping it would turn the operator's own emphasis into literal
+/// asterisks. What can be done is to compare it knowing what the store does,
+/// and to forgive exactly that and nothing else.
+///
+/// Three transformations, each with a recorded case behind it:
+///
+/// * an escape the store ADDED in front of punctuation (`2 * 3` → `2 \* 3`),
+/// * a backslash preserved by being doubled (`c:\dir` → `c:\\dir`), which is
+///   what the store does to a backslash that is not a valid escape,
+/// * the emphasis respelling (`_x_` → `*x*`), intraword underscores excepted.
+///
+/// **One direction only**, and this is the rule [`same_cell_value`]'s comment
+/// says this case would tempt somebody to break. Only the value that came BACK
+/// is un-escaped. Normalising both sides would make a backslash the writer put
+/// before punctuation indistinguishable from one the store added — and the
+/// store DROPS the writer's, which is real loss and must stay refused.
+///
+/// The trade is deliberate and was taken knowingly: this is strictly weaker
+/// than a byte comparison, so a store that started genuinely eating text would
+/// be caught later. That was chosen over a guard so strict that an ordinary
+/// sentence with a path in it cannot be saved.
+pub fn same_prose_value(wrote: &str, read: &str) -> bool {
+    if wrote == read {
+        return true;
+    }
+    // The doubling is undone first, because it is the one rewrite that leaves
+    // a backslash behind: `c:\\dir` un-escapes to `c:\dir`, which is what was
+    // written. Stripping added escapes alone would take both and give `c:dir`.
+    let undoubled = read.replace("\\\\", "\\");
+    if wrote == undoubled {
+        return true;
+    }
+    let stripped = without_added_escapes(&undoubled);
+    if wrote == stripped {
+        return true;
+    }
+    as_one_emphasis_marker(wrote) == as_one_emphasis_marker(&stripped)
+}
+
 /// How a field's two sides are compared — the caller knows which its field is,
 /// and this is the only place the choice is spelled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,6 +327,11 @@ pub enum Compare {
     /// A value that rides in a table cell, so the store's own escaping and
     /// marker respelling do not count as a change. See [`same_cell_value`].
     Cell,
+    /// Free markdown the operator wrote, which the store parses and re-emits.
+    /// It cannot be escaped on the way in without corrupting the operator's own
+    /// formatting, so it is compared knowing what the store does. See
+    /// [`same_prose_value`].
+    Prose,
     /// Machinery, or content the store leaves alone: an id, a date, a state, a
     /// fenced body. Byte-exact.
     Exact,
@@ -328,6 +381,7 @@ pub fn first_changed(fields: &[(&'static str, Compare, String, String)]) -> Opti
         .iter()
         .find(|(_, how, wrote, read)| match how {
             Compare::Cell => !same_cell_value(wrote, read),
+            Compare::Prose => !same_prose_value(wrote, read),
             Compare::Exact => wrote != read,
         })
         .map(|(field, _, wrote, read)| Changed {
@@ -578,5 +632,105 @@ mod tests {
             MESSAGE_TITLE.render("filed  under   shipments"),
             "filed under shipments"
         );
+    }
+}
+
+/// **What a prose comparison forgives, and what it must not.**
+///
+/// Prose is compared byte-exact today, which is why an ordinary sentence with
+/// a path in it cannot be written at all. It is the only caller text held to
+/// that: a cell already goes through [`same_cell_value`].
+///
+/// Every case below has a recorded measurement behind it from the store
+/// characterisation. Nothing is forgiven that does not.
+#[cfg(test)]
+mod prose_forgives_what_was_measured {
+    use super::*;
+
+    fn same(wrote: &str, read: &str) -> bool {
+        same_prose_value(wrote, read)
+    }
+
+    /// **The three transformations, each with a measured case.**
+    #[test]
+    fn the_measured_rewrites_are_forgiven() {
+        // The store adds an escape in front of punctuation it would otherwise
+        // read as syntax. Measured: `2 * 3` came back `2 \* 3`.
+        assert!(same("2 * 3 * 4", r"2 \* 3 \* 4"));
+        assert!(same("a ~ b ~ c", r"a \~ b \~ c"));
+
+        // A backslash that is not a valid escape is preserved by being
+        // escaped. Measured: `c:\dir\file` came back `c:\\dir\\file`.
+        assert!(same(r"c:\dir\file", r"c:\\dir\\file"));
+        assert!(same(r"a trailing \", r"a trailing \\"));
+
+        // The emphasis respelling, and intraword underscores are left alone —
+        // both measured, and the second matters because our own text is full
+        // of identifiers.
+        assert!(same("_under_ and snake_case", "*under* and snake_case"));
+    }
+
+    /// **And nothing else.** These are the changes a byte comparison exists to
+    /// catch, and a forgiving arm that also let them through would be worse
+    /// than the strict one it replaces.
+    #[test]
+    fn real_damage_is_still_refused() {
+        assert!(!same("the shop shuts at nine", "the shop shuts at ten"));
+        assert!(!same("the shop shuts at nine", "the shop shuts"));
+        assert!(!same("the shop shuts at nine", ""));
+        assert!(!same("", "the shop shuts at nine"));
+
+        // **A backslash the WRITER put before punctuation and the store then
+        // DROPPED.** This is the direction that must never be forgiven: it is
+        // real loss, and forgiving it is what normalising both sides would do.
+        assert!(!same(r#"say \"this\" back"#, r#"say "this" back"#));
+
+        // …and the same thing said the other way: a doubled backslash where
+        // one was written is forgiven, but a backslash that simply vanished is
+        // not.
+        assert!(!same(r"c:\dir\file", "c:dirfile"));
+    }
+
+    /// **The arm is wired to the comparison.** Without this, the tests above
+    /// pass against a `Compare::Prose` that still compares byte-exact — they
+    /// call the function directly and never touch the dispatch. Watched: the
+    /// three cases above stayed green with the arm reverted.
+    #[test]
+    fn the_prose_arm_dispatches_to_the_prose_comparison() {
+        assert_eq!(
+            first_changed(&[(
+                "prose",
+                Compare::Prose,
+                "2 * 3".to_string(),
+                r"2 \* 3".to_string(),
+            )]),
+            None,
+            "a store-added escape must not read as a change through the arm"
+        );
+        // Paired: the arm still reports real loss, so `None` above is
+        // forgiveness rather than a comparison that never fires.
+        assert!(
+            first_changed(&[(
+                "prose",
+                Compare::Prose,
+                "shuts at nine".to_string(),
+                "shuts at ten".to_string(),
+            )])
+            .is_some(),
+            "the arm must still catch a changed word"
+        );
+    }
+
+    /// **One direction only**, which is the rule `same_cell_value`'s own
+    /// comment says this case would tempt somebody to break. What the store
+    /// returned is measured against what we wrote; we never rewrite what we
+    /// wrote to make it match.
+    #[test]
+    fn forgiveness_does_not_run_backwards() {
+        // The store adding an escape is forgiven…
+        assert!(same("2 * 3", r"2 \* 3"));
+        // …and the reverse is not: we did not write the escaped form and get
+        // the bare one back, and if we did, something removed it.
+        assert!(!same(r"2 \* 3", "2 * 3"));
     }
 }
