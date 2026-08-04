@@ -19,13 +19,13 @@ pub struct EdgeFilterArgs {
 /// Arguments to `search`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SearchArgs {
-    /// Free text over entity handles/names, fact claims and details, and the
-    /// prose of documents. **All words must match.** Optional when at least one
+    /// Free text over entity handles/names, fact claims and details, and an
+    /// entity's prose. **All words must match.** Optional when at least one
     /// filter below is given.
     #[serde(default)]
     pub query: Option<String>,
     /// Narrow to one entity kind — an entity's own kind, a fact's subject's kind,
-    /// or the owner of the doc a prose match sits in.
+    /// or the kind of the entity whose prose matched.
     #[serde(default)]
     pub kind: Option<String>,
     /// `active` (the default) or `superseded`. A superseded fact is **excluded
@@ -63,7 +63,8 @@ pub struct SearchArgs {
 /// One search result on the wire. **Every hit says what it is** (`hit`), so a
 /// caller reads a mixed list without guessing from its shape — and each kind of
 /// hit carries what makes it actionable: an entity its handle, a fact its whole
-/// row and address, prose the doc to open and the text around the match.
+/// row and address, prose its title, the entity that owns it and the text
+/// around the match.
 ///
 /// **And every hit arrives with its surroundings.** A fact adds `about` and
 /// `home` — its subject and its home entity, resolved to every name they
