@@ -51,6 +51,11 @@ async fn spawn_server(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let state = make_state(addr);
+    // **Every served jojobot arrives with its default identity**, exactly as
+    // the composition root does it — before anything can connect. A memory
+    // write needs an identity now, so a server without one could not be
+    // written to at all, and no real deployment is in that state.
+    jojobot_mcp::seed::ensure_default_identity(&state.memory, &state.mailboxes).await;
     let ct = CancellationToken::new();
     let app = build_app(state, ct.child_token());
     let shutdown = ct.clone();
@@ -338,8 +343,18 @@ fn searchable_state(addr: SocketAddr) -> AppState {
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
         memory: indexed.clone(),
         search: indexed,
-        mailboxes: Arc::new(OutlineStore::unconfigured().mailboxes()),
-        sessions: Arc::new(OutlineStore::unconfigured().sessions()),
+        // **Real session and mailbox ports, unlike the other fixtures here, and
+        // not to make a test pass.** A memory write now carries an identity, an
+        // identity needs a `sid`, and a `sid` needs a session world that can
+        // start one. A deployment that captures facts therefore HAS a session
+        // store — so this fixture has one because the deployment it stands for
+        // does, not because the assertion below wants it. The half-wired shape
+        // is a legitimate scenario and it is `no_auth_state`'s, where losing
+        // writes is the correct behaviour rather than a gap.
+        mailboxes: Arc::new(
+            jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
+        ),
+        sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
     }
 }
@@ -393,6 +408,35 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
         "capture has no create_new; promising one sends the caller round a loop: {capture_doc}"
     );
 
+    // **The boot comes first, because a write with nobody behind it no longer
+    // lands.** Every real client does exactly this: walk through the door,
+    // then carry the sid. The identity is the one every jojobot arrives with,
+    // which is what makes the gate shippable rather than a bootstrap trap.
+    let booted = client
+        .call_tool(
+            CallToolRequestParams::new("start_here").with_arguments(
+                serde_json::json!({ "bot": "assistant", "brief": true })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    let booted: serde_json::Value = serde_json::from_str(
+        booted
+            .content
+            .first()
+            .and_then(|b| b.as_text())
+            .map(|t| t.text.as_str())
+            .expect("start_here answers with text"),
+    )
+    .expect("start_here answers with json");
+    let sid = booted["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the default identity must boot: {booted}"))
+        .to_string();
+
     // A subject must exist before a fact about it can land, so the probe is the
     // two deliberate steps a new entity takes — end to end, through the wire.
     let added = client
@@ -403,6 +447,7 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
                     "handle": "frontdoor-probe",
                     "name": "Frontdoor Probe",
                     "source": "user-named",
+                    "sid": sid,
                 })
                 .as_object()
                 .unwrap()
@@ -425,6 +470,7 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
                     "content": "keeps a zamboni in the garage",
                     "provenance": "testimony",
                     "date": "2026-07-01",
+                    "sid": sid,
                 })
                 .as_object()
                 .unwrap()
@@ -520,4 +566,94 @@ async fn ping_tool_round_trips_end_to_end() {
 
     client.cancel().await.unwrap();
     ct.cancel();
+}
+
+/// **A client that was connected when the surface changed must be told the
+/// list moved.**
+///
+/// Paid for in production: two sessions against one deployment held different
+/// tool lists. The one that had registered before a surface change still had
+/// the old seven verbs — no `start_here`, no mailbox verbs — so it could not
+/// boot as its bot or read its own box, and the brief waiting for it went
+/// unread. A client caches the list at registration; if the server never says
+/// the list moved, it never looks again.
+///
+/// Two halves, and a client needs both. The **capability** says this server's
+/// list is not a constant, which is what makes a cached copy something to
+/// revalidate rather than a fact. The **notification** is the actual nudge, and
+/// it goes out when a client initializes — the one moment jojobot knows a
+/// client is holding a list and can still reach it.
+mod surface_changed {
+    use super::*;
+    use rmcp::ServiceExt;
+    use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};
+    use rmcp::transport::StreamableHttpClientTransport;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// A client that records one thing: whether it was ever told.
+    #[derive(Clone, Default)]
+    struct Listening {
+        told: Arc<AtomicBool>,
+    }
+
+    impl rmcp::ClientHandler for Listening {
+        fn on_tool_list_changed(
+            &self,
+            _context: rmcp::service::NotificationContext<rmcp::RoleClient>,
+        ) -> impl std::future::Future<Output = ()> + Send + '_ {
+            self.told.store(true, Ordering::SeqCst);
+            std::future::ready(())
+        }
+
+        fn get_info(&self) -> ClientInfo {
+            ClientInfo::new(
+                ClientCapabilities::default(),
+                Implementation::new("jojobot-listening-client", "0.0.1"),
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn a_connected_client_is_told_the_tool_list_can_move() {
+        let (addr, ct) = spawn_server(no_auth_state).await;
+        let transport = StreamableHttpClientTransport::from_uri(format!("http://{addr}/mcp"));
+        let listening = Listening::default();
+        let client = listening.clone().serve(transport).await.unwrap();
+
+        // **The capability.** Without it a client is entitled to treat its
+        // cached list as final, and the notification below is one it never
+        // agreed to receive.
+        let caps = client
+            .peer_info()
+            .expect("the server answered initialize")
+            .capabilities
+            .clone();
+        assert_eq!(
+            caps.tools.as_ref().and_then(|t| t.list_changed),
+            Some(true),
+            "the server must declare that its tool list can move: {caps:?}"
+        );
+
+        // **The notification.** Paired with the positive above: the capability
+        // alone is a promise, and this is the server keeping it.
+        //
+        // It is sent on initialize, which arrives before `serve` returns — but
+        // it is a notification and the client dispatches it on its own task, so
+        // a poll is the honest way to observe it rather than a bare read that
+        // races the dispatcher.
+        let told = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !listening.told.load(Ordering::SeqCst) {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok();
+        assert!(
+            told,
+            "a client that just connected was never told the list can have moved under it"
+        );
+
+        client.cancel().await.unwrap();
+        ct.cancel();
+    }
 }

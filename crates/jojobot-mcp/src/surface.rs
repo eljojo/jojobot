@@ -547,7 +547,7 @@ fn agent_facing_text() -> Vec<(String, String)> {
                 Arc::new(crate::memory::testing::SpySearch::default()),
                 Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
                 Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
-                Arc::new(sid::SessionRegistry::new()),
+                crate::harness::seeded_registry(),
             )
             .get_info()
             .instructions
@@ -641,4 +641,228 @@ fn no_agent_facing_text_teaches_the_retired_store() {
         "these exceptions no longer match anything — delete them, or the allowlist stops being \
          a record of what is here and becomes a hole nobody reviewed: {unused:?}"
     );
+}
+
+/// **A memory write carries an identity, or it does not land.**
+///
+/// Every tool schema says the `sid` rides every call because it is what tells
+/// jojobot which bot is asking, and rule 19 says the same. The memory writes
+/// accepted `None` anyway and stored the write unattributed: `attributable`
+/// resolves through `caller`, which answers Ok for a missing sid. A vanilla
+/// session found this by trying, because nothing said it was allowed and
+/// nothing said what it cost.
+///
+/// It sits under the trust machinery rather than beside it. `provenance`
+/// answers who BACKS a claim; this is the separate question of who WROTE it,
+/// and the answer could be nobody.
+///
+/// **There is no exemption, `add_entity` included.** The bootstrap loop that
+/// once made one necessary is gone: every jojobot arrives with its default
+/// identity, so the state where no bot exists to create the first bot is not
+/// reachable.
+///
+/// **Reads are deliberately not here.** Rule 19 wants the sid on a read so
+/// jojobot knows who is asking, and a read with no sid stays legal and
+/// unattributed — it changes nothing, so there is nothing to attribute.
+#[cfg(test)]
+mod a_write_needs_an_identity {
+    use super::*;
+    use crate::harness::*;
+    use crate::memory::testing::*;
+    use crate::memory::{
+        AddEntityArgs, CaptureArgs, ListEntitiesArgs, RetractArgs, SetCharterArgs, UpdateEntityArgs,
+    };
+    use rmcp::handler::server::wrapper::Parameters;
+
+    /// What an anonymous write must come back with: a blocked answer naming the
+    /// door, never a bare error and never a silent success (rule 68).
+    fn refused(result: &CallToolResult, verb: &str) {
+        let body = json_of(result);
+        assert_eq!(
+            body["status"], "blocked",
+            "{verb} without a sid must be blocked, not an error and not a success: {body}"
+        );
+        assert_eq!(body["wrote"], false, "{verb} must not have written: {body}");
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("start_here"),
+            "{verb} must name the door a caller who has never booted can walk through: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_memory_write_refuses_an_anonymous_caller() {
+        let jojobot = handler();
+
+        // The positive first, and everything below leans on it: with an
+        // identity these same writes land. Without it the refusals could be
+        // any other failure wearing the same shape.
+        let sid = writing_as(&jojobot);
+        let made = jojobot
+            .add_entity(Parameters(add_args("place", "springfield", "Springfield")))
+            .await
+            .expect("an identified add_entity answers");
+        assert_ne!(json_of(&made)["status"], "blocked", "{:?}", json_of(&made));
+        let captured = jojobot
+            .capture(Parameters(capture_args(
+                "place:springfield",
+                "has a water tower",
+            )))
+            .await
+            .expect("an identified capture answers");
+        let address = address_of(&json_of(&captured));
+
+        // …and now the same writes with nobody behind them. **Every one is
+        // built explicitly rather than through a builder**, because the
+        // builders carry the fixture identity — reaching for one here is how
+        // the first version of this test came to pass while proving nothing.
+        refused(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    sid: None,
+                    ..add_args("place", "shelbyville", "Shelbyville")
+                }))
+                .await
+                .expect("add_entity answers"),
+            "add_entity",
+        );
+        refused(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    sid: None,
+                    ..capture_args("place:springfield", "has a monorail")
+                }))
+                .await
+                .expect("capture answers"),
+            "capture",
+        );
+        refused(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    sid: None,
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update_fact answers"),
+            "update_fact",
+        );
+        refused(
+            &jojobot
+                .update_entity(Parameters(UpdateEntityArgs {
+                    handle: "place:springfield".into(),
+                    name: Some("Springfield Renamed".into()),
+                    aliases: None,
+                    source: None,
+                    crm: None,
+                    create_new: None,
+                    sid: None,
+                }))
+                .await
+                .expect("update_entity answers"),
+            "update_entity",
+        );
+        refused(
+            &jojobot
+                .retract(Parameters(RetractArgs {
+                    address: address.clone(),
+                    reason: None,
+                    sid: None,
+                }))
+                .await
+                .expect("retract answers"),
+            "retract",
+        );
+        refused(
+            &jojobot
+                .set_charter(Parameters(SetCharterArgs {
+                    bot: "bot:otto".into(),
+                    prose: "a charter".into(),
+                    sid: None,
+                }))
+                .await
+                .expect("set_charter answers"),
+            "set_charter",
+        );
+
+        // **The refusals wrote nothing**, which is the half a status check
+        // cannot see — paired against the identified writes above, which are.
+        let listed = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: Some("place".into()),
+                    sid: Some(sid.clone()),
+                }))
+                .await
+                .expect("list_entities answers"),
+        )
+        .to_string();
+        assert!(
+            listed.contains("place:springfield"),
+            "the identified write is on the board: {listed}"
+        );
+        assert!(
+            !listed.contains("place:shelbyville"),
+            "the anonymous write must have left nothing behind: {listed}"
+        );
+    }
+
+    /// **The refusal separates two different problems.** "You have not booted"
+    /// and "the session world is down" both reach a caller as the same missing
+    /// `sid`, and the first is fixable by calling `start_here` while the second
+    /// is not. A refusal that named only the first would send a session round a
+    /// loop it cannot leave, which is the shape dev-49's storage message had.
+    #[tokio::test]
+    async fn the_refusal_says_what_to_do_when_the_door_cannot_help_either() {
+        let jojobot = handler();
+        let body = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    sid: None,
+                    ..capture_args("place:springfield", "something")
+                }))
+                .await
+                .expect("capture answers"),
+        );
+        let how = body["how_to_proceed"].as_str().expect("advice");
+        // The ordinary case: boot.
+        assert!(how.contains("start_here"), "{body}");
+        // …and the one a caller cannot act its way out of, named as such.
+        assert!(
+            how.contains("session world is unreachable"),
+            "the refusal must say what it means when the door cannot help either: {body}"
+        );
+        assert!(how.contains("Tell the operator"), "…and who can: {body}");
+    }
+
+    /// **Reads stay open, and this is the pair to the test above rather than an
+    /// afterthought.** Rule 19 asks for the sid on a read so jojobot knows who
+    /// is asking, not so it can refuse.
+    #[tokio::test]
+    async fn a_read_without_an_identity_is_still_answered() {
+        let jojobot = handler();
+        jojobot
+            .add_entity(Parameters(add_args("place", "springfield", "Springfield")))
+            .await
+            .expect("setup");
+
+        let body = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: Some("place".into()),
+                    sid: None,
+                }))
+                .await
+                .expect("an anonymous read answers"),
+        );
+        assert_ne!(
+            body["status"], "blocked",
+            "an anonymous read must still be served: {body}"
+        );
+        assert!(
+            body.to_string().contains("place:springfield"),
+            "…and must actually carry the answer: {body}"
+        );
+    }
 }
