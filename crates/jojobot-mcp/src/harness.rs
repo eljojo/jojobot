@@ -15,13 +15,55 @@ use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::session::testing::InMemorySessions;
 use rmcp::handler::server::wrapper::Parameters;
 
+/// **The identity a fixture writes as.** Every memory write needs one now, and
+/// nearly every test here performs a write as an ordinary identified caller —
+/// so the argument builders carry this rather than making 140 call sites say
+/// the same thing.
+///
+/// **A test that means ANONYMOUS says so explicitly**, by building its args
+/// with `sid: None` instead of reaching for a builder. That is what keeps the
+/// default honest: a case about anonymity that went through a builder would
+/// carry an identity and pass while testing nothing.
+pub(crate) const TEST_SID: &str = "test";
+
+/// A registry already holding [`TEST_SID`]. Seeded through `mint_with` so the
+/// handle is the one the builders expect; the registry is what `identified`
+/// consults, so nothing has to exist in the store for a fixture to write.
+pub(crate) fn seeded_registry() -> Arc<sid::SessionRegistry> {
+    let registry = Arc::new(sid::SessionRegistry::new());
+    registry
+        .mint_with(&EntityId::new(EntityKind::Bot, "otto"), None, || {
+            TEST_SID.to_string()
+        })
+        .expect("a free handle in a fresh registry");
+    registry
+}
+
+/// **The fixture handle, in whatever handler you hand it.** Returns
+/// [`TEST_SID`], minting it into that handler's registry first if it is not
+/// there — deterministically, so calling it twice gives the same handle rather
+/// than a second session.
+///
+/// Idempotent on purpose: a helper that minted a fresh handle per call would
+/// give each write its own session and break any test that counts beats.
+pub(crate) fn writing_as(jojobot: &Jojobot) -> String {
+    if jojobot.registry.lookup(TEST_SID).is_none() {
+        let _ = jojobot
+            .registry
+            .mint_with(&EntityId::new(EntityKind::Bot, "otto"), None, || {
+                TEST_SID.to_string()
+            });
+    }
+    TEST_SID.to_string()
+}
+
 pub(crate) fn handler() -> Jojobot {
     Jojobot::new(
         Arc::new(InMemoryMemory::new()),
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
-        Arc::new(sid::SessionRegistry::new()),
+        seeded_registry(),
     )
 }
 
@@ -32,7 +74,7 @@ pub(crate) fn handler_with(spy: Arc<SpySearch>) -> Jojobot {
         spy,
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
-        Arc::new(sid::SessionRegistry::new()),
+        seeded_registry(),
     )
 }
 
@@ -101,8 +143,17 @@ pub(crate) fn as_bot(jojobot: &Jojobot, bot: &str) -> String {
 /// to the handle, could name a different box than the bot's own — never
 /// accept one.
 pub(crate) async fn make_bot(jojobot: &Jojobot, slug: &str) {
+    // **Minted from the handler's OWN registry**, not from the shared fixture
+    // handle. A few tests here run against a bare registry because what they
+    // are testing IS what a registry holds, and a helper that reached for a
+    // constant could not write in those. Asking the handler in front of it
+    // works in both.
+    let sid = writing_as(jojobot);
     let result = jojobot
-        .add_entity(Parameters(add_args("bot", slug, slug)))
+        .add_entity(Parameters(AddEntityArgs {
+            sid: Some(sid),
+            ..add_args("bot", slug, slug)
+        }))
         .await
         .expect("add_entity call ok");
     // **A blocked write is a SUCCESSFUL result**, so `.expect` alone let a
@@ -121,12 +172,39 @@ pub(crate) async fn make_bot(jojobot: &Jojobot, slug: &str) {
     );
 }
 
+/// **Stand a bot up through the PORTS, leaving no session behind.**
+///
+/// `make_bot` goes through the gated verb, which is right for almost every
+/// test — the write is attributed, so jojobot writes a beat for it and the
+/// fixture identity gets a session card. That card is invisible to most tests
+/// and fatal to the handful whose subject IS the session rail: they count
+/// cards and recovered handles, and would be counting the fixture as much as
+/// the thing under test.
+///
+/// So those use this. It is not a way around the gate — the gate is on the
+/// surface, and this is below it, which is exactly what a fixture is allowed
+/// to be.
+/// Memory only: these callers are session tests and never touch a box.
+pub(crate) async fn seed_bot(memory: &Arc<InMemoryMemory>, slug: &str) {
+    memory
+        .add_entity(jojobot_domain::memory::NewEntity::new(
+            EntityId::new(EntityKind::Bot, slug),
+            slug,
+            "test-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the fixture bot is not blocked");
+}
+
 pub(crate) async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
     json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
                 bot: Some(name.into()),
                 brief: None,
+                skill: None,
                 resume: None,
             }))
             .await
@@ -145,6 +223,7 @@ pub(crate) async fn boot_answering(
             .start_here(Parameters(OrientArgs {
                 bot: Some(name.into()),
                 brief: None,
+                skill: None,
                 resume: Some(answer.into()),
             }))
             .await

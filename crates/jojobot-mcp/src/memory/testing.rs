@@ -85,6 +85,7 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
         content: content.into(),
         details: None,
         provenance: None,
+        standing: None,
         date: None,
         shape: None,
         object: None,
@@ -92,7 +93,7 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
         event_type: None,
         metadata: None,
         refs: None,
-        sid: None,
+        sid: Some(crate::harness::TEST_SID.into()),
     }
 }
 
@@ -102,11 +103,12 @@ pub(crate) fn update_args(address: &str) -> UpdateFactArgs {
         content: None,
         details: None,
         status: None,
+        standing: None,
         provenance: None,
         confirmed_by_user: None,
         shape: None,
         object: None,
-        sid: None,
+        sid: Some(crate::harness::TEST_SID.into()),
     }
 }
 
@@ -126,7 +128,9 @@ pub(crate) async fn ensure(jojobot: &Jojobot, handle: &str) {
             crm: None,
             boot: None,
             create_new: None,
-            sid: None,
+            // The handler's own registry, for the same reason `make_bot` uses
+            // it: a bare-registry test must be able to provision a subject.
+            sid: Some(crate::harness::writing_as(jojobot)),
         }))
         .await
         .expect("add_entity call ok");
@@ -194,7 +198,7 @@ pub(crate) fn add_args(kind: &str, handle: &str, name: &str) -> AddEntityArgs {
         crm: None,
         boot: None,
         create_new: None,
-        sid: None,
+        sid: Some(crate::harness::TEST_SID.into()),
     }
 }
 

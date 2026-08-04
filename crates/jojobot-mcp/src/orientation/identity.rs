@@ -437,6 +437,7 @@ mod tests {
             .start_here(Parameters(OrientArgs {
                 bot: Some("person:milhouse".into()),
                 brief: None,
+                skill: None,
                 resume: None,
             }))
             .await
@@ -466,7 +467,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(UnopenableMailboxes(InMemoryMailboxes::knowing_any_owner())),
             Arc::new(InMemorySessions::new()),
-            Arc::new(sid::SessionRegistry::new()),
+            crate::harness::seeded_registry(),
         );
         broken_bot(&jojobot, "gamma").await;
 

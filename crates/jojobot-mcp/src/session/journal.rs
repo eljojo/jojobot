@@ -192,7 +192,7 @@ mod tests {
             Arc::new(crate::memory::testing::SpySearch::default()),
             Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
             store.clone(),
-            Arc::new(sid::SessionRegistry::new()),
+            crate::harness::seeded_registry(),
         );
         make_bot(&jojobot, "gamma").await;
         let sid = booted(&jojobot, "gamma").await;
@@ -247,7 +247,7 @@ mod tests {
             Arc::new(crate::memory::testing::SpySearch::default()),
             Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
             store.clone(),
-            Arc::new(sid::SessionRegistry::new()),
+            crate::harness::seeded_registry(),
         );
         make_bot(&jojobot, "gamma").await;
         let sid = booted(&jojobot, "gamma").await;

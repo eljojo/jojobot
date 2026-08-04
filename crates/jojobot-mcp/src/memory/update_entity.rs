@@ -60,7 +60,7 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+        if let Err(refused) = self.identified(args.sid.as_deref()) {
             return Ok(refused);
         }
         let handle = EntityId::person(&args.handle);
@@ -115,7 +115,7 @@ mod tests {
                 source: None,
                 crm: Some("card:551".into()),
                 create_new: None,
-                sid: None,
+                sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await
             .expect("update ok");
@@ -150,7 +150,7 @@ mod tests {
             source: None,
             crm: None,
             create_new,
-            sid: None,
+            sid: Some(crate::harness::TEST_SID.into()),
         };
 
         let result = jojobot
@@ -166,7 +166,7 @@ mod tests {
             &jojobot
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("person".into()),
-                    sid: None,
+                    sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await
                 .expect("list ok"),
@@ -210,7 +210,7 @@ mod tests {
                 source: None,
                 crm: None,
                 create_new: None,
-                sid: None,
+                sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await
             .expect("the call succeeds; the guard answers in the body");
@@ -232,7 +232,7 @@ mod tests {
             &jojobot
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("person".into()),
-                    sid: None,
+                    sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await
                 .expect("list ok"),
@@ -275,7 +275,7 @@ mod tests {
             source: None,
             crm: None,
             create_new: None,
-            sid: None,
+            sid: Some(crate::harness::TEST_SID.into()),
         };
 
         let replaced = json_of(
@@ -331,7 +331,7 @@ mod tests {
                 source: None,
                 crm: None,
                 create_new: None,
-                sid: None,
+                sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await
             .expect("an unknown handle is an answer, not a protocol failure");

@@ -343,6 +343,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: None,
                     brief: None,
+                    skill: None,
                     resume: None,
                 }))
                 .await
@@ -545,7 +546,7 @@ mod tests {
             store.clone(),
             Arc::new(sid::SessionRegistry::new()),
         );
-        make_bot(&jojobot, "gamma").await;
+        seed_bot(&memory, "gamma").await;
 
         let handle = sid_of(&boot(&jojobot, "gamma").await).expect("a handle");
         journal_entry(&jojobot, &handle, "read the hand-off").await;
@@ -626,8 +627,17 @@ mod tests {
         );
 
         // The card's own handle is what survives a restart and addresses the run.
+        //
+        // **Counted over THIS bot's cards, not the whole board.** Standing the
+        // fixture bot up is itself an attributed write now, so it materializes
+        // a card of its own — a raw board count would be measuring the fixture
+        // as much as the subject.
         let rebuilt = Arc::new(sid::SessionRegistry::new());
-        let board = client.sessions.all_sessions().await.expect("read ok");
+        let board = client
+            .sessions
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("read ok");
         assert_eq!(rebuilt.rebuild_from(&board), 1);
         assert_eq!(
             rebuilt.lookup(stored.as_str()).expect("held").card,
@@ -644,12 +654,9 @@ mod tests {
     async fn a_card_with_no_stored_handle_is_offered_one_on_the_spot() {
         let store = Arc::new(InMemorySessions::new());
         let registry = Arc::new(sid::SessionRegistry::new());
-        let jojobot = connection_sharing(
-            Arc::new(InMemoryMemory::new()),
-            store.clone(),
-            registry.clone(),
-        );
-        make_bot(&jojobot, "gamma").await;
+        let memory = Arc::new(InMemoryMemory::new());
+        let jojobot = connection_sharing(memory.clone(), store.clone(), registry.clone());
+        seed_bot(&memory, "gamma").await;
 
         let legacy = store
             .begin(NewSession {
@@ -662,7 +669,10 @@ mod tests {
             .expect("begin ok");
         // Strip the handle, which is what an older jojobot's card looks like.
         store.forget_sid(&legacy.id);
-        let board = store.all_sessions().await.expect("read ok");
+        let board = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("read ok");
         assert_eq!(
             registry.rebuild_from(&board),
             0,
@@ -707,7 +717,13 @@ mod tests {
         // Same stores, new process: the registry is what a restart empties, and
         // filling it back from the board is what a restart then does.
         let rebuilt = Arc::new(sid::SessionRegistry::new());
-        let board = client.sessions.all_sessions().await.expect("read ok");
+        // Scoped to this bot, for the same reason as above: the fixture
+        // bot's own card would otherwise be counted.
+        let board = client
+            .sessions
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("read ok");
         assert_eq!(
             rebuilt.rebuild_from(&board),
             0,
@@ -725,6 +741,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: Some("gamma".into()),
                     brief: None,
+                    skill: None,
                     resume: Some(handle.clone()),
                 }))
                 .await
@@ -743,6 +760,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: Some("gamma".into()),
                     brief: None,
+                    skill: None,
                     resume: Some("k3fo".into()),
                 }))
                 .await
@@ -767,6 +785,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: Some("delta".into()),
                     brief: None,
+                    skill: None,
                     resume: Some(gammas.clone()),
                 }))
                 .await
@@ -907,13 +926,10 @@ mod tests {
     #[tokio::test]
     async fn an_old_abandoned_run_is_not_offered_and_is_still_resumable() {
         let store = Arc::new(InMemorySessions::new());
-        let registry = Arc::new(sid::SessionRegistry::new());
-        let jojobot = connection_sharing(
-            Arc::new(InMemoryMemory::new()),
-            store.clone(),
-            registry.clone(),
-        );
-        make_bot(&jojobot, "gamma").await;
+        let registry = crate::harness::seeded_registry();
+        let memory = Arc::new(InMemoryMemory::new());
+        let jojobot = connection_sharing(memory.clone(), store.clone(), registry.clone());
+        seed_bot(&memory, "gamma").await;
         let ancient = abandoned_run(&store, "gamma", "something from last winter", 24 * 240).await;
 
         let booted = boot(&jojobot, "gamma").await;
@@ -982,13 +998,10 @@ mod tests {
     #[tokio::test]
     async fn a_wrapped_run_is_never_offered_and_never_reopens() {
         let store = Arc::new(InMemorySessions::new());
-        let registry = Arc::new(sid::SessionRegistry::new());
-        let jojobot = connection_sharing(
-            Arc::new(InMemoryMemory::new()),
-            store.clone(),
-            registry.clone(),
-        );
-        make_bot(&jojobot, "gamma").await;
+        let registry = crate::harness::seeded_registry();
+        let memory = Arc::new(InMemoryMemory::new());
+        let jojobot = connection_sharing(memory.clone(), store.clone(), registry.clone());
+        seed_bot(&memory, "gamma").await;
 
         let told = store
             .begin(NewSession {
@@ -1018,6 +1031,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: Some("gamma".into()),
                     brief: None,
+                    skill: None,
                     resume: Some(held.as_str().into()),
                 }))
                 .await
@@ -1048,7 +1062,7 @@ mod tests {
     async fn booting_again_is_offered_the_session_in_flight() {
         let store = Arc::new(InMemorySessions::new());
         let memory = Arc::new(InMemoryMemory::new());
-        let registry = Arc::new(sid::SessionRegistry::new());
+        let registry = crate::harness::seeded_registry();
         let first = connection_sharing(memory.clone(), store.clone(), registry.clone());
         make_bot(&first, "gamma").await;
         let sid = booted(&first, "gamma").await;
@@ -1207,7 +1221,7 @@ mod tests {
             .set_charter(Parameters(SetCharterArgs {
                 bot: "otto".into(),
                 prose: "Keeps the schedule.\n\nHard line: never writes to the ledger.".into(),
-                sid: None,
+                sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await
             .expect("set_charter ok");
@@ -1303,6 +1317,7 @@ mod tests {
             let booting = jojobot.start_here(Parameters(OrientArgs {
                 bot: Some("gamma".into()),
                 brief: None,
+                skill: None,
                 resume: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {
@@ -1378,6 +1393,7 @@ mod tests {
             let booting = jojobot.start_here(Parameters(OrientArgs {
                 bot: Some("gamma".into()),
                 brief: None,
+                skill: None,
                 resume: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {

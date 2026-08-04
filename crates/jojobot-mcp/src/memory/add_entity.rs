@@ -124,7 +124,7 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+        if let Err(refused) = self.identified(args.sid.as_deref()) {
             return Ok(refused);
         }
         let id = entity_id(&args.kind, &args.handle)?;

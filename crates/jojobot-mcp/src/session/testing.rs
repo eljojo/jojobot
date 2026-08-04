@@ -80,14 +80,23 @@ pub(crate) async fn abandoned_run(
 /// A handler over **any** `Sessions` implementation — the doubles that misbehave
 /// on purpose, which are not `InMemorySessions` and cannot go through
 /// [`with_sessions`].
-pub(crate) fn with_sessions_port(sessions: Arc<dyn Sessions>) -> Jojobot {
-    Jojobot::new(
-        Arc::new(InMemoryMemory::new()),
+/// **Hands back the memory port too**, so a caller can provision below the
+/// surface. A session double that is primed to fail on its Nth `begin` counts
+/// the fixture's own writes otherwise — standing a bot up is an attributed
+/// write now, so it starts a session and consumes the failure the test meant
+/// for its own first journal.
+pub(crate) fn with_sessions_port_and_memory(
+    sessions: Arc<dyn Sessions>,
+) -> (Jojobot, Arc<InMemoryMemory>) {
+    let memory = Arc::new(InMemoryMemory::new());
+    let jojobot = Jojobot::new(
+        memory.clone(),
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         sessions,
-        Arc::new(sid::SessionRegistry::new()),
-    )
+        crate::harness::seeded_registry(),
+    );
+    (jojobot, memory)
 }
 
 /// A handler over a session store the test still holds a typed handle to.
@@ -99,7 +108,7 @@ pub(crate) fn with_sessions(sessions: Arc<InMemorySessions>) -> Jojobot {
 /// builds. The binding is per handler, so this is the only way to test that
 /// resuming reads the board rather than remembering anything.
 pub(crate) fn connection(memory: Arc<InMemoryMemory>, sessions: Arc<InMemorySessions>) -> Jojobot {
-    connection_sharing(memory, sessions, Arc::new(sid::SessionRegistry::new()))
+    connection_sharing(memory, sessions, crate::harness::seeded_registry())
 }
 
 /// The same, over a registry the caller keeps — what two connections of one
@@ -242,7 +251,7 @@ pub(crate) async fn refusing_close() -> (Jojobot, Arc<RefusingClose>, Arc<InMemo
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         store.clone(),
-        Arc::new(sid::SessionRegistry::new()),
+        crate::harness::seeded_registry(),
     );
     make_bot(&jojobot, "gamma").await;
     let sid = booted(&jojobot, "gamma").await;
@@ -359,7 +368,7 @@ pub(crate) fn racing(store: Arc<InMemorySessions>) -> Jojobot {
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(Yielding(store)),
-        Arc::new(sid::SessionRegistry::new()),
+        crate::harness::seeded_registry(),
     )
 }
 
@@ -374,7 +383,7 @@ impl NoAffinity {
             memory: Arc::new(InMemoryMemory::new()),
             sessions: Arc::new(InMemorySessions::new()),
             mailboxes: Arc::new(InMemoryMailboxes::knowing_any_owner()),
-            registry: Arc::new(sid::SessionRegistry::new()),
+            registry: crate::harness::seeded_registry(),
         }
     }
 

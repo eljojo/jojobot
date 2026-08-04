@@ -36,6 +36,7 @@ mod caller;
 pub mod mailboxes;
 pub mod memory;
 pub mod orientation;
+pub mod seed;
 pub mod session;
 pub mod sid;
 
@@ -53,7 +54,7 @@ use jojobot_domain::mailbox::{
 };
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
-    FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance,
+    FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance, Standing,
     event::Event,
     guard::{self, EntityMatch},
     search::{DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, MailCoverage, Search, SearchQuery},
@@ -82,8 +83,8 @@ use memory::declined::*;
 use memory::parse::*;
 use memory::wire::*;
 use rmcp::{
-    ErrorData as McpError, ServerHandler, handler::server::router::tool::ToolRouter, model::*,
-    tool_handler, tool_router,
+    ErrorData as McpError, RoleServer, ServerHandler, handler::server::router::tool::ToolRouter,
+    model::*, service::NotificationContext, tool_handler, tool_router,
 };
 use session::declined::*;
 use session::wire::*;
@@ -162,11 +163,16 @@ impl Jojobot {
 #[tool_handler]
 impl ServerHandler for Jojobot {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::from_build_env())
-            .with_protocol_version(ProtocolVersion::V_2024_11_05)
-            .with_instructions(
-                "jojobot — a personal-assistant server. Two worlds live here.\
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tool_list_changed()
+                .build(),
+        )
+        .with_server_info(Implementation::from_build_env())
+        .with_protocol_version(ProtocolVersion::V_2024_11_05)
+        .with_instructions(
+            "jojobot — a personal-assistant server. Two worlds live here.\
                  \n\n**MEMORY.** What jojobot knows is **entities** — a person, project, place, \
                  event, work, thing, org or topic, each with a permanent typed handle, \
                  `kind:slug` — and **facts** about them: single dated claims, each carrying an \
@@ -208,7 +214,31 @@ impl ServerHandler for Jojobot {
                  flagged `seen_before` — recoverable.\
                  \n\nResponses name types the schema.org way (`Person`, `CreativeWork`, \
                  `memberOf`); input stays lowercase (`person`, `membership`, `kind:slug`)."
-                    .to_string(),
-            )
+                .to_string(),
+        )
+    }
+
+    /// **Tell a client, the moment it connects, that the list it is about to
+    /// cache is not a constant.**
+    ///
+    /// jojobot's tool list does not move at runtime — it moves when a new build
+    /// is deployed, which is invisible from inside a client that registered
+    /// against the old one. Two sessions against one deployment once held
+    /// different lists: the older one had seven memory verbs and no way to boot
+    /// as its bot or read its own box, and the message waiting for it went
+    /// unread while the work it named looked untouched.
+    ///
+    /// Initialize is the one moment jojobot knows a client is holding a list
+    /// AND can still reach it, so that is when the notification goes out. It is
+    /// unconditional on purpose: the server cannot know what any particular
+    /// client cached, and re-listing is cheap where being stranded is silent.
+    /// The capability in [`Jojobot::get_info`] is the other half — without it
+    /// this notification is one the client never agreed to receive.
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        if let Err(e) = context.peer.notify_tool_list_changed().await {
+            // A client that has already gone is the ordinary case here, not a
+            // fault: this fires on a connection that may be one request long.
+            tracing::debug!("could not tell a client the tool list can move: {e}");
+        }
     }
 }

@@ -50,7 +50,7 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+        if let Err(refused) = self.identified(args.sid.as_deref()) {
             return Ok(refused);
         }
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
@@ -99,7 +99,7 @@ mod tests {
         RetractArgs {
             address: address.to_string(),
             reason: Some(reason.to_string()),
-            sid: None,
+            sid: Some(crate::harness::TEST_SID.into()),
         }
     }
 
@@ -168,7 +168,7 @@ mod tests {
             &jojobot
                 .recall(Parameters(RecallArgs {
                     subject: "person:alpha".into(),
-                    sid: None,
+                    sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await
                 .expect("recall ok"),
@@ -216,7 +216,7 @@ mod tests {
             &jojobot
                 .recall(Parameters(RecallArgs {
                     subject: "person:alpha".into(),
-                    sid: None,
+                    sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await
                 .expect("recall ok"),

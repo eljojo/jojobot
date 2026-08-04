@@ -38,7 +38,7 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+        if let Err(refused) = self.identified(args.sid.as_deref()) {
             return Ok(refused);
         }
         let bot = bot_id(&args.bot)?;
@@ -73,7 +73,7 @@ mod tests {
                 .set_charter(Parameters(SetCharterArgs {
                     bot: "gamma".into(),
                     prose: "  Holds the plan. Does not implement.  ".into(),
-                    sid: None,
+                    sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await
                 .expect("set_charter ok"),
@@ -95,7 +95,7 @@ mod tests {
                 .set_charter(Parameters(SetCharterArgs {
                     bot: "nobody".into(),
                     prose: "a charter for nobody".into(),
-                    sid: None,
+                    sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),

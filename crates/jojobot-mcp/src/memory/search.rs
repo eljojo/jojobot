@@ -719,6 +719,7 @@ mod tests {
             content: "spending the winter away".into(),
             details: Some("said so in June".into()),
             provenance: Provenance::Testimony,
+            standing: Standing::Open,
             status: FactStatus::Active,
             date: jiff::civil::date(2026, 7, 1),
             edge: Some(Edge::new(
