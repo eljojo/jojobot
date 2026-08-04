@@ -161,29 +161,59 @@ async fn mcp_rejects_unauthenticated_when_auth_enabled() {
 
 #[tokio::test]
 async fn mcp_guard_covers_path_and_method_variants() {
-    // The bearer guard must cover every path under /mcp and every method — no
-    // bypass via trailing slash, sub-path, traversal, encoded slash, or //.
+    // The bearer guard must cover every path that REACHES the transport, by
+    // every method — no bypass via trailing slash, sub-path, traversal,
+    // encoded slash, or //.
+    //
+    // A path that reaches the transport answers 401. `/mcp%2f` and `//mcp`
+    // reach nothing: neither matches a route, so the request is over before
+    // the handler exists, and each answers 404 for the same reason any other
+    // unmounted path does. Both answers keep an unauthenticated caller out of
+    // the handler; they differ in which problem they name, and every path is
+    // pinned to the one that is true of it.
     let (addr, ct) = spawn_server(auth_state).await;
     let client = reqwest::Client::new();
     let paths = [
-        "/mcp",
-        "/mcp/",
-        "/mcp/anything",
-        "/mcp/../mcp",
-        "/mcp%2f",
-        "//mcp",
+        ("/mcp", 401),
+        ("/mcp/", 401),
+        ("/mcp/anything", 401),
+        ("/mcp/../mcp", 401),
+        ("/mcp%2f", 404),
+        ("//mcp", 404),
     ];
     let methods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
-    for p in paths {
+    for (p, want) in paths {
         for m in methods {
             let resp = client
                 .request(m.parse().unwrap(), format!("http://{addr}{p}"))
                 .send()
                 .await
                 .unwrap();
-            assert_eq!(resp.status(), 401, "{m} {p} must require auth");
+            assert_eq!(resp.status(), want, "{m} {p}");
         }
     }
+    ct.cancel();
+}
+
+/// **A path jojobot does not serve answers 404, with auth on.** The bearer
+/// guard covers `/mcp`; it must not cover the router's fallback as well. A
+/// client probing an endpoint this server never implemented is told the path
+/// is not here, rather than that its credentials are wrong — an answer that
+/// names the wrong problem sends the caller to fix something that is not
+/// broken (rule 68).
+#[tokio::test]
+async fn an_unmounted_path_is_not_found_rather_than_unauthorized() {
+    let (addr, ct) = spawn_server(auth_state).await;
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/not-a-jojobot-endpoint"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        404,
+        "an unmounted path must report itself missing"
+    );
     ct.cancel();
 }
 

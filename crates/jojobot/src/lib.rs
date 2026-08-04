@@ -94,9 +94,17 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     );
 
     // The MCP transport is guarded; the metadata + health endpoints are public.
+    //
+    // **`route_layer`, never `layer`.** `layer` wraps the router's FALLBACK as
+    // well as its routes, and a layered fallback wins on `merge`, so every
+    // unmatched path in the whole app went through the bearer check and
+    // answered 401. That answer names the wrong problem: a client probing a
+    // path jojobot does not implement is told its credentials are wrong.
+    // `route_layer` guards the routes and leaves the fallback alone, so an
+    // unmounted path reports itself missing (rule 68).
     let mut mcp_router = Router::new().nest_service("/mcp", mcp);
     if state.validator.is_some() {
-        mcp_router = mcp_router.layer(axum::middleware::from_fn_with_state(
+        mcp_router = mcp_router.route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             routes::require_bearer,
         ));
