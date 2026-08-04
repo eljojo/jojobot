@@ -5,6 +5,8 @@
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
 //! call is the missing capability, written the way it would be asked for.
 
+use serde_json::json;
+
 use super::dsl::Story;
 
 #[tokio::test]
@@ -30,20 +32,28 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
 
     // It happened, it stays put, and it is not current truth — so it goes in
     // as an event rather than a fact.
+    // What it touched and how it was found are typed fields and `refs`, not
+    // prose: the record carries them as values a later session can read.
     let defect = s
-        .event(
+        .event_with(
             "project:jojobot-server",
             "a claim carrying an escaped quote could not be written at all",
             "defect",
+            json!({"found_by": "a write that failed", "surface": "capture"}),
+            &["bot:otto"],
         )
         .await;
+    s.recall("project:jojobot-server")
+        .await
+        .claim(&defect)
+        .says("found_by")
+        .says("bot:otto");
 
-    // GAP — an incident has no shape. `event_type` is free text, so "defect"
-    // is a word this session chose and nothing else in the system knows, and
-    // what it touched, how it was found and what closed it stay in prose. Two
-    // sessions recording the same class of incident produce records nothing
-    // can compare.
-    //   s.incident("project:jojobot-server", touched: &[…], found_by: …, closed_by: …).await;
+    // GAP — `event_type` is free text, so "defect" is a word this session
+    // chose and nothing else in the system knows. Two sessions recording the
+    // same class of incident agree on no word and no field names, so nothing
+    // can compare their records.
+    //   s.incident("project:jojobot-server", touched: &[…], closed_by: …).await;
 
     s.wrap("recorded the defect where the next session will find it")
         .await;

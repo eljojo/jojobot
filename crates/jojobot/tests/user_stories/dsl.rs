@@ -435,6 +435,26 @@ impl Session {
     /// true now. `kind` is free text and jojobot interprets none of it, so two
     /// sessions recording the same class of thing need not agree on the word.
     pub async fn event(&self, subject: &str, content: &str, kind: &str) -> String {
+        self.event_with(subject, content, kind, json!({}), &[])
+            .await
+    }
+
+    /// The same, carrying an event's typed fields and the entities it touches.
+    ///
+    /// **The plain helper sent neither, and that is why several stories say a
+    /// number or a link has nowhere to go but prose.** `capture` takes
+    /// `metadata` and `refs`; the DSL dropped them, so a story written through
+    /// the DSL could not reach a capability the surface already has, and the
+    /// marker recording that read as a gap in jojobot rather than a gap in the
+    /// fixture.
+    pub async fn event_with(
+        &self,
+        subject: &str,
+        content: &str,
+        kind: &str,
+        metadata: Value,
+        refs: &[&str],
+    ) -> String {
         let body = self
             .write(
                 &format!("an event about {subject}"),
@@ -442,6 +462,7 @@ impl Session {
                 json!({
                     "subject": subject, "content": content,
                     "provenance": "testimony", "event_type": kind,
+                    "metadata": metadata, "refs": refs,
                 }),
             )
             .await;

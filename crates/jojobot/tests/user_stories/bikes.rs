@@ -8,6 +8,8 @@
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
 //! call is the missing capability, written the way it would be asked for.
 
+use serde_json::json;
+
 use super::dsl::Story;
 
 #[tokio::test]
@@ -80,10 +82,28 @@ async fn keeping_track_of_bikes() {
         .await
         .says("person:milhouse");
 
-    // GAP — the service is an event with a type and fields: who did it, what
-    // was done, when. As prose, "when did I last service it" cannot be
-    // answered, and neither can "what has been done to this bike".
-    //   s.event_typed("service", "2026-04-18", &[("by", "person:milhouse")]).await;
+    // A service IS an event with a type and fields, and it goes in as one:
+    // what was done and when, as values, with `refs` naming who did it. "What
+    // has been done to this bike" is one read of its record.
+    let service = s
+        .event_with(
+            "thing:gravel-bike",
+            "annual service",
+            "service",
+            json!({"done_on": "2026-04-18", "work": "chain, cables, bearings"}),
+            &["person:milhouse"],
+        )
+        .await;
+    s.recall("thing:gravel-bike")
+        .await
+        .claim(&service)
+        .says("2026-04-18")
+        .says("person:milhouse");
+
+    // GAP — and no read orders them or takes the newest. "When did I last
+    // service it" comes back as every service ever recorded, and the session
+    // picks the latest date out by reading them.
+    //   s.latest("thing:gravel-bike", event_type: "service").await;
 
     // GAP — the chain is a PART of the bike, not a fact about it. Parentage is
     // not reachable, so it cannot be its own thing with its own history, and

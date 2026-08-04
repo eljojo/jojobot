@@ -7,6 +7,8 @@
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
 //! call is the missing capability, written the way it would be asked for.
 
+use serde_json::json;
+
 use super::dsl::Story;
 
 #[tokio::test]
@@ -177,9 +179,28 @@ async fn moving_abroad() {
     )
     .await;
 
-    // GAP — an event here is an entity, not a dated occurrence: no date on it,
-    // no type carrying the fields a flight has, and no way to say who is on it.
-    //   s.event_typed("flight", "2027-02-09", &[("with", "person:bodoque")]).await;
+    // The occurrence is a typed event on that entity: the fields a flight has
+    // are values, and `refs` says who is on it.
+    let flight = s
+        .event_with(
+            "event:departure-flight",
+            "the flight the family is booked on",
+            "flight",
+            json!({"departs_on": "2027-02-09", "one_way": "yes"}),
+            &["person:tulio"],
+        )
+        .await;
+    s.recall("event:departure-flight")
+        .await
+        .claim(&flight)
+        .says("2027-02-09")
+        .says("person:tulio");
+
+    // GAP — and the entity itself still has no date. `event:departure-flight`
+    // is a node whose occurrence lives on a claim about it, so "what is
+    // happening in February" has to read every event's claims rather than the
+    // events.
+    //   s.happens_on("event:departure-flight", "2027-02-09").await;
 
     s.wrap("movers quoted, flight sketched").await;
 

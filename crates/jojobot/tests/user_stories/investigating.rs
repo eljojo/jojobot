@@ -4,6 +4,8 @@
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
 //! call is the missing capability, written the way it would be asked for.
 
+use serde_json::json;
+
 use super::dsl::Story;
 
 #[tokio::test]
@@ -44,25 +46,42 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     )
     .await;
 
-    // GAP — the one date a record carries means when the claim became known,
-    // and an incident needs when it OCCURRED as well. There is no interval
-    // either: the second host was down for thirty-eight seconds and that
-    // number has nowhere to go but prose.
-    //   s.occurred("thing:tau", "stopped responding", at: …, for_seconds: 38).await;
-
-    // The diagnosis was the bits, so a paraphrase is not re-checkable.
-    let reading = s
-        .event(
-            "thing:sigma",
-            "machine-check status word decoded to two flags",
-            "measurement",
+    // An event's typed fields take what prose would have swallowed: when it
+    // happened and how long it lasted, as values rather than as a sentence.
+    let outage = s
+        .event_with(
+            "thing:tau",
+            "stopped responding",
+            "outage",
+            json!({"occurred_at": "2026-08-04T02:14:00Z", "down_seconds": "38"}),
+            &[],
         )
         .await;
 
-    // GAP — the literal status word and the command that produced it can only
-    // go in free text, where nothing parses them and no later session is
-    // directed to re-run the command rather than believe the summary.
-    //   s.measured("thing:sigma", ran: "…", got: "0x…").await;
+    // GAP — the fields are stored and nothing reads them AS fields. There is
+    // no query over a metadata value, so "which outages lasted over thirty
+    // seconds" reads every event and parses the numbers again.
+    //   s.events_where("down_seconds", greater_than: 30).await;
+
+    // The diagnosis was the bits, so a paraphrase is not re-checkable: the
+    // literal status word and the command that produced it are typed fields on
+    // the reading, and `refs` names the host they came off.
+    let reading = s
+        .event_with(
+            "thing:sigma",
+            "machine-check status word decoded to two flags",
+            "measurement",
+            json!({"ran": "mcelog --client", "got": "0xB200000000010A"}),
+            &["thing:sigma"],
+        )
+        .await;
+
+    s.recall("thing:sigma")
+        .await
+        .claim(&reading)
+        .says("0xB200000000010A")
+        .says("mcelog --client");
+    s.recall("thing:tau").await.claim(&outage).says("38");
 
     s.wrap("recorded the outage and the reading").await;
 
