@@ -2,7 +2,11 @@
 //! re-run what the last session already ruled out."
 //!
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
-//! call is the missing capability, written the way it would be asked for.
+//! call is the missing capability, written the way it would be asked for, and
+//! an assertion beside it goes red on the day the capability lands.
+//!
+//! `// NOTE —` marks something a SESSION did not do. jojobot answers nothing
+//! about it, so no assertion can hold it and none pretends to.
 
 use serde_json::json;
 
@@ -161,7 +165,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .says("not the watchdog")
         .says("not a shared kernel bug");
 
-    // GAP — nothing marks them as exclusions, so nothing directs the next
+    // NOTE — nothing marks them as exclusions, so nothing directs the next
     // investigator to read them before proposing a test. The most expensive
     // mistake in this work is re-running an experiment somebody already ran,
     // and the record makes it available rather than preventing it.

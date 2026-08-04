@@ -7,7 +7,11 @@
 //! open. `provenance` carries the first and `standing` the second.
 //!
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
-//! call is the missing capability, written the way it would be asked for.
+//! call is the missing capability, written the way it would be asked for, and
+//! an assertion beside it goes red on the day the capability lands.
+//!
+//! `// NOTE —` marks something a SESSION did not do. jojobot answers nothing
+//! about it, so no assertion can hold it and none pretends to.
 
 use super::dsl::Story;
 
@@ -87,7 +91,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         .says("\"details\":null")
         .never_says("was not sure");
 
-    // GAP — nothing asks a session to weigh `standing` before repeating a
+    // NOTE — nothing asks a session to weigh `standing` before repeating a
     // claim. Moving the hedge out of prose made it parseable, not noticed, and
     // no read is directed at it.
 

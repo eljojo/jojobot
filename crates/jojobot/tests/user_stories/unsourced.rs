@@ -7,7 +7,11 @@
 //! for a careful session to avoid it.
 //!
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
-//! call is the missing capability, written the way it would be asked for.
+//! call is the missing capability, written the way it would be asked for, and
+//! an assertion beside it goes red on the day the capability lands.
+//!
+//! `// NOTE —` marks something a SESSION did not do. jojobot answers nothing
+//! about it, so no assertion can hold it and none pretends to.
 
 use super::dsl::Story;
 
@@ -29,7 +33,7 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
         "the procedure for a real-world recommendation is fetchable by name: {procedure}"
     );
 
-    // GAP — nothing fetched it for this session and nothing will. jojobot
+    // NOTE — nothing fetched it for this session and nothing will. jojobot
     // decides no skill applies, deliberately, so the guard against
     // recommending an unchecked place runs only when the session thinks to
     // ask for it. The one beat where it matters most is the one where a

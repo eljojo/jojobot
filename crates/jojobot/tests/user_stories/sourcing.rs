@@ -6,7 +6,11 @@
 //! claim worked out from a claim has no entity to point at.
 //!
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
-//! call is the missing capability, written the way it would be asked for.
+//! call is the missing capability, written the way it would be asked for, and
+//! an assertion beside it goes red on the day the capability lands.
+//!
+//! `// NOTE —` marks something a SESSION did not do. jojobot answers nothing
+//! about it, so no assertion can hold it and none pretends to.
 
 use super::dsl::Story;
 
@@ -154,7 +158,7 @@ async fn a_claim_names_where_it_came_from() {
     s.find("trail-survey").await.says("event:trail-survey");
     s.find("erosion-review").await.says("event:erosion-review");
 
-    // GAP — and the club's walks still rest on the survey, untouched. One
+    // NOTE — and the club's walks still rest on the survey, untouched. One
     // claim was re-pointed by the session that happened to be looking at it;
     // the walk above would have found the other, and nothing ran it. A source
     // that stops holding does not reach what was built on it, so staleness

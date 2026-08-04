@@ -7,7 +7,11 @@
 //! ask yet.
 //!
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
-//! call is the missing capability, written the way it would be asked for.
+//! call is the missing capability, written the way it would be asked for, and
+//! an assertion beside it goes red on the day the capability lands.
+//!
+//! `// NOTE —` marks something a SESSION did not do. jojobot answers nothing
+//! about it, so no assertion can hold it and none pretends to.
 
 use super::dsl::Story;
 
@@ -92,7 +96,7 @@ async fn a_curveball_collides_with_the_week() {
     )
     .await;
 
-    // GAP — the decision is entirely the session's. jojobot recorded three
+    // NOTE — the decision is entirely the session's. jojobot recorded three
     // sentences it was handed and checked none of them against the other two;
     // there is no schedule here for anything to collide against.
 

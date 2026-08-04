@@ -8,7 +8,11 @@
 //! the procedure into the chat — and the last one is a gap by definition.
 //!
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
-//! call is the missing capability, written the way it would be asked for.
+//! call is the missing capability, written the way it would be asked for, and
+//! an assertion beside it goes red on the day the capability lands.
+//!
+//! `// NOTE —` marks something a SESSION did not do. jojobot answers nothing
+//! about it, so no assertion can hold it and none pretends to.
 
 use super::dsl::Story;
 
@@ -182,7 +186,7 @@ async fn a_session_records_a_claim_with_its_source_unprompted() {
         "fetching a skill by name returns its body: {fetched}"
     );
 
-    // GAP — nothing decides when one applies, which is deliberate: jojobot
+    // NOTE — nothing decides when one applies, which is deliberate: jojobot
     // performs no inference and the session chooses. What follows from it is
     // that a session which never reads the index never learns a procedure
     // exists, and no beat above was told to look. The one thing standing
