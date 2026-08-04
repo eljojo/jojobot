@@ -15,8 +15,10 @@
 //! name. This test points it at a dedicated **`jojobot-test`** collection, which
 //! it deletes (collection + all its docs) before and after the run — so it never
 //! touches the real `jojobot` collection or any of the user’s own docs, and it leaves
-//! nothing behind. Missing either variable → it skips. It never scans for or
-//! hardcodes a token; the token comes from the env the operator sets.
+//! nothing behind. Missing either variable → it PANICS: a run that reached no
+//! store has verified nothing, and a green bar that says otherwise is the one
+//! failure this suite cannot afford. It never scans for or hardcodes a token;
+//! the token comes from the env the operator sets.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -387,10 +389,17 @@ async fn assert_the_session_contract_holds(http: &reqwest::Client, c: &Creds) {
 #[tokio::test]
 #[ignore = "hits real Outline; set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN"]
 async fn real_outline_satisfies_the_contract() {
-    let Some(c) = creds() else {
-        eprintln!("skipping: set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN");
-        return;
-    };
+    // **A gate with no way to fail is not a gate.** This test returned green
+    // when the credentials were absent, so a `.env` holding neither name — the
+    // case the Makefile's own `.env` check does not cover — produced a passing
+    // run that reached no store and proved nothing about the adapter. The
+    // absence is a misconfiguration and it fails loud (rule 38). Skipping is
+    // right for the recorders below, which verify nothing by design; it is
+    // wrong here, where verifying is the whole job.
+    let c = creds().expect(
+        "this suite needs JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN, and a run without them \
+         has verified nothing — see the Makefile's integration rule",
+    );
 
     let http = reqwest::Client::new();
     // Clean slate, in case a prior run aborted before teardown.

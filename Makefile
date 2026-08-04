@@ -47,6 +47,12 @@ build: ## Build the workspace
 # themselves panic on absent credentials for the same reason, because a gate that
 # prints "skipping" and exits green is a run that verified nothing while reading
 # as if it had.
+#
+# **The golden recorders are skipped by name, so the count is the evidence.**
+# They are tools, not checks: without JOJOBOT_RECORD_GOLDENS they record nothing
+# and report `ok`, so counting them made this gate report three passing tests
+# where one thing was verified. A reader counts tests to size the evidence, and
+# a number three times the truth is worse than no number.
 integration: ## Run the suites against real stores (needs .env)
 	@test -f .env || { \
 		echo "no .env — the real-dependency suites need credentials, and a skipped run is not a green one"; \
@@ -55,5 +61,5 @@ integration: ## Run the suites against real stores (needs .env)
 	@set -a; . ./.env; set +a; \
 	for suite in $(INTEGRATION_SUITES); do \
 		echo "== $$suite"; \
-		$(CARGO) test -p jojobot-adapters --test $$suite -- --ignored || exit 1; \
+		$(CARGO) test -p jojobot-adapters --test $$suite -- --ignored --skip record_ || exit 1; \
 	done
