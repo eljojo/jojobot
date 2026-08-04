@@ -65,12 +65,13 @@ I can ___", never after infrastructure.
 
 Shipped so far: memory, search and edges, mailboxes, bots (AI identities with a
 handle, charter, rules, memory and an owned mailbox), every session on the
-record, and the alignment release that brought the repo in line with a design
-revision to where sessions and mailboxes live and what a wrap does — cleanup
-only, no new capability of its own.
+record, the redesigned surface, events as a first-class flavour of fact, and the
+skills that ship the method in the binary. A fresh instance arrives holding one
+identity, `assistant`, with its mailbox — which is what lets the next rule have
+no hole in it: every memory write names the session behind it, with no exemption
+for any kind.
 
-Next: the surface redesign, events as a first-class flavour of fact, trace,
-portraits, attention, sessions booting from jojobot, and seeding.
+Next: trace, portraits, attention, and sessions booting from jojobot.
 
 Two layers hold it together: the **engine** (this repo — user-agnostic, golden
 tests) and **bots** (data in the user's own store). The design docs live with
@@ -283,6 +284,9 @@ jojobot is an OAuth2 protected resource per the MCP authorization spec:
   JWKS with an **RS256-only** allowlist, and checked for issuer, audience
   (RFC 8707), and expiry. A 401 carries a `WWW-Authenticate` challenge pointing
   back at the metadata endpoint.
+- A path jojobot does not serve answers **404**, not 401. A challenge on an
+  unmounted path tells a client its credentials are wrong when the truth is
+  that the path is not there.
 
 ## License
 

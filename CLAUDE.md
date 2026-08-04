@@ -36,9 +36,9 @@ and has burned this project three times. When in doubt, it doesn't cross.
   wiki, not in this repo. The coordinator session owns them and reconciles them
   after every slice.
 - **Migration note:** while behaviour migrates, most operating context still
-  lives in the user's private `~/code/life` repo. Sessions on the user's
-  machine may read it for orientation. **Nothing life-specific may cross back
-  into this repo** — see the bright line below.
+  lives in a private repo of the user's. Sessions on the user's machine may read
+  it for orientation. **Nothing life-specific may cross back into this repo** —
+  see the bright line below.
 
 ## The build model — two sessions, never one
 
@@ -101,8 +101,11 @@ Shipped and live:
   a side effect; near-misses come back blocked-with-candidates); read-back on
   every write.
 - **M2/M2.5/M2.8** — `search` across facts, entities and prose; structured
-  edges (location · membership · attendance · about); aliases; orienteering
-  retrieval (every hit arrives with its surroundings).
+  edges (location · membership · attendance · about · connection); aliases;
+  orienteering retrieval (every hit arrives with its surroundings).
+  `connection` says a link is there and that how it relates was not recorded —
+  an admission, never a weaker `about`, because filing an unknown link as a
+  claim laundres it into one.
 
 > **One front door, over both worlds.** Mail is in the same `search` — no
 > second verb, one ranked list — and **in by default**: the reader who needs a
@@ -241,13 +244,17 @@ ran were the previous mental model still running. The release removed them, in
 order: entities gained a tree · sessions and mailboxes became rows on their
 bot's child pages and Vikunja left jojobot entirely · wrap stopped publishing
 and the shared journal went · the code reshuffle (one file per verb) · the last
-raw error became a blocked answer · the trash got swept. **Nothing new is built
-until the repo is pristine**, and what remains of that is this documentation
-catching up and one review before the deploy.
+raw error became a blocked answer · the trash got swept.
 
-Then the **surface** — redesigned from the catalogue of domain actions harvested
-from real use, fewer verbs doing more through domain-level parameters; the
-curated list lives in the README.
+The **surface** is the redesign that followed: built from the catalogue of domain
+actions harvested from real use, fewer verbs doing more through domain-level
+parameters; the curated list lives in the README.
+
+- **One identity ships.** A fresh instance arrives holding `assistant`, with its
+  mailbox, seeded before anything serves. That is what closes the loop under
+  **every memory write names its session** — creating the first bot is a write,
+  a write needs a session id, and a session id comes from booting a bot. An
+  empty jojobot is not an identity-less one.
 
 - **Skills** — the method ships with the binary. The orientation essay is the
   world model and arrives unasked; a **skill** is a procedure and is fetched by
