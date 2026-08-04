@@ -9,8 +9,8 @@ jojobot is **not** an MCP proxy. It is software with a domain: it feeds the
 assistant context, guards writes behind invariants, remembers what matters, and
 never runs inference of its own — the assistant is the only mind.
 
-> **Status: two domains live, one front door over both, and sessions can boot
-> as an identity.** The server ships **Memory** — typed entities and dated
+> **Status: two domains live, one front door over both, sessions can boot as an
+> identity, and the method ships with the binary.** The server ships **Memory** — typed entities and dated
 > facts with provenance (testimony vs inference), a write guard that blocks
 > near-miss creations with candidates, structured edges, aliases, and
 > orienteering retrieval (every hit arrives with its surroundings) — and
@@ -37,7 +37,11 @@ never runs inference of its own — the assistant is the only mind.
 > door**: it takes an optional bot name, and naming one **starts or resumes that
 > bot's session**, because a bot is a role and a session is one mortal run of it.
 > Booting anonymously is legal and deliberately useless — orientation, and no
-> handle behind it. **Sessions** live on a page of their bot's own, one row each:
+> handle behind it. **It is also skill zero.** The essay is the world model and
+> arrives unasked; a **skill** is a procedure and is fetched by name through the
+> same door. Every boot lists the skills by name and when-to-use and never their
+> bodies, so a session learns what exists without paying for what it does not
+> need. jojobot decides nothing about when one applies — the caller asks. **Sessions** live on a page of their bot's own, one row each:
 > a focus that is current truth, an append-only chronology (the session's own
 > beats plus jojobot's, marked apart), and `active` → `wrapped` | `abandoned` —
 > **`wrapped` is the last word, because wrapping folds the still-open focus into
@@ -114,8 +118,8 @@ Two consequences worth stating outright, because they surprise people:
 
 | tool | what a caller is doing |
 |---|---|
-| `start_here` | Coming online: getting the world model, a live snapshot of what exists, and — when naming an identity — that identity's charter, rules, mailbox counts, and a session handle. The one door; there is deliberately no second. |
-| `ping` | Checking jojobot is reachable at all. Identity, version, time, nothing else. |
+| `start_here` | Coming online: getting the world model, the skills that exist by name and when-to-use, a live snapshot of what exists, and — when naming an identity — that identity's charter, rules, mailbox counts, and a session handle. Naming a skill returns that one procedure. The one door; there is deliberately no second. |
+| `ping` | Checking jojobot is reachable at all, and which build answered. Identity, build, time, nothing else. |
 
 **Memory — recording and reading what is known**
 

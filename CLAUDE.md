@@ -61,6 +61,28 @@ and has burned this project three times. When in doubt, it doesn't cross.
 - Merging advances `main` only. **Deploy and push are the user's verbs** —
   never deploy; never push unless asked.
 
+### Booting a session in this repo
+
+A session here starts at jojobot, not at these files. The whole protocol:
+
+1. **`start_here` with your bot name** — `dev` if you were not told otherwise.
+   It hands back a `sid`; pass it on every call after that, reads included.
+   It also hands back your charter and your rules, which say more about how
+   you work than this file does.
+2. **`read_mailbox`** — your task is in your box. Work it.
+3. **Report to `pm`** as you go, not only at the end: `post_message` to the
+   `pm` box at each coherent milestone, and `mark_processed` a task the
+   moment you have acted on it.
+4. **Keep polling.** When the work is done you are not done: `read_mailbox`
+   with `counts_only: true` costs nothing and takes delivery of nothing.
+   Poll, take whatever arrived, repeat. **A session that stops checking its
+   box is indistinguishable from one that has died** — and the next task is
+   usually already waiting.
+
+The operator dispatches you; they are not the report channel (see the audience
+discipline above). Everything else — commits, test output, deviations,
+design notes, questions — goes to `pm`.
+
 ## The capability ladder
 
 Milestones are **capabilities, never infrastructure** — each is named "after
@@ -225,13 +247,29 @@ catching up and one review before the deploy.
 
 Then the **surface** — redesigned from the catalogue of domain actions harvested
 from real use, fewer verbs doing more through domain-level parameters; the
-curated list lives in the README. The capabilities after it — events remembered
-where they happened · trace · portraits · attention · sessions booting from
-jojobot · batteries included — are ordered, not scheduled, in the roadmap.
+curated list lives in the README.
+
+- **Skills** — the method ships with the binary. The orientation essay is the
+  world model and arrives unasked; a **skill** is a procedure and is fetched by
+  name through the same door, because `start_here` is skill zero. Every boot
+  lists the skills by name and when-to-use and **never their bodies**, so a
+  session learns what exists without paying for what it does not need.
+  jojobot decides nothing about when one applies — the caller asks.
+
+> **The engine ships the procedure; the operator's instance personalizes it.**
+> An override is an ordinary fact on the bot, read alongside the shipped text
+> rather than replacing it: it narrows, it never repeals. That keeps the two
+> halves under their own owners — software owns the general behaviour, data
+> owns the personalization — instead of making a second copy of one truth.
+
+The capabilities after these — events remembered where they happened · trace ·
+portraits · attention · sessions booting from jojobot — are ordered, not
+scheduled, in the roadmap.
 
 **Layering: engine + bot.** The engine (this repo) is user-agnostic code; a
 bot and its rules are *data* in the user's own store. Nothing about any
-particular person is compiled in.
+particular person is compiled in — and that now includes the skills, which
+name roles and never an operator.
 
 ## Engineering rules (non-negotiable)
 
@@ -239,7 +277,26 @@ particular person is compiled in.
   starts from a failing test you watched fail FIRST. A manual run proves
   nothing.
 - **Commits: one per coherent problem.** A milestone lands as a handful of
-  commits — never one per file or checklist item, never dozens.
+  commits — never one per file or checklist item, never dozens. **A fix and
+  the test that proves it are ONE problem**, however a task listed them.
+- **A commit message uses Simplified Technical English**, like every other text
+  this project writes. Short sentences. Active voice. One word has one meaning.
+  No metaphor.
+- **The body states what the code does now and why the change is correct.** It
+  does not state who asked for it, which message carried the request, what
+  anyone believed before, what a run printed, or how many attempts it took.
+  **Strike every sentence that would be false next month.** Those sentences are
+  a *report*, and a report goes to the coordinator.
+- **Cite a rule number when a rule governs the change.** Write no attribution
+  when no rule applies: every commit here was asked for, so "the operator asked
+  for this" carries nothing. Never cite a message id — mailbox traffic is
+  ephemeral and a later reader cannot resolve it. Never write a pronoun for the
+  operator; this repo names roles.
+- **A diagnostic is not a test and is never committed.** Something run once to
+  answer a question — a probe, a scan, a count — is a script. It guards
+  nothing and will never fail meaningfully again. Run it, put the *answer*
+  where the question lives, delete the instrument. Enforcing the answer later
+  is a deliberate test with an assertion, and a different artifact.
 - **Zero user PII, zero life specifics** — the bright line at the top of this
   file. It outranks every other rule here.
 - **The real-dependency gate.** A slice that touches an adapter does not merge
@@ -256,6 +313,15 @@ particular person is compiled in.
   each fronted service's quirks live in its adapter, quarantined.
 - **Green bar before DONE:** `cargo test` green and `cargo clippy` clean, run
   through the flake (`nix develop -c cargo test`).
+- **A test must travel the path it claims to exercise.** Calling a function
+  directly proves the function, not that it is wired to anything. Assert that
+  a value survives a journey by sending it on the journey, through the surface
+  a caller uses — otherwise the assertion holds identically on a build where
+  the value never moves.
+- **Never pin our own prose.** An assertion quoting a sentence somebody wrote
+  breaks when the sentence improves and proves nothing about behaviour. Pin
+  identifiers and structure — things a rename would be a real change to. The
+  tell is a needle that is a phrase rather than a name.
 - **Don't over-engineer.** Reach for the simplest model that fits the stated
   design; the tell is a pass that keeps getting bigger. When the design and
   the code disagree, say so — don't silently deviate, and don't silently
