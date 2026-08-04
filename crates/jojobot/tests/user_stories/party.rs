@@ -76,12 +76,23 @@ async fn throwing_a_birthday_party() {
     s.fact("person:barney-gumble", "does not drink").await;
     s.fact("person:ned-flanders", "bringing a partner").await;
 
-    // GAP — that partner is a PERSON, reachable only through Ned, and no shape
-    // says one person stands in a relation to another: the four point at a
-    // place, an org, an event, or vaguely at anything. For a system whose
-    // hardest content is people, nothing models people to people, so "who is
-    // Ned bringing" and "does anybody here not get along" are the same missing
-    // edge.
+    // The partner is a PERSON and the link to them is drawable: `connection`
+    // takes any kind, so person-to-person is reachable.
+    s.add("person:maude", "Maude").await;
+    s.fact_about(
+        "person:ned-flanders",
+        "bringing their partner",
+        "connection",
+        "person:maude",
+    )
+    .await;
+    s.through("connection", "person:maude", "person")
+        .await
+        .says("person:ned-flanders");
+
+    // GAP — and the link says only that one exists. No shape names a relation
+    // between two people, so partner, colleague and "does not get along with"
+    // are the same edge, and telling them apart means reading each claim.
     //   s.fact_about("person:ned-flanders", "their partner", "relation", "person:maude").await;
 
     s.wrap("invitations out").await;

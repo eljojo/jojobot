@@ -117,11 +117,12 @@ async fn a_claim_names_where_it_came_from() {
         .await
         .says("org:north-trail-club");
 
-    // GAP — one walk per kind, because the filter narrows to a kind and there
-    // is no way to ask for every subject regardless. "What rests on this" is a
-    // question about the source, and answering it means knowing beforehand
-    // what sorts of thing might be resting.
-    //   s.through_any("about", "event:trail-survey").await;
+    // And in one walk with no kind at all: "what rests on this" needs no
+    // guess about what sorts of thing might be resting.
+    s.through_any("about", "event:trail-survey")
+        .await
+        .says("place:north-trail")
+        .says("org:north-trail-club");
 
     s.wrap("caught up, and traceable in both directions").await;
 

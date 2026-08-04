@@ -73,10 +73,28 @@ async fn moving_abroad() {
     // being considered, ranked, or ruled out.
     //   s.shortlist("project:atlas", &["place:capital-city", "place:north-haverbrook"]).await;
 
-    // GAP — and no place sits inside another. `location` points a claim at a
-    // place, so a city cannot be IN a country and nothing reaches these two
-    // through Far Country.
-    //   s.fact_about("place:capital-city", "a city of", "location", "place:far-country").await;
+    // A place DOES sit inside another: `location` constrains what an edge
+    // points AT, never what it points from, so a city in a country is an
+    // ordinary edge and both cities are reachable through Far Country in one
+    // walk.
+    for city in ["place:capital-city", "place:north-haverbrook"] {
+        s.fact_about(
+            city,
+            "a city of Far Country",
+            "location",
+            "place:far-country",
+        )
+        .await;
+    }
+    s.through("location", "place:far-country", "place")
+        .await
+        .says("place:capital-city")
+        .says("place:north-haverbrook");
+
+    // GAP — and the containment is only as good as the claim's wording.
+    // Nothing says this edge means "inside" rather than "near" or "flies
+    // to", so a walk finds the pair and a reader still has to read each
+    // sentence to learn what the link was.
 
     s.wrap("two cities on the table").await;
 
@@ -232,10 +250,34 @@ async fn moving_abroad() {
     // "what is still open", because nothing here has a state.
     //   s.open_under("project:atlas").says("visa photo").await;
 
-    // GAP — the appointment moved twice, and every wrong date is still on the
-    // record with nothing saying which one held. A claim can be rewritten in
-    // place, which loses that it ever moved; retraction is for events only.
-    //   s.superseded("project:atlas#f3", "appointment was rebooked").await;
+    // The appointment moved, and the claim that held before it moved is put
+    // past rather than rewritten or taken back: it was true in its day, so it
+    // stays on the record and stops coming back as current truth.
+    let first_date = s
+        .fact("project:atlas", "embassy appointment is on the first")
+        .await;
+    s.supersede(&first_date).await;
+    s.fact(
+        "project:atlas",
+        "embassy appointment was rebooked to the ninth",
+    )
+    .await;
+    // It stays on the record, marked as moved past — and the front door stops
+    // offering it as current truth, which is the difference between putting a
+    // claim past and deleting it.
+    s.recall("project:atlas")
+        .await
+        .claim(&first_date)
+        .says("superseded");
+    s.find("embassy appointment")
+        .await
+        .says("rebooked to the ninth")
+        .never_says("appointment is on the first");
+
+    // GAP — and nothing says WHICH claim replaced it. A superseded claim knows
+    // it was moved past and not what moved past it, so a reader reconstructing
+    // the sequence matches the wording by hand.
+    //   s.superseded_by("project:atlas#f3", &rebooked).await;
 
     s.wrap("still in progress").await;
 

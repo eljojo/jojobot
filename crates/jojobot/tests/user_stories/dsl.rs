@@ -319,6 +319,19 @@ impl Session {
         address_of(&body)
     }
 
+    /// Move a claim past: it was true in its day and is not current truth any
+    /// more, so it stays on the record and stops coming back as current.
+    /// Different from a correction, which rewrites a claim that was never
+    /// right, and from a retraction, which is for chronology.
+    pub async fn supersede(&self, address: &str) {
+        self.write(
+            &format!("superseding {address}"),
+            "update_fact",
+            json!({"address": address, "status": "superseded"}),
+        )
+        .await;
+    }
+
     /// Rewrite a claim that turned out to be wrong, in place — rule 58, which
     /// says a refutation FIXES THE SOURCE rather than adding a contradiction
     /// beside it. Anything less is two claims and a reader left to adjudicate.
@@ -402,6 +415,21 @@ impl Session {
             format!("{kind}s linked to {object} by {shape}"),
             "search",
             json!({"kind": kind, "edge": {"shape": shape, "object": object}}),
+        )
+        .await
+    }
+
+    /// The same walk with no kind at all — everything pointing at `object`,
+    /// whatever sort of thing it is.
+    ///
+    /// **`kind` is optional on the wire and the DSL made it look required.**
+    /// A story written through `through` had to name a kind per call, so
+    /// "what rests on this" read as a question the surface could not answer.
+    pub async fn through_any(&self, shape: &str, object: &str) -> Answer {
+        self.read(
+            format!("everything linked to {object} by {shape}"),
+            "search",
+            json!({"edge": {"shape": shape, "object": object}}),
         )
         .await
     }

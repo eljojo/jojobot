@@ -139,12 +139,26 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .await
         .says(&format!("\"derived_from\":\"{ruling}\""));
 
-    // GAP — and the chain stops one link short of the thing being questioned.
-    // There is no commit: not as an entity, not as a value a claim can carry,
-    // not as anything a read returns. The diff in front of the reader is
-    // joined to that chain by nothing at all, so answering which decision
-    // authorized it means a person matching a diff to a ruling by hand.
-    //   s.commit("4eb6c99", authorized_by: &ruling).await;
+    // A commit can be a thing in its own right, and the claim that it was
+    // authorized by the ruling points at it — so the diff in front of a reader
+    // reaches the decision behind it in one walk.
+    s.add("thing:commit-omicron", "The schema commit").await;
+    s.fact_about(
+        "thing:commit-omicron",
+        "landed the column the ruling called for",
+        "connection",
+        "project:jojobot-server",
+    )
+    .await;
+    s.through("connection", "project:jojobot-server", "thing")
+        .await
+        .says("thing:commit-omicron");
+
+    // GAP — but the link is `connection`, which records that the two are
+    // related and not that one AUTHORIZED the other. Nothing distinguishes the
+    // commit a ruling called for from a commit that merely mentions it, so the
+    // chain is walkable and its meaning is still a reading job.
+    //   s.commit("thing:commit-omicron", authorized_by: &ruling).await;
 
     // GAP — the defect has the same problem from the other end: nothing
     // connects it to the commit that closed it. The event is on the page, the

@@ -59,10 +59,18 @@ async fn where_did_you_get_that() {
     // And what the operator actually said is untouched by the correction.
     s.recall("place:moes").await.says("week has been long");
 
-    // GAP — "where did you get that" is still unanswerable for this claim. It
-    // reads back as an inference, which says it was derived and not what from.
-    // No source, no session, no earlier fact: an inference with no visible
-    // parent is exactly as unfalsifiable as a fabrication.
+    // "Where did you get that" IS answerable when the claim was written with
+    // its parent: `derived_from` carries an earlier claim's address and an
+    // `about` edge carries the source it came off, both on the record.
+    let backed = s
+        .guess_from("place:moes", "probably busy on Sundays, then", &claim)
+        .await;
+    s.recall("place:moes").await.claim(&backed).says(&claim);
+
+    // GAP — and nothing made the first guess carry one. Provenance says a
+    // claim was derived and never that a parent is owed, so a session that
+    // writes an inference with nothing behind it is refused by nothing, and
+    // the claim above is unfalsifiable exactly as a fabrication would be.
     //   s.why(&claim).says("a search summary, session 1").await;
 
     // GAP — and nothing records that a claim was ACTED ON. A wrong guess that
@@ -117,13 +125,26 @@ async fn where_did_you_get_that() {
         .says("closes at 6 on Sundays")
         .never_says("week has been long");
 
-    // GAP — but not by where they came from. Both guesses came out of one
-    // summary and neither says so, so discrediting the summary reaches
-    // nothing: there is no handle for it, no edge to it, and no way to ask
-    // what else it produced. Every claim it fathered has to be remembered by a
-    // person.
-    //   s.add("thing:that-search-summary", "The Search Summary").await;
-    //   s.through("about", "thing:that-search-summary", "place").says("place:riverbend");
+    // And by where they came from, once the summary is a thing in its own
+    // right. A source is an entity, the claims drawn from it point at it, and
+    // asking what else it produced is one walk rather than somebody's memory.
+    s.add("thing:that-search-summary", "The Search Summary")
+        .await;
+    s.fact_about(
+        "place:riverbend",
+        "listed as sourcing from a farm co-op",
+        "about",
+        "thing:that-search-summary",
+    )
+    .await;
+    s.through_any("about", "thing:that-search-summary")
+        .await
+        .says("place:riverbend");
+
+    // GAP — and discrediting the summary still reaches none of them. There is
+    // no way to mark a source as unreliable, so each claim resting on it has
+    // to be found by that walk and rewritten one at a time.
+    //   s.discredit("thing:that-search-summary", "the listing was stale").await;
 
     s.wrap("one bad source, two claims, and no way to reach the second")
         .await;

@@ -145,19 +145,20 @@ async fn keeping_track_of_bikes() {
     s.fact_about(
         "thing:floor-pump",
         "loaned out, still not back",
-        "about",
+        "connection",
         "person:milhouse",
     )
     .await;
     s.find("loaned").await.says("thing:floor-pump");
     s.recall("thing:floor-pump").await.says("person:milhouse");
 
-    // GAP — but the shape is `about`, the catch-all, because there is no name
-    // for this link. The walk below returns everything pointed at this person
-    // by any claim, lending or otherwise, so "what have I lent out, and to
-    // whom" cannot be asked — only searched for in whatever words the note
+    // GAP — the shape is `connection`, which says a link is there and that how
+    // it relates was not recorded. That is the honest shape for a loan and it
+    // is not a name for one: the walk below returns everything pointed at this
+    // person by any claim, lending or otherwise, so "what have I lent out, and
+    // to whom" cannot be asked — only searched for in whatever words the note
     // happened to use.
-    s.through("about", "person:milhouse", "thing")
+    s.through("connection", "person:milhouse", "thing")
         .await
         .says("thing:floor-pump");
     //   s.fact_keyed("thing:floor-pump", "loaned-to", "person:milhouse").await;
