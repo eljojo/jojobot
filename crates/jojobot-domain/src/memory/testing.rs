@@ -3131,7 +3131,13 @@ pub mod contract {
             ("ok", "", None),
             ("bad\nid: person:someone-else", "user-named", None),
             ("bad ```", "user-named", None),
-            ("ok", "user-named", Some("card:abc")),
+            // A cross-link must stay one token on its frontmatter line, so
+            // whitespace, a comma and a backtick are all refused whatever the
+            // task layer's grammar is.
+            ("ok", "user-named", Some("card 874")),
+            ("ok", "user-named", Some("ENG-421,ENG-422")),
+            ("ok", "user-named", Some("ENG-`421`")),
+            ("ok", "user-named", Some("")),
         ] {
             let err = store
                 .add_entity(NewEntity {
@@ -3145,6 +3151,26 @@ pub mod contract {
                 "expected InvalidEntity for {name:?}/{source:?}/{crm:?}, got {err:?}"
             );
         }
+    }
+
+    /// **The cross-link takes the task layer's own grammar.** `crm` points at
+    /// this entity in whatever system holds the operator's tasks, and that
+    /// system decides how it addresses things: `card:874` in one, `ENG-421` in
+    /// another. A validator that accepted only one of those refused the link
+    /// outright to every other layer, which left the entity with no way to
+    /// record it at all.
+    pub async fn a_cross_link_takes_the_task_layers_own_grammar<M: Memory>(store: &M) {
+        let id = EntityId::person("contract-crosslink");
+        add(
+            store,
+            NewEntity {
+                crm: Some("ENG-421".into()),
+                ..NewEntity::new(id.clone(), "Beta", "user-named")
+            },
+        )
+        .await;
+        let seen = read_entity(store, &id).await;
+        assert_eq!(seen.crm.as_deref(), Some("ENG-421"));
     }
 
     // --- retrieval: the search verb ------------------------------------------
@@ -3738,5 +3764,6 @@ pub mod contract {
         capture_requires_an_existing_edge_object(store).await;
         update_fact_requires_an_existing_edge_object(store).await;
         malformed_entity_fields_are_rejected(store).await;
+        a_cross_link_takes_the_task_layers_own_grammar(store).await;
     }
 }

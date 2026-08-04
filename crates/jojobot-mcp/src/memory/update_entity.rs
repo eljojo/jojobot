@@ -21,7 +21,8 @@ pub struct UpdateEntityArgs {
     /// New source.
     #[serde(default)]
     pub source: Option<String>,
-    /// New cross-link to the entity's card in the user's task system, `card:N`.
+    /// New cross-link to this entity in the task layer, in whatever form that
+    /// layer addresses things. One reference, no space and no comma.
     #[serde(default)]
     pub crm: Option<String>,
     /// Set only after a previous call reported candidates for a name or alias

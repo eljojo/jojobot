@@ -25,8 +25,8 @@ pub struct AddEntityArgs {
     /// Where this entity came from — **never invented**: the user named it, or
     /// a real source produced it (e.g. `user-named`, `crm-card`, `calendar`).
     pub source: String,
-    /// Optional cross-link to this entity's card in the user's task system,
-    /// written `card:N`.
+    /// Optional cross-link to this entity in the task layer, in whatever form
+    /// that layer addresses things. One reference, no space and no comma.
     #[serde(default)]
     pub crm: Option<String>,
     /// `always` marks this entity as part of the core an assistant loads at

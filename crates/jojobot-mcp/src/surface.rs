@@ -595,19 +595,16 @@ fn no_agent_facing_text_teaches_the_retired_store() {
             "a box is a page owned by its bot, not a label",
         ),
     ];
-    // **The one legitimate use, allowlisted by name and by reason.** `crm` is a
-    // cross-link into the OPERATOR'S OWN task system — somebody else's store,
-    // which a caller must name correctly, and whose grammar is literally
-    // `card:N` (`jojobot_domain::memory::validate_crm`). The rule is that no
-    // text teaches JOJOBOT'S store; blanking the word here would turn a true
+    // **The one legitimate use, allowlisted by name and by reason.** The word
+    // survives in one place: `crm-card` as an example SOURCE value, which is a
+    // label the operator's own records carry rather than a grammar jojobot
+    // enforces. `crm` itself no longer teaches a grammar — the task layer
+    // decides how it addresses things
+    // (`jojobot_domain::memory::validate_crm`). The rule is that no text
+    // teaches JOJOBOT'S store; blanking the word here would turn a true
     // sentence false. Each entry must actually be hit — a stale exception
     // fails below, so this cannot quietly become a place to put new ones.
-    const ALLOWED: &[(&str, &str)] = &[
-        ("add_entity's argument schema", "card"),
-        ("update_entity's argument schema", "card"),
-        ("add_entity's argument schema", "task system"),
-        ("update_entity's argument schema", "task system"),
-    ];
+    const ALLOWED: &[(&str, &str)] = &[("add_entity's argument schema", "card")];
 
     let mut teaching: Vec<String> = Vec::new();
     let mut unused: Vec<&(&str, &str)> = ALLOWED.iter().collect();

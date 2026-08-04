@@ -227,7 +227,8 @@ pub struct Entity {
     /// Where this entity came from — **never invented**. An entity exists
     /// because the user named it or a real source produced it.
     pub source: String,
-    /// The kanban token this entity is mirrored by, if any (`card:554`).
+    /// The cross-link to this entity in the task layer, if there is one, in
+    /// whatever form that layer addresses things.
     pub crm: Option<String>,
     /// The entity this one sits **under**, if it sits under anything. A root
     /// has none, and most entities are roots.
@@ -278,7 +279,7 @@ pub struct NewEntity {
     pub aliases: Vec<String>,
     /// Where it came from — required, and never invented by jojobot.
     pub source: String,
-    /// Optional kanban token.
+    /// Optional cross-link to this entity in the task layer.
     pub crm: Option<String>,
     /// The entity to create this one **under**, if it is not a root. Screened
     /// by [`guard::decide_parent`]: the parent must already exist, and nothing
@@ -341,7 +342,7 @@ pub struct EntityPatch {
     pub aliases: Option<Vec<String>>,
     /// New source.
     pub source: Option<String>,
-    /// New kanban token.
+    /// New cross-link to this entity in the task layer.
     pub crm: Option<String>,
     /// Set only after the guard reported candidates for the new name and the
     /// caller judged them different. Same signal as [`NewEntity::create_new`].
@@ -820,19 +821,24 @@ pub fn validate_aliases(aliases: &[String]) -> Result<(), MemoryError> {
     Ok(())
 }
 
-/// Validate the optional `crm` link. It points at a kanban token and has exactly
-/// one shape — `card:N` — so a typo can't quietly become a dangling pointer.
+/// Validate the optional `crm` link — a cross-link to this entity in the task
+/// layer, in whatever form that layer addresses things.
+///
+/// **The grammar belongs to the task layer, not to jojobot.** One system
+/// addresses a task `card:874` and another `ENG-421`, and a validator that
+/// accepted one shape refused every other layer the link outright, leaving the
+/// entity no way to record it. So the screening is only what the frontmatter
+/// line needs: one plain token, non-empty, no backtick — the same
+/// [`validate_field`] rules every other label takes — with **no whitespace and
+/// no comma**, so the reference cannot split into two on the way back out.
 pub fn validate_crm(crm: &str) -> Result<(), MemoryError> {
-    let ok = crm
-        .strip_prefix("card:")
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
-    if ok {
-        Ok(())
-    } else {
-        Err(MemoryError::InvalidEntity(format!(
-            "crm must be card:N, got '{crm}'"
-        )))
+    validate_field("crm", crm)?;
+    if crm.trim().chars().any(|c| c.is_whitespace() || c == ',') {
+        return Err(MemoryError::InvalidEntity(format!(
+            "crm must be one reference with no space and no comma, got '{crm}'"
+        )));
     }
+    Ok(())
 }
 
 /// The line that opens a document's machine-readable fact table.
