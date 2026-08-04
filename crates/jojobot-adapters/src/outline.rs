@@ -1078,13 +1078,16 @@ impl Memory for OutlineStore {
         };
 
         let stored = normalize_prose(prose);
+        // **`Store`, and the variant is the whole point.** The caller wrote
+        // nothing wrong: the prose was validated above, and what is left is a
+        // record this adapter cannot reshape. `InvalidEntity` said otherwise
+        // and cost more than a wrong label — the boundary hands that variant
+        // to the caller verbatim, so this message crossed with the store's own
+        // furniture in it and an instruction to go and repair the record.
+        // `Store` is sanitized on the way out (rules 53 and 68).
         let updated = with_prose_replaced(&doc.text, &stored).ok_or_else(|| {
-            MemoryError::InvalidEntity(format!(
-                "the prose could not be written to {entity}. Either it carries a line reserved \
-                 for the fact table's header — every fact below such a line would stop being \
-                 read as a fact — or this page was written by hand and is not yet in the shape \
-                 jojobot rewrites, in which case any ordinary metadata edit (update_entity) puts \
-                 it right and the prose can then be set"
+            MemoryError::Store(format!(
+                "the record for {entity} is not in a shape this adapter can write prose into"
             ))
         })?;
         self.ws.api().update_document(&doc.id, &updated).await?;
@@ -2441,6 +2444,40 @@ mod tests {
                 "a refusal must not name {leak:?} — the store is not an agent's \
                  business: {said}"
             );
+        }
+    }
+
+    /// **A page jojobot cannot write prose into is a store failure, not a
+    /// caller's mistake.**
+    ///
+    /// It was raised as `InvalidEntity`, which the boundary hands to the
+    /// caller verbatim — so the refusal reached an agent carrying the store's
+    /// own furniture and a repair instruction for it. `Store` is the variant
+    /// the boundary sanitizes. The caller did nothing wrong here: the page is
+    /// simply not in the shape jojobot rewrites.
+    #[tokio::test]
+    async fn prose_into_a_page_jojobot_cannot_shape_is_a_store_failure() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        // A page somebody wrote by hand. Its `id` line is bare rather than
+        // fenced, which is enough to identify the entity — `parse_field` falls
+        // back to the top of the page when there is no machine block — and not
+        // enough to write prose into, because the splice needs that block to
+        // know where prose begins.
+        fake.seed_document(
+            &coll,
+            "Alpha",
+            "id: person:alpha\n\nsomebody's own notes about alpha\n",
+        );
+        let store = store(fake.clone());
+
+        let outcome = store
+            .set_prose(&EntityId::person("alpha"), "a sentence to file here")
+            .await;
+
+        match outcome {
+            Err(MemoryError::Store(_)) => {}
+            other => panic!("a page jojobot cannot shape is a store failure: {other:?}"),
         }
     }
 

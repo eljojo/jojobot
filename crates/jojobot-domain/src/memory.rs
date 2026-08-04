@@ -899,7 +899,7 @@ pub const RESERVED_PROSE_LINES: &[&str] = &[FACTS_HEADER];
 pub fn validate_prose(prose: &str) -> Result<(), MemoryError> {
     if prose.trim().is_empty() {
         return Err(MemoryError::InvalidEntity(
-            "prose is empty; a page with nothing on it is not a charter".into(),
+            "prose is empty; there is nothing to write".into(),
         ));
     }
     if let Some(reserved) = prose
@@ -908,7 +908,7 @@ pub fn validate_prose(prose: &str) -> Result<(), MemoryError> {
         .find(|line| RESERVED_PROSE_LINES.contains(line))
     {
         return Err(MemoryError::InvalidEntity(format!(
-            "prose carries the line '{reserved}', which a document reserves for its own \
+            "prose carries the line '{reserved}', which jojobot reserves for a record's own \
              structure; every fact below such a line would stop being read as a fact. Say it \
              some other way — the words on their own, not on a line of their own, are fine"
         )));
@@ -999,7 +999,7 @@ pub fn validate_content(content: &str) -> Result<(), MemoryError> {
     }
     if breaks_the_row(content) {
         return Err(MemoryError::InvalidFact(
-            "content spans multiple lines; a table cell is one line".into(),
+            "content spans multiple lines; a claim is one line".into(),
         ));
     }
     Ok(())
@@ -1010,7 +1010,7 @@ pub fn validate_content(content: &str) -> Result<(), MemoryError> {
 pub fn validate_details(details: Option<&str>) -> Result<(), MemoryError> {
     if details.is_some_and(breaks_the_row) {
         return Err(MemoryError::InvalidFact(
-            "details span multiple lines; a table cell is one line".into(),
+            "details span multiple lines; details are one line".into(),
         ));
     }
     Ok(())
