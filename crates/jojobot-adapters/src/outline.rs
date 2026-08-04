@@ -1209,6 +1209,11 @@ mod tests {
         /// induced fault behind the restore-on-mismatch contract.
         poison: std::sync::atomic::AtomicBool,
         poison_body: std::sync::atomic::AtomicBool,
+        /// Arms [`with_column_blanked`] for the next `update_document`, naming
+        /// the column to empty. The last-cell injector cannot reach a column
+        /// that is followed by one which is never empty, and `standing` is
+        /// exactly that — `status` and `date` always sit after it.
+        poison_column: Mutex<Option<String>>,
         refuse_update: std::sync::atomic::AtomicBool,
     }
 
@@ -1354,6 +1359,43 @@ mod tests {
 
     /// One write mangled at a layer the codec doesn't control — the induced
     /// fault for the restore contract: every data row loses its last cell.
+    /// **Empty the named column in every data row**, leaving the row's width
+    /// alone. The store's own mangles include this shape: a cell whose content
+    /// does not survive re-serialization comes back blank rather than absent,
+    /// and a blank `standing` resolves to the default for the claim's
+    /// provenance — so a hedge that was never recorded reads back as a settled
+    /// claim, and only the read-back guard can tell.
+    fn with_column_blanked(text: &str, column: &str) -> String {
+        let mut at: Option<usize> = None;
+        text.lines()
+            .map(|l| {
+                if !l.trim_start().starts_with('|') {
+                    return l.to_string();
+                }
+                let mut cells = split_cells(l);
+                let first = cells
+                    .first()
+                    .map(|c| c.trim().to_string())
+                    .unwrap_or_default();
+                if first.eq_ignore_ascii_case("id") {
+                    at = cells.iter().position(|c| c.trim() == column);
+                    return l.to_string();
+                }
+                if !first.is_empty() && first.chars().all(|c| c == '-') {
+                    return l.to_string();
+                }
+                match at {
+                    Some(i) if i < cells.len() => {
+                        cells[i] = String::new();
+                        format!("|{}|", cells.join("|"))
+                    }
+                    _ => l.to_string(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn with_last_cell_dropped(text: &str) -> String {
         text.lines()
             .map(|l| {
@@ -1405,6 +1447,12 @@ mod tests {
         /// Mangle the next `update_document` before it lands.
         fn poison_next_update(&self) {
             self.poison.store(true, Ordering::SeqCst);
+        }
+
+        /// **Empty one named column on the next write**, for the fields the
+        /// last-cell injector cannot reach.
+        fn poison_column_next_update(&self, column: &str) {
+            *self.poison_column.lock().unwrap() = Some(column.to_string());
         }
 
         /// **Mangle the next write's fenced BODY instead of its rows.**
@@ -1651,6 +1699,10 @@ mod tests {
                 with_last_cell_dropped(text)
             } else {
                 text.to_string()
+            };
+            let text = match self.poison_column.lock().unwrap().take() {
+                Some(column) => with_column_blanked(&text, &column),
+                None => text,
             };
             let text = if self.poison_body.swap(false, Ordering::SeqCst) {
                 with_a_body_line_clipped(&text)
@@ -2359,6 +2411,94 @@ mod tests {
                  business: {said}"
             );
         }
+    }
+
+    /// **A write that loses the hedge is refused.**
+    ///
+    /// `standing` answers how settled a claim is, and it is the one field
+    /// whose loss is silent: a blank cell resolves to the default for the
+    /// claim's provenance, so testimony the operator hedged reads back as
+    /// testimony they stood behind. Nothing downstream can tell, because the
+    /// record it would compare against is the one that was mangled.
+    ///
+    /// The last-cell injector cannot produce this fault — `status` and `date`
+    /// always sit after `standing` — which is why the guard's `standing` arm
+    /// could be deleted with the whole workspace staying green.
+    #[tokio::test]
+    async fn a_write_that_loses_the_hedge_is_refused() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        fake.seed_document(&coll, "Alpha", &seeded_doc(&person("alpha")));
+        let store = store(fake.clone());
+
+        fake.poison_column_next_update("standing");
+        let outcome = store
+            .capture(NewFact {
+                provenance: Provenance::Testimony,
+                standing: Some(Standing::Open),
+                ..NewFact::about(
+                    EntityId::person("alpha"),
+                    "might move in the spring",
+                    date(2026, 7, 3),
+                )
+            })
+            .await;
+
+        let Err(err) = outcome else {
+            panic!("a write that lost the standing must not report success");
+        };
+        let said = err.to_string();
+        assert!(
+            said.contains("standing came back changed"),
+            "the refusal must name the field that differed: {said}"
+        );
+    }
+
+    /// **A write that loses the claim it was derived from is refused.**
+    ///
+    /// `derived_from` is the last column, so this fact draws no edge and
+    /// carries no event: that makes the address the last cell holding
+    /// anything, which is what the injector drops. A derived claim that comes
+    /// back with no parent is a hypothesis with its reasoning gone, and it
+    /// reads as one somebody made from nothing.
+    #[tokio::test]
+    async fn a_write_that_loses_the_claim_it_came_from_is_refused() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        fake.seed_document(&coll, "Alpha", &seeded_doc(&person("alpha")));
+        let store = store(fake.clone());
+
+        let parent = store
+            .capture(NewFact::about(
+                EntityId::person("alpha"),
+                "walks to work",
+                date(2026, 7, 4),
+            ))
+            .await
+            .expect("the parent claim is written")
+            .written()
+            .expect("the guard waves an ordinary capture through");
+
+        fake.poison_next_update();
+        let outcome = store
+            .capture(NewFact {
+                derived_from: Some(parent.address()),
+                ..NewFact::about(
+                    EntityId::person("alpha"),
+                    "lives near work",
+                    date(2026, 7, 4),
+                )
+            })
+            .await;
+
+        let Err(err) = outcome else {
+            panic!("a write that lost derived_from must not report success");
+        };
+        let said = err.to_string();
+        assert!(
+            said.contains("derived from came back changed"),
+            "the refusal must name the field that differed: {said}"
+        );
     }
 
     /// **The write mangles, and then the rollback fails too.**
