@@ -747,6 +747,21 @@ mod a_write_needs_an_identity {
             .expect("an identified capture answers");
         let address = address_of(&json_of(&captured));
 
+        // **Retract needs an input it would otherwise accept.** A fact is not
+        // retractable on its own merits, so the arm below refused for two
+        // reasons at once and only the `how_to_proceed` assertion could tell
+        // them apart — an arm that survives a rename of a refusal message
+        // rather than a deletion of the gate. An event is chronology, which
+        // retract takes, so identity is the only thing left to refuse it for.
+        let event = jojobot
+            .capture(Parameters(CaptureArgs {
+                event_type: Some("visit".into()),
+                ..capture_args("place:springfield", "the inspector came by")
+            }))
+            .await
+            .expect("an identified event capture answers");
+        let event_address = address_of(&json_of(&event));
+
         // …and now the same writes with nobody behind them. **Every one is
         // built explicitly rather than through a builder**, because the
         // builders carry the fixture identity — reaching for one here is how
@@ -799,7 +814,7 @@ mod a_write_needs_an_identity {
         refused(
             &jojobot
                 .retract(Parameters(RetractArgs {
-                    address: address.clone(),
+                    address: event_address.clone(),
                     reason: None,
                     sid: None,
                 }))
