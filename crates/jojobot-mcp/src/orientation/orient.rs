@@ -159,6 +159,13 @@ impl Jojobot {
             // elision on this surface owes — less came back, and the caller is
             // told so rather than left to infer withheld from empty.
             "orientation_elided": brief,
+            // **Names and when-to-use lines, never bodies.** A session that
+            // needs a procedure fetches it by name; a boot that shipped every
+            // one would spend a session's attention on the jobs it is not
+            // doing, and get worse with each skill added. `brief` does not
+            // narrow this — the index is what CHANGES between builds, so it is
+            // exactly what a returning caller still needs.
+            "skills": skills::index(),
             "snapshot": snapshot,
             "identity": identity,
             "session": session,
@@ -189,7 +196,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             boxes.clone(),
             Arc::new(InMemorySessions::new()),
-            Arc::new(sid::SessionRegistry::new()),
+            crate::harness::seeded_registry(),
         );
         make_box(&seeded, "dev").await;
         send(&seeded, "dev", "delta", "your hand-off").await;
@@ -199,7 +206,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             boxes,
             Arc::new(InMemorySessions::new()),
-            Arc::new(sid::SessionRegistry::new()),
+            crate::harness::seeded_registry(),
         );
         // Read through the boot snapshot, which is where the scoping lives:
         // this is the door that applies the ownership rule.
@@ -338,6 +345,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: None,
                     brief: None,
+                    skill: None,
                     resume: None,
                 }))
                 .await
@@ -417,6 +425,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: None,
                     brief: None,
+                    skill: None,
                     resume: None,
                 }))
                 .await
@@ -480,6 +489,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: None,
                     brief: None,
+                    skill: None,
                     resume: None,
                 }))
                 .await
@@ -520,14 +530,14 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::knowing_any_owner()),
             Arc::new(InMemorySessions::new()),
-            Arc::new(sid::SessionRegistry::new()),
+            crate::harness::seeded_registry(),
         );
         make_bot(&healthy, "gamma").await;
         healthy
             .set_charter(Parameters(SetCharterArgs {
                 bot: "gamma".into(),
                 prose: "Holds the plan.".into(),
-                sid: None,
+                sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await
             .expect("set_charter ok");
@@ -571,5 +581,170 @@ mod tests {
 
         // …and the snapshot degrades beside it, exactly as it does anonymously.
         assert_eq!(body["snapshot"]["mailboxes"]["available"], false);
+    }
+}
+
+/// **Skills are listed, never shipped, and fetched by name through the door
+/// that already orients.**
+///
+/// `start_here` is skill zero: it is where a session learns the model, so it is
+/// where a session learns which procedures exist. Packing the fetch onto it too
+/// is rule 66 — the surface grows by giving an existing verb more to do, not by
+/// growing a verb count — and rule 51, because the index and the fetch read one
+/// list rather than two.
+#[cfg(test)]
+mod skills_are_indexed_not_shipped {
+    use super::*;
+    use crate::harness::*;
+    use crate::orientation::skills;
+
+    /// The boot names every skill and hands over no procedure.
+    ///
+    /// The negative here is the whole point, and it is paired: an index with no
+    /// names would pass "no body is present" trivially, so the names are
+    /// asserted first and the body's own words are looked for second.
+    #[tokio::test]
+    async fn a_boot_names_the_skills_and_carries_none_of_their_bodies() {
+        let booted = json_of(
+            &handler()
+                .start_here(Parameters(OrientArgs {
+                    bot: None,
+                    brief: None,
+                    resume: None,
+                    skill: None,
+                }))
+                .await
+                .expect("start_here answers"),
+        );
+
+        let listed = booted["skills"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the boot must name the skills that exist: {booted}"));
+        assert_eq!(
+            listed.len(),
+            skills::SKILLS.len(),
+            "every shipped skill is listed: {booted}"
+        );
+        assert_eq!(listed[0]["name"], "recommend", "{booted}");
+        assert!(
+            listed[0]["when_to_use"]
+                .as_str()
+                .is_some_and(|w| w.contains("recommendation")),
+            "the index says what the skill is FOR — it is what a session chooses on: {booted}"
+        );
+
+        // …and not one procedure travelled with it. Asserted against the
+        // shipped bodies themselves rather than against words quoted out of
+        // them, so rewriting a procedure cannot quietly disarm this.
+        //
+        // **Against the ESCAPED form**, because the haystack is serialized
+        // JSON: a body's newlines are `\n` there, so searching for its raw
+        // bytes finds nothing whether or not it was shipped.
+        let whole = booted.to_string();
+        for skill in skills::SKILLS {
+            assert!(
+                !skill.body.is_empty(),
+                "an empty body would make the check below vacuous: {}",
+                skill.name
+            );
+            let as_json = serde_json::Value::String(skill.body.to_string()).to_string();
+            assert!(
+                !whole.contains(as_json.trim_matches('"')),
+                "the {} body rode along in the boot payload: {whole}",
+                skill.name
+            );
+        }
+    }
+
+    /// …and the body comes back when it is asked for by name.
+    #[tokio::test]
+    async fn a_skill_body_is_fetched_by_name() {
+        let body = json_of(
+            &handler()
+                .start_here(Parameters(OrientArgs {
+                    bot: None,
+                    brief: None,
+                    resume: None,
+                    skill: Some("recommend".into()),
+                }))
+                .await
+                .expect("start_here answers"),
+        );
+        assert_eq!(body["skill"]["name"], "recommend", "{body}");
+        // **Compared against the shipped constant, not against phrasing.** An
+        // earlier version pinned two sentences out of the body and went red the
+        // day the text was rewritten with nothing wrong — the same defect the
+        // boot story carried. What this verb owes is that the wire hands over
+        // what the binary holds, whole and unaltered, and that is checkable
+        // without knowing a word of it.
+        assert_eq!(
+            body["skill"]["body"].as_str(),
+            Some(skills::named("recommend").expect("it ships").body),
+            "the fetched skill must be the shipped body, byte for byte: {body}"
+        );
+    }
+
+    /// **A fetch that also names a bot is two asks, and is refused.** The
+    /// fetch returns before the boot and starts no session, so honouring the
+    /// `bot` would have handed back a body, no `sid`, and no word about the
+    /// argument that was dropped — a caller could not tell it had not booted.
+    #[tokio::test]
+    async fn a_skill_fetch_that_also_names_a_bot_is_blocked() {
+        let jojobot = handler();
+        let body = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    bot: Some("otto".into()),
+                    brief: None,
+                    skill: Some("recommend".into()),
+                    resume: None,
+                }))
+                .await
+                .expect("start_here answers"),
+        );
+        assert_eq!(body["status"], "blocked", "{body}");
+        let how = body["how_to_proceed"].as_str().unwrap_or_default();
+        assert!(
+            how.contains("skill") && how.contains("bot"),
+            "the refusal must name both ways forward: {body}"
+        );
+        // Paired: nothing was served. A refusal that also handed over the body
+        // would be the silent drop wearing a status field.
+        assert!(
+            body["skill"].is_null(),
+            "a refused fetch must not also serve the procedure: {body}"
+        );
+        // **The text reads as a sentence, not as source.** A multi-line Rust
+        // literal without a trailing continuation bakes the next line's
+        // indentation into the string, and this is agent-facing prose: the
+        // caller reads it to find out what to do next.
+        assert!(
+            !how.contains("   "),
+            "the refusal carries source indentation, so it reads as broken text: {how:?}"
+        );
+    }
+
+    /// A name that is no skill is blocked with the ones that are — the same
+    /// shape every other miss on this surface wears, so a caller branches on
+    /// `status` here exactly as everywhere else.
+    #[tokio::test]
+    async fn an_unknown_skill_is_blocked_and_names_the_ones_that_exist() {
+        let body = json_of(
+            &handler()
+                .start_here(Parameters(OrientArgs {
+                    bot: None,
+                    brief: None,
+                    resume: None,
+                    skill: Some("recomend".into()),
+                }))
+                .await
+                .expect("start_here answers"),
+        );
+        assert_eq!(body["status"], "blocked", "{body}");
+        assert_eq!(body["attempted"], "recomend", "{body}");
+        assert!(
+            body.to_string().contains("recommend"),
+            "the refusal names the skills that do exist: {body}"
+        );
     }
 }

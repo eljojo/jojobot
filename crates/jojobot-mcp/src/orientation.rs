@@ -18,6 +18,7 @@ pub mod essay;
 pub mod identity;
 pub mod orient;
 pub mod ping;
+pub mod skills;
 pub mod start_here;
 
 pub use start_here::OrientArgs;

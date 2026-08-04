@@ -24,6 +24,16 @@ pub struct OrientArgs {
     /// off on a first boot — there is nothing to answer yet.
     #[serde(default)]
     pub resume: Option<String>,
+    /// **A skill to read, by the name the index gave it.** The boot lists every
+    /// skill by name and when-to-use and ships no bodies; this is how you get
+    /// one, once the index has told you it is relevant.
+    ///
+    /// It is the same door because this door is skill zero: it is where a
+    /// session learns the model, so it is where a session learns the
+    /// procedures. A name that is no skill comes back blocked, naming the ones
+    /// that are.
+    #[serde(default)]
+    pub skill: Option<String>,
 }
 
 /// **The one orienting door**, with or without an identity: the world-model
@@ -45,7 +55,11 @@ impl Jojobot {
                        returns a live snapshot of what exists right now (entities by kind, EVERY \
                        BOT NAMED so you can see which identities you could boot as, and every \
                        mailbox by name — with counts for the ones you drain), so you start \
-                       oriented instead of guessing. CALLED THIS \
+                       oriented instead of guessing. IT ALSO LISTS THE SKILLS this build \
+                       ships — a name and what each is FOR, never the procedures themselves. \
+                       When one of them matches the job in front of you, call this again with \
+                       skill: its name and you get that body. Nothing here decides when a \
+                       skill applies; the index says what each is for and you choose. CALLED THIS \
                        BEFORE? Pass brief: true and you get the snapshot without the essay — the \
                        essay is the only part that does not change between calls, and calling \
                        again without brief reads it in full. NAME A BOT and the same answer also \
@@ -92,6 +106,52 @@ impl Jojobot {
                     .to_string(),
             ));
         }
+        // **The fetch is answered before the boot**, and it does not touch a
+        // session: reading a procedure is a read, and it must not sweep, start
+        // or resume anything.
+        if let Some(wanted) = args
+            .skill
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            // **Two asks, refused rather than half-served.** Reading a
+            // procedure starts no session and booting is what starts one, so
+            // honouring both would hand back a body and no `sid` — a caller
+            // that cannot tell it has not booted.
+            if bot.is_some() || resume.is_some() {
+                return Ok(misused(
+                    "reading a skill and booting an identity are two calls: a fetch starts no \
+                     session, so honouring `bot` here would hand you a body and no handle. Call \
+                     start_here with `skill` alone to read the procedure, then again with `bot` \
+                     to boot — or drop `skill` to boot now."
+                        .to_string(),
+                ));
+            }
+            return match skills::named(wanted) {
+                Some(skill) => json_result(&serde_json::json!({
+                    "skill": {
+                        "name": skill.name,
+                        "when_to_use": skill.when_to_use,
+                        "body": skill.body,
+                    },
+                })),
+                None => Ok(handle_declined(
+                    wanted,
+                    format!(
+                        "Nothing was read. '{wanted}' is not a skill this build ships. These \
+                         are, by name: {}. Ask for one by its exact name; any boot lists them \
+                         again with what each is for. They are compiled into the server, so \
+                         there is no verb that adds one.",
+                        skills::SKILLS
+                            .iter()
+                            .map(|s| s.name)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ),
+                )),
+            };
+        }
         self.orient(bot.as_ref(), args.brief.unwrap_or(false), resume)
             .await
     }
@@ -118,7 +178,7 @@ mod tests {
                 crm: None,
                 boot: None,
                 create_new: None,
-                sid: None,
+                sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await
             .expect("entity ok");
@@ -129,6 +189,7 @@ mod tests {
             .start_here(Parameters(OrientArgs {
                 bot: None,
                 brief: None,
+                skill: None,
                 resume: None,
             }))
             .await
@@ -201,6 +262,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: None,
                     brief: None,
+                    skill: None,
                     resume: None,
                 }))
                 .await
@@ -214,6 +276,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: None,
                     brief: Some(true),
+                    skill: None,
                     resume: None,
                 }))
                 .await
@@ -269,6 +332,7 @@ mod tests {
                     .start_here(Parameters(OrientArgs {
                         bot: None,
                         brief: None,
+                        skill: None,
                         resume: None,
                     }))
                     .await
@@ -279,6 +343,7 @@ mod tests {
                     .start_here(Parameters(OrientArgs {
                         bot: None,
                         brief: Some(true),
+                        skill: None,
                         resume: None,
                     }))
                     .await
@@ -323,6 +388,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: Some("gamma".into()),
                     brief: Some(true),
+                    skill: None,
                     resume: None,
                 }))
                 .await
@@ -343,6 +409,7 @@ mod tests {
             .start_here(Parameters(OrientArgs {
                 bot: None,
                 brief: None,
+                skill: None,
                 resume: None,
             }))
             .await
@@ -369,6 +436,7 @@ mod tests {
             .start_here(Parameters(OrientArgs {
                 bot: None,
                 brief: None,
+                skill: None,
                 resume: Some("new".into()),
             }))
             .await
@@ -409,6 +477,7 @@ mod tests {
             .start_here(Parameters(OrientArgs {
                 bot: Some("person:milhouse".into()),
                 brief: None,
+                skill: None,
                 resume: None,
             }))
             .await
@@ -443,6 +512,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: Some("gamm".into()),
                     brief: None,
+                    skill: None,
                     resume: None,
                 }))
                 .await
@@ -458,6 +528,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: Some("nobody".into()),
                     brief: None,
+                    skill: None,
                     resume: None,
                 }))
                 .await
@@ -499,7 +570,7 @@ mod tests {
             &jojobot
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("bot".into()),
-                    sid: None,
+                    sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await
                 .expect("list ok"),
@@ -520,6 +591,7 @@ mod tests {
                 .start_here(Parameters(OrientArgs {
                     bot: Some("gamma".into()),
                     brief: None,
+                    skill: None,
                     resume: None,
                 }))
                 .await
