@@ -7,7 +7,7 @@ use jiff::civil::Date;
 
 use jojobot_domain::memory::{
     Boot, Edge, EdgeShape, Entity, EntityId, Fact, FactAddress, FactId, FactStatus, Provenance,
-    event::Event, validate_prose, validate_subject,
+    Standing, event::Event, validate_prose, validate_subject,
 };
 
 /// The header that marks the machine-readable fact table at the bottom of a
@@ -18,9 +18,10 @@ use jojobot_domain::memory::{
 /// store enforced would be the only one anybody checked.
 pub(super) use jojobot_domain::memory::{FACTS_HEADER, MACHINERY_FIELD};
 /// The table's column header row.
-pub(super) const TABLE_HEADER: &str = "| id | subject | content | details | provenance | status | date | edges | event | derived_from |";
+pub(super) const TABLE_HEADER: &str = "| id | subject | content | details | provenance | standing | status | date | edges | event | derived_from |";
 /// The markdown table separator under the header.
-pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |";
+pub(super) const TABLE_SEP: &str =
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |";
 /// The doc schema's CURRENT version, stamped into the machine block (`schema:`)
 /// by every write. Schema evolution is a standing condition of this system —
 /// long-lived docs, written by every era of this software — so the eras are
@@ -31,7 +32,8 @@ pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | 
 ///   2 — details (M1): `id | subject | content | details | provenance | status | date`
 ///   3 — edges (M2):   8 columns, through the surface release
 ///   4 — event:        9 columns, through the alignment release
-///   5 — derived_from: the current 10-column [`TABLE_HEADER`]
+///   5 — derived_from: 10 columns, through the sourcing work
+///   6 — standing:     the current 11-column [`TABLE_HEADER`]
 ///
 /// A doc with no `schema:` line predates the field; its rows read by structural
 /// inference ([`layout_of`]), which is kept forever — hand-written and ancient
@@ -41,8 +43,16 @@ pub(super) const TABLE_SEP: &str = "| --- | --- | --- | --- | --- | --- | --- | 
 /// at all. Upgrades today are reparse + re-render ([`migrated_region`]); the
 /// first version whose upgrade can't be that gets its explicit step registered
 /// alongside this constant.
-pub(super) const SCHEMA_CURRENT: u32 = 5;
+pub(super) const SCHEMA_CURRENT: u32 = 6;
 
+/// **Every era before schema 6 APPENDED a column; schema 6 inserted one at
+/// index 5.** That is why width 11 is the first width that is not
+/// prefix-compatible with the one before it, and why a rollback past it cannot
+/// read a migrated row at all — where a rollback past any earlier era would
+/// simply have ignored a trailing cell. The cost was put to the operator and
+/// accepted: this deployment is forward-only. Recorded here because the next
+/// era bump faces the same choice and nothing else says which way it went.
+///
 /// Where each field sits in a row. **Four layouts exist on disk** — the schema
 /// grew twice and was reshuffled once — and rows written under every one of them
 /// must keep reading. A column is added to a row on its next touch (lazy
@@ -60,6 +70,11 @@ struct Layout {
     details: Option<usize>,
     /// Absent in slice 1, where a trailing `❓` on the content cell carried it.
     provenance: Option<usize>,
+    /// Absent in every layout before schema 6 — which is every row written
+    /// before the hedge had a home. Absent reads as
+    /// [`Standing::default_for`] the row's provenance, which is what such a
+    /// row has always meant.
+    standing: Option<usize>,
     status: usize,
     date: usize,
     /// Absent in the two shapes written between slice 1 and the `edges` column.
@@ -92,9 +107,20 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
             .is_some_and(|c| c.trim().parse::<Date>().is_ok())
     };
     match cells.len() {
+        11 => Some(Layout {
+            details: Some(3),
+            provenance: Some(4),
+            standing: Some(5),
+            status: 6,
+            date: 7,
+            edges: Some(8),
+            event: Some(9),
+            derived_from: Some(10),
+        }),
         10 => Some(Layout {
             details: Some(3),
             provenance: Some(4),
+            standing: None,
             status: 5,
             date: 6,
             edges: Some(7),
@@ -104,6 +130,7 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
         9 => Some(Layout {
             details: Some(3),
             provenance: Some(4),
+            standing: None,
             status: 5,
             date: 6,
             edges: Some(7),
@@ -113,6 +140,7 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
         8 => Some(Layout {
             details: Some(3),
             provenance: Some(4),
+            standing: None,
             status: 5,
             date: 6,
             edges: Some(7),
@@ -122,6 +150,7 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
         7 => Some(Layout {
             details: Some(3),
             provenance: Some(4),
+            standing: None,
             status: 5,
             date: 6,
             edges: None,
@@ -132,6 +161,7 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
         6 if is_date(5) && !is_date(4) => Some(Layout {
             details: None,
             provenance: Some(3),
+            standing: None,
             status: 4,
             date: 5,
             edges: None,
@@ -142,6 +172,7 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
         6 if is_date(4) && !is_date(5) => Some(Layout {
             details: None,
             provenance: None,
+            standing: None,
             status: 3,
             date: 4,
             edges: Some(5),
@@ -158,9 +189,20 @@ fn layout_of(cells: &[String]) -> Option<Layout> {
 /// read but never lose a row.
 fn era_layout(version: u32, width: usize) -> Option<Layout> {
     match (version, width) {
+        (6, 11) => Some(Layout {
+            details: Some(3),
+            provenance: Some(4),
+            standing: Some(5),
+            status: 6,
+            date: 7,
+            edges: Some(8),
+            event: Some(9),
+            derived_from: Some(10),
+        }),
         (5, 10) => Some(Layout {
             details: Some(3),
             provenance: Some(4),
+            standing: None,
             status: 5,
             date: 6,
             edges: Some(7),
@@ -170,6 +212,7 @@ fn era_layout(version: u32, width: usize) -> Option<Layout> {
         (4, 9) => Some(Layout {
             details: Some(3),
             provenance: Some(4),
+            standing: None,
             status: 5,
             date: 6,
             edges: Some(7),
@@ -179,6 +222,7 @@ fn era_layout(version: u32, width: usize) -> Option<Layout> {
         (3, 8) => Some(Layout {
             details: Some(3),
             provenance: Some(4),
+            standing: None,
             status: 5,
             date: 6,
             edges: Some(7),
@@ -188,6 +232,7 @@ fn era_layout(version: u32, width: usize) -> Option<Layout> {
         (2, 7) => Some(Layout {
             details: Some(3),
             provenance: Some(4),
+            standing: None,
             status: 5,
             date: 6,
             edges: None,
@@ -197,6 +242,7 @@ fn era_layout(version: u32, width: usize) -> Option<Layout> {
         (1, 6) => Some(Layout {
             details: None,
             provenance: Some(3),
+            standing: None,
             status: 4,
             date: 5,
             edges: None,
@@ -206,6 +252,7 @@ fn era_layout(version: u32, width: usize) -> Option<Layout> {
         (0, 6) => Some(Layout {
             details: None,
             provenance: None,
+            standing: None,
             status: 3,
             date: 4,
             edges: Some(5),
@@ -252,15 +299,28 @@ fn parse_derived_from(cell: &str) -> Option<FactAddress> {
     FactAddress::parse(cell).ok()
 }
 
-/// Escape a value for a markdown table cell — the one character a cell can't
-/// carry raw is the column delimiter.
+/// Escape a value for a markdown table cell: the column delimiter, and the
+/// backslash that escapes it.
+///
+/// **The backslash goes first, and it is not optional.** The delimiter escape
+/// buys its meaning with a backslash, so a cell carrying one raw is a cell
+/// whose grammar the caller's own text can speak. The mail and session codecs
+/// do the same.
 pub(super) fn escape_cell(s: &str) -> String {
-    s.replace('|', "\\|")
+    s.replace('\\', "\\\\").replace('|', "\\|")
 }
 
 /// Split a markdown table row into trimmed, unescaped cells, honouring `\|` as a
-/// literal pipe inside a cell.
+/// literal pipe and `\\` as a literal backslash inside a cell.
 ///
+/// A backslash in front of anything else is text and stays text.
+///
+/// **Two byte sequences from before the writer escaped its own backslash read
+/// differently here**: `a\\b` comes back one backslash short, and `a\\|b`
+/// splits at the pipe, widening the row past every layout so the fact drops
+/// out of every read. The row and its id survive on the page — it is
+/// unreadable, not destroyed. The production corpus was counted and holds
+/// none, so no era-aware reader exists.
 pub(super) fn split_cells(row: &str) -> Vec<String> {
     let row = row.trim();
     let inner = row.strip_prefix('|').unwrap_or(row);
@@ -271,9 +331,8 @@ pub(super) fn split_cells(row: &str) -> Vec<String> {
     let mut chars = inner.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '\\' if chars.peek() == Some(&'|') => {
-                cur.push('|');
-                chars.next();
+            '\\' if matches!(chars.peek(), Some('|' | '\\')) => {
+                cur.push(chars.next().expect("peeked"));
             }
             '|' => {
                 cells.push(cur.trim().to_string());
@@ -292,12 +351,13 @@ pub(super) fn split_cells(row: &str) -> Vec<String> {
 /// never folded into content.
 pub(super) fn render_fact_row(f: &Fact) -> String {
     format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
         f.id,
         escape_cell(&f.subject.to_string()),
         escape_cell(&f.content),
         escape_cell(f.details.as_deref().unwrap_or_default()),
         f.provenance.as_token(),
+        f.standing.as_token(),
         f.status.as_token(),
         f.date,
         escape_cell(&render_edge(f.edge.as_ref())),
@@ -352,6 +412,12 @@ fn parse_fact_row_in(row: &str, home: &EntityId, declared: Option<u32>) -> Optio
     let provenance = at
         .provenance
         .map_or(Provenance::default(), |i| Provenance::from_token(cell(i)));
+    // **Read in the light of provenance**, which is what makes a row from
+    // before this column keep meaning what it meant: no cell reads as the
+    // default for the claim's own provenance, never as a flat value.
+    let standing = at.standing.map_or(Standing::default_for(provenance), |i| {
+        Standing::parse(cell(i), provenance)
+    });
     let status = FactStatus::from_token(cell(at.status));
     let date: Date = cells[at.date].trim().parse().ok()?;
     let edge = at.edges.and_then(|i| parse_edge(cell(i)));
@@ -372,6 +438,7 @@ fn parse_fact_row_in(row: &str, home: &EntityId, declared: Option<u32>) -> Optio
         content: content.to_string(),
         details,
         provenance,
+        standing,
         status,
         date,
         edge,
@@ -936,6 +1003,7 @@ mod tests {
             content: content.into(),
             details: None,
             provenance: prov,
+            standing: Standing::default_for(prov),
             status: FactStatus::Active,
             date: d,
             edge: None,
@@ -1229,6 +1297,69 @@ mod tests {
         assert_eq!(parsed.date, date(2026, 7, 1));
     }
 
+    /// **A row from before the `standing` column keeps meaning what it meant.**
+    ///
+    /// The whole argument for reading an absent cell in the light of the row's
+    /// own provenance rather than as a flat value. Every fact in the store
+    /// predates this column, and each one already said how sure anybody was —
+    /// it said it through `provenance`, which was carrying both questions.
+    /// Reading absence as a constant would have rewritten the meaning of every
+    /// one of them on the way past: `settled` would have declared every old
+    /// guess a fact (and is the illegal pairing besides), `open` would have
+    /// reopened everything the operator ever stated flatly.
+    ///
+    /// Nothing is swept. The column appears on a row the next time a write
+    /// touches it, exactly as `details`, `edges`, `event` and `derived_from`
+    /// each arrived.
+    #[test]
+    fn a_row_from_before_the_standing_column_reads_by_its_provenance() {
+        let home = EntityId::person("alpha");
+
+        let said = parse_fact_row(
+            "| f1 | person:alpha | opens at seven |  | testimony | active | 2026-07-01 |  |  |  |",
+            &home,
+        )
+        .expect("a schema-5 row must still parse");
+        assert_eq!(said.provenance, Provenance::Testimony);
+        assert_eq!(
+            said.standing,
+            Standing::Settled,
+            "what he stated was settled before this column existed and still is"
+        );
+
+        let guessed = parse_fact_row(
+            "| f2 | person:alpha | probably busy |  | inference | active | 2026-07-02 |  |  |  |",
+            &home,
+        )
+        .expect("a schema-5 row must still parse");
+        assert_eq!(guessed.provenance, Provenance::Inference);
+        assert_eq!(
+            guessed.standing,
+            Standing::Open,
+            "a claim nobody confirmed was a hypothesis then and is open now"
+        );
+
+        // …and the column arrives on the row a write touches, carrying the
+        // reading above rather than a blank cell that would read as a default
+        // all over again.
+        let doc = with_fact_appended(&seeded_doc(&alpha()), &render_fact_row(&said));
+        assert!(
+            doc.contains("| f1 | person:alpha | opens at seven |  | testimony | settled |"),
+            "the touched row states its standing: {doc}"
+        );
+
+        // The reader reports what the page says. Both columns are read
+        // independently, so a row pairing them any of the four ways comes back
+        // as written rather than being nudged toward a default.
+        let as_written = parse_fact_row(
+            "| f3 | person:alpha | certainly busy |  | inference | settled | active | 2026-07-03 |  |  |  |",
+            &home,
+        )
+        .expect("an 11-cell row parses");
+        assert_eq!(as_written.provenance, Provenance::Inference);
+        assert_eq!(as_written.standing, Standing::Settled);
+    }
+
     /// **The slice-1 table.** Before `provenance` was its own column it rode a
     /// trailing `❓` on the content cell, and the row was
     /// `id | subject | content | status | date | edges` — six cells, exactly as
@@ -1385,7 +1516,7 @@ mod tests {
         .expect("a slice-1 row is addressable");
         assert!(
             touched.contains(
-                "| f1 | person:alpha | plays go ❓ |  | inference | active | 2026-07-01 |  |"
+                "| f1 | person:alpha | plays go ❓ |  | inference | open | active | 2026-07-01 |  |"
             ),
             "the touched row carries every current column: {touched}"
         );
@@ -1764,8 +1895,8 @@ mod tests {
         };
         assert_eq!(
             render_fact_row(&f),
-            "| f2 | person:alpha | rides with the club |  | testimony | active | 2026-07-24 | \
-             membership=org:north-trail-club |  |  |"
+            "| f2 | person:alpha | rides with the club |  | testimony | settled | active | \
+             2026-07-24 | membership=org:north-trail-club |  |  |"
         );
     }
 
@@ -2262,7 +2393,7 @@ mod tests {
         );
         assert_eq!(
             render_fact_row(&f),
-            "| f1 | person:alpha | keeps a paper notebook |  | inference | active | 2026-07-24 |  |  |  |"
+            "| f1 | person:alpha | keeps a paper notebook |  | inference | open | active | 2026-07-24 |  |  |  |"
         );
     }
 
@@ -2522,6 +2653,7 @@ mod bare_cr {
             content: content.into(),
             details: None,
             provenance: Provenance::Inference,
+            standing: Standing::Open,
             status: FactStatus::Active,
             date: date(2026, 7, 25),
             edge: None,
