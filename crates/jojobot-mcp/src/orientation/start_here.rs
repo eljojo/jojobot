@@ -119,7 +119,11 @@ impl Jojobot {
             // procedure starts no session and booting is what starts one, so
             // honouring both would hand back a body and no `sid` — a caller
             // that cannot tell it has not booted.
-            if bot.is_some() || resume.is_some() {
+            //
+            // `resume` is not tested here and does not need to be: a `resume`
+            // with no bot is refused above as a malformed call, so any
+            // `resume` reaching this line has a bot beside it.
+            if bot.is_some() {
                 return Ok(misused(
                     "reading a skill and booting an identity are two calls: a fetch starts no \
                      session, so honouring `bot` here would hand you a body and no handle. Call \
@@ -164,6 +168,62 @@ mod tests {
     use crate::mailboxes::testing::*;
     use crate::memory::testing::*;
     use crate::session::testing::*;
+
+    /// **Which guard answers a `skill` call that also carries `resume`.**
+    ///
+    /// The skill guard reads `bot.is_some() || resume.is_some()`, and the
+    /// `resume` half decides nothing: a `resume` with no bot is already
+    /// refused above as a malformed call, so by the time the skill guard runs
+    /// a `resume` always has a `bot` beside it and the first half is true.
+    ///
+    /// Both refusals are correct and they name different problems, which is
+    /// why this pins which one answers rather than only that something did.
+    #[tokio::test]
+    async fn a_skill_fetch_with_resume_is_refused_by_the_guard_that_fits() {
+        let jojobot = handler();
+
+        // No bot: the malformed-resume refusal answers, before the skill guard
+        // is reached at all.
+        let out = jojobot
+            .start_here(Parameters(OrientArgs {
+                bot: None,
+                brief: None,
+                skill: Some("evidence".into()),
+                resume: Some("jm7z".into()),
+            }))
+            .await
+            .expect("start_here ok");
+        let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
+        assert_eq!(body["status"], "blocked", "{body}");
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("resume answers the choice"),
+            "the malformed-resume refusal must answer this one: {body}"
+        );
+
+        // With a bot, the skill guard answers, and it answers because of the
+        // bot rather than the resume.
+        let out = jojobot
+            .start_here(Parameters(OrientArgs {
+                bot: Some("dev".into()),
+                brief: None,
+                skill: Some("evidence".into()),
+                resume: Some("jm7z".into()),
+            }))
+            .await
+            .expect("start_here ok");
+        let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
+        assert_eq!(body["status"], "blocked", "{body}");
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("two calls"),
+            "the skill guard must answer this one: {body}"
+        );
+    }
 
     #[tokio::test]
     async fn start_here_lands_a_fresh_agent_with_the_world_and_a_snapshot() {

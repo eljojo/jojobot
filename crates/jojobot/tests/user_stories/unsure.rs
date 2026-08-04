@@ -11,7 +11,8 @@
 //! an assertion beside it goes red on the day the capability lands.
 //!
 //! `// NOTE —` marks something a SESSION did not do. jojobot answers nothing
-//! about it, so no assertion can hold it and none pretends to.
+//! about it, so no assertion can hold it and none pretends to — and it
+//! proposes no call either, because there is no verb that would fix it.
 
 use super::dsl::Story;
 
@@ -130,6 +131,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     // The link is intact and says nothing about that. It is harmless here,
     // because a promotion only makes the conclusion safer — and it would read
     // exactly the same if the parent had been refuted instead.
+    //   s.derived_from(&derived).says_parent_moved().await;
     s.has_no_verb("restate", &["update_fact", "recall"]).await;
     s.recall("place:moes")
         .await
@@ -163,6 +165,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     // claim that has moved twice and one written correctly the first time are
     // indistinguishable — and the derived claim below still rests on a parent
     // that has since reversed.
+    //   s.history_of(&hedged).says("open → settled → open").await;
     s.has_no_verb("history_of", &["recall", "search"]).await;
     walked_back
         .claim(&derived)

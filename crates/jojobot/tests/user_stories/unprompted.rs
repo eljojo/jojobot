@@ -12,7 +12,8 @@
 //! an assertion beside it goes red on the day the capability lands.
 //!
 //! `// NOTE —` marks something a SESSION did not do. jojobot answers nothing
-//! about it, so no assertion can hold it and none pretends to.
+//! about it, so no assertion can hold it and none pretends to — and it
+//! proposes no call either, because there is no verb that would fix it.
 
 use super::dsl::Story;
 
@@ -94,6 +95,7 @@ async fn a_session_records_a_claim_with_its_source_unprompted() {
     // GAP — and nothing said the claim needed a source at all. The operator
     // volunteered one; had they not, nothing in the boot would have prompted
     // the session to ask.
+    //   s.capture("place:leftorium", "…").without_source().is_blocked().await;
     s.has_no_verb("require_source", &["capture", "update_fact"])
         .await;
 
@@ -153,6 +155,7 @@ async fn a_session_records_a_claim_with_its_source_unprompted() {
     // `inference` — which answers who backs the claim, and answers it wrongly:
     // the operator did. Recording the hedge honestly needs a field the
     // orientation never mentions.
+    //   s.essay().teaches("standing").await;
     //
     // The needle is `settled`, not `standing`: the field's own value token,
     // which the essay has no other use for, where the field's name is also

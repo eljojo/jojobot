@@ -856,13 +856,20 @@ mod a_write_needs_an_identity {
         );
     }
 
-    /// **The refusal separates two different problems.** "You have not booted"
-    /// and "the session world is down" both reach a caller as the same missing
-    /// `sid`, and the first is fixable by calling `start_here` while the second
-    /// is not. A refusal that named only the first would send a session round a
-    /// loop it cannot leave, which is the shape dev-49's storage message had.
+    /// **Every unidentified write refuses through ONE constructor.**
+    ///
+    /// The refusal has to separate two problems a caller cannot tell apart —
+    /// "you have not booted", which `start_here` fixes, and "the session world
+    /// is down", which nothing the caller does fixes. That separation lives in
+    /// the wording, so a test cannot hold it without pinning our own prose,
+    /// and a test that pins prose goes red when somebody improves a sentence.
+    ///
+    /// What IS structural is that there is one source for it. Pin that: a
+    /// verb's refusal is byte-identical to [`session_unbound`], so no verb can
+    /// grow a refusal of its own that says less. Improving the sentence moves
+    /// both sides at once, which is the point.
     #[tokio::test]
-    async fn the_refusal_says_what_to_do_when_the_door_cannot_help_either() {
+    async fn an_unidentified_write_refuses_through_the_one_constructor() {
         let jojobot = handler();
         let body = json_of(
             &jojobot
@@ -873,15 +880,11 @@ mod a_write_needs_an_identity {
                 .await
                 .expect("capture answers"),
         );
-        let how = body["how_to_proceed"].as_str().expect("advice");
-        // The ordinary case: boot.
-        assert!(how.contains("start_here"), "{body}");
-        // …and the one a caller cannot act its way out of, named as such.
-        assert!(
-            how.contains("session world is unreachable"),
-            "the refusal must say what it means when the door cannot help either: {body}"
+        assert_eq!(
+            body,
+            json_of(&crate::caller::session_unbound()),
+            "a verb must refuse an unidentified write through the shared constructor: {body}"
         );
-        assert!(how.contains("Tell the operator"), "…and who can: {body}");
     }
 
     /// **Reads stay open, and this is the pair to the test above rather than an

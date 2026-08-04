@@ -6,7 +6,8 @@
 //! an assertion beside it goes red on the day the capability lands.
 //!
 //! `// NOTE —` marks something a SESSION did not do. jojobot answers nothing
-//! about it, so no assertion can hold it and none pretends to.
+//! about it, so no assertion can hold it and none pretends to — and it
+//! proposes no call either, because there is no verb that would fix it.
 
 use serde_json::json;
 

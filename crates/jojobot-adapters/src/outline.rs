@@ -1229,10 +1229,10 @@ mod tests {
     /// **What real Outline does to a table cell**, applied independently of
     /// the codec so the fake can DISAGREE with it.
     ///
-    /// Measured, not modelled — every rule here has a recorded case behind it
-    /// from `characterise_what_the_store_does_to_text`. The store parses a cell
-    /// as markdown and re-emits it, so what survives is a fixed point of
-    /// parse-then-emit:
+    /// Measured, not modelled — every rule here was read off the real store
+    /// and each has a golden fixture in `fixtures/` holding the case it came
+    /// from. The store parses a cell as markdown and re-emits it, so what
+    /// survives is a fixed point of parse-then-emit:
     ///
     /// * a backslash that IS a valid escape is consumed (`\"` comes back `"`),
     /// * a backslash that is NOT is preserved by being escaped (`c:\dir`
@@ -3969,10 +3969,10 @@ mod tests {
     /// **The sessions half of the same exclusion — a session page is machinery,
     /// not content.**
     ///
-    /// `64d54bf` deleted `jojobots_own_machinery_is_not_scanned_into_the_index`,
-    /// which covered BOTH flavours. Its sibling above covers mail; this covers
-    /// sessions, and without it nothing at HEAD asserted the property for the
-    /// pages that carry a run's whole record.
+    /// **Both flavours of machinery need their own assertion.** The sibling
+    /// above covers a mailbox page; this covers a session page, and the two
+    /// are separate tests because one exclusion filter serves both and a
+    /// single test would leave whichever flavour it did not write unguarded.
     ///
     /// **What leaks if this breaks is not a stray marker.** A session page holds
     /// every focus line, every chronology entry and the closing story of every

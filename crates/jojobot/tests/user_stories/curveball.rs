@@ -11,7 +11,8 @@
 //! an assertion beside it goes red on the day the capability lands.
 //!
 //! `// NOTE —` marks something a SESSION did not do. jojobot answers nothing
-//! about it, so no assertion can hold it and none pretends to.
+//! about it, so no assertion can hold it and none pretends to — and it
+//! proposes no call either, because there is no verb that would fix it.
 
 use super::dsl::Story;
 
@@ -106,6 +107,7 @@ async fn a_curveball_collides_with_the_week() {
     // decided and cannot say what it was decided AGAINST, so the reasoning
     // that survives is three unconnected sentences. A decision has nowhere to
     // name what it chose over what.
+    //   s.decided("project:atlas", "…", instead_of: "event:winter-fest").await;
     s.has_no_verb("decide", &["capture", "update_fact"]).await;
     let _ = &accepted;
     //   s.decided(&accepted, over: &[&winter_fest], because: "the draft is fixed").await;

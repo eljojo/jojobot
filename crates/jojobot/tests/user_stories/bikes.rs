@@ -60,6 +60,7 @@ async fn keeping_track_of_bikes() {
     // GAP — both of those are STATES rather than descriptions. Nothing carries
     // state, so they read as permanent truths about the bike and will still
     // read that way after it is sold.
+    //   s.state("thing:road-bike", "for sale").await;
     s.recall("thing:road-bike")
         .await
         .says("hanging in the basement")
@@ -177,6 +178,7 @@ async fn keeping_track_of_bikes() {
     // person by any claim, lending or otherwise, so "what have I lent out, and
     // to whom" cannot be asked — only searched for in whatever words the note
     // happened to use.
+    //   s.fact_about("thing:floor-pump", "…", "loaned-to", "person:milhouse").await;
     s.through("connection", "person:milhouse", "thing")
         .await
         .says("thing:floor-pump");

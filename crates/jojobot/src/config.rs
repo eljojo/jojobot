@@ -268,8 +268,8 @@ mod tests {
     #[test]
     fn authority_strips_scheme_and_path() {
         assert_eq!(
-            authority_of("https://jojobot.net/mcp").as_deref(),
-            Some("jojobot.net")
+            authority_of("https://jojobot.example/mcp").as_deref(),
+            Some("jojobot.example")
         );
         assert_eq!(
             authority_of("http://127.0.0.1:8080/mcp").as_deref(),

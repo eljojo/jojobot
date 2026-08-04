@@ -41,6 +41,7 @@ async fn moving_abroad() {
     // GAP — there is no entity for the operator, so outside this story those
     // three claims have no subject at all. A system modelling a life has no
     // node for the person whose life it is, and every preference needs one.
+    //   s.add_the_operator("The operator").await;
     s.list("person").await.never_says("\"operator\"");
 
     // Research: inference, not testimony, and it reads back marked as such.
@@ -97,6 +98,7 @@ async fn moving_abroad() {
     // Nothing says this edge means "inside" rather than "near" or "flies
     // to", so a walk finds the pair and a reader still has to read each
     // sentence to learn what the link was.
+    //   s.fact_about("place:capital-city", "…", "inside", "place:far-country").await;
     s.has_no_verb("contains", &["capture", "search"]).await;
 
     s.wrap("two cities on the table").await;

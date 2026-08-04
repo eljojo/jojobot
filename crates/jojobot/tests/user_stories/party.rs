@@ -140,6 +140,7 @@ async fn throwing_a_birthday_party() {
     // has not answered come back indistinguishable, because the edge carries
     // nothing but its shape. The answer is only in each fact's prose, so the
     // question worth asking costs a read per guest and a judgement per read.
+    //   s.through("attendance", "event:birthday-party", "person").with_answer("yes").await;
     s.has_no_verb("rsvp", &["capture", "search"]).await;
     let guests = s
         .through("attendance", "event:birthday-party", "person")

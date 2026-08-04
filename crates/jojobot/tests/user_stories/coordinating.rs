@@ -168,6 +168,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // GAP — the defect has the same problem from the other end: nothing
     // connects it to the commit that closed it. The event is on the page, the
     // fix is in the history, and only a person knows they are the same story.
+    //   s.fact_about(&defect, "closed by", "closed-by", "thing:commit-omicron").await;
     s.has_no_verb("closed_by", &["capture", "update_fact"])
         .await;
     s.recall("project:jojobot-server")
