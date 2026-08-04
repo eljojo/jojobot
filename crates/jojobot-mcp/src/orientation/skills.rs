@@ -162,12 +162,16 @@ still open. These properties are independent. The operator can tell you
 something and say that they are not sure of it. That claim is theirs, and it
 is still open. Do not record the operator's own doubt as your guess.
 
-## A claim you worked out is a hypothesis
+## Mark a claim you worked out
 
 If you cannot point to the operator's words, you worked the claim out. Mark
 it. You are rewarded for confident structure, and this is why an unmarked
 guess is a risk: the next session reads it with the authority of a statement
 the operator made.
+
+Marking who worked it out is not the same as marking how settled it is. A
+claim you worked out starts open. A claim the operator states and hedges is
+also open, and it is still theirs.
 
 ## Four rules
 
