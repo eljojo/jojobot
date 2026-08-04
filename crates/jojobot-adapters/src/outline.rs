@@ -1269,6 +1269,36 @@ mod tests {
         out
     }
 
+    /// **The store rewrites prose too, and the fake used to store it
+    /// verbatim.**
+    ///
+    /// Prose and table cells are one zone: the store parses the document as
+    /// markdown and re-emits it, so a backslash in a sentence comes back
+    /// doubled exactly as it does in a cell. A fake that kept prose byte for
+    /// byte was POORER than the deployment, which is the quiet half of the
+    /// fixture problem — a fake richer than reality fails loudly, while a fake
+    /// poorer than it lets a guard pass on a fault that only production sees.
+    ///
+    /// Two zones stay verbatim, because the store leaves them alone: fenced
+    /// blocks, which is why entity metadata survives at all, and table rows,
+    /// which [`rectangularized`] has already rewritten cell by cell.
+    fn prose_rewritten_like_the_store(text: &str) -> String {
+        let mut fenced = false;
+        text.lines()
+            .map(|l| {
+                if l.trim_start().starts_with("```") {
+                    fenced = !fenced;
+                    return l.to_string();
+                }
+                if fenced || l.trim_start().starts_with('|') {
+                    return l.to_string();
+                }
+                rewritten_like_the_store(l)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn rectangularized(text: &str) -> String {
         let lines: Vec<&str> = text.lines().collect();
         let mut out: Vec<String> = Vec::with_capacity(lines.len());
@@ -1710,6 +1740,7 @@ mod tests {
                 text
             };
             let text = rectangularized(&text);
+            let text = prose_rewritten_like_the_store(&text);
             let mut docs = self.documents.lock().unwrap();
             match docs.iter_mut().find(|(_, d)| d.id == id) {
                 Some((_, d)) => {
@@ -2411,6 +2442,46 @@ mod tests {
                  business: {said}"
             );
         }
+    }
+
+    /// **Prose the store rewrites is still written, through the call site
+    /// rather than through the comparison alone.**
+    ///
+    /// `same_prose_value` has its own tests. The call in `set_prose` did not,
+    /// so the argument it passes was invisible: reverting it to
+    /// `Compare::Exact` restored the bug where a sentence carrying a path
+    /// could not be saved at all, and nothing in the workspace turned red.
+    ///
+    /// This sends the sentence on the journey. The fake rewrites prose the way
+    /// the store does, so the read-back differs from what was written, and the
+    /// write succeeds only because the guard forgives that one rewrite.
+    #[tokio::test]
+    async fn prose_the_store_rewrites_is_still_written() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+        fake.seed_document(&coll, "Alpha", &seeded_doc(&person("alpha")));
+        let store = store(fake.clone());
+        let alpha = EntityId::person("alpha");
+
+        let written = store
+            .set_prose(&alpha, "the export lands in c:\\reports and nowhere else")
+            .await
+            .expect("an ordinary sentence with a path in it must be writable");
+
+        assert!(
+            written.contains("c:\\reports") || written.contains("c:\\\\reports"),
+            "the path must survive the round trip in some form: {written:?}"
+        );
+        let read = store
+            .scan_entity(&alpha)
+            .await
+            .expect("scan ok")
+            .expect("alpha has a doc");
+        assert!(
+            read.prose.contains("reports"),
+            "the prose must be on the page after the write: {:?}",
+            read.prose
+        );
     }
 
     /// **A write that loses the hedge is refused.**
