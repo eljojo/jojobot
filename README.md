@@ -11,9 +11,11 @@ never runs inference of its own — the assistant is the only mind.
 
 > **Status: two domains live, one front door over both, sessions can boot as an
 > identity, and the method ships with the binary.** The server ships **Memory** — typed entities and dated
-> facts with provenance (testimony vs inference), a write guard that blocks
-> near-miss creations with candidates, structured edges, aliases, and
-> orienteering retrieval (every hit arrives with its surroundings) — and
+> facts carrying **two independent answers: who backs a claim** (testimony vs
+> inference) **and how settled it is** (open vs settled), because the operator's
+> own hedge is their claim and still a hypothesis — a write guard that blocks
+> near-miss creations with candidates, structured edges in five shapes, aliases,
+> and orienteering retrieval (every hit arrives with its surroundings) — and
 > **Mailboxes** — message boxes with `new → read → processed`
 > state (read ≠ processed; processed is a terminal archive; no delete verbs —
 > the tool surface is pinned by test), each message optionally carrying a
