@@ -146,7 +146,7 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
 /// is simply not in it, and an answer that comes back without mail hits and
 /// without a word reads as "no message says that". That is a different claim
 /// from "jojobot has read no messages", and it is the one a caller acts on.
-fn mail_coverage(query: &SearchQuery, coverage: MailCoverage) -> serde_json::Value {
+fn mail_coverage(query: &SearchQuery, coverage: Coverage) -> serde_json::Value {
     let excluded = |note: &str| serde_json::json!({ "searched": false, "note": note });
     if !query.include_mail {
         return excluded(
@@ -172,7 +172,7 @@ fn mail_coverage(query: &SearchQuery, coverage: MailCoverage) -> serde_json::Val
         );
     }
     match coverage {
-        MailCoverage::Unread => excluded(
+        Coverage::Unread => excluded(
             "jojobot has not been able to read the mailbox world, so NO message is searchable \
              right now — this is not 'nothing matched'. The memory half of this answer is \
              complete. start_here's snapshot says whether the mailbox world is reachable at all.",
@@ -182,14 +182,44 @@ fn mail_coverage(query: &SearchQuery, coverage: MailCoverage) -> serde_json::Val
         // hunting an older message has to be told rather than shown an empty
         // list. Reporting this as `searched: false` was an answer that carried
         // message hits and denied having searched any.
-        MailCoverage::Partial => serde_json::json!({
+        Coverage::Partial => serde_json::json!({
             "searched": true,
             "note": "PARTIAL: jojobot could not read the mailbox world at startup, so only \
                      messages it has handled since are searchable. Any hit here is real, but an \
                      older message may be missing — this is not a complete answer over mail. \
                      start_here's snapshot says whether the mailbox world is reachable at all.",
         }),
-        MailCoverage::Loaded => serde_json::json!({ "searched": true }),
+        Coverage::Loaded => serde_json::json!({ "searched": true }),
+    }
+}
+
+/// **Whether this answer covered the memory graph, and what is missing when it
+/// didn't** — [`mail_coverage`]'s question, asked of the other store, in the
+/// same shape and the same words.
+///
+/// There is no caller-side reason for a gap here: memory is searched by every
+/// query, so the only way this half is incomplete is that the index is behind
+/// the store — a boot scan that failed, or a document jojobot wrote and could
+/// not re-read afterwards. The write landed either way. What a caller loses is
+/// the guarantee that this answer reflects it, and the way back is `recall`,
+/// which reads the store.
+fn memory_coverage(coverage: Coverage) -> serde_json::Value {
+    match coverage {
+        Coverage::Unread => serde_json::json!({
+            "searched": false,
+            "note": "jojobot could not read the memory store at startup, so NO entity, fact or \
+                     prose is searchable right now — this is not 'nothing matched'. The memory \
+                     verbs are unaffected: recall reads the store directly and is complete.",
+        }),
+        Coverage::Partial => serde_json::json!({
+            "searched": true,
+            "note": "PARTIAL: at least one document is indexed as it was BEFORE a write that \
+                     landed, because jojobot could not re-read it afterwards. Every hit here is \
+                     real, but one of them may be a version the store has moved past, and a row \
+                     written since may be missing. recall reads the store directly and is \
+                     complete — use it when the answer matters.",
+        }),
+        Coverage::Loaded => serde_json::json!({ "searched": true }),
     }
 }
 
@@ -221,8 +251,12 @@ impl Jojobot {
                        and searched: true can still be partial after a degraded start, where the \
                        hits are real but anything older than this server's start is missing. \
                        Whenever `mail` carries a `note`, that note says which case you are in — \
-                       read it before concluding a message does not exist. No pagination — raise \
-                       `limit` or ask a better question."
+                       read it before concluding a message does not exist. `memory` answers the \
+                       same question about entities, facts and prose: searched: false means the \
+                       memory store was never read, and searched: true with a note means at least \
+                       one document is indexed as it stood before a write that landed — the hits \
+                       are real, one may be out of date, and `recall` reads the store itself. No \
+                       pagination — raise `limit` or ask a better question."
     )]
     pub(crate) async fn search(
         &self,
@@ -258,6 +292,7 @@ impl Jojobot {
         let hits = self.search.search(&query).map_err(memory_error)?;
         let body = serde_json::json!({
             "count": hits.len(),
+            "memory": memory_coverage(self.search.memory_coverage()),
             "mail": mail_coverage(&query, self.search.mail_coverage()),
             "results": hits.iter().map(hit_json).collect::<Vec<_>>(),
         });
@@ -555,7 +590,7 @@ mod tests {
             }]
         };
 
-        for coverage in [MailCoverage::Partial, MailCoverage::Loaded] {
+        for coverage in [Coverage::Partial, Coverage::Loaded] {
             let body = json_of(
                 &handler_with(Arc::new(SpySearch::covering(coverage, hit())))
                     .search(Parameters(SearchArgs {
@@ -583,7 +618,7 @@ mod tests {
         // …and the degraded one still says it is degraded, or the caller reads a
         // partial answer over mail as a complete one.
         let partial = json_of(
-            &handler_with(Arc::new(SpySearch::covering(MailCoverage::Partial, hit())))
+            &handler_with(Arc::new(SpySearch::covering(Coverage::Partial, hit())))
                 .search(Parameters(SearchArgs {
                     query: Some("damper".into()),
                     ..search_args()
@@ -597,6 +632,99 @@ mod tests {
                 .expect("a partial answer says it is partial")
                 .contains("PARTIAL"),
             "got {partial}"
+        );
+    }
+
+    /// **An answer served from a memory half that is behind says so.**
+    ///
+    /// The mail half has said this since it shipped; the memory half never
+    /// learned to, so a `search` answered out of an index holding the version
+    /// before somebody's write read exactly like a complete one. Honesty to the
+    /// caller who wrote does nothing for the sessions that read afterwards, and
+    /// those are the ones with no way to tell.
+    #[tokio::test]
+    async fn an_answer_from_a_memory_half_that_is_behind_says_so() {
+        let hit = || {
+            vec![Hit::Entity {
+                entity: Entity {
+                    id: EntityId("person:alpha".into()),
+                    kind: EntityKind::Person,
+                    name: "Alpha".into(),
+                    aliases: Vec::new(),
+                    source: "user-named".into(),
+                    crm: None,
+                    parent: None,
+                    boot: Boot::OnDemand,
+                },
+                doc_id: "doc-9".into(),
+                edges: Vec::new(),
+            }]
+        };
+
+        let complete = json_of(
+            &handler_with(Arc::new(SpySearch::over_memory(Coverage::Loaded, hit())))
+                .search(Parameters(SearchArgs {
+                    query: Some("alpha".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(
+            complete["memory"]["searched"], true,
+            "a loaded half searched everything: {complete}"
+        );
+        assert!(
+            complete["memory"]["note"].is_null(),
+            "and has nothing to warn about: {complete}"
+        );
+
+        let behind = json_of(
+            &handler_with(Arc::new(SpySearch::over_memory(Coverage::Partial, hit())))
+                .search(Parameters(SearchArgs {
+                    query: Some("alpha".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        // Searched, and said so — the hits are real. The claim is that something
+        // is MISSING, which is a different thing from nothing being searched, and
+        // collapsing the two would make an answer carry hits and deny searching.
+        assert_eq!(
+            behind["memory"]["searched"], true,
+            "partial is not empty: {behind}"
+        );
+        assert!(
+            behind["memory"]["note"]
+                .as_str()
+                .expect("a partial answer says it is partial")
+                .contains("PARTIAL"),
+            "got {behind}"
+        );
+
+        let unread = json_of(
+            &handler_with(Arc::new(SpySearch::over_memory(
+                Coverage::Unread,
+                Vec::new(),
+            )))
+            .search(Parameters(SearchArgs {
+                query: Some("alpha".into()),
+                ..search_args()
+            }))
+            .await
+            .expect("search ok"),
+        );
+        assert_eq!(
+            unread["memory"]["searched"], false,
+            "an index that never read the store searched nothing: {unread}"
+        );
+        assert!(
+            unread["memory"]["note"]
+                .as_str()
+                .expect("an absence says why")
+                .contains("recall"),
+            "…and names the verb that reads the store instead: {unread}"
         );
     }
 

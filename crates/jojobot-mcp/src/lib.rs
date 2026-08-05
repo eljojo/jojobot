@@ -57,7 +57,7 @@ use jojobot_domain::memory::{
     FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance, Standing,
     event::Event,
     guard::{self, EntityMatch},
-    search::{DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, MailCoverage, Search, SearchQuery},
+    search::{Coverage, DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, Search, SearchQuery},
     validate_edge,
 };
 use jojobot_domain::session::{

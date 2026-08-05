@@ -16,7 +16,8 @@ impl Default for SpySearch {
         SpySearch {
             seen: Mutex::new(None),
             hits: Mutex::new(Vec::new()),
-            coverage: MailCoverage::Loaded,
+            coverage: Coverage::Loaded,
+            memory: Coverage::Loaded,
         }
     }
 }
@@ -31,10 +32,20 @@ impl SpySearch {
 
     /// A search port at a given mail coverage — the states a degraded index
     /// reports.
-    pub(crate) fn covering(coverage: MailCoverage, hits: Vec<Hit>) -> Self {
+    pub(crate) fn covering(coverage: Coverage, hits: Vec<Hit>) -> Self {
         SpySearch {
             hits: Mutex::new(hits),
             coverage,
+            ..Default::default()
+        }
+    }
+
+    /// A search port whose MEMORY half is degraded — an index that could not
+    /// re-read a document it wrote, or whose boot scan failed.
+    pub(crate) fn over_memory(memory: Coverage, hits: Vec<Hit>) -> Self {
+        SpySearch {
+            hits: Mutex::new(hits),
+            memory,
             ..Default::default()
         }
     }
@@ -43,7 +54,7 @@ impl SpySearch {
     /// index is in when the boot scan of the board failed and nothing has
     /// indexed a message since.
     pub(crate) fn with_no_mail_indexed() -> Self {
-        Self::covering(MailCoverage::Unread, Vec::new())
+        Self::covering(Coverage::Unread, Vec::new())
     }
 
     pub(crate) fn query(&self) -> SearchQuery {
@@ -61,8 +72,12 @@ impl Search for SpySearch {
         Ok(self.hits.lock().unwrap().clone())
     }
 
-    fn mail_coverage(&self) -> MailCoverage {
+    fn mail_coverage(&self) -> Coverage {
         self.coverage
+    }
+
+    fn memory_coverage(&self) -> Coverage {
+        self.memory
     }
 }
 
@@ -76,7 +91,9 @@ pub(crate) struct SpySearch {
     /// How much of the mail board this double claims to hold. Default
     /// loaded: an index that has read the board is the ordinary case, and
     /// the degraded ones are worth writing down at a call site.
-    coverage: MailCoverage,
+    coverage: Coverage,
+    /// The same, for the memory half.
+    memory: Coverage,
 }
 
 pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {

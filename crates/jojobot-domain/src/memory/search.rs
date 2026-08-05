@@ -345,29 +345,37 @@ pub enum Hit {
     },
 }
 
-/// How much of the mailbox board the projection actually holds — **the honesty
-/// half of degrade-don't-error**, and three states rather than two because the
-/// middle one is reachable and was being reported as one of the others.
+/// How much of one half of the corpus the projection actually holds — **the
+/// honesty half of degrade-don't-error**, and three states rather than two
+/// because the middle one is reachable and was being reported as one of the
+/// others.
 ///
-/// A search is a read of an in-process index, so a mailbox world that was
-/// unreachable when the index was built does not make searching fail; it makes
-/// mail missing. "No message says that" and "jojobot has read no messages" are
-/// different claims, and a caller acts on both.
+/// A search is a read of an in-process index, so a store that was unreachable
+/// when the index was built, or that could not be re-read after a write, does
+/// not make searching fail; it makes material missing. "Nothing says that" and
+/// "jojobot has not read it" are different claims, and a caller acts on both.
+///
+/// **One vocabulary for both halves.** Memory and mail are two stores behind
+/// one index and each can be behind on its own, so each reports its own
+/// coverage — in the same three words, because a caller reading an answer
+/// should not have to learn two of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MailCoverage {
-    /// The board has never been read and nothing has indexed a message: no
-    /// message is searchable at all, and an empty answer means nothing.
+pub enum Coverage {
+    /// Nothing of this half is searchable: it was never read and nothing has
+    /// been written through this process since. An empty answer means nothing.
     Unread,
-    /// The board has never been read, but messages written **through this
-    /// process since** are indexed. Hits are real and findable; anything older
-    /// than this process is missing, and a caller who is looking for an old
-    /// message has to be told that rather than shown an empty list.
+    /// Some of it is searchable and some is known to be missing. Hits are real
+    /// and findable; what is absent may exist anyway, and a caller has to be
+    /// told that rather than shown an empty list.
     ///
-    /// This is what a failed boot scan leaves behind. Never collapse it into
-    /// [`Unread`](Self::Unread): that would answer with message hits while
-    /// saying no message was searched.
+    /// Two ways in, and they are the same claim to a reader: a boot read that
+    /// failed, leaving only what this process has written since; and a document
+    /// whose refresh after a write could not run, leaving the index holding the
+    /// version before it. Never collapse it into [`Unread`](Self::Unread): that
+    /// would answer with hits while saying nothing was searched.
     Partial,
-    /// The board was read: everything on it is searchable.
+    /// It was read and nothing is known to be behind: everything in it is
+    /// searchable.
     Loaded,
 }
 
@@ -379,10 +387,19 @@ pub trait Search: Send + Sync {
     /// or name the query matches pinned to the top.
     fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError>;
 
-    /// How much of the mail board this projection holds — see [`MailCoverage`].
+    /// How much of the mail board this projection holds — see [`Coverage`].
     /// Memory results come back whatever it says; this is what lets an answer
     /// tell a caller which kind of silence they are looking at.
-    fn mail_coverage(&self) -> MailCoverage;
+    fn mail_coverage(&self) -> Coverage;
+
+    /// How much of the memory graph this projection holds — the same question
+    /// as [`mail_coverage`](Self::mail_coverage), asked of the other store.
+    ///
+    /// It is not always [`Loaded`](Coverage::Loaded), and that is the point: a
+    /// boot scan that failed, or a document whose refresh after a write could
+    /// not run, leaves this half serving the version it last read. Without this
+    /// the caller cannot tell that answer from a complete one.
+    fn memory_coverage(&self) -> Coverage;
 }
 
 #[cfg(test)]

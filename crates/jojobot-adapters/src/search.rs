@@ -32,7 +32,7 @@ use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
     Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction,
     guard::{self, MatchReason},
-    search::{self, DocScan, EntityRef, Hit, MailCoverage, Search, SearchQuery},
+    search::{self, Coverage, DocScan, EntityRef, Hit, Search, SearchQuery},
 };
 
 /// How much a fresh fact is worth against text relevance. Small on purpose: it
@@ -184,7 +184,7 @@ pub struct FullTextIndex {
     ///
     /// **Not "are there messages in it".** An empty board that was read and a
     /// mailbox world that never answered look identical in the postings and are
-    /// opposite answers to the caller — see [`MailCoverage`].
+    /// opposite answers to the caller — see [`Coverage`].
     mail_loaded: std::sync::atomic::AtomicBool,
     /// Whether any single message has been indexed since this index opened.
     ///
@@ -194,6 +194,18 @@ pub struct FullTextIndex {
     /// no board was ever read. Reporting that as "no mail is searchable" made an
     /// answer carry message hits and deny having searched any.
     mail_touched: std::sync::atomic::AtomicBool,
+    /// Whether the memory half was ever loaded from a **full scan**, and whether
+    /// any single doc has been indexed since — the mail half's two flags, asked
+    /// of the other store and for the same reason.
+    memory_loaded: std::sync::atomic::AtomicBool,
+    memory_touched: std::sync::atomic::AtomicBool,
+    /// The entities whose documents the index knows it is holding an old version
+    /// of: a refresh after a committed write that could not be run.
+    ///
+    /// **Kept by entity rather than by doc id**, because the refresh that failed
+    /// is the one that would have learned the doc id — a write to an entity the
+    /// index has never seen has no doc id anywhere to key on.
+    behind: RwLock<std::collections::BTreeSet<EntityId>>,
 }
 
 impl FullTextIndex {
@@ -211,7 +223,37 @@ impl FullTextIndex {
             docs: RwLock::new(Vec::new()),
             mail_loaded: std::sync::atomic::AtomicBool::new(false),
             mail_touched: std::sync::atomic::AtomicBool::new(false),
+            memory_loaded: std::sync::atomic::AtomicBool::new(false),
+            memory_touched: std::sync::atomic::AtomicBool::new(false),
+            behind: RwLock::new(std::collections::BTreeSet::new()),
         })
+    }
+
+    /// Record that this entity's document is indexed as it stands in the store.
+    pub fn current(&self, entity: &EntityId) {
+        self.behind.write().expect("behind poisoned").remove(entity);
+    }
+
+    /// Record that the index holds an older version of this entity's document
+    /// than the store does — a refresh after a committed write that could not
+    /// run. Cleared by the next refresh that does.
+    pub fn behind(&self, entity: &EntityId) {
+        self.behind
+            .write()
+            .expect("behind poisoned")
+            .insert(entity.clone());
+    }
+
+    /// The entities the index knows it is behind on, fewest words possible: the
+    /// count is what an answer reports, and the handles are what an operator
+    /// reads out of a log.
+    pub fn behind_now(&self) -> Vec<EntityId> {
+        self.behind
+            .read()
+            .expect("behind poisoned")
+            .iter()
+            .cloned()
+            .collect()
     }
 
     /// Replace the whole **mail** half of the index from a board read — the
@@ -301,9 +343,16 @@ impl FullTextIndex {
         for doc in scan {
             self.write_doc(&writer, doc)?;
         }
+        // Before the commit, for the reason `ingest_mail` sets its flag early.
+        self.memory_loaded
+            .store(true, std::sync::atomic::Ordering::Release);
         writer.commit().map_err(store_err)?;
         drop(writer);
 
+        // A full re-scan reads every doc from the store, so nothing is behind
+        // any more — including a doc a failed refresh marked before the restart
+        // or the rebuild that has just replaced it.
+        self.behind.write().expect("behind poisoned").clear();
         *self.docs.write().expect("doc mirror poisoned") = scan.iter().map(DocMirror::of).collect();
         self.reader.reload().map_err(store_err)?;
         Ok(())
@@ -316,6 +365,9 @@ impl FullTextIndex {
         let mut writer = self.writer.write().expect("index writer poisoned");
         writer.delete_term(Term::from_field_text(self.fields.doc_id, &doc.doc_id));
         self.write_doc(&writer, doc)?;
+        // Before the commit, for the reason `ingest_mail` sets its flag early.
+        self.memory_touched
+            .store(true, std::sync::atomic::Ordering::Release);
         writer.commit().map_err(store_err)?;
         drop(writer);
 
@@ -703,15 +755,36 @@ fn edges_of(mirror: &[DocMirror], id: &EntityId) -> Vec<Edge> {
 }
 
 impl Search for FullTextIndex {
-    fn mail_coverage(&self) -> MailCoverage {
+    fn mail_coverage(&self) -> Coverage {
         use std::sync::atomic::Ordering::Acquire;
         match (
             self.mail_loaded.load(Acquire),
             self.mail_touched.load(Acquire),
         ) {
-            (true, _) => MailCoverage::Loaded,
-            (false, true) => MailCoverage::Partial,
-            (false, false) => MailCoverage::Unread,
+            (true, _) => Coverage::Loaded,
+            (false, true) => Coverage::Partial,
+            (false, false) => Coverage::Unread,
+        }
+    }
+
+    /// The mail half's question, asked of the memory half — with one more way
+    /// in. Mail is behind when the board was never read; memory is behind for
+    /// that reason **and** when a doc's refresh after a committed write could
+    /// not run, which is a state a full scan at boot never reaches. A doc known
+    /// to be behind is `Partial` however the scan went: the hits are real and
+    /// one of them may be a version the store has moved on from.
+    fn memory_coverage(&self) -> Coverage {
+        use std::sync::atomic::Ordering::Acquire;
+        if !self.behind.read().expect("behind poisoned").is_empty() {
+            return Coverage::Partial;
+        }
+        match (
+            self.memory_loaded.load(Acquire),
+            self.memory_touched.load(Acquire),
+        ) {
+            (true, _) => Coverage::Loaded,
+            (false, true) => Coverage::Partial,
+            (false, false) => Coverage::Unread,
         }
     }
 
@@ -994,6 +1067,36 @@ impl IndexedMemory {
             None => self.index.forget(entity),
         }
     }
+
+    /// Refresh the projection for a document a **committed** write just changed.
+    ///
+    /// **A failure here is not the write failing.** The store took the write and
+    /// read it back; what could not be done is re-reading the page to refresh a
+    /// projection of it. Failing the verb for that told the caller nothing was
+    /// written and to try again, and a caller who obeys records the same thing
+    /// twice.
+    ///
+    /// So the write is reported as what it is, and the index records that it is
+    /// holding an older version of this document than the store — which is what
+    /// makes `search` say so on every answer afterwards. Swallowing the failure
+    /// without that mark would trade a wrong answer to one caller for a wrong
+    /// answer to every later one.
+    async fn refresh(&self, entity: &EntityId) {
+        match self.reindex(entity).await {
+            Ok(()) => self.index.current(entity),
+            Err(e) => {
+                self.index.behind(entity);
+                tracing::warn!(
+                    %entity,
+                    error = %e,
+                    "SEARCH INDEX BEHIND — this document was written and the index could not \
+                     re-read it, so `search` serves the version before that write and reports \
+                     itself partial until a write to this document succeeds or the server \
+                     restarts. The write itself landed; the memory verbs are unaffected."
+                );
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -1001,7 +1104,7 @@ impl Memory for IndexedMemory {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         let written = self.inner.add_entity(new).await?;
         if let Guarded::Written(entity) = &written {
-            self.reindex(&entity.id).await?;
+            self.refresh(&entity.id).await;
         }
         Ok(written)
     }
@@ -1017,7 +1120,7 @@ impl Memory for IndexedMemory {
     ) -> Result<Guarded<Entity>, MemoryError> {
         let written = self.inner.update_entity(handle, patch).await?;
         if let Guarded::Written(entity) = &written {
-            self.reindex(&entity.id).await?;
+            self.refresh(&entity.id).await;
         }
         Ok(written)
     }
@@ -1025,7 +1128,7 @@ impl Memory for IndexedMemory {
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         let written = self.inner.capture(fact).await?;
         if let Guarded::Written(fact) = &written {
-            self.reindex(&fact.home).await?;
+            self.refresh(&fact.home).await;
         }
         Ok(written)
     }
@@ -1041,7 +1144,7 @@ impl Memory for IndexedMemory {
     ) -> Result<Guarded<Fact>, MemoryError> {
         let written = self.inner.update_fact(address, patch).await?;
         if let Guarded::Written(fact) = &written {
-            self.reindex(&fact.home).await?;
+            self.refresh(&fact.home).await;
         }
         Ok(written)
     }
@@ -1057,7 +1160,7 @@ impl Memory for IndexedMemory {
         date: Date,
     ) -> Result<Retraction, MemoryError> {
         let taken_back = self.inner.retract(address, reason, date).await?;
-        self.reindex(&taken_back.retracted.home).await?;
+        self.refresh(&taken_back.retracted.home).await;
         Ok(taken_back)
     }
 
@@ -1067,7 +1170,7 @@ impl Memory for IndexedMemory {
     /// a bot that is pure prose would be the one part search could not see.
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
         let stored = self.inner.set_prose(entity, prose).await?;
-        self.reindex(entity).await?;
+        self.refresh(entity).await;
         Ok(stored)
     }
 
@@ -1085,8 +1188,12 @@ impl Search for IndexedMemory {
         self.index.search(query)
     }
 
-    fn mail_coverage(&self) -> MailCoverage {
+    fn mail_coverage(&self) -> Coverage {
         self.index.mail_coverage()
+    }
+
+    fn memory_coverage(&self) -> Coverage {
+        self.index.memory_coverage()
     }
 }
 
@@ -2046,6 +2153,9 @@ mod tests {
     /// invisible to it and shows up only here.
     struct Scanned {
         docs: RwLock<Vec<DocScan>>,
+        /// The store takes writes and cannot be read back — a transient fault on
+        /// the re-read the decorator makes after a write has already committed.
+        blind: std::sync::atomic::AtomicBool,
     }
 
     impl Scanned {
@@ -2056,6 +2166,7 @@ mod tests {
         fn new(docs: Vec<DocScan>) -> Arc<Self> {
             Arc::new(Scanned {
                 docs: RwLock::new(docs),
+                blind: std::sync::atomic::AtomicBool::new(false),
             })
         }
 
@@ -2063,11 +2174,23 @@ mod tests {
         fn vanish(&self) {
             self.docs.write().expect("docs poisoned").clear();
         }
+
+        /// Writes still land; reads fail from here until [`sighted`](Self::sighted).
+        fn blinded(&self) {
+            self.blind.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn sighted(&self) {
+            self.blind.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     #[async_trait]
     impl Memory for Scanned {
         async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
+            if self.blind.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(MemoryError::Store("the store cannot be read".into()));
+            }
             Ok(self.docs.read().expect("docs poisoned").clone())
         }
 
@@ -2151,6 +2274,168 @@ mod tests {
             _: Date,
         ) -> Result<Retraction, MemoryError> {
             unimplemented!("this double only scans")
+        }
+    }
+
+    /// One page with one entity on it, for the tests that turn on what the
+    /// decorator does after a write lands.
+    fn one_page() -> Arc<Scanned> {
+        Scanned::new(vec![DocScan {
+            doc_id: Scanned::DOC_ID.into(),
+            title: "Alpha".into(),
+            prose: String::new(),
+            entity: Some(entity("person:alpha", "Alpha")),
+            facts: Vec::new(),
+        }])
+    }
+
+    /// One row to write onto that page.
+    fn ferret() -> NewFact {
+        NewFact {
+            subject: EntityId::person("alpha"),
+            content: "keeps a ferret".into(),
+            details: None,
+            provenance: Provenance::Testimony,
+            standing: None,
+            status: FactStatus::Active,
+            date: date(2026, 1, 1),
+            edge: None,
+            event: None,
+            derived_from: None,
+        }
+    }
+
+    /// **A write the store took is not failed by the projection behind it.**
+    ///
+    /// The re-index re-reads the doc AFTER the store has committed, so a
+    /// transient fault on that read used to fail the whole verb — and the
+    /// sentence a caller got said nothing was written and told them to try
+    /// again. They try again, and the fact is recorded twice. The store is the
+    /// truth; an index that could not refresh is a stale projection, not a
+    /// failed write.
+    #[tokio::test]
+    async fn a_write_the_store_took_is_not_failed_by_a_refresh_that_could_not_run() {
+        let inner = one_page();
+        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        store.rebuild().await.expect("rebuild");
+
+        inner.blinded();
+        let written = store
+            .capture(ferret())
+            .await
+            .expect("the store took the write, so the verb reports it");
+
+        // The positive the whole case rests on: the write is reported, and it is
+        // the write that was made. Asserting only that no error came back would
+        // pass on a verb that returned an empty answer.
+        let fact = written.written().expect("this double does not guard");
+        assert_eq!(fact.content, "keeps a ferret");
+        assert_eq!(
+            inner
+                .docs
+                .read()
+                .expect("docs poisoned")
+                .iter()
+                .flat_map(|d| d.facts.iter())
+                .map(|f| f.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["keeps a ferret"],
+            "the row is on the page: the write committed and stayed committed"
+        );
+    }
+
+    /// **An index that could not refresh says so, on every answer.**
+    ///
+    /// Keeping the write and saying nothing would move the wrong answer from the
+    /// caller who wrote to every session that reads afterwards — and those have
+    /// no way to know. `search` is the only verb served from the index, so this
+    /// is where it has to be said.
+    #[tokio::test]
+    async fn a_doc_the_index_could_not_re_read_makes_the_memory_half_partial() {
+        let inner = one_page();
+        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        store.rebuild().await.expect("rebuild");
+        assert_eq!(
+            store.memory_coverage(),
+            Coverage::Loaded,
+            "a scan that read the store holds all of it"
+        );
+
+        inner.blinded();
+        store
+            .capture(ferret())
+            .await
+            .expect("the store took the write");
+
+        assert_eq!(
+            store.memory_coverage(),
+            Coverage::Partial,
+            "the index holds the version before that write and has to say so"
+        );
+        assert_eq!(
+            store.index().behind_now(),
+            vec![EntityId::person("alpha")],
+            "and it knows which document it is behind on"
+        );
+        // What `Partial` claims, and the half a bare "not Loaded" assertion would
+        // miss: the hits that ARE there are real, and the new row is not among
+        // them.
+        assert_eq!(
+            store
+                .search(&SearchQuery::text("person:alpha"))
+                .expect("search ok")
+                .len(),
+            1,
+            "the entity is still findable — partial is not empty"
+        );
+        assert!(
+            store
+                .search(&SearchQuery::text("ferret"))
+                .expect("search ok")
+                .is_empty(),
+            "and the row the index could not read is the part that is missing"
+        );
+    }
+
+    /// **A refresh that runs takes the mark off.** The state is "the index is
+    /// behind on this document", not "something went wrong once" — so the write
+    /// that catches it up clears it, and the answers stop hedging.
+    #[tokio::test]
+    async fn a_refresh_that_runs_clears_the_mark_and_the_hedge() {
+        let inner = one_page();
+        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        store.rebuild().await.expect("rebuild");
+
+        inner.blinded();
+        store.capture(ferret()).await.expect("the store took it");
+        assert_eq!(store.memory_coverage(), Coverage::Partial);
+
+        inner.sighted();
+        store
+            .capture(NewFact {
+                content: "plays the sousaphone".into(),
+                ..ferret()
+            })
+            .await
+            .expect("the store took it");
+
+        assert_eq!(
+            store.memory_coverage(),
+            Coverage::Loaded,
+            "the doc was re-read whole, so nothing on it is behind any more"
+        );
+        assert!(store.index().behind_now().is_empty());
+        // The re-read is of the whole document, so the row written while the
+        // store was unreadable comes back with it.
+        for missed in ["ferret", "sousaphone"] {
+            assert_eq!(
+                store
+                    .search(&SearchQuery::text(missed))
+                    .expect("search ok")
+                    .len(),
+                1,
+                "{missed} is findable once the refresh runs"
+            );
         }
     }
 
@@ -2813,7 +3098,7 @@ mod tests {
         )]);
         assert_eq!(
             index.mail_coverage(),
-            MailCoverage::Unread,
+            Coverage::Unread,
             "nothing has loaded mail"
         );
         assert_eq!(
@@ -2830,7 +3115,7 @@ mod tests {
             .expect("an empty board is still a board");
         assert_eq!(
             index.mail_coverage(),
-            MailCoverage::Loaded,
+            Coverage::Loaded,
             "a board that was read and holds nothing is not the same as a board nobody read"
         );
     }
@@ -2843,7 +3128,7 @@ mod tests {
     #[tokio::test]
     async fn mail_indexed_after_a_failed_board_read_is_partial_not_absent() {
         let index = index_of(Vec::new());
-        assert_eq!(index.mail_coverage(), MailCoverage::Unread);
+        assert_eq!(index.mail_coverage(), Coverage::Unread);
 
         // No ingest_mail — the boot read failed. A verb indexes one message.
         index
@@ -2859,7 +3144,7 @@ mod tests {
 
         assert_eq!(
             index.mail_coverage(),
-            MailCoverage::Partial,
+            Coverage::Partial,
             "a message that IS findable must never be reported as no mail at all"
         );
         assert_eq!(
@@ -2873,7 +3158,7 @@ mod tests {
 
         // A board read later promotes it: now everything is there.
         index.ingest_mail(&[]).expect("the board comes back");
-        assert_eq!(index.mail_coverage(), MailCoverage::Loaded);
+        assert_eq!(index.mail_coverage(), Coverage::Loaded);
     }
 
     /// **Rebuilding one half must not empty the other.** `ingest_all` wiped the
@@ -2927,7 +3212,7 @@ mod tests {
             );
             assert_eq!(
                 index.mail_coverage(),
-                MailCoverage::Loaded,
+                Coverage::Loaded,
                 "…and the coverage claim still matches what is actually in there"
             );
         };
