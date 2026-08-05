@@ -149,6 +149,22 @@ pub(crate) fn memory_declined(
         // reasons it is and what to do instead, so it is carried through
         // rather than re-worded here, where it would drift from the rule it
         // describes.
+        // **Already done is not the same answer as cannot be done.** The
+        // record the caller asked to take back is taken back; what this call
+        // wrote is nothing, because there was nothing left to write. Saying
+        // "cannot be retracted" here denies a state the store is holding, and
+        // a caller who believes it treats a retracted record as live.
+        MemoryError::AlreadyRetracted { attempted } => Ok(blocked_body(
+            &EntityId(attempted.clone()),
+            &[],
+            format!(
+                "'{attempted}' is already retracted — the record jojobot holds is the one you \
+                 asked for. This call wrote nothing because there was nothing left to write, and \
+                 a third attempt would say the same. Retraction is one-way: nothing takes a \
+                 record back out of it. If the retraction was itself a mistake, capture what is \
+                 so now as a new record."
+            ),
+        )),
         MemoryError::NotRetractable { attempted, why } => Ok(blocked_body(
             &EntityId(attempted.clone()),
             &[],
@@ -173,6 +189,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NotRetractable { .. }
+        | MemoryError::AlreadyRetracted { .. }
         | MemoryError::UnconfirmedPromotion
         | MemoryError::UnconfirmedSettling => McpError::invalid_params(e.to_string(), None),
         MemoryError::NotConfigured(msg) => {

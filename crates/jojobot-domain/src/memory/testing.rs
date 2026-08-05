@@ -2616,9 +2616,13 @@ pub mod contract {
         let again = store
             .retract(&event.address(), Some("again"), date(2026, 7, 5))
             .await;
+        // **Refused as already-done, never as impossible.** The caller asked
+        // for a state jojobot is holding: an answer that says the retraction
+        // did not happen and cannot happen is false about the record and about
+        // what to do next.
         assert!(
-            matches!(again, Err(MemoryError::NotRetractable { .. })),
-            "a second retraction must be refused: {again:?}"
+            matches!(again, Err(MemoryError::AlreadyRetracted { .. })),
+            "a second retraction is refused because it is already so: {again:?}"
         );
 
         let the_record = store

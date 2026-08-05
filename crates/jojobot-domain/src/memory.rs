@@ -1267,12 +1267,13 @@ pub fn check_retractable(fact: &Fact) -> Result<(), MemoryError> {
             why,
         })
     };
+    // **Its own variant, because it is not the same refusal.** The other two
+    // say the act cannot be performed on this row; this one says it has been,
+    // and the caller is asking for a state jojobot is already holding.
     if fact.status == FactStatus::Retracted {
-        return refuse(
-            "it is already retracted, and retraction is one-way — nothing takes a record back \
-             out of it, including a second retraction"
-                .to_string(),
-        );
+        return Err(MemoryError::AlreadyRetracted {
+            attempted: fact.address().to_string(),
+        });
     }
     if fact.event.as_ref().is_some_and(event::Event::is_retraction) {
         return refuse(
@@ -1437,9 +1438,29 @@ pub enum MemoryError {
         /// What the write guard found nearby.
         nearest: Vec<guard::EntityMatch>,
     },
+    /// **The addressed row is already retracted, and that is the state the
+    /// caller was asking for.**
+    ///
+    /// Apart from [`NotRetractable`](Self::NotRetractable) because the two
+    /// refuse for opposite reasons. That one says the act cannot be performed
+    /// on this row; this one says it has been. Answering a caller who asks for
+    /// a retraction jojobot is already holding with "this did not happen and
+    /// cannot happen" is false in both directions at once, and a caller acts on
+    /// it: the record they wanted taken back is taken back, and they are told
+    /// to treat it as live.
+    ///
+    /// **Retract only.** A row refused an ordinary EDIT because it is retracted
+    /// is a different answer and keeps the other variant: there the caller
+    /// asked for something else and the retracted state is what stands in the
+    /// way, not what they wanted.
+    #[error("'{attempted}' is already retracted")]
+    AlreadyRetracted {
+        /// The address that was aimed at.
+        attempted: String,
+    },
     /// **The addressed row cannot be taken back**, and `why` says which of the
-    /// three reasons it is: already retracted, itself a retraction, or an
-    /// ordinary fact — which is fixed in place rather than retracted.
+    /// two remaining reasons it is: itself a retraction, or an ordinary fact —
+    /// which is fixed in place rather than retracted.
     ///
     /// A refusal rather than a no-op: a caller who asked to retract something
     /// and got a shrug would reasonably believe it happened.

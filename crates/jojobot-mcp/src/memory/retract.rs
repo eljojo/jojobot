@@ -39,9 +39,12 @@ impl Jojobot {
                        CHRONOLOGY ONLY. A fact is current truth and gets FIXED: to correct one, \
                        or to say a claim turned out false, rewrite its content with update_fact \
                        — that stays active, because the negative truth is the truth. Retracting \
-                       a fact, retracting something already retracted, or retracting a \
-                       retraction all come back status: blocked, saying which it is and what to \
-                       do instead. An address that names no record comes back blocked too, with \
+                       a fact or retracting a retraction comes back status: blocked, saying \
+                       which it is and what to do instead. Retracting something ALREADY \
+                       retracted comes back blocked as well, and reads differently on purpose: \
+                       it says the record is retracted, because it is — that answer tells you \
+                       the state you asked for is the state jojobot holds, not that nothing \
+                       happened. An address that names no record comes back blocked too, with \
                        the addresses that do exist."
     )]
     pub(crate) async fn retract(
