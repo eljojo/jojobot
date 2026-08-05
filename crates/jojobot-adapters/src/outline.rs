@@ -401,13 +401,30 @@ impl OutlineStore {
             .api()
             .create_document(collection_id, &title, &seeded_doc(entity), under.as_deref())
             .await?;
+        // **From here the page exists, so no failure below is a clean one.**
+        // See [`created_and_stranded`].
+        self.place_created_doc(collection_id, entity, under.as_deref())
+            .await
+            .map_err(|cause| created_and_stranded(&entity.id, cause.to_string()))
+    }
+
+    /// Read a freshly created page back and put it where the write said it
+    /// goes. Split out from [`create_entity_doc`](Self::create_entity_doc) so
+    /// that everything reached AFTER the create has one exit, and that exit
+    /// answers for a page that is standing.
+    async fn place_created_doc(
+        &self,
+        collection_id: &str,
+        entity: &Entity,
+        under: Option<&str>,
+    ) -> Result<DocRec, MemoryError> {
         let doc = self
             .entity_doc(collection_id, &entity.id)
             .await?
             .ok_or_else(|| MemoryError::Store("entity doc missing after create".into()))?;
         // Read-back covers the page's POSITION too, not only its contents: the
         // write asserted where the page goes, so the write verifies it.
-        if doc.parent_id.as_deref() == under.as_deref() {
+        if doc.parent_id.as_deref() == under {
             return Ok(doc);
         }
 
@@ -425,13 +442,13 @@ impl OutlineStore {
         // this right does not spend the no-delete rule.
         self.ws
             .api()
-            .move_document(&doc.id, collection_id, under.as_deref())
+            .move_document(&doc.id, collection_id, under)
             .await?;
         let moved = self
             .entity_doc(collection_id, &entity.id)
             .await?
             .ok_or_else(|| MemoryError::Store("entity doc missing after move".into()))?;
-        if moved.parent_id.as_deref() != under.as_deref() {
+        if moved.parent_id.as_deref() != under {
             return Err(MemoryError::Store(format!(
                 "{} was created under {:?} and could not be moved under the page of {:?} \
                  as written — it is at {:?} now, and a person has to place it",
@@ -515,6 +532,28 @@ impl OutlineStore {
         }
     }
 
+    /// The error a write becomes when its read-back **could not be made at
+    /// all** — a fault on the second call, where the page was written and
+    /// jojobot never learned what it now holds.
+    ///
+    /// Decided exactly as a mismatch is, through [`undo`](Self::undo), because
+    /// the caller's next move follows from the state of the PAGE and not from
+    /// which of the two ways the check failed. Restoring the page makes
+    /// "nothing was written" true; failing to restore makes the write stranded
+    /// and a retry unsafe. Returning the read's own error instead said nothing
+    /// was written over a page that held the write, and a caller who obeys that
+    /// sentence records the same thing twice.
+    async fn unread(
+        &self,
+        doc: &DocRec,
+        verb: &'static str,
+        stranded: Vec<String>,
+        cause: MemoryError,
+    ) -> MemoryError {
+        self.undo(doc, verb, stranded, format!("read-back failed: {cause}"))
+            .await
+    }
+
     /// Read an entity back through the read path — the verification half of
     /// every entity write.
     async fn read_entity(&self, collection_id: &str, id: &EntityId) -> Result<Entity, MemoryError> {
@@ -522,6 +561,24 @@ impl OutlineStore {
             .await?
             .and_then(|d| parse_entity(&d.text))
             .ok_or_else(|| MemoryError::Store(format!("entity {id} did not read back")))
+    }
+}
+
+/// The error a failure AFTER an entity's page was created becomes.
+///
+/// A create has no earlier text to restore and this adapter has no delete, so
+/// the page stands whatever went wrong next. `Stranded` is what that state is
+/// called on every rail here: the write may not have finished, nothing undid
+/// the part that did, and a person has to look. A clean store failure would
+/// tell the caller nothing was written and to try once more — at a handle that
+/// now resolves, where the guard refuses an exact match and `create_new` does
+/// not override it.
+fn created_and_stranded(entity: &EntityId, cause: String) -> MemoryError {
+    MemoryError::Stranded {
+        verb: "add_entity".to_string(),
+        stranded: vec![entity.to_string()],
+        cause,
+        rollback: "the page was created and this adapter cannot remove one".to_string(),
     }
 }
 
@@ -674,12 +731,25 @@ impl Memory for OutlineStore {
         self.create_entity_doc(&collection_id, &entity).await?;
 
         // Read-back: the entity is only added once the read path returns it.
-        let seen = self.read_entity(&collection_id, &entity.id).await?;
+        // Both ways this can fail leave the page standing — see
+        // [`created_and_stranded`].
+        let seen = match self.read_entity(&collection_id, &entity.id).await {
+            Ok(seen) => seen,
+            Err(e) => {
+                return Err(created_and_stranded(
+                    &entity.id,
+                    format!("read-back failed: {e}"),
+                ));
+            }
+        };
         if seen != entity {
-            return Err(MemoryError::Store(format!(
-                "entity {} read back changed: wrote {entity:?}, read {seen:?}",
-                entity.id
-            )));
+            return Err(created_and_stranded(
+                &entity.id,
+                format!(
+                    "entity {} read back changed: wrote {entity:?}, read {seen:?}",
+                    entity.id
+                ),
+            ));
         }
         Ok(Guarded::Written(seen))
     }
@@ -730,7 +800,14 @@ impl Memory for OutlineStore {
         let updated = with_frontmatter_replaced(&doc.text, &entity);
         self.ws.api().update_document(&doc.id, &updated).await?;
 
-        let seen = self.read_entity(&collection_id, handle).await?;
+        let seen = match self.read_entity(&collection_id, handle).await {
+            Ok(seen) => seen,
+            Err(e) => {
+                return Err(self
+                    .unread(&doc, "update_entity", vec![handle.to_string()], e)
+                    .await);
+            }
+        };
         if seen != entity {
             return Err(self
                 .undo(
@@ -845,7 +922,14 @@ impl Memory for OutlineStore {
 
         // Read-back: a capture succeeds only if the read path returns the fact,
         // byte-identical. Writing is not recording.
-        let seen = self.read_back_fact(&stored.address()).await?;
+        let seen = match self.read_back_fact(&stored.address()).await {
+            Ok(seen) => seen,
+            Err(e) => {
+                return Err(self
+                    .unread(&doc, "capture", vec![stored.address().to_string()], e)
+                    .await);
+            }
+        };
         if let Some(changed) = fact_changed(&stored, &seen) {
             return Err(self
                 .undo(
@@ -953,7 +1037,14 @@ impl Memory for OutlineStore {
         .ok_or_else(|| unknown(facts.iter().map(|f| f.address().to_string()).collect()))?;
         self.ws.api().update_document(&doc.id, &updated).await?;
 
-        let seen = self.read_back_fact(address).await?;
+        let seen = match self.read_back_fact(address).await {
+            Ok(seen) => seen,
+            Err(e) => {
+                return Err(self
+                    .unread(&doc, "update_fact", vec![address.to_string()], e)
+                    .await);
+            }
+        };
         if let Some(changed) = fact_changed(&fact, &seen) {
             return Err(self
                 .undo(
@@ -1039,8 +1130,26 @@ impl Memory for OutlineStore {
         // **Both rows are read back, because both were written.** Confirming
         // only the mark would confirm exactly half of the one state this verb
         // must not leave behind.
-        let seen_retracted = self.read_back_fact(address).await?;
-        let seen_record = self.read_back_fact(&record.address()).await?;
+        let both = async {
+            Ok((
+                self.read_back_fact(address).await?,
+                self.read_back_fact(&record.address()).await?,
+            ))
+        }
+        .await;
+        let (seen_retracted, seen_record) = match both {
+            Ok(pair) => pair,
+            Err(e) => {
+                return Err(self
+                    .unread(
+                        &doc,
+                        "retract",
+                        vec![address.to_string(), record.address().to_string()],
+                        e,
+                    )
+                    .await);
+            }
+        };
         if let Some(changed) = fact_changed(&retracted, &seen_retracted)
             .or_else(|| fact_changed(&record, &seen_record))
         {
@@ -1094,11 +1203,19 @@ impl Memory for OutlineStore {
 
         // Read-back: the prose is only written once the read path returns it,
         // byte-identical — the same invariant a fact write carries.
-        let seen = self
-            .entity_doc(&collection_id, entity)
-            .await?
-            .map(|d| parse_prose(&d.text))
-            .ok_or_else(|| MemoryError::Store(format!("entity {entity} lost its doc mid-write")))?;
+        let read = self.entity_doc(&collection_id, entity).await.and_then(|d| {
+            d.map(|d| parse_prose(&d.text)).ok_or_else(|| {
+                MemoryError::Store(format!("entity {entity} lost its doc mid-write"))
+            })
+        });
+        let seen = match read {
+            Ok(seen) => seen,
+            Err(e) => {
+                return Err(self
+                    .unread(&doc, "set_prose", vec![entity.to_string()], e)
+                    .await);
+            }
+        };
         // **Through `first_changed`, like every other guard on every rail.**
         // This one compared byte-exact and interpolated both whole records into
         // its message — the shape `first_changed`'s own docstring says cost
@@ -2029,6 +2146,11 @@ mod tests {
     /// **…and if the move cannot get it there either, that is still a failed
     /// write.** The read-back is not traded away for the repair: repair first,
     /// and only report success once the page is actually where the write said.
+    ///
+    /// **It is a stranded write, not a clean one.** The page was created and
+    /// this adapter cannot remove it, so it is standing in the wrong place: a
+    /// caller told nothing was written would retry into the guard's exact-handle
+    /// refusal, which `create_new` does not override.
     #[tokio::test]
     async fn a_page_the_store_will_not_move_is_still_a_failed_write() {
         let fake = FakeOutline::new();
@@ -2048,8 +2170,18 @@ mod tests {
             .await
             .expect_err("a page that cannot be got where it belongs is not a success");
         assert!(
-            matches!(&err, MemoryError::Store(m) if m.contains("under")),
-            "the error says what did not happen: {err}"
+            matches!(&err, MemoryError::Stranded { cause, .. } if cause.contains("under")),
+            "the page is standing in the wrong place, and the error says what did not \
+             happen: {err}"
+        );
+        // The positive that makes `Stranded` the right verdict rather than a
+        // relabelling: the page really is there to be found and repaired.
+        let coll = store.resolve_collection().await.expect("collection");
+        assert!(
+            fake.docs_in(&coll)
+                .iter()
+                .any(|d| parse_id_marker(&d.text).as_deref() == Some("place:riverbend")),
+            "the create landed; only the placement did not"
         );
     }
 
@@ -2606,6 +2738,206 @@ mod tests {
         assert!(
             said.contains("derived from came back changed"),
             "the refusal must name the field that differed: {said}"
+        );
+    }
+
+    /// **The write lands and the read-back cannot be made at all** — the store
+    /// stops answering reads the moment something has been written to it. Not
+    /// the mangling double: nothing here transforms a page, so the read-back
+    /// never gets as far as comparing. This is the transport fault, the one
+    /// where jojobot does not learn what happened to its own write.
+    struct BlindAfterWrite {
+        inner: Arc<FakeOutline>,
+        written: std::sync::atomic::AtomicBool,
+        /// Whether the restore that follows is refused too.
+        refuse_restore: bool,
+    }
+
+    impl BlindAfterWrite {
+        fn over(inner: Arc<FakeOutline>, refuse_restore: bool) -> Arc<Self> {
+            Arc::new(BlindAfterWrite {
+                inner,
+                written: std::sync::atomic::AtomicBool::new(false),
+                refuse_restore,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl OutlineApi for BlindAfterWrite {
+        async fn list_collections(
+            &self,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<CollectionRec>, MemoryError> {
+            self.inner.list_collections(offset, limit).await
+        }
+        async fn create_collection(
+            &self,
+            name: &str,
+            description: &str,
+        ) -> Result<CollectionRec, MemoryError> {
+            self.inner.create_collection(name, description).await
+        }
+        async fn list_documents(
+            &self,
+            collection_id: &str,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<DocRec>, MemoryError> {
+            if self.written.load(Ordering::SeqCst) {
+                return Err(MemoryError::Store(
+                    "documents.list request: timed out".into(),
+                ));
+            }
+            self.inner
+                .list_documents(collection_id, offset, limit)
+                .await
+        }
+        async fn create_document(
+            &self,
+            collection_id: &str,
+            title: &str,
+            text: &str,
+            parent_id: Option<&str>,
+        ) -> Result<DocRec, MemoryError> {
+            let made = self
+                .inner
+                .create_document(collection_id, title, text, parent_id)
+                .await;
+            self.written.store(true, Ordering::SeqCst);
+            made
+        }
+        async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            if self.written.load(Ordering::SeqCst) {
+                // Every update after the first is the restore.
+                if self.refuse_restore {
+                    return Err(MemoryError::Store("the store refuses this write".into()));
+                }
+                return self.inner.update_document(id, text).await;
+            }
+            let done = self.inner.update_document(id, text).await;
+            self.written.store(true, Ordering::SeqCst);
+            done
+        }
+        async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
+            self.inner.append_document(id, text).await
+        }
+        async fn move_document(
+            &self,
+            id: &str,
+            collection_id: &str,
+            parent_id: Option<&str>,
+        ) -> Result<(), MemoryError> {
+            self.inner.move_document(id, collection_id, parent_id).await
+        }
+    }
+
+    /// Every claim written on any page of the fake, however it got there.
+    fn rows_on(fake: &FakeOutline) -> Vec<String> {
+        fake.documents
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|(_, d)| parse_facts_table(&d.text))
+            .map(|f| f.content)
+            .collect()
+    }
+
+    /// **The answer and the page agree about whether anything was written.**
+    ///
+    /// A read-back is a second call, and it can fail on its own — the write
+    /// landed and jojobot could not read it back. That failure used to be
+    /// reported as a clean store failure, whose sentence tells the caller
+    /// nothing was written and to try again, with the row sitting on the page.
+    /// The caller obeys and the claim is recorded twice.
+    ///
+    /// Two ways out and they are the two the store already draws: put the page
+    /// back and say nothing was written, which is then true, or fail to put it
+    /// back and say so — never the first sentence over the second state.
+    #[tokio::test]
+    async fn a_read_back_that_could_not_run_answers_for_the_state_the_page_is_in() {
+        for refuse_restore in [false, true] {
+            let fake = FakeOutline::new();
+            let store = store(fake.clone());
+            let subject = EntityId::person("alpha");
+            ensure(&store, &subject).await;
+            let before = rows_on(&fake);
+
+            let blind =
+                OutlineStore::from_api(BlindAfterWrite::over(fake.clone(), refuse_restore), COLL);
+            let err = blind
+                .capture(NewFact {
+                    subject: subject.clone(),
+                    content: "keeps a ferret".into(),
+                    details: None,
+                    provenance: Provenance::Testimony,
+                    standing: None,
+                    status: FactStatus::Active,
+                    date: date(2026, 1, 1),
+                    edge: None,
+                    event: None,
+                    derived_from: None,
+                })
+                .await
+                .expect_err("the read-back could not be made, so this is not a success");
+
+            match (&err, rows_on(&fake) == before) {
+                // The page was put back, so "nothing was written" is the truth.
+                (MemoryError::Store(_), true) => {}
+                // It could not be put back. The row is there and the caller is
+                // told not to repeat it.
+                (MemoryError::Stranded { .. }, false) => {}
+                (err, restored) => panic!(
+                    "the answer does not match the page (restored: {restored}, \
+                     refuse_restore: {refuse_restore}): {err:?}"
+                ),
+            }
+        }
+    }
+
+    /// **A page that was created and could not be checked is stranded, not
+    /// clean.**
+    ///
+    /// `add_entity` has nothing to put back — a create has no earlier text, and
+    /// this adapter cannot remove a page — so every failure after the create
+    /// leaves the page standing. Reporting that as "nothing was written, try
+    /// once more" sends the caller at a handle that now resolves, where the
+    /// guard refuses an exact match and `create_new` does not override it: the
+    /// advice cannot work, and the caller cannot see why.
+    #[tokio::test]
+    async fn an_entity_page_that_could_not_be_read_back_is_stranded() {
+        let fake = FakeOutline::new();
+        let blind = OutlineStore::from_api(BlindAfterWrite::over(fake.clone(), false), COLL);
+
+        let err = blind
+            .add_entity(NewEntity {
+                id: EntityId::person("alpha"),
+                name: "Alpha".into(),
+                aliases: Vec::new(),
+                source: "user-named".into(),
+                crm: None,
+                parent: None,
+                boot: Default::default(),
+                create_new: false,
+            })
+            .await
+            .expect_err("the read-back could not be made, so this is not a success");
+
+        assert!(
+            matches!(err, MemoryError::Stranded { .. }),
+            "the page is there and a repeat cannot work: {err:?}"
+        );
+        // The positive the verdict rests on: the page really is standing. A
+        // stranded answer over a store that created nothing would be its own
+        // wrong answer.
+        assert!(
+            fake.documents
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, d)| parse_id_marker(&d.text).as_deref() == Some("person:alpha")),
+            "the create landed, which is what makes the retry advice wrong"
         );
     }
 
