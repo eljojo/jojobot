@@ -65,10 +65,18 @@ impl Jojobot {
     /// Who this session is: the bot's record, the charter its prose carries,
     /// the rules its facts carry, and the live state of the box it owns.
     /// `Err(candidates)` is the guards' answer for a name that is no bot.
+    ///
+    /// **A caller answering the resume-or-new offer gets no charter.** That
+    /// offer is only ever handed back by a boot that carried the charter, so
+    /// the one reader this block is re-sent to is the reader that has it — and
+    /// it is the largest fixed block in the answer, crowding out the session
+    /// record a resume exists to deliver. The rules are not treated the same
+    /// way: they are dated claims that change one at a time.
     pub(crate) async fn identity(
         &self,
         index: &[Entity],
         bot: &EntityId,
+        answering_an_offer: bool,
     ) -> Result<Result<serde_json::Value, Vec<EntityMatch>>, McpError> {
         let Some(entity) = index.iter().find(|e| &e.id == bot) else {
             return Ok(Err(guard::screen(bot, &[], index)));
@@ -76,22 +84,40 @@ impl Jojobot {
 
         // The charter is the doc's prose; a bot nobody has written one for has
         // none, and null says so rather than an empty string pretending to be
-        // an answer.
-        let charter = self
-            .memory
-            .scan_entity(bot)
-            .await
-            .map_err(memory_error)?
-            .map(|doc| doc.prose)
-            .filter(|p| !p.trim().is_empty());
+        // an answer. It is not read at all when it is not being shipped.
+        let charter = match answering_an_offer {
+            true => None,
+            false => self
+                .memory
+                .scan_entity(bot)
+                .await
+                .map_err(memory_error)?
+                .map(|doc| doc.prose)
+                .filter(|p| !p.trim().is_empty()),
+        };
         let rules = self.memory.recall(bot).await.map_err(memory_error)?;
 
-        Ok(Ok(serde_json::json!({
+        let mut body = serde_json::json!({
             "bot": entity_json(entity),
             "charter": charter,
+            // **Marked, because `null` here already means something else**: a
+            // bot nobody has written a charter for. A reader left to tell
+            // withheld from absent would report the absence.
+            "charter_elided": answering_an_offer,
             "rules": rules.iter().map(fact_json).collect::<Vec<_>>(),
             "owned_mailbox": self.owned_mailbox(&entity.id).await?,
-        })))
+        });
+        if answering_an_offer && let Some(obj) = body.as_object_mut() {
+            obj.insert(
+                "note".into(),
+                "your charter is not in this answer. It is unchanged, and you are answering an \
+                 offer only a boot that carried it can make, so it is text you already hold. To \
+                 read it again, call start_here with your bot name and no `resume`: that boot \
+                 writes nothing and starts nothing."
+                    .into(),
+            );
+        }
+        Ok(Ok(body))
     }
 
     /// The live state of the box a bot owns — **and the one place jojobot heals
@@ -454,6 +480,101 @@ mod tests {
                 .is_empty(),
             "a person is not an addressee and never gets a box"
         );
+    }
+
+    /// **A resume does not re-ship the charter.** The caller answering the
+    /// resume-or-new offer read it on the call that made the offer, so sending
+    /// it again spends a large, unchanging block of the answer on the one reader
+    /// that demonstrably has it — while the parts a resume exists for are what
+    /// the payload then has no room for.
+    ///
+    /// **And it is marked, because `charter: null` already means something
+    /// else**: a bot nobody has written one for. A reader that cannot tell
+    /// "withheld" from "there is none" would report the second.
+    #[tokio::test]
+    async fn a_resumed_boot_does_not_re_ship_the_charter() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "gamma".into(),
+                prose: "Holds the plan.".into(),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+        store
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                sid: fixture_sid(line!()),
+                focus: "reading the hand-off".into(),
+                started_at: jiff::Timestamp::now(),
+            })
+            .await
+            .expect("begin ok");
+
+        // The boot that makes the offer carries the charter whole — the
+        // positive the elision below depends on.
+        let offering = boot(&jojobot, "gamma").await;
+        assert_eq!(offering["identity"]["charter"], "Holds the plan.");
+        assert_eq!(
+            offering["identity"]["charter_elided"], false,
+            "an unanswered boot ships it, and says it did: {offering}"
+        );
+        let offer = offering["session"]["choices"][0]["sid"]
+            .as_str()
+            .expect("one option")
+            .to_string();
+
+        let resumed = boot_answering(&jojobot, "gamma", &offer).await;
+        assert_eq!(resumed["session"]["resumed"], true, "{resumed}");
+        assert!(
+            resumed["identity"]["charter"].is_null(),
+            "the charter is what a resume drops: {resumed}"
+        );
+        assert_eq!(
+            resumed["identity"]["charter_elided"], true,
+            "…and it says so, because null already means a bot with no charter: {resumed}"
+        );
+        let note = resumed["identity"]["note"]
+            .as_str()
+            .expect("an elision says how to undo itself");
+        assert!(
+            note.contains("resume"),
+            "the way back is the boot that does not answer an offer: {note}"
+        );
+
+        // Everything a resume is for survives it.
+        assert_eq!(resumed["identity"]["bot"]["id"], "bot:gamma");
+        assert!(
+            resumed["identity"]["rules"].is_array(),
+            "the rules are dated claims and each can change: {resumed}"
+        );
+        assert_eq!(resumed["identity"]["owned_mailbox"]["name"], "gamma");
+    }
+
+    /// **`new` is an answer to the same offer, so it drops the charter too.**
+    /// A `resume` of either shape can only be a reply to a boot that carried
+    /// the charter — there is nothing else that hands out the sid it names, or
+    /// the word `new`.
+    #[tokio::test]
+    async fn answering_the_offer_with_new_drops_the_charter_the_same_way() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "gamma".into(),
+                prose: "Holds the plan.".into(),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+
+        let fresh = boot_answering(&jojobot, "gamma", sid::NEW).await;
+        assert!(fresh["identity"]["charter"].is_null(), "{fresh}");
+        assert_eq!(fresh["identity"]["charter_elided"], true, "{fresh}");
     }
 
     /// **A heal that cannot land is reported honestly, and is not retried into a

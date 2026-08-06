@@ -68,7 +68,7 @@ impl Jojobot {
         // claiming the identity is missing.
         let identity = match (bot, &index) {
             (None, _) | (_, Err(_)) => serde_json::Value::Null,
-            (Some(bot), Ok(index)) => match self.identity(index, bot).await? {
+            (Some(bot), Ok(index)) => match self.identity(index, bot, resume.is_some()).await? {
                 Ok(identity) => identity,
                 // A name that is no bot: the guards' own shape, so one
                 // client-side branch handles every "jojobot declined" answer —

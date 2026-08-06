@@ -67,7 +67,11 @@ impl Jojobot {
                        identity is, its hard lines, where its work lives), its rules as dated \
                        claims each carrying its own provenance (testimony is settled, inference \
                        is a hypothesis — read them that way), and the per-state counts of the \
-                       mailbox it owns. THIS DOOR CREATES NO IDENTITY: a name that is no bot \
+                       mailbox it owns. ANSWERING THE RESUME-OR-NEW OFFER? That answer carries \
+                       no charter: only a boot that shipped one hands the offer back, so you \
+                       are holding it already. It says so rather than reading as a bot with \
+                       none, and booting again with no resume reads it in full. THIS DOOR \
+                       CREATES NO IDENTITY: a name that is no bot \
                        comes back status: blocked, listing the bots that do exist and offering to \
                        boot as one of them. It does REPAIR one thing: a bot whose box is missing \
                        gets it opened here, because a box is part of what a bot is and its \
