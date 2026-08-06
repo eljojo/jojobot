@@ -21,15 +21,56 @@ pub(crate) fn display_line(prose: &str) -> String {
 
 /// One session on the wire — the record, its chronology, and where it sits.
 pub(crate) fn session_json(session: &Session) -> serde_json::Value {
-    serde_json::json!({
+    let mut body = serde_json::json!({
         "id": session.id.as_str(),
         "bot": session.bot.as_str(),
         "focus": session.focus,
         "started_at": session.started_at.to_string(),
         "state": session.state.as_token(),
+        // **The whole record's length, whatever this answer carries of it.**
         "entry_count": session.entries.len(),
-        "chronology": session.entries.iter().map(entry_json).collect::<Vec<_>>(),
-    })
+    });
+    if let Some(obj) = body.as_object_mut() {
+        obj.extend(chronology_json(
+            &text::SESSION_CHRONOLOGY.tail(&session.entries, |e| e.text.chars().count()),
+        ));
+    }
+    body
+}
+
+/// **The chronology a response carries, and what it left out.**
+///
+/// This is the only renderer for a chronology, and it takes a [`Kept`] — which
+/// nothing but [`text::Capped::tail`] produces. So serving a chronology without
+/// passing through the cap is not a thing that can be written here: the cap is
+/// unskippable rather than remembered.
+fn chronology_json(kept: &Kept<'_, JournalEntry>) -> serde_json::Map<String, serde_json::Value> {
+    let mut fields = serde_json::Map::new();
+    fields.insert(
+        "chronology".into(),
+        kept.kept()
+            .iter()
+            .map(entry_json)
+            .collect::<Vec<_>>()
+            .into(),
+    );
+    fields.insert("chronology_elided".into(), kept.elided().into());
+    if kept.elided() {
+        fields.insert("entries_omitted".into(), kept.omitted().into());
+        fields.insert(
+            "chronology_note".into(),
+            format!(
+                "the {} OLDEST entries of this chronology are not in this answer. A chronology \
+                 grows with every beat, so a boot carries the newest of it and the answer stays \
+                 one you can read; `entry_count` is the length of the whole record. Nothing was \
+                 changed and nothing was lost — but no verb serves the older entries, so read \
+                 this tail as what a resume gives you.",
+                kept.omitted(),
+            )
+            .into(),
+        );
+    }
+    fields
 }
 
 /// One chronology entry. `beat` names the verb class for an entry **jojobot**

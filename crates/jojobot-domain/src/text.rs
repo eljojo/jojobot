@@ -1,5 +1,9 @@
 //! Text fitted to a field — one engine, and a **named strategy per call site**.
 //!
+//! [`Capped`] is the same idea one level up: a *collection* of prose fitted to
+//! one response, for an answer that would otherwise grow with the record behind
+//! it until no client could read it.
+//!
 //! Several places in this system take prose somebody wrote and put it somewhere
 //! narrow: a card's title, a session's focus line, the outcome record on a
 //! retired message. They all need the same mechanics — flatten to one line, cut
@@ -177,6 +181,89 @@ pub const OUTCOME_NOTES: Fitted = Fitted {
     strip_unprintable: false,
     when_empty: None,
 };
+
+/// **A collection fitted to one response**, where [`Fitted`] fits one field.
+///
+/// A response that carries a growing record grows with it, and past some size a
+/// client cannot read it at all — which makes the answer a failure rather than a
+/// long one. This is the bound: how much of a collection an answer carries.
+///
+/// **The budget is characters, not items.** A count of items bounds nothing when
+/// one item can be thousands of characters, and what has to be bounded is the
+/// payload.
+///
+/// **Whole items only, and never none.** These are records somebody wrote, and
+/// half of one is a record that says something its writer did not. So an item
+/// larger than the whole budget is still served whole — the bound holds for
+/// every real case and gives way rather than serving a fragment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Capped {
+    /// How many characters of the collection an answer carries.
+    pub budget: usize,
+}
+
+/// **What a response carries of a collection, and how much it does not.**
+///
+/// The fields are private and [`Capped::tail`] is the only constructor, so a
+/// renderer cannot be written that serves a collection without passing through
+/// the cap. That is the part of this a compiler can hold: the discipline is
+/// unskippable, while the byte count itself depends on what somebody wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Kept<'a, T> {
+    kept: &'a [T],
+    omitted: usize,
+}
+
+impl Capped {
+    /// The **newest** end of `all` that fits this budget, sized by `size`.
+    ///
+    /// The tail rather than the head: the reader of a record is resuming it, so
+    /// the last thing that happened is the thing they need first.
+    pub fn tail<'a, T>(&self, all: &'a [T], size: impl Fn(&T) -> usize) -> Kept<'a, T> {
+        let mut spent = 0usize;
+        let mut taken = 0usize;
+        for item in all.iter().rev() {
+            let cost = size(item);
+            // The first item is taken whatever it costs — see [`Capped`] on why
+            // a bound that could serve nothing is the wrong bound here.
+            if taken > 0 && spent + cost > self.budget {
+                break;
+            }
+            spent += cost;
+            taken += 1;
+        }
+        Kept {
+            kept: &all[all.len() - taken..],
+            omitted: all.len() - taken,
+        }
+    }
+}
+
+impl<'a, T> Kept<'a, T> {
+    /// What the response carries, in the collection's own order.
+    pub fn kept(&self) -> &'a [T] {
+        self.kept
+    }
+
+    /// How many items were left out — **the number an answer has to state**, so
+    /// a reader can tell a short record from a long one it is seeing the end of.
+    pub fn omitted(&self) -> usize {
+        self.omitted
+    }
+
+    /// Whether anything was left out at all.
+    pub fn elided(&self) -> bool {
+        self.omitted > 0
+    }
+}
+
+/// **A session's chronology, as a boot serves it.**
+///
+/// Measured against a real record: entries run to a few thousand characters
+/// each, so this budget is the newest seven or eight beats — the window a
+/// resuming run reads before it starts working. The record itself is untouched
+/// and `entry_count` still states its whole length.
+pub const SESSION_CHRONOLOGY: Capped = Capped { budget: 12_000 };
 
 /// **One named case, and the goldens are its floor.** The store respells
 /// underscore-emphasis as asterisk-emphasis: `_under_` comes back
@@ -632,6 +719,76 @@ mod tests {
             MESSAGE_TITLE.render("filed  under   shipments"),
             "filed under shipments"
         );
+    }
+}
+
+/// **The bound on a collection an answer carries.**
+#[cfg(test)]
+mod a_collection_fitted_to_one_response {
+    use super::*;
+
+    /// Nine-character items, so what the budget buys is countable.
+    const ITEM: usize = 9;
+
+    fn items(count: usize) -> Vec<String> {
+        let all: Vec<String> = (0..count).map(|n| format!("item-{n:04}")).collect();
+        assert!(all.iter().all(|i| i.chars().count() == ITEM));
+        all
+    }
+
+    fn tail(budget: usize, all: &[String]) -> Kept<'_, String> {
+        Capped { budget }.tail(all, |i| i.chars().count())
+    }
+
+    /// **The newest items, in the collection's own order, and the rest counted.**
+    #[test]
+    fn the_tail_is_what_fits_and_the_rest_is_counted() {
+        let all = items(10);
+        let kept = tail(25, &all);
+        assert_eq!(kept.kept(), ["item-0008", "item-0009"]);
+        assert_eq!(kept.omitted(), 8);
+        assert!(kept.elided());
+    }
+
+    /// A collection inside its budget arrives whole, and says nothing was left
+    /// out — the positive the elision depends on.
+    ///
+    /// **Sized to exactly the budget**, because that is the boundary: a bound
+    /// that dropped the last item that fits would cost a reader a record for
+    /// nothing, and a budget with room to spare in it tests neither answer.
+    #[test]
+    fn a_collection_that_fills_its_budget_exactly_is_whole_and_not_elided() {
+        let all = items(3);
+        let kept = tail(3 * ITEM, &all);
+        assert_eq!(kept.kept().len(), 3);
+        assert_eq!(kept.omitted(), 0);
+        assert!(!kept.elided());
+
+        // …and one character less is one item less, so the assertion above is
+        // the boundary rather than a budget nowhere near it.
+        assert_eq!(tail(3 * ITEM - 1, &all).kept().len(), 2);
+    }
+
+    /// **One item larger than the whole budget is still served.** These are
+    /// records somebody wrote: half of one says something its writer did not,
+    /// and an answer carrying none of a record is not an answer.
+    #[test]
+    fn an_item_over_the_budget_comes_back_whole_and_alone() {
+        let all = vec!["short".to_string(), "w".repeat(500)];
+        let kept = tail(100, &all);
+        assert_eq!(kept.kept().len(), 1);
+        assert_eq!(kept.kept()[0].chars().count(), 500);
+        assert_eq!(kept.omitted(), 1);
+    }
+
+    /// Nothing to serve is not an elision.
+    #[test]
+    fn an_empty_collection_leaves_nothing_out() {
+        let all: Vec<String> = Vec::new();
+        let kept = tail(100, &all);
+        assert!(kept.kept().is_empty());
+        assert_eq!(kept.omitted(), 0);
+        assert!(!kept.elided());
     }
 }
 

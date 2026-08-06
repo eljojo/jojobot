@@ -64,7 +64,7 @@ use jojobot_domain::session::{
     BEAT_CLASSES, BEAT_EXAMPLES, Beat, Board, EntryId, JournalEntry, NewEntry, NewSession, Session,
     SessionError, SessionId, SessionState, Sessions, beat_text, beats_of, sweep_and_find,
 };
-use jojobot_domain::text::{self, FRESH_FOCUS};
+use jojobot_domain::text::{self, FRESH_FOCUS, Kept};
 // **The args types keep their crate-root path.** They were `pub` here before
 // the split and something outside may name them; where a type LIVES is this
 // slice's business, where a caller finds it is not.

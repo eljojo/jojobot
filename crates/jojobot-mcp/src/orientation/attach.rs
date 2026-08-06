@@ -1426,4 +1426,122 @@ mod tests {
             }
         }
     }
+
+    /// **A resume comes back readable.** A chronology grows with every beat and
+    /// nothing bounded it, so the longer a run was worth resuming the more
+    /// certainly its own boot was a payload the caller could not read — and a
+    /// response the caller cannot read is a failed response.
+    ///
+    /// The tail is what is kept: a resuming run reads the newest beats first,
+    /// and the oldest are the ones it is least likely to need.
+    ///
+    /// **The positive comes first and the negative depends on it**: the newest
+    /// beat is present and the kept entries are the run of beats that ends at
+    /// it, in order. "Fewer than all" asserted alone would pass on an empty
+    /// chronology.
+    #[tokio::test]
+    async fn a_resumed_boot_carries_the_newest_beats_and_says_what_it_left_out() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        // Dense beats, the shape a real chronology has: a resume note runs to
+        // thousands of characters, which is why a cap counted in entries would
+        // bound nothing.
+        for nth in 0..20 {
+            journal_entry(
+                &jojobot,
+                &sid,
+                &format!("beat {nth:02} {}", "w".repeat(1500)),
+            )
+            .await;
+        }
+
+        let resumed = boot_answering(&jojobot, "gamma", &sid).await;
+        let session = &resumed["session"]["session"];
+        let kept: Vec<&str> = session["chronology"]
+            .as_array()
+            .expect("a chronology")
+            .iter()
+            .map(|e| e["text"].as_str().expect("an entry's text"))
+            .collect();
+
+        assert!(
+            kept.last()
+                .expect("the newest beat is what a resume is for")
+                .starts_with("beat 19"),
+            "the newest beat is the one that must survive: {kept:?}"
+        );
+        let oldest_kept = 20 - kept.len();
+        assert!(
+            kept[0].starts_with(&format!("beat {oldest_kept:02}")),
+            "the kept beats are the tail, in order: {kept:?}"
+        );
+        assert!(
+            kept.len() < 20,
+            "…and it is a tail rather than the whole record: {} entries kept",
+            kept.len()
+        );
+
+        // The elision is stated, and the record's own size is not restated as
+        // the number served: a reader has to be able to tell how much it is
+        // not looking at.
+        assert_eq!(session["chronology_elided"], true, "{session}");
+        assert_eq!(
+            session["entry_count"], 20,
+            "entry_count is the whole record: {session}"
+        );
+        assert_eq!(
+            session["entries_omitted"],
+            (20 - kept.len()) as u64,
+            "what was left out is counted: {session}"
+        );
+        // The note is about THIS elision, not a fixed sentence: it names the
+        // number that was dropped. Its wording is not pinned — that would break
+        // the day somebody improves it and would prove nothing about behaviour.
+        let note = session["chronology_note"]
+            .as_str()
+            .expect("an elision says what it did");
+        assert!(
+            note.contains(&(20 - kept.len()).to_string()),
+            "the note names how much is missing: {note}"
+        );
+
+        // **And the payload is one a client can read**, which is the whole
+        // reason for the cap.
+        assert!(
+            resumed.to_string().len() < 40_000,
+            "a resumed boot is {} characters",
+            resumed.to_string().len()
+        );
+    }
+
+    /// …and a chronology that fits comes back whole, with the marker saying so.
+    /// Without this, the test above passes on a build that serves one entry and
+    /// calls the rest elided.
+    #[tokio::test]
+    async fn a_short_chronology_comes_back_whole() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        for nth in 0..3 {
+            journal_entry(&jojobot, &sid, &format!("beat {nth}")).await;
+        }
+
+        let session = boot_answering(&jojobot, "gamma", &sid).await["session"]["session"].clone();
+        let kept: Vec<&str> = session["chronology"]
+            .as_array()
+            .expect("a chronology")
+            .iter()
+            .map(|e| e["text"].as_str().expect("an entry's text"))
+            .collect();
+        assert_eq!(kept, ["beat 0", "beat 1", "beat 2"], "{session}");
+        assert_eq!(session["chronology_elided"], false, "{session}");
+        assert!(
+            session["entries_omitted"].is_null(),
+            "nothing was left out, so there is no count to report: {session}"
+        );
+        assert!(session["chronology_note"].is_null(), "{session}");
+    }
 }
