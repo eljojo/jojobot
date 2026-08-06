@@ -143,13 +143,16 @@ Shipped and live:
 > rather than echoing a body its own author wrote, `read_mailbox`'s `new_only`
 > stops re-shipping a deliberately held-open message on every poll, and
 > `start_here` takes `brief` so a caller who does not need the orientation
-> essay can skip it, and
+> essay can skip it and withholds the charter from a resume — answering the
+> resume offer is itself proof of holding it — while a session's chronology
+> comes back as its newest entries under a character budget, and
 > **mailbox counts are scoped to the caller** — the boxes a bot drains come back
 > with their per-state counts, every other box by name only, so existence stays
 > visible (a writer needs it) while somebody else's queue stops posing "is that
 > one mine?".
 > **Eliding is never silent**: whenever less comes back, a marker says what was
-> left out and how to get it, because a reader who has to infer withheld-vs-empty
+> left out and how to get it — or, where no verb serves it, that none does —
+> because a reader who has to infer withheld-vs-empty
 > from a missing key will eventually infer wrong. What the full echo *proved* is
 > untouched — read-back happens server-side, so a body that did not survive
 > storage is still an error rather than a success with mangled bytes.
