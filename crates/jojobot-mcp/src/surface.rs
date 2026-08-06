@@ -977,3 +977,88 @@ fn no_description_offers_a_parameter_its_schema_does_not_have() {
         );
     }
 }
+
+/// **A validated constraint is stated where a caller reads it, not only where
+/// it is refused.**
+///
+/// `subject` rides in the record and in the listing a reader sees before
+/// opening anything, so it takes one plain line and refuses markup. Nothing
+/// said so until the call was refused, and the parameter's own prose read as
+/// style guidance — so a caller naming a tool or a field reached for backticks,
+/// which every other prose surface here accepts, and paid a round-trip carrying
+/// the whole body to find out.
+///
+/// **Both halves, because either alone is a lie of a different kind**: the
+/// refusal happens through the verb a caller uses, and the constraint is on the
+/// parameter a caller reads. A description stating a rule nothing enforces is
+/// as wrong as a rule nothing states.
+#[tokio::test]
+async fn the_subject_constraint_is_refused_by_the_verb_and_stated_on_the_parameter() {
+    use crate::harness::*;
+    use crate::mailboxes::testing::*;
+    use rmcp::handler::server::wrapper::Parameters;
+
+    let jojobot = handler();
+    make_box(&jojobot, "dev").await;
+    let sid = as_bot(&jojobot, "gamma");
+
+    // **This refusal is a raw protocol error rather than a blocked answer**,
+    // which is the shape rule 68 exists to remove from the surface. Pinned as
+    // it behaves, not as it ought to: changing the channel is a decision of its
+    // own and is not what states a constraint in a description.
+    let refused = jojobot
+        .post_message(Parameters(PostMessageArgs {
+            mailbox: "dev".into(),
+            body: "the shipment landed".into(),
+            subject: Some("what `post_message` does with a title".into()),
+            in_reply_to: None,
+            sid: sid.clone(),
+        }))
+        .await
+        .expect_err("a subject carrying markup is refused");
+    assert_eq!(refused.code, ErrorCode::INVALID_PARAMS);
+    assert!(
+        refused.message.contains("subject"),
+        "the refusal names the field it is about: {}",
+        refused.message
+    );
+
+    // …and the same message lands once the subject is one plain line, so the
+    // refusal above is about the subject rather than about anything else in
+    // the call.
+    let posted = json_of(
+        &jojobot
+            .post_message(Parameters(PostMessageArgs {
+                mailbox: "dev".into(),
+                body: "the shipment landed".into(),
+                subject: Some("what post_message does with a title".into()),
+                in_reply_to: None,
+                sid,
+            }))
+            .await
+            .expect("post ok"),
+    );
+    assert_eq!(posted["subject"], "what post_message does with a title");
+
+    // The constraint is on the parameter, where it is read before the call.
+    let tools = Jojobot::tool_router().list_all();
+    let post = tools
+        .iter()
+        .find(|t| t.name == "post_message")
+        .expect("post_message is a tool");
+    let subject = post
+        .input_schema
+        .get("properties")
+        .and_then(|p| p.get("subject"))
+        .and_then(|s| s.get("description"))
+        .and_then(|d| d.as_str())
+        .expect("the subject parameter is described");
+    assert!(
+        subject.contains("backtick"),
+        "the trap a caller falls into must be named where they read: {subject}"
+    );
+    assert!(
+        subject.contains("nothing is written"),
+        "…and it must read as a validated contract rather than as advice: {subject}"
+    );
+}

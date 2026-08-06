@@ -21,6 +21,13 @@ pub struct PostMessageArgs {
     /// Optional, and worth giving: it is what a reader sees in a listing and on
     /// a search hit before they open anything. Do NOT also repeat it as the
     /// body's first line.
+    ///
+    /// **Validated, not styled: one plain line of unformatted text.** It is
+    /// shown as a title rather than rendered, so a line break, a backtick or
+    /// any other control character is refused and nothing is written — name a
+    /// tool or a field in plain words, even though every other prose surface
+    /// here takes markdown. A title over 120 characters is refused rather than
+    /// cut, because shortening your own title is yours to do.
     #[serde(default)]
     pub subject: Option<String>,
 
