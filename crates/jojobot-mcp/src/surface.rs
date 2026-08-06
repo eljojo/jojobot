@@ -917,3 +917,63 @@ mod a_write_needs_an_identity {
         );
     }
 }
+
+/// **A description never offers a parameter its tool does not take.**
+///
+/// A caller that trusts the prose sends a call the schema rejects, and a
+/// malformed call is the one shape that comes back as a raw protocol error
+/// rather than as a blocked answer naming a way forward. So a description that
+/// drifts away from its schema switches rule 68's guarantee off for that call,
+/// silently and only for the callers who believed it.
+///
+/// **The form is what carries the promise, and it is measured rather than
+/// assumed.** Parameter names here are ordinary English words — `name`,
+/// `source`, `body`, `status`, `shape`, `story` — so looking for a bare word
+/// flags forty sentences that promise nothing. What marks an identifier as a
+/// field a caller passes is the backticks around it, which is the convention
+/// every description on this surface already uses.
+///
+/// **A property, never a list**: the vocabulary is read off the schemas
+/// themselves, so a parameter added or dropped tomorrow is covered without
+/// anybody remembering this test exists.
+///
+/// **What it does NOT catch**, on the record before anybody treats it as
+/// covering the class: a promise written as plain prose rather than as an
+/// identifier, and the reverse direction — a restriction the schema enforces
+/// and the description omits. That second one is a different check and cannot
+/// be this one.
+#[test]
+fn no_description_offers_a_parameter_its_schema_does_not_have() {
+    let tools = Jojobot::tool_router().list_all();
+    let parameters = |tool: &rmcp::model::Tool| -> std::collections::BTreeSet<String> {
+        tool.input_schema
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .map(|properties| properties.keys().cloned().collect())
+            .unwrap_or_default()
+    };
+    // Every name that IS a parameter somewhere on this surface. A word that
+    // names no parameter anywhere cannot be a promise of one.
+    let vocabulary: std::collections::BTreeSet<String> =
+        tools.iter().flat_map(&parameters).collect();
+    assert!(
+        vocabulary.contains("sid"),
+        "the vocabulary is read off the schemas, and an empty one would pass this vacuously"
+    );
+
+    for tool in &tools {
+        let mine = parameters(tool);
+        let description = tool.description.as_deref().unwrap_or_default();
+        let offered: Vec<&String> = vocabulary
+            .iter()
+            .filter(|name| !mine.contains(*name))
+            .filter(|name| description.contains(&format!("`{name}`")))
+            .collect();
+        assert!(
+            offered.is_empty(),
+            "{}'s description offers {offered:?}, which its schema does not carry — a caller \
+             that believes it sends a call that cannot be answered. Its parameters are {mine:?}",
+            tool.name,
+        );
+    }
+}

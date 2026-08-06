@@ -82,8 +82,9 @@ impl Jojobot {
                        sweep and that repair are the only things a boot writes. Name no bot at \
                        all and this is an orientation \
                        preview: read-only, the world and the snapshot, no identity and no \
-                       session. Pass the `sid` you were handed on EVERY call, reads included — it \
-                       is how jojobot knows which bot is asking."
+                       session. THIS DOOR TAKES NO SESSION HANDLE — it is what hands one out. \
+                       That handle rides every verb after it, reads included, because it is how \
+                       jojobot knows which bot is asking."
     )]
     pub(crate) async fn start_here(
         &self,
