@@ -80,6 +80,18 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        // **Screened here so the refusal is an ANSWER.** A subject the record
+        // cannot carry is a caller mistake, and every other caller mistake on
+        // this surface comes back blocked with a way forward — this one reached
+        // the store's validator and came back as a protocol error, which is a
+        // failure rather than a next move (rule 68). The domain still refuses
+        // it; what this decides is the shape the caller sees.
+        if let Err(e) = mailbox::validate_subject(args.subject.as_deref()) {
+            return Ok(subject_declined(
+                args.subject.as_deref().unwrap_or_default(),
+                &e,
+            ));
+        }
         let new = NewMessage {
             mailbox: MailboxName(args.mailbox.trim().to_string()),
             body: args.body,

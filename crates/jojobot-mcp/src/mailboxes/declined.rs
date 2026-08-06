@@ -1,10 +1,11 @@
 //! **The mailbox context's refusals.**
 //!
-//! Four shapes wearing one envelope, because the way out of each differs: a
+//! Five shapes wearing one envelope, because the way out of each differs: a
 //! name that resembles a box, an id that names nothing at all, something
 //! jojobot cannot read as a message — that one needs a person, not a retry —
-//! and a message that is somebody else's to take delivery of. All are
-//! successful results whose body says `status: "blocked"`.
+//! a message that is somebody else's to take delivery of, and a title the
+//! record cannot carry. All are successful results whose body says
+//! `status: "blocked"`.
 
 use super::*;
 
@@ -92,6 +93,31 @@ pub(crate) fn mailbox_blocked_body(
         "how_to_proceed": how_to_proceed,
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
+/// **A title the record cannot carry**, answered as a refusal a caller can act
+/// on rather than as a protocol error.
+///
+/// A subject is validated: it is shown as a title rather than rendered, so it
+/// takes one plain line of unformatted text. Refusing that with a bare error
+/// is the shape rule 68 exists to remove — a thrown error is not a value, so
+/// the model on the other end gets a failure where it should get a next move,
+/// and the sentence saying what to do lands in a channel nothing branches on.
+///
+/// **The reason comes from the validator rather than from a copy of it here.**
+/// A subject can be refused for more than one fault, and a refusal that named
+/// one of them would be a catalogue that goes stale the day another is added.
+pub(crate) fn subject_declined(attempted: &str, said: &MailboxError) -> CallToolResult {
+    mailbox_blocked_body(
+        attempted,
+        None,
+        format!(
+            "Nothing was written: {said}. A subject is one plain line of unformatted text, \
+             because it is shown as a title rather than rendered. Send the message again with \
+             the same body and a plain-text subject — name a tool or a field in plain words — or \
+             leave `subject` off, and the opening of the body stands in as the title."
+        ),
+    )
 }
 
 /// **A message jojobot cannot read, answered in the guards' own shape.** The id

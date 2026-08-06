@@ -1002,25 +1002,49 @@ async fn the_subject_constraint_is_refused_by_the_verb_and_stated_on_the_paramet
     make_box(&jojobot, "dev").await;
     let sid = as_bot(&jojobot, "gamma");
 
-    // **This refusal is a raw protocol error rather than a blocked answer**,
-    // which is the shape rule 68 exists to remove from the surface. Pinned as
-    // it behaves, not as it ought to: changing the channel is a decision of its
-    // own and is not what states a constraint in a description.
-    let refused = jojobot
-        .post_message(Parameters(PostMessageArgs {
-            mailbox: "dev".into(),
-            body: "the shipment landed".into(),
-            subject: Some("what `post_message` does with a title".into()),
-            in_reply_to: None,
-            sid: sid.clone(),
-        }))
-        .await
-        .expect_err("a subject carrying markup is refused");
-    assert_eq!(refused.code, ErrorCode::INVALID_PARAMS);
+    // **The refusal is a blocked answer, not a raw protocol error** (rule 68):
+    // a caller that cannot branch on the answer cannot act on it, and the
+    // model on the other end gets a failure where it should get a next move.
+    let refused = blocked(
+        &jojobot
+            .post_message(Parameters(PostMessageArgs {
+                mailbox: "dev".into(),
+                body: "the shipment landed".into(),
+                subject: Some("what `post_message` does with a title".into()),
+                in_reply_to: None,
+                sid: sid.clone(),
+            }))
+            .await
+            .expect("a subject carrying markup is an answer, not a protocol failure"),
+    );
+    let how = refused["how_to_proceed"]
+        .as_str()
+        .expect("a refusal says what to do instead");
     assert!(
-        refused.message.contains("subject"),
-        "the refusal names the field it is about: {}",
-        refused.message
+        how.contains("subject"),
+        "the refusal names the field it is about: {how}"
+    );
+
+    // **A second fault, through the same answer.** A subject can be refused
+    // for more than one reason, and a refusal wired to one of them would send
+    // the other back down the channel this card exists to close.
+    let too_long = blocked(
+        &jojobot
+            .post_message(Parameters(PostMessageArgs {
+                mailbox: "dev".into(),
+                body: "the shipment landed".into(),
+                subject: Some("w".repeat(200)),
+                in_reply_to: None,
+                sid: sid.clone(),
+            }))
+            .await
+            .expect("an over-long subject is an answer too"),
+    );
+    assert!(
+        too_long["how_to_proceed"]
+            .as_str()
+            .is_some_and(|how| how.contains("subject")),
+        "{too_long}"
     );
 
     // …and the same message lands once the subject is one plain line, so the
