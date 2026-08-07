@@ -10,6 +10,23 @@
 //! migration is SQL. If this file starts growing a language, it has taken the
 //! wrong turn.
 //!
+//! # One statement per file, and it is not a style rule
+//!
+//! **This store does not roll back schema changes.** A file holding several
+//! statements can fail with the earlier ones committed, leaving a schema that
+//! is half a version — and no retry repairs it, because the retry fails on what
+//! already landed. One statement per file makes the unit of a migration the
+//! unit of atomicity the store actually offers.
+//!
+//! **Idempotency was the alternative and this store cannot carry it.**
+//! `CREATE TABLE IF NOT EXISTS` works; `ALTER TABLE … ADD COLUMN IF NOT EXISTS`
+//! is a syntax error here, and a plain `ADD COLUMN` fails on the second run. So
+//! idempotency would hold only while every migration is a creation, and break
+//! silently on the first one that adds a column.
+//!
+//! A test enforces the rule, because one that lived in this comment is one the
+//! next author breaks.
+//!
 //! **The files are compiled in rather than read from disk.** A deployed binary
 //! that needs a directory beside it is one that fails on the machine where the
 //! directory was not copied, and the failure arrives at start-up on a live host
@@ -24,12 +41,24 @@ use sqlx::{MySql, MySqlPool, Transaction};
 /// here and a file beside the others; nothing else.
 const MIGRATIONS: &[(&str, &str)] = &[
     (
-        "0001_sessions",
-        include_str!("../../migrations/0001_sessions.sql"),
+        "0001_session",
+        include_str!("../../migrations/0001_session.sql"),
     ),
     (
-        "0002_mailboxes",
-        include_str!("../../migrations/0002_mailboxes.sql"),
+        "0002_journal_entry",
+        include_str!("../../migrations/0002_journal_entry.sql"),
+    ),
+    (
+        "0003_minted",
+        include_str!("../../migrations/0003_minted.sql"),
+    ),
+    (
+        "0004_mailbox",
+        include_str!("../../migrations/0004_mailbox.sql"),
+    ),
+    (
+        "0005_message",
+        include_str!("../../migrations/0005_message.sql"),
     ),
 ];
 
@@ -111,6 +140,56 @@ mod tests {
     use super::*;
     use crate::dolt::tests::{Scratch, free_port};
 
+    /// **Every migration is exactly one statement, and that is the whole of
+    /// the atomicity story.**
+    ///
+    /// This store does not roll back schema changes, so a file holding several
+    /// statements can fail with the earlier ones committed — a schema that is
+    /// half a version, which no retry repairs because the retry fails on what
+    /// already landed.
+    ///
+    /// One statement per file makes the unit of a migration the unit of
+    /// atomicity the store actually offers: a file either applied or did not,
+    /// and the ledger cannot disagree with the schema.
+    ///
+    /// **Idempotency was the alternative and this store cannot support it.**
+    /// `CREATE TABLE IF NOT EXISTS` works, but `ALTER TABLE ... ADD COLUMN IF
+    /// NOT EXISTS` is a syntax error here and a plain `ADD COLUMN` fails on the
+    /// second run. So idempotency holds only while every migration is a
+    /// creation, and breaks silently on the first one that adds a column —
+    /// a property maintained by remembering rather than by the mechanism.
+    ///
+    /// **This test is what makes it a property.** A rule that lives in a
+    /// comment is a rule the next author breaks.
+    /// Every version, in the order they apply — read from one place, so a new
+    /// migration cannot make a test lie by omission.
+    const ALL_VERSIONS: &[&str] = &[
+        "0001_session",
+        "0002_journal_entry",
+        "0003_minted",
+        "0004_mailbox",
+        "0005_message",
+    ];
+
+    #[test]
+    fn every_migration_is_a_single_statement() {
+        for (version, sql) in MIGRATIONS {
+            let statements = sql
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("--"))
+                .collect::<Vec<_>>()
+                .join("\n")
+                .split(';')
+                .filter(|s| !s.trim().is_empty())
+                .count();
+            assert_eq!(
+                statements, 1,
+                "{version} holds {statements} statements. This store commits DDL as it goes, so a \
+                 file with more than one can fail half-applied and never recover — split it."
+            );
+        }
+    }
+
     /// **A migration that fails is not recorded as done.**
     ///
     /// The ledger row and the migration commit together, so a change that did
@@ -153,7 +232,7 @@ mod tests {
             panic!("a migration that cannot apply must fail: {refused:?}");
         };
         assert_eq!(
-            version, "0001_sessions",
+            version, "0001_session",
             "and it names which one, or an operator reads every file"
         );
 
@@ -175,13 +254,89 @@ mod tests {
             .expect("a database of its own");
         assert_eq!(
             run(&clean).await.expect("the schema moves"),
-            vec!["0001_sessions".to_string(), "0002_mailboxes".to_string()],
+            ALL_VERSIONS
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>(),
         );
         let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
             .fetch_all(&clean)
             .await
             .expect("the ledger is readable");
-        assert_eq!(recorded.len(), 2, "a migration that landed IS recorded");
+        assert_eq!(
+            recorded.len(),
+            ALL_VERSIONS.len(),
+            "a migration that landed IS recorded"
+        );
+
+        store.stop().await;
+    }
+
+    /// **A set that fails part-way RESUMES.** This is what one statement per
+    /// file buys, and it was impossible before.
+    ///
+    /// A failure used to leave the schema half a version with nothing recorded:
+    /// the tables created before the failing statement were committed anyway,
+    /// so the retry hit one of them and failed again, for ever, naming a file
+    /// and saying nothing about the tables underneath it. A person had to work
+    /// out by hand which had landed.
+    ///
+    /// Now a failure stops at a file boundary. Everything before it is applied
+    /// AND recorded, the failing one is neither, and clearing the obstruction
+    /// lets the next run carry on from exactly where it stopped.
+    #[tokio::test]
+    async fn a_set_that_fails_part_way_resumes_where_it_stopped() {
+        let scratch = Scratch::new("migrate-resume");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("partway")
+            .await
+            .expect("a database of its own");
+
+        // Obstruct the third migration, so the first two must land and it must
+        // not.
+        sqlx::raw_sql("CREATE TABLE minted (a INT NOT NULL PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .expect("the obstruction lands");
+
+        let refused = run(&pool).await;
+        let Err(MigrateError::Failed { version, .. }) = &refused else {
+            panic!("the obstructed migration must fail: {refused:?}");
+        };
+        assert_eq!(version, "0003_minted");
+
+        let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+        assert_eq!(
+            recorded,
+            ALL_VERSIONS[..2].to_vec(),
+            "everything before the failure is applied and recorded, and nothing after it is"
+        );
+
+        // Clear it, and the next run picks up at the file that failed.
+        sqlx::raw_sql("DROP TABLE minted")
+            .execute(&pool)
+            .await
+            .expect("the obstruction goes");
+        assert_eq!(
+            run(&pool).await.expect("the rest applies"),
+            ALL_VERSIONS[2..].to_vec(),
+            "the run resumes at the file that failed, and does not redo the ones that landed"
+        );
+
+        // …and the schema is whole, which is what resuming was for.
+        sqlx::raw_sql("INSERT INTO message (id, mailbox, ordinal, body, subject, sender, sent_at, state, notes, in_reply_to)
+                       VALUES ('1', 'gamma', 1, 'b', NULL, 's', '2026-01-01T00:00:00Z', 'new', NULL, NULL)")
+            .execute(&pool)
+            .await
+            .expect("the last table is there and takes a row");
 
         store.stop().await;
     }
@@ -200,7 +355,10 @@ mod tests {
         let first = run(store.pool()).await.expect("the schema moves");
         assert_eq!(
             first,
-            vec!["0001_sessions".to_string(), "0002_mailboxes".to_string()],
+            ALL_VERSIONS
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>(),
             "the first start applies what is there, in the order the list gives"
         );
 

@@ -1,14 +1,5 @@
--- A mailbox, and the messages in it.
+-- The messages in a mailbox.
 --
--- `owner` is NOT NULL because a box cannot exist without one. The rule that a
--- box states its one owner and nothing keeps a second copy in step is a column
--- constraint here rather than a convention.
-CREATE TABLE mailbox (
-    name  VARCHAR(191) NOT NULL PRIMARY KEY,
-    owner VARCHAR(191) NOT NULL,
-    INDEX by_owner (owner)
-);
-
 -- Timestamps are text for the reason the session table's are: the domain's
 -- instants are nanoseconds and DATETIME(6) is microseconds, so a column would
 -- truncate a record that must read back as it was written.
