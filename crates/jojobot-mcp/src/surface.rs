@@ -529,20 +529,26 @@ fn the_orientation_teaches_the_two_endings_and_the_own_box_norm() {
     );
 }
 
-/// **Every word an agent reads, gathered in one place** — tool descriptions,
-/// the argument-schema field docs, the orientation essay, and the server
-/// instructions.
+/// **Every word an agent reads before a call, and `search`'s coverage notes**
+/// — tool descriptions, the argument-schema field docs, the orientation essay,
+/// the server instructions, and that one set of notes.
 ///
 /// **The schemas are the half that gets forgotten.** A doc comment on a public
 /// args field is not a comment: `schemars` renders it into the JSON schema, so
 /// it reaches a caller exactly as a description does. That is where `boot`
 /// spent a release describing the deleted `mailbox` parameter.
 ///
-/// **A note in an answer is read the same way a description is.** The coverage
-/// notes are prose an agent forms its picture of the system from, so they are
-/// gathered here too. A word list that reads every description and no answer
-/// checks the half a caller meets before the call and skips the half it meets
-/// after.
+/// **A note in an answer is read the same way a description is.** A check that
+/// reads every description and no answer reads the half a caller meets before
+/// the call and skips the half it meets after.
+///
+/// **The answer half gathered here is one module's, and the principle above is
+/// wider than the reach below.** `search`'s coverage notes are in; the
+/// chronology note, the unreadable-items report, the notes on the identity
+/// path, the orient notes, the mailbox note and the refusal texts are answer
+/// prose that nothing here reads, so no check on this text can fail for any of
+/// them. Gathering answer prose generically is its own piece of work. Until it
+/// lands, read a pass here as covering the descriptions and one module.
 fn agent_facing_text() -> Vec<(String, String)> {
     let mut found = vec![
         ("the orientation essay".to_string(), ORIENTATION.to_string()),
@@ -574,6 +580,29 @@ fn agent_facing_text() -> Vec<(String, String)> {
         found.push((what, note));
     }
     found
+}
+
+/// **The gathering really reaches the coverage notes.**
+///
+/// Delete that loop and every check over this text still passes, across a body
+/// of text with a hole in it — the same shape as the notes going ungathered in
+/// the first place. What is asserted is the relation, every note `search` can
+/// serve being in the gathered text, rather than any sentence one of them
+/// carries.
+#[test]
+fn the_gathered_text_holds_every_coverage_note() {
+    let gathered = agent_facing_text();
+    let notes = crate::memory::search::coverage_notes();
+    assert!(
+        !notes.is_empty(),
+        "the gathering has notes to reach, or the loop below asserts nothing"
+    );
+    for (what, note) in notes {
+        assert!(
+            gathered.iter().any(|(w, t)| *w == what && *t == note),
+            "{what} is served to an agent and no check on this text reads it"
+        );
+    }
 }
 
 /// Whether this text uses `word` as a word, rather than as a run of letters
