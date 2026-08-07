@@ -117,13 +117,17 @@ Shipped and live:
 > `processed` included, and the state rides on the hit beside the box, the
 > sender and the id. Retrieval is the ONE place the two contexts meet, and it
 > meets them as a reader: a `Hit` carries a `Message`, nothing writes across.
-> Because a search is a read of an in-process index, a world that was down at
-> boot means part of the answer is silently missing — so **each half of every
-> answer states its own coverage**, because "no record says that" and "jojobot
-> has read no records" are different claims and a caller acts on both. A half
-> that is neither complete nor blind says which way it is behind: `unscanned`
-> when the boot read never landed, so only what this process has written since
-> is there, and `stale` when a write committed and its re-read could not run.
+> **Every answer is backed by a read taken for it** — each half re-reads its
+> own store before answering, so a record the store has since lost stops being
+> served, which nothing inside the process can notice any other way. A half
+> that could not take its read says so rather than vouching — so **each half of
+> every answer states its own coverage**, because "no record says that" and
+> "jojobot has read no records" are different claims and a caller acts on both.
+> A half that is neither complete nor blind says which way it is behind:
+> `unscanned` when no read has filled it yet, which the first read reaching the
+> store ends, and `stale` when the index holds an older version than the store —
+> a refresh that could not reach it, or, on the memory half alone, a committed
+> write whose re-read failed.
 > The token is what a caller branches on; the note beside it is what a reader
 > reads. Being honest to the caller who wrote is not enough on its own — the
 > sessions that read later are the ones with no other way to tell.
