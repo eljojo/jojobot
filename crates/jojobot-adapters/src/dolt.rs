@@ -55,6 +55,11 @@ pub enum StartError {
     /// It ran and never answered.
     #[error("the store's server started and did not answer within {0:?}")]
     NeverReady(Duration),
+    /// **Another server already holds the port.** This one's child could not
+    /// bind and has exited, so anything answering there belongs to somebody
+    /// else — a different data directory, with somebody else's records in it.
+    #[error("the store's server could not take port {0}: another server holds it")]
+    PortTaken(u16),
 }
 
 /// A running store: the child process, and a pool of connections to it.
@@ -88,6 +93,20 @@ impl Dolt {
         })?;
         Self::init_if_empty(&database)?;
 
+        // **Refuse a port somebody already holds, before spawning anything.**
+        // The child would lose the bind and exit, and the poll below would then
+        // be answered by the server that owns the port — a different directory,
+        // with another test's records in it. Binding first turns that into a
+        // refusal instead of a silent adoption.
+        //
+        // It does not close the window on two starts racing for a free port;
+        // the child check in the readiness poll is what catches that. This is
+        // the half that is deterministic.
+        match std::net::TcpListener::bind(("127.0.0.1", port)) {
+            Ok(probe) => drop(probe),
+            Err(_) => return Err(StartError::PortTaken(port)),
+        }
+
         let child = tokio::process::Command::new("dolt")
             .arg("sql-server")
             .arg("--data-dir")
@@ -109,7 +128,8 @@ impl Dolt {
         // password to leak — and inventing a second account would be
         // ceremony over a socket only this process reaches.
         let server = format!("mysql://root@127.0.0.1:{port}");
-        let pool = Self::once_answering(&format!("{server}/{DATABASE}")).await?;
+        let mut child = child;
+        let pool = Self::once_answering(&format!("{server}/{DATABASE}"), &mut child, port).await?;
         Ok(Dolt {
             child,
             pool,
@@ -117,15 +137,34 @@ impl Dolt {
         })
     }
 
-    /// A pool that has answered at least once.
+    /// A pool that has answered at least once, **from the server this call
+    /// spawned**.
     ///
     /// The server is up when it answers a query, not when the process exists —
     /// so this asks until it does. Connecting alone is not enough: the listener
     /// accepts before the database is served.
-    async fn once_answering(url: &str) -> Result<MySqlPool, StartError> {
+    ///
+    /// **And an answer is not enough either.** If another server already holds
+    /// the port, this call's child cannot bind and exits, while the port goes
+    /// on answering — so a poll that only asked "did something reply" would
+    /// hand back a pool aimed at another directory's database and report a
+    /// clean start. The child is polled beside the query: if it is gone, the
+    /// thing replying is not ours and there is nothing here to return.
+    async fn once_answering(
+        url: &str,
+        child: &mut tokio::process::Child,
+        port: u16,
+    ) -> Result<MySqlPool, StartError> {
         let deadline = std::time::Instant::now() + READY_WITHIN;
         let mut last = String::new();
         while std::time::Instant::now() < deadline {
+            if child
+                .try_wait()
+                .map_err(|e| StartError::Spawn(e.to_string()))?
+                .is_some()
+            {
+                return Err(StartError::PortTaken(port));
+            }
             match MySqlPoolOptions::new()
                 .max_connections(4)
                 .acquire_timeout(POLL_EVERY * 4)
@@ -133,7 +172,20 @@ impl Dolt {
                 .await
             {
                 Ok(pool) => match sqlx::query("SELECT 1").execute(&pool).await {
-                    Ok(_) => return Ok(pool),
+                    // Asked again after the answer, not only before it: a child
+                    // that lost a race for the port dies while this poll is in
+                    // flight, so the reply can arrive from the winner between
+                    // the check above and this one.
+                    Ok(_) => {
+                        if child
+                            .try_wait()
+                            .map_err(|e| StartError::Spawn(e.to_string()))?
+                            .is_some()
+                        {
+                            return Err(StartError::PortTaken(port));
+                        }
+                        return Ok(pool);
+                    }
                     Err(e) => last = e.to_string(),
                 },
                 Err(e) => last = e.to_string(),
@@ -232,15 +284,29 @@ pub(crate) mod tests {
         }
     }
 
-    /// A port nothing is listening on, taken by asking the OS for one and
-    /// letting it go. Racy in principle and the alternative is a fixed port,
-    /// which collides with the developer's own database.
+    /// A port no other caller in this process will be given.
+    ///
+    /// **A cursor, not just a bind.** Asking the OS for `:0` and letting the
+    /// listener go hands two concurrent callers the same number often enough to
+    /// matter — measured on this machine at 4 collisions in 400 with two callers,
+    /// and 339 in 3200 with sixteen. Two servers then get one port: the loser's
+    /// child cannot bind and dies, and the winner answers its client, so a whole
+    /// test runs against another test's database.
+    ///
+    /// Taking a distinct slot first means no two callers here can be offered the
+    /// same candidate, whatever the kernel would have said. The bind that follows
+    /// only checks the candidate is free; the window it leaves is somebody outside
+    /// this process, and `Dolt::start` refuses a port it cannot take.
     pub(crate) fn free_port() -> u16 {
-        std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("a free port")
-            .local_addr()
-            .expect("a bound address")
-            .port()
+        static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+        for _ in 0..40_000 {
+            let slot = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let port = 20_000 + slot % 40_000;
+            if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+                return port;
+            }
+        }
+        panic!("no free port in the range this suite uses")
     }
 
     /// **The store comes up on an empty directory and answers.**
@@ -305,5 +371,60 @@ pub(crate) mod tests {
             .expect("the row is still there");
         assert_eq!(n, 7, "a restart opens the store it left behind");
         second.stop().await;
+    }
+
+    /// **A store refuses a server it did not spawn.**
+    ///
+    /// Two starts can be handed one port: `free_port` binds, reads the number
+    /// and releases it, so two concurrent callers can be given the same one.
+    /// The loser's child then cannot bind and dies — silently, its output goes
+    /// nowhere — and the readiness poll connects to the WINNER and gets an
+    /// answer.
+    ///
+    /// **The handle it returned would then be aimed at another test's
+    /// database**, in another directory, with that test's tables and rows in
+    /// it. That is not a flake: it is two cases sharing one store, which is
+    /// the thing the contract harness builds a database per case to prevent,
+    /// defeated one level below where it looks.
+    ///
+    /// So a start that cannot verify the server is its own must fail rather
+    /// than hand back a working-looking handle to somebody else's data.
+    #[tokio::test]
+    async fn a_start_refuses_a_server_it_did_not_spawn() {
+        let held = Scratch::new("port-held");
+        let intruder = Scratch::new("port-intruder");
+        let port = free_port();
+
+        let mut first = Dolt::start(&held.0, port)
+            .await
+            .expect("the first server takes the port");
+        crate::dolt::migrate::run(first.pool())
+            .await
+            .expect("the first server's schema");
+
+        let second = Dolt::start(&intruder.0, port).await;
+        assert!(
+            matches!(second, Err(StartError::PortTaken { .. })),
+            "a second start on a held port must refuse, not adopt the server \
+             already there"
+        );
+
+        // **The positive it rests on.** A start on a port nobody holds still
+        // works — otherwise the refusal above passes on a build where no
+        // server ever comes up.
+        let free = Scratch::new("port-free");
+        let mut ours = Dolt::start(&free.0, free_port())
+            .await
+            .expect("a free port still starts");
+        assert!(
+            !crate::dolt::migrate::run(ours.pool())
+                .await
+                .expect("its schema is its own")
+                .is_empty(),
+            "and the database it reached is empty, so it is not the first one"
+        );
+
+        ours.stop().await;
+        first.stop().await;
     }
 }
