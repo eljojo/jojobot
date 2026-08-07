@@ -447,3 +447,72 @@ async fn mint(tx: &mut Transaction<'_, MySql>, kind: &str) -> Result<String, Ses
         .map_err(store)?;
     Ok(counter.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dolt::tests::{Scratch, free_port};
+    use crate::dolt::{Dolt, migrate};
+
+    /// Put a session row on the board that jojobot cannot read, the way a hand
+    /// edit or a record from a schema nobody remembers would.
+    async fn row(store: &Dolt, id: &str, started_at: &str, state: &str) {
+        sqlx::query(
+            "INSERT INTO session (id, sid, bot, focus, started_at, state)
+             VALUES (?, NULL, 'bot:gamma', 'what it was doing', ?, ?)",
+        )
+        .bind(id)
+        .bind(started_at)
+        .bind(state)
+        .execute(store.pool())
+        .await
+        .expect("the board takes the row");
+    }
+
+    /// **A session row jojobot cannot read is refused, never guessed at.**
+    ///
+    /// Neither branch is reachable through the port — every write goes through
+    /// verbs that validate — so the contract cannot produce either, and both
+    /// were unasserted. The cost of guessing is not abstract: a state token
+    /// read as `active` offers a run whose story is already told back as
+    /// resumable, and a stamp read as some default makes a live session look
+    /// ancient enough for the sweep to abandon it.
+    #[tokio::test]
+    async fn a_row_that_cannot_be_read_is_refused_rather_than_guessed_at() {
+        let scratch = Scratch::new("unreadable-session");
+        let path = scratch.0.clone();
+        // Leaked deliberately: dropping it removes the data under a running
+        // server. The process is stopped below and the temp dir goes with it.
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        let sessions = DoltSessions::open(store.pool().clone());
+
+        // Two ways a row stops being readable: a state that is no state, and a
+        // stamp that is no time. Both, so neither channel can rot unnoticed.
+        row(&store, "bad-state", "2026-01-01T00:00:00Z", "in-flight").await;
+        row(&store, "bad-stamp", "the day before yesterday", "active").await;
+        for id in ["bad-state", "bad-stamp"] {
+            let refused = sessions.read_session(&SessionId(id.into())).await;
+            assert!(
+                matches!(refused, Err(SessionError::Store(_))),
+                "reading {id} must refuse rather than guess: {refused:?}"
+            );
+        }
+
+        // **The positive the refusals rest on.** Without it both assertions
+        // hold on a store that refuses every read it is given, which would say
+        // nothing about reading a damaged row in particular.
+        row(&store, "sound", "2026-01-01T00:00:00Z", "active").await;
+        let read = sessions
+            .read_session(&SessionId("sound".into()))
+            .await
+            .expect("a well-formed row reads back");
+        assert_eq!(read.state, SessionState::Active);
+        assert_eq!(read.focus, "what it was doing");
+
+        store.stop().await;
+    }
+}
