@@ -869,6 +869,32 @@ impl Memory for OutlineStore {
             }
         }
 
+        // **A claim this one is derived from is named, so it must already
+        // exist.** The rule the subject and the edge's object face, on the one
+        // field that names a claim rather than an entity. A citation to nothing
+        // fails the reader the field exists for: a later session walking the
+        // provenance chain back.
+        //
+        // Answered in `retract`'s two shapes rather than a third of its own
+        // (rule 51): an unknown home is an entity miss with entity candidates,
+        // and a home that holds no such row is a fact miss with the addresses
+        // that do exist.
+        if let Some(source) = &fact.derived_from {
+            let Some(source_doc) = self.entity_doc(&collection_id, &source.home).await? else {
+                return Err(MemoryError::UnknownEntity {
+                    attempted: source.home.to_string(),
+                    nearest: guard::screen(&source.home, &[], &index),
+                });
+            };
+            let held = parse_facts_table(&source_doc.text);
+            if !held.iter().any(|f| f.id == source.local) {
+                return Err(MemoryError::UnknownFact {
+                    attempted: source.to_string(),
+                    nearest: held.iter().map(|f| f.address().to_string()).collect(),
+                });
+            }
+        }
+
         // The gate passed, so the entity is in the index — and an entity is in
         // the index because a doc carries its marker. A miss here is a store
         // that changed under us mid-write, not a subject to provision.

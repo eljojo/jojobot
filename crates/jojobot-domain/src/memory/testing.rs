@@ -181,6 +181,36 @@ impl Memory for InMemoryMemory {
         }
 
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
+        // **A claim this one is derived from is named, so it must already
+        // exist** — the same rule the subject and the edge's object face, on
+        // the one field that names a claim rather than an entity. A citation
+        // to nothing fails the reader the field exists for: a later session
+        // walking the provenance chain back.
+        //
+        // Answered in `retract`'s two shapes rather than a third of its own
+        // (rule 51): an unknown home is an entity miss, and a home holding no
+        // such row is a fact miss with the addresses that do exist.
+        if let Some(source) = &fact.derived_from {
+            if !index.iter().any(|e| e.id == source.home) {
+                return Err(MemoryError::UnknownEntity {
+                    attempted: source.home.to_string(),
+                    nearest: guard::screen(&source.home, &[], &index),
+                });
+            }
+            if !facts
+                .iter()
+                .any(|f| f.home == source.home && f.id == source.local)
+            {
+                return Err(MemoryError::UnknownFact {
+                    attempted: source.to_string(),
+                    nearest: facts
+                        .iter()
+                        .filter(|f| f.home == source.home)
+                        .map(|f| f.address().to_string())
+                        .collect(),
+                });
+            }
+        }
         let home = fact.subject.clone();
         let existing: Vec<&Fact> = facts.iter().filter(|f| f.home == home).collect();
         let id = FactId(format!("f{}", existing.len() + 1));
@@ -517,12 +547,106 @@ pub mod contract {
         assert_eq!(seen, captured, "recalled fact must be byte-identical");
     }
 
+    /// **A `derived_from` names a claim, and the claim has to be there.**
+    ///
+    /// The surface teaches that everything a write names must already exist.
+    /// That was true of entities — a subject, an edge's object, an event's
+    /// refs — and not of claims: this field took any well-formed address and
+    /// nothing looked. A link to a claim that never existed is a citation to
+    /// nothing, and the reader it fails is a later session following the
+    /// provenance chain, which is the whole reason the field is there.
+    ///
+    /// Both halves, in one read. The refusal alone passes on a store whose
+    /// capture is simply broken; the acceptance alone passes on the store that
+    /// checked nothing.
+    pub async fn derived_from_must_name_a_fact_that_exists<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-derived");
+        let source = capture(
+            store,
+            NewFact::about(subject.clone(), "said the ferry moved", date(2026, 4, 1)),
+        )
+        .await;
+
+        // Named and there: accepted, and the link reads back off the record.
+        let derived = capture(
+            store,
+            NewFact {
+                derived_from: Some(source.address()),
+                ..NewFact::about(
+                    subject.clone(),
+                    "so the crossing is longer now",
+                    date(2026, 4, 2),
+                )
+            },
+        )
+        .await;
+        assert_eq!(
+            read_back(store, &subject, &derived.id).await.derived_from,
+            Some(source.address()),
+            "a link to a claim that exists survives the write"
+        );
+
+        // Named and absent: refused, with the addresses that do exist.
+        let missing = FactAddress::parse("person:contract-derived#f99").expect("well-formed");
+        let refused = store
+            .capture(NewFact {
+                derived_from: Some(missing.clone()),
+                ..NewFact::about(subject.clone(), "and the fare went up", date(2026, 4, 3))
+            })
+            .await;
+        let Err(MemoryError::UnknownFact { attempted, nearest }) = &refused else {
+            panic!("a derived_from naming no claim must be refused as a miss, got {refused:?}");
+        };
+        assert_eq!(attempted, &missing.to_string());
+        assert!(
+            nearest.contains(&source.address().to_string()),
+            "the addresses that DO exist are what makes it repairable: {nearest:?}"
+        );
+
+        // A home nobody has heard of is an ENTITY miss, which is the shape
+        // `retract` already answers with. Two shapes, no third: what is absent
+        // differs, so what the caller does about it differs.
+        let nowhere = FactAddress::parse("person:contract-nobody#f1").expect("well-formed");
+        let refused = store
+            .capture(NewFact {
+                derived_from: Some(nowhere),
+                ..NewFact::about(subject.clone(), "and the pier closed", date(2026, 4, 4))
+            })
+            .await;
+        assert!(
+            matches!(refused, Err(MemoryError::UnknownEntity { .. })),
+            "a derived_from whose home is unknown is an entity miss, got {refused:?}"
+        );
+
+        // Nothing was written by either refusal. A guard that refuses and
+        // writes anyway is the failure this whole rule exists to prevent
+        // (rule 18).
+        let facts = store.recall(&subject).await.expect("recall should succeed");
+        assert_eq!(
+            facts.len(),
+            2,
+            "a refused capture leaves the record as it was: {facts:?}"
+        );
+    }
+
     /// Every field survives capture→recall unchanged and byte-identical —
     /// `derived_from` included, since it is a fact field like any other and
     /// this is the one test that pins ALL of them at once.
     pub async fn preserves_all_fields<M: Memory>(store: &M) {
         let subject = EntityId::person("contract-fields");
-        let source = FactAddress::parse("person:contract-fields#f1").expect("well-formed");
+        // A claim that is really there: `derived_from` names one, and naming
+        // one that does not exist is refused rather than stored.
+        let source = capture(
+            store,
+            NewFact::about(subject.clone(), "mentioned the café", date(2026, 3, 8)),
+        )
+        .await
+        .address();
+        assert_eq!(
+            source.to_string(),
+            "person:contract-fields#f1",
+            "the first claim on an entity is addressed f1, and that address is what a link carries"
+        );
         let new = NewFact {
             subject: subject.clone(),
             content: "prefers a café table".into(),
@@ -3700,6 +3824,7 @@ pub mod contract {
     pub async fn run_all<M: Memory>(store: &M) {
         capture_reads_back(store).await;
         preserves_all_fields(store).await;
+        derived_from_must_name_a_fact_that_exists(store).await;
         pipe_in_content_round_trips(store).await;
         a_backslash_in_content_round_trips(store).await;
         both_provenances_survive(store).await;

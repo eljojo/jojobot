@@ -625,6 +625,65 @@ mod tests {
         assert_eq!(captured["provenance"], "inference");
     }
 
+    /// **A `derived_from` naming no claim is blocked, with the addresses that
+    /// do exist.**
+    ///
+    /// The store refuses it; this is the half that says a caller sees a
+    /// refusal it can act on rather than an error. The pair is here too,
+    /// because a blocked answer proves nothing on a build where the accepted
+    /// case never writes the link either.
+    #[tokio::test]
+    async fn a_derived_from_must_name_a_claim_that_exists() {
+        let jojobot = handler();
+        let source = capture_ok(&jojobot, capture_args("alpha", "said the ferry moved")).await;
+        let address = source["address"].as_str().expect("an address").to_string();
+
+        let linked = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                derived_from: Some(address.clone()),
+                ..capture_args("alpha", "so the crossing is longer")
+            },
+        )
+        .await;
+        assert_eq!(
+            linked["derived_from"], address,
+            "a link to a claim that exists is written: {linked}"
+        );
+
+        let refused = blocked(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    derived_from: Some("person:alpha#f99".into()),
+                    ..capture_args("alpha", "and the fare went up")
+                }))
+                .await
+                .expect("a miss is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        assert!(
+            refused["how_to_proceed"]
+                .as_str()
+                .is_some_and(|advice| advice.contains(&address)),
+            "the addresses that DO exist are what makes it repairable: {refused}"
+        );
+
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: "person:alpha".into(),
+                    sid: None,
+                }))
+                .await
+                .expect("recall answers"),
+        );
+        assert_eq!(
+            recalled["facts"].as_array().expect("facts").len(),
+            2,
+            "a refused capture wrote nothing: {recalled}"
+        );
+    }
+
     /// **The `standing` argument reaches the store, and comes back.**
     ///
     /// Nothing tested this. The domain contract builds `NewFact { standing }`
