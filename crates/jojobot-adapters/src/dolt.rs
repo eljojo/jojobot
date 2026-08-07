@@ -145,6 +145,26 @@ impl Dolt {
         let deadline = std::time::Instant::now() + READY_WITHIN;
         let mut last = String::new();
         while std::time::Instant::now() < deadline {
+            // ⚠️ **UNPROVEN, AND DELIBERATELY KEPT.** No test in this suite
+            // reaches this branch, and the comment exists so the next reader
+            // knows the coverage is absent rather than assuming it.
+            //
+            // It guards one window: two processes picking the same free port at
+            // the same instant, each spawning before the other has bound. The
+            // loser's child exits, and this notices before a connection is even
+            // attempted. That is reachable across the two test binaries, so it
+            // is not decoration.
+            //
+            // The suite cannot produce it. Its deterministic case is a port
+            // ALREADY held, and there the connection succeeds on the first
+            // pass — against the other server — before this child has finished
+            // dying, so the identity check below is what refuses. Reaching this
+            // branch needs a hook between the spawn and the poll, which is more
+            // apparatus than the branch is worth.
+            //
+            // **Nothing downstream depends on it**: the identity check refuses
+            // the same collision by construction, later and more expensively.
+            // This is the cheap early exit, not the guarantee.
             if child
                 .try_wait()
                 .map_err(|e| StartError::Spawn(e.to_string()))?
