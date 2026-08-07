@@ -487,7 +487,7 @@ mod tests {
     use jojobot_domain::mailbox::{Guarded, MailboxName, NewMessage, StateCounts};
     use jojobot_domain::memory::EntityId;
     use jojobot_domain::session::testing::InMemorySessions;
-    use jojobot_domain::session::{NewEntry, NewSession, Sid};
+    use jojobot_domain::session::{JournalEntry, NewEntry, NewSession, SessionId, Sid};
     use std::sync::Arc;
 
     /// Every well-formed owner resolves. Ownership has its own cases; a
@@ -880,6 +880,225 @@ mod tests {
                 "a refused handover writes nothing, so no board came across"
             );
         }
+
+        store.stop().await;
+    }
+
+    /// **Every field the SESSION verification compares is proven by a target
+    /// that changes exactly that field.**
+    ///
+    /// The message half's case one tier over. A session's five fields and an
+    /// entry's four are compared, and nothing produced a mismatch on any of
+    /// them, so every clause could be dropped and the handover would report
+    /// success over a chronology that did not survive.
+    ///
+    /// The order of the chronology is compared too, and it is the one that
+    /// cannot be checked field by field: two entries that both landed but
+    /// swapped places is a record that no longer says what happened first.
+    #[tokio::test]
+    async fn each_session_field_the_verification_compares_is_proven_on_its_own() {
+        /// The real store, with one session rewritten on the way out.
+        struct Warping(DoltSessions, fn(&mut Session));
+
+        #[async_trait::async_trait]
+        impl Sessions for Warping {
+            async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+                let mut session = self.0.read_session(id).await?;
+                (self.1)(&mut session);
+                Ok(session)
+            }
+            async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+                self.0.sessions_of(bot).await
+            }
+            async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+                self.0.all_sessions().await
+            }
+            async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+                self.0.begin(new).await
+            }
+            async fn append(
+                &self,
+                id: &SessionId,
+                entry: NewEntry,
+            ) -> Result<JournalEntry, SessionError> {
+                self.0.append(id, entry).await
+            }
+            async fn amend_last(
+                &self,
+                id: &SessionId,
+                text: &str,
+            ) -> Result<JournalEntry, SessionError> {
+                self.0.amend_last(id, text).await
+            }
+            async fn amend_beat(
+                &self,
+                id: &SessionId,
+                entry: &jojobot_domain::session::EntryId,
+                text: &str,
+                at: jiff::Timestamp,
+            ) -> Result<JournalEntry, SessionError> {
+                self.0.amend_beat(id, entry, text, at).await
+            }
+            async fn set_focus(
+                &self,
+                id: &SessionId,
+                focus: &str,
+            ) -> Result<Session, SessionError> {
+                self.0.set_focus(id, focus).await
+            }
+            async fn close(
+                &self,
+                id: &SessionId,
+                to: jojobot_domain::session::SessionState,
+            ) -> Result<Session, SessionError> {
+                self.0.close(id, to).await
+            }
+            async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+                self.0.reopen(id).await
+            }
+        }
+
+        /// One field's mutation, and the clause it must make fire.
+        type Case = (&'static str, fn(&mut Session));
+
+        // Each mutation changes exactly one field to a value the source cannot
+        // have had, so the clause named beside it is the only one that can fire.
+        let cases: [Case; 10] = [
+            ("sid", |s| s.sid = Some(Sid("zzzz".into()))),
+            ("bot", |s| s.bot = EntityId("bot:delta".into())),
+            ("focus", |s| s.focus = "something it never worked on".into()),
+            ("started_at", |s| {
+                s.started_at += jiff::SignedDuration::from_secs(1)
+            }),
+            ("state", |s| {
+                s.state = jojobot_domain::session::SessionState::Wrapped
+            }),
+            ("the number of chronology entries", |s| {
+                s.entries.pop();
+            }),
+            // The entry clauses. The chronology is compared in order, so the
+            // first entry is where a difference has to land for the position to
+            // be the one reported.
+            ("at", |s| {
+                s.entries[0].at += jiff::SignedDuration::from_secs(1)
+            }),
+            ("text", |s| s.entries[0].text = "a beat nobody wrote".into()),
+            ("touched", |s| s.entries[0].touched = Some(s.entries[0].at)),
+            ("beat", |s| {
+                s.entries[0].beat = Some("a class nobody recorded".into())
+            }),
+        ];
+
+        for (expected, warp) in cases {
+            let (old_mail, old_sessions) = old_board().await;
+            let (mut store, mail, sessions) =
+                new_store(&format!("session-mismatch-{}", expected.replace(' ', "-"))).await;
+
+            let outcome = run(
+                &old_mail,
+                &old_sessions,
+                &mail,
+                &Warping(sessions, warp),
+                store.pool(),
+            )
+            .await;
+
+            let Err(HandoverError::Mismatch { field, .. }) = outcome else {
+                panic!("a changed {expected} must fail the handover: {outcome:?}");
+            };
+            assert_eq!(
+                field, expected,
+                "and it names the field that moved, so nobody has to diff two records by eye"
+            );
+
+            store.stop().await;
+        }
+    }
+
+    /// **A chronology that landed in the wrong order fails the handover.**
+    ///
+    /// The one difference no field comparison can catch: every entry is
+    /// present and every field of each is intact, and the record still no
+    /// longer says what happened first.
+    #[tokio::test]
+    async fn a_chronology_that_came_back_reordered_fails_the_handover() {
+        struct Reversing(DoltSessions);
+
+        #[async_trait::async_trait]
+        impl Sessions for Reversing {
+            async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+                let mut session = self.0.read_session(id).await?;
+                session.entries.reverse();
+                Ok(session)
+            }
+            async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+                self.0.sessions_of(bot).await
+            }
+            async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+                self.0.all_sessions().await
+            }
+            async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+                self.0.begin(new).await
+            }
+            async fn append(
+                &self,
+                id: &SessionId,
+                entry: NewEntry,
+            ) -> Result<JournalEntry, SessionError> {
+                self.0.append(id, entry).await
+            }
+            async fn amend_last(
+                &self,
+                id: &SessionId,
+                text: &str,
+            ) -> Result<JournalEntry, SessionError> {
+                self.0.amend_last(id, text).await
+            }
+            async fn amend_beat(
+                &self,
+                id: &SessionId,
+                entry: &jojobot_domain::session::EntryId,
+                text: &str,
+                at: jiff::Timestamp,
+            ) -> Result<JournalEntry, SessionError> {
+                self.0.amend_beat(id, entry, text, at).await
+            }
+            async fn set_focus(
+                &self,
+                id: &SessionId,
+                focus: &str,
+            ) -> Result<Session, SessionError> {
+                self.0.set_focus(id, focus).await
+            }
+            async fn close(
+                &self,
+                id: &SessionId,
+                to: jojobot_domain::session::SessionState,
+            ) -> Result<Session, SessionError> {
+                self.0.close(id, to).await
+            }
+            async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+                self.0.reopen(id).await
+            }
+        }
+
+        let (old_mail, old_sessions) = old_board().await;
+        let (mut store, mail, sessions) = new_store("session-reordered").await;
+
+        let outcome = run(
+            &old_mail,
+            &old_sessions,
+            &mail,
+            &Reversing(sessions),
+            store.pool(),
+        )
+        .await;
+
+        let Err(HandoverError::Mismatch { what, field, .. }) = outcome else {
+            panic!("a reordered chronology must fail the handover: {outcome:?}");
+        };
+        assert_eq!(what, "chronology entry");
+        assert_eq!(field, "the entry at this position is a different entry");
 
         store.stop().await;
     }
