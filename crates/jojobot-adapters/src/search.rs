@@ -2153,6 +2153,114 @@ mod tests {
         );
     }
 
+    /// **A claim taken back before this server started is not served by it.**
+    ///
+    /// The shared contract drives both states against a live index, so what is
+    /// left to ask is the path it does not travel: a record marked in the store
+    /// and read back by the BOOT SCAN, rather than by the refresh that follows a
+    /// write. Taking something back is the one move whose whole purpose is that
+    /// it stops being served, so the state has to survive the journey out to the
+    /// store and back rather than only the write that set it.
+    ///
+    /// Both of the states that leave a row standing are driven here, because
+    /// they are set by different verbs: `retract` marks an event, and an
+    /// ordinary edit is what moves a fact to superseded.
+    #[tokio::test]
+    async fn a_claim_taken_back_before_the_scan_is_not_served_after_it() {
+        let inner = Arc::new(InMemoryMemory::new());
+        inner
+            .add_entity(NewEntity::new(
+                EntityId::person("alpha"),
+                "Alpha",
+                "user-named",
+            ))
+            .await
+            .expect("add ok");
+        let stands = inner
+            .capture(NewFact {
+                event: Some(jojobot_domain::memory::event::Event::of("a-rehearsal")),
+                ..NewFact::about(
+                    EntityId::person("alpha"),
+                    "the quartet rehearsed",
+                    date(2026, 7, 1),
+                )
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        let taken_back = inner
+            .capture(NewFact {
+                event: Some(jojobot_domain::memory::event::Event::of("a-rehearsal")),
+                ..NewFact::about(
+                    EntityId::person("alpha"),
+                    "the quartet rehearsed twice",
+                    date(2026, 7, 2),
+                )
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        inner
+            .retract(
+                &taken_back.address(),
+                Some("it never happened"),
+                date(2026, 7, 3),
+            )
+            .await
+            .expect("retract ok");
+        // The card's claim names both states, so both are driven: they leave a
+        // row standing for different reasons and are marked by different verbs.
+        let moved_past = inner
+            .capture(NewFact::about(
+                EntityId::person("alpha"),
+                "the quartet rehearsed on Tuesdays",
+                date(2026, 7, 4),
+            ))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        inner
+            .update_fact(
+                &moved_past.address(),
+                FactPatch {
+                    status: Some(FactStatus::Superseded),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("edit ok");
+
+        let store = IndexedMemory::new(inner).expect("index opens");
+        store.rebuild().await.expect("rebuild");
+
+        let seen: Vec<String> = store
+            .search(&SearchQuery::text("rehearsed"))
+            .expect("search ok")
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Fact { fact, .. } => Some(fact.address().to_string()),
+                _ => None,
+            })
+            .collect();
+        // The positive first: "the retracted one is absent" passes identically
+        // on a scan that indexed nothing at all.
+        assert!(
+            seen.contains(&stands.address().to_string()),
+            "the claim that still stands is served: {seen:?}"
+        );
+        assert!(
+            !seen.contains(&taken_back.address().to_string()),
+            "the claim that was taken back is not: {seen:?}"
+        );
+        assert!(
+            !seen.contains(&moved_past.address().to_string()),
+            "and neither is the claim the record has moved past: {seen:?}"
+        );
+    }
+
     /// A store that just hands back the docs it was given, and can drop them.
     ///
     /// Its doc ids are deliberately **not** entity handles — the real store's
