@@ -539,6 +539,142 @@ mod tests {
         assert!(reasons("person:alphonse", None).is_empty());
     }
 
+    /// **What the near-miss budget actually catches, measured on realistic
+    /// names.** A record of behaviour, not a value anybody has chosen.
+    ///
+    /// A new place closely resembling an existing one was created with no
+    /// block and no candidates offered, and nobody knew whether the budget was
+    /// wrong, applied wrongly, or right with the expectation wrong. This is
+    /// the measurement that answers it, and the answer is that the budget is
+    /// right and the METRIC cannot see the case that was reported.
+    ///
+    /// [`NEAR`] is an edit distance, so it catches a misspelling of one name
+    /// and cannot catch **containment** — a name that is another name plus
+    /// words. "Moe's" against "Moe's Tavern" scores 7, which is not a near
+    /// miss by any budget that still lets two genuinely different places
+    /// exist. The two cases below marked as passing are that shape, and they
+    /// are the shape a session actually produces: not a typo, a fuller name
+    /// for the same place.
+    ///
+    /// Both directions, because a threshold that blocks everything and a
+    /// threshold that blocks nothing each satisfy half of this on their own.
+    #[test]
+    fn the_near_miss_budget_catches_typos_and_not_containment() {
+        // (existing handle, its name, incoming handle, its name, blocked)
+        const CASES: &[(&str, &str, &str, &str, bool)] = &[
+            // Typos inside the budget: caught, which is what it is for.
+            (
+                "place:shelbyville",
+                "Shelbyville",
+                "place:shelbyvile",
+                "Shelbyvile",
+                true,
+            ),
+            (
+                "place:north-haverbrook",
+                "North Haverbrook",
+                "place:north-haverbook",
+                "North Haverbook",
+                true,
+            ),
+            (
+                "place:springfield",
+                "Springfield",
+                "place:springfeild",
+                "Springfeild",
+                true,
+            ),
+            (
+                "place:riverbend",
+                "Riverbend",
+                "place:riverbnd",
+                "Riverbnd",
+                true,
+            ),
+            (
+                "place:capital-city",
+                "Capital City",
+                "place:capital-citty",
+                "Capital Citty",
+                true,
+            ),
+            // A deliberate second one is inside the budget too, so it is
+            // blocked and `create_new` is how it gets made. Working as
+            // designed: the guard suspects, the caller decides.
+            (
+                "place:north-trail",
+                "North Trail",
+                "place:north-trail-2",
+                "North Trail 2",
+                true,
+            ),
+            // **NOT caught, and this is the reported case.** Containment, not
+            // a typo: the same place under a fuller name. Edit distance scores
+            // these 7 apart and no budget that keeps distinct places distinct
+            // will reach them.
+            (
+                "place:moes",
+                "Moe's",
+                "place:moes-tavern",
+                "Moe's Tavern",
+                false,
+            ),
+            (
+                "place:golden-north-trail",
+                "Golden North Trail",
+                "place:north-trail",
+                "North Trail",
+                false,
+            ),
+            // Genuinely different places: untouched, which is the half that
+            // stops "block more" from being a free answer.
+            (
+                "place:shelbyville",
+                "Shelbyville",
+                "place:springfield",
+                "Springfield",
+                false,
+            ),
+            (
+                "place:capital-city",
+                "Capital City",
+                "place:far-country",
+                "Far Country",
+                false,
+            ),
+            ("place:leftorium", "Leftorium", "place:moes", "Moe's", false),
+        ];
+
+        for (existing_handle, existing_name, incoming_handle, incoming_name, want_block) in CASES {
+            let existing = Entity {
+                id: EntityId((*existing_handle).into()),
+                kind: EntityKind::Place,
+                name: (*existing_name).into(),
+                aliases: vec![],
+                source: "fixture".into(),
+                crm: None,
+                parent: None,
+                boot: Default::default(),
+            };
+            let incoming = EntityId((*incoming_handle).into());
+            let decision = decide(
+                &incoming,
+                &[incoming_name],
+                std::slice::from_ref(&existing),
+                false,
+            );
+            let blocked = matches!(decision, Decision::Block(_));
+            // The distance rides the failure, so a red reports the number
+            // rather than sending the next reader to work it out again.
+            assert_eq!(
+                blocked,
+                *want_block,
+                "{existing_handle} vs {incoming_handle}: edit distance {}, budget {NEAR}, got {decision:?}",
+                edit_distance(incoming.slug(), existing.id.slug()),
+            );
+        }
+    }
+
     #[test]
     fn a_typo_in_the_name_is_caught_within_two_edits() {
         assert_eq!(
