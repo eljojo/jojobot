@@ -180,14 +180,31 @@ async fn main() -> anyhow::Result<()> {
     )
     .await
     {
-        Carryover::Carried(report) => tracing::info!(
-            boxes = report.boxes.verified,
-            messages = report.messages.verified,
-            sessions = report.sessions.verified,
-            entries = report.entries.verified,
-            not_carried = ?report.not_carried,
-            "handover: the board moved into the store and read back as itself"
-        ),
+        Carryover::Carried(report) => {
+            tracing::info!(
+                boxes = report.boxes.verified,
+                messages = report.messages.verified,
+                sessions = report.sessions.verified,
+                entries = report.entries.verified,
+                not_carried = ?report.not_carried,
+                "handover: the board moved into the store and read back as itself"
+            );
+            // **Its own line, at warn.** These cards did not cross: they are
+            // not in the store being served from, and this is the only notice
+            // that they exist at all — as a field on a success line it is read
+            // as part of a success. Only when there are any, because an alarm
+            // that fires on every boot stops being read.
+            if !report.not_carried.is_empty() {
+                tracing::warn!(
+                    count = report.not_carried.len(),
+                    ids = ?report.not_carried,
+                    "CARDS LEFT BEHIND — the old store holds cards jojobot cannot read as \
+                     messages, so they were not carried and are not on the board being served. \
+                     Nothing was lost: they are still on the old store, where a person has to \
+                     look at them."
+                );
+            }
+        }
         Carryover::AlreadyCarried => {
             tracing::info!("handover: already carried by an earlier boot, and verified")
         }
