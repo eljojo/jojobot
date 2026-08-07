@@ -36,7 +36,11 @@ impl Jojobot {
                        its story was never told, and that is the difference between the two \
                        endings. Pass your `sid` on every call. When the work continues but this \
                        run has gotten long, wrapping is also how you ROTATE: wrap the story, then \
-                       boot again for a fresh sid."
+                       boot again for a fresh sid. THE CHRONOLOGY THIS HANDS BACK IS THE NEWEST \
+                       OF THE RECORD, not all of it: a long run's answer would be one no client \
+                       can read. `entry_count` is the whole length, and `chronology_elided` with \
+                       `entries_omitted` says how much is not here. Nothing was dropped from the \
+                       record — what was written is stored whole."
     )]
     pub(crate) async fn wrap_session(
         &self,
@@ -222,6 +226,68 @@ mod tests {
         assert!(
             last.find("cutting the codec seam") < last.find("the seam is cut"),
             "…and in the order they happened: {last:?}"
+        );
+    }
+
+    /// **A wrap's answer is capped like a boot's, and this pins the decision
+    /// rather than discovering it.**
+    ///
+    /// The cap lives in the one session renderer, so `wrap_session` inherited
+    /// it: no card scoped that, and a behaviour nobody decided is one anybody
+    /// may unpick by accident. It is the right answer here for the reason it is
+    /// right at a boot — a long run's whole chronology is a response no client
+    /// reads — and nothing is lost, because the store holds the record whole and
+    /// the answer states what it left out.
+    #[tokio::test]
+    async fn a_long_runs_wrap_serves_the_newest_of_its_chronology_and_says_so() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        for nth in 0..20 {
+            jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: format!("beat {nth:02} {}", "w".repeat(1500)),
+                    focus: None,
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("journal ok");
+        }
+
+        let wrapped = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "the run is over and the story is told".into(),
+                    sid,
+                }))
+                .await
+                .expect("wrap ok"),
+        );
+        let session = &wrapped["session"];
+        let chronology = session["chronology"].as_array().expect("a chronology");
+
+        // The positive first: the story a wrap exists to tell is in the answer.
+        // Asserting only that entries were dropped would pass on an answer that
+        // dropped the one entry this verb wrote.
+        assert!(
+            chronology.last().expect("a wrap carries its own entry")["text"]
+                .as_str()
+                .expect("an entry's text")
+                .contains("the run is over and the story is told"),
+            "{session}"
+        );
+        assert_eq!(session["chronology_elided"], true, "{session}");
+        assert!(
+            session["entries_omitted"]
+                .as_u64()
+                .expect("what was left out is counted")
+                > 0,
+            "{session}"
+        );
+        assert!(
+            chronology.len() < session["entry_count"].as_u64().expect("a length") as usize,
+            "entry_count is the whole record and the answer carries less: {session}"
         );
     }
 
