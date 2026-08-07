@@ -56,13 +56,6 @@
           # build saying the toolchain is short rather than the code being
           # wrong.
           nativeCheckInputs = [ dolt ];
-          # `dolt` creates `$HOME/.dolt` on its first run and refuses to start
-          # when it cannot reach a home directory. The sandbox points HOME at
-          # `/homeless-shelter`, which does not exist, so the check phase gets
-          # a writable one of its own.
-          preCheck = ''
-            export HOME="$(mktemp -d)"
-          '';
           # What `ping` reports as the running build. This has to come from
           # here: the build sandbox has no `.git` — src is a store path — so
           # the build script's git fallback cannot fire, and the deployed

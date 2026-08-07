@@ -290,6 +290,11 @@ All configuration is environment-driven.
 | `STATE_DIRECTORY` | Where the SQL store keeps its data — **required**; the service manager sets it | unset |
 | `JOJOBOT_STORE_PORT` | Loopback port the SQL store serves on | `3307` |
 
+Everything the store keeps sits under `$STATE_DIRECTORY/db`: `jojobot` is the
+database, and `dolt-home` is the server's own configuration. jojobot names that
+second path instead of taking it from the environment, so the store also comes
+up where the process runs as an account with no home directory of its own.
+
 The server **fails closed**, and there are two kinds of it.
 
 *Misconfiguration.* With `JOJOBOT_ISSUER` unset it refuses to start unless

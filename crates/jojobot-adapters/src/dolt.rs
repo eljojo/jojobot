@@ -27,6 +27,19 @@ pub mod sessions;
 /// `/var/lib/jojobot/db` address the same database by the same name.
 const DATABASE: &str = "jojobot";
 
+/// Where the server keeps its own configuration, inside the data directory.
+///
+/// **jojobot names this place, because jojobot runs the process.** The server
+/// keeps a global configuration under a home directory and refuses to start
+/// when it cannot find one — and a service manager may run jojobot as an
+/// account that resolves to no home at all. Pointing the server at a directory
+/// jojobot already owns takes the environment out of it.
+///
+/// It sits beside the database rather than anywhere else on the machine: every
+/// piece of the store's state belongs under the one data directory, so a backup
+/// of that directory is the whole store and nothing of it is hidden.
+const SERVER_HOME: &str = "dolt-home";
+
 /// How long a freshly spawned server has to start answering before the start
 /// is called a failure. Generous: a first start initializes storage, and a
 /// loaded machine is slow rather than broken.
@@ -91,9 +104,11 @@ impl Dolt {
             path: database.clone(),
             why: e.to_string(),
         })?;
-        Self::init_if_empty(&database)?;
+        let home = Self::server_home(data_dir)?;
+        Self::init_if_empty(&database, &home)?;
 
         let child = tokio::process::Command::new("dolt")
+            .env("DOLT_ROOT_PATH", &home)
             .arg("sql-server")
             .arg("--data-dir")
             .arg(data_dir)
@@ -243,16 +258,36 @@ impl Dolt {
         Ok(())
     }
 
+    /// Make the directory the server reads its own configuration from, and
+    /// give back an absolute path to it.
+    ///
+    /// **Absolute, and that is not tidiness.** `dolt init` runs with the
+    /// database directory as its working directory, so a relative path would
+    /// send the server's configuration somewhere else — a second home, one
+    /// directory further down, for the one call that makes the database.
+    fn server_home(data_dir: &Path) -> Result<PathBuf, StartError> {
+        let home = data_dir.join(SERVER_HOME);
+        std::fs::create_dir_all(&home).map_err(|e| StartError::DataDir {
+            path: home.clone(),
+            why: e.to_string(),
+        })?;
+        home.canonicalize().map_err(|e| StartError::DataDir {
+            path: home,
+            why: e.to_string(),
+        })
+    }
+
     /// Initialize the database directory if nothing is there yet.
     ///
     /// Idempotent by inspection rather than by ignoring a failure: an `init`
     /// that fails for a reason other than "already initialized" is a real
     /// failure, and swallowing it would hand back a handle to nothing.
-    fn init_if_empty(database: &Path) -> Result<(), StartError> {
+    fn init_if_empty(database: &Path, home: &Path) -> Result<(), StartError> {
         if database.join(".dolt").exists() {
             return Ok(());
         }
         let done = std::process::Command::new("dolt")
+            .env("DOLT_ROOT_PATH", home)
             .arg("init")
             .arg("--name")
             .arg("jojobot")
