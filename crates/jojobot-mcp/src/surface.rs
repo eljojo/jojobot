@@ -537,6 +537,12 @@ fn the_orientation_teaches_the_two_endings_and_the_own_box_norm() {
 /// args field is not a comment: `schemars` renders it into the JSON schema, so
 /// it reaches a caller exactly as a description does. That is where `boot`
 /// spent a release describing the deleted `mailbox` parameter.
+///
+/// **A note in an answer is read the same way a description is.** The coverage
+/// notes are prose an agent forms its picture of the system from, so they are
+/// gathered here too. A word list that reads every description and no answer
+/// checks the half a caller meets before the call and skips the half it meets
+/// after.
 fn agent_facing_text() -> Vec<(String, String)> {
     let mut found = vec![
         ("the orientation essay".to_string(), ORIENTATION.to_string()),
@@ -564,7 +570,53 @@ fn agent_facing_text() -> Vec<(String, String)> {
             serde_json::to_string(&tool.input_schema).expect("a schema serializes"),
         ));
     }
+    for (what, note) in crate::memory::search::coverage_notes() {
+        found.push((what, note));
+    }
     found
+}
+
+/// Whether this text uses `word` as a word, rather than as a run of letters
+/// inside a longer one. The plural counts: a trailing `s` is the same word.
+///
+/// **A substring match cannot carry a rule about short words.** "row" sits
+/// inside "grow", "narrow" and "browser"; "card" sits inside "discard". Every
+/// one of those is ordinary English doing its job, so a substring test reports
+/// sentences that are correct and the list below stops being usable for exactly
+/// the words most likely to leak.
+fn mentions(haystack: &str, word: &str) -> bool {
+    haystack.match_indices(word).any(|(at, _)| {
+        let opens = haystack[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric());
+        let mut rest = haystack[at + word.len()..].chars();
+        let closes = match rest.next() {
+            None => true,
+            Some('s') => rest.next().is_none_or(|c| !c.is_alphanumeric()),
+            Some(c) => !c.is_alphanumeric(),
+        };
+        opens && closes
+    })
+}
+
+/// **The boundary rule is what lets the list below carry a short word.**
+///
+/// Both directions matter and they fail differently: matching inside a longer
+/// word reports correct sentences until somebody deletes the entry to get the
+/// suite green, and matching nothing at all leaves a guard that passes because
+/// it looks at nothing.
+#[test]
+fn a_word_is_only_found_where_it_is_a_word() {
+    assert!(mentions("a fact is one row on the page", "row"));
+    assert!(mentions("two rows", "row"), "the plural is the same word");
+    assert!(mentions("row", "row"), "the whole text can be the word");
+    assert!(mentions("a crm-card id", "card"), "a hyphen ends a word");
+
+    assert!(!mentions("the graph is meant to grow", "row"));
+    assert!(!mentions("narrowed to one kind", "row"));
+    assert!(!mentions("a browser with no repository", "row"));
+    assert!(!mentions("documented elsewhere", "document"));
 }
 
 /// **The prose an agent reads describes the system that exists.**
@@ -578,11 +630,14 @@ fn agent_facing_text() -> Vec<(String, String)> {
 ///
 /// An agent must never be taught the store's shape — not its business, and
 /// it will be wrong again — and must never be sent to repair something in a
-/// system that does not hold it.
+/// system that does not hold it. **That covers the store serving today as well
+/// as the one that was retired** (rule 53): a word true only of the product
+/// underneath is a word that stops being true when the product is swapped, and
+/// an agent taught it has to unlearn a model rather than read a new sentence.
 ///
 /// Six point-fixes would have left the seventh. This is the class.
 #[test]
-fn no_agent_facing_text_teaches_the_retired_store() {
+fn no_agent_facing_text_teaches_the_store() {
     // Each word, and what an agent wrongly concludes from meeting it.
     const RETIRED: &[(&str, &str)] = &[
         ("card", "a message is a row on a page, not a card"),
@@ -593,6 +648,14 @@ fn no_agent_facing_text_teaches_the_retired_store() {
         (
             "mailbox label",
             "a box is a page owned by its bot, not a label",
+        ),
+        (
+            "document",
+            "an agent holds entities, facts and prose; a document is what the store keeps them in",
+        ),
+        (
+            "row",
+            "a fact is a claim, not a line in whatever table holds it today",
         ),
     ];
     // **The one legitimate use, allowlisted by name and by reason.** The word
@@ -611,7 +674,7 @@ fn no_agent_facing_text_teaches_the_retired_store() {
     for (what, text) in agent_facing_text() {
         let haystack = text.to_lowercase();
         for (word, why) in RETIRED {
-            if !haystack.contains(word) {
+            if !mentions(&haystack, word) {
                 continue;
             }
             if let Some(at) = unused.iter().position(|(w, x)| *w == what && x == word) {
@@ -629,8 +692,8 @@ fn no_agent_facing_text_teaches_the_retired_store() {
     // rounds of finding the next one.
     assert!(
         teaching.is_empty(),
-        "agent-facing text teaches a store that no longer exists. An agent reads this as the \
-         truth about the system it is calling, and acts on it:\n  {}",
+        "agent-facing text teaches the store rather than the system. An agent reads this as the \
+         truth about what it is calling, and acts on it:\n  {}",
         teaching.join("\n  ")
     );
     assert!(

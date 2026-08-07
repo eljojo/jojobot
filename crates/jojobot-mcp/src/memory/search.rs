@@ -213,14 +213,61 @@ fn memory_coverage(coverage: Coverage) -> serde_json::Value {
         }),
         Coverage::Partial => serde_json::json!({
             "searched": true,
-            "note": "PARTIAL: at least one document is indexed as it was BEFORE a write that \
+            "note": "PARTIAL: at least one entity is indexed as it stood BEFORE a write that \
                      landed, because jojobot could not re-read it afterwards. Every hit here is \
-                     real, but one of them may be a version the store has moved past, and a row \
+                     real, but one of them may be a version the store has moved past, and a fact \
                      written since may be missing. recall reads the store directly and is \
                      complete — use it when the answer matters.",
         }),
         Coverage::Loaded => serde_json::json!({ "searched": true }),
     }
+}
+
+/// **Every note these two functions can put in an answer**, each labelled with
+/// the state that produces it — the input to the surface's checks on the words
+/// an agent is handed.
+///
+/// The `Coverage` values are written out rather than looped over a list, so a
+/// state added later fails to compile here instead of quietly going unread.
+#[cfg(test)]
+pub(crate) fn coverage_notes() -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for coverage in [Coverage::Unread, Coverage::Partial, Coverage::Loaded] {
+        found.push((
+            format!("search's memory coverage note ({coverage:?})"),
+            memory_coverage(coverage).to_string(),
+        ));
+        for (narrowing, query) in [
+            ("unnarrowed", SearchQuery::default()),
+            (
+                "include_mail false",
+                SearchQuery {
+                    include_mail: false,
+                    ..SearchQuery::default()
+                },
+            ),
+            (
+                "fact-scoped",
+                SearchQuery {
+                    status: Some(FactStatus::Active),
+                    ..SearchQuery::default()
+                },
+            ),
+            (
+                "kind-filtered",
+                SearchQuery {
+                    kind: Some(EntityKind::Person),
+                    ..SearchQuery::default()
+                },
+            ),
+        ] {
+            found.push((
+                format!("search's mail coverage note ({narrowing}, {coverage:?})"),
+                mail_coverage(&query, coverage).to_string(),
+            ));
+        }
+    }
+    found
 }
 
 /// The front door: one ranked list over entities, facts and prose.
@@ -236,7 +283,7 @@ impl Jojobot {
                        nor filter is refused. kind + edge answers a cross-entity question in one \
                        call (\"which people are in X\") by walking typed edges — prose that \
                        merely mentions X is not an answer. No hit comes back bare: a fact \
-                       carries its whole row, its address (feed that to update_fact), and who it \
+                       carries the whole claim, its address (feed that to update_fact), and who it \
                        is `about` and where it is `home`d (a null name there means the handle \
                        names nothing — a real defect worth reporting); an entity or prose hit \
                        carries that entity's names and the edges its facts draw; a message hit \
@@ -254,7 +301,7 @@ impl Jojobot {
                        read it before concluding a message does not exist. `memory` answers the \
                        same question about entities, facts and prose: searched: false means the \
                        memory store was never read, and searched: true with a note means at least \
-                       one document is indexed as it stood before a write that landed — the hits \
+                       one entity is indexed as it stood before a write that landed — the hits \
                        are real, one may be out of date, and `recall` reads the store itself. No \
                        pagination — raise `limit` or ask a better question."
     )]
