@@ -128,6 +128,24 @@ fn source_session(e: SessionError) -> HandoverError {
     HandoverError::Source(e.to_string())
 }
 
+/// A read-back the target refused.
+///
+/// **Post-commit, always**: the verification runs after the rows are in, and
+/// this is the target's own read path. So a refusal here says the target holds
+/// records nobody could check — never that the old store was unreadable, which
+/// would tell a caller nothing was written and it is safe to retry. The
+/// underlying cause is logged because the variant carries only names.
+fn unread_back(what: &'static str) -> impl FnOnce(MailboxError) -> HandoverError {
+    move |e| {
+        tracing::error!(error = %e, what, "the handover could not read the carried records back");
+        HandoverError::Mismatch {
+            what,
+            which: "all of them".into(),
+            field: "the read-back itself",
+        }
+    }
+}
+
 fn target(e: sqlx::Error) -> HandoverError {
     tracing::error!(error = %e, "the handover's target refused a write");
     HandoverError::Target("the store refused the records".into())
@@ -345,7 +363,10 @@ async fn verify(
     to_mail: &dyn Mailboxes,
     to_sessions: &dyn Sessions,
 ) -> Result<(), HandoverError> {
-    let landed_boxes = to_mail.list_mailboxes().await.map_err(source_mail)?;
+    let landed_boxes = to_mail
+        .list_mailboxes()
+        .await
+        .map_err(unread_back("mailbox"))?;
     for was in boxes {
         let Some(now) = landed_boxes.iter().find(|b| b.name == was.name) else {
             return Err(HandoverError::Mismatch {
@@ -371,7 +392,10 @@ async fn verify(
         report.boxes.verified += 1;
     }
 
-    let landed = to_mail.scan_messages().await.map_err(source_mail)?;
+    let landed = to_mail
+        .scan_messages()
+        .await
+        .map_err(unread_back("message"))?;
     for was in messages {
         let Some(now) = landed.iter().find(|m| m.id == was.id) else {
             return Err(HandoverError::Mismatch {
@@ -1222,5 +1246,137 @@ mod tests {
 
             store.stop().await;
         }
+    }
+
+    /// **A read-back that fails is a failure of the TARGET, and says so.**
+    ///
+    /// The verification runs after the commit, so by the time these reads
+    /// happen the rows are already in the new store. Reporting a refusal here
+    /// as if the old store were unreadable tells a caller the opposite of
+    /// what is true — nothing was written, retry — while the target sits
+    /// holding a board nobody verified.
+    #[tokio::test]
+    async fn a_read_back_the_target_refuses_is_a_mismatch_not_a_source_failure() {
+        /// The real target, with one of its two read-back paths refusing.
+        ///
+        /// `run` reaches the target through this port only in the
+        /// verification, so a refusal here can only be post-commit.
+        struct Unreadable(DoltMailboxes, Option<Read>);
+
+        #[derive(Clone, Copy, PartialEq)]
+        enum Read {
+            Boxes,
+            Messages,
+        }
+
+        impl Unreadable {
+            fn refuses(&self, read: Read) -> Result<(), MailboxError> {
+                if self.1 == Some(read) {
+                    return Err(MailboxError::Store("the store would not answer".into()));
+                }
+                Ok(())
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl Mailboxes for Unreadable {
+            async fn list_mailboxes(
+                &self,
+            ) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+                self.refuses(Read::Boxes)?;
+                self.0.list_mailboxes().await
+            }
+            async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+                self.refuses(Read::Messages)?;
+                self.0.scan_messages().await
+            }
+            async fn create_mailbox(
+                &self,
+                name: &MailboxName,
+                owner: &EntityId,
+                token: Option<&str>,
+            ) -> Result<Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+                self.0.create_mailbox(name, owner, token).await
+            }
+            async fn post_message(
+                &self,
+                message: NewMessage,
+            ) -> Result<Guarded<Message>, MailboxError> {
+                self.0.post_message(message).await
+            }
+            async fn read_mailbox(
+                &self,
+                name: &MailboxName,
+            ) -> Result<Guarded<jojobot_domain::mailbox::Delivery>, MailboxError> {
+                self.0.read_mailbox(name).await
+            }
+            async fn read_message(
+                &self,
+                id: &jojobot_domain::mailbox::MessageId,
+            ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
+                self.0.read_message(id).await
+            }
+            async fn mark_processed(
+                &self,
+                id: &jojobot_domain::mailbox::MessageId,
+                notes: Option<&str>,
+            ) -> Result<Message, MailboxError> {
+                self.0.mark_processed(id, notes).await
+            }
+        }
+
+        // One case per read-back, because each is its own mapping: fix the
+        // boxes and the messages still lie.
+        for (refusing, expected, what) in [
+            (Read::Boxes, "the mailboxes", "mailbox"),
+            (Read::Messages, "the messages", "message"),
+        ] {
+            let (old_mail, old_sessions) = old_board().await;
+            let (mut store, mail, sessions) =
+                new_store(&format!("read-back-{}", expected.replace(' ', "-"))).await;
+
+            let outcome = run(
+                &old_mail,
+                &old_sessions,
+                &Unreadable(mail, Some(refusing)),
+                &sessions,
+                store.pool(),
+            )
+            .await;
+
+            let Err(HandoverError::Mismatch { what: kind, .. }) = outcome else {
+                panic!(
+                    "a target that will not hand {expected} back is a mismatch, \
+                     not a source failure: {outcome:?}"
+                );
+            };
+            assert_eq!(
+                kind, what,
+                "and it names the kind that could not be read back"
+            );
+
+            store.stop().await;
+        }
+
+        // **The positive the two negatives rest on.** The same decorator,
+        // refusing nothing, carries the board and verifies it — so the cases
+        // above failed because the read was refused, not because this double
+        // breaks the handover or hands back an empty board either way.
+        let (old_mail, old_sessions) = old_board().await;
+        let (mut store, mail, sessions) = new_store("read-back-intact").await;
+        let report = run(
+            &old_mail,
+            &old_sessions,
+            &Unreadable(mail, None),
+            &sessions,
+            store.pool(),
+        )
+        .await
+        .expect("a target that answers both reads completes the handover");
+        assert!(report.whole(), "every kind came through whole: {report:?}");
+        assert_eq!(report.boxes.verified, 2);
+        assert_eq!(report.messages.verified, 3);
+
+        store.stop().await;
     }
 }
