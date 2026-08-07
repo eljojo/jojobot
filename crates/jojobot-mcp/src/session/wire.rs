@@ -31,8 +31,16 @@ pub(crate) fn session_json(session: &Session) -> serde_json::Value {
         "entry_count": session.entries.len(),
     });
     if let Some(obj) = body.as_object_mut() {
+        // **Sized by what it renders as, not by what somebody wrote.** An entry
+        // ships as an object with an id, a timestamp and a beat around its
+        // text, and on a short entry that envelope is most of the payload — so
+        // measuring the text alone left the budget holding a number the answer
+        // does not spend. The rendering happens twice, which a chronology is far
+        // too small for anybody to notice.
         obj.extend(chronology_json(
-            &text::SESSION_CHRONOLOGY.tail(&session.entries, |e| e.text.chars().count()),
+            &text::SESSION_CHRONOLOGY.tail(&session.entries, |e| {
+                entry_json(e).to_string().chars().count()
+            }),
         ));
     }
     body

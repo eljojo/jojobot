@@ -1427,6 +1427,56 @@ mod tests {
         }
     }
 
+    /// **The bound is on the payload, so the payload is what is measured.**
+    ///
+    /// An entry does not travel as its text. It travels as an object with an
+    /// id, a timestamp and a beat around it, and that envelope is most of a
+    /// short entry. Sized by the text alone, a chronology of short beats served
+    /// several times the budget while every other check on it passed — the cap
+    /// was there, the number it held was not the number that ships.
+    #[tokio::test]
+    async fn short_beats_are_bounded_by_what_they_render_as() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        // Short enough that the text alone fits the budget several times over:
+        // whatever is over it comes from the envelope.
+        for nth in 0..200 {
+            journal_entry(&jojobot, &sid, &format!("beat {nth:03}")).await;
+        }
+
+        let resumed = boot_answering(&jojobot, "gamma", &sid).await;
+        let chronology = resumed["session"]["session"]["chronology"]
+            .as_array()
+            .expect("a chronology")
+            .clone();
+
+        let text: usize = chronology
+            .iter()
+            .map(|e| e["text"].as_str().expect("an entry's text").chars().count())
+            .sum();
+        let served: usize = chronology
+            .iter()
+            .map(|e| e.to_string().chars().count())
+            .sum();
+        assert!(
+            served <= jojobot_domain::text::SESSION_CHRONOLOGY.budget,
+            "the served entries are {served} characters against a budget of {}, and their text \
+             is only {text} of it",
+            jojobot_domain::text::SESSION_CHRONOLOGY.budget
+        );
+        // The positive the bound depends on: a cap that served nothing, or that
+        // dropped the newest beat, would satisfy the assertion above.
+        assert!(
+            chronology.last().expect("a resume carries beats")["text"]
+                .as_str()
+                .expect("an entry's text")
+                .starts_with("beat 199"),
+            "the newest beat survives the cap: {chronology:?}"
+        );
+    }
+
     /// **A resume comes back readable.** A chronology grows with every beat and
     /// nothing bounded it, so the longer a run was worth resuming the more
     /// certainly its own boot was a payload the caller could not read — and a
