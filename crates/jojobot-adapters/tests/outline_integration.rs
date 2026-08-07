@@ -1007,6 +1007,11 @@ async fn record_the_rail_goldens() {
 /// somebody's session wrote. A migration proven only against a fake is a
 /// migration whose verification has never itself been verified.
 ///
+/// **It enters where a boot enters — `carry_over`, never `run`.** The record,
+/// its two states and the already-carried answer all sit above `run`, and a
+/// suite that stepped past them would prove the carrying and nothing about the
+/// decision to do it. The one exception is marked where it stands.
+///
 /// **It reads a disposable collection this test builds, and never the real
 /// one.** The operator's own board is not this suite's to read, and a handover
 /// is exactly the operation where that would matter most.
@@ -1017,9 +1022,12 @@ async fn the_handover_carries_a_real_board_across() {
         Dolt, handover, mailboxes::DoltMailboxes, migrate, sessions::DoltSessions,
     };
     use jojobot_domain::mailbox::{
-        MailboxName, Mailboxes, MessageState, NewMessage, OwnerIndex, OwnerLookup, StateCounts,
+        Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
+        MessageId, MessageState, NewMessage, OwnerIndex, OwnerLookup, StateCounts,
     };
-    use jojobot_domain::session::NewEntry;
+    use jojobot_domain::session::{
+        EntryId, JournalEntry, NewEntry, Session, SessionError, SessionId, SessionState,
+    };
 
     let c = creds().expect(
         "this suite needs JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN, and a run without them \
@@ -1119,6 +1127,119 @@ async fn the_handover_carries_a_real_board_across() {
             .expect("append ok");
     }
 
+    // --- the source, wrapped so this test can say whether it was READ -------
+    //
+    // The steady state's whole claim is that a boot with a verified record never
+    // touches the old store. `AlreadyCarried` on its own is equally true of a
+    // boot that scanned the entire remote board first and threw the answer away
+    // — a full Outline scan, every start, to learn there is nothing to do. So
+    // the reads are counted rather than inferred from the outcome.
+    //
+    // **Only the verbs the handover's SOURCE side calls are implemented.** The
+    // handover reads and never writes; anything else arriving here is this
+    // test's own bug, and a delegation that quietly answered it would hide that.
+    struct WatchedMail<'a>(&'a dyn Mailboxes, AtomicU64);
+    struct WatchedRuns<'a>(&'a dyn Sessions, AtomicU64);
+
+    impl WatchedMail<'_> {
+        fn reads(&self) -> u64 {
+            self.1.load(Ordering::Relaxed)
+        }
+        fn forget(&self) {
+            self.1.store(0, Ordering::Relaxed);
+        }
+    }
+    impl WatchedRuns<'_> {
+        fn reads(&self) -> u64 {
+            self.1.load(Ordering::Relaxed)
+        }
+        fn forget(&self) {
+            self.1.store(0, Ordering::Relaxed);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Mailboxes for WatchedMail<'_> {
+        async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
+            self.1.fetch_add(1, Ordering::Relaxed);
+            self.0.list_mailboxes().await
+        }
+        async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+            self.1.fetch_add(1, Ordering::Relaxed);
+            self.0.scan_messages().await
+        }
+        async fn create_mailbox(
+            &self,
+            _: &MailboxName,
+            _: &EntityId,
+            _: Option<&str>,
+        ) -> Result<Guarded<Mailbox>, MailboxError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+        async fn post_message(&self, _: NewMessage) -> Result<Guarded<Message>, MailboxError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+        async fn read_mailbox(&self, _: &MailboxName) -> Result<Guarded<Delivery>, MailboxError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+        async fn read_message(&self, _: &MessageId) -> Result<Delivered, MailboxError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+        async fn mark_processed(
+            &self,
+            _: &MessageId,
+            _: Option<&str>,
+        ) -> Result<Message, MailboxError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+    }
+
+    // Counted separately from the mail half: the two sources are two remote
+    // boards, and a start that touched only one of them still touched a source.
+    #[async_trait::async_trait]
+    impl Sessions for WatchedRuns<'_> {
+        async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+            self.1.fetch_add(1, Ordering::Relaxed);
+            self.0.all_sessions().await
+        }
+        async fn sessions_of(&self, _: &EntityId) -> Result<Vec<Session>, SessionError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+        async fn read_session(&self, _: &SessionId) -> Result<Session, SessionError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+        async fn begin(&self, _: NewSession) -> Result<Session, SessionError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+        async fn append(&self, _: &SessionId, _: NewEntry) -> Result<JournalEntry, SessionError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+        async fn amend_last(&self, _: &SessionId, _: &str) -> Result<JournalEntry, SessionError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+        async fn amend_beat(
+            &self,
+            _: &SessionId,
+            _: &EntryId,
+            _: &str,
+            _: jiff::Timestamp,
+        ) -> Result<JournalEntry, SessionError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+        async fn set_focus(&self, _: &SessionId, _: &str) -> Result<Session, SessionError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+        async fn close(&self, _: &SessionId, _: SessionState) -> Result<Session, SessionError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+        async fn reopen(&self, _: &SessionId) -> Result<Session, SessionError> {
+            unimplemented!("the handover only ever reads its source")
+        }
+    }
+
+    let source_mail = WatchedMail(&old_mail, AtomicU64::new(0));
+    let source_runs = WatchedRuns(&old_sessions, AtomicU64::new(0));
+
     // --- the new store ------------------------------------------------------
     struct AnyOwner;
     #[async_trait::async_trait]
@@ -1144,15 +1265,30 @@ async fn the_handover_carries_a_real_board_across() {
     let new_sessions = DoltSessions::open(store.pool().clone());
 
     // --- carry, and check by comparison ------------------------------------
-    let report = handover::run(
-        &old_mail,
-        &old_sessions,
+    //
+    // **Through `carry_over`, because that is the verb a boot calls.** The
+    // record and its two states, the already-carried answer and the refusals
+    // all sit above `run`, and against fake sources they are proven elsewhere.
+    // This is the one place they meet a real document store.
+    let carried = handover::carry_over(
+        &source_mail,
+        &source_runs,
         &new_mail,
         &new_sessions,
         store.pool(),
     )
-    .await
-    .expect("the handover completes");
+    .await;
+    let handover::Carryover::Carried(report) = carried else {
+        panic!("the first boot carries the board across: {carried:?}");
+    };
+    // The positive twin of the steady state below: without it, the zeroes there
+    // would pass just as well over a double nothing ever calls.
+    assert!(
+        source_mail.reads() > 0 && source_runs.reads() > 0,
+        "the carrying boot DID read both sources — {} mail reads, {} session reads",
+        source_mail.reads(),
+        source_runs.reads()
+    );
 
     assert!(report.whole(), "every kind came through whole: {report:?}");
     assert_eq!(report.messages.read, 3, "{report:?}");
@@ -1210,19 +1346,66 @@ async fn the_handover_carries_a_real_board_across() {
         "…and its sessions"
     );
 
-    // ---- a second run refuses, and leaves the target as the first left it --
+    // ---- the record says the store may be served from ----------------------
+    //
+    // Read the way an operator would — a plain `SELECT` — rather than through
+    // the module's own helper: a verify that shares the reader it is checking is
+    // not a verify. Only this token lets a later boot serve mail from here.
+    let recorded: Option<String> =
+        sqlx::query_scalar("SELECT state FROM handover WHERE what = 'mail-and-sessions'")
+            .fetch_optional(store.pool())
+            .await
+            .expect("the record is readable");
+    assert_eq!(
+        recorded.as_deref(),
+        Some("verified"),
+        "the read-back passed against the real board, so the record is promoted"
+    );
+
+    // ---- the steady state: every later boot asks, and carries nothing ------
+    //
+    // What the boot path actually does after the first start. The claim is not
+    // merely the outcome: the old store must not be TOUCHED, or every start
+    // pays a full Outline scan to learn it has nothing to do.
     let before = new_mail.scan_messages().await.expect("scan ok").len();
-    let again = handover::run(
-        &old_mail,
-        &old_sessions,
+    source_mail.forget();
+    source_runs.forget();
+    let again = handover::carry_over(
+        &source_mail,
+        &source_runs,
         &new_mail,
         &new_sessions,
         store.pool(),
     )
     .await;
     assert!(
-        matches!(again, Err(handover::HandoverError::Populated { .. })),
-        "a second run must refuse rather than double the board: {again:?}"
+        matches!(again, handover::Carryover::AlreadyCarried),
+        "a verified record means an earlier boot already did this: {again:?}"
+    );
+    assert_eq!(
+        (source_mail.reads(), source_runs.reads()),
+        (0, 0),
+        "and it was answered from the record — the old board was not read at all"
+    );
+
+    // ---- and the doubling guard underneath it ------------------------------
+    //
+    // **`run` on purpose, and it is the one call here that cannot go through
+    // `carry_over`**: with a verified record on this store the boot path answers
+    // from the record and never reaches the guard. What it holds is that the
+    // guard itself refuses a populated target rather than doubling the board —
+    // the last thing standing between a re-run and two of every message.
+    let twice = handover::run(
+        &source_mail,
+        &source_runs,
+        &new_mail,
+        &new_sessions,
+        store.pool(),
+    )
+    .await;
+    assert!(
+        matches!(twice, Err(handover::HandoverError::Populated { .. })),
+        "a second run must refuse rather than double the board: {twice:?}"
     );
     assert_eq!(
         new_mail.scan_messages().await.expect("scan ok").len(),
@@ -1333,15 +1516,21 @@ async fn the_handover_carries_a_real_board_across() {
         .await
         .expect("the store takes a session");
 
-    let onto_lived_in = handover::run(
-        &old_mail,
-        &old_sessions,
+    //
+    // Through `carry_over`, because this is the one refusal a boot really
+    // reaches: rows and no record, which is the store answering that somebody
+    // else wrote them. The composition root turns it into a dead start.
+    let onto_lived_in = handover::carry_over(
+        &source_mail,
+        &source_runs,
         &lived_mail,
         &lived_sessions,
         second.pool(),
     )
     .await;
-    let Err(handover::HandoverError::Populated { what, .. }) = &onto_lived_in else {
+    let handover::Carryover::Refused(handover::HandoverError::Populated { what, .. }) =
+        &onto_lived_in
+    else {
         panic!("a target already holding sessions must refuse: {onto_lived_in:?}");
     };
     assert_eq!(
