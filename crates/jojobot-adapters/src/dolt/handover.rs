@@ -802,6 +802,88 @@ mod tests {
         store.stop().await;
     }
 
+    /// **Each table is guarded on its own.**
+    ///
+    /// The whole-board case populates all four, so any one check can be deleted
+    /// and the other three still refuse — every guard invisible behind its
+    /// neighbours. This puts exactly one row on the target at a time, so each
+    /// check is the only thing that can produce the refusal.
+    ///
+    /// It is not a hypothetical split. A running jojobot writes a mailbox when
+    /// a bot is created and a session on that session's first write, without
+    /// necessarily writing a message or a beat — so a target holding sessions
+    /// and nothing else is an ordinary state, and only the session check sees
+    /// it.
+    #[tokio::test]
+    async fn every_table_refuses_the_handover_on_its_own() {
+        let (old_mail, old_sessions) = old_board().await;
+        let scratch = Scratch::new("handover-guards");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+
+        // One row, in one table, per case — and the row is the least a real
+        // occupant could leave behind.
+        for (n, (row, expected)) in [
+            (
+                "INSERT INTO mailbox (name, owner) VALUES ('squatter', 'bot:gamma')",
+                "mailboxes",
+            ),
+            (
+                "INSERT INTO message (id, mailbox, ordinal, body, subject, sender, sent_at, state,                  notes, in_reply_to) VALUES ('sq', 'squatter', 1, 'b', NULL, 's',                  '2026-01-01T00:00:00Z', 'new', NULL, NULL)",
+                "messages",
+            ),
+            (
+                "INSERT INTO session (id, sid, bot, focus, started_at, state) VALUES ('sq', NULL,                  'bot:gamma', 'squatting', '2026-01-01T00:00:00Z', 'active')",
+                "sessions",
+            ),
+            (
+                "INSERT INTO journal_entry (session, id, ordinal, at, text, touched, beat) VALUES                  ('sq', 'e1', 1, '2026-01-01T00:00:00Z', 'a beat', NULL, NULL)",
+                "chronology entries",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let pool = store
+                .database(&format!("guard{n}"))
+                .await
+                .expect("a database of this case's own");
+            migrate::run(&pool).await.expect("the schema");
+            sqlx::query(row)
+                .execute(&pool)
+                .await
+                .expect("the occupant lands");
+
+            let mail = DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner));
+            let sessions = DoltSessions::open(pool.clone());
+            let outcome = run(&old_mail, &old_sessions, &mail, &sessions, &pool).await;
+
+            let Err(HandoverError::Populated { what, held }) = outcome else {
+                panic!("a target already holding {expected} must refuse: {outcome:?}");
+            };
+            assert_eq!(
+                what, expected,
+                "the refusal names the kind it found, so a person knows what to clear"
+            );
+            assert_eq!(held, 1);
+
+            // …and it refused before writing: the occupant is still alone.
+            let boxes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mailbox")
+                .fetch_one(&pool)
+                .await
+                .expect("count ok");
+            assert!(
+                boxes <= 1,
+                "a refused handover writes nothing, so no board came across"
+            );
+        }
+
+        store.stop().await;
+    }
+
     /// **A record that does not read back as itself fails the handover.**
     ///
     /// The verification reads through the port, so a target whose read path
