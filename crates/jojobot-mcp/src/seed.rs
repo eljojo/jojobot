@@ -118,6 +118,53 @@ mod tests {
         );
     }
 
+    /// **A near miss on the board does not deny the default identity its box.**
+    ///
+    /// The seed sends no override token, and needs none: the box name IS the
+    /// owner's handle, which the entity screen adjudicated in the same act.
+    /// Re-running a similarity screen here would refuse `assistant` a box on any
+    /// instance that happens to hold a box one letter away from that name — and
+    /// an identity that cannot be written to is not one, so the loop this module
+    /// exists to close would stay open on exactly the instances that already
+    /// have mail.
+    #[tokio::test]
+    async fn a_near_miss_on_the_board_does_not_deny_the_default_identity_its_box() {
+        let (memory, mailboxes) = ports();
+        let other = EntityId::new(EntityKind::Bot, "gamma");
+        // One letter off `assistant` — a near miss by the mailbox guard's own
+        // budget.
+        mailboxes
+            .create_mailbox(&MailboxName("assistan".into()), &other, None)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("an empty board blocks nothing");
+
+        // The positive the verdict rests on: that board really is hostile to
+        // this name. Without it, the assertion below passes on a build where
+        // `assistan` was never a near miss and the screen never fired at all.
+        assert!(
+            matches!(
+                mailboxes
+                    .create_mailbox(&MailboxName(DEFAULT_BOT.into()), &other, None)
+                    .await
+                    .expect("a blocked create is a result, not a failure"),
+                jojobot_domain::mailbox::Guarded::Blocked { .. }
+            ),
+            "that name is refused to any other owner, so the screen is live"
+        );
+
+        assert_eq!(
+            ensure_default_identity(&memory, &mailboxes).await,
+            Seeded::Created
+        );
+        let boxes = mailboxes.list_mailboxes().await.expect("list ok");
+        assert!(
+            boxes.iter().any(|b| b.name.0 == DEFAULT_BOT),
+            "the default identity has a box of its own, not the near miss: {boxes:?}"
+        );
+    }
+
     /// **Running it twice writes nothing the second time**, and running it
     /// against an instance that already has an `assistant` leaves that one
     /// exactly as it was — facts and all. A seed that overwrote would be data
