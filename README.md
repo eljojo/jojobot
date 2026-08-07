@@ -61,7 +61,9 @@ never runs inference of its own — the assistant is the only mind.
 > reads included — because real MCP clients open a fresh connection per tool call
 > and a connection-held identity does not survive to the next one. It is written
 > on the session's own row, so a restart does not orphan it. All behind OAuth2
-> resource-server auth, every write verified by read-back.
+> resource-server auth, and a write is reported successful only once it has
+> landed — read back through the read path, or carried by a transaction that
+> either commits or does not.
 
 ## Vision & roadmap
 
