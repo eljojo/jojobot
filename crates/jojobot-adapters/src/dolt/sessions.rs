@@ -26,35 +26,6 @@ use jojobot_domain::session::{
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
-/// The tables this adapter owns, created if they are not there.
-///
-/// **Applied on every start rather than tracked by a version number.** There is
-/// one shape and it is this one; a migration ledger is machinery for a history
-/// that does not exist yet, and `IF NOT EXISTS` is the whole of what a second
-/// start needs.
-pub(crate) const SCHEMA: &[&str] = &[
-    "CREATE TABLE IF NOT EXISTS session (
-        id          VARCHAR(64)  NOT NULL PRIMARY KEY,
-        sid         VARCHAR(64)  NULL,
-        bot         VARCHAR(191) NOT NULL,
-        focus       TEXT         NOT NULL,
-        started_at  VARCHAR(48)  NOT NULL,
-        state       VARCHAR(16)  NOT NULL,
-        INDEX by_bot (bot)
-    )",
-    "CREATE TABLE IF NOT EXISTS journal_entry (
-        session  VARCHAR(64)  NOT NULL,
-        id       VARCHAR(64)  NOT NULL,
-        ordinal  INT          NOT NULL,
-        at       VARCHAR(48)  NOT NULL,
-        text     LONGTEXT     NOT NULL,
-        touched  VARCHAR(48)  NULL,
-        beat     VARCHAR(191) NULL,
-        PRIMARY KEY (session, id),
-        INDEX in_order (session, ordinal)
-    )",
-];
-
 /// Sessions kept in the SQL store jojobot runs.
 ///
 /// Cloning shares the one pool rather than opening a second: a pool is the
@@ -66,12 +37,14 @@ pub struct DoltSessions {
 }
 
 impl DoltSessions {
-    /// Open the store over an existing pool, creating the tables if needed.
-    pub async fn open(pool: MySqlPool) -> Result<Self, SessionError> {
-        for statement in SCHEMA {
-            sqlx::query(statement).execute(&pool).await.map_err(store)?;
-        }
-        Ok(DoltSessions { pool })
+    /// Open the store over an existing pool.
+    ///
+    /// **The schema is not this adapter's to create.** It arrives through the
+    /// migrations the server applies on start, so there is one place a table's
+    /// shape is decided and one order it changes in — see
+    /// [`crate::dolt::migrate`].
+    pub fn open(pool: MySqlPool) -> Self {
+        DoltSessions { pool }
     }
 
     /// Read one whole session inside a transaction, or say it is not there.
@@ -457,16 +430,8 @@ async fn read_entry(
 async fn mint(tx: &mut Transaction<'_, MySql>, kind: &str) -> Result<String, SessionError> {
     // **`counter`, not `next`.** This store's parser treats `next` as a
     // reserved word and refuses the statement, which is the kind of quirk that
-    // only shows up against the real thing.
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS minted (
-            kind    VARCHAR(32) NOT NULL PRIMARY KEY,
-            counter BIGINT      NOT NULL
-        )",
-    )
-    .execute(&mut **tx)
-    .await
-    .map_err(store)?;
+    // only shows up against the real thing. The table itself comes from the
+    // migrations, like every other.
     sqlx::query(
         "INSERT INTO minted (kind, counter) VALUES (?, 1)
          ON DUPLICATE KEY UPDATE counter = counter + 1",

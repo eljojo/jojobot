@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 
+pub mod migrate;
 pub mod sessions;
 
 /// The database jojobot serves out of its data directory. Named rather than
@@ -202,14 +203,14 @@ impl Dolt {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A directory of this test's own, removed when it is done.
-    struct Scratch(PathBuf);
+    pub(crate) struct Scratch(pub(crate) PathBuf);
 
     impl Scratch {
-        fn new(what: &str) -> Self {
+        pub(crate) fn new(what: &str) -> Self {
             let path = std::env::temp_dir().join(format!(
                 "jojobot-dolt-{}-{what}-{}",
                 std::process::id(),
@@ -232,7 +233,7 @@ mod tests {
     /// A port nothing is listening on, taken by asking the OS for one and
     /// letting it go. Racy in principle and the alternative is a fixed port,
     /// which collides with the developer's own database.
-    fn free_port() -> u16 {
+    pub(crate) fn free_port() -> u16 {
         std::net::TcpListener::bind("127.0.0.1:0")
             .expect("a free port")
             .local_addr()

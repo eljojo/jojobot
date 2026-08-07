@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jojobot_adapters::dolt::Dolt;
+use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_domain::session::testing::contract as sessions;
 
@@ -66,16 +67,12 @@ async fn dolt_satisfies_the_session_contract() {
     const ROOM: usize = 32;
     let mut prepared = Vec::with_capacity(ROOM);
     for n in 0..ROOM {
-        prepared.push(
-            DoltSessions::open(
-                store
-                    .database(&format!("case{n}"))
-                    .await
-                    .expect("a database of this case's own"),
-            )
+        let pool = store
+            .database(&format!("case{n}"))
             .await
-            .expect("the session tables"),
-        );
+            .expect("a database of this case's own");
+        migrate::run(&pool).await.expect("the schema");
+        prepared.push(DoltSessions::open(pool));
     }
 
     let handed = AtomicUsize::new(0);
