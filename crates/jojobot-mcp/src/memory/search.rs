@@ -182,8 +182,13 @@ fn mail_coverage(query: &SearchQuery, coverage: Coverage) -> serde_json::Value {
         // hunting an older message has to be told rather than shown an empty
         // list. Reporting this as `searched: false` was an answer that carried
         // message hits and denied having searched any.
-        Coverage::Partial => serde_json::json!({
+        // One cause only: the mail half is filled by the board read and by
+        // nothing else, so `unscanned` is the only way it goes behind. The
+        // token still rides the answer, because a caller reads one vocabulary
+        // across both halves rather than learning which of them can say what.
+        Coverage::Partial(behind) => serde_json::json!({
             "searched": true,
+            "behind": behind.as_token(),
             "note": "PARTIAL: jojobot could not read the mailbox world at startup, so only \
                      messages it has handled since are searchable. Any hit here is real, but an \
                      older message may be missing — this is not a complete answer over mail. \
@@ -211,13 +216,26 @@ fn memory_coverage(coverage: Coverage) -> serde_json::Value {
                      prose is searchable right now — this is not 'nothing matched'. The memory \
                      verbs are unaffected: recall reads the store directly and is complete.",
         }),
-        Coverage::Partial => serde_json::json!({
+        // **Two states, two notes.** They differ in how much is missing, which
+        // is the whole of what a caller does with the answer: one says trust an
+        // empty result about anything except the newest write, the other says
+        // trust an empty result about nothing at all.
+        Coverage::Partial(behind) => serde_json::json!({
             "searched": true,
-            "note": "PARTIAL: at least one entity is indexed as it stood BEFORE a write that \
+            "behind": behind.as_token(),
+            "note": match behind {
+                Behind::Unscanned =>
+                    "PARTIAL: jojobot could not read the memory store at startup, so only what \
+                     it has written since is searchable. Any hit here is real, but anything \
+                     older may be missing — this is not a complete answer over memory. recall \
+                     reads the store directly and is complete.",
+                Behind::Stale =>
+                    "PARTIAL: at least one entity is indexed as it stood BEFORE a write that \
                      landed, because jojobot could not re-read it afterwards. Every hit here is \
-                     real, but one of them may be a version the store has moved past, and a fact \
-                     written since may be missing. recall reads the store directly and is \
+                     real, but one of them may be a version the store has moved past, and a \
+                     fact written since may be missing. recall reads the store directly and is \
                      complete — use it when the answer matters.",
+            },
         }),
         Coverage::Loaded => serde_json::json!({ "searched": true }),
     }
@@ -232,7 +250,12 @@ fn memory_coverage(coverage: Coverage) -> serde_json::Value {
 #[cfg(test)]
 pub(crate) fn coverage_notes() -> Vec<(String, String)> {
     let mut found = Vec::new();
-    for coverage in [Coverage::Unread, Coverage::Partial, Coverage::Loaded] {
+    for coverage in [
+        Coverage::Unread,
+        Coverage::Partial(Behind::Unscanned),
+        Coverage::Partial(Behind::Stale),
+        Coverage::Loaded,
+    ] {
         found.push((
             format!("search's memory coverage note ({coverage:?})"),
             memory_coverage(coverage).to_string(),
@@ -300,9 +323,12 @@ impl Jojobot {
                        Whenever `mail` carries a `note`, that note says which case you are in — \
                        read it before concluding a message does not exist. `memory` answers the \
                        same question about entities, facts and prose: searched: false means the \
-                       memory store was never read, and searched: true with a note means at least \
-                       one entity is indexed as it stood before a write that landed — the hits \
-                       are real, one may be out of date, and `recall` reads the store itself. No \
+                       memory store was never read, and searched: true with a note means the \
+                       index is behind the store, where `behind` says how much: `unscanned` (the \
+                       startup read never ran, so only what jojobot has written since is in \
+                       there) or `stale` (one entity could not be re-read after a write, so it \
+                       is indexed as it stood before it). The hits are real either way, and \
+                       `recall` reads the store itself. No \
                        pagination — raise `limit` or ask a better question."
     )]
     pub(crate) async fn search(
@@ -637,7 +663,7 @@ mod tests {
             }]
         };
 
-        for coverage in [Coverage::Partial, Coverage::Loaded] {
+        for coverage in [Coverage::Partial(Behind::Stale), Coverage::Loaded] {
             let body = json_of(
                 &handler_with(Arc::new(SpySearch::covering(coverage, hit())))
                     .search(Parameters(SearchArgs {
@@ -665,13 +691,16 @@ mod tests {
         // …and the degraded one still says it is degraded, or the caller reads a
         // partial answer over mail as a complete one.
         let partial = json_of(
-            &handler_with(Arc::new(SpySearch::covering(Coverage::Partial, hit())))
-                .search(Parameters(SearchArgs {
-                    query: Some("damper".into()),
-                    ..search_args()
-                }))
-                .await
-                .expect("search ok"),
+            &handler_with(Arc::new(SpySearch::covering(
+                Coverage::Partial(Behind::Stale),
+                hit(),
+            )))
+            .search(Parameters(SearchArgs {
+                query: Some("damper".into()),
+                ..search_args()
+            }))
+            .await
+            .expect("search ok"),
         );
         assert!(
             partial["mail"]["note"]
@@ -727,13 +756,16 @@ mod tests {
         );
 
         let behind = json_of(
-            &handler_with(Arc::new(SpySearch::over_memory(Coverage::Partial, hit())))
-                .search(Parameters(SearchArgs {
-                    query: Some("alpha".into()),
-                    ..search_args()
-                }))
-                .await
-                .expect("search ok"),
+            &handler_with(Arc::new(SpySearch::over_memory(
+                Coverage::Partial(Behind::Stale),
+                hit(),
+            )))
+            .search(Parameters(SearchArgs {
+                query: Some("alpha".into()),
+                ..search_args()
+            }))
+            .await
+            .expect("search ok"),
         );
         // Searched, and said so — the hits are real. The claim is that something
         // is MISSING, which is a different thing from nothing being searched, and
@@ -772,6 +804,55 @@ mod tests {
                 .expect("an absence says why")
                 .contains("recall"),
             "…and names the verb that reads the store instead: {unread}"
+        );
+    }
+
+    /// **Two states reach `PARTIAL`, and an answer says which one.**
+    ///
+    /// A boot scan that never ran leaves almost nothing searchable; a doc whose
+    /// refresh failed leaves almost everything searchable. Told the second when
+    /// it is in the first, a caller reads an empty result as "nothing says
+    /// that" — which is the exact wrong conclusion the whole coverage block
+    /// exists to prevent.
+    ///
+    /// The cause is pinned by its token rather than by a sentence: the wording
+    /// is free to improve, and `behind` is what a client is meant to branch on.
+    #[tokio::test]
+    async fn the_two_ways_into_partial_come_back_as_different_answers() {
+        let answer = async |behind: Behind| {
+            json_of(
+                &handler_with(Arc::new(SpySearch::over_memory(
+                    Coverage::Partial(behind),
+                    Vec::new(),
+                )))
+                .search(Parameters(SearchArgs {
+                    query: Some("alpha".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+            )
+        };
+
+        let unscanned = answer(Behind::Unscanned).await;
+        let stale = answer(Behind::Stale).await;
+
+        for (body, token) in [(&unscanned, "unscanned"), (&stale, "stale")] {
+            assert_eq!(
+                body["memory"]["searched"], true,
+                "either way the hits are real and the half was searched: {body}"
+            );
+            assert_eq!(
+                body["memory"]["behind"], token,
+                "the cause is on the answer, not left to be read out of the prose: {body}"
+            );
+        }
+
+        // The pair the tokens depend on: two labels over one sentence would
+        // satisfy every assertion above and tell the caller nothing.
+        assert_ne!(
+            unscanned["memory"]["note"], stale["memory"]["note"],
+            "the two states make different claims, so they cannot share a note"
         );
     }
 

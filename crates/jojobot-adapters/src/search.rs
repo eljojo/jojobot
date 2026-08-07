@@ -32,7 +32,7 @@ use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
     Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction,
     guard::{self, MatchReason},
-    search::{self, Coverage, DocScan, EntityRef, Hit, Search, SearchQuery},
+    search::{self, Behind, Coverage, DocScan, EntityRef, Hit, Search, SearchQuery},
 };
 
 /// How much a fresh fact is worth against text relevance. Small on purpose: it
@@ -762,7 +762,7 @@ impl Search for FullTextIndex {
             self.mail_touched.load(Acquire),
         ) {
             (true, _) => Coverage::Loaded,
-            (false, true) => Coverage::Partial,
+            (false, true) => Coverage::Partial(Behind::Unscanned),
             (false, false) => Coverage::Unread,
         }
     }
@@ -770,21 +770,25 @@ impl Search for FullTextIndex {
     /// The mail half's question, asked of the memory half — with one more way
     /// in. Mail is behind when the board was never read; memory is behind for
     /// that reason **and** when a doc's refresh after a committed write could
-    /// not run, which is a state a full scan at boot never reaches. A doc known
-    /// to be behind is `Partial` however the scan went: the hits are real and
-    /// one of them may be a version the store has moved on from.
+    /// not run, which is a state a full scan at boot never reaches.
+    ///
+    /// **The scan is answered for first, because it is the wider claim.** When
+    /// the boot read never ran, the index holds only what this process has
+    /// written, and a doc marked behind on top of that is a detail inside a far
+    /// bigger absence. Reporting the detail there described an index that is
+    /// nearly complete when almost nothing was in it.
     fn memory_coverage(&self) -> Coverage {
         use std::sync::atomic::Ordering::Acquire;
-        if !self.behind.read().expect("behind poisoned").is_empty() {
-            return Coverage::Partial;
-        }
         match (
             self.memory_loaded.load(Acquire),
             self.memory_touched.load(Acquire),
         ) {
-            (true, _) => Coverage::Loaded,
-            (false, true) => Coverage::Partial,
+            (false, true) => Coverage::Partial(Behind::Unscanned),
             (false, false) => Coverage::Unread,
+            (true, _) if !self.behind.read().expect("behind poisoned").is_empty() => {
+                Coverage::Partial(Behind::Stale)
+            }
+            (true, _) => Coverage::Loaded,
         }
     }
 
@@ -2369,7 +2373,7 @@ mod tests {
 
         assert_eq!(
             store.memory_coverage(),
-            Coverage::Partial,
+            Coverage::Partial(Behind::Stale),
             "the index holds the version before that write and has to say so"
         );
         assert_eq!(
@@ -2397,6 +2401,83 @@ mod tests {
         );
     }
 
+    /// **The other way into `Partial`, and it takes away far more.**
+    ///
+    /// A boot scan that never ran leaves the index holding nothing except what
+    /// this process has written since. A stale doc leaves it holding everything
+    /// except one write. Those are opposite claims about an empty result, and a
+    /// caller decides whether to believe one on exactly that difference — so
+    /// `Partial` has to say which state it is reporting.
+    #[tokio::test]
+    async fn a_boot_scan_that_never_ran_is_partial_for_the_other_reason() {
+        let inner = Scanned::new(vec![
+            DocScan {
+                doc_id: Scanned::DOC_ID.into(),
+                title: "Alpha".into(),
+                prose: String::new(),
+                entity: Some(entity("person:alpha", "Alpha")),
+                facts: Vec::new(),
+            },
+            DocScan {
+                doc_id: "outline-uuid-b2c9".into(),
+                title: "Beta".into(),
+                prose: String::new(),
+                entity: Some(entity("person:beta", "Beta")),
+                facts: vec![fact(
+                    "person:beta",
+                    "f1",
+                    "restrings the harp",
+                    date(2026, 1, 1),
+                )],
+            },
+        ]);
+        inner.blinded();
+        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        store
+            .rebuild()
+            .await
+            .expect_err("the scan cannot read the store");
+        assert_eq!(
+            store.memory_coverage(),
+            Coverage::Unread,
+            "nothing was read and nothing has been written"
+        );
+
+        inner.sighted();
+        store
+            .capture(ferret())
+            .await
+            .expect("the store took the write");
+
+        assert_eq!(
+            store.memory_coverage(),
+            Coverage::Partial(Behind::Unscanned),
+            "the scan never ran, so the index holds only the page this write touched"
+        );
+        assert!(
+            store.index().behind_now().is_empty(),
+            "and no document is behind: this write was re-read, which is the other state"
+        );
+        // The positive the negative below depends on. Without it, "beta is
+        // missing" passes just as well on an index that holds nothing at all,
+        // which is the state this one is being told apart from.
+        assert_eq!(
+            store
+                .search(&SearchQuery::text("ferret"))
+                .expect("search ok")
+                .len(),
+            1,
+            "what this process wrote is indexed and findable"
+        );
+        assert!(
+            store
+                .search(&SearchQuery::text("harp"))
+                .expect("search ok")
+                .is_empty(),
+            "and the page the scan never read is the part that is missing"
+        );
+    }
+
     /// **A refresh that runs takes the mark off.** The state is "the index is
     /// behind on this document", not "something went wrong once" — so the write
     /// that catches it up clears it, and the answers stop hedging.
@@ -2408,7 +2489,7 @@ mod tests {
 
         inner.blinded();
         store.capture(ferret()).await.expect("the store took it");
-        assert_eq!(store.memory_coverage(), Coverage::Partial);
+        assert_eq!(store.memory_coverage(), Coverage::Partial(Behind::Stale));
 
         inner.sighted();
         store
@@ -3144,7 +3225,7 @@ mod tests {
 
         assert_eq!(
             index.mail_coverage(),
-            Coverage::Partial,
+            Coverage::Partial(Behind::Unscanned),
             "a message that IS findable must never be reported as no mail at all"
         );
         assert_eq!(

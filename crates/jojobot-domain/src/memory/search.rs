@@ -368,15 +368,44 @@ pub enum Coverage {
     /// and findable; what is absent may exist anyway, and a caller has to be
     /// told that rather than shown an empty list.
     ///
-    /// Two ways in, and they are the same claim to a reader: a boot read that
-    /// failed, leaving only what this process has written since; and a document
-    /// whose refresh after a write could not run, leaving the index holding the
-    /// version before it. Never collapse it into [`Unread`](Self::Unread): that
-    /// would answer with hits while saying nothing was searched.
-    Partial,
+    /// **It carries WHY, because the two ways in are not the same claim.** One
+    /// leaves almost nothing searchable and the other leaves almost everything
+    /// searchable, and a caller decides whether to trust an empty answer on
+    /// exactly that difference. A single word for both told the caller in the
+    /// worse state that it was in the milder one. Never collapse it into
+    /// [`Unread`](Self::Unread) either: that would answer with hits while
+    /// saying nothing was searched.
+    Partial(Behind),
     /// It was read and nothing is known to be behind: everything in it is
     /// searchable.
     Loaded,
+}
+
+/// **Why a half of the index is behind the store it mirrors.**
+///
+/// The two are ordered by how much they take away, and the wider one wins when
+/// both hold: a store that was never read is missing nearly everything, which
+/// is the state a caller has to hear about first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Behind {
+    /// The read that fills this half at startup did not run, so only what this
+    /// process has written since is in it. Almost nothing is searchable.
+    Unscanned,
+    /// This half was read whole, and one write since could not be re-read, so
+    /// the index holds the version before that write. Almost everything is
+    /// searchable.
+    Stale,
+}
+
+impl Behind {
+    /// The wire spelling, so a caller branches on a token rather than on a
+    /// sentence — the same deal `searched` already makes.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            Behind::Unscanned => "unscanned",
+            Behind::Stale => "stale",
+        }
+    }
 }
 
 /// The retrieval port: one ranked, mixed list. Synchronous — the index is
