@@ -111,6 +111,81 @@ mod tests {
     use super::*;
     use crate::dolt::tests::{Scratch, free_port};
 
+    /// **A migration that fails is not recorded as done.**
+    ///
+    /// The ledger row and the migration commit together, so a change that did
+    /// not land leaves no claim that it did. Without that, every later start
+    /// skips a migration the database never received — a schema and a ledger
+    /// that disagree, which nothing detects and no retry repairs.
+    ///
+    /// The failure is provoked with the real migrations rather than a rigged
+    /// one: a database already holding a table the first migration creates
+    /// makes that migration fail exactly as a bad change would.
+    ///
+    /// **What this does NOT claim is that the database is left untouched.** The
+    /// tables created before the failing statement are still there, because
+    /// this store does not roll back schema changes. Only the ledger is
+    /// transactional, and only the ledger is asserted here.
+    #[tokio::test]
+    async fn a_migration_that_fails_is_not_recorded_as_done() {
+        let scratch = Scratch::new("migrate-fail");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("halfway")
+            .await
+            .expect("a database of its own");
+
+        // The obstruction: a table the first migration will try to create.
+        // `raw_sql`, not a prepared statement — this server answers DDL over
+        // the prepare path with a protocol error, which is why the migration
+        // runner uses raw statements too.
+        sqlx::raw_sql("CREATE TABLE session (id VARCHAR(64) NOT NULL PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .expect("the obstruction lands");
+
+        let refused = run(&pool).await;
+        let Err(MigrateError::Failed { version, .. }) = &refused else {
+            panic!("a migration that cannot apply must fail: {refused:?}");
+        };
+        assert_eq!(
+            version, "0001_sessions",
+            "and it names which one, or an operator reads every file"
+        );
+
+        let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+        assert!(
+            recorded.is_empty(),
+            "a migration that did not land is not recorded as done: {recorded:?}"
+        );
+
+        // **The positive the verdict rests on**, on a database of its own: the
+        // same call on an unobstructed schema records both versions. Without
+        // it the assertion above holds on a store that records nothing at all.
+        let clean = store
+            .database("unobstructed")
+            .await
+            .expect("a database of its own");
+        assert_eq!(
+            run(&clean).await.expect("the schema moves"),
+            vec!["0001_sessions".to_string(), "0002_mailboxes".to_string()],
+        );
+        let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(&clean)
+            .await
+            .expect("the ledger is readable");
+        assert_eq!(recorded.len(), 2, "a migration that landed IS recorded");
+
+        store.stop().await;
+    }
+
     /// **A second start applies nothing, and the tables are still there.**
     ///
     /// Both halves. "Applied nothing" alone passes on a run that never applies
