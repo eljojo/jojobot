@@ -224,10 +224,9 @@ pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
         // own board that belongs to another project and refused, or a write
         // failed and could not be undone, leaving a card mid-verb. Both are
         // integrity conditions on the server side that need a person.
-        MailboxError::Stranded { .. } => McpError::internal_error(
-            crate::boundary::stranded("this call", &e.to_string()),
-            None,
-        ),
+        MailboxError::Stranded { .. } => {
+            McpError::internal_error(crate::boundary::stranded("this call", &e.to_string()), None)
+        }
         MailboxError::NotConfigured(msg) => {
             McpError::internal_error(format!("mailboxes not configured: {msg}"), None)
         }

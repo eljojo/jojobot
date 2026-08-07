@@ -170,6 +170,43 @@ pub(crate) fn memory_declined(
             &[],
             format!("Nothing was written. '{attempted}' cannot be retracted: {why}."),
         )),
+        // **A malformed argument is a caller mistake, so it is an answer**
+        // (rule 68). A thrown error is not a value: the model on the other end
+        // gets a failure where it should get a next move, and the sentence
+        // saying what to do lands in a channel nothing branches on.
+        //
+        // One arm for all six, interpolating the validator's own sentence
+        // rather than restating it. Each of these faults has several causes
+        // and the validators gain more; naming them here would be a catalogue
+        // that goes stale on the day it is added to (rule 106).
+        MemoryError::InvalidFact(_)
+        | MemoryError::InvalidSubject(_)
+        | MemoryError::InvalidAddress(_)
+        | MemoryError::InvalidEntity(_)
+        | MemoryError::InvalidEdge(_)
+        | MemoryError::InvalidQuery(_) => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. Nothing is missing from the store and nothing here \
+                 needs the operator — the call itself is what jojobot cannot carry out. Send the \
+                 same {verb} call again with that fixed."
+            ),
+        )),
+        // **A different refusal, so a different way forward.** These two are
+        // not malformed calls: the arguments are well-formed and jojobot is
+        // declining to bless a claim the operator has not blessed. Telling a
+        // caller to fix the call would invite them to set the confirmation
+        // flag themselves, which is the one thing the gate exists to stop.
+        MemoryError::UnconfirmedPromotion | MemoryError::UnconfirmedSettling => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. This is not a malformed call and re-sending it will \
+                 not change the answer — what is missing is the operator's word. Ask, and re-call \
+                 {verb} with confirmed_by_user only once they have actually said so."
+            ),
+        )),
         other => Err(memory_error(other)),
     }
 }
@@ -178,8 +215,11 @@ pub(crate) fn memory_declined(
 /// (invalid params) from server-side failures.
 pub(crate) fn memory_error(e: MemoryError) -> McpError {
     match e {
-        // Everything the caller can fix by calling differently is invalid_params
-        // — including the misses, whose messages carry the near candidates.
+        // **Backstops, not the intended answer.** Every one of these is a
+        // caller mistake and `memory_declined` answers all of them as blocked
+        // results with a way forward (rule 68). They are reached only by a verb
+        // that surfaces an error without going through that path, and they stay
+        // client errors rather than 500s for that case.
         MemoryError::InvalidFact(_)
         | MemoryError::InvalidSubject(_)
         | MemoryError::InvalidAddress(_)
@@ -207,6 +247,70 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::*;
+    use crate::memory::testing::*;
+
+    /// **A caller mistake never leaves this rail through the error channel**
+    /// (rule 68). It comes back as a blocked answer carrying what is wrong and
+    /// what to do about it.
+    ///
+    /// Driven through the verbs a caller calls, because these faults arrive by
+    /// two different routes and only one of them is the fall-through the
+    /// mapper is blamed for. `capture`, `add_entity` and `search` never reach
+    /// the declined path at all: they hand the domain's error straight to the
+    /// mapper, so an arm added there does nothing for them until the call site
+    /// is routed too. Asking the mapper directly would pass on a build where
+    /// none of them is wired to anything.
+    #[tokio::test]
+    async fn a_malformed_memory_write_is_an_answer_rather_than_an_error() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        jojobot
+            .add_entity(Parameters(add_args("person", "person:alpha", "Alpha")))
+            .await
+            .expect("add ok");
+
+        // Refused inside the domain's own write.
+        let empty_claim = jojobot
+            .capture(Parameters(CaptureArgs {
+                sid: Some(sid.clone()),
+                ..capture_args("person:alpha", "   ")
+            }))
+            .await
+            .expect("a caller mistake is an answer, not a protocol failure");
+
+        let bad_entity = jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                sid: Some(sid.clone()),
+                ..add_args("person", "person:beta", "   ")
+            }))
+            .await
+            .expect("a caller mistake is an answer, not a protocol failure");
+
+        // Refused by the query's own validation, before the index is read.
+        let empty_query = jojobot
+            .search(Parameters(SearchArgs {
+                sid: Some(sid),
+                ..search_args()
+            }))
+            .await
+            .expect("a caller mistake is an answer, not a protocol failure");
+
+        for (what, result) in [
+            ("an empty claim", &empty_claim),
+            ("an entity with no name", &bad_entity),
+            ("a search that narrows nothing", &empty_query),
+        ] {
+            let body = blocked(result);
+            assert_eq!(body["wrote"], false, "{what} wrote something: {body}");
+            assert!(
+                body["how_to_proceed"]
+                    .as_str()
+                    .is_some_and(|advice| !advice.is_empty()),
+                "{what} came back with no way forward: {body}"
+            );
+        }
+    }
 
     /// A store failure's own account must not reach the caller — the same
     /// invariant the mailbox and session rails hold, through the same

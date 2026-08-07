@@ -438,8 +438,16 @@ impl Jojobot {
         };
         // Checked here as well as in the index: a malformed query is the caller's
         // mistake, and it should read as one no matter which adapter is behind us.
-        query.validate().map_err(memory_error)?;
-        let hits = self.search.search(&query).map_err(memory_error)?;
+        // A query that narrows nothing, or narrows itself into a contradiction,
+        // is a caller mistake and comes back as an answer with a way forward
+        // (rule 68) rather than as a protocol error.
+        if let Err(e) = query.validate() {
+            return memory_declined("search", e);
+        }
+        let hits = match self.search.search(&query) {
+            Ok(hits) => hits,
+            Err(e) => return memory_declined("search", e),
+        };
         let body = serde_json::json!({
             "count": hits.len(),
             "memory": memory_coverage(self.search.memory_coverage()),
@@ -552,12 +560,20 @@ mod tests {
     /// Neither text nor a filter is a request for everything, which is not a
     /// search — and it is the caller's mistake, whatever adapter is behind us.
     #[tokio::test]
-    async fn search_with_neither_text_nor_a_filter_is_a_client_error() {
-        let err = handler()
-            .search(Parameters(search_args()))
-            .await
-            .expect_err("an unbounded search must be refused");
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    async fn search_with_neither_text_nor_a_filter_is_a_blocked_answer() {
+        let body = blocked(
+            &handler()
+                .search(Parameters(search_args()))
+                .await
+                .expect("a caller mistake is an answer, not a protocol failure"),
+        );
+        assert_eq!(body["wrote"], false, "{body}");
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .is_some_and(|advice| !advice.is_empty()),
+            "a refusal names a way forward: {body}"
+        );
     }
 
     /// Bad tokens are client errors, not silent fallbacks: a mistyped `status`
@@ -568,14 +584,28 @@ mod tests {
     /// token. Without it, an implementation that dropped the filter entirely
     /// would still error — as an unbounded search — and this would pass green
     /// over a `search` that ignored its filters.
+    ///
+    /// **Refused either way, and the CHANNEL splits on where the fault is
+    /// decided.** A caller mistake the domain sees comes back as a blocked
+    /// answer with a way forward (rule 68). A token the MCP edge cannot parse
+    /// at all — one naming no kind, no status, no provenance, no shape — is
+    /// refused before any domain error exists, so it never reaches that path
+    /// and stays a protocol error.
+    ///
+    /// That split is a boundary rather than an oversight, and the two groups
+    /// sit side by side here because it is what the boundary costs a caller:
+    /// two shapes of refusal for two faults they cannot tell apart. Where a
+    /// malformed argument is decided is its own question.
     #[tokio::test]
-    async fn malformed_search_filters_are_client_errors() {
+    async fn malformed_search_filters_are_refused() {
         let jojobot = handler();
         let searching = || SearchArgs {
             query: Some("winter".into()),
             ..search_args()
         };
-        let bad = [
+
+        // Decided at the edge: still errors.
+        let unparsable = [
             SearchArgs {
                 kind: Some("receipt".into()),
                 ..searching()
@@ -588,17 +618,28 @@ mod tests {
                 provenance: Some("maybe".into()),
                 ..searching()
             },
-            // A *bare* subject is read as a person, as everywhere else — so the
-            // malformed case is one that can't be an id at all.
-            SearchArgs {
-                subject: Some("person:a|b".into()),
-                ..searching()
-            },
             SearchArgs {
                 edge: Some(EdgeFilterArgs {
                     shape: Some("knows".into()),
                     object: "place:x".into(),
                 }),
+                ..searching()
+            },
+        ];
+        for args in unparsable {
+            let err = jojobot
+                .search(Parameters(args))
+                .await
+                .expect_err("a malformed filter must be refused");
+            assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        }
+
+        // Decided by the domain: blocked answers.
+        let refused = [
+            // A *bare* subject is read as a person, as everywhere else — so the
+            // malformed case is one that can't be an id at all.
+            SearchArgs {
+                subject: Some("person:a|b".into()),
                 ..searching()
             },
             SearchArgs {
@@ -613,12 +654,20 @@ mod tests {
                 ..searching()
             },
         ];
-        for args in bad {
-            let err = jojobot
-                .search(Parameters(args))
-                .await
-                .expect_err("a malformed filter must be refused");
-            assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        for args in refused {
+            let body = blocked(
+                &jojobot
+                    .search(Parameters(args))
+                    .await
+                    .expect("a caller mistake is an answer, not a protocol failure"),
+            );
+            assert_eq!(body["wrote"], false, "{body}");
+            assert!(
+                body["how_to_proceed"]
+                    .as_str()
+                    .is_some_and(|advice| !advice.is_empty()),
+                "a refusal names a way forward: {body}"
+            );
         }
     }
 

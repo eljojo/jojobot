@@ -141,7 +141,14 @@ impl Jojobot {
             boot: parse_boot(args.boot.as_deref())?,
             create_new: args.create_new.unwrap_or(false),
         };
-        match self.memory.add_entity(new).await.map_err(memory_error)? {
+        // Routed through the declined path rather than straight to the mapper,
+        // for the reason capture is: an entity the validators refuse is a
+        // caller mistake and comes back as an answer (rule 68).
+        let added = match self.memory.add_entity(new).await {
+            Ok(added) => added,
+            Err(e) => return memory_declined("add_entity", e),
+        };
+        match added {
             Guarded::Written(entity) => {
                 self.beat("add_entity", entity.id.as_str(), args.sid.as_deref())
                     .await;

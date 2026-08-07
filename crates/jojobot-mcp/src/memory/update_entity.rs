@@ -304,15 +304,19 @@ mod tests {
                 .is_empty()
         );
 
-        // An alias carrying the separator is a client error, not a silent split.
-        let err = jojobot
-            .add_entity(Parameters(AddEntityArgs {
-                aliases: Some(vec!["one, two".into()]),
-                ..add_args("person", "comma-carrier", "Comma Carrier")
-            }))
-            .await
-            .expect_err("a comma in an alias must be refused");
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        // An alias carrying the separator is refused, not silently split — and
+        // refused as a blocked answer, because it is the caller's mistake
+        // (rule 68).
+        let refused = blocked(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    aliases: Some(vec!["one, two".into()]),
+                    ..add_args("person", "comma-carrier", "Comma Carrier")
+                }))
+                .await
+                .expect("a caller mistake is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
     }
 
     /// Updating an entity that isn't there is a client error naming near misses

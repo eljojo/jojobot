@@ -208,7 +208,14 @@ impl Jojobot {
             event,
             derived_from,
         };
-        match self.memory.capture(new).await.map_err(memory_error)? {
+        // Routed through the declined path rather than straight to the mapper:
+        // a fact the validators refuse is a caller mistake, and it comes back
+        // as an answer with a way forward (rule 68).
+        let captured = match self.memory.capture(new).await {
+            Ok(captured) => captured,
+            Err(e) => return memory_declined("capture", e),
+        };
+        match captured {
             Guarded::Written(fact) => {
                 self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
                     .await;
@@ -724,12 +731,25 @@ mod tests {
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     }
 
+    /// Empty content is a caller mistake, so it comes back as a blocked
+    /// answer with a way forward rather than as a protocol error (rule 68).
     #[tokio::test]
-    async fn empty_content_is_a_client_error() {
-        let err = handler()
-            .capture(Parameters(capture_args("alpha", "   ")))
-            .await
-            .expect_err("must reject empty content");
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    async fn empty_content_is_a_blocked_answer() {
+        let body = blocked(
+            &handler()
+                .capture(Parameters(capture_args("alpha", "   ")))
+                .await
+                .expect("a caller mistake is an answer, not a protocol failure"),
+        );
+        assert_eq!(body["wrote"], false, "{body}");
+        let said = jojobot_domain::memory::validate_content("   ")
+            .expect_err("empty content is refused")
+            .to_string();
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .is_some_and(|advice| advice.contains(&said)),
+            "the refusal names the fault: {body}"
+        );
     }
 }

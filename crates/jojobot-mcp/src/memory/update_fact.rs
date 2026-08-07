@@ -205,11 +205,21 @@ mod tests {
             ..update_args(&address_of(&captured))
         };
 
-        let err = jojobot
-            .update_fact(Parameters(promote(None)))
-            .await
-            .expect_err("an unconfirmed promotion must be refused");
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        // Refused as a blocked ANSWER: the call is well formed and jojobot is
+        // declining to bless a claim the operator has not blessed, which is a
+        // next move rather than a failure (rule 68).
+        let refused = blocked(
+            &jojobot
+                .update_fact(Parameters(promote(None)))
+                .await
+                .expect("an unconfirmed promotion is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let advice = refused["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            advice.contains("confirmed_by_user"),
+            "the way forward names the flag the operator's word unlocks: {advice}"
+        );
 
         let ok = json_of(
             &jojobot
