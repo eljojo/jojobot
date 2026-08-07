@@ -183,9 +183,15 @@ fn unread_back(what: &'static str) -> impl FnOnce(MailboxError) -> HandoverError
     }
 }
 
+/// A write the target refused, **carrying the store's own words**.
+///
+/// The store's vocabulary stops at the boundary everywhere a CALLER is on the
+/// other side. Nobody is here: this refusal only ever reaches a boot that is
+/// about to die on it, and the reader is the person holding the machine. A
+/// constant covers a missing table, a changed column and a full disk with one
+/// sentence, which leaves them reading the source to learn which one they have.
 fn target(e: sqlx::Error) -> HandoverError {
-    tracing::error!(error = %e, "the handover's target refused a write");
-    HandoverError::Target("the store refused the records".into())
+    HandoverError::Target(e.to_string())
 }
 
 /// Refuse if the target already holds anything of this kind.
@@ -1988,6 +1994,79 @@ mod tests {
             "no board came across"
         );
         assert_eq!(recorded_state(store.pool()).await, None);
+
+        store.stop().await;
+    }
+
+    /// **A write the target refuses names what it refused.**
+    ///
+    /// This refusal is now fatal, and fatal under a unit that restarts every
+    /// five seconds — so the sentence in the log is the whole of what a person
+    /// has to work from. A constant "the store refused the records" is the same
+    /// sentence for a table that is missing, a column that changed shape and a
+    /// disk that filled, and it sends the reader to the source to find out which
+    /// of those they are looking at.
+    ///
+    /// The condition is produced the way a real one arrives: a target whose
+    /// schema is not the shape this build writes to. Dropping a table one of the
+    /// carrying statements needs is the smallest version of a restored or
+    /// hand-repaired data directory.
+    #[tokio::test]
+    async fn a_write_the_target_refuses_names_what_it_refused() {
+        let (old_mail, old_sessions) = old_board().await;
+        let scratch = Scratch::new("target-refused");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+
+        let broken = store
+            .database("broken")
+            .await
+            .expect("a database of this case's own");
+        migrate::run(&broken).await.expect("the schema");
+        sqlx::raw_sql("DROP TABLE minted")
+            .execute(&broken)
+            .await
+            .expect("the counter table goes");
+
+        let outcome = run(
+            &old_mail,
+            &old_sessions,
+            &DoltMailboxes::open(broken.clone(), Arc::new(AnyOwner)),
+            &DoltSessions::open(broken.clone()),
+            &broken,
+        )
+        .await;
+
+        let Err(HandoverError::Target(why)) = &outcome else {
+            panic!("a target that will not take the rows is its own failure: {outcome:?}");
+        };
+        assert!(
+            why.contains("minted"),
+            "the refusal names what the store refused, so a person can act on the log line \
+             alone: {why:?}"
+        );
+
+        // **The positive it rests on.** The same board, against a target of this
+        // build's own schema, carries — so the case above failed on the dropped
+        // table and not on a fixture that cannot complete a handover anywhere.
+        let whole = store
+            .database("whole")
+            .await
+            .expect("a database of this case's own");
+        migrate::run(&whole).await.expect("the schema");
+        let report = run(
+            &old_mail,
+            &old_sessions,
+            &DoltMailboxes::open(whole.clone(), Arc::new(AnyOwner)),
+            &DoltSessions::open(whole.clone()),
+            &whole,
+        )
+        .await
+        .expect("an intact target takes the board");
+        assert!(report.whole(), "every kind came through whole: {report:?}");
 
         store.stop().await;
     }
