@@ -4,9 +4,14 @@
 //! Two pieces, deliberately separable:
 //!
 //! * [`FullTextIndex`] — an in-RAM tantivy index over **entities, facts and
-//!   prose at once**, satisfying the domain's [`Search`] port. Truth stays in the
-//!   store; this is a projection, and it is allowed to be one only because it is
-//!   rebuilt from a full re-scan and never written to directly.
+//!   prose at once**. Truth stays in the store; this is a projection, and it is
+//!   allowed to be one only because it is rebuilt from a full re-scan and never
+//!   written to directly. It is **not** the domain's [`Search`] port: it holds
+//!   no store, so it cannot take the reading the port promises an answer is
+//!   backed by.
+//! * [`Retrieval`] — the [`Search`] port itself, over that index plus one
+//!   [`Refresh`] half per store. It refreshes every half before it answers, so
+//!   an answer is backed by a reading taken for it.
 //! * [`IndexedMemory`] — the same Memory port, wrapped so that **read-back
 //!   extends to the index**: after any successful write, the touched document is
 //!   re-scanned *from the store* and re-indexed, so a fact captured a moment ago
@@ -944,9 +949,10 @@ fn edges_of(mirror: &[DocMirror], id: &EntityId) -> Vec<Edge> {
 ///
 /// **Deliberately not the [`Search`] port.** The port promises an answer backed
 /// by a scan taken for it, and this type holds no store to take one from — only
-/// [`IndexedMemory`] does. Leaving these as the index's own methods makes that a
-/// compile error rather than a convention: nothing can be wired to the bare
-/// projection and quietly serve whatever it last saw.
+/// [`Retrieval`] does, which is why the port lives there and holds one
+/// [`Refresh`] half per store. Leaving these as the index's own methods makes
+/// that a compile error rather than a convention: nothing can be wired to the
+/// bare projection and quietly serve whatever it last saw.
 impl FullTextIndex {
     /// Two ways in reach [`Stale`](Behind::Stale) on the memory half and one
     /// does here: a board read that could not reach the store. The mail path
@@ -1487,6 +1493,13 @@ impl Refresh for IndexedMemory {
 #[async_trait]
 pub(crate) trait SearchViaPort {
     async fn search_via_port(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError>;
+
+    /// **The coverage the port reports, not the coverage the projection holds.**
+    /// [`Retrieval`] is the object `main.rs` hands the MCP layer, so an
+    /// assertion that reads [`FullTextIndex::memory_coverage`] straight off the
+    /// projection holds identically on a port that answers something else
+    /// entirely. The word a caller acts on is this one.
+    fn memory_coverage_via_port(&self) -> Coverage;
 }
 
 #[cfg(test)]
@@ -1496,6 +1509,10 @@ impl SearchViaPort for Arc<IndexedMemory> {
         Retrieval::new(self.index(), vec![self.clone()])
             .search(query)
             .await
+    }
+
+    fn memory_coverage_via_port(&self) -> Coverage {
+        Retrieval::new(self.index(), vec![self.clone()]).memory_coverage()
     }
 }
 
@@ -2714,7 +2731,7 @@ mod tests {
         let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
         store.rebuild().await.expect("rebuild");
         assert_eq!(
-            store.index().memory_coverage(),
+            store.memory_coverage_via_port(),
             Coverage::Loaded,
             "a scan that just succeeded is complete coverage"
         );
@@ -2731,7 +2748,7 @@ mod tests {
             "degrade, don't error: the last good scan still answers"
         );
         assert_eq!(
-            store.index().memory_coverage(),
+            store.memory_coverage_via_port(),
             Coverage::Partial(Behind::Stale),
             "…and the answer says it is holding an older version than the store"
         );
@@ -2748,7 +2765,7 @@ mod tests {
             "the record is still there and still served"
         );
         assert_eq!(
-            store.index().memory_coverage(),
+            store.memory_coverage_via_port(),
             Coverage::Loaded,
             "a scan that reaches the store again clears the mark"
         );
@@ -2974,7 +2991,7 @@ mod tests {
         let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
         store.rebuild().await.expect("rebuild");
         assert_eq!(
-            store.index().memory_coverage(),
+            store.memory_coverage_via_port(),
             Coverage::Loaded,
             "a scan that read the store holds all of it"
         );
@@ -2986,7 +3003,7 @@ mod tests {
             .expect("the store took the write");
 
         assert_eq!(
-            store.index().memory_coverage(),
+            store.memory_coverage_via_port(),
             Coverage::Partial(Behind::Stale),
             "the index holds the version before that write and has to say so"
         );
@@ -3054,7 +3071,7 @@ mod tests {
             .await
             .expect_err("the scan cannot read the store");
         assert_eq!(
-            store.index().memory_coverage(),
+            store.memory_coverage_via_port(),
             Coverage::Unread,
             "nothing was read and nothing has been written"
         );
@@ -3066,7 +3083,7 @@ mod tests {
             .expect("the store took the write");
 
         assert_eq!(
-            store.index().memory_coverage(),
+            store.memory_coverage_via_port(),
             Coverage::Partial(Behind::Unscanned),
             "the scan never ran, so the index holds only the page this write touched"
         );
@@ -3099,7 +3116,7 @@ mod tests {
             "and the page the scan never read is the part that is missing"
         );
         assert_eq!(
-            store.index().memory_coverage(),
+            store.memory_coverage_via_port(),
             Coverage::Partial(Behind::Unscanned),
             "the wider claim still wins: almost nothing is searchable"
         );
@@ -3117,7 +3134,7 @@ mod tests {
             "the page arrives on the first read that can reach the store"
         );
         assert_eq!(
-            store.index().memory_coverage(),
+            store.memory_coverage_via_port(),
             Coverage::Loaded,
             "…and the answer stops hedging, because the scan behind it ran"
         );
@@ -3135,7 +3152,7 @@ mod tests {
         inner.blinded();
         store.capture(ferret()).await.expect("the store took it");
         assert_eq!(
-            store.index().memory_coverage(),
+            store.memory_coverage_via_port(),
             Coverage::Partial(Behind::Stale)
         );
 
@@ -3149,7 +3166,7 @@ mod tests {
             .expect("the store took it");
 
         assert_eq!(
-            store.index().memory_coverage(),
+            store.memory_coverage_via_port(),
             Coverage::Loaded,
             "the doc was re-read whole, so nothing on it is behind any more"
         );
