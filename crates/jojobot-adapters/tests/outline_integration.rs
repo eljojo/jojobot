@@ -41,6 +41,19 @@ const SESSION_PREFIX: &str = "jojobot-sessions-itest-";
 const MAILBOX_PREFIX: &str = "jojobot-mailboxes-itest-";
 /// The disposable collection the handover reads from. Its own, so the board it
 /// holds is one this test built and nothing else wrote into.
+///
+/// **Deliberately outside the prefix sweep**, like [`OWNERS_COLLECTION`] and
+/// for a sharper reason. The two gated cases run in PARALLEL — nothing here
+/// sets the test-thread count — so a sweep is not teardown, it is one case
+/// deleting collections while another is using them. This name was in the
+/// sweep, which put it on both sides of that: the contract's own opening sweep
+/// deleted it in the same moment this case was creating it and posting into it.
+///
+/// A name matched by nothing but its owner cannot be swept out from under that
+/// owner, whatever the two cases' timings turn out to be. Which matters because
+/// the timings are not a constant: the sweep loops until it matches nothing, so
+/// a workspace left dirty by an aborted run widens the window exactly when the
+/// next run is trying to recover from it.
 const HANDOVER_COLLECTION: &str = "jojobot-handover-itest";
 /// The disposable collection the owner index is asked about. Its own for the
 /// same reason, and more sharply: the answer to "who is nearly this handle" is
@@ -238,7 +251,12 @@ async fn assert_a_child_page_is_nested(http: &reqwest::Client, c: &Creds, store:
     );
 }
 
-/// Delete every throwaway collection the session contract created.
+/// Delete every throwaway collection the session and mailbox contracts created.
+///
+/// **Only the prefixes those contracts mint under.** A sweep is a blunt
+/// instrument in a suite whose cases run concurrently: anything it matches that
+/// another case owns, it deletes while that case is using it. Named
+/// collections belong to their own case and are dropped by name.
 async fn drop_session_collections(http: &reqwest::Client, c: &Creds) {
     loop {
         let (_, page) = (
@@ -259,11 +277,9 @@ async fn drop_session_collections(http: &reqwest::Client, c: &Creds) {
             .unwrap_or_default()
             .iter()
             .filter(|c| {
-                c["name"].as_str().is_some_and(|n| {
-                    n.starts_with(SESSION_PREFIX)
-                        || n.starts_with(MAILBOX_PREFIX)
-                        || n == HANDOVER_COLLECTION
-                })
+                c["name"]
+                    .as_str()
+                    .is_some_and(|n| n.starts_with(SESSION_PREFIX) || n.starts_with(MAILBOX_PREFIX))
             })
             .filter_map(|c| c["id"].as_str().map(str::to_string))
             .collect();
@@ -1034,7 +1050,11 @@ async fn the_handover_carries_a_real_board_across() {
          has verified nothing",
     );
     let http = reqwest::Client::new();
-    drop_session_collections(&http, &c).await;
+    // **By name, never the prefix sweep.** This case owns exactly one
+    // collection, and the other gated case is starting up beside it: a sweep
+    // here would delete collections that one owns, and a sweep that matched
+    // this one's name let it be deleted in return.
+    drop_collection(&http, &c, HANDOVER_COLLECTION).await;
 
     let old = OutlineStore::with_collection(
         http.clone(),
@@ -1548,5 +1568,5 @@ async fn the_handover_carries_a_real_board_across() {
 
     second.stop().await;
     let _ = std::fs::remove_dir_all(&lived_in);
-    drop_session_collections(&http, &c).await;
+    drop_collection(&http, &c, HANDOVER_COLLECTION).await;
 }
