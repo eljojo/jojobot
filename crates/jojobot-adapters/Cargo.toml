@@ -26,6 +26,11 @@ tracing = { workspace = true }
 # construction — see `Workspace`'s lock field for what that buys and what it
 # does not.
 tokio = { workspace = true }
+# The mailbox and session store. jojobot spawns `dolt sql-server` and talks to
+# it over a unix socket; sqlx is the wire client.
+sqlx = { workspace = true }
+# The store's startup failures are a typed enum like every other error here.
+thiserror = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

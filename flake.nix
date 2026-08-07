@@ -58,6 +58,12 @@
           buildInputs = buildInputs ++ [
             rustToolchain
             pkgs.gnumake
+            # jojobot spawns `dolt sql-server` and supervises it, so the binary
+            # is part of the toolchain rather than a service somebody installs:
+            # the mailbox and session tests start a real one against a temp
+            # directory, and a test that skips when a binary is missing is a
+            # test nobody notices stopped running.
+            pkgs.dolt
           ];
           # Cargo's default ./target (gitignored) — no CARGO_TARGET_DIR override,
           # which would anchor to the shell-entry $PWD and leak artifacts if run

@@ -112,6 +112,11 @@ in
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
 
+      # **The store's binary is jojobot's to run, so it is on jojobot's PATH.**
+      # It is not a service somebody administers beside jojobot: jojobot spawns
+      # it, waits for it, and stops it with itself.
+      path = [ pkgs.dolt ];
+
       environment = {
         JOJOBOT_BIND = "${cfg.listenAddress}:${toString cfg.port}";
         RUST_LOG = cfg.logLevel;
@@ -129,8 +134,16 @@ in
         RestartSec = "5s";
         EnvironmentFile = mkIf (cfg.environmentFile != null) cfg.environmentFile;
 
-        # Hardening. jojobot is a stateless network client + server: it needs
-        # outbound HTTPS (JWKS) and an inbound socket, nothing on disk.
+        # **The store's data directory.** jojobot keeps mailboxes and sessions
+        # in a SQL store it runs itself, so it is no longer stateless: this is
+        # `/var/lib/jojobot`, and the store lives in `db` under it. With
+        # `DynamicUser` systemd owns the real path and hands jojobot a stable
+        # one, so nothing here has to know where it actually sits.
+        StateDirectory = "jojobot";
+
+        # Hardening. jojobot needs outbound HTTPS (JWKS), an inbound socket,
+        # its state directory, and a child process serving the store on
+        # loopback.
         DynamicUser = true;
         NoNewPrivileges = true;
         ProtectSystem = "strict";
@@ -146,8 +159,11 @@ in
         SystemCallFilter = [ "@system-service" ];
         SystemCallErrorNumber = "EPERM";
 
-        MemoryMax = "256M";
-        TasksMax = 128;
+        # The store's server is a child process with a working set of its
+        # own, and it is a Go program rather than a thread. Both ceilings are
+        # jojobot's plus the server's, not jojobot's alone.
+        MemoryMax = "1G";
+        TasksMax = 256;
       };
     };
 

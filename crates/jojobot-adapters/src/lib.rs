@@ -3,12 +3,17 @@
 //! and quarantines that service's quirks, so the domain never grows a
 //! dependency on a wire format.
 //!
-//! **One store fronts all three contexts.** Memory, Sessions and Mailboxes all
-//! live in [`outline`], over one collection and behind one write lock — an
-//! entity is a page, a bot's sessions are a page under it, a mailbox is a page,
-//! and a session or a message is a row. The search projection sits over the
-//! same store ([`search`]). CalDAV and Raindrop clients are still pending.
+//! **Memory fronts on [`outline`]** — one collection behind one write lock, an
+//! entity a page and a fact a row — and the search projection sits over it
+//! ([`search`]). CalDAV and Raindrop clients are still pending.
+//!
+//! **Mailboxes and sessions front on [`dolt`]**, a SQL store jojobot spawns and
+//! supervises itself. They moved because a document editor was the wrong shape
+//! for them: rows with states and an append-only order are what a table is for,
+//! and everything that existed only to survive prose being rewritten stopped
+//! earning its place when they left.
 
+pub mod dolt;
 pub mod outline;
 pub mod search;
 

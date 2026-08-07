@@ -14,7 +14,15 @@ repository = "https://github.com/eljojo/jojobot"
 
 [workspace.dependencies]
 # --- async runtime + web ---
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+# `process` and `time`: jojobot spawns the store's server and waits for it to
+# start answering, which is a child process and a poll rather than a sleep.
+tokio = { version = "1", features = [
+    "macros",
+    "rt-multi-thread",
+    "signal",
+    "process",
+    "time",
+] }
 axum = "0.8"
 tower-http = { version = "0.7", features = ["trace"] }
 tokio-util = "0.7"
@@ -69,6 +77,17 @@ reqwest = { version = "0.13", default-features = false, features = [
 # locking) and compression, and this index lives in RAM and is rebuilt from
 # Outline at start — so none of that is load-bearing, it is only build time.
 tantivy = { version = "0.25", default-features = false }
+
+# --- the mailbox and session store: Dolt, spoken to over the MySQL wire ---
+# Default features off and the runtime named: the defaults pull a TLS stack and
+# every driver, and this talks to one child process over a unix socket on the
+# same machine, where there is nothing to encrypt and nothing else to speak to.
+# Pinned at 0.8: 0.9 requires rustc 1.94 against this workspace's 1.85.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "mysql",
+    "macros",
+] }
 
 # --- entropy: the session handle is minted here, and a handle a caller could
 # predict is a handle a caller could forge. OS entropy, no PRNG state to seed. ---
