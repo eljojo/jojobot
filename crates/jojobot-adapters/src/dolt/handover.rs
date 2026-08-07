@@ -662,9 +662,16 @@ mod tests {
             "the unreadable card is reported as not carried: {report:?}"
         );
 
-        // **The counters cleared what was carried.** Without this the next post
-        // mints an id a carried message already wears, and the write collides
-        // on a record nobody can see.
+        // **The counters cleared what was carried — ALL THREE of them.**
+        // Ids come across as they are, so a counter left where it was mints an
+        // id a carried record already wears and the first write after the
+        // cutover collides on a record nobody can see.
+        //
+        // Each counter is exercised by writing the thing it mints for. Proving
+        // one of the three proves nothing about the other two: they are three
+        // separate rows named by three separate strings, and a misspelling in
+        // any of them is silent until the first write lands on top of a carried
+        // record.
         let posted = mail
             .post_message(NewMessage {
                 mailbox: MailboxName("gamma".into()),
@@ -687,6 +694,62 @@ mod tests {
                 .count()
                 == 1,
             "the new message got an id nothing else wears"
+        );
+
+        // The session counter, and the entry counter under it.
+        let fresh = sessions
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("efgh".into()),
+                focus: "the first run after the move".into(),
+                started_at: at(9),
+            })
+            .await
+            .expect("the store takes a new session after the handover");
+        let carried_ids: Vec<String> = sessions
+            .all_sessions()
+            .await
+            .expect("list ok")
+            .iter()
+            .map(|s| s.id.to_string())
+            .collect();
+        assert_eq!(
+            carried_ids
+                .iter()
+                .filter(|id| *id == &fresh.id.to_string())
+                .count(),
+            1,
+            "the new session got an id nothing else wears: {carried_ids:?}"
+        );
+
+        let appended = sessions
+            .append(
+                &fresh.id,
+                NewEntry::manual("the first beat after the move", at(10)),
+            )
+            .await
+            .expect("the store takes a new entry after the handover");
+        let carried = sessions.all_sessions().await.expect("list ok");
+        // **Beyond every carried id, not merely different from them.** An
+        // absence of collision can be luck — two id shapes that happen not to
+        // overlap — and luck is not what the counter is for.
+        //
+        // Only ids that are numbers count here, because only those come from a
+        // counter this store mints from. A source whose entry ids wear a prefix
+        // contributes none, the counter is left at zero, and nothing can
+        // collide because this store never mints that shape. That is why
+        // `highest` ignores them rather than trying to read a number out.
+        let numeric = |id: &str| id.parse::<i64>().ok();
+        let carried_entries: Vec<i64> = carried
+            .iter()
+            .flat_map(|s| s.entries.iter())
+            .filter(|e| e.id != appended.id)
+            .filter_map(|e| numeric(e.id.as_str()))
+            .collect();
+        let minted = numeric(appended.id.as_str()).expect("this store mints numeric entry ids");
+        assert!(
+            carried_entries.iter().all(|carried| *carried < minted),
+            "the new entry's id is beyond every carried one: {minted} against {carried_entries:?}"
         );
 
         // The chronology came across in order, read through the new store.
