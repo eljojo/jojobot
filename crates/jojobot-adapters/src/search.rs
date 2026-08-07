@@ -176,6 +176,43 @@ impl DocMirror {
     }
 }
 
+/// **The comparison both halves of the index make before they write anything.**
+///
+/// Given what a scan holds and what the index holds, both keyed by the id their
+/// postings were written under: the records to rewrite, and the keys to evict.
+/// A record is rewritten when the scan and the index disagree about it, and
+/// evicted when the scan no longer carries it at all — which is the same answer
+/// for a record deleted by hand, one that became unreadable, and one that left
+/// any other way. Nothing here asks which happened, so nothing has to be taught
+/// a new way for a record to go missing.
+///
+/// One definition, two callers: the memory half keys on the store's doc id and
+/// the mail half on the message id, and that is the whole of the difference
+/// between them.
+/// The rewrites come back **owned**, because the comparison reads the mirror
+/// under its lock and the writing happens after that lock is dropped. The set
+/// is empty on the ordinary read, so the clone is paid only when the store has
+/// actually moved.
+fn changed_and_gone<R: PartialEq + Clone>(
+    arriving: &[(&str, &R)],
+    held: &[(&str, &R)],
+) -> (Vec<R>, Vec<String>) {
+    use std::collections::{HashMap, HashSet};
+    let held_by_key: HashMap<&str, &R> = held.iter().copied().collect();
+    let arriving_keys: HashSet<&str> = arriving.iter().map(|(k, _)| *k).collect();
+    (
+        arriving
+            .iter()
+            .filter(|(k, r)| held_by_key.get(k) != Some(r))
+            .map(|(_, r)| (*r).clone())
+            .collect(),
+        held.iter()
+            .filter(|(k, _)| !arriving_keys.contains(k))
+            .map(|(k, _)| (*k).to_string())
+            .collect(),
+    )
+}
+
 /// The in-RAM full-text index over entities, facts and prose.
 pub struct FullTextIndex {
     index: Index,
@@ -222,6 +259,15 @@ pub struct FullTextIndex {
     /// put in a set keyed by them. Both mean the index holds an older version
     /// than the store, so both read out as the same word to a caller.
     memory_refresh_failed: std::sync::atomic::AtomicBool,
+    /// The messages these postings were written from — the mail half's mirror,
+    /// and the same thing [`docs`](Self::docs) is for the memory half: what a
+    /// later board read is compared against so a refresh writes only where the
+    /// store has moved.
+    messages: RwLock<Vec<Message>>,
+    /// Whether the last board read failed to reach the store. The mail half's
+    /// [`memory_refresh_failed`](Self::memory_refresh_failed), for the same
+    /// reason and read out as the same word.
+    mail_refresh_failed: std::sync::atomic::AtomicBool,
 }
 
 impl FullTextIndex {
@@ -243,7 +289,17 @@ impl FullTextIndex {
             memory_touched: std::sync::atomic::AtomicBool::new(false),
             behind: RwLock::new(std::collections::BTreeSet::new()),
             memory_refresh_failed: std::sync::atomic::AtomicBool::new(false),
+            messages: RwLock::new(Vec::new()),
+            mail_refresh_failed: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// Record that the board read behind this answer could not reach the store,
+    /// so the mail half is a version behind. Cleared by the next board read that
+    /// lands.
+    pub fn mail_refresh_failed(&self) {
+        self.mail_refresh_failed
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// Record that the refresh this answer should have been built on could not
@@ -294,23 +350,63 @@ impl FullTextIndex {
     /// stores, either one can be down while the other is fine, and a rebuild of
     /// one must never evict the other's hits.
     pub fn ingest_mail(&self, messages: &[Message]) -> Result<(), MemoryError> {
-        let mut writer = self.writer.write().expect("index writer poisoned");
-        writer.delete_term(Term::from_field_text(self.fields.class, CLASS_MESSAGE));
-        for message in messages {
-            self.write_message(&writer, message)?;
+        self.ingest_mail_changes(messages).map(|_| ())
+    }
+
+    /// Bring the mail half to what this board read says the board is, writing
+    /// only where the two differ — the memory half's
+    /// [`ingest_changes`](Self::ingest_changes), asked of the other store.
+    ///
+    /// A message the board read no longer carries leaves the index: removed by
+    /// hand, or on a card that has become unreadable and so is absent from
+    /// every board read. Both are the same absence and get the same answer.
+    pub fn ingest_mail_changes(&self, messages: &[Message]) -> Result<usize, MemoryError> {
+        let (rewrite, evict) = {
+            let mirror = self.messages.read().expect("mail mirror poisoned");
+            changed_and_gone(
+                &messages
+                    .iter()
+                    .map(|m| (m.id.as_str(), m))
+                    .collect::<Vec<_>>(),
+                &mirror
+                    .iter()
+                    .map(|m| (m.id.as_str(), m))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let changed = rewrite.len() + evict.len();
+
+        if changed > 0 {
+            let mut writer = self.writer.write().expect("index writer poisoned");
+            for id in evict.iter().chain(rewrite.iter().map(|m| &m.id.0)) {
+                writer.delete_term(Term::from_field_text(self.fields.message_id, id));
+            }
+            for message in &rewrite {
+                self.write_message(&writer, message)?;
+            }
+            // **Set before the commit, deliberately.** Whichever side of the
+            // commit this lands on, a concurrent searcher can see one and not
+            // the other — but the two orders are not equally wrong. Claiming
+            // coverage a moment early costs an answer that says it searched mail
+            // and returns nothing yet; claiming it a moment late is the one
+            // shape the invariant forbids, an answer carrying message hits while
+            // denying it searched any.
+            self.mail_loaded
+                .store(true, std::sync::atomic::Ordering::Release);
+            writer.commit().map_err(store_err)?;
+            drop(writer);
+            *self.messages.write().expect("mail mirror poisoned") = messages.to_vec();
         }
-        // **Set before the commit, deliberately.** Whichever side of the commit
-        // this lands on, a concurrent searcher can see one and not the other —
-        // but the two orders are not equally wrong. Claiming coverage a moment
-        // early costs an answer that says it searched mail and returns nothing
-        // yet; claiming it a moment late is the one shape the invariant forbids,
-        // an answer carrying message hits while denying it searched any.
+        // Again for the path that wrote nothing: the read still reached the
+        // board, which is the only thing this flag reports.
         self.mail_loaded
             .store(true, std::sync::atomic::Ordering::Release);
-        writer.commit().map_err(store_err)?;
-        drop(writer);
-        self.reader.reload().map_err(store_err)?;
-        Ok(())
+        self.mail_refresh_failed
+            .store(false, std::sync::atomic::Ordering::Release);
+        if changed > 0 {
+            self.reader.reload().map_err(store_err)?;
+        }
+        Ok(changed)
     }
 
     /// Re-index one message, replacing whatever was indexed under its id. What
@@ -388,24 +484,17 @@ impl FullTextIndex {
     /// The coverage flags are set either way: reaching the store is what they
     /// report, and a scan that found nothing new still reached it.
     pub fn ingest_changes(&self, scan: &[DocScan]) -> Result<usize, MemoryError> {
-        use std::collections::{HashMap, HashSet};
-
-        let arriving: HashSet<&str> = scan.iter().map(|d| d.doc_id.as_str()).collect();
-        let (rewrite, evict): (Vec<&DocScan>, Vec<String>) = {
+        let (rewrite, evict) = {
             let mirror = self.docs.read().expect("doc mirror poisoned");
-            let held: HashMap<&str, &DocScan> = mirror
-                .iter()
-                .map(|d| (d.doc_id.as_str(), &d.scanned))
-                .collect();
-            (
-                scan.iter()
-                    .filter(|d| held.get(d.doc_id.as_str()) != Some(d))
-                    .collect(),
-                mirror
+            changed_and_gone(
+                &scan
                     .iter()
-                    .filter(|d| !arriving.contains(d.doc_id.as_str()))
-                    .map(|d| d.doc_id.clone())
-                    .collect(),
+                    .map(|d| (d.doc_id.as_str(), d))
+                    .collect::<Vec<_>>(),
+                &mirror
+                    .iter()
+                    .map(|d| (d.doc_id.as_str(), &d.scanned))
+                    .collect::<Vec<_>>(),
             )
         };
         let changed = rewrite.len() + evict.len();
@@ -848,12 +937,17 @@ fn edges_of(mirror: &[DocMirror], id: &EntityId) -> Vec<Edge> {
 /// compile error rather than a convention: nothing can be wired to the bare
 /// projection and quietly serve whatever it last saw.
 impl FullTextIndex {
+    /// Two ways in reach [`Stale`](Behind::Stale) on the memory half and one
+    /// does here: a board read that could not reach the store. The mail path
+    /// indexes the record the store hands back rather than re-reading it, so
+    /// there is no write-path way to be behind and none is invented.
     pub fn mail_coverage(&self) -> Coverage {
         use std::sync::atomic::Ordering::Acquire;
         match (
             self.mail_loaded.load(Acquire),
             self.mail_touched.load(Acquire),
         ) {
+            (true, _) if self.mail_refresh_failed.load(Acquire) => Coverage::Partial(Behind::Stale),
             (true, _) => Coverage::Loaded,
             (false, true) => Coverage::Partial(Behind::Unscanned),
             (false, false) => Coverage::Unread,
@@ -1300,6 +1394,76 @@ impl Memory for IndexedMemory {
     }
 }
 
+/// One half of the corpus behind `search`, able to bring itself level with the
+/// store it mirrors.
+///
+/// **This is what makes one mechanism serve two stores.** Memory and mail are
+/// two halves of one index fed by two stores, and the promise the [`Search`]
+/// port makes — an answer backed by a scan taken for it — is the same promise
+/// on both. A half implements it for its own store; nothing above has to know
+/// which stores exist, so a third one later is a third implementor rather than
+/// an edit here.
+#[async_trait]
+pub trait Refresh: Send + Sync {
+    /// Take a scan and bring this half of the index to what it says.
+    ///
+    /// **Infallible on purpose.** A refresh that cannot reach its store does
+    /// not fail the search: it records that this half is behind, and the last
+    /// scan that succeeded goes on answering. Degrading is the promise; the
+    /// coverage is where it is admitted.
+    async fn refresh(&self);
+}
+
+/// The [`Search`] port: the index, and every half that can refresh itself.
+///
+/// **The port lives here rather than on either decorator**, because an answer
+/// spans both halves and neither decorator can reach the other's store. Putting
+/// it on the Memory decorator and handing that a mailbox store would be the
+/// wrong object holding a second store to make a port reachable; putting the
+/// refresh in the caller would move the port's own promise out of the port.
+pub struct Retrieval {
+    index: Arc<FullTextIndex>,
+    halves: Vec<Arc<dyn Refresh>>,
+}
+
+impl Retrieval {
+    /// The port over an index, refreshed by each half before it answers.
+    pub fn new(index: Arc<FullTextIndex>, halves: Vec<Arc<dyn Refresh>>) -> Self {
+        Retrieval { index, halves }
+    }
+}
+
+#[async_trait]
+impl Search for Retrieval {
+    /// **Refresh every half, then answer.** Each half reaches its own store, so
+    /// a record removed outside jojobot — which rule 60 makes the only way one
+    /// leaves at all — is noticed on the read path, the only place left that
+    /// can notice it.
+    async fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
+        for half in &self.halves {
+            half.refresh().await;
+        }
+        self.index.search(query)
+    }
+
+    fn mail_coverage(&self) -> Coverage {
+        self.index.mail_coverage()
+    }
+
+    fn memory_coverage(&self) -> Coverage {
+        self.index.memory_coverage()
+    }
+}
+
+#[async_trait]
+impl Refresh for IndexedMemory {
+    async fn refresh(&self) {
+        if self.rescan().await.is_err() {
+            self.index.refresh_failed();
+        }
+    }
+}
+
 #[async_trait]
 impl Search for IndexedMemory {
     /// **Refresh from the store, then answer.**
@@ -1377,6 +1541,22 @@ impl IndexedMailboxes {
 
     fn reindex(&self, message: &Message) -> Result<(), MailboxError> {
         self.index.ingest_message(message).map_err(indexing)
+    }
+}
+
+#[async_trait]
+impl Refresh for IndexedMailboxes {
+    /// **`scan_messages`, never a delivering read.** Reading IS delivery on the
+    /// verbs that deliver, so a refresh built on one would drain a box as a side
+    /// effect of answering a question. This board read takes nothing and moves
+    /// nothing.
+    async fn refresh(&self) {
+        match self.inner.scan_messages().await {
+            Ok(messages) => {
+                let _ = self.index.ingest_mail_changes(&messages);
+            }
+            Err(_) => self.index.mail_refresh_failed(),
+        }
     }
 }
 
@@ -3822,6 +4002,162 @@ mod tests {
             state_of(&index),
             Some(MessageState::Processed),
             "the hit's state follows the message, or a reader acts on a stale word"
+        );
+    }
+
+    /// A board with two messages behind the `search` port, ready to lose one.
+    /// Two rather than one so every negative below has a survivor to pair with.
+    async fn a_board_of_two() -> (Arc<InMemoryMailboxes>, Arc<IndexedMailboxes>, Retrieval) {
+        let inner = Arc::new(InMemoryMailboxes::new());
+        mail_contract::create(inner.as_ref(), "pm").await;
+        mail_contract::post(inner.as_ref(), "pm", "dev", "the kiln is relined", 0).await;
+        mail_contract::post(inner.as_ref(), "pm", "dev", "the damper is hand-cut", 1).await;
+
+        let index = Arc::new(FullTextIndex::open().expect("index opens"));
+        let mail = Arc::new(IndexedMailboxes::new(inner.clone(), index.clone()));
+        mail.rebuild().await.expect("rebuild");
+        let port = Retrieval::new(index, vec![mail.clone()]);
+        (inner, mail, port)
+    }
+
+    /// **A message removed from the store stops being served, with no write to
+    /// prompt it.** Rule 60 puts true removal outside jojobot, so nothing calls
+    /// a refresh and the read path is the only place that can notice.
+    #[tokio::test]
+    async fn a_message_removed_from_the_store_stops_being_served() {
+        let (inner, _mail, port) = a_board_of_two().await;
+        for present in ["kiln", "damper"] {
+            assert_eq!(
+                port.search(&asking_for_mail(present))
+                    .await
+                    .expect("search ok")
+                    .len(),
+                1,
+                "{present:?} is served while both messages are on the board"
+            );
+        }
+
+        inner.lose(&MessageId("1".into()));
+
+        assert!(
+            port.search(&asking_for_mail("kiln"))
+                .await
+                .expect("search ok")
+                .is_empty(),
+            "the message left the board, so search must stop serving it"
+        );
+        assert_eq!(
+            port.search(&asking_for_mail("damper"))
+                .await
+                .expect("search ok")
+                .len(),
+            1,
+            "…and the one still on the board is still served"
+        );
+    }
+
+    /// **A card that has become unreadable is the same absence**, and it costs
+    /// no machinery of its own: a board read leaves a quarantined card out, so
+    /// it arrives at the index as a message the scan no longer carries.
+    #[tokio::test]
+    async fn a_quarantined_card_stops_being_served_too() {
+        let (inner, _mail, port) = a_board_of_two().await;
+
+        inner.quarantine(
+            &MailboxName("pm".into()),
+            &MessageId("1".into()),
+            "the card cannot be read",
+        );
+
+        assert!(
+            port.search(&asking_for_mail("kiln"))
+                .await
+                .expect("search ok")
+                .is_empty(),
+            "jojobot cannot read it, so search must not go on serving its content"
+        );
+        assert_eq!(
+            port.search(&asking_for_mail("damper"))
+                .await
+                .expect("search ok")
+                .len(),
+            1,
+            "…and the readable one beside it is untouched"
+        );
+    }
+
+    /// **A search takes no delivery.** Reading IS delivery on the verbs that
+    /// deliver, so a refresh that used one would drain a box as a side effect of
+    /// answering a question — a data-loss defect wearing a correctness fix, and
+    /// the kind a coverage assertion would pass straight over.
+    #[tokio::test]
+    async fn a_search_leaves_every_message_state_as_it_found_it() {
+        let (inner, _mail, port) = a_board_of_two().await;
+        let before = mail_contract::counts(inner.as_ref(), "pm").await;
+        assert_eq!(
+            before.map(|c| c.new),
+            Some(2),
+            "both messages start new and nobody has taken them"
+        );
+
+        assert_eq!(
+            port.search(&asking_for_mail("kiln"))
+                .await
+                .expect("search ok")
+                .len(),
+            1,
+            "the search really ran and really answered"
+        );
+
+        assert_eq!(
+            mail_contract::counts(inner.as_ref(), "pm").await,
+            before,
+            "…and every state is exactly as it was, the untaken ones included"
+        );
+    }
+
+    /// **The mail half stops claiming complete while it is serving a board it
+    /// could not re-read.** Rule 130: the wrong answer is the defect, and the
+    /// wrong answer that vouches for itself is worse.
+    #[tokio::test]
+    async fn mail_coverage_stops_claiming_loaded_when_the_read_cannot_reach_the_store() {
+        let (inner, _mail, port) = a_board_of_two().await;
+        assert_eq!(
+            port.mail_coverage(),
+            Coverage::Loaded,
+            "a board read that just succeeded is complete coverage"
+        );
+
+        inner.blind();
+
+        assert_eq!(
+            port.search(&asking_for_mail("kiln"))
+                .await
+                .expect("search ok")
+                .len(),
+            1,
+            "degrade, don't error: the last good board read still answers"
+        );
+        assert_eq!(
+            port.mail_coverage(),
+            Coverage::Partial(Behind::Stale),
+            "…and the answer says it is holding an older board than the store"
+        );
+
+        inner.sighted();
+
+        assert_eq!(
+            port.search(&asking_for_mail("kiln"))
+                .await
+                .expect("search ok")
+                .len(),
+            1,
+            "the message is still there and still served"
+        );
+        assert_eq!(
+            port.mail_coverage(),
+            Coverage::Loaded,
+            "a board read that reaches the store again clears the mark"
         );
     }
 

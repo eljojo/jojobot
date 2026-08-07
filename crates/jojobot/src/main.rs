@@ -7,9 +7,10 @@ use std::sync::Arc;
 use anyhow::Context;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
-use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory};
+use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, Retrieval};
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::Memory;
+use jojobot_domain::memory::search::Search;
 use jojobot_domain::session::Sessions;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -178,6 +179,15 @@ async fn main() -> anyhow::Result<()> {
              reachable to get the whole store back."
         ),
     }
+    // **The retrieval port holds both halves, because an answer spans both.**
+    // Each half refreshes itself from its own store before a search answers, so
+    // a record removed outside jojobot — the only way one leaves at all — stops
+    // being served. Neither decorator can reach the other's store, which is why
+    // the port is not on either of them.
+    let search: Arc<dyn Search> = Arc::new(Retrieval::new(
+        indexed.index(),
+        vec![indexed.clone(), mailboxes.clone()],
+    ));
     let mailboxes: Arc<dyn Mailboxes> = mailboxes;
 
     // **The handle registry, filled from the board before anything is served.**
@@ -239,7 +249,7 @@ async fn main() -> anyhow::Result<()> {
         validator,
         metadata_url,
         memory: indexed.clone(),
-        search: indexed,
+        search,
         mailboxes,
         sessions,
         registry,

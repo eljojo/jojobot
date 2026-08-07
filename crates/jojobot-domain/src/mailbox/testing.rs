@@ -39,6 +39,9 @@ pub struct InMemoryMailboxes {
     messages: Mutex<Vec<Message>>,
     next_id: Mutex<u64>,
     quarantined: Mutex<Vec<(MailboxName, MessageId, String)>>,
+    /// Whether a board read fails. Writes still land: this is the store being
+    /// unreachable for a read, not gone.
+    blind: Mutex<bool>,
 }
 
 impl InMemoryMailboxes {
@@ -109,6 +112,30 @@ impl InMemoryMailboxes {
             card.clone(),
             reason.to_string(),
         ));
+    }
+
+    /// **A message is removed from the store by hand**, the way rule 60 says a
+    /// record leaves at all: outside jojobot, with no verb of its own and
+    /// nothing telling the index it happened.
+    ///
+    /// Distinct from [`quarantine`](Self::quarantine), which leaves the card on
+    /// the board and unreadable. Both are invisible to a board read; only this
+    /// one means the record is gone.
+    /// A board read fails from here until [`sighted`](Self::sighted).
+    pub fn blind(&self) {
+        *self.blind.lock().expect("blind lock") = true;
+    }
+
+    /// Board reads land again.
+    pub fn sighted(&self) {
+        *self.blind.lock().expect("blind lock") = false;
+    }
+
+    pub fn lose(&self, card: &MessageId) {
+        self.messages
+            .lock()
+            .expect("message lock")
+            .retain(|m| &m.id != card);
     }
 
     /// The names currently on the board, in creation order.
@@ -337,6 +364,9 @@ impl Mailboxes for InMemoryMailboxes {
     }
 
     async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+        if *self.blind.lock().expect("blind lock") {
+            return Err(MailboxError::Store("the board cannot be read".into()));
+        }
         let quarantined = self.quarantined.lock().expect("quarantine lock");
         Ok(self
             .messages
