@@ -93,6 +93,19 @@ pub(crate) fn session_declined(e: SessionError) -> Result<CallToolResult, McpErr
                  most recent entry can be amended, through amend_journal."
             ),
         ),
+        // **A malformed id or entry is a caller mistake, so it is an answer**
+        // (rule 68). The validator's own sentence says which fault it is and
+        // what the rule is, and it is carried rather than restated: a focus
+        // alone has three ways to be refused and the validators gain more, so
+        // naming them here would be a catalogue that goes stale (rule 106).
+        SessionError::InvalidId(_) | SessionError::InvalidEntry(_) => blocked(
+            "",
+            format!(
+                "Nothing was written: {e}. Nothing about this needs the operator and no session \
+                 is missing — the call itself is what jojobot cannot carry out. Send it again \
+                 with that fixed."
+            ),
+        ),
         other => Err(session_error(other)),
     }
 }
@@ -101,13 +114,14 @@ pub(crate) fn session_declined(e: SessionError) -> Result<CallToolResult, McpErr
 /// server-side failures — the same split the other two contexts make.
 pub(crate) fn session_error(e: SessionError) -> McpError {
     match e {
-        SessionError::InvalidId(_) | SessionError::InvalidEntry(_) => {
-            McpError::invalid_params(e.to_string(), None)
-        }
-        // Reached only if a verb surfaces one without going through
-        // `session_declined` — kept as a client error rather than a 500 for the
-        // same reason the other contexts keep theirs.
-        SessionError::UnknownSession { .. }
+        // **Backstops, not the intended answer.** Every one of these is a
+        // caller mistake and `session_declined` answers all of them as blocked
+        // results with a way forward (rule 68). They are reached only by a verb
+        // that surfaces an error without going through that path, and they stay
+        // client errors rather than 500s for that case.
+        SessionError::InvalidId(_)
+        | SessionError::InvalidEntry(_)
+        | SessionError::UnknownSession { .. }
         | SessionError::Closed { .. }
         | SessionError::NoEntries { .. }
         | SessionError::NotABeat { .. } => McpError::invalid_params(e.to_string(), None),
@@ -128,6 +142,89 @@ pub(crate) fn session_error(e: SessionError) -> McpError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::*;
+
+    /// **A caller mistake never leaves this rail through the error channel**
+    /// (rule 68). It comes back as a blocked answer carrying what is wrong and
+    /// what to do about it.
+    ///
+    /// The two faults reach the surface by different routes, and only one of
+    /// them is the fall-through the mapper is blamed for. An empty entry is
+    /// refused by the append and handed to the declined path; a focus the
+    /// record cannot carry is refused by the call that OPENS the session,
+    /// which sends its error straight to the mapper. Driving both through
+    /// `journal` is what tells them apart — asking the mapper directly would
+    /// pass on a build where neither is wired to anything.
+    #[tokio::test]
+    async fn a_malformed_beat_is_an_answer_rather_than_an_error() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        // Refused by the append, on a session that already exists.
+        let started = booted(&jojobot, "gamma").await;
+        jojobot
+            .journal(Parameters(JournalArgs {
+                entry: "set out to read the box".into(),
+                focus: None,
+                sid: started.clone(),
+            }))
+            .await
+            .expect("the first beat lands");
+        let empty_entry = jojobot
+            .journal(Parameters(JournalArgs {
+                entry: "   ".into(),
+                focus: None,
+                sid: started,
+            }))
+            .await
+            .expect("a caller mistake is an answer, not a protocol failure");
+
+        // Refused while the session is being opened, before any entry exists.
+        // A second identity, because a bot with a run in flight is offered it
+        // back rather than handed a fresh handle.
+        make_bot(&jojobot, "delta").await;
+        let fresh = booted(&jojobot, "delta").await;
+        let bad_focus = jojobot
+            .journal(Parameters(JournalArgs {
+                entry: "set out to read the box".into(),
+                focus: Some("reading `the box`".into()),
+                sid: fresh,
+            }))
+            .await
+            .expect("a caller mistake is an answer, not a protocol failure");
+
+        let said = |e: SessionError| e.to_string();
+        for (what, result, expected) in [
+            (
+                "an empty entry",
+                &empty_entry,
+                said(
+                    jojobot_domain::session::validate_entry("   ")
+                        .expect_err("an empty entry is refused"),
+                ),
+            ),
+            (
+                "a focus the record cannot carry",
+                &bad_focus,
+                said(
+                    jojobot_domain::session::validate_focus("reading `the box`")
+                        .expect_err("a focus with a backtick is refused"),
+                ),
+            ),
+        ] {
+            let body = blocked(result);
+            assert_eq!(body["wrote"], false, "{what} wrote something: {body}");
+            let advice = body["how_to_proceed"].as_str().expect("advice");
+            // The validator's own sentence, read from the validator rather
+            // than written out here: it says which fault it is and what the
+            // rule is, and pinning the relation leaves the wording free.
+            assert!(
+                advice.contains(&expected),
+                "{what} came back without the reason it was refused for.\n  wanted: \
+                 {expected}\n  got: {advice}"
+            );
+        }
+    }
 
     /// A stranded write must never be told to retry — it may have
     /// half-landed, and a repeat could double whatever did.

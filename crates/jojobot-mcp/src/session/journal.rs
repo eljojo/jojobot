@@ -58,6 +58,21 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        // **Screened here so the refusal is an ANSWER, and before anything is
+        // written.** A focus the record cannot carry is a caller mistake, and
+        // it reaches the store by two paths: the call that OPENS a session, and
+        // the one that moves the focus of a session already open. The first
+        // came back as a protocol error, which is a failure where the caller
+        // needs a next move (rule 68); the second came back as a partial answer
+        // saying jojobot's storage failed, which is not true of a bad argument
+        // (rule 130). One screen closes both, and it runs before the entry is
+        // appended, so nothing is written and the whole call can simply be sent
+        // again.
+        if let Some(theirs) = focus.map(str::trim).filter(|f| !f.is_empty()) {
+            if let Err(e) = jojobot_domain::session::validate_focus(theirs) {
+                return session_declined(e);
+            }
+        }
         let session = self
             .session_for(&_serialized, &caller, focus, Some(&args.entry))
             .await?;
@@ -486,7 +501,14 @@ mod tests {
 
     /// A focus the caller passed IS validated as a focus — the rules were never
     /// wrong, only misapplied. Its refusal names the parameter they actually
-    /// sent.
+    /// sent, and it is a blocked ANSWER rather than a protocol error: a caller
+    /// mistake does not leave through the error channel (rule 68).
+    ///
+    /// **The whole call is refused, so nothing is written.** The screen runs
+    /// before the entry is appended, which is what lets the caller fix the
+    /// argument and send the same call again — the alternative left the entry
+    /// recorded and the focus unmoved, and reported that as jojobot's own
+    /// storage failing.
     #[tokio::test]
     async fn an_explicit_focus_is_still_held_to_the_focus_rules() {
         let store = Arc::new(InMemorySessions::new());
@@ -494,15 +516,48 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         let sid = booted(&jojobot, "gamma").await;
 
-        let err = jojobot
+        // **On a session that is already open**, which is the case that bites:
+        // the entry appends before the focus moves, so a screen placed after
+        // the append refuses the call with the entry already on the record.
+        jojobot
             .journal(Parameters(JournalArgs {
                 entry: "read the hand-off".into(),
-                focus: Some("two\nlines".into()),
-                sid,
+                focus: None,
+                sid: sid.clone(),
             }))
             .await
-            .expect_err("a focus that is not one line must be refused");
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+            .expect("the first beat lands");
+
+        let body = blocked(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: "scoped the slice".into(),
+                    focus: Some("two\nlines".into()),
+                    sid,
+                }))
+                .await
+                .expect("a caller mistake is an answer, not a protocol failure"),
+        );
+        assert_eq!(body["wrote"], false, "{body}");
+        let advice = body["how_to_proceed"].as_str().expect("advice");
+        let said = jojobot_domain::session::validate_focus("two\nlines")
+            .expect_err("a focus over two lines is refused")
+            .to_string();
+        assert!(
+            advice.contains(&said),
+            "the refusal names the fault.\n  wanted: {said}\n  got: {advice}"
+        );
+
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        let texts: Vec<&str> = live[0].entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            ["read the hand-off"],
+            "a refused call writes nothing at all — not even the entry it carried"
+        );
     }
 
     /// **The whole arc through the surface:** boot, journal with a focus, amend
