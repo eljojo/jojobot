@@ -10,11 +10,16 @@
 //! say whether it behaves.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jojobot_adapters::dolt::Dolt;
+use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
+use jojobot_domain::mailbox::testing::contract as mailboxes;
+use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
+use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::testing::contract as sessions;
 
 /// A directory of this run's own, removed when it is done.
@@ -88,6 +93,84 @@ async fn dolt_satisfies_the_session_contract() {
     };
 
     sessions::run_all(fresh).await;
+
+    store.stop().await;
+}
+
+/// **An owner index that answers for the contract's roster and nothing else.**
+///
+/// Strict on purpose. A resolver that says yes to everything makes
+/// `Guarded::UnknownOwner` unreachable, so the case that proves a box cannot be
+/// opened for a stranger would pass over a store that never checks — a green
+/// bar wearing a costume. This one holds exactly the handles the suite's
+/// precondition names.
+struct RosterOnly;
+
+#[async_trait::async_trait]
+impl OwnerIndex for RosterOnly {
+    async fn look_up(&self, owner: &EntityId) -> Result<OwnerLookup, MailboxError> {
+        if mailboxes::OWNERS.contains(&owner.as_str()) {
+            return Ok(OwnerLookup::Known);
+        }
+        // The near misses a real index would find, from the roster it does
+        // hold — so a typo comes back with the handle it probably meant rather
+        // than an empty list that says nothing.
+        let index: Vec<jojobot_domain::memory::Entity> = mailboxes::OWNERS
+            .iter()
+            .map(|handle| {
+                let id = EntityId((*handle).to_string());
+                jojobot_domain::memory::Entity {
+                    kind: id.kind().expect("the roster's handles are well-formed"),
+                    name: id.slug().to_string(),
+                    id,
+                    aliases: Vec::new(),
+                    source: "contract-fixture".into(),
+                    crm: None,
+                    parent: None,
+                    boot: Default::default(),
+                }
+            })
+            .collect();
+        Ok(OwnerLookup::Unknown(jojobot_domain::memory::guard::screen(
+            owner,
+            &[],
+            &index,
+        )))
+    }
+}
+
+/// The mailbox contract's cases, each against a store of its own.
+#[tokio::test]
+async fn dolt_satisfies_the_mailbox_contract() {
+    let scratch = Scratch::new("mailboxes");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+
+    const ROOM: usize = 48;
+    let mut prepared = Vec::with_capacity(ROOM);
+    for n in 0..ROOM {
+        let pool = store
+            .database(&format!("mail{n}"))
+            .await
+            .expect("a database of this case's own");
+        migrate::run(&pool).await.expect("the schema");
+        prepared.push(DoltMailboxes::open(pool, Arc::new(RosterOnly)));
+    }
+
+    let handed = AtomicUsize::new(0);
+    mailboxes::run_all(|| {
+        let n = handed.fetch_add(1, Ordering::SeqCst);
+        let store = prepared.get(n).cloned().unwrap_or_else(|| {
+            panic!(
+                "the contract has more cases than this suite prepared stores for \
+                 ({ROOM}). Raise ROOM — never let two cases share one store, or one \
+                 case's rows start satisfying another's assertions."
+            )
+        });
+        async move { store }
+    })
+    .await;
 
     store.stop().await;
 }

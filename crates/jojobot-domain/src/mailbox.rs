@@ -320,6 +320,41 @@ fn blank_is_absent(text: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+/// **Does this owner exist, and what is near it.** The whole surface, and
+/// deliberately the whole surface.
+///
+/// A box is created FOR somebody, so the mail context has to answer one
+/// question about the entity world: does this handle resolve. When both
+/// contexts sat in one store an adapter answered it by reading the index it
+/// already had. They no longer do, so the question needs a name — this one.
+///
+/// **It is not the Memory port with a smaller name.** It cannot fetch a fact, a
+/// kind, an edge or a record; it answers existence and hands back what Memory's
+/// own screen found nearby, which is exactly what a [`Guarded::UnknownOwner`]
+/// carries and nothing more. The moment something wants more than that through
+/// here, that is a different design and it stops rather than widening this.
+#[async_trait::async_trait]
+pub trait OwnerIndex: Send + Sync {
+    /// Whether `owner` resolves, and the nearest handles if it does not.
+    ///
+    /// A store that cannot be reached is an error rather than "no": answering
+    /// "that owner does not exist" because the entity world is down would
+    /// refuse a legitimate creation and tell the caller a falsehood about their
+    /// own roster.
+    async fn look_up(&self, owner: &EntityId) -> Result<OwnerLookup, MailboxError>;
+}
+
+/// What [`OwnerIndex::look_up`] found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnerLookup {
+    /// The handle resolves. Nothing else about the entity is reported, because
+    /// nothing else is this port's business.
+    Known,
+    /// It does not, and these are the entities it might have meant — Memory's
+    /// own screen, so a typo comes back with the handle it probably meant.
+    Unknown(Vec<memory_guard::EntityMatch>),
+}
+
 /// A mailbox and what is in it. The counts are the whole point of
 /// `list_mailboxes`: what's new, what's seen, what's handled, per box.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

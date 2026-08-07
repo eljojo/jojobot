@@ -22,10 +22,16 @@ use sqlx::{MySql, MySqlPool, Transaction};
 /// **The order is this list, not the filenames** — a sort is a rule somebody
 /// has to know, and a list is one they can read. Adding a migration is a line
 /// here and a file beside the others; nothing else.
-const MIGRATIONS: &[(&str, &str)] = &[(
-    "0001_sessions",
-    include_str!("../../migrations/0001_sessions.sql"),
-)];
+const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "0001_sessions",
+        include_str!("../../migrations/0001_sessions.sql"),
+    ),
+    (
+        "0002_mailboxes",
+        include_str!("../../migrations/0002_mailboxes.sql"),
+    ),
+];
 
 /// The table recording what has run. Created by hand rather than by a
 /// migration, because it is what says whether a migration has run.
@@ -119,8 +125,8 @@ mod tests {
         let first = run(store.pool()).await.expect("the schema moves");
         assert_eq!(
             first,
-            vec!["0001_sessions".to_string()],
-            "the first start applies what is there"
+            vec!["0001_sessions".to_string(), "0002_mailboxes".to_string()],
+            "the first start applies what is there, in the order the list gives"
         );
 
         let second = run(store.pool())
@@ -139,6 +145,10 @@ mod tests {
             .execute(store.pool())
             .await
             .expect("the session table is there and takes a row");
+        sqlx::query("INSERT INTO mailbox (name, owner) VALUES ('gamma', 'bot:gamma')")
+            .execute(store.pool())
+            .await
+            .expect("the mailbox table is there and takes a row");
 
         store.stop().await;
     }
