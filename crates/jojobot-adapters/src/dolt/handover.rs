@@ -17,6 +17,13 @@
 //! to serve, and answering with an empty board would report the loss as the
 //! truth.
 //!
+//! **A source nobody wired is the one case that is not a failure.** With no old
+//! store configured there are no records anywhere to miss, so an empty target
+//! is the whole truth rather than a loss reported as one, and that boot goes on
+//! — serving mail and sessions from a store that starts out empty, which is
+//! what a fresh local run is. It writes no record, because nothing was carried.
+//! Configured-and-unreachable is the opposite case and keeps refusing.
+//!
 //! **The source is read and never written.** Nothing here deletes, edits or
 //! marks anything on the old store. What happens to it afterwards is a separate
 //! decision that belongs to a person.
@@ -78,6 +85,14 @@ pub enum HandoverError {
     /// The old store could not be read. Nothing was written.
     #[error("the records could not be read from the old store: {0}")]
     Source(String),
+    /// **Nobody wired an old store.** The one member of this enum that is not
+    /// a failure: there is no source, so there is nothing to carry, and
+    /// [`carry_over`] turns it into [`Carryover::NothingToCarry`] rather than a
+    /// refusal. It is deliberately NOT [`Source`](HandoverError::Source): a
+    /// wired store that will not answer may be hiding records, and an unwired
+    /// one cannot be.
+    #[error("no old store is configured, so there is nothing to carry: {0}")]
+    Unwired(String),
     /// The new store refused a write.
     #[error("the new store refused the handover: {0}")]
     Target(String),
@@ -166,12 +181,24 @@ const WRITTEN: &str = "written";
 /// from**, and everything that is not exactly this token refuses.
 const VERIFIED: &str = "verified";
 
+/// A source read that did not answer.
+///
+/// **The two ways it can fail are not one.** Unwired keeps its own variant
+/// instead of folding into a sentence inside [`HandoverError::Source`]: a
+/// caller reading the string would be deciding a boot by substring, which is
+/// broken by rewording the message with every test still green.
 fn source_mail(e: MailboxError) -> HandoverError {
-    HandoverError::Source(e.to_string())
+    match e {
+        MailboxError::NotConfigured(why) => HandoverError::Unwired(why),
+        other => HandoverError::Source(other.to_string()),
+    }
 }
 
 fn source_session(e: SessionError) -> HandoverError {
-    HandoverError::Source(e.to_string())
+    match e {
+        SessionError::NotConfigured(why) => HandoverError::Unwired(why),
+        other => HandoverError::Source(other.to_string()),
+    }
 }
 
 /// A read-back the target refused.
@@ -440,6 +467,16 @@ pub enum Carryover {
     Carried(Report),
     /// A previous boot carried them and its read-back passed.
     AlreadyCarried,
+    /// **There is no old store to carry from**, so nothing was carried and
+    /// nothing was recorded. A supported mode, not a failure: the boot goes on
+    /// and mail and sessions are served from a store that is empty because it
+    /// is empty. Carries the source's own words about what is missing.
+    ///
+    /// **No record is written here**, which is what keeps the mode reversible:
+    /// wiring credentials later leaves a boot that genuinely tries, and if this
+    /// store has been used in the meantime the "rows but no record" refusal is
+    /// the right answer to give it.
+    NothingToCarry(String),
     /// **The store must not be served from.**
     Refused(HandoverError),
 }
@@ -447,11 +484,19 @@ pub enum Carryover {
 /// **The store may be served from only when the record says verified.
 /// Everything else refuses.**
 ///
-/// That is the whole rule, and it is one line of code rather than a list of
-/// cases on purpose: the accepting arm names the one token it accepts, and
-/// everything that is not that token — a state this build has never heard of, a
-/// failure `run` grew a variant for after this was written — lands on the
-/// refusing side without anybody remembering to put it there.
+/// That is the whole rule, and the accepting arm names the one token it accepts
+/// on purpose: a state this build has never heard of, a failure `run` grew a
+/// variant for after this was written, land on the refusing side without
+/// anybody remembering to put them there.
+///
+/// **The one exception is written out here rather than inferred**, because it
+/// is a decision and not a failure: a source nobody wired holds no records, so
+/// there is nothing to carry and nothing to be wrong about. The distinction it
+/// turns on is [`HandoverError::Unwired`] against
+/// [`HandoverError::Source`] — never configured, against configured and
+/// unreadable. The second may be hiding records, so it keeps refusing; folding
+/// the two together would serve an empty board as the whole truth on the day
+/// the old store is down.
 ///
 /// What the arms mean:
 ///
@@ -460,6 +505,9 @@ pub enum Carryover {
 ///   whether the target is populated, so a steady-state boot that reached it
 ///   would pay a full remote scan to learn it has nothing to do.
 /// - **no record, and `run` succeeds** — this boot carried them.
+/// - **no record, and no source is wired** — nothing to carry, and **no record
+///   is written**: nothing was carried, so nothing is verified. Credentials
+///   added later leave a boot that genuinely tries.
 /// - **written** — the rows are committed and the read-back never finished. The
 ///   target holds a board nobody checked, and no count of what is in it can
 ///   tell that from a completed run. A person has to look.
@@ -487,6 +535,7 @@ pub async fn carry_over(
         Ok(Some(state)) => Carryover::Refused(HandoverError::Halfway { state }),
         Ok(None) => match run(from_mail, from_sessions, to_mail, to_sessions, pool).await {
             Ok(report) => Carryover::Carried(report),
+            Err(HandoverError::Unwired(why)) => Carryover::NothingToCarry(why),
             Err(refused) => Carryover::Refused(refused),
         },
     }
@@ -714,7 +763,19 @@ mod tests {
     struct WatchedMail {
         board: InMemoryMailboxes,
         reads: AtomicUsize,
-        refuses: bool,
+        answering: Answering,
+    }
+
+    /// **How the old store answers — three states, not two.** Wired and
+    /// unreachable is a different fact from never wired at all, and a double
+    /// that could only say "no" would let the two be tested as one.
+    enum Answering {
+        /// From the board behind it.
+        Board,
+        /// Wired, and it will not answer.
+        Unreadable,
+        /// Nobody wired it.
+        Unwired,
     }
 
     impl WatchedMail {
@@ -722,13 +783,21 @@ mod tests {
             WatchedMail {
                 board,
                 reads: AtomicUsize::new(0),
-                refuses: false,
+                answering: Answering::Board,
             }
         }
         /// The same double, unreadable — an old store that will not answer.
         fn refusing(board: InMemoryMailboxes) -> Self {
             WatchedMail {
-                refuses: true,
+                answering: Answering::Unreadable,
+                ..WatchedMail::watching(board)
+            }
+        }
+        /// The same double with nobody behind it — the shipped unconfigured
+        /// store, which refuses every call for want of credentials.
+        fn unwired(board: InMemoryMailboxes) -> Self {
+            WatchedMail {
+                answering: Answering::Unwired,
                 ..WatchedMail::watching(board)
             }
         }
@@ -738,13 +807,20 @@ mod tests {
         fn forget(&self) {
             self.reads.store(0, Ordering::Relaxed);
         }
-        /// Count the read, then answer it — or refuse.
+        /// Count the read, then answer it — or refuse, in the store's own
+        /// vocabulary: the two refusals differ by variant, which is the only
+        /// thing the code under test can tell them apart by.
         fn asked(&self) -> Result<(), MailboxError> {
             self.reads.fetch_add(1, Ordering::Relaxed);
-            if self.refuses {
-                return Err(MailboxError::Store("the old store would not answer".into()));
+            match self.answering {
+                Answering::Board => Ok(()),
+                Answering::Unreadable => {
+                    Err(MailboxError::Store("the old store would not answer".into()))
+                }
+                Answering::Unwired => Err(MailboxError::NotConfigured(
+                    "set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN".into(),
+                )),
             }
-            Ok(())
         }
     }
 
@@ -798,11 +874,17 @@ mod tests {
     /// The session half of the same watch. Counted separately because the two
     /// sources are two remote boards, and a skip that touched only one of them
     /// is still a skip that touched a source.
-    struct WatchedSessions(InMemorySessions, AtomicUsize);
+    struct WatchedSessions(InMemorySessions, AtomicUsize, Answering);
 
     impl WatchedSessions {
         fn watching(runs: InMemorySessions) -> Self {
-            WatchedSessions(runs, AtomicUsize::new(0))
+            WatchedSessions(runs, AtomicUsize::new(0), Answering::Board)
+        }
+        /// The session half of an unwired store. Its own case: the two halves
+        /// make the same trip out of two different error types, and a mapping
+        /// that only survives on one of them is a mapping half done.
+        fn unwired(runs: InMemorySessions) -> Self {
+            WatchedSessions(runs, AtomicUsize::new(0), Answering::Unwired)
         }
         fn reads(&self) -> usize {
             self.1.load(Ordering::Relaxed)
@@ -816,6 +898,11 @@ mod tests {
     impl Sessions for WatchedSessions {
         async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
             self.1.fetch_add(1, Ordering::Relaxed);
+            if matches!(self.2, Answering::Unwired) {
+                return Err(SessionError::NotConfigured(
+                    "set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN".into(),
+                ));
+            }
             self.0.all_sessions().await
         }
         async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
@@ -2001,6 +2088,104 @@ mod tests {
         assert!(
             mail.list_mailboxes().await.expect("list ok").is_empty(),
             "no board came across"
+        );
+        assert_eq!(recorded_state(store.pool()).await, None);
+
+        store.stop().await;
+    }
+
+    /// **A source nobody wired is not a failure — there is nothing to carry.**
+    ///
+    /// The unconfigured document store ships and is documented: with no
+    /// credentials the server boots, serves `ping`, and the memory verbs refuse
+    /// loudly. Refusing the boot for it makes that mode a crash loop under a
+    /// unit that restarts every five seconds.
+    ///
+    /// **The distinction is the whole of it**, so its pair is in this case
+    /// rather than a test away: a source that IS wired and will not answer may
+    /// be holding records nobody can see, and carrying on would serve an empty
+    /// board as the whole truth. That one still refuses.
+    ///
+    /// No half of this writes anything, so all three share one target — and
+    /// each reads the record back and finds it ABSENT, which is the claim. An
+    /// outcome that merely was not a refusal is compatible with a record that
+    /// went in, and a record here says "already carried" to every later boot.
+    #[tokio::test]
+    async fn an_unwired_source_carries_nothing_and_records_nothing() {
+        let (mut store, mail, sessions) = new_store("carry-over-unwired").await;
+
+        // The mail half, with the whole old board behind it: the answer comes
+        // from the wiring, not from a source that happens to hold nothing.
+        let (old_mail, old_sessions) = old_board().await;
+        let outcome = carry_over(
+            &WatchedMail::unwired(old_mail),
+            &old_sessions,
+            &mail,
+            &sessions,
+            store.pool(),
+        )
+        .await;
+        assert!(
+            matches!(outcome, Carryover::NothingToCarry(_)),
+            "nobody wired a source, so there is nothing to carry and the boot goes on: {outcome:?}"
+        );
+        assert_eq!(
+            recorded_state(store.pool()).await,
+            None,
+            "and NO record: nothing was carried, so nothing is verified. A record here would tell \
+             the boot after the credentials are wired that the move already happened"
+        );
+        assert!(
+            mail.list_mailboxes().await.expect("list ok").is_empty(),
+            "no board came across"
+        );
+
+        // The session half of the same store, which makes the same trip out of
+        // a different error type. Mail is read first, so letting it answer is
+        // the only way to reach this arm at all.
+        let (old_mail, old_sessions) = old_board().await;
+        let readable = WatchedMail::watching(old_mail);
+        let outcome = carry_over(
+            &readable,
+            &WatchedSessions::unwired(old_sessions),
+            &mail,
+            &sessions,
+            store.pool(),
+        )
+        .await;
+        assert!(
+            matches!(outcome, Carryover::NothingToCarry(_)),
+            "the session half of an unwired store says the same: {outcome:?}"
+        );
+        assert!(
+            readable.reads() > 0,
+            "the mail source did answer, so it is the sessions arm that decided this"
+        );
+        assert_eq!(
+            recorded_state(store.pool()).await,
+            None,
+            "still no record, on the arm that is reached after a source has been read"
+        );
+        assert!(
+            mail.list_mailboxes().await.expect("list ok").is_empty(),
+            "and the board it did read did not land — the run stops before it writes anything"
+        );
+
+        // **The pair the case rests on.** Wired and unreadable is where records
+        // may exist and cannot be seen. Same shape, opposite answer.
+        let (old_mail, old_sessions) = old_board().await;
+        let outcome = carry_over(
+            &WatchedMail::refusing(old_mail),
+            &old_sessions,
+            &mail,
+            &sessions,
+            store.pool(),
+        )
+        .await;
+        assert!(
+            matches!(outcome, Carryover::Refused(HandoverError::Source(_))),
+            "a wired source that will not answer keeps refusing the boot — collapsed into \
+             'nothing to carry' it would serve an empty board as the whole truth: {outcome:?}"
         );
         assert_eq!(recorded_state(store.pool()).await, None);
 

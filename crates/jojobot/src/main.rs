@@ -191,6 +191,11 @@ async fn main() -> anyhow::Result<()> {
         Carryover::AlreadyCarried => {
             tracing::info!("handover: already carried by an earlier boot, and verified")
         }
+        Carryover::NothingToCarry(why) => tracing::info!(
+            reason = %why,
+            "handover: no old store is wired, so there was nothing to carry — mail and sessions \
+             are served from this store, which starts out empty"
+        ),
         Carryover::Refused(why) => {
             return Err(anyhow::anyhow!(why).context(
                 "HANDOVER REFUSED — mail and sessions must not be served from this store until a \
