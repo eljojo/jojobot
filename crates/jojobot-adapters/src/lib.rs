@@ -12,9 +12,14 @@
 //! for them: rows with states and an append-only order are what a table is for,
 //! and everything that existed only to survive prose being rewritten stopped
 //! earning its place when they left.
+//!
+//! **The two stores meet at one narrow port** ([`owners`]): a box is created for
+//! somebody, entities do not live where the mail does, and "does this handle
+//! resolve" is the whole of what crosses.
 
 pub mod dolt;
 pub mod outline;
+pub mod owners;
 pub mod search;
 
 #[cfg(test)]
