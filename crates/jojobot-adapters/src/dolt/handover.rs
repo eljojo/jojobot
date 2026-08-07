@@ -1613,6 +1613,113 @@ mod tests {
         store.stop().await;
     }
 
+    /// **Every field the MAILBOX verification compares is proven by a target
+    /// that changes exactly that field.**
+    ///
+    /// The message half's case one tier up. A box's two fields are compared and
+    /// nothing else in the suite ever produces a box that reads back different,
+    /// so either clause could be dropped and the handover would report success
+    /// over a board that did not survive.
+    ///
+    /// **`owner` is the one that matters most.** It is the only place ownership
+    /// crosses in the whole handover: the rows go in as rows, so the write-path
+    /// owner screen never runs on them, and the column behind it is a plain
+    /// string with no constraint. A box carried under the wrong owner is
+    /// invisible to the bot it belongs to — and because the handover writes down
+    /// that it ran, a boot that calls that verified never carries the box again.
+    #[tokio::test]
+    async fn each_mailbox_field_the_verification_compares_is_proven_on_its_own() {
+        /// The real store, with one box rewritten on the way out.
+        struct Skewing(DoltMailboxes, fn(&mut jojobot_domain::mailbox::Mailbox));
+
+        #[async_trait::async_trait]
+        impl Mailboxes for Skewing {
+            async fn list_mailboxes(
+                &self,
+            ) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+                let mut boxes = self.0.list_mailboxes().await?;
+                if let Some(first) = boxes.first_mut() {
+                    (self.1)(first);
+                }
+                Ok(boxes)
+            }
+            async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+                self.0.scan_messages().await
+            }
+            async fn create_mailbox(
+                &self,
+                name: &MailboxName,
+                owner: &EntityId,
+                token: Option<&str>,
+            ) -> Result<Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+                self.0.create_mailbox(name, owner, token).await
+            }
+            async fn post_message(
+                &self,
+                message: NewMessage,
+            ) -> Result<Guarded<Message>, MailboxError> {
+                self.0.post_message(message).await
+            }
+            async fn read_mailbox(
+                &self,
+                name: &MailboxName,
+            ) -> Result<Guarded<jojobot_domain::mailbox::Delivery>, MailboxError> {
+                self.0.read_mailbox(name).await
+            }
+            async fn read_message(
+                &self,
+                id: &MessageId,
+            ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
+                self.0.read_message(id).await
+            }
+            async fn mark_processed(
+                &self,
+                id: &MessageId,
+                notes: Option<&str>,
+            ) -> Result<Message, MailboxError> {
+                self.0.mark_processed(id, notes).await
+            }
+        }
+
+        /// One field's mutation, and the clause it must make fire.
+        type Case = (&'static str, fn(&mut jojobot_domain::mailbox::Mailbox));
+
+        // Each mutation changes exactly one field to a value the source cannot
+        // have had, so the clause named beside it is the only one that can fire.
+        // Whichever box the target hands back first, both boxes on the old board
+        // are owned by `bot:gamma`, and neither holds a message it did not get.
+        let cases: [Case; 2] = [
+            ("owner", |b| b.owner = EntityId("bot:delta".into())),
+            ("counts", |b| b.counts.new += 1),
+        ];
+
+        for (expected, skew) in cases {
+            let (old_mail, old_sessions) = old_board().await;
+            let (mut store, mail, sessions) =
+                new_store(&format!("mailbox-mismatch-{expected}")).await;
+
+            let outcome = run(
+                &old_mail,
+                &old_sessions,
+                &Skewing(mail, skew),
+                &sessions,
+                store.pool(),
+            )
+            .await;
+
+            let Err(HandoverError::Mismatch { what, field, .. }) = outcome else {
+                panic!("a changed {expected} must fail the handover: {outcome:?}");
+            };
+            assert_eq!(what, "mailbox");
+            assert_eq!(
+                field, expected,
+                "and it names the field that moved, so nobody has to diff two records by eye"
+            );
+
+            store.stop().await;
+        }
+    }
+
     /// **Every field the verification compares is proven by a target that
     /// changes exactly that field.**
     ///
