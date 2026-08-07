@@ -222,6 +222,23 @@ fn changed_and_gone<R: PartialEq + Clone>(
     )
 }
 
+/// **When a reading of the store began**, as a position in the sequence of
+/// behind marks.
+///
+/// A whole-corpus reading ends by saying "nothing is behind any more". That is
+/// only ever true of the store **as the reading found it**, and a reading is
+/// I/O: a write can commit, fail its own re-read and mark the index behind while
+/// the reading is still in flight. Clearing every mark on arrival then vouches
+/// for a write the reading never saw.
+///
+/// So the point is taken **before** the read and handed to the ingest after it,
+/// which clears only the marks that were already there. A mark made in between
+/// survives — the reading cannot speak for it either way, and over-reporting
+/// `Stale` costs an answer that hedges, while under-reporting it is the answer
+/// that vouches for a document the index does not hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadingPoint(u64);
+
 /// The in-RAM full-text index over entities, facts and prose.
 pub struct FullTextIndex {
     index: Index,
@@ -259,7 +276,15 @@ pub struct FullTextIndex {
     /// **Kept by entity rather than by doc id**, because the refresh that failed
     /// is the one that would have learned the doc id — a write to an entity the
     /// index has never seen has no doc id anywhere to key on.
-    behind: RwLock<std::collections::BTreeSet<EntityId>>,
+    ///
+    /// **Each mark carries when it was made**, counted in
+    /// [`mark_seq`](Self::mark_seq). A whole-corpus reading clears the marks its
+    /// own reading covered and no others, so a mark made while that reading was
+    /// in flight survives it — see [`ReadingPoint`].
+    behind: RwLock<std::collections::BTreeMap<EntityId, u64>>,
+    /// Counts the marks made, so each one can be placed in time against a
+    /// reading of the store. Only ever compared, never displayed.
+    mark_seq: std::sync::atomic::AtomicU64,
     /// Whether the last whole-corpus refresh failed to reach the store.
     ///
     /// The [`behind`](Self::behind) set answers the same question about one
@@ -296,7 +321,8 @@ impl FullTextIndex {
             mail_touched: std::sync::atomic::AtomicBool::new(false),
             memory_loaded: std::sync::atomic::AtomicBool::new(false),
             memory_touched: std::sync::atomic::AtomicBool::new(false),
-            behind: RwLock::new(std::collections::BTreeSet::new()),
+            behind: RwLock::new(std::collections::BTreeMap::new()),
+            mark_seq: std::sync::atomic::AtomicU64::new(0),
             memory_refresh_failed: std::sync::atomic::AtomicBool::new(false),
             messages: RwLock::new(Vec::new()),
             mail_refresh_failed: std::sync::atomic::AtomicBool::new(false),
@@ -327,12 +353,26 @@ impl FullTextIndex {
 
     /// Record that the index holds an older version of this entity's document
     /// than the store does — a refresh after a committed write that could not
-    /// run. Cleared by the next refresh that does.
+    /// run. Cleared by the next whole-corpus reading that covers it.
+    ///
+    /// **The mark is stamped as it goes on**, so a reading that started earlier
+    /// cannot clear it. See [`ReadingPoint`].
     pub fn behind(&self, entity: &EntityId) {
+        let at = self
+            .mark_seq
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            + 1;
         self.behind
             .write()
             .expect("behind poisoned")
-            .insert(entity.clone());
+            .insert(entity.clone(), at);
+    }
+
+    /// **Where the mark sequence stands right now.** Take this BEFORE reading the
+    /// store and hand it to the ingest that follows, so the ingest clears what
+    /// its own reading covered and nothing newer.
+    pub fn reading_begins(&self) -> ReadingPoint {
+        ReadingPoint(self.mark_seq.load(std::sync::atomic::Ordering::Acquire))
     }
 
     /// The entities the index knows it is behind on.
@@ -346,7 +386,7 @@ impl FullTextIndex {
         self.behind
             .read()
             .expect("behind poisoned")
-            .iter()
+            .keys()
             .cloned()
             .collect()
     }
@@ -480,8 +520,8 @@ impl FullTextIndex {
     /// Memory silently emptied `search`'s mail half and then vouched for it.
     /// Only the boot ordering in `main.rs` — untested, and no invariant —
     /// happened to hide it.
-    pub fn ingest_all(&self, scan: &[DocScan]) -> Result<(), MemoryError> {
-        self.ingest_changes(scan).map(|_| ())
+    pub fn ingest_all(&self, scan: &[DocScan], began: ReadingPoint) -> Result<(), MemoryError> {
+        self.ingest_changes(scan, began).map(|_| ())
     }
 
     /// Bring the index to what this scan says the corpus is, and return how many
@@ -503,7 +543,11 @@ impl FullTextIndex {
     ///
     /// The coverage flags are set either way: reaching the store is what they
     /// report, and a scan that found nothing new still reached it.
-    pub fn ingest_changes(&self, scan: &[DocScan]) -> Result<usize, MemoryError> {
+    pub fn ingest_changes(
+        &self,
+        scan: &[DocScan],
+        began: ReadingPoint,
+    ) -> Result<usize, MemoryError> {
         let (rewrite, evict) = {
             let mirror = self.docs.read().expect("doc mirror poisoned");
             changed_and_gone(
@@ -540,11 +584,18 @@ impl FullTextIndex {
         self.memory_loaded
             .store(true, std::sync::atomic::Ordering::Release);
 
-        // A full re-scan reads every doc from the store, so nothing is behind
-        // any more — including a doc a failed refresh marked before the restart
-        // or the rebuild that has just replaced it, and an earlier whole-corpus
-        // refresh that never reached the store.
-        self.behind.write().expect("behind poisoned").clear();
+        // This reading covered every doc in the store, so every mark that was
+        // already on when it began is answered — a doc a failed refresh marked
+        // before the restart or the rebuild that has just replaced it included.
+        //
+        // **Only those.** A mark made while this reading was in flight belongs
+        // to a write this snapshot predates, and clearing it would report
+        // complete coverage over a document the index does not hold. See
+        // [`ReadingPoint`].
+        self.behind
+            .write()
+            .expect("behind poisoned")
+            .retain(|_, at| *at > began.0);
         self.memory_refresh_failed
             .store(false, std::sync::atomic::Ordering::Release);
         if changed > 0 {
@@ -1275,8 +1326,12 @@ impl IndexedMemory {
     /// same one, so there is no second way for the index to be filled that could
     /// drift from this.
     async fn rescan(&self) -> Result<Vec<DocScan>, MemoryError> {
+        // **Before the read, never after.** What this scan is entitled to clear
+        // is what was already marked when it looked; a write that fails its
+        // re-read while the scan is in flight is not covered by it.
+        let began = self.index.reading_begins();
         let scan = self.inner.scan().await?;
-        self.index.ingest_all(&scan)?;
+        self.index.ingest_all(&scan, began)?;
         Ok(scan)
     }
 
@@ -1765,7 +1820,9 @@ mod tests {
 
     fn index_of(scans: Vec<DocScan>) -> FullTextIndex {
         let index = FullTextIndex::open().expect("index opens");
-        index.ingest_all(&scans).expect("ingest");
+        index
+            .ingest_all(&scans, index.reading_begins())
+            .expect("ingest");
         index
     }
 
@@ -2363,7 +2420,9 @@ mod tests {
                 date(2026, 1, 1),
             )],
         );
-        index.ingest_all(&[before]).expect("ingest");
+        index
+            .ingest_all(&[before], index.reading_begins())
+            .expect("ingest");
         assert_eq!(
             index
                 .search(&SearchQuery::text("ferret"))
@@ -2383,7 +2442,9 @@ mod tests {
                 date(2026, 1, 1),
             )],
         );
-        index.ingest_all(&[after]).expect("re-ingest");
+        index
+            .ingest_all(&[after], index.reading_begins())
+            .expect("re-ingest");
         assert!(
             index
                 .search(&SearchQuery::text("ferret"))
@@ -2814,6 +2875,18 @@ mod tests {
         /// The store takes writes and cannot be read back — a transient fault on
         /// the re-read the decorator makes after a write has already committed.
         blind: std::sync::atomic::AtomicBool,
+        /// **A scan that has read the store and has not answered yet.**
+        ///
+        /// A real scan is I/O: it takes its snapshot, suspends, and returns some
+        /// time later, and the store can move in between. This double answers
+        /// without ever suspending, so two futures on one runtime run
+        /// start-to-finish in turn and never interleave — and a race test
+        /// written against it passes on code that races. Holding a scan open is
+        /// what makes that window exist here.
+        park: std::sync::atomic::AtomicBool,
+        /// Set once a parked scan has taken its snapshot, so a test waits for
+        /// the window to be open rather than guessing at it.
+        parked: std::sync::atomic::AtomicBool,
     }
 
     impl Scanned {
@@ -2825,6 +2898,8 @@ mod tests {
             Arc::new(Scanned {
                 docs: RwLock::new(docs),
                 blind: std::sync::atomic::AtomicBool::new(false),
+                park: std::sync::atomic::AtomicBool::new(false),
+                parked: std::sync::atomic::AtomicBool::new(false),
             })
         }
 
@@ -2850,6 +2925,21 @@ mod tests {
         fn sighted(&self) {
             self.blind.store(false, std::sync::atomic::Ordering::SeqCst);
         }
+
+        /// The next scan takes its snapshot and then waits to be let go.
+        fn hold_scans(&self) {
+            self.park.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        /// Whether a scan is holding its snapshot right now — the window is open.
+        fn scan_is_holding(&self) -> bool {
+            self.parked.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        /// Let a held scan answer with the snapshot it took.
+        fn release_scans(&self) {
+            self.park.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     #[async_trait]
@@ -2858,7 +2948,19 @@ mod tests {
             if self.blind.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err(MemoryError::Store("the store cannot be read".into()));
             }
-            Ok(self.docs.read().expect("docs poisoned").clone())
+            // **The snapshot is taken here, before the wait.** That is the whole
+            // of what a held scan models: an answer describes the store as it
+            // was when the read happened, never as it is when the answer lands.
+            let snapshot = self.docs.read().expect("docs poisoned").clone();
+            if self.park.load(std::sync::atomic::Ordering::SeqCst) {
+                self.parked.store(true, std::sync::atomic::Ordering::SeqCst);
+                while self.park.load(std::sync::atomic::Ordering::SeqCst) {
+                    tokio::task::yield_now().await;
+                }
+                self.parked
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+            Ok(snapshot)
         }
 
         /// Append a row to the subject's page and hand it back. **No guard** —
@@ -2970,6 +3072,72 @@ mod tests {
             event: None,
             derived_from: None,
         }
+    }
+
+    /// **A refresh clears only what its own reading covered.**
+    ///
+    /// A whole-corpus scan says "nothing is behind" on the strength of having
+    /// read everything. That is a claim about the store **as of the moment it
+    /// read**, and a scan is I/O: a write can commit, fail its re-read and mark
+    /// the index behind while the scan is still in flight. Clearing the whole
+    /// mark set on arrival then vouches for a write the scan never saw, and
+    /// `search` reports complete coverage over a document the index does not
+    /// hold — rule 130's shape, in the channel built to report exactly this.
+    ///
+    /// **The double holds its scan open** so the window exists at all: it
+    /// answers instantly otherwise, and two futures on one runtime would run in
+    /// turn and never overlap.
+    #[tokio::test]
+    async fn a_scan_in_flight_does_not_clear_a_mark_its_snapshot_predates() {
+        let inner = one_page();
+        let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
+        store.rebuild().await.expect("rebuild");
+        assert_eq!(
+            store.memory_coverage_via_port(),
+            Coverage::Loaded,
+            "a scan that just succeeded is complete coverage"
+        );
+
+        // A search's whole-corpus refresh reads the store and holds its answer.
+        inner.hold_scans();
+        let searching = tokio::spawn({
+            let store = store.clone();
+            async move { store.search_via_port(&SearchQuery::text("Alpha")).await }
+        });
+        while !inner.scan_is_holding() {
+            tokio::task::yield_now().await;
+        }
+
+        // Underneath it: a write commits and its re-read cannot run.
+        inner.blinded();
+        let written = store.capture(ferret()).await.expect("the store took it");
+        assert_eq!(
+            written
+                .written()
+                .expect("this double does not guard")
+                .content,
+            "keeps a ferret",
+            "the write really landed, so there is something to be behind on"
+        );
+        assert_eq!(
+            store.memory_coverage_via_port(),
+            Coverage::Partial(Behind::Stale),
+            "the index says it is behind, which is the mark the scan must not clear"
+        );
+
+        // The held scan now answers with the snapshot it took before that write.
+        inner.sighted();
+        inner.release_scans();
+        searching
+            .await
+            .expect("the search task")
+            .expect("the search answers");
+
+        assert_eq!(
+            store.memory_coverage_via_port(),
+            Coverage::Partial(Behind::Stale),
+            "a reading taken before the write cannot vouch for the write"
+        );
     }
 
     /// **A write the store took is not failed by the projection behind it.**
@@ -4026,11 +4194,15 @@ mod tests {
 
         let mail_first = FullTextIndex::open().expect("index opens");
         mail_first.ingest_mail(&[mail()]).expect("ingest mail");
-        mail_first.ingest_all(&docs()).expect("ingest docs");
+        mail_first
+            .ingest_all(&docs(), mail_first.reading_begins())
+            .expect("ingest docs");
         both_survive(&mail_first, "mail then memory");
 
         let memory_first = FullTextIndex::open().expect("index opens");
-        memory_first.ingest_all(&docs()).expect("ingest docs");
+        memory_first
+            .ingest_all(&docs(), memory_first.reading_begins())
+            .expect("ingest docs");
         memory_first.ingest_mail(&[mail()]).expect("ingest mail");
         both_survive(&memory_first, "memory then mail");
     }
