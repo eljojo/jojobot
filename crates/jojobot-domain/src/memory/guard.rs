@@ -44,6 +44,16 @@ pub enum MatchReason {
     SameNameOtherKind,
     /// Same kind, slugs within a typo of each other (edit distance ≤ 2).
     NearSlug,
+    /// Same kind, and one handle's tokens sit inside the other's, whole —
+    /// `place:moes` beside `place:moes-tavern`.
+    ///
+    /// **A second channel, not a wider budget.** These two are seven edits
+    /// apart, and so are `north-trail` and `golden-north-trail`; no distance
+    /// that reaches them leaves two genuinely different names alone. It is
+    /// weaker evidence than a typo, because the pair is often real —
+    /// `springfield` and `springfield-mall` are two places — so it sorts below
+    /// the distance channels and the caller decides.
+    Contains,
     /// Same kind, names within a typo of each other (edit distance ≤ 2).
     NearName,
 }
@@ -260,7 +270,41 @@ fn reason_for(
     if edit_distance(incoming_slug, existing.id.slug()) <= NEAR {
         return Some(MatchReason::NearSlug);
     }
+    // **The class distance cannot see: the same thing under a fuller name.**
+    // Reached only after the name channels and the typo budget have said
+    // nothing, because it is the weakest evidence here.
+    if by_name.is_none() && contained(incoming_slug, existing.id.slug()) {
+        return Some(MatchReason::Contains);
+    }
     by_name
+}
+
+/// Whether one handle's tokens sit inside the other's, whole — in **either**
+/// direction, because neither is the special case: the fuller name may arrive
+/// second (the place got a proper name) or first (somebody filed it fully and
+/// now types the short form).
+///
+/// **One general relation, and deliberately only one** (rule 106). Sharing a
+/// token is not containment — otherwise every handle with a common word would
+/// collide with every other — and a list of the pairs somebody thought of is
+/// the thing this must never become.
+fn contained(a: &str, b: &str) -> bool {
+    if a == b {
+        return false;
+    }
+    let tokens = |slug: &str| -> Vec<String> {
+        slug.split('-')
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let (a, b) = (tokens(a), tokens(b));
+    // A single token that is the whole of the other name is the exact-handle
+    // case, already reported above; a set is never a strict subset of itself.
+    let subset = |small: &[String], large: &[String]| {
+        small.len() < large.len() && small.iter().all(|t| large.contains(t))
+    };
+    subset(&a, &b) || subset(&b, &a)
 }
 
 /// The strongest reason an incoming set of **names** means an existing entity:
@@ -548,6 +592,96 @@ mod tests {
         );
     }
 
+    /// **The class edit distance cannot see: the same thing under a fuller
+    /// name.**
+    ///
+    /// `moes` beside `moes-tavern` is seven edits apart, and so is
+    /// `north-trail` beside `golden-north-trail`. No budget reaches either
+    /// without blocking almost every genuinely different name — the threshold
+    /// is right and the instrument is wrong, so this is a second channel rather
+    /// than a wider one.
+    ///
+    /// **Both directions, because neither is the special case**: the fuller
+    /// name may arrive second (the place got a proper name) or first (somebody
+    /// filed it fully and now types the short form).
+    #[test]
+    fn a_handle_whose_tokens_sit_inside_another_is_a_near_miss() {
+        let idx = vec![
+            entity("place:moes", "Moe's", "user-named"),
+            entity("place:north-trail", "North Trail", "user-named"),
+        ];
+        for (incoming, expected) in [
+            // The short form arriving beside the fuller one.
+            ("place:moes-tavern", "place:moes"),
+            // …and the fuller one arriving beside the short.
+            ("place:golden-north-trail", "place:north-trail"),
+        ] {
+            let handle = EntityId(incoming.into());
+            let Decision::Block(candidates) = decide(&handle, &[], &idx, None) else {
+                panic!("{incoming} must block: its tokens sit inside {expected}");
+            };
+            assert_eq!(candidates[0].handle.as_str(), expected);
+            assert_eq!(candidates[0].reason, MatchReason::Contains);
+        }
+    }
+
+    /// **The escape works on this channel too.** A sibling under a fuller name
+    /// is a real pair, not a mistake, so the caller has to be able to say so —
+    /// with the token this refusal minted and nothing else.
+    #[test]
+    fn a_containment_refusal_is_lifted_by_its_own_token() {
+        let idx = vec![entity("place:springfield", "Springfield", "user-named")];
+        let mall = EntityId("place:springfield-mall".into());
+        let Decision::Block(candidates) = decide(&mall, &[], &idx, None) else {
+            panic!("a containing handle must block");
+        };
+        assert!(
+            matches!(
+                decide(&mall, &[], &idx, Some("0000000000000000")),
+                Decision::Block(_)
+            ),
+            "a token nobody minted lifts nothing"
+        );
+        assert_eq!(
+            decide(&mall, &[], &idx, Some(&override_token(&mall, &candidates))),
+            Decision::Proceed,
+            "the token this refusal minted says the two really are different"
+        );
+    }
+
+    /// **Sharing a token is not containment**, or every handle with a common
+    /// word in it would collide with every other. The rule is that one token
+    /// SET sits inside the other, whole.
+    #[test]
+    fn an_overlap_that_is_not_containment_says_nothing() {
+        // **Three tokens, deliberately.** Against a two-token name, an
+        // overlapping candidate that is shorter is necessarily a subset, so the
+        // length check alone waves it through and the subset test is never
+        // reached. Only a shorter name that shares SOME tokens and brings one
+        // of its own can tell "every token" from "any token" apart — and that
+        // needs the longer side to have three.
+        let idx = vec![entity(
+            "place:golden-north-trail",
+            "Golden North Trail",
+            "user-named",
+        )];
+        for unrelated in [
+            // Shares `trail`, brings `spot`. Shorter, overlapping, not
+            // contained. Far outside the typo budget, so nothing else can be
+            // what waves it through.
+            "place:trail-spot",
+            // Shares `north`, brings `haverbrook`.
+            "place:north-haverbrook",
+        ] {
+            let handle = EntityId(unrelated.into());
+            assert_eq!(
+                decide(&handle, &["Somewhere Else"], &idx, None),
+                Decision::Proceed,
+                "{unrelated} overlaps but is not contained, so it is not a near miss"
+            );
+        }
+    }
+
     /// **A token minted elsewhere lifts nothing here.** Without this the guard
     /// accepts any string a caller sends, which is the boolean again under a
     /// longer name.
@@ -604,27 +738,26 @@ mod tests {
         assert!(reasons("person:alphonse", None).is_empty());
     }
 
-    /// **What the near-miss budget actually catches, measured on realistic
-    /// names.** A record of behaviour, not a value anybody has chosen.
+    /// **What the two channels catch, measured on realistic names.** A record
+    /// of behaviour, not a value anybody has chosen.
     ///
-    /// A new place closely resembling an existing one was created with no
-    /// block and no candidates offered, and nobody knew whether the budget was
-    /// wrong, applied wrongly, or right with the expectation wrong. This is
-    /// the measurement that answers it, and the answer is that the budget is
-    /// right and the METRIC cannot see the case that was reported.
+    /// A new place closely resembling an existing one was created with no block
+    /// and no candidates offered, and nobody knew whether the budget was wrong,
+    /// applied wrongly, or right with the expectation wrong. The measurement
+    /// answered it: the budget is right and the METRIC could not see the case.
     ///
     /// [`NEAR`] is an edit distance, so it catches a misspelling of one name
     /// and cannot catch **containment** — a name that is another name plus
-    /// words. "Moe's" against "Moe's Tavern" scores 7, which is not a near
-    /// miss by any budget that still lets two genuinely different places
-    /// exist. The two cases below marked as passing are that shape, and they
-    /// are the shape a session actually produces: not a typo, a fuller name
-    /// for the same place.
+    /// words. "Moe's" against "Moe's Tavern" scores 7, which is not a near miss
+    /// by any budget that still lets two genuinely different places exist. So
+    /// containment is a **second channel** rather than a wider budget, and the
+    /// containment rows below now block on it. The distance rows are untouched,
+    /// which is the point: widening one channel would have moved them.
     ///
     /// Both directions, because a threshold that blocks everything and a
     /// threshold that blocks nothing each satisfy half of this on their own.
     #[test]
-    fn the_near_miss_budget_catches_typos_and_not_containment() {
+    fn the_two_channels_catch_typos_and_containment_and_leave_the_rest() {
         // (existing handle, its name, incoming handle, its name, blocked)
         const CASES: &[(&str, &str, &str, &str, bool)] = &[
             // Typos inside the budget: caught, which is what it is for.
@@ -673,23 +806,24 @@ mod tests {
                 "North Trail 2",
                 true,
             ),
-            // **NOT caught, and this is the reported case.** Containment, not
-            // a typo: the same place under a fuller name. Edit distance scores
-            // these 7 apart and no budget that keeps distinct places distinct
-            // will reach them.
+            // **The reported case, and now caught — on the other channel.**
+            // Containment, not a typo: the same place under a fuller name. Edit
+            // distance scores these 7 apart, so the row that reads `true` here
+            // is evidence about the containment channel and says nothing about
+            // the budget, which is exactly why the two are separate.
             (
                 "place:moes",
                 "Moe's",
                 "place:moes-tavern",
                 "Moe's Tavern",
-                false,
+                true,
             ),
             (
                 "place:golden-north-trail",
                 "Golden North Trail",
                 "place:north-trail",
                 "North Trail",
-                false,
+                true,
             ),
             // Genuinely different places: untouched, which is the half that
             // stops "block more" from being a free answer.

@@ -165,15 +165,37 @@ async fn assert_a_child_page_is_nested(http: &reqwest::Client, c: &Creds, store:
         (&parent, "Integration Monorail", None),
         (&child, "Integration Monorail Track", Some(parent.clone())),
     ] {
-        store
-            .add_entity(NewEntity {
-                parent: under,
-                ..NewEntity::new(id.clone(), name, "integration-fixture")
-            })
+        let new = NewEntity {
+            parent: under,
+            ..NewEntity::new(id.clone(), name, "integration-fixture")
+        };
+        // The child's handle contains its parent's — the natural shape of a
+        // tree, and a containment near miss. It is deliberate here, so it goes
+        // over the screen the way a caller says so: read the refusal, hand back
+        // the token it minted.
+        let written = match store
+            .add_entity(new.clone())
             .await
             .expect("add_entity should succeed")
-            .written()
-            .unwrap_or_else(|| panic!("the guard must not block {id}"));
+        {
+            jojobot_domain::memory::Guarded::Written(entity) => entity,
+            jojobot_domain::memory::Guarded::Blocked {
+                attempted,
+                candidates,
+            } => store
+                .add_entity(NewEntity {
+                    override_token: Some(jojobot_domain::memory::guard::override_token(
+                        &attempted,
+                        &candidates,
+                    )),
+                    ..new
+                })
+                .await
+                .expect("add_entity should succeed")
+                .written()
+                .unwrap_or_else(|| panic!("the refusal's own token must let {id} through")),
+        };
+        assert_eq!(&written.id, id);
     }
 
     let docs = raw_documents(http, c, TEST_COLLECTION).await;

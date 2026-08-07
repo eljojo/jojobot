@@ -992,7 +992,12 @@ pub mod contract {
         .await;
         assert_eq!(root.parent, None, "an entity under nothing is a root");
 
-        let added = add(
+        // **A child named for its parent is a containment near miss**, and
+        // rightly: `monorail-funding` beside `monorail` is exactly the shape
+        // that is usually one thing filed twice. Here the two really are
+        // different, so it goes over the screen the way a caller would say so —
+        // read the refusal, hand its token back.
+        let added = add_over_the_screen(
             store,
             NewEntity {
                 parent: Some(parent.clone()),
@@ -1029,12 +1034,16 @@ pub mod contract {
             NewEntity::new(root.clone(), "Contract Springfield", "contract-fixture"),
         )
         .await;
+        // Every child's handle contains its parent's, which is the containment
+        // near miss doing its job — a branch named for its trunk is the shape
+        // that is usually one thing filed twice. These are deliberate, so each
+        // goes over the screen with the token its own refusal minted.
         for (id, name, under) in [
             (&track, "Springfield Track", &root),
             (&cars, "Springfield Cars", &root),
             (&brakes, "Springfield Brakes", &cars),
         ] {
-            add(
+            add_over_the_screen(
                 store,
                 NewEntity {
                     parent: Some(under.clone()),
@@ -1086,7 +1095,9 @@ pub mod contract {
             NewEntity::new(parent.clone(), "Contract Kwik-E", "contract-fixture"),
         )
         .await;
-        add(
+        // A child named for its parent trips the containment screen; the two
+        // are deliberately different, so it goes over with its own token.
+        add_over_the_screen(
             store,
             NewEntity {
                 parent: Some(parent.clone()),
@@ -1198,7 +1209,10 @@ pub mod contract {
     pub async fn an_unnamed_parent_is_refused_and_provisions_nothing<M: Memory>(store: &M) {
         let real = EntityId::new(EntityKind::Project, "contract-plant");
         let typo = EntityId::new(EntityKind::Project, "contract-plnt");
-        let child = EntityId::new(EntityKind::Project, "contract-plant-shift");
+        // Named so it resembles neither the real parent nor the typo: this
+        // case is about the PARENT gate, and a child that tripped the screen on
+        // its own handle first would report a block about itself.
+        let child = EntityId::new(EntityKind::Project, "contract-shift-rota");
         add(
             store,
             NewEntity::new(real.clone(), "Contract Plant", "contract-fixture"),
@@ -1208,7 +1222,7 @@ pub mod contract {
         let blocked = store
             .add_entity(NewEntity {
                 parent: Some(typo.clone()),
-                ..NewEntity::new(child.clone(), "Plant Shift", "contract-fixture")
+                ..NewEntity::new(child.clone(), "Shift Rota", "contract-fixture")
             })
             .await
             .expect("an unresolvable parent is an answer, not a failure");
@@ -1239,7 +1253,7 @@ pub mod contract {
                     .add_entity(NewEntity {
                         parent: Some(typo.clone()),
                         override_token: Some(held),
-                        ..NewEntity::new(child.clone(), "Plant Shift", "contract-fixture")
+                        ..NewEntity::new(child.clone(), "Shift Rota", "contract-fixture")
                     })
                     .await
                     .expect("an unresolvable parent is an answer, not a failure"),
@@ -3489,7 +3503,7 @@ pub mod contract {
     /// included. The address is what an edit needs; the provenance is what keeps a
     /// guess from being read as something the user said.
     pub async fn search_fact_hits_carry_an_address_and_provenance<S: Memory + Search>(store: &S) {
-        let subject = EntityId::person("contract-search-fields");
+        let subject = EntityId::person("contract-searchable");
         capture(
             store,
             NewFact {
@@ -3533,7 +3547,7 @@ pub mod contract {
     /// goes looking; a mark that hid a record from every possible read would
     /// be a delete with extra steps.
     pub async fn search_excludes_a_retracted_record_by_default<S: Memory + Search>(store: &S) {
-        let subject = EntityId::person("contract-search-retracted");
+        let subject = EntityId::person("contract-retraction-hit");
         let live = capture(
             store,
             NewFact {
@@ -3833,7 +3847,7 @@ pub mod contract {
     /// The name is the part that cannot be derived: a handle carries its kind in
     /// its grammar, but `person:contract-orient` says nothing about who that is.
     pub async fn search_fact_hits_name_their_subject_and_home<S: Memory + Search>(store: &S) {
-        let subject = EntityId::person("contract-orient-subject");
+        let subject = EntityId::person("contract-orienteer");
         add(
             store,
             NewEntity {

@@ -111,6 +111,7 @@ const ROSTER: &[&str] = &[
     "place:shelbyville",
     "place:springfeild",
     "place:springfield",
+    "place:springfield-mall",
     "place:trail-spot",
     "place:x",
     "project:atlas",
