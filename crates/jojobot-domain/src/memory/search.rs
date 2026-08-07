@@ -416,13 +416,26 @@ impl Behind {
     }
 }
 
-/// The retrieval port: one ranked, mixed list. Synchronous — the index is
-/// in-process, so a search is a memory read, not I/O.
+/// The retrieval port: one ranked, mixed list.
+///
+/// **Asynchronous, because an answer is only as good as its last look at the
+/// store.** The projection behind this port is a copy, and a copy that is never
+/// re-read serves whatever it last saw — including a record the store has since
+/// lost, which nothing inside the process can observe. So a search takes a
+/// scan; it is I/O, and the port says so.
+#[async_trait::async_trait]
 pub trait Search: Send + Sync {
     /// Search entities, facts, prose and messages at once. Ordering is the
     /// ranking: text relevance, boosted by recency, with an entity whose handle
     /// or name the query matches pinned to the top.
-    fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError>;
+    ///
+    /// **The answer is backed by a scan taken for it.** When that scan reaches
+    /// the store the projection is replaced from it, so a record the store no
+    /// longer has stops being served here. When it does not, the answer comes
+    /// from the last scan that did and [`memory_coverage`](Self::memory_coverage)
+    /// stops reporting [`Loaded`](Coverage::Loaded) — a search does not fail
+    /// because a refresh could not run.
+    async fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError>;
 
     /// How much of the mail board this projection holds — see [`Coverage`].
     /// Memory results come back whatever it says; this is what lets an answer

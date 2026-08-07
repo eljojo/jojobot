@@ -3397,6 +3397,7 @@ mod tests {
 
         let hits = indexed
             .search(&SearchQuery::text("penicillin"))
+            .await
             .expect("search ok");
         let prose: Vec<&Hit> = hits
             .iter()
@@ -3423,6 +3424,7 @@ mod tests {
         // The fact in the same doc is still reachable by its own words.
         let facts = indexed
             .search(&SearchQuery::text("chess"))
+            .await
             .expect("search ok");
         assert!(
             facts
@@ -3453,6 +3455,7 @@ mod tests {
 
         let hits = indexed
             .search(&SearchQuery::text("pass closed"))
+            .await
             .expect("search ok");
         assert!(
             hits.iter().any(
@@ -3463,6 +3466,7 @@ mod tests {
         // …and the fact beside it is untouched by the wider prose boundary.
         let facts = indexed
             .search(&SearchQuery::text("chess"))
+            .await
             .expect("search ok");
         assert!(
             facts
@@ -3502,6 +3506,7 @@ mod tests {
 
         let hits = indexed
             .search(&SearchQuery::text("flowerpot"))
+            .await
             .expect("search ok");
         let Some(Hit::Prose { entity, edges, .. }) =
             hits.iter().find(|h| matches!(h, Hit::Prose { .. }))
@@ -3594,6 +3599,7 @@ mod tests {
                 subject: Some(EntityId::person("alpha")),
                 ..Default::default()
             })
+            .await
             .expect("search ok");
         assert!(
             hits.iter()
@@ -4307,6 +4313,7 @@ mod tests {
                 include_mail: true,
                 ..Default::default()
             })
+            .await
             .expect("search ok");
         assert!(
             hits.iter().any(|h| matches!(h, Hit::Message { .. })),
@@ -4321,6 +4328,7 @@ mod tests {
                 text: Some("monorail".into()),
                 ..Default::default()
             })
+            .await
             .expect("search ok");
         assert!(
             !after
@@ -4389,6 +4397,7 @@ mod tests {
                     text: Some(secret.into()),
                     ..Default::default()
                 })
+                .await
                 .expect("search ok");
             assert!(
                 hits.is_empty(),

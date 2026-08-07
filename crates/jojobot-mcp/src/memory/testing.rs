@@ -66,8 +66,9 @@ impl SpySearch {
     }
 }
 
+#[async_trait::async_trait]
 impl Search for SpySearch {
-    fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
+    async fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
         *self.seen.lock().unwrap() = Some(query.clone());
         Ok(self.hits.lock().unwrap().clone())
     }

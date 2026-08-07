@@ -469,7 +469,9 @@ impl Jojobot {
         if let Err(e) = query.validate() {
             return memory_declined("search", e);
         }
-        let hits = match self.search.search(&query) {
+        // Awaited before the coverage below is read: the refresh this search
+        // takes is what those two answers describe.
+        let hits = match self.search.search(&query).await {
             Ok(hits) => hits,
             Err(e) => return memory_declined("search", e),
         };

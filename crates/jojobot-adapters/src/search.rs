@@ -152,6 +152,13 @@ struct DocMirror {
     entity: Option<Entity>,
     /// Each row's subject and the edge it draws, for the rows that draw one.
     edges: Vec<(EntityId, Edge)>,
+    /// The scan these postings were written from.
+    ///
+    /// Kept so a later scan can be compared against what the index actually
+    /// holds. That comparison is what lets a refresh write only where the store
+    /// has moved — see [`FullTextIndex::ingest_changes`] — and it is a
+    /// comparison of two full readings rather than a guess at a delta.
+    scanned: DocScan,
 }
 
 impl DocMirror {
@@ -164,6 +171,7 @@ impl DocMirror {
                 .iter()
                 .filter_map(|f| f.edge.clone().map(|e| (f.subject.clone(), e)))
                 .collect(),
+            scanned: scan.clone(),
         }
     }
 }
@@ -206,6 +214,14 @@ pub struct FullTextIndex {
     /// is the one that would have learned the doc id — a write to an entity the
     /// index has never seen has no doc id anywhere to key on.
     behind: RwLock<std::collections::BTreeSet<EntityId>>,
+    /// Whether the last whole-corpus refresh failed to reach the store.
+    ///
+    /// The [`behind`](Self::behind) set answers the same question about one
+    /// entity, and it cannot answer it about the corpus: a refresh of everything
+    /// that never reached the store learned no handles, so there is nothing to
+    /// put in a set keyed by them. Both mean the index holds an older version
+    /// than the store, so both read out as the same word to a caller.
+    memory_refresh_failed: std::sync::atomic::AtomicBool,
 }
 
 impl FullTextIndex {
@@ -226,7 +242,17 @@ impl FullTextIndex {
             memory_loaded: std::sync::atomic::AtomicBool::new(false),
             memory_touched: std::sync::atomic::AtomicBool::new(false),
             behind: RwLock::new(std::collections::BTreeSet::new()),
+            memory_refresh_failed: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// Record that the refresh this answer should have been built on could not
+    /// reach the store, so the whole memory half is a version behind. Cleared by
+    /// the next [`ingest_all`](Self::ingest_all), which is the only thing that
+    /// can clear it: nothing smaller than a full scan knows the corpus is whole.
+    pub fn refresh_failed(&self) {
+        self.memory_refresh_failed
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// Record that this entity's document is indexed as it stands in the store.
@@ -330,9 +356,8 @@ impl FullTextIndex {
         Ok(())
     }
 
-    /// Replace the whole index from a full scan — the boot path. A full re-scan
-    /// rather than a delta: the corpus is dozens of docs, and a projection that
-    /// can drift is worse than one that is rebuilt.
+    /// State that this scan is the whole memory corpus.
+    ///
     /// **Scoped to the memory classes, never `delete_all_documents`.** The two
     /// halves come from two stores; wiping the whole index here evicted every
     /// message while leaving the flag saying mail was loaded, so a rebuild of
@@ -340,26 +365,83 @@ impl FullTextIndex {
     /// Only the boot ordering in `main.rs` — untested, and no invariant —
     /// happened to hide it.
     pub fn ingest_all(&self, scan: &[DocScan]) -> Result<(), MemoryError> {
-        let mut writer = self.writer.write().expect("index writer poisoned");
-        for class in [CLASS_ENTITY, CLASS_FACT, CLASS_PROSE] {
-            writer.delete_term(Term::from_field_text(self.fields.class, class));
+        self.ingest_changes(scan).map(|_| ())
+    }
+
+    /// Bring the index to what this scan says the corpus is, and return how many
+    /// documents had to be written or evicted to get there.
+    ///
+    /// **This is not a delta the writer guessed at.** It compares two full
+    /// readings of the store — the scan in hand, and the mirror of the scan the
+    /// postings were written from — so a document is rewritten when its scanned
+    /// content differs and for no other reason. A projection that drifts is
+    /// still worse than one that is rebuilt; nothing here decides what changed,
+    /// it only declines to rewrite what did not.
+    ///
+    /// **Declining matters because this runs on every read.** A full rewrite
+    /// takes the writer lock, commits the index and rebuilds the mirror, so
+    /// running one per answer would serialize every search in the process behind
+    /// a commit apiece, and would grow with the corpus rather than with what
+    /// changed. When nothing changed — the ordinary case — no lock is taken, no
+    /// commit runs and the reader is not reloaded.
+    ///
+    /// The coverage flags are set either way: reaching the store is what they
+    /// report, and a scan that found nothing new still reached it.
+    pub fn ingest_changes(&self, scan: &[DocScan]) -> Result<usize, MemoryError> {
+        use std::collections::{HashMap, HashSet};
+
+        let arriving: HashSet<&str> = scan.iter().map(|d| d.doc_id.as_str()).collect();
+        let (rewrite, evict): (Vec<&DocScan>, Vec<String>) = {
+            let mirror = self.docs.read().expect("doc mirror poisoned");
+            let held: HashMap<&str, &DocScan> = mirror
+                .iter()
+                .map(|d| (d.doc_id.as_str(), &d.scanned))
+                .collect();
+            (
+                scan.iter()
+                    .filter(|d| held.get(d.doc_id.as_str()) != Some(d))
+                    .collect(),
+                mirror
+                    .iter()
+                    .filter(|d| !arriving.contains(d.doc_id.as_str()))
+                    .map(|d| d.doc_id.clone())
+                    .collect(),
+            )
+        };
+        let changed = rewrite.len() + evict.len();
+
+        if changed > 0 {
+            let mut writer = self.writer.write().expect("index writer poisoned");
+            for doc_id in evict.iter().chain(rewrite.iter().map(|d| &d.doc_id)) {
+                writer.delete_term(Term::from_field_text(self.fields.doc_id, doc_id));
+            }
+            for doc in &rewrite {
+                self.write_doc(&writer, doc)?;
+            }
+            // Before the commit, for the reason `ingest_mail` sets its flag early.
+            self.memory_loaded
+                .store(true, std::sync::atomic::Ordering::Release);
+            writer.commit().map_err(store_err)?;
+            drop(writer);
+            *self.docs.write().expect("doc mirror poisoned") =
+                scan.iter().map(DocMirror::of).collect();
         }
-        for doc in scan {
-            self.write_doc(&writer, doc)?;
-        }
-        // Before the commit, for the reason `ingest_mail` sets its flag early.
+        // Again, for the path that wrote nothing: the scan still reached the
+        // store, which is the only thing this flag reports.
         self.memory_loaded
             .store(true, std::sync::atomic::Ordering::Release);
-        writer.commit().map_err(store_err)?;
-        drop(writer);
 
         // A full re-scan reads every doc from the store, so nothing is behind
         // any more — including a doc a failed refresh marked before the restart
-        // or the rebuild that has just replaced it.
+        // or the rebuild that has just replaced it, and an earlier whole-corpus
+        // refresh that never reached the store.
         self.behind.write().expect("behind poisoned").clear();
-        *self.docs.write().expect("doc mirror poisoned") = scan.iter().map(DocMirror::of).collect();
-        self.reader.reload().map_err(store_err)?;
-        Ok(())
+        self.memory_refresh_failed
+            .store(false, std::sync::atomic::Ordering::Release);
+        if changed > 0 {
+            self.reader.reload().map_err(store_err)?;
+        }
+        Ok(changed)
     }
 
     /// Re-index one document, replacing everything previously indexed under its
@@ -758,8 +840,15 @@ fn edges_of(mirror: &[DocMirror], id: &EntityId) -> Vec<Edge> {
     edges
 }
 
-impl Search for FullTextIndex {
-    fn mail_coverage(&self) -> Coverage {
+/// The projection's own reads.
+///
+/// **Deliberately not the [`Search`] port.** The port promises an answer backed
+/// by a scan taken for it, and this type holds no store to take one from — only
+/// [`IndexedMemory`] does. Leaving these as the index's own methods makes that a
+/// compile error rather than a convention: nothing can be wired to the bare
+/// projection and quietly serve whatever it last saw.
+impl FullTextIndex {
+    pub fn mail_coverage(&self) -> Coverage {
         use std::sync::atomic::Ordering::Acquire;
         match (
             self.mail_loaded.load(Acquire),
@@ -781,22 +870,27 @@ impl Search for FullTextIndex {
     /// written, and a doc marked behind on top of that is a detail inside a far
     /// bigger absence. Reporting the detail there described an index that is
     /// nearly complete when almost nothing was in it.
-    fn memory_coverage(&self) -> Coverage {
+    ///
+    /// Two ways in reach [`Stale`](Behind::Stale) and they are one claim: a doc
+    /// whose re-read after a write could not run, and a whole-corpus refresh
+    /// that could not reach the store. Both say the index holds an older version
+    /// than the store does, which is the only thing a caller can act on.
+    pub fn memory_coverage(&self) -> Coverage {
         use std::sync::atomic::Ordering::Acquire;
+        let behind_now = self.memory_refresh_failed.load(Acquire)
+            || !self.behind.read().expect("behind poisoned").is_empty();
         match (
             self.memory_loaded.load(Acquire),
             self.memory_touched.load(Acquire),
         ) {
             (false, true) => Coverage::Partial(Behind::Unscanned),
             (false, false) => Coverage::Unread,
-            (true, _) if !self.behind.read().expect("behind poisoned").is_empty() => {
-                Coverage::Partial(Behind::Stale)
-            }
+            (true, _) if behind_now => Coverage::Partial(Behind::Stale),
             (true, _) => Coverage::Loaded,
         }
     }
 
-    fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
+    pub fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
         query.validate()?;
         let depth = candidate_depth(query.limit);
 
@@ -1046,14 +1140,29 @@ impl IndexedMemory {
 
     /// Rebuild the whole index from a full re-scan of the store — the boot path.
     /// Returns how many documents were indexed.
+    ///
+    /// **The boot path, and only it, reports what the scan saw.** The
+    /// consistency report names rows a hand edit left pointing at nothing; it is
+    /// a diagnostic about the corpus, so it is worth one reading of the corpus
+    /// and not one per answer. Every read re-scans now, and repeating the report
+    /// on each would bury the reading that is worth having.
     pub async fn rebuild(&self) -> Result<usize, MemoryError> {
-        let scan = self.inner.scan().await?;
-        self.index.ingest_all(&scan)?;
+        let scan = self.rescan().await?;
         let known = search::known_entities(&scan);
         for doc in &scan {
             report_consistency(doc, &known);
         }
         Ok(scan.len())
+    }
+
+    /// Replace the projection from a full scan of the store, and hand back what
+    /// the scan saw. The one refresh — the boot path and the read path run the
+    /// same one, so there is no second way for the index to be filled that could
+    /// drift from this.
+    async fn rescan(&self) -> Result<Vec<DocScan>, MemoryError> {
+        let scan = self.inner.scan().await?;
+        self.index.ingest_all(&scan)?;
+        Ok(scan)
     }
 
     /// The index, for handing to whatever serves the `search` verb.
@@ -1191,8 +1300,32 @@ impl Memory for IndexedMemory {
     }
 }
 
+#[async_trait]
 impl Search for IndexedMemory {
-    fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
+    /// **Refresh from the store, then answer.**
+    ///
+    /// The projection is a copy, and the only thing that can tell it the store
+    /// has moved on is reading the store. Writes through this decorator already
+    /// do that for the document they touch; a change nobody made through jojobot
+    /// — rule 60 puts true deletion outside it entirely — has no write to ride
+    /// on, so the read path is the only place left that can notice.
+    ///
+    /// The refresh is the boot path's own [`rebuild`](Self::rebuild), so a
+    /// record the store no longer has leaves the index by the eviction that is
+    /// already there. Nothing here knows what went missing or how, and that is
+    /// the point: an answer is built from what the store holds now, not from a
+    /// list of the ways it could differ from what it held before.
+    ///
+    /// **A refresh that cannot reach the store does not fail the search.** The
+    /// last scan that succeeded still answers, and the index records that it is
+    /// a version behind, which is what stops
+    /// [`memory_coverage`](Search::memory_coverage) reporting `Loaded` over it.
+    /// Degrading is the promise the boot path already makes; a wrong answer that
+    /// says so is worth more to a caller than no answer at all.
+    async fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
+        if self.rescan().await.is_err() {
+            self.index.refresh_failed();
+        }
         self.index.search(query)
     }
 
@@ -1864,17 +1997,21 @@ mod tests {
         // Asked for by the fact's own CONTENT: a row about someone else, sitting
         // on this page, is deliberately not indexed under their labels, so
         // querying the name would fail for an unrelated reason.
-        let named = |store: &IndexedMemory| -> Option<String> {
+        async fn named(store: &IndexedMemory, who: &EntityId) -> Option<String> {
             store
                 .search(&SearchQuery::text("sourdough"))
+                .await
                 .expect("search ok")
                 .iter()
                 .find_map(|h| match h {
-                    Hit::Fact { subject, .. } if subject.id == renamed.id => subject.name.clone(),
+                    Hit::Fact { subject, .. } if &subject.id == who => subject.name.clone(),
                     _ => None,
                 })
-        };
-        assert_eq!(named(&store).as_deref(), Some("Milhouse Van Houten"));
+        }
+        assert_eq!(
+            named(&store, &renamed.id).await.as_deref(),
+            Some("Milhouse Van Houten")
+        );
 
         store
             .update_entity(
@@ -1890,7 +2027,7 @@ mod tests {
             .expect("this double does not guard");
 
         assert_eq!(
-            named(&store).as_deref(),
+            named(&store, &renamed.id).await.as_deref(),
             Some("Thrillhouse"),
             "the row on the OTHER doc still names them, and must name them correctly"
         );
@@ -2072,6 +2209,7 @@ mod tests {
         assert!(
             store
                 .search(&SearchQuery::text("old place"))
+                .await
                 .expect("search ok")
                 .is_empty(),
             "the superseded text must be gone from the index"
@@ -2079,6 +2217,7 @@ mod tests {
         assert_eq!(
             store
                 .search(&SearchQuery::text("new place"))
+                .await
                 .expect("search ok")
                 .len(),
             1
@@ -2113,6 +2252,7 @@ mod tests {
         assert!(
             store
                 .search(&SearchQuery::text("should not be indexed"))
+                .await
                 .expect("search ok")
                 .is_empty(),
             "a blocked capture must leave nothing in the index either"
@@ -2143,12 +2283,18 @@ mod tests {
             .expect("not blocked");
 
         let store = IndexedMemory::new(inner).expect("index opens");
-        assert!(
+        // An index nobody has filled yet still answers from the store, because
+        // the read takes its own scan. This used to assert the opposite — that
+        // nothing is searchable until the boot scan runs — which was a statement
+        // about the projection rather than about what the store holds.
+        assert_eq!(
             store
                 .search(&SearchQuery::text("before"))
+                .await
                 .expect("search ok")
-                .is_empty(),
-            "nothing is indexed until the scan runs"
+                .len(),
+            1,
+            "the store holds it, so a read finds it with no boot scan"
         );
         assert_eq!(
             store.rebuild().await.expect("rebuild"),
@@ -2158,6 +2304,7 @@ mod tests {
         assert_eq!(
             store
                 .search(&SearchQuery::text("before"))
+                .await
                 .expect("search ok")
                 .len(),
             1
@@ -2249,6 +2396,7 @@ mod tests {
 
         let seen: Vec<String> = store
             .search(&SearchQuery::text("rehearsed"))
+            .await
             .expect("search ok")
             .iter()
             .filter_map(|h| match h {
@@ -2269,6 +2417,150 @@ mod tests {
         assert!(
             !seen.contains(&moved_past.address().to_string()),
             "and neither is the claim the record has moved past: {seen:?}"
+        );
+    }
+
+    /// Two documents, one of which is about to be removed from the store
+    /// behind jojobot's back. Two rather than one so that every assertion
+    /// below has a survivor to pair with.
+    fn a_store_of_two() -> Arc<Scanned> {
+        Scanned::new(vec![
+            DocScan {
+                doc_id: Scanned::DOC_ID.into(),
+                title: "Alpha".into(),
+                prose: "Alpha is allergic to penicillin.".into(),
+                entity: Some(entity("person:alpha", "Alpha")),
+                facts: vec![fact(
+                    "person:alpha",
+                    "f1",
+                    "keeps a ferret",
+                    date(2026, 1, 1),
+                )],
+            },
+            DocScan {
+                doc_id: "outline-uuid-9b2c".into(),
+                title: "Beta".into(),
+                prose: "Beta plays the sousaphone.".into(),
+                entity: Some(entity("person:beta", "Beta")),
+                facts: vec![fact("person:beta", "f1", "keeps a gecko", date(2026, 1, 1))],
+            },
+        ])
+    }
+
+    /// **A record the store lost stops being served, with no write to prompt
+    /// it.** The removal happens outside jojobot — rule 60 makes true deletion
+    /// a human act — so nothing calls a refresh, and the read path is the only
+    /// place left that can notice.
+    ///
+    /// Every assertion is a pair: the survivor is asserted present in the same
+    /// read that asserts the removed one absent, because "the stale record is
+    /// gone" passes identically against a search wired to nothing.
+    #[tokio::test]
+    async fn a_record_removed_from_the_store_stops_being_served() {
+        let inner = a_store_of_two();
+        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        store.rebuild().await.expect("rebuild");
+        for present in ["ferret", "penicillin", "gecko", "sousaphone"] {
+            assert_eq!(
+                store
+                    .search(&SearchQuery::text(present))
+                    .await
+                    .unwrap()
+                    .len(),
+                1,
+                "{present:?} is served while both pages exist"
+            );
+        }
+
+        inner.lose(Scanned::DOC_ID);
+
+        for gone in ["ferret", "penicillin"] {
+            assert!(
+                store
+                    .search(&SearchQuery::text(gone))
+                    .await
+                    .unwrap()
+                    .is_empty(),
+                "{gone:?} left the store, so search must stop serving it"
+            );
+        }
+        for kept in ["gecko", "sousaphone"] {
+            assert_eq!(
+                store.search(&SearchQuery::text(kept)).await.unwrap().len(),
+                1,
+                "{kept:?} is still in the store and must still be served"
+            );
+        }
+        assert!(
+            store
+                .search(&SearchQuery::text("person:alpha"))
+                .await
+                .unwrap()
+                .is_empty(),
+            "the entity goes with its page"
+        );
+        assert!(
+            !store
+                .search(&SearchQuery::text("person:beta"))
+                .await
+                .unwrap()
+                .is_empty(),
+            "…and the entity whose page remains does not"
+        );
+    }
+
+    /// **The answer never claims to be complete while it is coming from a scan
+    /// that could not be taken.** Rule 130: a wrong answer is a defect, and a
+    /// wrong answer that vouches for itself is worse, because the caller has
+    /// nothing to act on.
+    ///
+    /// The pair here is hits-and-coverage in one read. An implementation that
+    /// answered with nothing and reported itself partial would satisfy the
+    /// coverage assertion alone, and it would be a worse store than the one
+    /// this fixes.
+    #[tokio::test]
+    async fn coverage_stops_claiming_loaded_when_the_read_cannot_reach_the_store() {
+        let inner = a_store_of_two();
+        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        store.rebuild().await.expect("rebuild");
+        assert_eq!(
+            store.memory_coverage(),
+            Coverage::Loaded,
+            "a scan that just succeeded is complete coverage"
+        );
+
+        inner.blinded();
+
+        assert_eq!(
+            store
+                .search(&SearchQuery::text("ferret"))
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "degrade, don't error: the last good scan still answers"
+        );
+        assert_eq!(
+            store.memory_coverage(),
+            Coverage::Partial(Behind::Stale),
+            "…and the answer says it is holding an older version than the store"
+        );
+
+        inner.sighted();
+
+        assert_eq!(
+            store
+                .search(&SearchQuery::text("ferret"))
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "the record is still there and still served"
+        );
+        assert_eq!(
+            store.memory_coverage(),
+            Coverage::Loaded,
+            "a scan that reaches the store again clears the mark"
         );
     }
 
@@ -2300,6 +2592,15 @@ mod tests {
         /// The page is deleted in the wiki.
         fn vanish(&self) {
             self.docs.write().expect("docs poisoned").clear();
+        }
+
+        /// One page is deleted and the rest of the store is untouched — a hand
+        /// deletion, as opposed to a store that went away.
+        fn lose(&self, doc_id: &str) {
+            self.docs
+                .write()
+                .expect("docs poisoned")
+                .retain(|d| d.doc_id != doc_id);
         }
 
         /// Writes still land; reads fail from here until [`sighted`](Self::sighted).
@@ -2510,6 +2811,7 @@ mod tests {
         assert_eq!(
             store
                 .search(&SearchQuery::text("person:alpha"))
+                .await
                 .expect("search ok")
                 .len(),
             1,
@@ -2518,6 +2820,7 @@ mod tests {
         assert!(
             store
                 .search(&SearchQuery::text("ferret"))
+                .await
                 .expect("search ok")
                 .is_empty(),
             "and the row the index could not read is the part that is missing"
@@ -2581,12 +2884,17 @@ mod tests {
             store.index().behind_now().is_empty(),
             "and no document is behind: this write was re-read, which is the other state"
         );
+        // Blind again to read the state itself. A read takes its own scan, so
+        // "the scan never ran" is only observable while it still cannot run —
+        // and that is the state this test is about.
+        inner.blinded();
         // The positive the negative below depends on. Without it, "beta is
         // missing" passes just as well on an index that holds nothing at all,
         // which is the state this one is being told apart from.
         assert_eq!(
             store
                 .search(&SearchQuery::text("ferret"))
+                .await
                 .expect("search ok")
                 .len(),
             1,
@@ -2595,9 +2903,33 @@ mod tests {
         assert!(
             store
                 .search(&SearchQuery::text("harp"))
+                .await
                 .expect("search ok")
                 .is_empty(),
             "and the page the scan never read is the part that is missing"
+        );
+        assert_eq!(
+            store.memory_coverage(),
+            Coverage::Partial(Behind::Unscanned),
+            "the wider claim still wins: almost nothing is searchable"
+        );
+
+        // And it is not a state that lasts until a restart. The first read that
+        // reaches the store fills the half that was never scanned.
+        inner.sighted();
+        assert_eq!(
+            store
+                .search(&SearchQuery::text("harp"))
+                .await
+                .expect("search ok")
+                .len(),
+            1,
+            "the page arrives on the first read that can reach the store"
+        );
+        assert_eq!(
+            store.memory_coverage(),
+            Coverage::Loaded,
+            "…and the answer stops hedging, because the scan behind it ran"
         );
     }
 
@@ -2635,6 +2967,7 @@ mod tests {
             assert_eq!(
                 store
                     .search(&SearchQuery::text(missed))
+                    .await
                     .expect("search ok")
                     .len(),
                 1,
@@ -2669,6 +3002,7 @@ mod tests {
         assert_eq!(
             store
                 .search(&SearchQuery::text("ferret"))
+                .await
                 .expect("search ok")
                 .len(),
             1
@@ -2676,6 +3010,7 @@ mod tests {
         assert_eq!(
             store
                 .search(&SearchQuery::text("penicillin"))
+                .await
                 .expect("search ok")
                 .len(),
             1
@@ -2683,6 +3018,7 @@ mod tests {
         assert!(
             store
                 .search(&SearchQuery::text("person:alpha"))
+                .await
                 .expect("search ok")
                 .iter()
                 .any(|h| matches!(h, Hit::Entity { .. }))
@@ -2695,6 +3031,7 @@ mod tests {
             assert!(
                 store
                     .search(&SearchQuery::text(gone))
+                    .await
                     .expect("search ok")
                     .is_empty(),
                 "{gone:?} must be gone from the index with its doc"
@@ -2703,6 +3040,7 @@ mod tests {
         assert!(
             store
                 .search(&SearchQuery::text("person:alpha"))
+                .await
                 .expect("search ok")
                 .is_empty(),
             "…and so must the entity, pin and all"
@@ -2729,8 +3067,12 @@ mod tests {
             subject: EntityId::person("alphaa"),
             ..fact("person:alpha", "f1", "plays chess", date(2026, 1, 1))
         };
+        // Its own doc id, unique in this binary. The sink is the binary's — one
+        // subscriber shared by every test in it — so anything counted over its
+        // text has to be counted by something no other test can log.
+        const REPORTED_DOC: &str = "outline-uuid-orphan-report";
         let store = IndexedMemory::new(Scanned::new(vec![scan(
-            Scanned::DOC_ID,
+            REPORTED_DOC,
             Some(entity("person:alpha", "Alpha")),
             "",
             vec![
@@ -2743,7 +3085,7 @@ mod tests {
 
         let text = logged.text();
         assert!(
-            text.contains(Scanned::DOC_ID),
+            text.contains(REPORTED_DOC),
             "the log must say which doc: {text}"
         );
         assert!(text.contains("person:alphaa"), "…and which subject: {text}");
@@ -2757,10 +3099,18 @@ mod tests {
         assert_eq!(
             store
                 .search(&SearchQuery::text("chess"))
+                .await
                 .expect("search ok")
                 .len(),
             1,
             "a counted row is still indexed and still findable"
+        );
+        // That read re-scanned the store, and re-scanning is not re-reporting.
+        // The report is a reading of the corpus; one per answer would bury it.
+        assert_eq!(
+            logged.text().matches(REPORTED_DOC).count(),
+            1,
+            "a read refreshes the index without repeating the report"
         );
     }
 
@@ -2816,6 +3166,7 @@ mod tests {
         assert_eq!(
             store
                 .search(&SearchQuery::text("ordinary"))
+                .await
                 .expect("search ok")
                 .len(),
             1
@@ -2938,6 +3289,7 @@ mod tests {
         assert_eq!(
             store
                 .search(&SearchQuery::text("ferry"))
+                .await
                 .expect("search ok")
                 .len(),
             1

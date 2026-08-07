@@ -3457,9 +3457,10 @@ pub mod contract {
     // pre-populated collection as much as against an empty fake.
 
     /// Search the store, expecting the query to be well-formed.
-    fn found<S: Search>(store: &S, query: SearchQuery) -> Vec<Hit> {
+    async fn found<S: Search>(store: &S, query: SearchQuery) -> Vec<Hit> {
         store
             .search(&query)
+            .await
             .unwrap_or_else(|e| panic!("search should succeed: {e}"))
     }
 
@@ -3488,7 +3489,7 @@ pub mod contract {
         )
         .await;
 
-        let hits = found(store, SearchQuery::text("zamboni"));
+        let hits = found(store, SearchQuery::text("zamboni")).await;
         let addresses: Vec<String> = fact_hits(&hits)
             .iter()
             .map(|f| f.address().to_string())
@@ -3514,7 +3515,7 @@ pub mod contract {
         )
         .await;
 
-        let hits = found(store, SearchQuery::text("velodrome"));
+        let hits = found(store, SearchQuery::text("velodrome")).await;
         let facts = fact_hits(&hits);
         let found_fact = facts
             .iter()
@@ -3584,7 +3585,7 @@ pub mod contract {
                 .collect()
         };
 
-        let default = found(store, SearchQuery::text("rehearsed"));
+        let default = found(store, SearchQuery::text("rehearsed")).await;
         let seen = addresses(&default);
         // Both halves, because "not in the results" on its own passes just as
         // well when the query matched nothing at all.
@@ -3603,7 +3604,8 @@ pub mod contract {
                 status: Some(FactStatus::Retracted),
                 ..SearchQuery::text("rehearsed")
             },
-        );
+        )
+        .await;
         assert!(
             addresses(&asked).contains(&taken_back.address().to_string()),
             "nothing was deleted, so asking for it by name finds it: {asked:?}"
@@ -3640,7 +3642,7 @@ pub mod contract {
         )
         .await;
 
-        let default = found(store, SearchQuery::text("theremin"));
+        let default = found(store, SearchQuery::text("theremin")).await;
         let addresses: Vec<String> = fact_hits(&default)
             .iter()
             .map(|f| f.address().to_string())
@@ -3660,7 +3662,8 @@ pub mod contract {
                 status: Some(FactStatus::Superseded),
                 ..SearchQuery::text("theremin")
             },
-        );
+        )
+        .await;
         let asked_addresses: Vec<String> = fact_hits(&asked)
             .iter()
             .map(|f| f.address().to_string())
@@ -3721,7 +3724,8 @@ pub mod contract {
                 }),
                 ..Default::default()
             },
-        );
+        )
+        .await;
         let mut subjects: Vec<String> = fact_hits(&hits)
             .iter()
             .map(|f| f.subject.to_string())
@@ -3795,7 +3799,8 @@ pub mod contract {
                 }),
                 ..Default::default()
             },
-        );
+        )
+        .await;
         let addresses: Vec<String> = fact_hits(&hits)
             .iter()
             .map(|f| f.address().to_string())
@@ -3833,7 +3838,7 @@ pub mod contract {
         )
         .await;
 
-        let hits = found(store, SearchQuery::text(handle.as_str()));
+        let hits = found(store, SearchQuery::text(handle.as_str())).await;
         assert!(
             matches!(hits.first(), Some(Hit::Entity { entity, .. }) if entity.id == handle),
             "an exact handle query must return that entity first: {hits:?}"
@@ -3862,7 +3867,7 @@ pub mod contract {
         )
         .await;
 
-        let hits = found(store, SearchQuery::text("map for fun"));
+        let hits = found(store, SearchQuery::text("map for fun")).await;
         let (fact_subject, fact_home) = hits
             .iter()
             .find_map(|h| match h {
@@ -3924,7 +3929,7 @@ pub mod contract {
         )
         .await;
 
-        let hits = found(store, SearchQuery::text(handle.as_str()));
+        let hits = found(store, SearchQuery::text(handle.as_str())).await;
         let edges = hits
             .iter()
             .find_map(|h| match h {
