@@ -42,6 +42,12 @@ const MAILBOX_PREFIX: &str = "jojobot-mailboxes-itest-";
 /// The disposable collection the handover reads from. Its own, so the board it
 /// holds is one this test built and nothing else wrote into.
 const HANDOVER_COLLECTION: &str = "jojobot-handover-itest";
+/// The disposable collection the owner index is asked about. Its own for the
+/// same reason, and more sharply: the answer to "who is nearly this handle" is
+/// a function of the WHOLE index, so a roster anything else writes into would
+/// change what the screen is allowed to say. **Deliberately outside the prefix
+/// sweep** — the collection belongs to one case, and it drops it itself.
+const OWNERS_COLLECTION: &str = "jojobot-owners-itest";
 
 struct Creds {
     url: String,
@@ -277,7 +283,12 @@ async fn drop_session_collections(http: &reqwest::Client, c: &Creds) {
 
 /// Delete the test collection (and every doc in it), if it exists.
 async fn drop_test_collection(http: &reqwest::Client, c: &Creds) {
-    if let Some(id) = find_collection(http, c, TEST_COLLECTION).await {
+    drop_collection(http, c, TEST_COLLECTION).await;
+}
+
+/// Delete one collection by name, and every doc in it, if it exists.
+async fn drop_collection(http: &reqwest::Client, c: &Creds, name: &str) {
+    if let Some(id) = find_collection(http, c, name).await {
         let resp = http
             .post(format!("{}/api/collections.delete", c.url))
             .bearer_auth(&c.token)
@@ -348,6 +359,96 @@ async fn assert_the_mailbox_contract_holds(http: &reqwest::Client, c: &Creds) {
         }
     })
     .await;
+}
+
+/// **The owner index, answering out of real Outline.**
+///
+/// `create_mailbox` asks this on every box it opens — including the default
+/// identity's seed on a first boot — so what it says about a handle decides
+/// whether a box can be opened at all. The unit tests answer it out of a fake
+/// index; here the index is documents in a real collection, read back over the
+/// real API.
+///
+/// A collection of its own, holding exactly two entities. The screen's answer is
+/// a function of the whole index, so a roster this case does not control would
+/// make the candidate assertion below a statement about whatever else was
+/// written that day.
+async fn assert_the_owner_index_answers_from_real_memory(http: &reqwest::Client, c: &Creds) {
+    use jojobot_adapters::owners::MemoryOwners;
+    use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
+    use jojobot_domain::memory::guard;
+
+    let store = OutlineStore::with_collection(
+        http.clone(),
+        OutlineConfig {
+            base_url: c.url.clone(),
+            token: Secret::new(c.token.clone()),
+        },
+        OWNERS_COLLECTION,
+    );
+    for (handle, name) in [("bot:gamma", "Gamma"), ("person:alpha", "Alpha")] {
+        store
+            .add_entity(NewEntity::new(
+                EntityId(handle.into()),
+                name,
+                "integration-fixture",
+            ))
+            .await
+            .expect("the entity is written")
+            .written()
+            .expect("the roster's two handles do not collide");
+    }
+    let owners = MemoryOwners::new(Arc::new(store));
+
+    assert_eq!(
+        owners
+            .look_up(&EntityId("bot:gamma".into()))
+            .await
+            .expect("a reachable entity world answers"),
+        OwnerLookup::Known,
+        "a handle whose page is really in the collection resolves"
+    );
+
+    // **The candidates are the assertion, not the variant.** `Unknown` alone
+    // would pass over an index that screened nothing, and an empty list reads as
+    // "nothing even resembles this" — which is the one thing that is false here,
+    // and the answer a caller would act on by minting a second bot.
+    let found = owners
+        .look_up(&EntityId("bot:gamm".into()))
+        .await
+        .expect("a reachable entity world answers");
+    let OwnerLookup::Unknown(candidates) = found else {
+        panic!("a handle nobody holds does not resolve: {found:?}");
+    };
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|m| m.handle.as_str())
+            .collect::<Vec<_>>(),
+        vec!["bot:gamma"],
+        "the near miss comes back off the real index, and the unrelated entity does not"
+    );
+    assert_eq!(candidates[0].reason, guard::MatchReason::NearSlug);
+
+    // **An entity world that cannot be reached is an error, never "no such
+    // owner".** Provoked the way it really arrives — the real host, and a token
+    // it will not accept — so the refusal is the adapter's own HTTP failure
+    // making the whole trip, not a double standing in for one. Reporting that
+    // silence as absence would refuse a legitimate box, and do it with an empty
+    // candidate list that says nothing resembles a handle nothing was read about.
+    let unreachable = MemoryOwners::new(Arc::new(OutlineStore::with_collection(
+        http.clone(),
+        OutlineConfig {
+            base_url: c.url.clone(),
+            token: Secret::new("no-token-this-workspace-ever-minted".to_string()),
+        },
+        OWNERS_COLLECTION,
+    )));
+    let outcome = unreachable.look_up(&EntityId("bot:gamma".into())).await;
+    assert!(
+        matches!(outcome, Err(MailboxError::Store(_))),
+        "a store that will not answer is a failure, not a verdict about the owner: {outcome:?}"
+    );
 }
 
 async fn assert_the_session_contract_holds(http: &reqwest::Client, c: &Creds) {
@@ -431,6 +532,7 @@ async fn real_outline_satisfies_the_contract() {
     let http = reqwest::Client::new();
     // Clean slate, in case a prior run aborted before teardown.
     drop_test_collection(&http, &c).await;
+    drop_collection(&http, &c, OWNERS_COLLECTION).await;
     drop_session_collections(&http, &c).await;
 
     // Fingerprint the real `jojobot` collection: the test must not touch it.
@@ -471,10 +573,12 @@ async fn real_outline_satisfies_the_contract() {
         assert_a_child_page_is_nested(&http_for_spec, &creds_for_spec, &store).await;
         assert_the_session_contract_holds(&http_for_spec, &creds_for_spec).await;
         assert_the_mailbox_contract_holds(&http_for_spec, &creds_for_spec).await;
+        assert_the_owner_index_answers_from_real_memory(&http_for_spec, &creds_for_spec).await;
     })
     .await;
 
     drop_test_collection(&http, &c).await;
+    drop_collection(&http, &c, OWNERS_COLLECTION).await;
     drop_session_collections(&http, &c).await;
 
     let jojobot_after = doc_id_fingerprint(&http, &c, "jojobot").await;
