@@ -25,14 +25,19 @@ pub struct UpdateFactArgs {
     /// `testimony` or `inference`.
     #[serde(default)]
     pub provenance: Option<String>,
-    /// `settled` or `open`. **Settling an open claim requires
-    /// `confirmed_by_user`** — the operator hedged the claim, and only the
-    /// operator can withdraw the hedge. Reopening is free.
+    /// `settled` or `open`. **Moving a claim that is ALREADY open to settled
+    /// requires `confirmed_by_user`** — the operator hedged that claim, and
+    /// only the operator can withdraw the hedge. Reopening is free.
+    ///
+    /// That is the whole of the gate: it is on this promotion, not on
+    /// declaring a standing. A fresh `capture` may state `settled` and is
+    /// taken at its word, the way it is taken at its word about provenance.
     #[serde(default)]
     pub standing: Option<String>,
-    /// Required to promote a claim from inference to testimony, AND to settle
-    /// one that is open: set it only when the user has actually confirmed the
-    /// claim.
+    /// Required for two promotions of an EXISTING claim: inference → testimony,
+    /// and an open standing → settled. Set it only when the user has actually
+    /// confirmed the claim. Nothing else is gated on it — a fresh `capture`
+    /// declares its provenance and its standing on honour.
     #[serde(default)]
     pub confirmed_by_user: Option<bool>,
     /// The shape of an edge to attach: `location` · `membership` · `attendance` ·
@@ -59,11 +64,14 @@ impl Jojobot {
                        is NOT so, rewrite content to state the negative truth — that is an \
                        ordinary edit and the fact stays active; there is no negated status. \
                        TWO MOVES NEED confirmed_by_user, and they are different: promoting \
-                       inference → testimony (who backs it), and settling a claim that is open \
-                       (how sure anyone is). THIS IS HOW A HEDGE IS CONFIRMED — the \
+                       inference → testimony (who backs it), and settling a claim that is \
+                       already open (how sure anyone is). THIS IS HOW A HEDGE IS CONFIRMED — the \
                        operator hedged the claim and no longer does, so set standing settled \
                        and leave provenance alone; the claim was theirs from the start. \
-                       Reopening is free. An address that \
+                       Reopening is free. THE GATE IS ON PROMOTION, NOT ON ASSERTION: a fresh \
+                       capture may declare standing settled and nobody is asked to confirm it, \
+                       exactly as it declares its provenance — what needs the operator's word \
+                       is moving a claim they hedged. An address that \
                        names no fact comes back status: blocked with the addresses that do \
                        exist — it never creates.")]
     pub(crate) async fn update_fact(
@@ -228,6 +236,61 @@ mod tests {
                 .expect("a confirmed promotion is allowed"),
         );
         assert_eq!(ok["provenance"], "testimony");
+    }
+
+    /// **The confirmation gate is on PROMOTION, not on assertion**, and this
+    /// is the scope the surface has to state.
+    ///
+    /// `check_standing` fires on one move only: an existing OPEN claim being
+    /// made SETTLED. A fresh capture may declare `settled` on an inference and
+    /// is accepted — standing is declared on honour exactly as provenance is,
+    /// and the gate is on promotion rather than on assertion, by design.
+    ///
+    /// Both halves in one read. The refusal alone reads as "settling is
+    /// guarded" and the acceptance alone reads as a hole in the gate; it is
+    /// the pair that says where the line actually is, and a reader of the
+    /// surface who has only one of them believes the wrong thing.
+    #[tokio::test]
+    async fn the_confirmation_gate_is_on_promotion_and_not_on_assertion() {
+        let jojobot = handler();
+
+        // Asserted, and ungated: nobody is asked to confirm this.
+        let asserted = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("inference".into()),
+                standing: Some("settled".into()),
+                ..capture_args("alpha", "shuts early on sundays")
+            },
+        )
+        .await;
+        assert_eq!(asserted["provenance"], "inference", "{asserted}");
+        assert_eq!(
+            asserted["standing"], "settled",
+            "a capture declares its standing on honour: {asserted}"
+        );
+
+        // Promoted, and gated: the operator hedged this one, so only the
+        // operator withdraws the hedge.
+        let hedged = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                standing: Some("open".into()),
+                ..capture_args("alpha", "thinks the ferry moved")
+            },
+        )
+        .await;
+        let refused = blocked(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    standing: Some("settled".into()),
+                    ..update_args(&address_of(&hedged))
+                }))
+                .await
+                .expect("an unconfirmed settling is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
     }
 
     /// **A malformed address and a missed one are different answers**, and

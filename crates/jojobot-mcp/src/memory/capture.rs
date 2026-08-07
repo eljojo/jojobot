@@ -32,6 +32,11 @@ pub struct CaptureArgs {
     /// come apart — and the case that matters is **the operator saying
     /// something first-hand and hedging it**: that is
     /// `provenance: testimony` with `standing: open`.
+    ///
+    /// **Declared on honour, exactly as `provenance` is.** Nothing here asks
+    /// you to confirm a standing. `update_fact` is where the gate sits, and
+    /// only on the one move that takes a claim the operator hedged and calls
+    /// it settled.
     #[serde(default)]
     pub standing: Option<String>,
     /// The fact's freshness date, `YYYY-MM-DD`. Defaults to today (UTC).
