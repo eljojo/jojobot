@@ -1135,6 +1135,50 @@ pub mod contract {
         assert_eq!(counts.read, 2);
     }
 
+    /// **Two messages inside one second still deliver oldest first.**
+    ///
+    /// A second's resolution is not the board's resolution: two sessions
+    /// posting in the same second is ordinary, and a delivery that put them
+    /// the wrong way round would tell a reader the reply came before the
+    /// question.
+    ///
+    /// Its own case because whole-second stamps cannot catch it, and because a
+    /// store is free to keep the instant in a form whose natural sort is not
+    /// chronological — a text stamp is the obvious example, where a stamp with
+    /// no fractional part sorts after every stamp that has one. A store that
+    /// ordered by that form passes every other case here.
+    pub async fn a_delivery_orders_inside_one_second(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let within = |nanos: i64| epoch() + jiff::SignedDuration::from_nanos(nanos);
+        // Posted newest first, so insertion order and instant order disagree.
+        for (body, nanos) in [("third", 500_000_000), ("second", 1), ("first", 0)] {
+            store
+                .post_message(NewMessage {
+                    mailbox: name("inbox"),
+                    body: body.to_string(),
+                    subject: None,
+                    sender: "alpha".into(),
+                    sent_at: within(nanos),
+                    in_reply_to: None,
+                })
+                .await
+                .expect("post ok")
+                .written()
+                .expect("not blocked");
+        }
+
+        let delivery = read(store, "inbox").await;
+        assert_eq!(
+            delivery
+                .messages
+                .iter()
+                .map(|d| d.message.body.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "second", "third"],
+            "oldest first, to the nanosecond"
+        );
+    }
+
     /// **The crashed consumer.** A second read hands the same messages over
     /// again — flagged as already seen, so a consumer that took a batch and
     /// died is visible as such rather than looking like fresh mail.
@@ -1564,6 +1608,7 @@ pub mod contract {
         a_body_of_markup_and_a_loose_fence_survives(&fresh().await).await;
         posting_into_an_unknown_mailbox_is_blocked(&fresh().await).await;
         a_read_delivers_everything_new_and_moves_the_column(&fresh().await).await;
+        a_delivery_orders_inside_one_second(&fresh().await).await;
         a_second_read_redelivers_leftovers_flagged(&fresh().await).await;
         mark_processed_is_terminal_and_records_the_outcome(&fresh().await).await;
         a_failure_is_recorded_as_an_outcome(&fresh().await).await;
