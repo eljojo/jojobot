@@ -206,8 +206,9 @@ impl ServerHandler for Jojobot {
                  CALLED, that resembles something jojobot already knows comes back as a \
                  SUCCESSFUL result whose body says `status: blocked`, `wrote: false`, with \
                  `candidates` and `how_to_proceed` — nothing was written; use the candidate you \
-                 meant, or re-call with `create_new: true` if it truly is a different thing \
-                 sharing a name. **Naming something that does not exist is blocked too**, with \
+                 meant, or re-call with the `override_token` that refusal carries if it truly is \
+                 a different thing sharing a name — the token lifts the one refusal that minted \
+                 it and no other. **Naming something that does not exist is blocked too**, with \
                  whatever is nearby — never a plain error, so branch on `status`, not on whether \
                  the call errored. A plain error is a malformed call, or the store failing. \
                  Nothing on this surface deletes anything. 3. **Mark a message processed only \

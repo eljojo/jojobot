@@ -150,7 +150,7 @@ pub(crate) async fn broken_bot(jojobot: &Jojobot, slug: &str) {
             crm: None,
             parent: None,
             boot: Default::default(),
-            create_new: false,
+            override_token: None,
         })
         .await
         .expect("the store writes it");
@@ -162,7 +162,7 @@ impl mailbox::Mailboxes for DownMailboxes {
         &self,
         _: &mailbox::MailboxName,
         _: &EntityId,
-        _: bool,
+        _: Option<&str>,
     ) -> Result<mailbox::Guarded<mailbox::Mailbox>, mailbox::MailboxError> {
         Err(mailbox::MailboxError::NotConfigured(
             "the mailbox world is down".into(),
@@ -219,7 +219,7 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
         &self,
         _: &mailbox::MailboxName,
         _: &EntityId,
-        _: bool,
+        _: Option<&str>,
     ) -> Result<mailbox::Guarded<mailbox::Mailbox>, mailbox::MailboxError> {
         Err(mailbox::MailboxError::Store(
             "the board refuses writes".into(),

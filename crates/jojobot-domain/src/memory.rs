@@ -267,8 +267,9 @@ impl Entity {
     }
 }
 
-/// An entity about to be created. `create_new` is the caller's explicit
-/// "I checked, it's a different one" answer to the write guard.
+/// An entity about to be created. `override_token` is the token the write
+/// guard's own refusal minted, handed back — the caller's evidence that it read
+/// what it is overriding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewEntity {
     /// The handle to create.
@@ -294,9 +295,10 @@ pub struct NewEntity {
     pub parent: Option<EntityId>,
     /// Boot tier.
     pub boot: Boot,
-    /// Set only after the guard reported candidates and the caller judged them
-    /// different. Never clears an exact handle collision.
-    pub create_new: bool,
+    /// The token a previous call's refusal minted, handed back after the caller
+    /// read the candidates and judged them a different entity. It lifts only
+    /// the refusal that minted it, and never an exact handle collision.
+    pub override_token: Option<String>,
 }
 
 impl NewEntity {
@@ -311,7 +313,7 @@ impl NewEntity {
             crm: None,
             parent: None,
             boot: Boot::default(),
-            create_new: false,
+            override_token: None,
         }
     }
 
@@ -344,9 +346,10 @@ pub struct EntityPatch {
     pub source: Option<String>,
     /// New cross-link to this entity in the task layer.
     pub crm: Option<String>,
-    /// Set only after the guard reported candidates for the new name and the
-    /// caller judged them different. Same signal as [`NewEntity::create_new`].
-    pub create_new: bool,
+    /// The token the relabel refusal minted, handed back after the caller read
+    /// the candidates and judged them different. Same mechanism, and the same
+    /// type, as [`NewEntity::override_token`].
+    pub override_token: Option<String>,
 }
 
 /// An in-place edit to one addressed fact. A `None` field is left alone; this is
@@ -1084,7 +1087,7 @@ pub fn screen_entity_patch(
         &incoming,
         &entity.labels(),
         index,
-        patch.create_new,
+        patch.override_token.as_deref(),
     )
 }
 
@@ -1162,11 +1165,11 @@ pub struct NewFact {
     /// The typed edge this fact draws, if it draws one. Written atomically with
     /// the fact: an edge is never a second, separately-failing write.
     ///
-    /// There is deliberately **no `create_new` on this record.** Every entity a
-    /// capture names — its subject, its edge's object, an event's refs — must
-    /// already exist (see [`guard::decide_existing`]), so there is no suspicion
-    /// for a caller to wave away: a new entity is `add_entity` and then this,
-    /// two steps.
+    /// There is deliberately **no `override_token` on this record.** Every
+    /// entity a capture names — its subject, its edge's object, an event's refs
+    /// — must already exist (see [`guard::decide_existing`]), so there is no
+    /// suspicion for a caller to wave away and no refusal that mints a token: a
+    /// new entity is `add_entity` and then this, two steps.
     pub edge: Option<Edge>,
     /// **The marker that makes this fact an event**, or `None` for an ordinary
     /// fact — which is the common case and the default.
@@ -1367,7 +1370,7 @@ pub enum Guarded<T> {
     /// No suspicion, or the caller had already resolved it: this is the record.
     Written(T),
     /// **Nothing was written.** The way out depends on the gate: a creation or a
-    /// rename takes one of the candidates or an explicit create-new signal
+    /// rename takes one of the candidates or the token this refusal minted
     /// (which never clears an exact handle); a write that only *names* an entity
     /// takes an existing handle or an [`add_entity`](Memory::add_entity) first,
     /// because it cannot create one. `candidates` may be empty — an unrecognized

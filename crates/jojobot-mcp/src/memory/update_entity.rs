@@ -25,11 +25,13 @@ pub struct UpdateEntityArgs {
     /// layer addresses things. One reference, no space and no comma.
     #[serde(default)]
     pub crm: Option<String>,
-    /// Set only after a previous call reported candidates for a name or alias
-    /// you are claiming here, and you judged them a different entity. Any change
-    /// to what this entity is CALLED is screened exactly as a creation is.
+    /// The token a previous call's refusal handed you, sent back after you read
+    /// its candidates for the name or alias you are claiming here and judged
+    /// them a different entity. It lifts only the refusal that minted it. Any
+    /// change to what this entity is CALLED is screened exactly as a creation
+    /// is.
     #[serde(default)]
-    pub create_new: Option<bool>,
+    pub override_token: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -50,8 +52,10 @@ impl Jojobot {
                        with it, in add_entity, so there is nothing here to point at a different \
                        one. Any change to what it is CALLED — name or aliases — faces the same \
                        check a creation does, because an alias is a name: it can come back \
-                       status: blocked with candidates, and create_new: true is how you confirm a \
-                       genuinely shared name. Passing `aliases` REPLACES the whole set ([] clears \
+                       status: blocked with candidates, and the override_token that refusal \
+                       carries is how you confirm a genuinely shared name — a token lifts the one \
+                       refusal that minted it and no other. Passing `aliases` REPLACES the whole \
+                       set ([] clears \
                        it); source and crm edits are never questioned. A handle that names \
                        nothing comes back blocked with the nearest handles — it never creates."
     )]
@@ -70,7 +74,7 @@ impl Jojobot {
             aliases: args.aliases,
             source: args.source,
             crm: args.crm,
-            create_new: args.create_new.unwrap_or(false),
+            override_token: args.override_token.clone(),
         };
         let written = match self.memory.update_entity(&handle, patch).await {
             Ok(written) => written,
@@ -115,7 +119,7 @@ mod tests {
                 aliases: None,
                 source: None,
                 crm: Some("card:551".into()),
-                create_new: None,
+                override_token: None,
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await
@@ -144,13 +148,13 @@ mod tests {
             .await
             .expect("add ok");
 
-        let rename = |create_new: Option<bool>| UpdateEntityArgs {
+        let rename = |override_token: Option<String>| UpdateEntityArgs {
             handle: "person:zenith".into(),
             name: Some("Alpha".into()),
             aliases: None,
             source: None,
             crm: None,
-            create_new,
+            override_token,
             sid: Some(crate::harness::TEST_SID.into()),
         };
 
@@ -161,6 +165,7 @@ mod tests {
         let body = blocked(&result);
         assert_eq!(body["attempted"], "person:zenith");
         assert_eq!(body["candidates"][0]["handle"], "person:alpha");
+        let token = token_in(body["how_to_proceed"].as_str().expect("advice is a string"));
 
         // …and the name did not move.
         let listed = json_of(
@@ -180,14 +185,43 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["Alpha", "Zenith"]);
 
+        // A token nobody minted must not move it. Without this half, the
+        // assertion below holds identically on a build that accepts any string.
+        let invented = json_of(
+            &jojobot
+                .update_entity(Parameters(rename(Some("0000000000000000".into()))))
+                .await
+                .expect("the call succeeds; the guard answers in the body"),
+        );
+        assert_eq!(
+            invented["status"], "blocked",
+            "a token nobody minted moves nothing: {invented}"
+        );
+
         let forced = json_of(
             &jojobot
-                .update_entity(Parameters(rename(Some(true))))
+                .update_entity(Parameters(rename(Some(token))))
                 .await
                 .expect("confirmed rename ok"),
         );
         assert_ne!(forced["status"], "blocked");
         assert_eq!(forced["name"], "Alpha");
+    }
+
+    /// **The token as a caller gets it: out of the refusal's own advice.**
+    ///
+    /// Recomputing it from the guard would prove the guard agrees with itself
+    /// and would pass on a build that mints a token and tells nobody, which is
+    /// a secret rather than a mechanism (rule 68). Sixteen hex digits is the
+    /// token's shape, not a sentence somebody wrote, so this survives the
+    /// advice being reworded.
+    fn token_in(advice: &str) -> String {
+        let chars: Vec<char> = advice.chars().collect();
+        chars
+            .windows(16)
+            .find(|w| w.iter().all(char::is_ascii_hexdigit))
+            .map(|w| w.iter().collect())
+            .unwrap_or_else(|| panic!("the refusal must carry the token it minted: {advice}"))
     }
 
     /// The guard's last door, through the real handler: a patch carrying
@@ -210,7 +244,7 @@ mod tests {
                 aliases: Some(vec!["Homer Simpson".into()]),
                 source: None,
                 crm: None,
-                create_new: None,
+                override_token: None,
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await
@@ -275,7 +309,7 @@ mod tests {
             aliases: Some(aliases),
             source: None,
             crm: None,
-            create_new: None,
+            override_token: None,
             sid: Some(crate::harness::TEST_SID.into()),
         };
 
@@ -335,7 +369,7 @@ mod tests {
                 aliases: None,
                 source: None,
                 crm: None,
-                create_new: None,
+                override_token: None,
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await

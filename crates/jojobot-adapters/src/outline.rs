@@ -571,8 +571,8 @@ impl OutlineStore {
 /// called on every rail here: the write may not have finished, nothing undid
 /// the part that did, and a person has to look. A clean store failure would
 /// tell the caller nothing was written and to try once more — at a handle that
-/// now resolves, where the guard refuses an exact match and `create_new` does
-/// not override it.
+/// now resolves, where the guard refuses an exact match and no token overrides
+/// it.
 fn created_and_stranded(entity: &EntityId, cause: String) -> MemoryError {
     MemoryError::Stranded {
         verb: "add_entity".to_string(),
@@ -697,9 +697,12 @@ impl Memory for OutlineStore {
         let collection_id = self.resolve_collection().await?;
 
         let index = self.entity_index(&collection_id).await?;
-        if let Decision::Block(candidates) =
-            guard::decide(&new.id, &new.labels(), &index, new.create_new)
-        {
+        if let Decision::Block(candidates) = guard::decide(
+            &new.id,
+            &new.labels(),
+            &index,
+            new.override_token.as_deref(),
+        ) {
             return Ok(Guarded::Blocked {
                 attempted: new.id,
                 candidates,
@@ -2176,7 +2179,7 @@ mod tests {
     /// **It is a stranded write, not a clean one.** The page was created and
     /// this adapter cannot remove it, so it is standing in the wrong place: a
     /// caller told nothing was written would retry into the guard's exact-handle
-    /// refusal, which `create_new` does not override.
+    /// refusal, which no token overrides.
     #[tokio::test]
     async fn a_page_the_store_will_not_move_is_still_a_failed_write() {
         let fake = FakeOutline::new();
@@ -2929,7 +2932,7 @@ mod tests {
     /// this adapter cannot remove a page — so every failure after the create
     /// leaves the page standing. Reporting that as "nothing was written, try
     /// once more" sends the caller at a handle that now resolves, where the
-    /// guard refuses an exact match and `create_new` does not override it: the
+    /// guard refuses an exact match and no token overrides it: the
     /// advice cannot work, and the caller cannot see why.
     #[tokio::test]
     async fn an_entity_page_that_could_not_be_read_back_is_stranded() {
@@ -2945,7 +2948,7 @@ mod tests {
                 crm: None,
                 parent: None,
                 boot: Default::default(),
-                create_new: false,
+                override_token: None,
             })
             .await
             .expect_err("the read-back could not be made, so this is not a success");
@@ -3086,7 +3089,7 @@ mod tests {
         let mailboxes = outline.mailboxes();
         let name = jojobot_domain::mailbox::MailboxName("gamma".into());
         mailboxes
-            .create_mailbox(&name, &owner, false)
+            .create_mailbox(&name, &owner, None)
             .await
             .expect("the box opens")
             .written()
@@ -3155,7 +3158,7 @@ mod tests {
         let mailboxes = outline.mailboxes();
         let name = jojobot_domain::mailbox::MailboxName("gamma".into());
         mailboxes
-            .create_mailbox(&name, &owner, false)
+            .create_mailbox(&name, &owner, None)
             .await
             .expect("the box opens")
             .written()
@@ -3225,7 +3228,7 @@ mod tests {
         let mailboxes = outline.mailboxes();
         let name = jojobot_domain::mailbox::MailboxName("gamma".into());
         mailboxes
-            .create_mailbox(&name, &owner, false)
+            .create_mailbox(&name, &owner, None)
             .await
             .expect("the box opens")
             .written()
@@ -4108,7 +4111,7 @@ mod tests {
                         crm: None,
                         parent: None,
                         boot: Default::default(),
-                        create_new: false,
+                        override_token: None,
                     })
                     .await
                     .expect("the owner is written")
@@ -4160,7 +4163,7 @@ mod tests {
                 crm: None,
                 parent: None,
                 boot: Default::default(),
-                create_new: false,
+                override_token: None,
             })
             .await
             .expect("the owner is written")
@@ -4169,7 +4172,7 @@ mod tests {
         let mailboxes = Arc::new(outline.mailboxes());
         let name = jojobot_domain::mailbox::MailboxName("gamma".into());
         mailboxes
-            .create_mailbox(&name, &owner, false)
+            .create_mailbox(&name, &owner, None)
             .await
             .expect("the box opens")
             .written()
@@ -4259,13 +4262,13 @@ mod tests {
                 crm: None,
                 parent: None,
                 boot: Default::default(),
-                create_new: false,
+                override_token: None,
             })
             .await
             .expect("the owner exists")
             .written()
             .expect("not blocked");
-        mail.create_mailbox(&inbox, &owner, false)
+        mail.create_mailbox(&inbox, &owner, None)
             .await
             .expect("create ok")
             .written()

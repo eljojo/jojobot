@@ -296,7 +296,7 @@ impl Mailboxes for OutlineMailboxes {
         &self,
         name: &MailboxName,
         owner: &EntityId,
-        create_new: bool,
+        override_token: Option<&str>,
     ) -> Result<Guarded<Mailbox>, MailboxError> {
         validate_mailbox_name(name)?;
         jojobot_domain::memory::validate_subject(owner)
@@ -322,7 +322,7 @@ impl Mailboxes for OutlineMailboxes {
 
         let existing = self.names(&collection_id).await?;
         if let guard::Decision::Block(candidates) =
-            guard::decide_create(name, &existing, create_new)
+            guard::decide_create_for(name, Some(owner.slug()), &existing, override_token)
         {
             return Ok(Guarded::Blocked {
                 attempted: name.clone(),

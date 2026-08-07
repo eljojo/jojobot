@@ -769,7 +769,7 @@ mod tests {
                             source: "test-fixture".into(),
                             crm: None,
                             boot: None,
-                            create_new: None,
+                            override_token: None,
                             sid: Some(dead.clone()),
                         }))
                         .await
@@ -786,7 +786,7 @@ mod tests {
                             aliases: None,
                             source: None,
                             crm: None,
-                            create_new: None,
+                            override_token: None,
                             sid: Some(dead.clone()),
                         }))
                         .await

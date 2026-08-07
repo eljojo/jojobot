@@ -156,7 +156,7 @@ impl Mailboxes for InMemoryMailboxes {
         &self,
         name: &MailboxName,
         owner: &EntityId,
-        create_new: bool,
+        override_token: Option<&str>,
     ) -> Result<Guarded<Mailbox>, MailboxError> {
         validate_mailbox_name(name)?;
         crate::memory::validate_subject(owner)
@@ -179,7 +179,9 @@ impl Mailboxes for InMemoryMailboxes {
         }
 
         let mut boxes = self.boxes.lock().expect("mailbox lock");
-        if let guard::Decision::Block(candidates) = guard::decide_create(name, &boxes, create_new) {
+        if let guard::Decision::Block(candidates) =
+            guard::decide_create_for(name, Some(owner.slug()), &boxes, override_token)
+        {
             return Ok(Guarded::Blocked {
                 attempted: name.clone(),
                 candidates,
@@ -431,7 +433,7 @@ pub mod contract {
     /// Create a box, asserting the guard waved it through.
     pub async fn create(store: &dyn Mailboxes, n: &str) -> Mailbox {
         store
-            .create_mailbox(&name(n), &owner(), false)
+            .create_mailbox(&name(n), &owner(), None)
             .await
             .expect("create_mailbox should succeed")
             .written()
@@ -519,7 +521,7 @@ pub mod contract {
             attempted,
             candidates,
         } = store
-            .create_mailbox(&name("inbx"), &owner(), false)
+            .create_mailbox(&name("inbx"), &owner(), None)
             .await
             .expect("a blocked create is a result, not a failure")
         else {
@@ -535,37 +537,72 @@ pub mod contract {
     }
 
     /// **A sibling fleet is deliberate — and creatable.** `worker-2` beside
-    /// `worker-1` blocks as a near miss until the caller passes `create_new`,
-    /// which overrides the similarity screen. An exact name stays blocked
-    /// regardless: that box already exists.
+    /// `worker-1` blocks as a near miss until the caller hands back the token
+    /// that refusal minted, which lifts the similarity screen. An exact name
+    /// stays blocked regardless: that box already exists.
+    ///
+    /// The token is read out of the refusal rather than made up beside the
+    /// assertion, because reading it back is the whole behaviour under test: a
+    /// store that accepts any string passes the first half of this and fails
+    /// the third.
     pub async fn a_confirmed_near_miss_creates_the_sibling_box(store: &dyn Mailboxes) {
         create(store, "worker-1").await;
 
-        let Guarded::Blocked { candidates, .. } = store
-            .create_mailbox(&name("worker-2"), &owner(), false)
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = store
+            .create_mailbox(&name("worker-2"), &owner(), None)
             .await
             .expect("a blocked create is a result, not a failure")
         else {
-            panic!("without the signal, a near-miss name must block");
+            panic!("without a token, a near-miss name must block");
         };
         assert_eq!(candidates[0].name.as_str(), "worker-1");
+        let token = guard::override_token(&attempted, &candidates);
+
+        assert!(
+            matches!(
+                store
+                    .create_mailbox(&name("worker-2"), &owner(), Some("0000000000000000"))
+                    .await
+                    .expect("a blocked create is a result, not a failure"),
+                Guarded::Blocked { .. }
+            ),
+            "a token nobody minted lifts nothing"
+        );
 
         let created = store
-            .create_mailbox(&name("worker-2"), &owner(), true)
+            .create_mailbox(&name("worker-2"), &owner(), Some(&token))
             .await
             .expect("create_mailbox should succeed")
             .written()
-            .expect("create_new must override the near-miss screen");
+            .expect("the refusal's own token must lift the near-miss screen");
         assert_eq!(created.name.as_str(), "worker-2");
 
-        let Guarded::Blocked { candidates, .. } = store
-            .create_mailbox(&name("worker-1"), &owner(), true)
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = store
+            .create_mailbox(&name("worker-1"), &owner(), None)
             .await
             .expect("a blocked create is a result, not a failure")
         else {
-            panic!("an exact name stays blocked, create_new or not: the box exists");
+            panic!("an exact name blocks: the box exists");
         };
         assert_eq!(candidates[0].reason, guard::MatchReason::Exact);
+
+        let exact_token = guard::override_token(&attempted, &candidates);
+        assert!(
+            matches!(
+                store
+                    .create_mailbox(&name("worker-1"), &owner(), Some(&exact_token))
+                    .await
+                    .expect("a blocked create is a result, not a failure"),
+                Guarded::Blocked { .. }
+            ),
+            "an exact name stays blocked by its own token too: the box exists"
+        );
     }
 
     /// A posted message lands in `new`, carrying exactly what was posted.
@@ -1345,7 +1382,7 @@ pub mod contract {
     pub async fn malformed_input_is_refused(store: &dyn Mailboxes) {
         assert!(
             store
-                .create_mailbox(&name("Inbox"), &owner(), false)
+                .create_mailbox(&name("Inbox"), &owner(), None)
                 .await
                 .is_err(),
             "a name outside the grammar is refused"

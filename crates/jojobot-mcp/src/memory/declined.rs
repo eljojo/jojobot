@@ -14,13 +14,14 @@ use super::*;
 /// slug" is worse than no advice at all.
 pub(crate) enum Blocked {
     /// A creation: the handle is being minted here, so an exact collision is
-    /// unforgivable and `create_new` covers only a shared *name*.
+    /// unforgivable and the token covers only a shared *name*.
     Creating,
     /// A relabel — a change to a name or an alias. No handle is moving, so
     /// nothing here is unforgivable.
     Relabelling,
     /// A write that only **names** an entity (a capture's subject, an edge's
-    /// object). It cannot create one, so `create_new` does not exist on it.
+    /// object). It cannot create one, so there is no token to hand back and no
+    /// `override_token` on the verb.
     MustExist(&'static str),
 }
 
@@ -41,6 +42,12 @@ pub(crate) fn blocked_result(
     let exact = candidates
         .iter()
         .any(|c| c.reason == guard::MatchReason::ExactHandle);
+    // **The token this refusal mints, and the only thing that lifts it** (rule
+    // 75). It rides the advice rather than sitting in a field of its own,
+    // because a secret a caller has to be told separately about is one nobody
+    // uses — the sentence that says what to do names the thing to do it with
+    // (rule 68). An exact collision mints none: there is nothing to lift.
+    let token = guard::override_token(attempted, candidates);
     let how_to_proceed = match gate {
         Blocked::Creating if exact => format!(
             "Nothing was written. The handle '{attempted}' is already taken, and that cannot be \
@@ -50,8 +57,9 @@ pub(crate) fn blocked_result(
         Blocked::Creating => format!(
             "Nothing was written. If '{attempted}' IS one of the entities above, use that handle \
              instead. If it is genuinely a different one that happens to share a name, re-call \
-             add_entity with create_new: true — display names are not unique and never have to \
-             be; the handle is what has to be.",
+             add_entity with override_token: \"{token}\". That token belongs to THIS refusal and \
+             lifts no other. Display names are not unique and never have to be; the handle is \
+             what has to be.",
         ),
         // Says "name" rather than "rename": this gate fires on an alias write
         // too, and telling a caller nothing was renamed when they renamed
@@ -59,8 +67,8 @@ pub(crate) fn blocked_result(
         Blocked::Relabelling => format!(
             "Nothing was written, and the handle '{attempted}' is unaffected either way — this \
              only moves the names it answers to. Either pick a name or alias that isn't already \
-             worn, or re-call update_entity with create_new: true if this entity really does \
-             share a name with one above: names are not unique, handles are.",
+             worn, or re-call update_entity with override_token: \"{token}\" if this entity really \
+             does share a name with one above: names are not unique, handles are.",
         ),
         // The candidate list is often empty here — this gate fires on any
         // unrecognized handle, not only a near miss — so the advice must not

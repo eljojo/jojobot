@@ -8,12 +8,13 @@
 //!
 //! On suspicion the guard neither fails nor guesses: it reports the candidates
 //! and the write is refused until the caller confirms the existing entity or
-//! re-calls with an explicit create-new signal. **Detection without inference:
+//! re-calls with the token that refusal minted. **Detection without inference:
 //! jojobot notices, the AI decides.** No I/O, no clock, no randomness — every
 //! decision here is a pure function of (handle, name, index), which is why it can
 //! live on the write path of *both* adapters and cannot be skipped.
 
 use super::{Entity, EntityId, EntityKind};
+use crate::override_token::Collision;
 
 /// Why an existing entity is a candidate for the incoming write, strongest
 /// first. The order is the reporting order — the caller reads the top one.
@@ -22,7 +23,7 @@ use super::{Entity, EntityId, EntityKind};
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum MatchReason {
-    /// The very same handle already exists. Never overridable.
+    /// The very same handle already exists. Never overridable, by any token.
     ExactHandle,
     /// The write names **itself** as its own parent. Never overridable: unlike
     /// a name collision there is no "I checked, they're different" to give,
@@ -70,7 +71,7 @@ pub enum Decision {
     /// No suspicion, or the caller resolved it: the write may proceed.
     Proceed,
     /// Suspicion: **nothing is written**. The caller confirms one of these
-    /// candidates or re-calls with an explicit create-new signal.
+    /// candidates or re-calls with the token this refusal minted.
     Block(Vec<EntityMatch>),
 }
 
@@ -299,19 +300,45 @@ fn name_reason(
     near.then_some(MatchReason::NearName)
 }
 
+/// The refusal this write would get, as the token mechanism addresses it.
+///
+/// One shape for both entity gates, so a token minted by a creation's refusal
+/// and one minted by a relabel's are the same kind of thing.
+fn collision(handle: &EntityId, matches: &[EntityMatch]) -> Collision {
+    Collision {
+        gate: "entity",
+        attempted: handle.to_string(),
+        candidates: matches.iter().map(|m| m.handle.to_string()).collect(),
+    }
+}
+
 /// The guard's decision on a write that names an entity.
 ///
-/// `create_new` is the caller's explicit "I know, they're different" signal — it
-/// clears fuzzy suspicion but **never an exact handle collision**: two entities
-/// cannot share a handle, so that case is re-slug-or-confirm, always.
-pub fn decide(handle: &EntityId, labels: &[&str], index: &[Entity], create_new: bool) -> Decision {
+/// **`override_token` is the token THIS refusal minted, handed back** (rule
+/// 75). It clears fuzzy suspicion and **never an exact handle collision**: two
+/// entities cannot share a handle, so that case is re-slug-or-confirm, always
+/// (rule 61).
+///
+/// A boolean used to do this job and it asserted nothing — a caller could send
+/// it on a first call, having seen no refusal at all, which made the override
+/// available to exactly the callers it was meant to slow down. A token is
+/// unguessable and specific to one collision, so passing it back is evidence
+/// the caller read what it is overriding.
+pub fn decide(
+    handle: &EntityId,
+    labels: &[&str],
+    index: &[Entity],
+    override_token: Option<&str>,
+) -> Decision {
     let matches = screen(handle, labels, index);
-    let exact = matches.iter().any(|m| m.reason == MatchReason::ExactHandle);
-    if matches.is_empty() || (create_new && !exact) {
-        Decision::Proceed
-    } else {
-        Decision::Block(matches)
+    if matches.is_empty() {
+        return Decision::Proceed;
     }
+    let exact = matches.iter().any(|m| m.reason == MatchReason::ExactHandle);
+    if !exact && collision(handle, &matches).honours(override_token) {
+        return Decision::Proceed;
+    }
+    Decision::Block(matches)
 }
 
 /// The guard's decision on a handle a write **names but must not create** — a
@@ -322,7 +349,7 @@ pub fn decide(handle: &EntityId, labels: &[&str], index: &[Entity], create_new: 
 /// the entity, not a candidate for it. Everything else blocks — a near miss with
 /// the candidates that explain it, an unrecognized handle with an empty list.
 ///
-/// There is deliberately **no create-new escape**. A write that names an entity
+/// There is deliberately **no override at all here**. A write that names an entity
 /// is not a write that may invent one: auto-provisioning on a novel handle
 /// turned every typo, and every plausible-looking id an AI produced, into a
 /// nameless entity nobody chose, sitting in the store forever. A genuinely new
@@ -349,7 +376,7 @@ pub fn decide_existing(handle: &EntityId, index: &[Entity]) -> Decision {
 /// **A parent must already exist.** Beyond that this is [`decide_existing`] and
 /// nothing more: naming a parent is naming an entity, so it gets the same gate
 /// as a capture's subject or an edge's object, with the same absence of a
-/// create-new escape. Creation is an intentional act; a tree that grew its own
+/// override. Creation is an intentional act; a tree that grew its own
 /// branches on the way past would be exactly the auto-provisioning that rule
 /// exists to forbid.
 ///
@@ -399,14 +426,14 @@ pub fn decide_parent(child: &Entity, parent: &EntityId, index: &[Entity]) -> Dec
 ///   not already there — and a patch touching no label at all (source, crm,
 ///   boot) is screened against nothing, with no special case needed for it.
 ///
-/// `create_new` clears any suspicion here: only a handle can collide
+/// The token clears any suspicion here: only a handle can collide
 /// unforgivably, and no handle is moving.
 pub fn decide_relabel(
     handle: &EntityId,
     incoming: &[&str],
     current: &[&str],
     index: &[Entity],
-    create_new: bool,
+    override_token: Option<&str>,
 ) -> Decision {
     let worn = folded(current);
     let added: Vec<&str> = incoming
@@ -421,11 +448,17 @@ pub fn decide_relabel(
         .into_iter()
         .filter(|m| &m.handle != handle)
         .collect();
-    if matches.is_empty() || create_new {
+    if matches.is_empty() || collision(handle, &matches).honours(override_token) {
         Decision::Proceed
     } else {
         Decision::Block(matches)
     }
+}
+
+/// The token that lifts the refusal a set of candidates represents — what a
+/// blocked answer hands back so a caller can decide and come again.
+pub fn override_token(handle: &EntityId, matches: &[EntityMatch]) -> String {
+    collision(handle, matches).token()
 }
 
 #[cfg(test)]
@@ -470,40 +503,72 @@ mod tests {
 
     // --- the golden case: two same-named people cannot merge silently --------
 
-    /// A second person arriving at an existing handle is blocked, and
-    /// `create_new` does NOT override it — a handle has exactly one owner, so
-    /// the caller must confirm the existing one or qualify the slug.
+    /// A second person arriving at an existing handle is blocked, and no token
+    /// overrides it — not even the one this refusal itself mints. A handle has
+    /// exactly one owner, so the caller must confirm the existing one or
+    /// qualify the slug (rule 61).
     #[test]
     fn a_second_person_at_the_same_handle_can_never_be_forced_through() {
         let taken = EntityId("person:alpha".into());
-        for create_new in [false, true] {
-            let Decision::Block(candidates) = decide(&taken, &["Alpha Two"], &index(), create_new)
-            else {
-                panic!("a colliding handle must block (create_new={create_new})");
-            };
-            assert_eq!(candidates[0].reason, MatchReason::ExactHandle);
-            assert_eq!(candidates[0].handle.as_str(), "person:alpha");
-            assert_eq!(
-                candidates[0].source, "crm-card",
-                "the caller decides on the source"
-            );
-        }
+        let Decision::Block(candidates) = decide(&taken, &["Alpha Two"], &index(), None) else {
+            panic!("a colliding handle must block");
+        };
+        assert_eq!(candidates[0].reason, MatchReason::ExactHandle);
+        assert_eq!(candidates[0].handle.as_str(), "person:alpha");
+        assert_eq!(
+            candidates[0].source, "crm-card",
+            "the caller decides on the source"
+        );
+
+        let minted = override_token(&taken, &candidates);
+        let Decision::Block(again) = decide(&taken, &["Alpha Two"], &index(), Some(&minted)) else {
+            panic!("a colliding handle stays blocked, token or not");
+        };
+        assert_eq!(again[0].reason, MatchReason::ExactHandle);
     }
 
-    /// The same name under a qualified slug is still flagged — but here
-    /// `create_new` is the escape hatch, because the handles differ.
+    /// The same name under a qualified slug is still flagged — and here the
+    /// refusal's own token is the escape hatch, because the handles differ.
     #[test]
-    fn a_qualified_slug_is_flagged_by_name_and_create_new_clears_it() {
+    fn a_qualified_slug_is_flagged_by_name_and_its_own_token_clears_it() {
         let qualified = EntityId("person:alpha-two".into());
-        let Decision::Block(candidates) = decide(&qualified, &["Alpha"], &index(), false) else {
+        let Decision::Block(candidates) = decide(&qualified, &["Alpha"], &index(), None) else {
             panic!("a same-name person must block");
         };
         assert_eq!(candidates[0].reason, MatchReason::SameName);
         assert_eq!(
-            decide(&qualified, &["Alpha"], &index(), true),
+            decide(
+                &qualified,
+                &["Alpha"],
+                &index(),
+                Some(&override_token(&qualified, &candidates)),
+            ),
             Decision::Proceed,
-            "an explicit create-new signal resolves a fuzzy match"
+            "the token this refusal minted resolves a fuzzy match"
         );
+    }
+
+    /// **A token minted elsewhere lifts nothing here.** Without this the guard
+    /// accepts any string a caller sends, which is the boolean again under a
+    /// longer name.
+    #[test]
+    fn only_this_refusals_own_token_lifts_it() {
+        let qualified = EntityId("person:alpha-two".into());
+        let elsewhere = EntityId("project:atlas-two".into());
+        let Decision::Block(other) = decide(&elsewhere, &["Atlas"], &index(), None) else {
+            panic!("a same-name project must block");
+        };
+        let borrowed = override_token(&elsewhere, &other);
+
+        for offered in [borrowed.as_str(), "0000000000000000", ""] {
+            assert!(
+                matches!(
+                    decide(&qualified, &["Alpha"], &index(), Some(offered)),
+                    Decision::Block(_)
+                ),
+                "a token this refusal did not mint lifts nothing: {offered:?}"
+            );
+        }
     }
 
     // --- each detection channel ---------------------------------------------
@@ -599,8 +664,8 @@ mod tests {
                 true,
             ),
             // A deliberate second one is inside the budget too, so it is
-            // blocked and `create_new` is how it gets made. Working as
-            // designed: the guard suspects, the caller decides.
+            // blocked and the refusal's own token is how it gets made. Working
+            // as designed: the guard suspects, the caller decides.
             (
                 "place:north-trail",
                 "North Trail",
@@ -661,7 +726,7 @@ mod tests {
                 &incoming,
                 &[incoming_name],
                 std::slice::from_ref(&existing),
-                false,
+                None,
             );
             let blocked = matches!(decision, Decision::Block(_));
             // The distance rides the failure, so a red reports the number
@@ -707,12 +772,12 @@ mod tests {
                 &EntityId("person:zenith".into()),
                 &["Zenith"],
                 &index(),
-                false
+                None
             ),
             Decision::Proceed
         );
         assert_eq!(
-            decide(&EntityId("topic:widgets".into()), &[], &[], false),
+            decide(&EntityId("topic:widgets".into()), &[], &[], None),
             Decision::Proceed
         );
     }
@@ -786,7 +851,7 @@ mod tests {
             &EntityId("person:cosme-fulanito".into()),
             &["Cosme Fulanito"],
             &idx,
-            false,
+            None,
         ) else {
             panic!("a name the entity already answers to must block");
         };
@@ -820,7 +885,7 @@ mod tests {
             &EntityId("person:barney-gumble".into()),
             &["Barney Gumble", "Homer Simpson"],
             &idx,
-            false,
+            None,
         ) else {
             panic!("an incoming alias that names someone here must block");
         };
@@ -841,7 +906,7 @@ mod tests {
             "Cosme Fulanito",
             "Zenith",
             &idx,
-            false,
+            None,
         ) else {
             panic!("renaming onto an alias must block");
         };
@@ -893,7 +958,7 @@ mod tests {
         assert_eq!(candidates[0].handle.as_str(), "person:alpha");
 
         // **A handle nothing resembles blocks too**, with an empty list. There is
-        // no create-new escape here: this is a write that NAMES an entity, and
+        // no override here: this is a write that NAMES an entity, and
         // an entity it cannot find is not one it may invent. "I don't know this
         // one" is the answer; there is simply nothing to suggest alongside it.
         let Decision::Block(none) = decide_existing(&EntityId("person:zenith".into()), &idx) else {
@@ -914,24 +979,45 @@ mod tests {
         new_name: &str,
         current_name: &str,
         index: &[Entity],
-        create_new: bool,
+        override_token: Option<&str>,
     ) -> Decision {
-        decide_relabel(handle, &[new_name], &[current_name], index, create_new)
+        decide_relabel(handle, &[new_name], &[current_name], index, override_token)
     }
 
-    /// A rename onto a name the index already holds is blocked, and the same
-    /// explicit signal clears it — the creation gate, reused.
+    /// A rename onto a name the index already holds is blocked, and the token
+    /// that refusal minted clears it — the creation gate, reused, with the same
+    /// mechanism on it (rule 51).
     #[test]
-    fn a_rename_onto_an_existing_name_is_blocked_and_create_new_clears_it() {
+    fn a_rename_onto_an_existing_name_is_blocked_and_its_own_token_clears_it() {
         let renamer = EntityId("person:zenith".into());
-        let Decision::Block(candidates) = rename(&renamer, "Alpha", "Zenith", &index(), false)
+        let Decision::Block(candidates) = rename(&renamer, "Alpha", "Zenith", &index(), None)
         else {
             panic!("a rename onto an existing name must block");
         };
         assert_eq!(candidates[0].handle.as_str(), "person:alpha");
         assert_eq!(candidates[0].reason, MatchReason::SameName);
+
+        assert!(
+            matches!(
+                rename(
+                    &renamer,
+                    "Alpha",
+                    "Zenith",
+                    &index(),
+                    Some("0000000000000000")
+                ),
+                Decision::Block(_)
+            ),
+            "a token nobody minted lifts nothing"
+        );
         assert_eq!(
-            rename(&renamer, "Alpha", "Zenith", &index(), true),
+            rename(
+                &renamer,
+                "Alpha",
+                "Zenith",
+                &index(),
+                Some(&override_token(&renamer, &candidates)),
+            ),
             Decision::Proceed
         );
     }
@@ -947,7 +1033,7 @@ mod tests {
         idx.push(entity("person:alphaa", "Second Alpha", "user-named"));
         let settled = EntityId("person:alphaa".into());
         assert_eq!(
-            rename(&settled, "Something Unrelated", "Second Alpha", &idx, false),
+            rename(&settled, "Something Unrelated", "Second Alpha", &idx, None),
             Decision::Proceed,
             "the handle is not changing, so a settled near-slug must not block a name edit"
         );
@@ -959,7 +1045,7 @@ mod tests {
     fn a_rename_onto_an_existing_handles_spelling_is_blocked() {
         let renamer = EntityId("place:trail-spot".into());
         let Decision::Block(candidates) =
-            rename(&renamer, "North Trail", "Trail Spot", &index(), false)
+            rename(&renamer, "North Trail", "Trail Spot", &index(), None)
         else {
             panic!("a name that spells out an existing handle must block");
         };
@@ -972,7 +1058,7 @@ mod tests {
     #[test]
     fn a_rename_onto_a_near_name_is_blocked() {
         let renamer = EntityId("person:zenith".into());
-        let Decision::Block(candidates) = rename(&renamer, "Bet", "Zenith", &index(), false) else {
+        let Decision::Block(candidates) = rename(&renamer, "Bet", "Zenith", &index(), None) else {
             panic!("a name within a typo of an existing one must block");
         };
         assert_eq!(candidates[0].handle.as_str(), "person:beta");
@@ -985,7 +1071,7 @@ mod tests {
     fn a_rename_does_not_screen_the_entity_against_itself() {
         let existing = EntityId("person:alpha".into());
         assert_eq!(
-            rename(&existing, "Something Unrelated", "Alpha", &index(), false),
+            rename(&existing, "Something Unrelated", "Alpha", &index(), None),
             Decision::Proceed,
             "an entity is not a candidate for its own rename"
         );
@@ -1006,21 +1092,21 @@ mod tests {
             &["Zenith", "Cosme Fulanito"],
             &["Zenith"],
             &idx,
-            false,
+            None,
         ) else {
             panic!("an alias onto a name another entity wears must block");
         };
         assert_eq!(candidates[0].handle.as_str(), "person:homer-simpson");
         assert_eq!(candidates[0].reason, MatchReason::SameName);
 
-        // Names are not unique; handles are. The same signal clears it.
+        // Names are not unique; handles are. This refusal's own token clears it.
         assert_eq!(
             decide_relabel(
                 &borrower,
                 &["Zenith", "Cosme Fulanito"],
                 &["Zenith"],
                 &idx,
-                true
+                Some(&override_token(&borrower, &candidates)),
             ),
             Decision::Proceed
         );
@@ -1045,7 +1131,7 @@ mod tests {
                 &["Second Alpha", "Alpha"],
                 &["Second Alpha", "Alpha"],
                 &idx,
-                false
+                None
             ),
             Decision::Proceed,
             "re-sending the labels it already wears is not a collision with anyone"
@@ -1056,13 +1142,13 @@ mod tests {
                 &["  SECOND   alpha ", "alpha"],
                 &["Second Alpha", "Alpha"],
                 &idx,
-                false
+                None
             ),
             Decision::Proceed,
             "case and spacing folded on both sides"
         );
         assert_eq!(
-            decide_relabel(&settled, &[], &["Second Alpha"], &idx, false),
+            decide_relabel(&settled, &[], &["Second Alpha"], &idx, None),
             Decision::Proceed,
             "a patch carrying no label at all screens against nothing"
         );
@@ -1077,7 +1163,7 @@ mod tests {
         idx.push(entity("person:alpha-two", "Alpha", "user-named"));
         let existing = EntityId("person:alpha-two".into());
         assert_eq!(
-            rename(&existing, "  ALPHA  ", "Alpha", &idx, false),
+            rename(&existing, "  ALPHA  ", "Alpha", &idx, None),
             Decision::Proceed,
             "case and spacing folded: this is the same name, not a new collision"
         );

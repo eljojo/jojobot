@@ -1259,12 +1259,12 @@ impl Mailboxes for IndexedMailboxes {
         &self,
         name: &jojobot_domain::mailbox::MailboxName,
         owner: &jojobot_domain::memory::EntityId,
-        create_new: bool,
+        override_token: Option<&str>,
     ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError>
     {
         // A box holds no text of its own — nothing to index until a message
         // lands in it.
-        self.inner.create_mailbox(name, owner, create_new).await
+        self.inner.create_mailbox(name, owner, override_token).await
     }
 
     async fn list_mailboxes(&self) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {

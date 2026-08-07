@@ -67,7 +67,7 @@ pub async fn ensure_default_identity(
         return Seeded::Unreachable(e.to_string());
     }
     if let Err(e) = mailboxes
-        .create_mailbox(&MailboxName(DEFAULT_BOT.to_string()), &id, false)
+        .create_mailbox(&MailboxName(DEFAULT_BOT.to_string()), &id, None)
         .await
     {
         // The bot landed and its box did not. Not silently: this is the state

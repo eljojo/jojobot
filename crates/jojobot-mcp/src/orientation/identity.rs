@@ -245,7 +245,7 @@ impl Jojobot {
         }
 
         let name = MailboxName(bot.slug().to_string());
-        match self.mailboxes.create_mailbox(&name, bot, true).await {
+        match self.mailboxes.create_mailbox(&name, bot, None).await {
             Ok(mailbox::Guarded::Written(opened)) => {
                 let mut body = mailbox_json(&opened);
                 if let Some(obj) = body.as_object_mut() {
@@ -336,8 +336,9 @@ mod tests {
     /// window is real: `owned_mailbox` finds no box and calls this, and
     /// between those two moments another boot of the SAME bot can open it.
     /// The loser's `create_mailbox` then meets an exact-name collision, which
-    /// `guard::decide_create` blocks whatever `create_new` says — an exact
-    /// name can never be forced. A non-`Written` answer must be checked for
+    /// `guard::decide_create` blocks whatever token it is handed and whoever
+    /// the owner is — an exact name can never be forced. A non-`Written`
+    /// answer must be checked for
     /// that collision before it is read as "the repair failed".
     ///
     /// Reproduced without a race, because the race is only how you arrive

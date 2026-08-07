@@ -34,10 +34,13 @@ pub struct AddEntityArgs {
     /// conversation reaches for it. Only the exact token `always` counts.
     #[serde(default)]
     pub boot: Option<String>,
-    /// Set only after a previous call came back with candidates and you judged
-    /// them a different entity. It never overrides an exact handle collision.
+    /// The token a previous call's refusal handed you, sent back after you read
+    /// its candidates and judged them a different entity. It lifts only the
+    /// refusal that minted it — a token you made up, or one from another
+    /// refusal, lifts nothing — and it never overrides an exact handle
+    /// collision.
     #[serde(default)]
-    pub create_new: Option<bool>,
+    pub override_token: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -67,13 +70,14 @@ impl Jojobot {
             return Vec::new();
         }
         let name = MailboxName(entity.id.slug().to_string());
-        // `create_new` is set, and it is not a loosening: it waives the
-        // SIMILARITY screen, never an exact collision. A near-miss box name is
-        // a near-miss bot handle, and that was already screened against the
-        // roster before this bot existed — re-screening the same string against
-        // a different list would block `bot:gamma` for a box called `gamma-2`
-        // that the operator deliberately named.
-        match self.mailboxes.create_mailbox(&name, &entity.id, true).await {
+        // No token, and none is needed: the box name IS the owner's handle, so
+        // the mailbox guard waives its SIMILARITY screen on that ground alone,
+        // and never an exact collision. A near-miss box name is a near-miss bot
+        // handle, and that was already screened against the roster before this
+        // bot existed — re-screening the same string against a different list
+        // would block `bot:gamma` for a box called `gamma-2` that the operator
+        // deliberately named.
+        match self.mailboxes.create_mailbox(&name, &entity.id, None).await {
             Ok(mailbox::Guarded::Written(opened)) => {
                 vec![("mailbox", opened.name.as_str().into())]
             }
@@ -114,9 +118,10 @@ impl Jojobot {
                        name it. Returns the stored entity. If its handle or any of its names \
                        resembles something jojobot already knows, NOTHING is written: the \
                        result says status: blocked with candidates and how_to_proceed. Use the \
-                       candidate you meant, or re-call with create_new: true if this genuinely \
-                       is a different thing sharing a name. An exact handle collision can never \
-                       be forced — a handle has exactly one owner."
+                       candidate you meant, or re-call with the override_token that refusal \
+                       carries if this genuinely is a different thing sharing a name — a token \
+                       lifts the one refusal that minted it and no other. An exact handle \
+                       collision can never be forced — a handle has exactly one owner."
     )]
     pub(crate) async fn add_entity(
         &self,
@@ -139,7 +144,7 @@ impl Jojobot {
             // a root.
             parent: None,
             boot: parse_boot(args.boot.as_deref())?,
-            create_new: args.create_new.unwrap_or(false),
+            override_token: args.override_token.clone(),
         };
         // Routed through the declined path rather than straight to the mapper,
         // for the reason capture is: an entity the validators refuse is a

@@ -61,9 +61,12 @@ impl Memory for InMemoryMemory {
             new.parent.as_ref(),
         )?;
         let index = self.index();
-        if let Decision::Block(candidates) =
-            guard::decide(&new.id, &new.labels(), &index, new.create_new)
-        {
+        if let Decision::Block(candidates) = guard::decide(
+            &new.id,
+            &new.labels(),
+            &index,
+            new.override_token.as_deref(),
+        ) {
             return Ok(Guarded::Blocked {
                 attempted: new.id,
                 candidates,
@@ -495,6 +498,36 @@ pub mod contract {
             .expect("add_entity should succeed")
             .written()
             .unwrap_or_else(|| panic!("the guard must not block {id}"))
+    }
+
+    /// Add an entity the guard is expected to **refuse first** — the way a
+    /// caller really gets one made: read the refusal, take the token it minted,
+    /// come again with it.
+    ///
+    /// The token is read out of the answer rather than made up beside it. A
+    /// setup line that mints its own token proves nothing about the store it is
+    /// setting up, and would pass on one that accepts any string.
+    async fn add_over_the_screen<M: Memory>(store: &M, new: NewEntity) -> Entity {
+        let id = new.id.clone();
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = store
+            .add_entity(new.clone())
+            .await
+            .expect("add_entity should succeed")
+        else {
+            panic!("{id} was expected to hit the near-miss screen and did not");
+        };
+        store
+            .add_entity(NewEntity {
+                override_token: Some(guard::override_token(&attempted, &candidates)),
+                ..new
+            })
+            .await
+            .expect("add_entity should succeed")
+            .written()
+            .unwrap_or_else(|| panic!("the refusal's own token must let {id} through"))
     }
 
     /// Edit a fact the guard is expected to wave through — provisioning any edge
@@ -1175,9 +1208,6 @@ pub mod contract {
         let blocked = store
             .add_entity(NewEntity {
                 parent: Some(typo.clone()),
-                // The same signal that clears a name collision must not
-                // conjure a parent: this is a write that NAMES an entity.
-                create_new: true,
                 ..NewEntity::new(child.clone(), "Plant Shift", "contract-fixture")
             })
             .await
@@ -1196,6 +1226,26 @@ pub mod contract {
         assert!(
             candidates.iter().any(|c| c.handle == real),
             "the answer names what it might have meant: {candidates:?}"
+        );
+
+        // **The token that clears a name collision must not conjure a parent.**
+        // This is the token for exactly the refusal above — correctly derived,
+        // not invented — and this gate still refuses it, because a write that
+        // NAMES an entity has no override to offer.
+        let held = guard::override_token(&attempted, &candidates);
+        assert!(
+            matches!(
+                store
+                    .add_entity(NewEntity {
+                        parent: Some(typo.clone()),
+                        override_token: Some(held),
+                        ..NewEntity::new(child.clone(), "Plant Shift", "contract-fixture")
+                    })
+                    .await
+                    .expect("an unresolvable parent is an answer, not a failure"),
+                Guarded::Blocked { .. }
+            ),
+            "no token creates a parent: naming a thing is not creating it"
         );
 
         let known = store
@@ -1217,12 +1267,15 @@ pub mod contract {
         let blocked = store
             .add_entity(NewEntity {
                 parent: Some(ouroboros.clone()),
-                create_new: true,
                 ..NewEntity::new(ouroboros.clone(), "Contract Ouroboros", "contract-fixture")
             })
             .await
             .expect("a self-parenting write is an answer, not a failure");
-        let Guarded::Blocked { candidates, .. } = blocked else {
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = blocked
+        else {
             panic!("an entity naming itself as its parent must block");
         };
         assert!(
@@ -1230,6 +1283,29 @@ pub mod contract {
                 .iter()
                 .any(|c| c.handle == ouroboros && c.reason == guard::MatchReason::SelfParent),
             "the answer says WHICH refusal this is, or it reads as an unknown handle: {candidates:?}"
+        );
+
+        // The token derived from this very refusal, handed back. It changes
+        // nothing, because there is no honest "I checked, they're different"
+        // answer when both handles are the same one.
+        let held = guard::override_token(&attempted, &candidates);
+        assert!(
+            matches!(
+                store
+                    .add_entity(NewEntity {
+                        parent: Some(ouroboros.clone()),
+                        override_token: Some(held),
+                        ..NewEntity::new(
+                            ouroboros.clone(),
+                            "Contract Ouroboros",
+                            "contract-fixture"
+                        )
+                    })
+                    .await
+                    .expect("a self-parenting write is an answer, not a failure"),
+                Guarded::Blocked { .. }
+            ),
+            "self-parenting is never overridable"
         );
         assert!(
             !store
@@ -1443,13 +1519,18 @@ pub mod contract {
             )
             .await
             .expect("the call itself succeeds; the guard answers in the result");
-        let Guarded::Blocked { candidates, .. } = outcome else {
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = outcome
+        else {
             panic!("a rename onto an existing name must be blocked");
         };
         assert!(
             candidates.iter().any(|m| m.handle == first),
             "the guard must name the entity already wearing it: {candidates:?}"
         );
+        let token = guard::override_token(&attempted, &candidates);
 
         let entities = store.list_entities(None).await.expect("list");
         let wearing_the_name: Vec<&EntityId> = entities
@@ -1463,20 +1544,41 @@ pub mod contract {
             "an unconfirmed rename onto an existing name must not land"
         );
 
-        // The same explicit signal that clears a creation clears a rename.
+        // A token nobody minted must not resolve it, or the mechanism is a
+        // boolean with more ceremony.
+        assert!(
+            matches!(
+                store
+                    .update_entity(
+                        &second,
+                        EntityPatch {
+                            name: Some("Renamed Onto".into()),
+                            override_token: Some("0000000000000000".into()),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .expect("the call itself succeeds; the guard answers in the result"),
+                Guarded::Blocked { .. }
+            ),
+            "a token this refusal did not mint resolves nothing"
+        );
+
+        // The token this refusal minted clears a rename, exactly as it clears a
+        // creation — one mechanism over both gates.
         let forced = store
             .update_entity(
                 &second,
                 EntityPatch {
                     name: Some("Renamed Onto".into()),
-                    create_new: true,
+                    override_token: Some(token),
                     ..Default::default()
                 },
             )
             .await
             .expect("update should succeed")
             .written()
-            .expect("an explicit create_new resolves the rename");
+            .expect("the refusal's own token resolves the rename");
         assert_eq!(forced.name, "Renamed Onto");
         assert_eq!(forced.id, second, "the handle is untouched by a rename");
     }
@@ -1489,13 +1591,11 @@ pub mod contract {
         let settled = EntityId::person("contract-nearslug");
         let neighbour = EntityId::person("contract-nearslugg");
         add(store, NewEntity::new(settled, "Nearslug One", "user-named")).await;
-        add(
+        // The near-slug the guard reported, judged different at creation — made
+        // the way a caller really makes one, over the refusal's own token.
+        add_over_the_screen(
             store,
-            NewEntity {
-                // The near-slug the guard reported, judged different at creation.
-                create_new: true,
-                ..NewEntity::new(neighbour.clone(), "Quite Another Two", "user-named")
-            },
+            NewEntity::new(neighbour.clone(), "Quite Another Two", "user-named"),
         )
         .await;
 
@@ -1545,13 +1645,18 @@ pub mod contract {
             )
             .await
             .expect("the call itself succeeds; the guard answers in the result");
-        let Guarded::Blocked { candidates, .. } = outcome else {
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = outcome
+        else {
             panic!("an alias onto a name another entity wears must be blocked");
         };
         assert!(
             candidates.iter().any(|m| m.handle == owner),
             "the guard must name the entity already wearing it: {candidates:?}"
         );
+        let token = guard::override_token(&attempted, &candidates);
         assert!(
             store
                 .list_entities(None)
@@ -1563,21 +1668,21 @@ pub mod contract {
             "a blocked alias write lands nothing"
         );
 
-        // The same explicit signal that clears a rename clears this: names are
-        // not unique, and two entities may legitimately answer to one word.
+        // The same mechanism that clears a rename clears this: names are not
+        // unique, and two entities may legitimately answer to one word.
         let forced = store
             .update_entity(
                 &borrower,
                 EntityPatch {
                     aliases: Some(vec!["Contract Alias Owner".into()]),
-                    create_new: true,
+                    override_token: Some(token),
                     ..Default::default()
                 },
             )
             .await
             .expect("update should succeed")
             .written()
-            .expect("an explicit create_new resolves the collision");
+            .expect("the refusal's own token resolves the collision");
         assert_eq!(forced.aliases, vec!["Contract Alias Owner".to_string()]);
     }
 
@@ -1625,15 +1730,12 @@ pub mod contract {
         )
         .await;
         // A second entity that legitimately shares the name — settled once, at
-        // creation, with the explicit signal. That settlement must not be
+        // creation, over that refusal's own token. That settlement must not be
         // re-litigated by a patch that touches no label at all.
         let twin = EntityId::new(EntityKind::Org, "contract-unscreened-twin");
-        add(
+        add_over_the_screen(
             store,
-            NewEntity {
-                create_new: true,
-                ..NewEntity::new(twin.clone(), "Unscreened Org", "user-named")
-            },
+            NewEntity::new(twin.clone(), "Unscreened Org", "user-named"),
         )
         .await;
 
@@ -2834,29 +2936,41 @@ pub mod contract {
     // --- the write guard, on the write path ----------------------------------
 
     /// The golden case: a second entity at an existing handle is blocked, and
-    /// `create_new` cannot force it. Two same-named people can never merge into
-    /// one portrait silently.
+    /// **no token forces it — not even the one this refusal itself mints.** Two
+    /// same-named people can never merge into one portrait silently (rule 61).
     pub async fn add_entity_blocks_an_existing_handle<M: Memory>(store: &M) {
         let id = EntityId::person("contract-alpha");
         add(store, NewEntity::new(id.clone(), "Alpha", "crm-card")).await;
 
-        for create_new in [false, true] {
-            let outcome = store
-                .add_entity(NewEntity {
-                    create_new,
-                    ..NewEntity::new(id.clone(), "Alpha Two", "user-named")
-                })
-                .await
-                .expect("the call itself succeeds; the guard answers in the result");
-            let Guarded::Blocked { candidates, .. } = outcome else {
-                panic!("a colliding handle must be blocked (create_new={create_new})");
-            };
-            assert_eq!(candidates[0].reason, guard::MatchReason::ExactHandle);
-            assert_eq!(
-                candidates[0].source, "crm-card",
-                "the caller decides on the source"
-            );
-        }
+        let outcome = store
+            .add_entity(NewEntity::new(id.clone(), "Alpha Two", "user-named"))
+            .await
+            .expect("the call itself succeeds; the guard answers in the result");
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = outcome
+        else {
+            panic!("a colliding handle must be blocked");
+        };
+        assert_eq!(candidates[0].reason, guard::MatchReason::ExactHandle);
+        assert_eq!(
+            candidates[0].source, "crm-card",
+            "the caller decides on the source"
+        );
+
+        let held = guard::override_token(&attempted, &candidates);
+        let again = store
+            .add_entity(NewEntity {
+                override_token: Some(held),
+                ..NewEntity::new(id.clone(), "Alpha Two", "user-named")
+            })
+            .await
+            .expect("the call itself succeeds; the guard answers in the result");
+        let Guarded::Blocked { candidates, .. } = again else {
+            panic!("a colliding handle stays blocked, token or not");
+        };
+        assert_eq!(candidates[0].reason, guard::MatchReason::ExactHandle);
 
         let seen = read_entity(store, &id).await;
         assert_eq!(
@@ -2865,9 +2979,11 @@ pub mod contract {
         );
     }
 
-    /// A near-miss handle is reported, and the explicit create-new signal is
-    /// what lets a genuinely different entity through.
-    pub async fn add_entity_reports_a_near_miss_then_accepts_create_new<M: Memory>(store: &M) {
+    /// A near-miss handle is reported, and **the token that refusal minted** is
+    /// what lets a genuinely different entity through — while a token nobody
+    /// minted lets nothing through at all. Both halves, because a store that
+    /// accepts any string passes the first one.
+    pub async fn add_entity_reports_a_near_miss_then_accepts_its_own_token<M: Memory>(store: &M) {
         let first = EntityId::new(EntityKind::Org, "contract-riverside");
         add(
             store,
@@ -2880,7 +2996,11 @@ pub mod contract {
             .add_entity(NewEntity::new(typo.clone(), "Riversid", "user-named"))
             .await
             .expect("call succeeds");
-        let Guarded::Blocked { candidates, .. } = outcome else {
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = outcome
+        else {
             panic!("a one-letter-off handle must be reported");
         };
         assert!(candidates.iter().any(|m| m.handle == first));
@@ -2893,11 +3013,26 @@ pub mod contract {
                 .all(|e| e.id != typo),
             "a blocked add must write nothing"
         );
+        let token = guard::override_token(&attempted, &candidates);
+
+        assert!(
+            matches!(
+                store
+                    .add_entity(NewEntity {
+                        override_token: Some("0000000000000000".into()),
+                        ..NewEntity::new(typo.clone(), "Riversid", "user-named")
+                    })
+                    .await
+                    .expect("call succeeds"),
+                Guarded::Blocked { .. }
+            ),
+            "a token nobody minted lifts nothing"
+        );
 
         let forced = add(
             store,
             NewEntity {
-                create_new: true,
+                override_token: Some(token),
                 ..NewEntity::new(typo.clone(), "Riversid", "user-named")
             },
         )
@@ -2909,7 +3044,7 @@ pub mod contract {
     /// something else" — must *be* something: letting a novel subject
     /// self-provision a nameless entity would turn every typo or
     /// plausible-looking AI handle into a permanent record nobody chose.
-    /// There is no create-new escape on this path either: a genuinely new
+    /// There is no override on this path either: a genuinely new
     /// entity is `add_entity`, then the capture — two deliberate steps.
     pub async fn capture_requires_an_existing_subject<M: Memory>(store: &M) {
         let known = EntityId::person("contract-zenith");
@@ -3888,7 +4023,7 @@ pub mod contract {
         update_fact_tells_an_unknown_handle_from_an_empty_entity(store).await;
 
         add_entity_blocks_an_existing_handle(store).await;
-        add_entity_reports_a_near_miss_then_accepts_create_new(store).await;
+        add_entity_reports_a_near_miss_then_accepts_its_own_token(store).await;
         capture_requires_an_existing_subject(store).await;
         capture_requires_an_existing_edge_object(store).await;
         update_fact_requires_an_existing_edge_object(store).await;

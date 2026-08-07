@@ -551,7 +551,7 @@ mod tests {
                 crm: None,
                 parent: None,
                 boot: Default::default(),
-                create_new: false,
+                override_token: None,
             })
             .await
             .expect("the store writes it");

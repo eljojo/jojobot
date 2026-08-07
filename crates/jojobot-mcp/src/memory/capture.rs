@@ -403,9 +403,10 @@ mod tests {
     }
 
     /// Capture's subject must exist, near miss or complete stranger, and the
-    /// way through is `add_entity` — never a flag. The advice must say
-    /// `add_entity`: `create_new` is not a parameter on this verb, and telling
-    /// the caller to pass it would send it round a loop it cannot leave.
+    /// way through is `add_entity` — never an override. The advice must say
+    /// `add_entity`: `override_token` is not a parameter on this verb, and
+    /// telling the caller to send one would offer a way out that does not
+    /// exist.
     #[tokio::test]
     async fn a_blocked_capture_says_to_add_the_entity_first() {
         let jojobot = handler();
@@ -437,8 +438,8 @@ mod tests {
             "something does resemble it — that is what the candidates are: {advice}"
         );
         assert!(
-            !advice.contains("create_new"),
-            "capture has no create_new, near miss or not: {advice}"
+            !advice.contains("override_token"),
+            "capture has no override_token, near miss or not: {advice}"
         );
 
         // A handle nothing resembles blocks too, with nothing to suggest.
@@ -458,9 +459,9 @@ mod tests {
             "must name the way through: {advice}"
         );
         assert!(
-            !advice.contains("create_new: true"),
-            "capture has no create_new; advising it sends the caller round a loop \
-             with no exit: {advice}"
+            !advice.contains("override_token"),
+            "capture has no override_token; advising one offers a way out that does \
+             not exist: {advice}"
         );
         assert!(
             !advice.contains("above"),

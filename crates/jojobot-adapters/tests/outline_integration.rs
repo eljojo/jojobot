@@ -310,7 +310,7 @@ async fn assert_the_mailbox_contract_holds(http: &reqwest::Client, c: &Creds) {
                         crm: None,
                         parent: None,
                         boot: Default::default(),
-                        create_new: false,
+                        override_token: None,
                     })
                     .await
                     .expect("the owner is written")
@@ -785,7 +785,7 @@ async fn record_the_rail_goldens() {
         .create_mailbox(
             &jojobot_domain::mailbox::MailboxName("gamma".into()),
             &owner,
-            false,
+            None,
         )
         .await
         .expect("the box opens")

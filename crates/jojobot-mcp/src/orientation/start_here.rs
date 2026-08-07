@@ -242,7 +242,7 @@ mod tests {
                 source: "user-named".into(),
                 crm: None,
                 boot: None,
-                create_new: None,
+                override_token: None,
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await

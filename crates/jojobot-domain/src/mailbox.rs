@@ -602,9 +602,10 @@ pub enum MailboxError {
 pub trait Mailboxes: Send + Sync {
     /// Create a mailbox. Screened against the existing names, so one that looks
     /// like a box already there comes back [`Guarded::Blocked`] with candidates.
-    /// `create_new` is the caller's explicit "I know, it's a sibling" signal:
-    /// it overrides the near/containment screen (so `worker-2` is creatable
-    /// beside `worker-1`), and never an exact name — that box already exists.
+    /// `override_token` is the token THIS refusal minted, handed back: it
+    /// lifts the near/containment screen (so `worker-2` is creatable beside
+    /// `worker-1`), and never an exact name — that box already exists. A token
+    /// from another refusal, or one nobody minted, lifts nothing.
     /// **A mailbox is created FOR somebody.** The owner is an input, not
     /// something discovered later: an owner that does not exist comes back
     /// [`Guarded::UnknownOwner`], and there is no way to mint an unowned box —
@@ -613,7 +614,7 @@ pub trait Mailboxes: Send + Sync {
         &self,
         name: &MailboxName,
         owner: &EntityId,
-        create_new: bool,
+        override_token: Option<&str>,
     ) -> Result<Guarded<Mailbox>, MailboxError>;
 
     /// Every mailbox jojobot manages, with per-state counts.

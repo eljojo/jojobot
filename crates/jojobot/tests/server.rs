@@ -434,8 +434,9 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
         "capture's description must name the two-step flow its gate forces: {capture_doc}"
     );
     assert!(
-        !capture_doc.contains("create_new"),
-        "capture has no create_new; promising one sends the caller round a loop: {capture_doc}"
+        !capture_doc.contains("override_token"),
+        "capture has no override_token; promising one offers a way out that does not \
+         exist: {capture_doc}"
     );
 
     // **The boot comes first, because a write with nobody behind it no longer
