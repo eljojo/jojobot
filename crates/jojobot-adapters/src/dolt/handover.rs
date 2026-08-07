@@ -219,6 +219,31 @@ fn unread_back(what: &'static str) -> impl FnOnce(MailboxError) -> HandoverError
     }
 }
 
+/// The same, for the one read-back that is addressed at a single record.
+///
+/// **Absence is one cause among several, and only it may be reported as
+/// absence.** A store that cannot be reached and an id the read path will not
+/// parse are not a missing row, and saying they are sends the reader hunting
+/// for a session that is sitting in the table — on a boot that refuses again
+/// every restart until they find it.
+fn unread_session_back(which: String) -> impl FnOnce(SessionError) -> HandoverError {
+    move |e| match e {
+        SessionError::UnknownSession { .. } => HandoverError::Mismatch {
+            what: "session",
+            which,
+            field: "the session itself is not there",
+        },
+        other => {
+            tracing::error!(error = %other, which, "the handover could not read a carried session back");
+            HandoverError::Mismatch {
+                what: "session",
+                which,
+                field: "the read-back itself",
+            }
+        }
+    }
+}
+
 /// A write the target refused, **carrying the store's own words**.
 ///
 /// The store's vocabulary stops at the boundary everywhere a CALLER is on the
@@ -657,11 +682,7 @@ async fn verify(
         let now = to_sessions
             .read_session(&was.id)
             .await
-            .map_err(|_| HandoverError::Mismatch {
-                what: "session",
-                which: was.id.to_string(),
-                field: "the session itself is not there",
-            })?;
+            .map_err(unread_session_back(was.id.to_string()))?;
         let field = if now.sid != was.sid {
             Some("sid")
         } else if now.bot != was.bot {
@@ -1916,6 +1937,147 @@ mod tests {
         assert!(report.whole(), "every kind came through whole: {report:?}");
         assert_eq!(report.boxes.verified, 2);
         assert_eq!(report.messages.verified, 3);
+
+        store.stop().await;
+    }
+
+    /// **A session read-back that was refused says the store refused it, not
+    /// that the session is missing.**
+    ///
+    /// The mail half's case, one port over. "The session itself is not there"
+    /// sends the operator hunting for a row that is sitting in the table, and
+    /// the boot refuses again on every restart — so the one cause that really is
+    /// absence keeps that sentence, and every other cause says what happened
+    /// instead.
+    #[tokio::test]
+    async fn a_refused_session_read_back_does_not_claim_the_session_is_absent() {
+        /// The real target, with the session read-back refusing in one named
+        /// way. A function rather than a value because the error is not `Clone`.
+        struct Refusing(DoltSessions, Option<fn() -> SessionError>);
+
+        #[async_trait::async_trait]
+        impl Sessions for Refusing {
+            async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+                match self.1 {
+                    Some(refusal) => Err(refusal()),
+                    None => self.0.read_session(id).await,
+                }
+            }
+            async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+                self.0.sessions_of(bot).await
+            }
+            async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+                self.0.all_sessions().await
+            }
+            async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+                self.0.begin(new).await
+            }
+            async fn append(
+                &self,
+                id: &SessionId,
+                entry: NewEntry,
+            ) -> Result<JournalEntry, SessionError> {
+                self.0.append(id, entry).await
+            }
+            async fn amend_last(
+                &self,
+                id: &SessionId,
+                text: &str,
+            ) -> Result<JournalEntry, SessionError> {
+                self.0.amend_last(id, text).await
+            }
+            async fn amend_beat(
+                &self,
+                id: &SessionId,
+                entry: &jojobot_domain::session::EntryId,
+                text: &str,
+                at: jiff::Timestamp,
+            ) -> Result<JournalEntry, SessionError> {
+                self.0.amend_beat(id, entry, text, at).await
+            }
+            async fn set_focus(
+                &self,
+                id: &SessionId,
+                focus: &str,
+            ) -> Result<Session, SessionError> {
+                self.0.set_focus(id, focus).await
+            }
+            async fn close(
+                &self,
+                id: &SessionId,
+                to: jojobot_domain::session::SessionState,
+            ) -> Result<Session, SessionError> {
+                self.0.close(id, to).await
+            }
+            async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+                self.0.reopen(id).await
+            }
+        }
+
+        /// A refusal, and the field the handover must report it as.
+        type Case = (&'static str, fn() -> SessionError, &'static str);
+
+        let cases: [Case; 3] = [
+            (
+                "unreachable",
+                || SessionError::Store("the store would not answer".into()),
+                "the read-back itself",
+            ),
+            (
+                "malformed-id",
+                || SessionError::InvalidId("not a session id".into()),
+                "the read-back itself",
+            ),
+            (
+                "absent",
+                || SessionError::UnknownSession {
+                    attempted: "abcd".into(),
+                },
+                "the session itself is not there",
+            ),
+        ];
+
+        for (case, refusal, expected) in cases {
+            let (old_mail, old_sessions) = old_board().await;
+            let (mut store, mail, sessions) = new_store(&format!("session-read-back-{case}")).await;
+
+            let outcome = run(
+                &old_mail,
+                &old_sessions,
+                &mail,
+                &Refusing(sessions, Some(refusal)),
+                store.pool(),
+            )
+            .await;
+
+            let Err(HandoverError::Mismatch { what, field, .. }) = outcome else {
+                panic!("a refused session read-back fails the handover: {outcome:?}");
+            };
+            assert_eq!(what, "session");
+            assert_eq!(
+                field, expected,
+                "a {case} read-back is reported as what it was"
+            );
+
+            store.stop().await;
+        }
+
+        // **The positive the three rest on.** The same decorator, refusing
+        // nothing, carries the board — so the cases above failed on the refusal
+        // and not on a double that cannot complete a handover at all.
+        let (old_mail, old_sessions) = old_board().await;
+        let (mut store, mail, sessions) = new_store("session-read-back-intact").await;
+        let report = run(
+            &old_mail,
+            &old_sessions,
+            &mail,
+            &Refusing(sessions, None),
+            store.pool(),
+        )
+        .await
+        .expect("a target that answers the read completes the handover");
+        assert!(report.whole(), "every kind came through whole: {report:?}");
+        assert_eq!(report.sessions.verified, 1);
 
         store.stop().await;
     }
