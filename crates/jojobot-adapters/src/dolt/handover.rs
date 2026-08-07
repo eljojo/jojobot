@@ -1003,6 +1003,15 @@ mod tests {
         held
     }
 
+    /// The id counters, by name and value, in an order a comparison can rely
+    /// on. **The one table the handover writes that no guard asks about.**
+    async fn counters(pool: &MySqlPool) -> Vec<(String, i64)> {
+        sqlx::query_as("SELECT kind, counter FROM minted ORDER BY kind")
+            .fetch_all(pool)
+            .await
+            .expect("the counters are readable")
+    }
+
     /// The old board, with a message in **each** state and a session with a
     /// chronology on it.
     ///
@@ -2475,6 +2484,227 @@ mod tests {
              'nothing to carry' it would serve an empty board as the whole truth: {outcome:?}"
         );
         assert_eq!(recorded_state(store.pool()).await, None);
+
+        store.stop().await;
+    }
+
+    /// **The exit from the halfway state, walked rather than written down.**
+    ///
+    /// When the rows commit and the read-back does not pass, the record stays
+    /// `written` and every later boot refuses — correctly, and for ever. The
+    /// only way out is a person, and a failure mode whose only exit has never
+    /// been run is the worst kind to meet at 2am. So the repair is here as
+    /// statements somebody can copy, and this case is what keeps them true.
+    ///
+    /// **THE RUNBOOK.** Against the store's own database, in this order:
+    ///
+    /// ```sql
+    /// DELETE FROM journal_entry;
+    /// DELETE FROM session;
+    /// DELETE FROM message;
+    /// DELETE FROM mailbox;
+    /// DELETE FROM handover WHERE what = 'mail-and-sessions';
+    /// ```
+    ///
+    /// Then start the server. It finds no record, carries the board again from
+    /// the old store — which was never touched — and verifies it.
+    ///
+    /// **Why the unqualified DELETEs are safe HERE and nowhere else.** Every
+    /// row in those four tables was put there by the interrupted run: the
+    /// record has said `written` since, so every boot after it refused, and
+    /// nothing has been served from this store or written to it. On a store
+    /// that has been live these statements are a data loss, not a repair — the
+    /// halfway state is the whole of what makes them right.
+    ///
+    /// **Why the record goes LAST.** While it stands the store keeps answering
+    /// `written`, which names the state a person is actually in; take it away
+    /// first and a boot in the middle of the repair refuses as `Populated`
+    /// instead, which sends them looking for a squatter that is their own
+    /// half-done work.
+    ///
+    /// **What the repair leaves behind, and why it does not matter.** The id
+    /// counters in `minted` were committed with the rows and no statement above
+    /// clears them — and `must_be_empty` never looks at that table, so nothing
+    /// would notice if they had been. It is safe in the direction it fails:
+    /// `advance` raises a counter with `GREATEST`, so a carry over the same
+    /// board leaves them where they already were, and a counter that is too
+    /// high mints an id nothing wears while one that is too low mints an id
+    /// something does. Asserted below rather than reasoned about, because it is
+    /// the one thing about this repair that is true by accident of one
+    /// operator.
+    #[tokio::test]
+    async fn the_halfway_state_is_repaired_by_clearing_what_was_carried_and_its_record() {
+        let (old_mail, old_sessions) = old_board().await;
+        let (mut store, mail, sessions) = new_store("halfway-repair").await;
+
+        // The halfway state, reached the way the existing case reaches it: a
+        // real commit, and a post-commit read-back that does not pass.
+        let interrupted = run(
+            &old_mail,
+            &old_sessions,
+            &Mangling(mail, |m| m.body.push_str(" and something nobody wrote")),
+            &sessions,
+            store.pool(),
+        )
+        .await;
+        assert!(
+            matches!(interrupted, Err(HandoverError::Mismatch { .. })),
+            "the read-back must fail to leave the state this case is about: {interrupted:?}"
+        );
+
+        // The store is wedged: a board is in, nobody checked it, and the boot
+        // path refuses. This is the precondition, not the subject.
+        let healthy = DoltMailboxes::open(store.pool().clone(), Arc::new(AnyOwner));
+        let wedged = carry_over(&old_mail, &old_sessions, &healthy, &sessions, store.pool()).await;
+        assert!(
+            matches!(wedged, Carryover::Refused(HandoverError::Halfway { .. })),
+            "a person is only needed because the boot cannot get out of this itself: {wedged:?}"
+        );
+        let counters_before = counters(store.pool()).await;
+        assert_eq!(
+            counters_before,
+            vec![
+                ("entry".to_string(), 3),
+                ("message".to_string(), 3),
+                ("session".to_string(), 1)
+            ],
+            "the interrupted run committed its counters with its rows — an empty table here \
+             would make the comparisons below true of nothing"
+        );
+
+        // ---- THE REPAIR ------------------------------------------------------
+        for statement in [
+            "DELETE FROM journal_entry",
+            "DELETE FROM session",
+            "DELETE FROM message",
+            "DELETE FROM mailbox",
+            "DELETE FROM handover WHERE what = 'mail-and-sessions'",
+        ] {
+            sqlx::query(statement)
+                .execute(store.pool())
+                .await
+                .unwrap_or_else(|e| panic!("the repair statement `{statement}` ran: {e}"));
+        }
+
+        // What the person can check before restarting, in the reads they
+        // already have open.
+        assert_eq!(
+            carried_rows(store.pool()).await,
+            vec![
+                ("mailbox", 0),
+                ("message", 0),
+                ("session", 0),
+                ("journal_entry", 0)
+            ],
+            "the five statements clear every kind the guards look at — one missed table is a \
+             boot that refuses as populated instead of carrying"
+        );
+        assert_eq!(
+            recorded_state(store.pool()).await,
+            None,
+            "and the record went with them, so the next boot is a first boot"
+        );
+        // **And they leave the counters standing**, which is the one thing the
+        // runbook does not undo and no guard would notice if it did. Pinned
+        // here rather than in the prose, because it is the whole of what makes
+        // the repair safe to run without touching that table.
+        assert_eq!(
+            counters(store.pool()).await,
+            counters_before,
+            "the repair does not clear `minted`, and `must_be_empty` never asks about it"
+        );
+
+        // ---- THE NEXT BOOT ---------------------------------------------------
+        let repaired =
+            carry_over(&old_mail, &old_sessions, &healthy, &sessions, store.pool()).await;
+        let Carryover::Carried(report) = repaired else {
+            panic!("the boot after the repair carries the board across: {repaired:?}");
+        };
+        assert!(report.whole(), "every kind came through whole: {report:?}");
+        assert_eq!(
+            recorded_state(store.pool()).await.as_deref(),
+            Some("verified"),
+            "and this time the read-back passed, which is the only thing that lets the store be \
+             served from"
+        );
+
+        // **The board is whole**, which is what the operator is actually
+        // repairing towards — not a green boot over a board that came back
+        // short. Read through the store's own read path.
+        let landed = healthy.list_mailboxes().await.expect("list ok");
+        let gamma = landed
+            .iter()
+            .find(|b| b.name.as_str() == "gamma")
+            .expect("the box is back");
+        assert_eq!(
+            gamma.counts,
+            StateCounts {
+                new: 1,
+                read: 1,
+                processed: 1
+            },
+            "one message in each state, as the old board still has them — the repair carried the \
+             history, not just the mail"
+        );
+        let processed = healthy
+            .scan_messages()
+            .await
+            .expect("scan ok")
+            .into_iter()
+            .find(|m| m.state == jojobot_domain::mailbox::MessageState::Processed)
+            .expect("the handled message is back, handled");
+        assert_eq!(processed.notes.as_deref(), Some("the outcome, recorded"));
+        let carried = sessions
+            .all_sessions()
+            .await
+            .expect("list ok")
+            .pop()
+            .expect("the session is back");
+        assert_eq!(
+            carried
+                .entries
+                .iter()
+                .map(|e| e.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["what I set out to do", "what I found"],
+            "and its chronology still says what happened first"
+        );
+
+        // The re-carry raised them to the same place it had raised them the
+        // first time, so the leftover made no difference either way — which is
+        // the direction that has to be true for the runbook to be safe.
+        assert_eq!(
+            counters(store.pool()).await,
+            counters_before,
+            "the carry over the same board puts the counters where they already were"
+        );
+
+        // And the only thing they are for: the first write after the repair
+        // lands on an id nothing carried wears.
+        let posted = healthy
+            .post_message(NewMessage {
+                mailbox: MailboxName("gamma".into()),
+                body: "the first message written after the repair".into(),
+                subject: None,
+                sender: "gamma".into(),
+                sent_at: at(9),
+                in_reply_to: None,
+            })
+            .await
+            .expect("the repaired store takes a message")
+            .written()
+            .expect("not blocked");
+        assert_eq!(
+            healthy
+                .scan_messages()
+                .await
+                .expect("scan ok")
+                .iter()
+                .filter(|m| m.id == posted.id)
+                .count(),
+            1,
+            "the id it minted is one no carried message already wore"
+        );
 
         store.stop().await;
     }
