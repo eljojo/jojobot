@@ -244,10 +244,14 @@ impl FullTextIndex {
             .insert(entity.clone());
     }
 
-    /// The entities the index knows it is behind on, fewest words possible: the
-    /// count is what an answer reports, and the handles are what an operator
-    /// reads out of a log.
-    pub fn behind_now(&self) -> Vec<EntityId> {
+    /// The entities the index knows it is behind on.
+    ///
+    /// **A test observer, and gated so it cannot become anything else.** What a
+    /// caller is told is `Behind::Stale` on the coverage — that something is
+    /// behind, not which entity — so nothing in an answer or a log reads these
+    /// handles. This is how a test asserts the mark goes on and comes off.
+    #[cfg(test)]
+    fn behind_now(&self) -> Vec<EntityId> {
         self.behind
             .read()
             .expect("behind poisoned")
