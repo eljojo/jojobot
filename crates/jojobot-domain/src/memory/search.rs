@@ -143,12 +143,20 @@ pub struct SearchQuery {
     pub subject: Option<EntityId>,
     /// Facts drawing a matching edge.
     pub edge: Option<EdgeFilter>,
-    /// Whether messages are in the answer. **True by default**, because the
-    /// whole point is a session finding context it did not know where to look
-    /// for: excluded-by-default would rebuild the blindness with an extra step
-    /// in front of it. Set it false to keep work-queue traffic out of a recall
-    /// that is asking about the operator's life rather than about the sessions
-    /// serving it.
+    /// Whether messages are in the answer. **False by default, and worth
+    /// setting true.**
+    ///
+    /// Mail in the one ranked list is how a session finds a finding it did not
+    /// know to go looking for — a report another session filed is exactly the
+    /// context nobody would think to ask for — so this is a flag to reach for
+    /// rather than an obscure corner.
+    ///
+    /// It is still off unless asked for, because a mail hit carries somebody's
+    /// box, sender and a snippet of their message, and this is the verb the
+    /// surface tells a session to reach for FIRST. A session told to leave a
+    /// box alone must be able to use the front door without knowing to switch
+    /// something off: the safe branch is the default, never the documented
+    /// preference (rule 62).
     pub include_mail: bool,
     /// How many results to return.
     pub limit: usize,
@@ -163,7 +171,7 @@ impl Default for SearchQuery {
             provenance: None,
             subject: None,
             edge: None,
-            include_mail: true,
+            include_mail: false,
             limit: DEFAULT_LIMIT,
         }
     }

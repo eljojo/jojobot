@@ -1388,6 +1388,17 @@ mod tests {
         }
     }
 
+    /// A free-text query that asks for mail as well. **Mail is opt-in** — the
+    /// bare query leaves it out — and the tests below are about what the mail
+    /// half of the index holds, so they ask for it rather than relying on a
+    /// default that would hide the flag from every one of them.
+    fn asking_for_mail(text: &str) -> SearchQuery {
+        SearchQuery {
+            include_mail: true,
+            ..SearchQuery::text(text)
+        }
+    }
+
     fn index_of(scans: Vec<DocScan>) -> FullTextIndex {
         let index = FullTextIndex::open().expect("index opens");
         index.ingest_all(&scans).expect("ingest");
@@ -2985,9 +2996,7 @@ mod tests {
             )])
             .expect("ingest mail");
 
-        let hits = index
-            .search(&SearchQuery::text("damper"))
-            .expect("search ok");
+        let hits = index.search(&asking_for_mail("damper")).expect("search ok");
         let Some(Hit::Message { message, snippet }) =
             hits.iter().find(|h| matches!(h, Hit::Message { .. }))
         else {
@@ -3009,7 +3018,7 @@ mod tests {
         assert!(snippet.to_lowercase().contains("damper"), "got {snippet:?}");
 
         // One list: the same query reaches mail and memory together.
-        let mixed = index.search(&SearchQuery::text("kiln")).expect("search ok");
+        let mixed = index.search(&asking_for_mail("kiln")).expect("search ok");
         assert!(
             mixed.iter().any(|h| matches!(h, Hit::Fact { .. })),
             "{mixed:?}"
@@ -3055,9 +3064,7 @@ mod tests {
             ])
             .expect("ingest mail");
 
-        let hits = index
-            .search(&SearchQuery::text("crates"))
-            .expect("search ok");
+        let hits = index.search(&asking_for_mail("crates")).expect("search ok");
         let mut states: Vec<&str> = hits
             .iter()
             .filter_map(|h| match h {
@@ -3099,27 +3106,32 @@ mod tests {
             )])
             .expect("ingest mail");
 
+        // **Mail is opt-in.** A caller that has not asked for it does not get
+        // somebody's message back from the verb the surface tells it to reach
+        // for first (rule 62).
         let by_default = index
             .search(&SearchQuery::text("shipment"))
             .expect("search ok");
         assert!(
-            by_default.iter().any(|h| matches!(h, Hit::Message { .. })),
-            "mail is in by default — excluded-by-default rebuilds the blindness: {by_default:?}"
+            !by_default.iter().any(|h| matches!(h, Hit::Message { .. })),
+            "mail is not searched unless it is asked for: {by_default:?}"
+        );
+        assert!(
+            by_default.iter().any(|h| matches!(h, Hit::Fact { .. })),
+            "…and the memory half is untouched by that: {by_default:?}"
         );
 
-        let excluded = index
+        // Its pair: asked for, it is there. Without this the assertion above
+        // passes on an index that cannot return a message at all.
+        let asked = index
             .search(&SearchQuery {
-                include_mail: false,
+                include_mail: true,
                 ..SearchQuery::text("shipment")
             })
             .expect("search ok");
         assert!(
-            !excluded.iter().any(|h| matches!(h, Hit::Message { .. })),
-            "the caller asked for no mail: {excluded:?}"
-        );
-        assert!(
-            excluded.iter().any(|h| matches!(h, Hit::Fact { .. })),
-            "…and the memory half is untouched by that: {excluded:?}"
+            asked.iter().any(|h| matches!(h, Hit::Message { .. })),
+            "asked for, mail is in the one list: {asked:?}"
         );
     }
 
@@ -3212,7 +3224,7 @@ mod tests {
             .expect("re-ingest mail");
 
         let hits = index
-            .search(&SearchQuery::text("shipment"))
+            .search(&asking_for_mail("shipment"))
             .expect("search ok");
         let states: Vec<&str> = hits
             .iter()
@@ -3228,7 +3240,7 @@ mod tests {
         );
         assert_eq!(
             index
-                .search(&SearchQuery::text("ferret"))
+                .search(&asking_for_mail("ferret"))
                 .expect("search ok")
                 .len(),
             1,
@@ -3263,7 +3275,7 @@ mod tests {
             .expect("ingest one");
 
         let hits = index
-            .search(&SearchQuery::text("shipment"))
+            .search(&asking_for_mail("shipment"))
             .expect("search ok");
         assert_eq!(hits.len(), 1, "one copy, not two: {hits:?}");
         assert!(
@@ -3342,7 +3354,7 @@ mod tests {
         );
         assert_eq!(
             index
-                .search(&SearchQuery::text("shipment"))
+                .search(&asking_for_mail("shipment"))
                 .expect("search ok")
                 .len(),
             1,
@@ -3389,7 +3401,7 @@ mod tests {
         let both_survive = |index: &FullTextIndex, order: &str| {
             assert_eq!(
                 index
-                    .search(&SearchQuery::text("shipment"))
+                    .search(&asking_for_mail("shipment"))
                     .expect("search ok")
                     .len(),
                 1,
@@ -3397,7 +3409,7 @@ mod tests {
             );
             assert_eq!(
                 index
-                    .search(&SearchQuery::text("ferret"))
+                    .search(&asking_for_mail("ferret"))
                     .expect("search ok")
                     .len(),
                 1,
@@ -3436,7 +3448,7 @@ mod tests {
             mail_contract::post(&store, "pm", "dev", "the damper is still hand-cut", 0).await;
         let state_of = |index: &FullTextIndex| -> Option<MessageState> {
             index
-                .search(&SearchQuery::text("damper"))
+                .search(&asking_for_mail("damper"))
                 .expect("search ok")
                 .iter()
                 .find_map(|h| match h {
@@ -3480,7 +3492,7 @@ mod tests {
         let store = IndexedMailboxes::new(inner, index.clone());
         assert!(
             index
-                .search(&SearchQuery::text("started"))
+                .search(&asking_for_mail("started"))
                 .expect("search ok")
                 .is_empty(),
             "nothing is indexed until the board is read"
@@ -3488,7 +3500,7 @@ mod tests {
         assert_eq!(store.rebuild().await.expect("rebuild"), 1);
         assert_eq!(
             index
-                .search(&SearchQuery::text("started"))
+                .search(&asking_for_mail("started"))
                 .expect("search ok")
                 .len(),
             1
@@ -3511,7 +3523,7 @@ mod tests {
         ));
         assert!(
             index
-                .search(&SearchQuery::text("should not be indexed"))
+                .search(&asking_for_mail("should not be indexed"))
                 .expect("search ok")
                 .is_empty(),
             "a blocked post must leave nothing in the index either"

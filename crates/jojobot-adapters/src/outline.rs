@@ -4273,6 +4273,9 @@ mod tests {
         let hits = restarted
             .search(&SearchQuery {
                 text: Some("monorail".into()),
+                // Asked for: mail is opt-in, and what this asserts is that the
+                // mail half survived a restart, not what a bare query does.
+                include_mail: true,
                 ..Default::default()
             })
             .expect("search ok");

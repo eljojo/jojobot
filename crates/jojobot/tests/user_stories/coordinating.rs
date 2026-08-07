@@ -192,8 +192,12 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     .await;
 
     // Where the coordinator's own mail got to is readable without taking
-    // delivery of anything, and the search finds work filed for somebody else.
-    s.find("prose codec").await.says("delta");
+    // delivery of anything, and the search finds work filed for somebody else
+    // — once it asks for mail. A bare search is about the operator's life and
+    // leaves the boxes alone, so the answer says mail was not searched rather
+    // than letting an empty result read as "nobody filed that".
+    s.find("prose codec").await.says("\"searched\":false");
+    s.find_including_mail("prose codec").await.says("delta");
 
     // GAP — two slices are now in flight and nothing says so. A message is
     // `new`, `read` or `processed`, which is the state of a message and not

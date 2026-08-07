@@ -45,9 +45,11 @@ pub struct SearchArgs {
     #[serde(default)]
     pub edge: Option<EdgeFilterArgs>,
     /// Whether messages left in mailboxes are searched too. **Defaults to
-    /// true** — a report filed for another session is exactly the context you
-    /// would not know to go looking for. Pass `false` to keep session traffic
-    /// out of a question about the operator's life.
+    /// false, and worth passing true** when you are looking for what a session
+    /// knows: a report filed for another session is exactly the context you
+    /// would not know to go looking for, and this is the one call that finds
+    /// it. It is off unless you ask, because a message hit carries somebody's
+    /// box, sender and a snippet, and this verb is the one to reach for first.
     #[serde(default)]
     pub include_mail: Option<bool>,
     /// How many results; defaults to 20. There is no pagination — a second page
@@ -146,7 +148,9 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
 /// nothing reads (rule 106).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MailExcluded {
-    /// The caller said to leave mail out.
+    /// Mail was not asked for. **The default, so this is the ordinary case
+    /// rather than a caller ruling something out** — which is why the note
+    /// says how to ask rather than reporting a choice back.
     NotAsked,
     /// The query filters on a property only a fact has, so it is a question
     /// about facts and mail is not part of the answer it asks for.
@@ -179,7 +183,9 @@ impl MailExcluded {
     fn note(self) -> &'static str {
         match self {
             MailExcluded::NotAsked => {
-                "you passed include_mail: false, so messages were left out of this answer."
+                "mail was not searched, because this call did not ask for it — that is the \
+                 default. Pass include_mail: true to search messages too, which is how you \
+                 find a report another session filed."
             }
             MailExcluded::FactScoped => {
                 "this query filters on a property only a fact has (status, provenance, subject \
@@ -214,13 +220,15 @@ impl MailExcluded {
                 include_mail: false,
                 ..SearchQuery::default()
             },
+            // These two ask for mail, or they never reach their own reason:
+            // not-asked answers first, and it is now the default.
             MailExcluded::FactScoped => SearchQuery {
                 status: Some(FactStatus::Active),
-                ..SearchQuery::default()
+                ..asking_for_mail()
             },
             MailExcluded::KindFiltered => SearchQuery {
                 kind: Some(EntityKind::Person),
-                ..SearchQuery::default()
+                ..asking_for_mail()
             },
         }
     }
@@ -327,6 +335,18 @@ fn walk<T: Copy>(first: T, next: impl Fn(T) -> Option<T>) -> Vec<T> {
     walked
 }
 
+/// A query that asks for mail and narrows nothing else — the one shape whose
+/// mail coverage is decided by the INDEX rather than by the query, so it is
+/// what the coverage notes below are gathered through. `SearchQuery::default()`
+/// leaves mail out, which would gather the not-asked note four times over.
+#[cfg(test)]
+fn asking_for_mail() -> SearchQuery {
+    SearchQuery {
+        include_mail: true,
+        ..SearchQuery::default()
+    }
+}
+
 /// The next coverage state — [`MailExcluded::next`]'s job for the type this
 /// module does not own.
 #[cfg(test)]
@@ -364,7 +384,7 @@ pub(crate) fn coverage_notes() -> Vec<(String, String)> {
         ));
         found.push((
             format!("search's mail coverage note ({coverage:?})"),
-            mail_coverage(&SearchQuery::default(), coverage).to_string(),
+            mail_coverage(&asking_for_mail(), coverage).to_string(),
         ));
     }
     found
@@ -390,9 +410,14 @@ impl Jojobot {
                        carries its box, its state (new/read/processed — an archived report is \
                        findable, and the state is how you tell it from live work), its sender \
                        and the id read_message takes, plus a snippet rather than the whole body. \
-                       Mail is searched by default — pass include_mail: false to leave session \
-                       traffic out, and note that a `kind` filter also leaves it out, since a \
-                       message belongs to no entity and so has no kind to match. ALWAYS read the \
+                       Mail is OPT-IN: pass include_mail: true to search messages too, and \
+                       reach for it when you want what a session knows — a report filed for \
+                       another session is exactly the context you would not know to go looking \
+                       for, and this is the one call that finds it. It is off unless you ask, \
+                       because a message hit carries somebody's box, sender and a snippet, and \
+                       this is the verb to reach for first. Note that a `kind` filter leaves \
+                       mail out even when you ask, since a message belongs to no entity and so \
+                       has no kind to match. ALWAYS read the \
                        `mail` field of the answer, in BOTH directions: searched: false means no \
                        message was searched at all, which is not the same as nothing matching; \
                        and searched: true can still be partial after a degraded start, where the \
@@ -433,7 +458,7 @@ impl Jojobot {
                 .transpose()?,
             subject: args.subject.as_deref().map(EntityId::person),
             edge,
-            include_mail: args.include_mail.unwrap_or(true),
+            include_mail: args.include_mail.unwrap_or(false),
             limit: args.limit.map_or(DEFAULT_LIMIT, |l| l as usize),
         };
         // Checked here as well as in the index: a malformed query is the caller's
@@ -486,10 +511,40 @@ mod tests {
         // The positive half's pair: an unnarrowed query holds none of these
         // reasons, so the walk above is not simply matching everything.
         assert_eq!(
-            MailExcluded::of(&SearchQuery::default()),
+            MailExcluded::of(&asking_for_mail()),
             None,
-            "a query that narrows nothing leaves mail out for no query-side reason"
+            "a query that asks for mail and narrows nothing holds none of these reasons"
         );
+    }
+
+    /// **Mail is opt-in at the door, and the opt-in reaches the port.**
+    ///
+    /// `search` is the verb the surface tells a session to reach for first, and
+    /// a mail hit carries somebody's box, state, sender and a snippet. A
+    /// session told to leave a box alone cannot use the front door safely if
+    /// the unsafe branch is what a bare call does, so the default is the safe
+    /// one and reaching mail is asked for (rule 62).
+    ///
+    /// Both directions, because the negative alone passes on a build where the
+    /// flag never reaches the port at all.
+    #[tokio::test]
+    async fn mail_is_left_out_unless_a_caller_asks_for_it() {
+        for (asked, wanted) in [(None, false), (Some(false), false), (Some(true), true)] {
+            let spy = Arc::new(SpySearch::default());
+            handler_with(spy.clone())
+                .search(Parameters(SearchArgs {
+                    query: Some("damper".into()),
+                    include_mail: asked,
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok");
+            assert_eq!(
+                spy.query().include_mail,
+                wanted,
+                "include_mail: {asked:?} must reach the port as {wanted}"
+            );
+        }
     }
 
     /// Every argument reaches the port as the typed query it means — including the
@@ -697,6 +752,7 @@ mod tests {
             &handler_with(spy)
                 .search(Parameters(SearchArgs {
                     query: Some("damper".into()),
+                    include_mail: Some(true),
                     ..search_args()
                 }))
                 .await
@@ -732,6 +788,7 @@ mod tests {
             &handler_with(Arc::new(SpySearch::with_no_mail_indexed()))
                 .search(Parameters(SearchArgs {
                     query: Some("damper".into()),
+                    include_mail: Some(true),
                     ..search_args()
                 }))
                 .await
@@ -770,6 +827,7 @@ mod tests {
                 .search(Parameters(SearchArgs {
                     query: Some("damper".into()),
                     provenance: Some("testimony".into()),
+                    include_mail: Some(true),
                     ..search_args()
                 }))
                 .await
@@ -825,6 +883,7 @@ mod tests {
                 &handler_with(Arc::new(SpySearch::covering(coverage, hit())))
                     .search(Parameters(SearchArgs {
                         query: Some("damper".into()),
+                        include_mail: Some(true),
                         ..search_args()
                     }))
                     .await
@@ -854,6 +913,7 @@ mod tests {
             )))
             .search(Parameters(SearchArgs {
                 query: Some("damper".into()),
+                include_mail: Some(true),
                 ..search_args()
             }))
             .await
@@ -1035,6 +1095,7 @@ mod tests {
                 .search(Parameters(SearchArgs {
                     query: Some("damper".into()),
                     kind: Some("person".into()),
+                    include_mail: Some(true),
                     ..search_args()
                 }))
                 .await

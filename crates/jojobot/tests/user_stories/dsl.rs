@@ -464,6 +464,18 @@ impl Session {
         .await
     }
 
+    /// The same front door, asking for mail as well. **Mail is opt-in**: the
+    /// bare search above answers about the operator's life, and this is how a
+    /// session reaches what another session filed.
+    pub async fn find_including_mail(&self, query: &str) -> Answer {
+        self.read(
+            format!("search for {query:?}, mail included"),
+            "search",
+            json!({"query": query, "include_mail": true}),
+        )
+        .await
+    }
+
     /// Every claim nobody vouched for, across the whole store — the filter
     /// asks about provenance rather than about words.
     pub async fn unbacked(&self) -> Answer {

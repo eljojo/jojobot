@@ -184,13 +184,15 @@ impl ServerHandler for Jojobot {
                  `membership` · `attendance` · `about` · `connection` (a link is there and how \
                  it relates was not recorded) — and edges are what make cross-entity \
                  questions (\"which people are in X\") answerable without reading everything. \
-                 **Start with `search`**: one ranked list over entities, facts, free prose and \
-                 mailbox messages at once, every hit arriving with its surroundings.\
+                 **Start with `search`**: one ranked list over entities, facts and free prose, \
+                 every hit arriving with its surroundings — and over mailbox messages too when \
+                 you pass `include_mail: true`.\
                  \n\n**MAILBOXES.** A place to leave a message for someone who is not in this \
                  conversation. A mailbox is a named box (`[a-z0-9-]+`); a message in one is \
                  `new` → `read` → `processed`. **Read is not processed, and processed is not \
                  deleted**: reading takes delivery, processing means you acted, and `processed` \
-                 is a terminal archive. **Messages are searchable**: `search` returns them beside \
+                 is a terminal archive. **Messages are searchable, on request**: `search` with \
+                 `include_mail: true` returns them beside \
                  the memory hits, in every state including the processed archive, each hit \
                  carrying its box, its state, its sender and the id `read_message` takes — so a \
                  message left for one session is findable by any of them. `read_message` takes \
