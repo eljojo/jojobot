@@ -985,6 +985,24 @@ mod tests {
         .expect("the record is readable")
     }
 
+    /// How many rows of each carried kind the target holds, counted the way an
+    /// operator with a SQL client would.
+    ///
+    /// One plain query per table, never `must_be_empty` — that helper is the
+    /// guard these cases are checking, and a witness that shares the code it is
+    /// witnessing agrees with it whatever either does.
+    async fn carried_rows(pool: &MySqlPool) -> Vec<(&'static str, i64)> {
+        let mut held = Vec::new();
+        for table in ["mailbox", "message", "session", "journal_entry"] {
+            let rows: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM `{table}`"))
+                .fetch_one(pool)
+                .await
+                .expect("the table is readable");
+            held.push((table, rows));
+        }
+        held
+    }
+
     /// The old board, with a message in **each** state and a session with a
     /// chronology on it.
     ///
@@ -2474,6 +2492,15 @@ mod tests {
     /// schema is not the shape this build writes to. Dropping a table one of the
     /// carrying statements needs is the smallest version of a restored or
     /// hand-repaired data directory.
+    ///
+    /// **And it is the RETRYABLE failure, which is the claim the whole
+    /// no-fatal-branch reasoning rests on.** [`HandoverError::Target`] can only
+    /// arise at or before the commit, so the target is left exactly as empty as
+    /// it was found and no record is minted — meaning the restart five seconds
+    /// later, against the same data directory, is a first boot again. That is
+    /// asserted here rather than reasoned about: the refused target is counted
+    /// empty, the record is read back absent, the cause is repaired, and the
+    /// same target carries.
     #[tokio::test]
     async fn a_write_the_target_refuses_names_what_it_refused() {
         let (old_mail, old_sessions) = old_board().await;
@@ -2530,6 +2557,56 @@ mod tests {
         .await
         .expect("an intact target takes the board");
         assert!(report.whole(), "every kind came through whole: {report:?}");
+
+        // **And the refused target is left EMPTY.** Every insert this run made
+        // went into the transaction the counter statement killed, so the
+        // rollback took all of them with it. Counted through ordinary queries
+        // rather than through `must_be_empty`, which is the guard being checked
+        // rather than a witness to it.
+        assert_eq!(
+            carried_rows(&broken).await,
+            vec![
+                ("mailbox", 0),
+                ("message", 0),
+                ("session", 0),
+                ("journal_entry", 0)
+            ],
+            "a refused write leaves nothing behind — half a board here is a target the next \
+             boot refuses as populated, for ever"
+        );
+        assert_eq!(
+            recorded_state(&broken).await,
+            None,
+            "and no record was minted, so the next boot is a first boot rather than a halfway one"
+        );
+
+        // **The retry, which is what the restart actually does.** The cause is
+        // repaired — the counter table put back with the statement that makes
+        // it — and the boot runs again against THE SAME target, through the
+        // verb a boot calls.
+        sqlx::raw_sql(include_str!("../../migrations/0003_minted.sql"))
+            .execute(&broken)
+            .await
+            .expect("the counter table is put back");
+
+        let retried = carry_over(
+            &old_mail,
+            &old_sessions,
+            &DoltMailboxes::open(broken.clone(), Arc::new(AnyOwner)),
+            &DoltSessions::open(broken.clone()),
+            &broken,
+        )
+        .await;
+        let Carryover::Carried(report) = retried else {
+            panic!("the boot after the repair carries the board: {retried:?}");
+        };
+        assert!(report.whole(), "every kind came through whole: {report:?}");
+        assert_eq!(report.messages.verified, 3, "{report:?}");
+        assert_eq!(
+            recorded_state(&broken).await.as_deref(),
+            Some("verified"),
+            "and the retry verified — the refusal cost nothing but the boot it killed"
+        );
 
         store.stop().await;
     }
