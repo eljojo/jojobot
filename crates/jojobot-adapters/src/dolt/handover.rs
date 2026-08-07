@@ -1,12 +1,21 @@
 //! **The one-time handover** — mailboxes and sessions move out of the document
 //! store and into this one.
 //!
-//! Not a sync, not a reconciliation loop, and not something that runs quietly
-//! on every boot doing nothing. It is a deliberate operation that carries the
-//! records across once. **It refuses rather than doubling**: a target that
-//! already holds any of these records is left exactly as it is, loudly, because
-//! a migration that silently doubles a mailbox is worse than one that will not
-//! start.
+//! Not a sync and not a reconciliation loop: it carries the records across
+//! once. **Every boot calls it, and after the first one it does nothing** —
+//! that is the steady state rather than a degenerate case. [`carry_over`] reads
+//! the record, finds it verified, and returns without touching either store, so
+//! standing in the boot path forever costs one row read. What runs on every
+//! boot is the question of whether this has already run; the carrying itself
+//! happens once.
+//!
+//! **It refuses rather than doubling, and rather than guessing.** A target that
+//! already holds any of these records is left exactly as it is, loudly: a
+//! migration that silently doubles a mailbox is worse than one that will not
+//! start. The boot is refused with it — mail is served from here now, so a
+//! start that cannot establish the records came across whole has nothing safe
+//! to serve, and answering with an empty board would report the loss as the
+//! truth.
 //!
 //! **The source is read and never written.** Nothing here deletes, edits or
 //! marks anything on the old store. What happens to it afterwards is a separate

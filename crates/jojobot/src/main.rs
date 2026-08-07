@@ -6,9 +6,13 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use jojobot_adapters::dolt::Dolt;
+use jojobot_adapters::dolt::handover::{self, Carryover};
+use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
+use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
+use jojobot_adapters::owners::MemoryOwners;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, Retrieval};
-use jojobot_domain::mailbox::Mailboxes;
+use jojobot_domain::mailbox::{Mailboxes, OwnerIndex};
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::session::Sessions;
@@ -71,42 +75,30 @@ async fn main() -> anyhow::Result<()> {
     //
     // Its directory comes from the service manager, which owns the real path
     // and hands over a stable one — so nothing here decides where state lives.
-    // Without it there is no store: a development run says so and carries on,
-    // because the verbs still answer from the document store.
     //
-    // ⚠️ **A failure here is loud and NOT fatal, and that is only right while
-    // nothing serves from this store.** Nothing does yet: the schema is built
-    // and unread. The day a verb reads from it, coming up without it stops
-    // being survivable and this has to refuse the boot instead.
-    let _store = match store_dir_from_env() {
-        Some(dir) => match Dolt::ready(&dir, store_port_from_env()).await {
-            Ok((store, applied)) if applied.is_empty() => {
-                tracing::info!(dir = %dir.display(), "store: up, schema already current");
-                Some(store)
-            }
-            Ok((store, applied)) => {
-                tracing::info!(dir = %dir.display(), applied = ?applied, "store: up, schema moved");
-                Some(store)
-            }
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    "STORE UNAVAILABLE — it did not come up, or its schema did not apply. Nothing \
-                     reads from it yet, so the server carries on and the verbs are unaffected. A \
-                     migration that failed is not recorded as applied, so a restart resumes where \
-                     it stopped rather than skipping it."
-                );
-                None
-            }
-        },
-        None => {
-            tracing::warn!(
-                "STORE DISABLED — no state directory, so the SQL store is not started. Set \
-                 STATE_DIRECTORY (the service manager does) to enable it."
-            );
-            None
-        }
-    };
+    // ⚠️ **A failure here refuses the boot.** Mail and sessions are served from
+    // this store, so a server that came up without it would have no board to
+    // read and no run to resume, and would report that emptiness as the truth.
+    // Refusing is the same fact said where somebody can act on it. A migration
+    // that failed is not recorded as applied, so a restart resumes where it
+    // stopped rather than skipping it.
+    let dir = store_dir_from_env().context(
+        "STORE MISSING — no state directory, so there is no store to serve mail and sessions \
+         from. Set STATE_DIRECTORY (the service manager does).",
+    )?;
+    let (store, applied) = Dolt::ready(&dir, store_port_from_env())
+        .await
+        .with_context(|| {
+            format!(
+                "STORE UNAVAILABLE — the store at {} did not come up, or its schema did not apply",
+                dir.display()
+            )
+        })?;
+    if applied.is_empty() {
+        tracing::info!(dir = %dir.display(), "store: up, schema already current");
+    } else {
+        tracing::info!(dir = %dir.display(), applied = ?applied, "store: up, schema moved");
+    }
 
     // The Memory port. Always the real Outline adapter — no toy store ships. It
     // discovers/creates its own `jojobot` collection by name; the only config is
@@ -127,26 +119,25 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // **The Sessions port, built FROM the memory store rather than beside it.**
-    // A bot's sessions are a page under the bot's own page, in the same
-    // collection as every entity — so the two stores write different documents
-    // in one place, and building this one from that one is what makes them
-    // share a write lock instead of each holding a lock that excludes nobody.
+    // **The document store's mail and session ports — the handover's read
+    // source, and nothing else.** Nothing writes mail or sessions there again;
+    // they are here to be carried out of, and they answer reads while the old
+    // records still matter to somebody.
     //
-    // It is not indexed: a sessions page declares itself jojobot's own
-    // machinery, and the boot scan skips those.
-    let sessions: Arc<dyn Sessions> = Arc::new(outline.sessions());
-    // Built here too, off the same handle and therefore the same lock, before
-    // the store is moved behind the search projection.
-    let mailbox_store: Arc<dyn Mailboxes> = Arc::new(outline.mailboxes());
-    let store: Arc<dyn Memory> = Arc::new(outline);
+    // They come off this handle before it moves behind the memory port, which
+    // is the last moment they can. The write lock they used to share with
+    // Memory is moot for them now — a lock orders writers, and these two no
+    // longer write.
+    let from_sessions = outline.sessions();
+    let from_mail = outline.mailboxes();
+    let memory: Arc<dyn Memory> = Arc::new(outline);
 
     // The search projection sits in FRONT of the store, so every write through
     // the port keeps the index current. Boot is a plain full re-scan — and a
     // failed scan is not fatal: the store is the truth, and refusing to start
     // because a projection couldn't be built is worse than a thin `search`. It
     // says so loudly instead.
-    let indexed = Arc::new(IndexedMemory::new(store).context("opening the search index")?);
+    let indexed = Arc::new(IndexedMemory::new(memory).context("opening the search index")?);
     match indexed.rebuild().await {
         Ok(docs) => tracing::info!(docs, "search: index built from a full scan"),
         Err(e) => tracing::warn!(
@@ -155,6 +146,57 @@ async fn main() -> anyhow::Result<()> {
              writes from here on. The memory verbs are unaffected; restart once the store is \
              reachable to get a full index."
         ),
+    }
+
+    // **The ports mail and sessions are served from.** Rows in the SQL store,
+    // both over the one pool.
+    //
+    // The owner index is the production one and it reads Memory: a box is
+    // created FOR somebody, the entity world is somewhere else now, and "does
+    // this handle resolve" is the whole of what crosses. It reads through the
+    // projection so a bot created this session is an owner this session.
+    let owners: Arc<dyn OwnerIndex> = Arc::new(MemoryOwners::new(indexed.clone()));
+    let mail_store: Arc<dyn Mailboxes> =
+        Arc::new(DoltMailboxes::open(store.pool().clone(), owners));
+    let sessions: Arc<dyn Sessions> = Arc::new(DoltSessions::open(store.pool().clone()));
+
+    // **The one-time move, asked about on every boot.** After the first it
+    // reads one row and returns; the carrying happens once. It runs before the
+    // index and the registry are built off these ports, so what it carries is
+    // what they load.
+    //
+    // ⚠️ **A refusal refuses the boot**, for the reason the store's own failure
+    // does: the records are either here and checked or they are not, and a
+    // server that started anyway would serve whatever is in the store as though
+    // it were the whole board. The refusal carries the state it found — which
+    // condition, and what it saw — because this crashes under a unit that
+    // restarts in five seconds and the log line is all a person gets.
+    match handover::carry_over(
+        &from_mail,
+        &from_sessions,
+        mail_store.as_ref(),
+        sessions.as_ref(),
+        store.pool(),
+    )
+    .await
+    {
+        Carryover::Carried(report) => tracing::info!(
+            boxes = report.boxes.verified,
+            messages = report.messages.verified,
+            sessions = report.sessions.verified,
+            entries = report.entries.verified,
+            not_carried = ?report.not_carried,
+            "handover: the board moved into the store and read back as itself"
+        ),
+        Carryover::AlreadyCarried => {
+            tracing::info!("handover: already carried by an earlier boot, and verified")
+        }
+        Carryover::Refused(why) => {
+            return Err(anyhow::anyhow!(why).context(
+                "HANDOVER REFUSED — mail and sessions must not be served from this store until a \
+                 person has looked at it",
+            ));
+        }
     }
 
     // Mail goes into the SAME index — one front door, one ranked list — so the
@@ -166,7 +208,7 @@ async fn main() -> anyhow::Result<()> {
     // gap in every answer rather than passing it off as "nothing matched".
     // Refusing to start over a projection is worse than a thin one that admits
     // what it is.
-    let mailboxes = Arc::new(IndexedMailboxes::new(mailbox_store, indexed.index()));
+    let mailboxes = Arc::new(IndexedMailboxes::new(mail_store, indexed.index()));
     match mailboxes.rebuild().await {
         Ok(messages) => tracing::info!(messages, "search: mail indexed from a full board read"),
         Err(e) => tracing::warn!(
@@ -175,8 +217,8 @@ async fn main() -> anyhow::Result<()> {
              messages at all and says so (mail.searched: false). It does NOT stay that way: any \
              message this process posts or delivers is indexed as it goes, and from the first \
              one `search` reports partial coverage — real hits, with anything older than this \
-             process missing. The mailbox verbs are unaffected; restart once Outline is \
-             reachable to get the whole store back."
+             process missing. The mailbox verbs are unaffected; restart once the board reads to \
+             get the whole store back."
         ),
     }
     // **The retrieval port holds both halves, because an answer spans both.**

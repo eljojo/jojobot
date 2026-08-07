@@ -24,6 +24,13 @@ mod support;
 /// domain verbs — the real store, left unconfigured (no network), behind the real
 /// index. No toy store, and the same one-adapter-two-ports pairing production
 /// wires, so these tests can't pass on a shape the binary doesn't build.
+///
+/// **Mail and sessions are stand-ins here, and production no longer wires this
+/// pairing**: it serves both from the SQL store. Nothing in this file calls a
+/// mail or session verb — these cases are about the transport and the bearer
+/// guard, which never reach either port — so standing a database process up per
+/// case would buy nothing. The cases that DO exercise those stores live in the
+/// adapter crate, against the real one.
 /// The four ports a served app needs, as the transport/auth tests want them.
 type TestPorts = (
     Arc<dyn Memory>,
