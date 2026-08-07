@@ -160,7 +160,7 @@ pub(crate) fn memory_declined(
             format!(
                 "'{attempted}' is already retracted — the record jojobot holds is the one you \
                  asked for. This call wrote nothing because there was nothing left to write, and \
-                 a third attempt would say the same. Retraction is one-way: nothing takes a \
+                 a further attempt would say the same. Retraction is one-way: nothing takes a \
                  record back out of it. If the retraction was itself a mistake, capture what is \
                  so now as a new record."
             ),
