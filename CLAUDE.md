@@ -115,10 +115,16 @@ Shipped and live:
 > `processed` included, and the state rides on the hit beside the box, the
 > sender and the id. Retrieval is the ONE place the two contexts meet, and it
 > meets them as a reader: a `Hit` carries a `Message`, nothing writes across.
-> Because a search is a read of an in-process index, a mailbox world that was
-> down at boot means mail is silently missing — so every answer carries
-> `mail: {searched}`, because "no message says that" and "jojobot has read no
-> messages" are different claims and a caller acts on both.
+> Because a search is a read of an in-process index, a world that was down at
+> boot means part of the answer is silently missing — so **each half of every
+> answer states its own coverage**, because "no record says that" and "jojobot
+> has read no records" are different claims and a caller acts on both. A half
+> that is neither complete nor blind says which way it is behind: `unscanned`
+> when the boot read never landed, so only what this process has written since
+> is there, and `stale` when a write committed and its re-read could not run.
+> The token is what a caller branches on; the note beside it is what a reader
+> reads. Being honest to the caller who wrote is not enough on its own — the
+> sessions that read later are the ones with no other way to tell.
 - **M3** — Mailboxes: message boxes (`new → read → processed`;
   read ≠ processed; processed is a terminal archive; no delete verbs — the
   tool surface is pinned by test). A message may carry a one-line `subject`
@@ -143,9 +149,14 @@ Shipped and live:
 > rather than echoing a body its own author wrote, `read_mailbox`'s `new_only`
 > stops re-shipping a deliberately held-open message on every poll, and
 > `start_here` takes `brief` so a caller who does not need the orientation
-> essay can skip it and withholds the charter from a resume — answering the
-> resume offer is itself proof of holding it — while a session's chronology
-> comes back as its newest entries under a character budget, and
+> essay can skip it and withholds the charter from a resume, marked so that
+> *withheld* cannot be read as *absent* — the charter is the largest block a
+> boot carries, and the answer names the call that returns it rather than
+> claiming anything about what its reader already holds, which is not something
+> the engine checks. A session's chronology comes back as its newest entries
+> under a character budget, sized on what an entry renders as rather than on
+> its text alone; **both the boot and the wrap answer through that budget**,
+> and the response states the full length and what it left out. And
 > **mailbox counts are scoped to the caller** — the boxes a bot drains come back
 > with their per-state counts, every other box by name only, so existence stays
 > visible (a writer needs it) while somebody else's queue stops posing "is that

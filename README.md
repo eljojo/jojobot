@@ -32,8 +32,11 @@ never runs inference of its own — the assistant is the only mind.
 > everyone, because that is a fault in storage rather than a queue.
 > **`search` spans both**: one ranked list over entities, facts, prose and
 > messages, mail included by default and in every state (`processed` archives
-> too), each mail hit carrying its box, state, sender and id — and an answer
-> that could not read the mail store says so rather than reading as "nothing
+> too), each mail hit carrying its box, state, sender and id — and **each half
+> of an answer states its own coverage**: complete, blind, or behind, and when
+> it is behind it says which way — `unscanned` when the boot read never landed,
+> `stale` when a write committed and its re-read could not run. An answer that
+> could not read a store says so rather than reading as "nothing
 > matched". On top of both, **bots**: an AI identity is an entity of kind `bot`
 > with a charter, rules, memory and one owned mailbox. **`start_here` is the one
 > door**: it takes an optional bot name, and naming one **starts or resumes that
@@ -166,9 +169,8 @@ discovered one at a time.
 
 | the action | why there is no verb yet |
 |---|---|
-| **Walk the graph from a subject** | Retrieval reads one subject's own record. The typed edges exist and nothing traverses them, which is what would make this a graph rather than a table. |
+| **Compose a walk across several hops** | A single typed edge is filtered on and traversed today, which answers "which people are in X" in one call. What is not served is several edge filters combined, a walk of more than one hop, or a named query kept and re-run. |
 | **Read a thing's history as distinct from its current truth** | The two flavours of record are being separated; until then, chronology and truth read alike. |
-| **Ask why a claim is believed** | Records carry addresses, so the evidence chain exists; nothing follows it end to end. |
 | **Get a synthesised portrait of a subject** | A projection over the graph rather than a read of one record. Waits on graph traversal. |
 | **Surface what has gone quiet, or is decaying** | Rules and rhythms are stored as ordinary facts and nothing fires on them. This is the largest single gap. |
 | **Verify a write by reading it back** | Every write already does this internally; no caller can ask for it as its own step. |
