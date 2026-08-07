@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
-use jojobot_adapters::search::IndexedMemory;
+use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_domain::mailbox::testing::contract as mailboxes;
 use jojobot_domain::memory::testing::contract;
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity};
@@ -448,7 +448,8 @@ async fn real_outline_satisfies_the_contract() {
     // The spec runs against the store **behind the search projection**, so the
     // retrieval half is proven against real Outline too: the index is fed by the
     // real scan (real prose, real fact tables), not by a fake's approximation.
-    let indexed = IndexedMemory::new(Arc::new(store.clone())).expect("the search index opens");
+    let indexed =
+        Arc::new(IndexedMemory::new(Arc::new(store.clone())).expect("the search index opens"));
     indexed.rebuild().await.expect("the boot scan must succeed");
 
     // Run the shared spec in a task so a panic is caught — the test collection
@@ -462,7 +463,11 @@ async fn real_outline_satisfies_the_contract() {
         token: c.token.clone(),
     };
     let outcome = tokio::spawn(async move {
-        contract::run_all_searchable(&indexed).await;
+        contract::run_all_searchable(
+            indexed.as_ref(),
+            &Retrieval::new(indexed.index(), vec![indexed.clone()]),
+        )
+        .await;
         assert_a_child_page_is_nested(&http_for_spec, &creds_for_spec, &store).await;
         assert_the_session_contract_holds(&http_for_spec, &creds_for_spec).await;
         assert_the_mailbox_contract_holds(&http_for_spec, &creds_for_spec).await;

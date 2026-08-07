@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use jojobot::{AppState, build_app};
-use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory};
+use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, Retrieval};
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::session::testing::InMemorySessions;
@@ -46,10 +46,18 @@ impl Story {
         // it.** Both worlds sit behind one `search`, so a fixture holding the
         // raw store would serve a jojobot whose mail no story could see —
         // poorer than the deployment it stands for, and silently so.
-        let boxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> = Arc::new(IndexedMailboxes::new(
+        let mail = Arc::new(IndexedMailboxes::new(
             Arc::new(InMemoryMailboxes::knowing_any_owner()),
             indexed.index(),
         ));
+        // **The retrieval port over BOTH halves, exactly as the binary wires
+        // it.** A port over memory alone answers without ever refreshing mail,
+        // which is a poorer jojobot than the deployment this stands for.
+        let search = Arc::new(Retrieval::new(
+            indexed.index(),
+            vec![indexed.clone(), mail.clone()],
+        ));
+        let boxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> = mail;
         let boxes_for_seed = boxes.clone();
         let state = AppState {
             resource: format!("http://{addr}/mcp"),
@@ -57,7 +65,7 @@ impl Story {
             validator: None,
             metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
             memory: indexed.clone(),
-            search: indexed,
+            search,
             mailboxes: boxes,
             sessions: Arc::new(InMemorySessions::new()),
             registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),

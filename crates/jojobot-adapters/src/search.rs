@@ -1464,41 +1464,27 @@ impl Refresh for IndexedMemory {
     }
 }
 
+/// **Search one store through the real port**, for tests that hold only the
+/// Memory decorator.
+///
+/// The decorator is not the port and must not become one: a search spans both
+/// halves of the index, and a port over the memory half alone would answer
+/// without ever refreshing mail. So a test that wants to search builds the
+/// [`Retrieval`] a caller builds, rather than calling a method the production
+/// path does not have.
+#[cfg(test)]
 #[async_trait]
-impl Search for IndexedMemory {
-    /// **Refresh from the store, then answer.**
-    ///
-    /// The projection is a copy, and the only thing that can tell it the store
-    /// has moved on is reading the store. Writes through this decorator already
-    /// do that for the document they touch; a change nobody made through jojobot
-    /// — rule 60 puts true deletion outside it entirely — has no write to ride
-    /// on, so the read path is the only place left that can notice.
-    ///
-    /// The refresh is the boot path's own [`rebuild`](Self::rebuild), so a
-    /// record the store no longer has leaves the index by the eviction that is
-    /// already there. Nothing here knows what went missing or how, and that is
-    /// the point: an answer is built from what the store holds now, not from a
-    /// list of the ways it could differ from what it held before.
-    ///
-    /// **A refresh that cannot reach the store does not fail the search.** The
-    /// last scan that succeeded still answers, and the index records that it is
-    /// a version behind, which is what stops
-    /// [`memory_coverage`](Search::memory_coverage) reporting `Loaded` over it.
-    /// Degrading is the promise the boot path already makes; a wrong answer that
-    /// says so is worth more to a caller than no answer at all.
-    async fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
-        if self.rescan().await.is_err() {
-            self.index.refresh_failed();
-        }
-        self.index.search(query)
-    }
+pub(crate) trait SearchViaPort {
+    async fn search_via_port(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError>;
+}
 
-    fn mail_coverage(&self) -> Coverage {
-        self.index.mail_coverage()
-    }
-
-    fn memory_coverage(&self) -> Coverage {
-        self.index.memory_coverage()
+#[cfg(test)]
+#[async_trait]
+impl SearchViaPort for Arc<IndexedMemory> {
+    async fn search_via_port(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
+        Retrieval::new(self.index(), vec![self.clone()])
+            .search(query)
+            .await
     }
 }
 
@@ -1651,8 +1637,13 @@ mod tests {
     /// behind the index. The fast loop.
     #[tokio::test]
     async fn the_contract_holds_over_the_fake() {
-        let store = IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens");
-        contract::run_all_searchable(&store).await;
+        let store =
+            Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens"));
+        contract::run_all_searchable(
+            store.as_ref(),
+            &Retrieval::new(store.index(), vec![store.clone()]),
+        )
+        .await;
     }
 
     // --- the index as a projection --------------------------------------------
@@ -2162,24 +2153,26 @@ mod tests {
                 date(2026, 1, 1),
             )
         };
-        let store = IndexedMemory::new(Scanned::new(vec![
-            scan(
-                "doc-alpha",
-                Some(entity("person:alpha", "Alpha")),
-                "",
-                vec![guest],
-            ),
-            scan("doc-milhouse", Some(renamed.clone()), "", Vec::new()),
-        ]))
-        .expect("index opens");
+        let store = Arc::new(
+            IndexedMemory::new(Scanned::new(vec![
+                scan(
+                    "doc-alpha",
+                    Some(entity("person:alpha", "Alpha")),
+                    "",
+                    vec![guest],
+                ),
+                scan("doc-milhouse", Some(renamed.clone()), "", Vec::new()),
+            ]))
+            .expect("index opens"),
+        );
         store.rebuild().await.expect("rebuild");
 
         // Asked for by the fact's own CONTENT: a row about someone else, sitting
         // on this page, is deliberately not indexed under their labels, so
         // querying the name would fail for an unrelated reason.
-        async fn named(store: &IndexedMemory, who: &EntityId) -> Option<String> {
+        async fn named(store: &Arc<IndexedMemory>, who: &EntityId) -> Option<String> {
             store
-                .search(&SearchQuery::text("sourdough"))
+                .search_via_port(&SearchQuery::text("sourdough"))
                 .await
                 .expect("search ok")
                 .iter()
@@ -2351,7 +2344,8 @@ mod tests {
     /// incremental path re-reads the doc, so a stale copy can't survive an edit.
     #[tokio::test]
     async fn an_edit_leaves_one_indexed_copy_saying_the_new_thing() {
-        let store = IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens");
+        let store =
+            Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens"));
         store
             .add_entity(NewEntity::new(
                 EntityId::person("alpha"),
@@ -2388,7 +2382,7 @@ mod tests {
 
         assert!(
             store
-                .search(&SearchQuery::text("old place"))
+                .search_via_port(&SearchQuery::text("old place"))
                 .await
                 .expect("search ok")
                 .is_empty(),
@@ -2396,7 +2390,7 @@ mod tests {
         );
         assert_eq!(
             store
-                .search(&SearchQuery::text("new place"))
+                .search_via_port(&SearchQuery::text("new place"))
                 .await
                 .expect("search ok")
                 .len(),
@@ -2408,7 +2402,8 @@ mod tests {
     /// the projection has to agree.
     #[tokio::test]
     async fn a_blocked_write_indexes_nothing() {
-        let store = IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens");
+        let store =
+            Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens"));
         store
             .add_entity(NewEntity::new(
                 EntityId::person("zenith"),
@@ -2431,7 +2426,7 @@ mod tests {
         assert!(matches!(blocked, Guarded::Blocked { .. }));
         assert!(
             store
-                .search(&SearchQuery::text("should not be indexed"))
+                .search_via_port(&SearchQuery::text("should not be indexed"))
                 .await
                 .expect("search ok")
                 .is_empty(),
@@ -2462,14 +2457,14 @@ mod tests {
             .written()
             .expect("not blocked");
 
-        let store = IndexedMemory::new(inner).expect("index opens");
+        let store = Arc::new(IndexedMemory::new(inner).expect("index opens"));
         // An index nobody has filled yet still answers from the store, because
         // the read takes its own scan. This used to assert the opposite — that
         // nothing is searchable until the boot scan runs — which was a statement
         // about the projection rather than about what the store holds.
         assert_eq!(
             store
-                .search(&SearchQuery::text("before"))
+                .search_via_port(&SearchQuery::text("before"))
                 .await
                 .expect("search ok")
                 .len(),
@@ -2483,7 +2478,7 @@ mod tests {
         );
         assert_eq!(
             store
-                .search(&SearchQuery::text("before"))
+                .search_via_port(&SearchQuery::text("before"))
                 .await
                 .expect("search ok")
                 .len(),
@@ -2571,11 +2566,11 @@ mod tests {
             .await
             .expect("edit ok");
 
-        let store = IndexedMemory::new(inner).expect("index opens");
+        let store = Arc::new(IndexedMemory::new(inner).expect("index opens"));
         store.rebuild().await.expect("rebuild");
 
         let seen: Vec<String> = store
-            .search(&SearchQuery::text("rehearsed"))
+            .search_via_port(&SearchQuery::text("rehearsed"))
             .await
             .expect("search ok")
             .iter()
@@ -2638,12 +2633,12 @@ mod tests {
     #[tokio::test]
     async fn a_record_removed_from_the_store_stops_being_served() {
         let inner = a_store_of_two();
-        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
         store.rebuild().await.expect("rebuild");
         for present in ["ferret", "penicillin", "gecko", "sousaphone"] {
             assert_eq!(
                 store
-                    .search(&SearchQuery::text(present))
+                    .search_via_port(&SearchQuery::text(present))
                     .await
                     .unwrap()
                     .len(),
@@ -2657,7 +2652,7 @@ mod tests {
         for gone in ["ferret", "penicillin"] {
             assert!(
                 store
-                    .search(&SearchQuery::text(gone))
+                    .search_via_port(&SearchQuery::text(gone))
                     .await
                     .unwrap()
                     .is_empty(),
@@ -2666,14 +2661,18 @@ mod tests {
         }
         for kept in ["gecko", "sousaphone"] {
             assert_eq!(
-                store.search(&SearchQuery::text(kept)).await.unwrap().len(),
+                store
+                    .search_via_port(&SearchQuery::text(kept))
+                    .await
+                    .unwrap()
+                    .len(),
                 1,
                 "{kept:?} is still in the store and must still be served"
             );
         }
         assert!(
             store
-                .search(&SearchQuery::text("person:alpha"))
+                .search_via_port(&SearchQuery::text("person:alpha"))
                 .await
                 .unwrap()
                 .is_empty(),
@@ -2681,7 +2680,7 @@ mod tests {
         );
         assert!(
             !store
-                .search(&SearchQuery::text("person:beta"))
+                .search_via_port(&SearchQuery::text("person:beta"))
                 .await
                 .unwrap()
                 .is_empty(),
@@ -2701,10 +2700,10 @@ mod tests {
     #[tokio::test]
     async fn coverage_stops_claiming_loaded_when_the_read_cannot_reach_the_store() {
         let inner = a_store_of_two();
-        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
         store.rebuild().await.expect("rebuild");
         assert_eq!(
-            store.memory_coverage(),
+            store.index().memory_coverage(),
             Coverage::Loaded,
             "a scan that just succeeded is complete coverage"
         );
@@ -2713,7 +2712,7 @@ mod tests {
 
         assert_eq!(
             store
-                .search(&SearchQuery::text("ferret"))
+                .search_via_port(&SearchQuery::text("ferret"))
                 .await
                 .unwrap()
                 .len(),
@@ -2721,7 +2720,7 @@ mod tests {
             "degrade, don't error: the last good scan still answers"
         );
         assert_eq!(
-            store.memory_coverage(),
+            store.index().memory_coverage(),
             Coverage::Partial(Behind::Stale),
             "…and the answer says it is holding an older version than the store"
         );
@@ -2730,7 +2729,7 @@ mod tests {
 
         assert_eq!(
             store
-                .search(&SearchQuery::text("ferret"))
+                .search_via_port(&SearchQuery::text("ferret"))
                 .await
                 .unwrap()
                 .len(),
@@ -2738,7 +2737,7 @@ mod tests {
             "the record is still there and still served"
         );
         assert_eq!(
-            store.memory_coverage(),
+            store.index().memory_coverage(),
             Coverage::Loaded,
             "a scan that reaches the store again clears the mark"
         );
@@ -2924,7 +2923,7 @@ mod tests {
     #[tokio::test]
     async fn a_write_the_store_took_is_not_failed_by_a_refresh_that_could_not_run() {
         let inner = one_page();
-        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
         store.rebuild().await.expect("rebuild");
 
         inner.blinded();
@@ -2961,10 +2960,10 @@ mod tests {
     #[tokio::test]
     async fn a_doc_the_index_could_not_re_read_makes_the_memory_half_partial() {
         let inner = one_page();
-        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
         store.rebuild().await.expect("rebuild");
         assert_eq!(
-            store.memory_coverage(),
+            store.index().memory_coverage(),
             Coverage::Loaded,
             "a scan that read the store holds all of it"
         );
@@ -2976,7 +2975,7 @@ mod tests {
             .expect("the store took the write");
 
         assert_eq!(
-            store.memory_coverage(),
+            store.index().memory_coverage(),
             Coverage::Partial(Behind::Stale),
             "the index holds the version before that write and has to say so"
         );
@@ -2990,7 +2989,7 @@ mod tests {
         // them.
         assert_eq!(
             store
-                .search(&SearchQuery::text("person:alpha"))
+                .search_via_port(&SearchQuery::text("person:alpha"))
                 .await
                 .expect("search ok")
                 .len(),
@@ -2999,7 +2998,7 @@ mod tests {
         );
         assert!(
             store
-                .search(&SearchQuery::text("ferret"))
+                .search_via_port(&SearchQuery::text("ferret"))
                 .await
                 .expect("search ok")
                 .is_empty(),
@@ -3038,13 +3037,13 @@ mod tests {
             },
         ]);
         inner.blinded();
-        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
         store
             .rebuild()
             .await
             .expect_err("the scan cannot read the store");
         assert_eq!(
-            store.memory_coverage(),
+            store.index().memory_coverage(),
             Coverage::Unread,
             "nothing was read and nothing has been written"
         );
@@ -3056,7 +3055,7 @@ mod tests {
             .expect("the store took the write");
 
         assert_eq!(
-            store.memory_coverage(),
+            store.index().memory_coverage(),
             Coverage::Partial(Behind::Unscanned),
             "the scan never ran, so the index holds only the page this write touched"
         );
@@ -3073,7 +3072,7 @@ mod tests {
         // which is the state this one is being told apart from.
         assert_eq!(
             store
-                .search(&SearchQuery::text("ferret"))
+                .search_via_port(&SearchQuery::text("ferret"))
                 .await
                 .expect("search ok")
                 .len(),
@@ -3082,14 +3081,14 @@ mod tests {
         );
         assert!(
             store
-                .search(&SearchQuery::text("harp"))
+                .search_via_port(&SearchQuery::text("harp"))
                 .await
                 .expect("search ok")
                 .is_empty(),
             "and the page the scan never read is the part that is missing"
         );
         assert_eq!(
-            store.memory_coverage(),
+            store.index().memory_coverage(),
             Coverage::Partial(Behind::Unscanned),
             "the wider claim still wins: almost nothing is searchable"
         );
@@ -3099,7 +3098,7 @@ mod tests {
         inner.sighted();
         assert_eq!(
             store
-                .search(&SearchQuery::text("harp"))
+                .search_via_port(&SearchQuery::text("harp"))
                 .await
                 .expect("search ok")
                 .len(),
@@ -3107,7 +3106,7 @@ mod tests {
             "the page arrives on the first read that can reach the store"
         );
         assert_eq!(
-            store.memory_coverage(),
+            store.index().memory_coverage(),
             Coverage::Loaded,
             "…and the answer stops hedging, because the scan behind it ran"
         );
@@ -3119,12 +3118,15 @@ mod tests {
     #[tokio::test]
     async fn a_refresh_that_runs_clears_the_mark_and_the_hedge() {
         let inner = one_page();
-        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
         store.rebuild().await.expect("rebuild");
 
         inner.blinded();
         store.capture(ferret()).await.expect("the store took it");
-        assert_eq!(store.memory_coverage(), Coverage::Partial(Behind::Stale));
+        assert_eq!(
+            store.index().memory_coverage(),
+            Coverage::Partial(Behind::Stale)
+        );
 
         inner.sighted();
         store
@@ -3136,7 +3138,7 @@ mod tests {
             .expect("the store took it");
 
         assert_eq!(
-            store.memory_coverage(),
+            store.index().memory_coverage(),
             Coverage::Loaded,
             "the doc was re-read whole, so nothing on it is behind any more"
         );
@@ -3146,7 +3148,7 @@ mod tests {
         for missed in ["ferret", "sousaphone"] {
             assert_eq!(
                 store
-                    .search(&SearchQuery::text(missed))
+                    .search_via_port(&SearchQuery::text(missed))
                     .await
                     .expect("search ok")
                     .len(),
@@ -3175,13 +3177,13 @@ mod tests {
                 date(2026, 1, 1),
             )],
         }]);
-        let store = IndexedMemory::new(inner.clone()).expect("index opens");
+        let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
         store.rebuild().await.expect("rebuild");
 
         let alpha = EntityId::person("alpha");
         assert_eq!(
             store
-                .search(&SearchQuery::text("ferret"))
+                .search_via_port(&SearchQuery::text("ferret"))
                 .await
                 .expect("search ok")
                 .len(),
@@ -3189,7 +3191,7 @@ mod tests {
         );
         assert_eq!(
             store
-                .search(&SearchQuery::text("penicillin"))
+                .search_via_port(&SearchQuery::text("penicillin"))
                 .await
                 .expect("search ok")
                 .len(),
@@ -3197,7 +3199,7 @@ mod tests {
         );
         assert!(
             store
-                .search(&SearchQuery::text("person:alpha"))
+                .search_via_port(&SearchQuery::text("person:alpha"))
                 .await
                 .expect("search ok")
                 .iter()
@@ -3210,7 +3212,7 @@ mod tests {
         for gone in ["ferret", "penicillin"] {
             assert!(
                 store
-                    .search(&SearchQuery::text(gone))
+                    .search_via_port(&SearchQuery::text(gone))
                     .await
                     .expect("search ok")
                     .is_empty(),
@@ -3219,7 +3221,7 @@ mod tests {
         }
         assert!(
             store
-                .search(&SearchQuery::text("person:alpha"))
+                .search_via_port(&SearchQuery::text("person:alpha"))
                 .await
                 .expect("search ok")
                 .is_empty(),
@@ -3251,16 +3253,18 @@ mod tests {
         // subscriber shared by every test in it — so anything counted over its
         // text has to be counted by something no other test can log.
         const REPORTED_DOC: &str = "outline-uuid-orphan-report";
-        let store = IndexedMemory::new(Scanned::new(vec![scan(
-            REPORTED_DOC,
-            Some(entity("person:alpha", "Alpha")),
-            "",
-            vec![
-                orphan,
-                fact("person:alpha", "f2", "plays go", date(2026, 1, 2)),
-            ],
-        )]))
-        .expect("index opens");
+        let store = Arc::new(
+            IndexedMemory::new(Scanned::new(vec![scan(
+                REPORTED_DOC,
+                Some(entity("person:alpha", "Alpha")),
+                "",
+                vec![
+                    orphan,
+                    fact("person:alpha", "f2", "plays go", date(2026, 1, 2)),
+                ],
+            )]))
+            .expect("index opens"),
+        );
         store.rebuild().await.expect("rebuild");
 
         let text = logged.text();
@@ -3278,7 +3282,7 @@ mod tests {
         // …and the row is still there. Reporting it is not quarantining it.
         assert_eq!(
             store
-                .search(&SearchQuery::text("chess"))
+                .search_via_port(&SearchQuery::text("chess"))
                 .await
                 .expect("search ok")
                 .len(),
@@ -3316,13 +3320,15 @@ mod tests {
                 date(2026, 1, 1),
             )
         };
-        let store = IndexedMemory::new(Scanned::new(vec![scan(
-            DOC,
-            Some(entity("person:alpha", "Alpha")),
-            "",
-            vec![hand_edited],
-        )]))
-        .expect("index opens");
+        let store = Arc::new(
+            IndexedMemory::new(Scanned::new(vec![scan(
+                DOC,
+                Some(entity("person:alpha", "Alpha")),
+                "",
+                vec![hand_edited],
+            )]))
+            .expect("index opens"),
+        );
 
         store
             .capture(NewFact::about(
@@ -3345,7 +3351,7 @@ mod tests {
         // …and the write is findable, which is the reindex having run at all.
         assert_eq!(
             store
-                .search(&SearchQuery::text("ordinary"))
+                .search_via_port(&SearchQuery::text("ordinary"))
                 .await
                 .expect("search ok")
                 .len(),
@@ -3373,21 +3379,23 @@ mod tests {
                 date(2026, 1, 1),
             )
         };
-        let store = IndexedMemory::new(Scanned::new(vec![
-            scan(
-                DOC,
-                Some(entity("person:alpha", "Alpha")),
-                "",
-                vec![elsewhere],
-            ),
-            scan(
-                "outline-uuid-kappa",
-                Some(entity("person:kappa", "Kappa")),
-                "",
-                Vec::new(),
-            ),
-        ]))
-        .expect("index opens");
+        let store = Arc::new(
+            IndexedMemory::new(Scanned::new(vec![
+                scan(
+                    DOC,
+                    Some(entity("person:alpha", "Alpha")),
+                    "",
+                    vec![elsewhere],
+                ),
+                scan(
+                    "outline-uuid-kappa",
+                    Some(entity("person:kappa", "Kappa")),
+                    "",
+                    Vec::new(),
+                ),
+            ]))
+            .expect("index opens"),
+        );
 
         // Make kappa known the way a running server does — one doc at a time.
         // Never a rebuild: a rebuild reports this doc itself, and the assertion
@@ -3437,24 +3445,26 @@ mod tests {
             subject: EntityId::person("beta"),
             ..fact("person:alpha", "f1", "took the ferry", date(2026, 1, 1))
         };
-        let store = IndexedMemory::new(Scanned::new(vec![
-            scan(
-                DOC,
-                Some(entity("person:alpha", "Alpha")),
-                "",
-                vec![
-                    elsewhere,
-                    fact("person:alpha", "f2", "took the bus", date(2026, 1, 2)),
-                ],
-            ),
-            scan(
-                "outline-uuid-beta",
-                Some(entity("person:beta", "Beta")),
-                "",
-                Vec::new(),
-            ),
-        ]))
-        .expect("index opens");
+        let store = Arc::new(
+            IndexedMemory::new(Scanned::new(vec![
+                scan(
+                    DOC,
+                    Some(entity("person:alpha", "Alpha")),
+                    "",
+                    vec![
+                        elsewhere,
+                        fact("person:alpha", "f2", "took the bus", date(2026, 1, 2)),
+                    ],
+                ),
+                scan(
+                    "outline-uuid-beta",
+                    Some(entity("person:beta", "Beta")),
+                    "",
+                    Vec::new(),
+                ),
+            ]))
+            .expect("index opens"),
+        );
         store.rebuild().await.expect("rebuild");
 
         let text = logged.text();
@@ -3468,7 +3478,7 @@ mod tests {
         // Counted is not quarantined: the row is still indexed and still found.
         assert_eq!(
             store
-                .search(&SearchQuery::text("ferry"))
+                .search_via_port(&SearchQuery::text("ferry"))
                 .await
                 .expect("search ok")
                 .len(),

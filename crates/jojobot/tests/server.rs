@@ -10,7 +10,7 @@ use std::sync::Arc;
 use jojobot::auth::Validator;
 use jojobot::{AppState, build_app};
 use jojobot_adapters::outline::OutlineStore;
-use jojobot_adapters::search::IndexedMemory;
+use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::search::Search;
@@ -35,9 +35,10 @@ type TestPorts = (
 fn test_ports() -> TestPorts {
     let store: Arc<dyn Memory> = Arc::new(OutlineStore::unconfigured());
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
+    let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
     (
-        indexed.clone(),
         indexed,
+        search,
         Arc::new(OutlineStore::unconfigured().mailboxes()),
         Arc::new(OutlineStore::unconfigured().sessions()),
     )
@@ -372,7 +373,7 @@ fn searchable_state(addr: SocketAddr) -> AppState {
         validator: None,
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
         memory: indexed.clone(),
-        search: indexed,
+        search: Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()])),
         // **Real session and mailbox ports, unlike the other fixtures here, and
         // not to make a test pass.** A memory write now carries an identity, an
         // identity needs a `sid`, and a `sid` needs a session world that can

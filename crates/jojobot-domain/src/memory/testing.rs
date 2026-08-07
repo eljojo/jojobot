@@ -3457,8 +3457,8 @@ pub mod contract {
     // pre-populated collection as much as against an empty fake.
 
     /// Search the store, expecting the query to be well-formed.
-    async fn found<S: Search>(store: &S, query: SearchQuery) -> Vec<Hit> {
-        store
+    async fn found<S: Search>(search: &S, query: SearchQuery) -> Vec<Hit> {
+        search
             .search(&query)
             .await
             .unwrap_or_else(|e| panic!("search should succeed: {e}"))
@@ -3477,7 +3477,10 @@ pub mod contract {
     /// **Read-back extends to the index.** A fact captured a moment ago is
     /// findable by the next search call, with no restart — otherwise "captured"
     /// means "written somewhere the assistant can't look".
-    pub async fn search_finds_a_fact_captured_moments_ago<S: Memory + Search>(store: &S) {
+    pub async fn search_finds_a_fact_captured_moments_ago<M: Memory, S: Search>(
+        store: &M,
+        search: &S,
+    ) {
         let subject = EntityId::person("contract-searchable");
         let captured = capture(
             store,
@@ -3489,7 +3492,7 @@ pub mod contract {
         )
         .await;
 
-        let hits = found(store, SearchQuery::text("zamboni")).await;
+        let hits = found(search, SearchQuery::text("zamboni")).await;
         let addresses: Vec<String> = fact_hits(&hits)
             .iter()
             .map(|f| f.address().to_string())
@@ -3503,7 +3506,10 @@ pub mod contract {
     /// Every fact hit carries the **whole row** — its address and its provenance
     /// included. The address is what an edit needs; the provenance is what keeps a
     /// guess from being read as something the user said.
-    pub async fn search_fact_hits_carry_an_address_and_provenance<S: Memory + Search>(store: &S) {
+    pub async fn search_fact_hits_carry_an_address_and_provenance<M: Memory, S: Search>(
+        store: &M,
+        search: &S,
+    ) {
         let subject = EntityId::person("contract-searchable");
         capture(
             store,
@@ -3515,7 +3521,7 @@ pub mod contract {
         )
         .await;
 
-        let hits = found(store, SearchQuery::text("velodrome")).await;
+        let hits = found(search, SearchQuery::text("velodrome")).await;
         let facts = fact_hits(&hits);
         let found_fact = facts
             .iter()
@@ -3547,7 +3553,10 @@ pub mod contract {
     /// Nothing is deleted, so the record has to stay findable by somebody who
     /// goes looking; a mark that hid a record from every possible read would
     /// be a delete with extra steps.
-    pub async fn search_excludes_a_retracted_record_by_default<S: Memory + Search>(store: &S) {
+    pub async fn search_excludes_a_retracted_record_by_default<M: Memory, S: Search>(
+        store: &M,
+        search: &S,
+    ) {
         let subject = EntityId::person("contract-retraction-hit");
         let live = capture(
             store,
@@ -3585,7 +3594,7 @@ pub mod contract {
                 .collect()
         };
 
-        let default = found(store, SearchQuery::text("rehearsed")).await;
+        let default = found(search, SearchQuery::text("rehearsed")).await;
         let seen = addresses(&default);
         // Both halves, because "not in the results" on its own passes just as
         // well when the query matched nothing at all.
@@ -3599,7 +3608,7 @@ pub mod contract {
         );
 
         let asked = found(
-            store,
+            search,
             SearchQuery {
                 status: Some(FactStatus::Retracted),
                 ..SearchQuery::text("rehearsed")
@@ -3613,9 +3622,11 @@ pub mod contract {
     }
 
     pub async fn search_excludes_superseded_by_default_and_lists_it_on_request<
-        S: Memory + Search,
+        M: Memory,
+        S: Search,
     >(
-        store: &S,
+        store: &M,
+        search: &S,
     ) {
         let subject = EntityId::person("contract-search-superseded");
         let live = capture(
@@ -3642,7 +3653,7 @@ pub mod contract {
         )
         .await;
 
-        let default = found(store, SearchQuery::text("theremin")).await;
+        let default = found(search, SearchQuery::text("theremin")).await;
         let addresses: Vec<String> = fact_hits(&default)
             .iter()
             .map(|f| f.address().to_string())
@@ -3657,7 +3668,7 @@ pub mod contract {
         );
 
         let asked = found(
-            store,
+            search,
             SearchQuery {
                 status: Some(FactStatus::Superseded),
                 ..SearchQuery::text("theremin")
@@ -3682,7 +3693,10 @@ pub mod contract {
     /// "which people are in X". The filter walks the typed edges, so a fact that
     /// merely *mentions* X in its text is not an answer — that difference is the
     /// whole reason edges are written at capture instead of inferred later.
-    pub async fn search_answers_ask_across_by_kind_and_edge<S: Memory + Search>(store: &S) {
+    pub async fn search_answers_ask_across_by_kind_and_edge<M: Memory, S: Search>(
+        store: &M,
+        search: &S,
+    ) {
         let far = EntityId::new(EntityKind::Place, "contract-faraway");
         let here = capture_at(store, "contract-away-one", &far, date(2026, 7, 1)).await;
         let there = capture_at(store, "contract-away-two", &far, date(2026, 7, 2)).await;
@@ -3715,7 +3729,7 @@ pub mod contract {
         .await;
 
         let hits = found(
-            store,
+            search,
             SearchQuery {
                 kind: Some(EntityKind::Person),
                 edge: Some(EdgeFilter {
@@ -3742,7 +3756,10 @@ pub mod contract {
 
     /// An edge filter with **no shape** answers "what's connected to X" — every
     /// edge pointing at it, whatever its shape.
-    pub async fn search_by_edge_object_alone_finds_any_shape<S: Memory + Search>(store: &S) {
+    pub async fn search_by_edge_object_alone_finds_any_shape<M: Memory, S: Search>(
+        store: &M,
+        search: &S,
+    ) {
         let fest = EntityId::new(EntityKind::Event, "contract-connected-fest");
         let attendee = capture(
             store,
@@ -3791,7 +3808,7 @@ pub mod contract {
         .await;
 
         let hits = found(
-            store,
+            search,
             SearchQuery {
                 edge: Some(EdgeFilter {
                     shape: None,
@@ -3820,7 +3837,7 @@ pub mod contract {
     /// A query that names an entity outright puts **that entity first** — decided
     /// by the write guard's own matcher, so search and the guard can never
     /// disagree about what counts as the same thing.
-    pub async fn search_pins_a_named_entity_first<S: Memory + Search>(store: &S) {
+    pub async fn search_pins_a_named_entity_first<M: Memory, S: Search>(store: &M, search: &S) {
         let handle = EntityId::new(EntityKind::Org, "contract-pinnable-guild");
         add(
             store,
@@ -3838,7 +3855,7 @@ pub mod contract {
         )
         .await;
 
-        let hits = found(store, SearchQuery::text(handle.as_str())).await;
+        let hits = found(search, SearchQuery::text(handle.as_str())).await;
         assert!(
             matches!(hits.first(), Some(Hit::Entity { entity, .. }) if entity.id == handle),
             "an exact handle query must return that entity first: {hits:?}"
@@ -3851,7 +3868,10 @@ pub mod contract {
     ///
     /// The name is the part that cannot be derived: a handle carries its kind in
     /// its grammar, but `person:contract-orient` says nothing about who that is.
-    pub async fn search_fact_hits_name_their_subject_and_home<S: Memory + Search>(store: &S) {
+    pub async fn search_fact_hits_name_their_subject_and_home<M: Memory, S: Search>(
+        store: &M,
+        search: &S,
+    ) {
         let subject = EntityId::person("contract-orienteer");
         add(
             store,
@@ -3867,7 +3887,7 @@ pub mod contract {
         )
         .await;
 
-        let hits = found(store, SearchQuery::text("map for fun")).await;
+        let hits = found(search, SearchQuery::text("map for fun")).await;
         let (fact_subject, fact_home) = hits
             .iter()
             .find_map(|h| match h {
@@ -3907,7 +3927,7 @@ pub mod contract {
     /// facts draw. Asking about someone and getting back only their name is the
     /// same bare answer as a fact with no subject: the surroundings are the part
     /// that makes the next question askable.
-    pub async fn search_entity_hits_carry_their_edges<S: Memory + Search>(store: &S) {
+    pub async fn search_entity_hits_carry_their_edges<M: Memory, S: Search>(store: &M, search: &S) {
         let handle = EntityId::new(EntityKind::Org, "contract-orient-guild");
         let hall = EntityId::new(EntityKind::Place, "contract-orient-hall");
         add(
@@ -3929,7 +3949,7 @@ pub mod contract {
         )
         .await;
 
-        let hits = found(store, SearchQuery::text(handle.as_str())).await;
+        let hits = found(search, SearchQuery::text(handle.as_str())).await;
         let edges = hits
             .iter()
             .find_map(|h| match h {
@@ -3960,18 +3980,18 @@ pub mod contract {
     /// Run the whole contract, **including retrieval**, against a store that
     /// carries the search projection. The search half can't live in `run_all`:
     /// the bare Memory port has no read side for it.
-    pub async fn run_all_searchable<S: Memory + Search>(store: &S) {
+    pub async fn run_all_searchable<M: Memory, S: Search>(store: &M, search: &S) {
         run_all(store).await;
 
-        search_finds_a_fact_captured_moments_ago(store).await;
-        search_fact_hits_carry_an_address_and_provenance(store).await;
-        search_excludes_superseded_by_default_and_lists_it_on_request(store).await;
-        search_excludes_a_retracted_record_by_default(store).await;
-        search_answers_ask_across_by_kind_and_edge(store).await;
-        search_by_edge_object_alone_finds_any_shape(store).await;
-        search_pins_a_named_entity_first(store).await;
-        search_fact_hits_name_their_subject_and_home(store).await;
-        search_entity_hits_carry_their_edges(store).await;
+        search_finds_a_fact_captured_moments_ago(store, search).await;
+        search_fact_hits_carry_an_address_and_provenance(store, search).await;
+        search_excludes_superseded_by_default_and_lists_it_on_request(store, search).await;
+        search_excludes_a_retracted_record_by_default(store, search).await;
+        search_answers_ask_across_by_kind_and_edge(store, search).await;
+        search_by_edge_object_alone_finds_any_shape(store, search).await;
+        search_pins_a_named_entity_first(store, search).await;
+        search_fact_hits_name_their_subject_and_home(store, search).await;
+        search_entity_hits_carry_their_edges(store, search).await;
     }
 
     /// Run the whole contract against one store.

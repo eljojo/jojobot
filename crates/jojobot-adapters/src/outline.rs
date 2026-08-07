@@ -1334,11 +1334,12 @@ impl Memory for OutlineStore {
 
 #[cfg(test)]
 mod tests {
+    use crate::search::{Retrieval, SearchViaPort};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use jiff::civil::date;
-    use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
+    use jojobot_domain::memory::search::{Hit, SearchQuery};
     use jojobot_domain::memory::testing::contract;
     use jojobot_domain::memory::{Edge, EdgeShape, FactStatus, Provenance, Standing};
 
@@ -2318,8 +2319,13 @@ mod tests {
     /// stops the two from drifting.
     #[tokio::test]
     async fn the_indexed_outline_store_satisfies_the_whole_contract() {
-        let indexed = IndexedMemory::new(Arc::new(store(FakeOutline::new()))).expect("index opens");
-        contract::run_all_searchable(&indexed).await;
+        let indexed =
+            Arc::new(IndexedMemory::new(Arc::new(store(FakeOutline::new()))).expect("index opens"));
+        contract::run_all_searchable(
+            indexed.as_ref(),
+            &Retrieval::new(indexed.index(), vec![indexed.clone()]),
+        )
+        .await;
     }
 
     /// **The production edge-loss bug, end to end.** A doc provisioned before
@@ -3388,7 +3394,7 @@ mod tests {
         );
         fake.seed_document(&coll, "Alpha", &doc);
 
-        let indexed = IndexedMemory::new(Arc::new(store(fake))).expect("index opens");
+        let indexed = Arc::new(IndexedMemory::new(Arc::new(store(fake))).expect("index opens"));
         assert_eq!(
             indexed.rebuild().await.expect("rebuild"),
             1,
@@ -3396,7 +3402,7 @@ mod tests {
         );
 
         let hits = indexed
-            .search(&SearchQuery::text("penicillin"))
+            .search_via_port(&SearchQuery::text("penicillin"))
             .await
             .expect("search ok");
         let prose: Vec<&Hit> = hits
@@ -3423,7 +3429,7 @@ mod tests {
 
         // The fact in the same doc is still reachable by its own words.
         let facts = indexed
-            .search(&SearchQuery::text("chess"))
+            .search_via_port(&SearchQuery::text("chess"))
             .await
             .expect("search ok");
         assert!(
@@ -3450,11 +3456,11 @@ mod tests {
                    | f1 | person:alpha | plays chess |  | testimony | active | 2026-07-01 |  |\n";
         fake.seed_document(&coll, "alpha", doc);
 
-        let indexed = IndexedMemory::new(Arc::new(store(fake))).expect("index opens");
+        let indexed = Arc::new(IndexedMemory::new(Arc::new(store(fake))).expect("index opens"));
         indexed.rebuild().await.expect("rebuild");
 
         let hits = indexed
-            .search(&SearchQuery::text("pass closed"))
+            .search_via_port(&SearchQuery::text("pass closed"))
             .await
             .expect("search ok");
         assert!(
@@ -3465,7 +3471,7 @@ mod tests {
         );
         // …and the fact beside it is untouched by the wider prose boundary.
         let facts = indexed
-            .search(&SearchQuery::text("chess"))
+            .search_via_port(&SearchQuery::text("chess"))
             .await
             .expect("search ok");
         assert!(
@@ -3497,7 +3503,7 @@ mod tests {
         );
         fake.seed_document(&coll, "Ned Flanders", &doc);
 
-        let indexed = IndexedMemory::new(Arc::new(store(fake))).expect("index opens");
+        let indexed = Arc::new(IndexedMemory::new(Arc::new(store(fake))).expect("index opens"));
         assert_eq!(
             indexed.rebuild().await.expect("rebuild"),
             1,
@@ -3505,7 +3511,7 @@ mod tests {
         );
 
         let hits = indexed
-            .search(&SearchQuery::text("flowerpot"))
+            .search_via_port(&SearchQuery::text("flowerpot"))
             .await
             .expect("search ok");
         let Some(Hit::Prose { entity, edges, .. }) =
@@ -3591,11 +3597,11 @@ mod tests {
         );
         fake.seed_document(&coll, "alpha", &doc);
 
-        let indexed = IndexedMemory::new(Arc::new(store(fake))).expect("index opens");
+        let indexed = Arc::new(IndexedMemory::new(Arc::new(store(fake))).expect("index opens"));
         indexed.rebuild().await.expect("rebuild");
 
         let hits = indexed
-            .search(&SearchQuery {
+            .search_via_port(&SearchQuery {
                 subject: Some(EntityId::person("alpha")),
                 ..Default::default()
             })
@@ -4247,10 +4253,10 @@ mod tests {
     #[tokio::test]
     async fn mail_reaches_the_index_but_the_page_it_sits_on_does_not() {
         use jojobot_domain::mailbox::{MailboxName, Mailboxes as _, NewMessage};
-        use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
+        use jojobot_domain::memory::search::{Hit, SearchQuery};
 
         let outline = store(FakeOutline::new());
-        let index = IndexedMemory::new(Arc::new(outline.clone())).expect("index opens");
+        let index = Arc::new(IndexedMemory::new(Arc::new(outline.clone())).expect("index opens"));
         let mail =
             crate::search::IndexedMailboxes::new(Arc::new(outline.mailboxes()), index.index());
 
@@ -4299,14 +4305,15 @@ mod tests {
         // one loses every message older than the process while looking fine.
         // So this is a restart: a fresh index, both halves rebuilt from the
         // store, and only then the question.
-        let restarted = IndexedMemory::new(Arc::new(outline.clone())).expect("index opens");
+        let restarted =
+            Arc::new(IndexedMemory::new(Arc::new(outline.clone())).expect("index opens"));
         restarted.rebuild().await.expect("memory rebuild ok");
         let restarted_mail =
             crate::search::IndexedMailboxes::new(Arc::new(outline.mailboxes()), restarted.index());
         restarted_mail.rebuild().await.expect("mail rebuild ok");
 
         let hits = restarted
-            .search(&SearchQuery {
+            .search_via_port(&SearchQuery {
                 text: Some("monorail".into()),
                 // Asked for: mail is opt-in, and what this asserts is that the
                 // mail half survived a restart, not what a bare query does.
@@ -4324,7 +4331,7 @@ mod tests {
         // is not content. The rebuild is what reads every document, so this is
         // the path where a leak would appear.
         let after = restarted
-            .search(&SearchQuery {
+            .search_via_port(&SearchQuery {
                 text: Some("monorail".into()),
                 ..Default::default()
             })
@@ -4357,7 +4364,7 @@ mod tests {
     /// markdown, which would prove only that a hand-written marker is honoured.
     #[tokio::test]
     async fn a_sessions_page_is_machinery_and_never_scanned_into_the_index() {
-        use jojobot_domain::memory::search::{Search, SearchQuery};
+        use jojobot_domain::memory::search::SearchQuery;
         use jojobot_domain::session::{NewEntry, NewSession, Sessions as _, Sid};
 
         let outline = store(FakeOutline::new());
@@ -4388,12 +4395,13 @@ mod tests {
         // A restart: the index is rebuilt by reading every document, which is
         // the path a leak appears on. Searching an index this process has been
         // writing to would prove nothing about what the scan admits.
-        let restarted = IndexedMemory::new(Arc::new(outline.clone())).expect("index opens");
+        let restarted =
+            Arc::new(IndexedMemory::new(Arc::new(outline.clone())).expect("index opens"));
         restarted.rebuild().await.expect("rebuild ok");
 
         for secret in [FOCUS, ENTRY] {
             let hits = restarted
-                .search(&SearchQuery {
+                .search_via_port(&SearchQuery {
                     text: Some(secret.into()),
                     ..Default::default()
                 })
