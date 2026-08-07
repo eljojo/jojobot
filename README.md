@@ -31,8 +31,9 @@ never runs inference of its own — the assistant is the only mind.
 > somebody else's workload — while a quarantined message is reported to
 > everyone, because that is a fault in storage rather than a queue.
 > **`search` spans both**: one ranked list over entities, facts, prose and
-> messages, mail included by default and in every state (`processed` archives
-> too), each mail hit carrying its box, state, sender and id — and **each half
+> messages, mail **opt-in** through `include_mail` and searchable in every
+> state (`processed` archives too), each mail hit carrying its box, state,
+> sender and id — and **each half
 > of an answer states its own coverage**: complete, blind, or behind, and when
 > it is behind it says which way — `unscanned` when the boot read never landed,
 > `stale` when a write committed and its re-read could not run. An answer that

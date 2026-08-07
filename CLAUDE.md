@@ -108,10 +108,12 @@ Shipped and live:
   claim laundres it into one.
 
 > **One front door, over both worlds.** Mail is in the same `search` — no
-> second verb, one ranked list — and **in by default**: the reader who needs a
-> filed finding is a later session that does not know it is there, so
-> excluded-by-default would rebuild the blindness with an extra step in front
-> of it. `include_mail: false` takes it back out. Every state is searchable,
+> second verb, one ranked list — and **opt-in**: `include_mail: true` reaches
+> it. The reader who needs a filed finding is a later session that does not
+> know it is there, so the flag is worth reaching for — but the safe branch is
+> the default, and a session told to leave somebody's mail alone must be able
+> to use the front door without knowing a flag exists. Every state is
+> searchable,
 > `processed` included, and the state rides on the hit beside the box, the
 > sender and the id. Retrieval is the ONE place the two contexts meet, and it
 > meets them as a reader: a `Hit` carries a `Message`, nothing writes across.
