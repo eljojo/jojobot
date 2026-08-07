@@ -884,27 +884,32 @@ mod tests {
         store.stop().await;
     }
 
-    /// **A record that does not read back as itself fails the handover.**
+    /// **Every field the verification compares is proven by a target that
+    /// changes exactly that field.**
     ///
     /// The verification reads through the port, so a target whose read path
-    /// disagrees with what was written is exactly the condition it exists for —
-    /// and the only way to produce it deliberately. This one hands back one
-    /// message with a changed body and is otherwise the real store.
+    /// disagrees with what was written is the condition it exists for — and the
+    /// only way to produce one deliberately.
     ///
-    /// Without this case the whole comparison could be absent and every other
-    /// test here would still pass: they all describe a handover that worked.
+    /// **One case per field, because one case proves one comparison.** A single
+    /// changed body leaves the other seven clauses unreached: drop any of them
+    /// and the handover reports success over a record that did not survive.
+    /// `state` is the one that matters most — the whole reason this writes rows
+    /// instead of calling the posting verb is that a state must not move, and a
+    /// missing comparison there would report a clean migration over mail that
+    /// had silently gone back to unread.
     #[tokio::test]
-    async fn a_record_that_reads_back_changed_fails_the_handover() {
-        /// The real store, with one body rewritten on the way out — the shape
-        /// of a store that accepted a write and kept something else.
-        struct Mangling(DoltMailboxes);
+    async fn each_field_the_verification_compares_is_proven_on_its_own() {
+        /// The real store, with one message rewritten on the way out — the
+        /// shape of a store that accepted a write and kept something else.
+        struct Mangling(DoltMailboxes, fn(&mut Message));
 
         #[async_trait::async_trait]
         impl Mailboxes for Mangling {
             async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
                 let mut messages = self.0.scan_messages().await?;
                 if let Some(first) = messages.first_mut() {
-                    first.body = format!("{} (and something nobody wrote)", first.body);
+                    (self.1)(first);
                 }
                 Ok(messages)
             }
@@ -948,27 +953,55 @@ mod tests {
             }
         }
 
-        let (old_mail, old_sessions) = old_board().await;
-        let (mut store, mail, sessions) = new_store("handover-mismatch").await;
+        /// One field's mutation, and the clause it must make fire.
+        type Case = (&'static str, fn(&mut Message));
 
-        let outcome = run(
-            &old_mail,
-            &old_sessions,
-            &Mangling(mail),
-            &sessions,
-            store.pool(),
-        )
-        .await;
+        // Each mutation changes exactly one field to a value the source cannot
+        // have had, so the clause named beside it is the only one that can fire.
+        let cases: [Case; 8] = [
+            ("mailbox", |m| m.mailbox = MailboxName("delta".into())),
+            ("body", |m| m.body.push_str(" and something nobody wrote")),
+            ("subject", |m| {
+                m.subject = Some("a title nobody gave it".into())
+            }),
+            ("sender", |m| m.sender = "somebody-else".into()),
+            ("sent_at", |m| {
+                m.sent_at += jiff::SignedDuration::from_secs(1)
+            }),
+            ("state", |m| {
+                m.state = jojobot_domain::mailbox::MessageState::Processed
+            }),
+            ("notes", |m| {
+                m.notes = Some("an outcome nobody recorded".into())
+            }),
+            ("in_reply_to", |m| {
+                m.in_reply_to = Some(jojobot_domain::mailbox::MessageId("1".into()))
+            }),
+        ];
 
-        let Err(HandoverError::Mismatch { what, field, .. }) = outcome else {
-            panic!("a body that came back changed must fail the handover: {outcome:?}");
-        };
-        assert_eq!(what, "message");
-        assert_eq!(
-            field, "body",
-            "and it names the field, so nobody has to diff two records by eye"
-        );
+        for (expected, mangle) in cases {
+            let (old_mail, old_sessions) = old_board().await;
+            let (mut store, mail, sessions) = new_store(&format!("mismatch-{expected}")).await;
 
-        store.stop().await;
+            let outcome = run(
+                &old_mail,
+                &old_sessions,
+                &Mangling(mail, mangle),
+                &sessions,
+                store.pool(),
+            )
+            .await;
+
+            let Err(HandoverError::Mismatch { what, field, .. }) = outcome else {
+                panic!("a changed {expected} must fail the handover: {outcome:?}");
+            };
+            assert_eq!(what, "message");
+            assert_eq!(
+                field, expected,
+                "and it names the field that moved, so nobody has to diff two records by eye"
+            );
+
+            store.stop().await;
+        }
     }
 }
