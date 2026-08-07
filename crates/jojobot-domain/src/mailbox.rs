@@ -612,7 +612,8 @@ pub enum MailboxError {
         /// Why the rollback could not undo it.
         rollback: String,
     },
-    /// The underlying store (Outline, or its network/parse layer) failed.
+    /// The underlying store failed — it, or the layer that carries and parses
+    /// its answers.
     #[error("store error: {0}")]
     Store(String),
     /// The store isn't configured (no credentials).
@@ -620,9 +621,9 @@ pub enum MailboxError {
     NotConfigured(String),
 }
 
-/// The Mailboxes port — five verbs over boxes and the messages in them. One real
-/// adapter stands behind it in production (Outline, one page per box); a fake
-/// stands behind it in tests. Three invariants bind every adapter:
+/// The Mailboxes port — five verbs over boxes and the messages in them. A
+/// store-backed adapter stands behind it in production; a fake stands behind it
+/// in tests. Three invariants bind every adapter:
 ///
 /// * **read-back** — a write succeeds only if reading it back through the read
 ///   path returns it. A read-back mismatch restores the prior state before
@@ -672,8 +673,8 @@ pub trait Mailboxes: Send + Sync {
     /// not always `new`: somebody picking the message up off the board between
     /// the write and its verification leaves it in `read`, and that is this
     /// verb succeeding — the message exists and someone has it — not a failure
-    /// to file it. An adapter that serializes its own verbs (the Outline store
-    /// does) narrows that somebody to a person editing the page by hand.
+    /// to file it. An adapter that serializes its own verbs narrows that
+    /// somebody down to a person editing the record underneath by hand.
     async fn post_message(&self, message: NewMessage) -> Result<Guarded<Message>, MailboxError>;
 
     /// Deliver everything unprocessed in a box — messages in `new` and messages

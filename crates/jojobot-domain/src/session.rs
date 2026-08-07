@@ -466,7 +466,7 @@ pub enum SessionError {
     #[error("invalid entry: {0}")]
     InvalidEntry(String),
     /// The addressed session doesn't exist. Never created, never guessed at.
-    #[error("no session '{attempted}': no bot's sessions page carries a run with that id")]
+    #[error("no session '{attempted}': no bot's sessions carry a run with that id")]
     UnknownSession {
         /// The id that missed.
         attempted: String,
@@ -545,9 +545,8 @@ pub enum SessionError {
     NotConfigured(String),
 }
 
-/// The Sessions port. One real adapter stands behind it in production (Outline,
-/// a page per bot); a fake stands behind it in tests. The invariants every
-/// adapter holds:
+/// The Sessions port. A store-backed adapter stands behind it in production; a
+/// fake stands behind it in tests. The invariants every adapter holds:
 ///
 /// * **read-back** — a write succeeds only if reading it back through the read
 ///   path returns it, and a mismatch restores the prior state before erroring.
