@@ -577,6 +577,75 @@ mod tests {
         .expect("the board takes the row");
     }
 
+    /// **An owner index that cannot be reached is a failure, never "no such
+    /// owner".**
+    ///
+    /// The two are different claims and only one of them is about the caller's
+    /// roster. Rendering unreachable as absent refuses a creation that should
+    /// have succeeded and tells the caller something false about their own
+    /// entities — and it does it with an empty candidate list, which reads as
+    /// "nothing even resembles this" when in fact nothing was looked at.
+    ///
+    /// The port's own contract says so and nothing held it: the condition
+    /// cannot arise through any verb, so no test that goes through the door
+    /// could produce it.
+    #[tokio::test]
+    async fn an_owner_index_that_cannot_be_reached_is_a_failure_not_an_absence() {
+        /// An index that is down, which is the one answer a real one can give
+        /// that says nothing about who exists.
+        struct Down;
+
+        #[async_trait]
+        impl OwnerIndex for Down {
+            async fn look_up(&self, _: &EntityId) -> Result<OwnerLookup, MailboxError> {
+                Err(MailboxError::Store("the entity world is down".into()))
+            }
+        }
+
+        let scratch = Scratch::new("owner-index-down");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+
+        let down = DoltMailboxes::open(store.pool().clone(), Arc::new(Down));
+        let outcome = down
+            .create_mailbox(
+                &MailboxName("inbox".into()),
+                &EntityId("bot:gamma".into()),
+                None,
+            )
+            .await;
+        assert!(
+            matches!(outcome, Err(MailboxError::Store(_))),
+            "an index that is down is a failure, not a verdict about the owner: {outcome:?}"
+        );
+        assert!(
+            down.list_mailboxes().await.expect("list ok").is_empty(),
+            "and nothing was written"
+        );
+
+        // **The positive it rests on.** The same call, the same owner, against
+        // an index that answers — otherwise this passes on a store that
+        // refuses every creation for any reason at all.
+        let up = DoltMailboxes::open(store.pool().clone(), Arc::new(AnyOwner));
+        let opened = up
+            .create_mailbox(
+                &MailboxName("inbox".into()),
+                &EntityId("bot:gamma".into()),
+                None,
+            )
+            .await
+            .expect("create ok")
+            .written()
+            .expect("a reachable index opens the box");
+        assert_eq!(opened.name.as_str(), "inbox");
+
+        store.stop().await;
+    }
+
     /// **A card jojobot cannot read is invisible to every verb that acts, and
     /// visible on the box that holds it.**
     ///
