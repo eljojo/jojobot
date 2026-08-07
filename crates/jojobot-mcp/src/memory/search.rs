@@ -766,7 +766,12 @@ mod tests {
             }]
         };
 
-        for coverage in [Coverage::Partial(Behind::Stale), Coverage::Loaded] {
+        // **`Unscanned` is the only way the mail half goes behind**, and the
+        // double is fed a state the index can actually report: the board read
+        // is what fills this half and nothing else touches it, so
+        // `FullTextIndex::mail_coverage` reaches `Partial` from that one state.
+        // A double handed `Stale` here tests an answer no store produces.
+        for coverage in [Coverage::Partial(Behind::Unscanned), Coverage::Loaded] {
             let body = json_of(
                 &handler_with(Arc::new(SpySearch::covering(coverage, hit())))
                     .search(Parameters(SearchArgs {
@@ -795,7 +800,7 @@ mod tests {
         // partial answer over mail as a complete one.
         let partial = json_of(
             &handler_with(Arc::new(SpySearch::covering(
-                Coverage::Partial(Behind::Stale),
+                Coverage::Partial(Behind::Unscanned),
                 hit(),
             )))
             .search(Parameters(SearchArgs {
@@ -811,6 +816,14 @@ mod tests {
                 .expect("a partial answer says it is partial")
                 .contains("PARTIAL"),
             "got {partial}"
+        );
+        // **The token beside that note, because a client is told to branch on
+        // it.** Unasserted, it could carry any word — and the note it sits
+        // beside describes one cause only, so a token naming another one
+        // contradicts the sentence next to it.
+        assert_eq!(
+            partial["mail"]["behind"], "unscanned",
+            "the mail half goes behind one way, and the token says which: {partial}"
         );
     }
 
