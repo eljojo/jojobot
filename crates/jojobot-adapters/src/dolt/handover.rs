@@ -27,6 +27,20 @@
 //! everything as `new` by design, which is right for a message somebody is
 //! sending and wrong for one that already has a history.
 //!
+//! # Done-ness is a record, not an inference
+//!
+//! "The target has rows in it" cannot tell a completed run from a half-verified
+//! one, and once this store is the one being served from, that gap is a way to
+//! lose data rather than a nicety. Wiping the data directory is the obvious
+//! repair; the old store still holds the pre-migration snapshot; an empty target
+//! then looks exactly like a fresh install, and the next start carries the OLD
+//! records back over everything written since.
+//!
+//! So the handover writes down what it did. Two states, because verification is
+//! post-commit: `written` goes in with the carried rows, `verified` is set once
+//! the read-back passed. [`carry_over`] is the verb a start calls, and **only a
+//! `verified` record lets it say the store may be served from.**
+//!
 //! # What cannot be carried is reported, never dropped
 //!
 //! The old store holds cards jojobot cannot read. It cannot write them here
@@ -58,6 +72,18 @@ pub enum HandoverError {
     /// The new store refused a write.
     #[error("the new store refused the handover: {0}")]
     Target(String),
+    /// **The record says the rows were committed and the read-back never
+    /// finished.** The target holds a board nobody checked, so it must not be
+    /// served from until a person has looked at it.
+    #[error(
+        "the handover's record says '{state}', not 'verified' — the rows were committed and the \
+         read-back never completed, so the store holds a board nobody checked"
+    )]
+    Halfway {
+        /// The token the record wears, quoted rather than interpreted: a state
+        /// this build does not know is exactly the thing a person must see.
+        state: String,
+    },
     /// **A record did not read back as what it was.** The handover failed; the
     /// target is left holding whatever landed, and a person has to look.
     #[error("{what} '{which}' did not read back as it was written: {field} differs")]
@@ -119,6 +145,17 @@ impl Report {
         self.boxes.whole() && self.messages.whole() && self.sessions.whole() && self.entries.whole()
     }
 }
+
+/// **What the record is a record of.** One handover, named — so the row says
+/// which body of records it speaks for rather than being a bare flag.
+const CARRIED: &str = "mail-and-sessions";
+
+/// The rows are committed and the read-back has not passed yet.
+const WRITTEN: &str = "written";
+
+/// The read-back passed. **This and only this means the store may be served
+/// from**, and everything that is not exactly this token refuses.
+const VERIFIED: &str = "verified";
 
 fn source_mail(e: MailboxError) -> HandoverError {
     HandoverError::Source(e.to_string())
@@ -200,6 +237,17 @@ pub async fn run(
     must_be_empty(&mut tx, "message", "messages").await?;
     must_be_empty(&mut tx, "session", "sessions").await?;
     must_be_empty(&mut tx, "journal_entry", "chronology entries").await?;
+
+    // **The record goes in with the rows it is about.** Same transaction, so
+    // there is no state where the records are committed and nothing says a
+    // handover happened — which is the state a later boot cannot tell from
+    // somebody else's data, and refuses.
+    sqlx::query("INSERT INTO handover (what, state) VALUES (?, ?)")
+        .bind(CARRIED)
+        .bind(WRITTEN)
+        .execute(&mut *tx)
+        .await
+        .map_err(target)?;
 
     let mut report = Report {
         not_carried: boxes.iter().flat_map(|b| b.quarantined.clone()).collect(),
@@ -320,7 +368,113 @@ pub async fn run(
         to_sessions,
     )
     .await?;
+
+    // Only now. The record was `written` from the commit until this line, which
+    // is exactly the window in which the target holds a board nobody checked.
+    promote(pool).await?;
     Ok(report)
+}
+
+/// Say the read-back passed.
+///
+/// Its own commit, and it cannot be otherwise: the verification reads through
+/// the target's own read path, which is a caller of the pool rather than of the
+/// handover's transaction, so it can only run once that transaction is gone.
+///
+/// **A store that refuses this update wedges the boot, on purpose.** The
+/// handover really did complete, and the record still says `written`, so this
+/// start and every later one refuse until a person looks — which is the rule
+/// applied to itself rather than an oversight: a run that could not say it
+/// verified has not said it.
+///
+/// **UNPROVEN IN THE CODE: nothing makes this failure alone go red.** No test
+/// produces a store that takes the carried rows, answers the whole read-back
+/// and then refuses one `UPDATE`. The state it leaves behind — a `written`
+/// record over committed rows — is covered, by the case that reaches it through
+/// a failed read-back instead.
+async fn promote(pool: &MySqlPool) -> Result<(), HandoverError> {
+    sqlx::query("UPDATE handover SET state = ? WHERE what = ?")
+        .bind(VERIFIED)
+        .bind(CARRIED)
+        .execute(pool)
+        .await
+        .map_err(target)?;
+    Ok(())
+}
+
+/// What the record says, or nothing at all if there is no record.
+///
+/// The token is returned as it is read, never parsed into a state this build
+/// knows: a token this build does not recognise must reach a person intact, and
+/// mapping it onto a known state on the way is how it would stop doing that.
+async fn recorded(pool: &MySqlPool) -> Result<Option<String>, HandoverError> {
+    sqlx::query_scalar::<_, String>("SELECT state FROM handover WHERE what = ?")
+        .bind(CARRIED)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "the store would not say whether the handover has run");
+            HandoverError::Target("the store would not say whether the handover has run".into())
+        })
+}
+
+/// What a boot found when it asked whether the records still need carrying.
+#[derive(Debug)]
+pub enum Carryover {
+    /// This boot carried them, and the read-back passed.
+    Carried(Report),
+    /// A previous boot carried them and its read-back passed.
+    AlreadyCarried,
+    /// **The store must not be served from.**
+    Refused(HandoverError),
+}
+
+/// **The store may be served from only when the record says verified.
+/// Everything else refuses.**
+///
+/// That is the whole rule, and it is one line of code rather than a list of
+/// cases on purpose: the accepting arm names the one token it accepts, and
+/// everything that is not that token — a state this build has never heard of, a
+/// failure `run` grew a variant for after this was written — lands on the
+/// refusing side without anybody remembering to put it there.
+///
+/// What the arms mean:
+///
+/// - **verified** — a previous boot did this and its read-back passed. The
+///   source is not touched. `run` reads the entire old board before it looks at
+///   whether the target is populated, so a steady-state boot that reached it
+///   would pay a full remote scan to learn it has nothing to do.
+/// - **no record, and `run` succeeds** — this boot carried them.
+/// - **written** — the rows are committed and the read-back never finished. The
+///   target holds a board nobody checked, and no count of what is in it can
+///   tell that from a completed run. A person has to look.
+/// - **no record and rows already there** — `run`'s own refusal. Something else
+///   wrote them, and adopting them is the guess this build refuses to make.
+///
+/// **There is no arm for a report that came back partial**, because `run`
+/// cannot produce one: every counter is either incremented once per record read
+/// or the function has already returned `Err` — the write loops bail on a
+/// refused insert, and the read-back loops bail on the first record that
+/// differs, with the chronology's length compared before its entries are
+/// walked. So `Ok` implies `report.whole()`. If a later change makes a partial
+/// report reachable, this is where the policy for it has to be decided rather
+/// than inferred.
+pub async fn carry_over(
+    from_mail: &dyn Mailboxes,
+    from_sessions: &dyn Sessions,
+    to_mail: &dyn Mailboxes,
+    to_sessions: &dyn Sessions,
+    pool: &MySqlPool,
+) -> Carryover {
+    match recorded(pool).await {
+        Err(unreadable) => Carryover::Refused(unreadable),
+        Ok(Some(state)) if state == VERIFIED => Carryover::AlreadyCarried,
+        Ok(Some(state)) => Carryover::Refused(HandoverError::Halfway { state }),
+        Ok(None) => match run(from_mail, from_sessions, to_mail, to_sessions, pool).await {
+            Ok(report) => Carryover::Carried(report),
+            Err(refused) => Carryover::Refused(refused),
+        },
+    }
 }
 
 /// The largest numeric id among those carried, or zero.
@@ -513,6 +667,7 @@ mod tests {
     use jojobot_domain::session::testing::InMemorySessions;
     use jojobot_domain::session::{JournalEntry, NewEntry, NewSession, SessionId, Sid};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Every well-formed owner resolves. Ownership has its own cases; a
     /// handover that refused an owner would be answering a question nobody
@@ -534,12 +689,241 @@ mod tests {
             + jiff::SignedDuration::from_secs(offset)
     }
 
+    /// The old board, wrapped so a test can say whether it was READ at all.
+    ///
+    /// The steady state's whole claim is that a boot with a verified record
+    /// never touches the old store. `AlreadyCarried` on its own is compatible
+    /// with a run that scanned the entire old board first and threw the answer
+    /// away — a full remote scan, every boot, to learn there is nothing to do.
+    /// So the reads are counted rather than inferred from the outcome.
+    struct WatchedMail {
+        board: InMemoryMailboxes,
+        reads: AtomicUsize,
+        refuses: bool,
+    }
+
+    impl WatchedMail {
+        fn watching(board: InMemoryMailboxes) -> Self {
+            WatchedMail {
+                board,
+                reads: AtomicUsize::new(0),
+                refuses: false,
+            }
+        }
+        /// The same double, unreadable — an old store that will not answer.
+        fn refusing(board: InMemoryMailboxes) -> Self {
+            WatchedMail {
+                refuses: true,
+                ..WatchedMail::watching(board)
+            }
+        }
+        fn reads(&self) -> usize {
+            self.reads.load(Ordering::Relaxed)
+        }
+        fn forget(&self) {
+            self.reads.store(0, Ordering::Relaxed);
+        }
+        /// Count the read, then answer it — or refuse.
+        fn asked(&self) -> Result<(), MailboxError> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            if self.refuses {
+                return Err(MailboxError::Store("the old store would not answer".into()));
+            }
+            Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Mailboxes for WatchedMail {
+        async fn list_mailboxes(
+            &self,
+        ) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+            self.asked()?;
+            self.board.list_mailboxes().await
+        }
+        async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+            self.asked()?;
+            self.board.scan_messages().await
+        }
+        async fn create_mailbox(
+            &self,
+            name: &MailboxName,
+            owner: &EntityId,
+            token: Option<&str>,
+        ) -> Result<Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+            self.board.create_mailbox(name, owner, token).await
+        }
+        async fn post_message(
+            &self,
+            message: NewMessage,
+        ) -> Result<Guarded<Message>, MailboxError> {
+            self.board.post_message(message).await
+        }
+        async fn read_mailbox(
+            &self,
+            name: &MailboxName,
+        ) -> Result<Guarded<jojobot_domain::mailbox::Delivery>, MailboxError> {
+            self.board.read_mailbox(name).await
+        }
+        async fn read_message(
+            &self,
+            id: &jojobot_domain::mailbox::MessageId,
+        ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
+            self.board.read_message(id).await
+        }
+        async fn mark_processed(
+            &self,
+            id: &jojobot_domain::mailbox::MessageId,
+            notes: Option<&str>,
+        ) -> Result<Message, MailboxError> {
+            self.board.mark_processed(id, notes).await
+        }
+    }
+
+    /// The session half of the same watch. Counted separately because the two
+    /// sources are two remote boards, and a skip that touched only one of them
+    /// is still a skip that touched a source.
+    struct WatchedSessions(InMemorySessions, AtomicUsize);
+
+    impl WatchedSessions {
+        fn watching(runs: InMemorySessions) -> Self {
+            WatchedSessions(runs, AtomicUsize::new(0))
+        }
+        fn reads(&self) -> usize {
+            self.1.load(Ordering::Relaxed)
+        }
+        fn forget(&self) {
+            self.1.store(0, Ordering::Relaxed);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Sessions for WatchedSessions {
+        async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+            self.1.fetch_add(1, Ordering::Relaxed);
+            self.0.all_sessions().await
+        }
+        async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+            self.0.read_session(id).await
+        }
+        async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+            self.0.sessions_of(bot).await
+        }
+        async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+            self.0.begin(new).await
+        }
+        async fn append(
+            &self,
+            id: &SessionId,
+            entry: NewEntry,
+        ) -> Result<JournalEntry, SessionError> {
+            self.0.append(id, entry).await
+        }
+        async fn amend_last(
+            &self,
+            id: &SessionId,
+            text: &str,
+        ) -> Result<JournalEntry, SessionError> {
+            self.0.amend_last(id, text).await
+        }
+        async fn amend_beat(
+            &self,
+            id: &SessionId,
+            entry: &jojobot_domain::session::EntryId,
+            text: &str,
+            at: jiff::Timestamp,
+        ) -> Result<JournalEntry, SessionError> {
+            self.0.amend_beat(id, entry, text, at).await
+        }
+        async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
+            self.0.set_focus(id, focus).await
+        }
+        async fn close(
+            &self,
+            id: &SessionId,
+            to: jojobot_domain::session::SessionState,
+        ) -> Result<Session, SessionError> {
+            self.0.close(id, to).await
+        }
+        async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+            self.0.reopen(id).await
+        }
+    }
+
+    /// What the record says, read the way an operator would rather than through
+    /// this module's own helper — a verify that shares the reader it is checking
+    /// is not a verify.
+    async fn recorded_state(pool: &MySqlPool) -> Option<String> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT state FROM handover WHERE what = 'mail-and-sessions'",
+        )
+        .fetch_optional(pool)
+        .await
+        .expect("the record is readable")
+    }
+
     /// The old board, with a message in **each** state and a session with a
     /// chronology on it.
     ///
     /// Every state, deliberately: a handover that filed everything as `new`
     /// would satisfy a fixture that only ever posted, and losing which messages
     /// are already handled is the defect that costs a reader most.
+    /// The real store, with one message rewritten on the way out — the shape of
+    /// a store that accepted a write and kept something else.
+    ///
+    /// Module-scoped because two questions need it: which comparison fires, and
+    /// what a handover whose read-back failed LEAVES BEHIND.
+    struct Mangling(DoltMailboxes, fn(&mut Message));
+
+    #[async_trait::async_trait]
+    impl Mailboxes for Mangling {
+        async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+            let mut messages = self.0.scan_messages().await?;
+            if let Some(first) = messages.first_mut() {
+                (self.1)(first);
+            }
+            Ok(messages)
+        }
+        async fn create_mailbox(
+            &self,
+            name: &MailboxName,
+            owner: &EntityId,
+            token: Option<&str>,
+        ) -> Result<Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+            self.0.create_mailbox(name, owner, token).await
+        }
+        async fn list_mailboxes(
+            &self,
+        ) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+            self.0.list_mailboxes().await
+        }
+        async fn post_message(
+            &self,
+            message: NewMessage,
+        ) -> Result<Guarded<Message>, MailboxError> {
+            self.0.post_message(message).await
+        }
+        async fn read_mailbox(
+            &self,
+            name: &MailboxName,
+        ) -> Result<Guarded<jojobot_domain::mailbox::Delivery>, MailboxError> {
+            self.0.read_mailbox(name).await
+        }
+        async fn read_message(
+            &self,
+            id: &jojobot_domain::mailbox::MessageId,
+        ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
+            self.0.read_message(id).await
+        }
+        async fn mark_processed(
+            &self,
+            id: &jojobot_domain::mailbox::MessageId,
+            notes: Option<&str>,
+        ) -> Result<Message, MailboxError> {
+            self.0.mark_processed(id, notes).await
+        }
+    }
+
     async fn old_board() -> (InMemoryMailboxes, InMemorySessions) {
         let mail = InMemoryMailboxes::knowing_any_owner();
         let owner = EntityId("bot:gamma".into());
@@ -1143,59 +1527,6 @@ mod tests {
     /// had silently gone back to unread.
     #[tokio::test]
     async fn each_field_the_verification_compares_is_proven_on_its_own() {
-        /// The real store, with one message rewritten on the way out — the
-        /// shape of a store that accepted a write and kept something else.
-        struct Mangling(DoltMailboxes, fn(&mut Message));
-
-        #[async_trait::async_trait]
-        impl Mailboxes for Mangling {
-            async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
-                let mut messages = self.0.scan_messages().await?;
-                if let Some(first) = messages.first_mut() {
-                    (self.1)(first);
-                }
-                Ok(messages)
-            }
-            async fn create_mailbox(
-                &self,
-                name: &MailboxName,
-                owner: &EntityId,
-                token: Option<&str>,
-            ) -> Result<Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError> {
-                self.0.create_mailbox(name, owner, token).await
-            }
-            async fn list_mailboxes(
-                &self,
-            ) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
-                self.0.list_mailboxes().await
-            }
-            async fn post_message(
-                &self,
-                message: NewMessage,
-            ) -> Result<Guarded<Message>, MailboxError> {
-                self.0.post_message(message).await
-            }
-            async fn read_mailbox(
-                &self,
-                name: &MailboxName,
-            ) -> Result<Guarded<jojobot_domain::mailbox::Delivery>, MailboxError> {
-                self.0.read_mailbox(name).await
-            }
-            async fn read_message(
-                &self,
-                id: &jojobot_domain::mailbox::MessageId,
-            ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
-                self.0.read_message(id).await
-            }
-            async fn mark_processed(
-                &self,
-                id: &jojobot_domain::mailbox::MessageId,
-                notes: Option<&str>,
-            ) -> Result<Message, MailboxError> {
-                self.0.mark_processed(id, notes).await
-            }
-        }
-
         /// One field's mutation, and the clause it must make fire.
         type Case = (&'static str, fn(&mut Message));
 
@@ -1376,6 +1707,287 @@ mod tests {
         assert!(report.whole(), "every kind came through whole: {report:?}");
         assert_eq!(report.boxes.verified, 2);
         assert_eq!(report.messages.verified, 3);
+
+        store.stop().await;
+    }
+
+    /// **A completed handover leaves the record saying `verified`, and only a
+    /// completed one does.**
+    ///
+    /// Both halves in one case, because either alone is satisfied by a build
+    /// that gets the record wrong. A run that never wrote the record at all
+    /// passes any assertion about the failing path; a run that wrote `verified`
+    /// up front passes any assertion about the succeeding one.
+    ///
+    /// The failing path is produced the way it happens: verification is
+    /// post-commit, so a target whose read-back disagrees leaves the rows in
+    /// and the record un-promoted. That is the same state a death between the
+    /// commit and the promotion leaves, and it is the state the next boot has
+    /// to be able to tell from a completed run.
+    #[tokio::test]
+    async fn the_record_says_verified_only_after_the_read_back_passed() {
+        let (old_mail, old_sessions) = old_board().await;
+        let (mut store, mail, sessions) = new_store("record-verified").await;
+
+        assert_eq!(
+            recorded_state(store.pool()).await,
+            None,
+            "a store nothing has been carried into holds no record"
+        );
+
+        run(&old_mail, &old_sessions, &mail, &sessions, store.pool())
+            .await
+            .expect("the handover completes");
+        assert_eq!(
+            recorded_state(store.pool()).await.as_deref(),
+            Some("verified"),
+            "the read-back passed, so the record is promoted — this and only this means the \
+             store may be served from"
+        );
+
+        store.stop().await;
+
+        // The other half, on a store of its own: the read-back fails, so the
+        // record stops at `written`.
+        let (old_mail, old_sessions) = old_board().await;
+        let (mut store, mail, sessions) = new_store("record-written").await;
+        let outcome = run(
+            &old_mail,
+            &old_sessions,
+            &Mangling(mail, |m| m.body.push_str(" and something nobody wrote")),
+            &sessions,
+            store.pool(),
+        )
+        .await;
+        assert!(
+            matches!(outcome, Err(HandoverError::Mismatch { .. })),
+            "the read-back must fail for this half to mean anything: {outcome:?}"
+        );
+        assert_eq!(
+            recorded_state(store.pool()).await.as_deref(),
+            Some("written"),
+            "the rows are committed and the read-back did not pass, so the record says so"
+        );
+
+        store.stop().await;
+    }
+
+    /// **A verified record answers the boot without touching the old store.**
+    ///
+    /// The steady state, and the reason the record is consulted FIRST. `run`
+    /// reads the whole old board before it looks at whether the target is
+    /// populated, so a boot that reached `run` to learn it had nothing to do
+    /// would pay a full remote scan every time — and would still be paying it
+    /// on a build where the outcome happens to come back right.
+    ///
+    /// So the claim asserted is that the source was NOT READ, positively, from
+    /// a source that counts. Its positive twin is in the same case: the first
+    /// call, through the same doubles, carries the board and the counters move
+    /// — otherwise the zeroes below would pass on a double nobody ever calls.
+    #[tokio::test]
+    async fn a_verified_record_skips_the_handover_without_reading_the_source() {
+        let (old_mail, old_sessions) = old_board().await;
+        let source_mail = WatchedMail::watching(old_mail);
+        let source_sessions = WatchedSessions::watching(old_sessions);
+        let (mut store, mail, sessions) = new_store("carry-over-steady").await;
+
+        let first = carry_over(
+            &source_mail,
+            &source_sessions,
+            &mail,
+            &sessions,
+            store.pool(),
+        )
+        .await;
+        let Carryover::Carried(report) = first else {
+            panic!("the first boot carries the board: {first:?}");
+        };
+        assert!(report.whole(), "every kind came through whole: {report:?}");
+        assert!(
+            source_mail.reads() > 0 && source_sessions.reads() > 0,
+            "the carrying boot DID read both sources — {} mail reads, {} session reads",
+            source_mail.reads(),
+            source_sessions.reads()
+        );
+
+        source_mail.forget();
+        source_sessions.forget();
+
+        let again = carry_over(
+            &source_mail,
+            &source_sessions,
+            &mail,
+            &sessions,
+            store.pool(),
+        )
+        .await;
+        assert!(
+            matches!(again, Carryover::AlreadyCarried),
+            "a verified record means a previous boot already did this: {again:?}"
+        );
+        assert_eq!(
+            (source_mail.reads(), source_sessions.reads()),
+            (0, 0),
+            "and it was answered from the record — the old store was not touched at all"
+        );
+
+        store.stop().await;
+    }
+
+    /// **A record that says `written` and never reached `verified` refuses.**
+    ///
+    /// The state that makes the record worth having. The rows are committed and
+    /// nobody checked them, which is indistinguishable from a completed run by
+    /// any count of what the target holds — so a build that decides done-ness
+    /// from "the target has rows in it" serves an unverified board and says
+    /// nothing.
+    ///
+    /// It refuses with the state NAMED, because the answer here is that a
+    /// person has to look, and "the handover refused" without the state sends
+    /// them reading the code to find out which refusal they got.
+    #[tokio::test]
+    async fn a_record_that_never_verified_refuses_and_names_that_state() {
+        let (old_mail, old_sessions) = old_board().await;
+        let (mut store, mail, sessions) = new_store("carry-over-halfway").await;
+
+        // The halfway state, made the way a real one is made: the commit lands
+        // and the post-commit read-back does not pass.
+        let interrupted = run(
+            &old_mail,
+            &old_sessions,
+            &Mangling(mail, |m| m.body.push_str(" and something nobody wrote")),
+            &sessions,
+            store.pool(),
+        )
+        .await;
+        assert!(
+            matches!(interrupted, Err(HandoverError::Mismatch { .. })),
+            "the read-back must fail to leave the state this case is about: {interrupted:?}"
+        );
+        assert_eq!(
+            recorded_state(store.pool()).await.as_deref(),
+            Some("written"),
+            "the precondition: rows in, record un-promoted"
+        );
+
+        // The next boot, with a target that reads back perfectly well. Nothing
+        // about the DATA is wrong now — only the record says the read-back
+        // never finished, and that alone must stop it.
+        let healthy = DoltMailboxes::open(store.pool().clone(), Arc::new(AnyOwner));
+        let outcome = carry_over(&old_mail, &old_sessions, &healthy, &sessions, store.pool()).await;
+        let Carryover::Refused(HandoverError::Halfway { state }) = &outcome else {
+            panic!("a record that never verified must refuse as such: {outcome:?}");
+        };
+        assert_eq!(
+            state, "written",
+            "and it names the state the record wears, so a person knows what they are looking at"
+        );
+
+        store.stop().await;
+    }
+
+    /// **A record that cannot be read refuses, without touching the source.**
+    ///
+    /// Not hypothetical: a data directory restored from before this migration
+    /// has every other table and no record table, which is exactly the shape
+    /// this produces. "The record does not say verified" covers a record that
+    /// cannot be consulted at all, and the refusal has to come from the record
+    /// step rather than from whatever `run` happens to trip over later.
+    ///
+    /// Which is why the assertion is that the OLD STORE WAS NOT READ. A build
+    /// that ignored the unreadable record and ran anyway also ends in a refusal
+    /// — the carrying transaction fails on the missing table — so the outcome
+    /// alone cannot tell the two apart. The counter can.
+    #[tokio::test]
+    async fn a_record_that_cannot_be_read_refuses_before_the_source_is_touched() {
+        let (old_mail, old_sessions) = old_board().await;
+        let source = WatchedMail::watching(old_mail);
+        let (mut store, mail, sessions) = new_store("carry-over-no-record").await;
+
+        sqlx::raw_sql("DROP TABLE handover")
+            .execute(store.pool())
+            .await
+            .expect("the record table goes");
+
+        let outcome = carry_over(&source, &old_sessions, &mail, &sessions, store.pool()).await;
+        assert!(
+            matches!(outcome, Carryover::Refused(_)),
+            "a record this store will not answer for is a refusal: {outcome:?}"
+        );
+        assert_eq!(
+            source.reads(),
+            0,
+            "and it refused at the record, before reading a thing from the old store"
+        );
+
+        store.stop().await;
+    }
+
+    /// **A target somebody else wrote to is refused, never adopted.**
+    ///
+    /// No record and rows already there is the one state that must not be
+    /// guessed at: it is either a store this handover has no business writing
+    /// to, or a repair that went half-way. Adopting it — treating the rows as
+    /// though this handover had put them there — is the guess-instead-of-refuse
+    /// trap, and it ends with the old snapshot carried over live data.
+    #[tokio::test]
+    async fn a_target_with_rows_and_no_record_refuses() {
+        let (old_mail, old_sessions) = old_board().await;
+        let (mut store, mail, sessions) = new_store("carry-over-squatter").await;
+        sqlx::query("INSERT INTO mailbox (name, owner) VALUES ('squatter', 'bot:gamma')")
+            .execute(store.pool())
+            .await
+            .expect("the occupant lands");
+
+        let outcome = carry_over(&old_mail, &old_sessions, &mail, &sessions, store.pool()).await;
+        assert!(
+            matches!(outcome, Carryover::Refused(HandoverError::Populated { .. })),
+            "rows nobody recorded are refused, not adopted: {outcome:?}"
+        );
+
+        // And it left both sides alone: no board came across, and nothing
+        // wrote a record claiming it had.
+        let boxes = mail.list_mailboxes().await.expect("list ok");
+        assert_eq!(
+            boxes.iter().map(|b| b.name.to_string()).collect::<Vec<_>>(),
+            vec!["squatter".to_string()],
+            "the occupant is still alone — the old board did not land on top of it"
+        );
+        assert_eq!(
+            recorded_state(store.pool()).await,
+            None,
+            "and no record was minted for a handover that did not happen"
+        );
+
+        store.stop().await;
+    }
+
+    /// **Anything the handover refuses, the boot refuses.**
+    ///
+    /// Written as one arm rather than one per error, and this is what makes
+    /// that structural instead of aspirational: an unreadable SOURCE is a
+    /// different failure from a populated target, reaches this from a different
+    /// place, and lands on the refusing side without a line of its own. A
+    /// variant added later does the same.
+    #[tokio::test]
+    async fn a_handover_that_fails_refuses_the_boot() {
+        let (old_mail, old_sessions) = old_board().await;
+        let source = WatchedMail::refusing(old_mail);
+        let (mut store, mail, sessions) = new_store("carry-over-unreadable").await;
+
+        let outcome = carry_over(&source, &old_sessions, &mail, &sessions, store.pool()).await;
+        assert!(
+            matches!(outcome, Carryover::Refused(HandoverError::Source(_))),
+            "an old store that will not answer refuses the boot: {outcome:?}"
+        );
+
+        // Nothing was carried and nothing was recorded — a refusal that left a
+        // record behind would wedge every later boot.
+        assert!(
+            mail.list_mailboxes().await.expect("list ok").is_empty(),
+            "no board came across"
+        );
+        assert_eq!(recorded_state(store.pool()).await, None);
 
         store.stop().await;
     }

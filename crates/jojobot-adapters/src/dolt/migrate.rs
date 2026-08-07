@@ -82,6 +82,11 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0005_message.sql"),
         creates: "message",
     },
+    Migration {
+        version: "0006_handover",
+        sql: include_str!("../../migrations/0006_handover.sql"),
+        creates: "handover",
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -343,6 +348,7 @@ mod tests {
         "0003_minted",
         "0004_mailbox",
         "0005_message",
+        "0006_handover",
     ];
 
     #[test]

@@ -462,7 +462,7 @@ pub(crate) mod tests {
             .expect("the first boot brings the store up");
         assert_eq!(
             applied.len(),
-            5,
+            6,
             "the first boot applies the set: {applied:?}"
         );
         // **And it opened the directory it was ASKED for.** Without this the
