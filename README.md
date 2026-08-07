@@ -207,8 +207,10 @@ Recorded so nobody proposes them again as fresh ideas.
 - **Domain-driven, ports-and-adapters.** A pure `jojobot-domain` crate owns the
   ubiquitous language; adapters and the MCP surface depend on it, never the
   reverse.
-- **Fronts, never owns.** The underlying services stay the source of truth. An
-  anti-corruption layer per service quarantines each one's quirks.
+- **Fronts what it does not own.** Where a service is the source of truth,
+  jojobot reads through it rather than copying it, and an anti-corruption layer
+  quarantines that service's quirks. What no service owns, jojobot keeps in a
+  SQL store it starts and supervises itself.
 - **Resource server only.** jojobot validates bearer tokens; it never issues
   them. Bring your own OpenID Connect authorization server.
 
@@ -217,7 +219,7 @@ Recorded so nobody proposes them again as fresh ideas.
 ```
 crates/
   jojobot-domain     pure domain — bounded contexts as modules, no I/O, no MCP
-  jojobot-adapters   anti-corruption layer per fronted service (Outline)
+  jojobot-adapters   the fronted service's anti-corruption layer, and the SQL store jojobot runs itself
   jojobot-mcp        the MCP adapter — the only crate that maps MCP calls to the domain
   jojobot            the binary: HTTP transport + resource-server auth
 ```
@@ -230,8 +232,14 @@ Development uses a Nix flake (a Rust toolchain, `pkg-config`, and OpenSSL):
 nix develop            # drops you in a shell with the pinned toolchain
 cargo build            # build the workspace
 cargo test             # run the tests, including the auth golden tests
-cargo run -p jojobot   # start the server
+
+# Mail and sessions are rows in a SQL store the server starts and supervises,
+# so it needs somewhere to keep them. The service manager hands that path over
+# in production; supply one by hand for a local run.
+STATE_DIRECTORY=$PWD/.state cargo run -p jojobot
 ```
+
+The store's server binary comes from the flake, so run from inside `nix develop`.
 
 Or build the package directly:
 
@@ -273,12 +281,28 @@ All configuration is environment-driven.
 | `JOJOBOT_JWKS_URI` | Explicit JWKS URI | discovered from issuer |
 | `JOJOBOT_ALLOW_NO_AUTH` | Set to `1` to run **without auth** (dev only) | unset |
 | `JOJOBOT_ALLOWED_SUBJECTS` | Optional comma-separated `sub` allowlist (requires auth) | unset = any valid token |
-| `JOJOBOT_OUTLINE_URL` / `JOJOBOT_OUTLINE_TOKEN` | The Outline instance Memory, Mailboxes and Sessions front | unset |
+| `JOJOBOT_OUTLINE_URL` / `JOJOBOT_OUTLINE_TOKEN` | The Outline instance Memory fronts, and the store mail and sessions are carried out of | unset |
+| `STATE_DIRECTORY` | Where the SQL store keeps its data — **required**; the service manager sets it | unset |
+| `JOJOBOT_STORE_PORT` | Loopback port the SQL store serves on | `3307` |
 
-The server **fails closed**: with `JOJOBOT_ISSUER` unset it refuses to start
-unless `JOJOBOT_ALLOW_NO_AUTH=1` is set explicitly, and even then it refuses a
+The server **fails closed**, and there are two kinds of it.
+
+*Misconfiguration.* With `JOJOBOT_ISSUER` unset it refuses to start unless
+`JOJOBOT_ALLOW_NO_AUTH=1` is set explicitly, and even then it refuses a
 non-loopback bind. This turns a dropped-secret misconfiguration into a startup
 error rather than a silently unauthenticated `/mcp`.
+
+*No store to serve from.* Mail and sessions live in the SQL store, so the server
+refuses to start without a state directory, or when the store does not come up,
+or when the one-time carry of mail and sessions into it will not say the records
+came across whole. A server that started anyway would answer with an empty board
+and present that emptiness as the truth. Each refusal names the condition it
+found; the one that needs a person is a carry recorded as begun and never
+verified, which means rows landed and nothing checked them.
+
+A missing `JOJOBOT_OUTLINE_URL` is **not** one of these. With no Outline wired
+there is nothing to carry and no memory to serve: the server starts, `search`
+and `capture` refuse loudly, and mail and sessions work from an empty store.
 
 ## Auth model
 
