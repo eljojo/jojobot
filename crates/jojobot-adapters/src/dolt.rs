@@ -272,6 +272,31 @@ impl Dolt {
         Ok(())
     }
 
+    /// **Bring the store up and its schema to the shape this build expects.**
+    ///
+    /// The one call a boot makes. It is separate from [`start`](Self::start)
+    /// because a server that is running with the wrong schema is not ready, and
+    /// a caller that had to remember two steps would eventually do one.
+    ///
+    /// Returns the migrations it applied, which is empty on every start after
+    /// the first. **That is the ordinary case, not a special one** — the ledger
+    /// records what has run, so a restart against a migrated store applies
+    /// nothing and says so.
+    pub async fn ready(
+        data_dir: &Path,
+        port: u16,
+    ) -> Result<(Self, Vec<String>), migrate::MigrateError> {
+        let store =
+            Self::start(data_dir, port)
+                .await
+                .map_err(|e| migrate::MigrateError::Failed {
+                    version: "the store itself".to_string(),
+                    why: e.to_string(),
+                })?;
+        let applied = migrate::run(store.pool()).await?;
+        Ok((store, applied))
+    }
+
     /// A pool onto a database of its own on this server, created if needed.
     ///
     /// **For tests that need isolation from each other**, which is a real need
@@ -418,6 +443,54 @@ pub(crate) mod tests {
             .expect("the row is still there");
         assert_eq!(n, 7, "a restart opens the store it left behind");
         second.stop().await;
+    }
+
+    /// **A restart against a migrated store applies nothing and still comes
+    /// up.** The most-run path there is: every boot after the first.
+    ///
+    /// Both halves. "Applied nothing" alone is satisfied by a store that never
+    /// applied anything, so the schema is exercised afterwards to show it is
+    /// really there.
+    #[tokio::test]
+    async fn a_restart_against_a_migrated_store_applies_nothing() {
+        let scratch = Scratch::new("ready-twice");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+
+        let (mut first, applied) = Dolt::ready(&path, free_port())
+            .await
+            .expect("the first boot brings the store up");
+        assert_eq!(
+            applied.len(),
+            5,
+            "the first boot applies the set: {applied:?}"
+        );
+        // **And it opened the directory it was ASKED for.** Without this the
+        // case only shows the two boots agreeing with each other, which they
+        // would do just as well against a directory nobody named.
+        assert!(
+            path.join("jojobot").is_dir(),
+            "the store landed under the directory the caller gave: {path:?}"
+        );
+        first.stop().await;
+
+        let (mut again, applied) = Dolt::ready(&path, free_port())
+            .await
+            .expect("the second boot brings the store up");
+        assert!(
+            applied.is_empty(),
+            "a restart against a migrated store applies nothing: {applied:?}"
+        );
+
+        // …and the schema those migrations were for is really there, which is
+        // what stops the assertion above from passing over a store that has
+        // nothing in it.
+        sqlx::query("INSERT INTO mailbox (name, owner) VALUES ('gamma', 'bot:gamma')")
+            .execute(again.pool())
+            .await
+            .expect("the schema survived the restart");
+
+        again.stop().await;
     }
 
     /// **A store refuses a server it did not spawn.**

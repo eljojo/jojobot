@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory};
 use jojobot_domain::mailbox::Mailboxes;
@@ -61,6 +62,48 @@ async fn main() -> anyhow::Result<()> {
                 "AUTH DISABLED — JOJOBOT_ISSUER is unset, so /mcp is open. Development use only."
             );
             (None, None)
+        }
+    };
+
+    // **The SQL store jojobot runs itself**, brought up and migrated before
+    // anything else is wired.
+    //
+    // Its directory comes from the service manager, which owns the real path
+    // and hands over a stable one — so nothing here decides where state lives.
+    // Without it there is no store: a development run says so and carries on,
+    // because the verbs still answer from the document store.
+    //
+    // ⚠️ **A failure here is loud and NOT fatal, and that is only right while
+    // nothing serves from this store.** Nothing does yet: the schema is built
+    // and unread. The day a verb reads from it, coming up without it stops
+    // being survivable and this has to refuse the boot instead.
+    let _store = match store_dir_from_env() {
+        Some(dir) => match Dolt::ready(&dir, store_port_from_env()).await {
+            Ok((store, applied)) if applied.is_empty() => {
+                tracing::info!(dir = %dir.display(), "store: up, schema already current");
+                Some(store)
+            }
+            Ok((store, applied)) => {
+                tracing::info!(dir = %dir.display(), applied = ?applied, "store: up, schema moved");
+                Some(store)
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "STORE UNAVAILABLE — it did not come up, or its schema did not apply. Nothing \
+                     reads from it yet, so the server carries on and the verbs are unaffected. A \
+                     migration that failed is not recorded as applied, so a restart resumes where \
+                     it stopped rather than skipping it."
+                );
+                None
+            }
+        },
+        None => {
+            tracing::warn!(
+                "STORE DISABLED — no state directory, so the SQL store is not started. Set \
+                 STATE_DIRECTORY (the service manager does) to enable it."
+            );
+            None
         }
     };
 
@@ -219,6 +262,27 @@ async fn main() -> anyhow::Result<()> {
         .context("server error")?;
 
     Ok(())
+}
+
+/// Where the SQL store keeps its data — **the service manager's answer, not
+/// this binary's**. With a dynamic user the real path is systemd's to choose
+/// and `STATE_DIRECTORY` is the stable name it hands over; the store sits in
+/// `db` beneath it, so one directory holds everything jojobot owns.
+fn store_dir_from_env() -> Option<std::path::PathBuf> {
+    std::env::var("STATE_DIRECTORY")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(|s| std::path::PathBuf::from(s).join("db"))
+}
+
+/// The loopback port the store serves on. Fixed by default so an operator
+/// debugging a live host knows where to look, and overridable because a
+/// developer may already have something on it.
+fn store_port_from_env() -> u16 {
+    std::env::var("JOJOBOT_STORE_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3307)
 }
 
 /// Read the Outline store's **credentials** from the environment — the only
