@@ -33,12 +33,13 @@ never runs inference of its own — the assistant is the only mind.
 > **`search` spans both**: one ranked list over entities, facts, prose and
 > messages, mail **opt-in** through `include_mail` and searchable in every
 > state (`processed` archives too), each mail hit carrying its box, state,
-> sender and id — and **each half
-> of an answer states its own coverage**: complete, blind, or behind, and when
-> it is behind it says which way — `unscanned` when the boot read never landed,
-> `stale` when a write committed and its re-read could not run. An answer that
-> could not read a store says so rather than reading as "nothing
-> matched". On top of both, **bots**: an AI identity is an entity of kind `bot`
+> sender and id. **Every answer is backed by a read taken for it** — each half
+> re-reads its own store before answering, so a record the store has since lost
+> stops being served — and **each half states its own coverage**: complete,
+> blind, or behind, and when it is behind it says which way — `unscanned` when
+> no read has filled it yet, `stale` when the index holds an older version than
+> the store. An answer that could not read a store says so rather than reading
+> as "nothing matched". On top of both, **bots**: an AI identity is an entity of kind `bot`
 > with a charter, rules, memory and one owned mailbox. **`start_here` is the one
 > door**: it takes an optional bot name, and naming one **starts or resumes that
 > bot's session**, because a bot is a role and a session is one mortal run of it.
