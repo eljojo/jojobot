@@ -1,4 +1,4 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, ... }@args:
 
 with lib;
 
@@ -101,6 +101,30 @@ in
       '');
       description = "The jojobot package to run.";
     };
+
+    doltPackage = mkOption {
+      type = types.package;
+      # `args.dolt`, not `pkgs.dolt`: reading it out of the host's `pkgs`
+      # would take whatever version that host's channel happens to carry,
+      # which is the module choosing after all. The host hands it in.
+      default = args.dolt or (throw ''
+        dolt was not passed to this module.
+        jojobot runs the store itself and pins no version of it: the deploying
+        host chooses one and hands it in as a module argument.
+          nixpkgs.lib.nixosSystem {
+            specialArgs = { dolt = <the dolt package this host tracks>; };
+            modules = [ inputs.jojobot.nixosModules.default ./configuration.nix ];
+          }
+        Or set services.jojobot.doltPackage directly.
+      '');
+      description = ''
+        The dolt package jojobot runs the mailbox and session store with.
+
+        It arrives as a module argument from the deploying host. This module
+        names no version and no channel: pinning one here would decide, for
+        every host, when the store's engine moves.
+      '';
+    };
   };
 
   config = mkIf cfg.enable {
@@ -114,8 +138,9 @@ in
 
       # **The store's binary is jojobot's to run, so it is on jojobot's PATH.**
       # It is not a service somebody administers beside jojobot: jojobot spawns
-      # it, waits for it, and stops it with itself.
-      path = [ pkgs.dolt ];
+      # it, waits for it, and stops it with itself. The package is the host's
+      # choice — see `doltPackage`.
+      path = [ cfg.doltPackage ];
 
       environment = {
         JOJOBOT_BIND = "${cfg.listenAddress}:${toString cfg.port}";
