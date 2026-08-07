@@ -1101,7 +1101,154 @@ async fn the_handover_carries_a_real_board_across() {
         "…and its sessions"
     );
 
+    // ---- a second run refuses, and leaves the target as the first left it --
+    let before = new_mail.scan_messages().await.expect("scan ok").len();
+    let again = handover::run(
+        &old_mail,
+        &old_sessions,
+        &new_mail,
+        &new_sessions,
+        store.pool(),
+    )
+    .await;
+    assert!(
+        matches!(again, Err(handover::HandoverError::Populated { .. })),
+        "a second run must refuse rather than double the board: {again:?}"
+    );
+    assert_eq!(
+        new_mail.scan_messages().await.expect("scan ok").len(),
+        before,
+        "and the refusal wrote nothing"
+    );
+
+    // ---- the first write of each kind lands on an id nothing carried wears -
+    //
+    // ⚠️ **Against THIS source the counters are a no-op, and that is safe by
+    // shape rather than by the advance working.** The document store mints
+    // `gamma-1`, `e1` — prefixed — and this store mints bare decimals, so
+    // `highest` reads none of them, no counter moves, and nothing can collide
+    // because the two shapes are disjoint.
+    //
+    // So the assertions below cannot fail for an Outline source. They are here
+    // because they are the property the cutover actually needs, and they would
+    // fail the day either side's id shape changed. **The counter logic itself is
+    // proven in the fast suite**, where the source mints numeric ids and each of
+    // the three counters reddens when its kind is misspelled.
+    let fresh_message = new_mail
+        .post_message(NewMessage {
+            mailbox: MailboxName("gamma".into()),
+            body: "the first message after the move".into(),
+            subject: None,
+            sender: "gamma".into(),
+            sent_at: at(20),
+            in_reply_to: None,
+        })
+        .await
+        .expect("the store takes a message after the handover")
+        .written()
+        .expect("not blocked");
+    assert_eq!(
+        new_mail
+            .scan_messages()
+            .await
+            .expect("scan ok")
+            .iter()
+            .filter(|m| m.id == fresh_message.id)
+            .count(),
+        1,
+        "the new message got an id nothing carried wears"
+    );
+
+    let fresh_session = new_sessions
+        .begin(NewSession {
+            bot: owner.clone(),
+            sid: Sid("post".into()),
+            focus: "the first run after the move".into(),
+            started_at: at(20),
+        })
+        .await
+        .expect("the store takes a session after the handover");
+    let appended = new_sessions
+        .append(
+            &fresh_session.id,
+            NewEntry::manual("the first beat after the move", at(21)),
+        )
+        .await
+        .expect("the store takes an entry after the handover");
+    let landed = new_sessions.all_sessions().await.expect("list ok");
+    assert_eq!(
+        landed.iter().filter(|s| s.id == fresh_session.id).count(),
+        1,
+        "the new session got an id nothing carried wears"
+    );
+    assert_eq!(
+        landed
+            .iter()
+            .flat_map(|s| s.entries.iter())
+            .filter(|e| e.id == appended.id)
+            .count(),
+        1,
+        "and so did the new entry"
+    );
+
     store.stop().await;
     let _ = std::fs::remove_dir_all(&dir);
+
+    // ---- THE ORDINARY TARGET: one that already holds sessions --------------
+    // Not an empty database. A target jojobot has been up on at all has
+    // sessions and nothing else, and only the session check sees it. This is
+    // what the cutover will actually meet if the handover is ever run after
+    // the adapters are flipped, and refusing is what stops it doubling a board.
+    let lived_in =
+        std::env::temp_dir().join(format!("jojobot-handover-livedin-{}", std::process::id()));
+    std::fs::create_dir_all(&lived_in).expect("a scratch directory");
+    let mut second = Dolt::ready(&lived_in, {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("a free port")
+            .local_addr()
+            .expect("a bound address")
+            .port()
+    })
+    .await
+    .expect("the store comes up and migrates")
+    .0;
+    let lived_mail = DoltMailboxes::open(second.pool().clone(), Arc::new(AnyOwner));
+    let lived_sessions = DoltSessions::open(second.pool().clone());
+    lived_sessions
+        .begin(NewSession {
+            bot: owner.clone(),
+            sid: Sid("live".into()),
+            focus: "a run that happened before anybody migrated".into(),
+            started_at: at(0),
+        })
+        .await
+        .expect("the store takes a session");
+
+    let onto_lived_in = handover::run(
+        &old_mail,
+        &old_sessions,
+        &lived_mail,
+        &lived_sessions,
+        second.pool(),
+    )
+    .await;
+    let Err(handover::HandoverError::Populated { what, .. }) = &onto_lived_in else {
+        panic!("a target already holding sessions must refuse: {onto_lived_in:?}");
+    };
+    assert_eq!(
+        *what, "sessions",
+        "and it names what it found, so a person knows what to clear"
+    );
+    assert!(
+        lived_mail
+            .list_mailboxes()
+            .await
+            .expect("list ok")
+            .is_empty(),
+        "the refusal carried no board across"
+    );
+
+    second.stop().await;
+    let _ = std::fs::remove_dir_all(&lived_in);
     drop_session_collections(&http, &c).await;
 }
