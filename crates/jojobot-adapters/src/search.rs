@@ -1564,10 +1564,38 @@ impl Refresh for IndexedMailboxes {
     /// verbs that deliver, so a refresh built on one would drain a box as a side
     /// effect of answering a question. This board read takes nothing and moves
     /// nothing.
+    ///
+    /// **Both halves of a refresh can leave the index behind, so both mark it.**
+    /// The store read is the obvious one. The index write is the other: the
+    /// board arrived and the index does not end up holding it, which is the same
+    /// state by a different route, and reporting `Loaded` over it is the shape
+    /// rule 130 forbids. The memory half gets this free — `rescan` chains the
+    /// store read and the index write through one `?`.
+    ///
+    /// **This branch is UNPROVEN, and no test can reach it today.** The window
+    /// is an index write that fails after a board read that landed. Nothing in
+    /// the suite can open it: `payload_json` cannot fail over a `Message`, which
+    /// is strings, an enum and a timestamp with no map and no float; tantivy's
+    /// `add_document` fails only once the writer thread is dead; `commit` and
+    /// `reload` over a RAM index have no failure to inject. The index is a
+    /// concrete `Arc<FullTextIndex>` with no trait between it and this
+    /// decorator, so nothing can be faked at that seam either. Reaching it takes
+    /// a fault injector inside `FullTextIndex` — deliberately not built, because
+    /// that puts a `cfg`-gated branch through the type every search goes
+    /// through. **Read the coverage here as absent, not as passing.**
+    ///
+    /// **A second consequence of that same failure is not addressed here.**
+    /// `ingest_mail_changes` stages every `delete_term` before it writes any
+    /// message, so a failure part-way leaves uncommitted deletes in the shared
+    /// writer and the next commit from anywhere applies them — messages still on
+    /// the board stop being served. That fix is a rollback, unprovable for the
+    /// identical reason, and it is carded rather than shipped blind.
     async fn refresh(&self) {
         match self.inner.scan_messages().await {
             Ok(messages) => {
-                let _ = self.index.ingest_mail_changes(&messages);
+                if self.index.ingest_mail_changes(&messages).is_err() {
+                    self.index.mail_refresh_failed();
+                }
             }
             Err(_) => self.index.mail_refresh_failed(),
         }
