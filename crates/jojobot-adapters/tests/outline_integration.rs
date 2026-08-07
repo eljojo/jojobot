@@ -39,6 +39,9 @@ const TEST_COLLECTION: &str = "jojobot-test";
 /// Deliberately distinct from both the real collection and [`TEST_COLLECTION`].
 const SESSION_PREFIX: &str = "jojobot-sessions-itest-";
 const MAILBOX_PREFIX: &str = "jojobot-mailboxes-itest-";
+/// The disposable collection the handover reads from. Its own, so the board it
+/// holds is one this test built and nothing else wrote into.
+const HANDOVER_COLLECTION: &str = "jojobot-handover-itest";
 
 struct Creds {
     url: String,
@@ -228,9 +231,11 @@ async fn drop_session_collections(http: &reqwest::Client, c: &Creds) {
             .unwrap_or_default()
             .iter()
             .filter(|c| {
-                c["name"]
-                    .as_str()
-                    .is_some_and(|n| n.starts_with(SESSION_PREFIX) || n.starts_with(MAILBOX_PREFIX))
+                c["name"].as_str().is_some_and(|n| {
+                    n.starts_with(SESSION_PREFIX)
+                        || n.starts_with(MAILBOX_PREFIX)
+                        || n == HANDOVER_COLLECTION
+                })
             })
             .filter_map(|c| c["id"].as_str().map(str::to_string))
             .collect();
@@ -860,5 +865,221 @@ async fn record_the_rail_goldens() {
     }
 
     drop_test_collection(&http, &c).await;
+    drop_session_collections(&http, &c).await;
+}
+
+/// **The one-time handover, against a real board.**
+///
+/// The fast tests prove the carry over a fake source. This one proves it over
+/// the store the records actually live in — where a body has been through a
+/// document editor, a state is a column on a page, and a chronology is rows
+/// somebody's session wrote. A migration proven only against a fake is a
+/// migration whose verification has never itself been verified.
+///
+/// **It reads a disposable collection this test builds, and never the real
+/// one.** The operator's own board is not this suite's to read, and a handover
+/// is exactly the operation where that would matter most.
+#[tokio::test]
+#[ignore = "hits real Outline; set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN"]
+async fn the_handover_carries_a_real_board_across() {
+    use jojobot_adapters::dolt::{
+        Dolt, handover, mailboxes::DoltMailboxes, migrate, sessions::DoltSessions,
+    };
+    use jojobot_domain::mailbox::{
+        MailboxName, Mailboxes, MessageState, NewMessage, OwnerIndex, OwnerLookup, StateCounts,
+    };
+    use jojobot_domain::session::NewEntry;
+
+    let c = creds().expect(
+        "this suite needs JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN, and a run without them \
+         has verified nothing",
+    );
+    let http = reqwest::Client::new();
+    drop_session_collections(&http, &c).await;
+
+    let old = OutlineStore::with_collection(
+        http.clone(),
+        OutlineConfig {
+            base_url: c.url.clone(),
+            token: Secret::new(c.token.clone()),
+        },
+        HANDOVER_COLLECTION,
+    );
+
+    // --- the old board, built through the real store's own verbs -----------
+    let owner = EntityId("bot:gamma".into());
+    old.add_entity(NewEntity {
+        id: owner.clone(),
+        name: "gamma".into(),
+        aliases: Vec::new(),
+        source: "user-named".into(),
+        crm: None,
+        parent: None,
+        boot: Default::default(),
+        override_token: None,
+    })
+    .await
+    .expect("the owner is written")
+    .written()
+    .expect("not blocked");
+
+    let old_mail = old.mailboxes();
+    old_mail
+        .create_mailbox(&MailboxName("gamma".into()), &owner, None)
+        .await
+        .expect("the box opens")
+        .written()
+        .expect("not blocked");
+
+    let at = |offset: i64| {
+        jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant")
+            + jiff::SignedDuration::from_secs(offset)
+    };
+    let mut posted = Vec::new();
+    for (n, body) in [
+        "nobody has taken this one",
+        "somebody took this one",
+        // Prose that has been through a document editor, which is the whole
+        // reason this runs against the real store rather than a fake.
+        "somebody finished this one\n\n| a | table |\n| - | - |\n| in | a body |\n\n```\na fence\n```",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        posted.push(
+            old_mail
+                .post_message(NewMessage {
+                    mailbox: MailboxName("gamma".into()),
+                    body: body.into(),
+                    subject: Some("a subject that must survive".into()),
+                    sender: "gamma".into(),
+                    sent_at: at(n as i64),
+                    in_reply_to: None,
+                })
+                .await
+                .expect("post ok")
+                .written()
+                .expect("not blocked"),
+        );
+    }
+    old_mail.read_message(&posted[1].id).await.expect("read ok");
+    old_mail
+        .mark_processed(&posted[2].id, Some("the outcome, recorded"))
+        .await
+        .expect("processed ok");
+
+    let old_sessions = old.sessions();
+    let run = old_sessions
+        .begin(NewSession {
+            bot: owner.clone(),
+            sid: Sid("hndv".into()),
+            focus: "the board this handover carries".into(),
+            started_at: at(0),
+        })
+        .await
+        .expect("begin ok");
+    for (n, text) in ["what I set out to do", "what I found"]
+        .into_iter()
+        .enumerate()
+    {
+        old_sessions
+            .append(&run.id, NewEntry::manual(text, at(n as i64 + 1)))
+            .await
+            .expect("append ok");
+    }
+
+    // --- the new store ------------------------------------------------------
+    struct AnyOwner;
+    #[async_trait::async_trait]
+    impl OwnerIndex for AnyOwner {
+        async fn look_up(
+            &self,
+            _: &EntityId,
+        ) -> Result<OwnerLookup, jojobot_domain::mailbox::MailboxError> {
+            Ok(OwnerLookup::Known)
+        }
+    }
+
+    let dir = std::env::temp_dir().join(format!("jojobot-handover-itest-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("a free port")
+        .local_addr()
+        .expect("a bound address")
+        .port();
+    let mut store = Dolt::start(&dir, port).await.expect("the store comes up");
+    migrate::run(store.pool()).await.expect("the schema");
+    let new_mail = DoltMailboxes::open(store.pool().clone(), Arc::new(AnyOwner));
+    let new_sessions = DoltSessions::open(store.pool().clone());
+
+    // --- carry, and check by comparison ------------------------------------
+    let report = handover::run(
+        &old_mail,
+        &old_sessions,
+        &new_mail,
+        &new_sessions,
+        store.pool(),
+    )
+    .await
+    .expect("the handover completes");
+
+    assert!(report.whole(), "every kind came through whole: {report:?}");
+    assert_eq!(report.messages.read, 3, "{report:?}");
+    assert_eq!(
+        report.messages.verified, 3,
+        "the comparison ran: {report:?}"
+    );
+    assert_eq!(report.sessions.read, 1, "{report:?}");
+    assert_eq!(report.entries.read, 2, "{report:?}");
+
+    // The states survived the crossing — the half no count can show.
+    let landed = new_mail.list_mailboxes().await.expect("list ok");
+    let gamma = landed
+        .iter()
+        .find(|b| b.name.as_str() == "gamma")
+        .expect("the box came across");
+    assert_eq!(
+        gamma.counts,
+        StateCounts {
+            new: 1,
+            read: 1,
+            processed: 1
+        },
+        "one message in each state, as the real board had them"
+    );
+
+    // The body that went through the document editor came across as the old
+    // store hands it back — table, fence and all.
+    let carried = new_mail.scan_messages().await.expect("scan ok");
+    let handled = carried
+        .iter()
+        .find(|m| m.state == MessageState::Processed)
+        .expect("the handled message came across handled");
+    let was = old_mail
+        .scan_messages()
+        .await
+        .expect("scan ok")
+        .into_iter()
+        .find(|m| m.id == handled.id)
+        .expect("it is still on the old board");
+    assert_eq!(handled.body, was.body, "byte for byte, against the source");
+    assert_eq!(handled.notes.as_deref(), Some("the outcome, recorded"));
+
+    // **The old board is untouched.** The source is read-only, and a handover
+    // that quietly moved records instead of copying them is the one mistake
+    // here that reading a diff cannot undo.
+    assert_eq!(
+        old_mail.scan_messages().await.expect("scan ok").len(),
+        3,
+        "the old board still holds everything it held"
+    );
+    assert_eq!(
+        old_sessions.all_sessions().await.expect("list ok").len(),
+        1,
+        "…and its sessions"
+    );
+
+    store.stop().await;
+    let _ = std::fs::remove_dir_all(&dir);
     drop_session_collections(&http, &c).await;
 }
