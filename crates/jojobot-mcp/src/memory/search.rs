@@ -136,6 +136,96 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
     }
 }
 
+/// **Why the QUERY left mail out** — the reasons that hold before the index is
+/// consulted at all, so they answer ahead of [`Coverage`].
+///
+/// A type rather than three early returns carrying their prose inline. Every
+/// sentence here is text an agent reads, so the surface's word check has to
+/// gather all of them; a reason that is a variant is a reason it gathers by
+/// construction, where a fourth `if` with a fresh string in it would be prose
+/// nothing reads (rule 106).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MailExcluded {
+    /// The caller said to leave mail out.
+    NotAsked,
+    /// The query filters on a property only a fact has, so it is a question
+    /// about facts and mail is not part of the answer it asks for.
+    FactScoped,
+    /// **A `kind` filter excludes mail, silently and structurally.** A message
+    /// belongs to no entity, so it has no kind to match — the filter drops it
+    /// exactly as it drops prose in a doc that is nobody's. Saying `searched:
+    /// true` here was the field's one wrong answer, and a field a caller is
+    /// told to trust has to be right in every case rather than in most of them.
+    KindFiltered,
+}
+
+impl MailExcluded {
+    /// The reason this query leaves mail out, if one holds. First match wins:
+    /// a query can be narrowed several ways at once and the answer names one.
+    fn of(query: &SearchQuery) -> Option<Self> {
+        if !query.include_mail {
+            return Some(MailExcluded::NotAsked);
+        }
+        if query.is_fact_scoped() {
+            return Some(MailExcluded::FactScoped);
+        }
+        if query.kind.is_some() {
+            return Some(MailExcluded::KindFiltered);
+        }
+        None
+    }
+
+    /// What the answer tells the caller, and how to get mail back.
+    fn note(self) -> &'static str {
+        match self {
+            MailExcluded::NotAsked => {
+                "you passed include_mail: false, so messages were left out of this answer."
+            }
+            MailExcluded::FactScoped => {
+                "this query filters on a property only a fact has (status, provenance, subject \
+                 or edge), so it is a question about facts — messages, entities and prose are \
+                 all out of it."
+            }
+            MailExcluded::KindFiltered => {
+                "this query narrows to one entity kind, and a message belongs to no entity, so \
+                 mail was left out of it. Drop `kind` to search messages too."
+            }
+        }
+    }
+
+    /// The next reason, so the note gathering walks every one of them — see
+    /// [`walk`].
+    #[cfg(test)]
+    fn next(self) -> Option<Self> {
+        match self {
+            MailExcluded::NotAsked => Some(MailExcluded::FactScoped),
+            MailExcluded::FactScoped => Some(MailExcluded::KindFiltered),
+            MailExcluded::KindFiltered => None,
+        }
+    }
+
+    /// A query that this reason answers for, so the gathering below reaches
+    /// each note through [`mail_coverage`] rather than reading the string out
+    /// of [`note`](Self::note) and calling that the served text.
+    #[cfg(test)]
+    fn query(self) -> SearchQuery {
+        match self {
+            MailExcluded::NotAsked => SearchQuery {
+                include_mail: false,
+                ..SearchQuery::default()
+            },
+            MailExcluded::FactScoped => SearchQuery {
+                status: Some(FactStatus::Active),
+                ..SearchQuery::default()
+            },
+            MailExcluded::KindFiltered => SearchQuery {
+                kind: Some(EntityKind::Person),
+                ..SearchQuery::default()
+            },
+        }
+    }
+}
+
 /// **Whether this answer covered mail, and why not when it didn't.**
 ///
 /// One shape, always present, so a caller reads it in one pass instead of
@@ -148,28 +238,8 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
 /// from "jojobot has read no messages", and it is the one a caller acts on.
 fn mail_coverage(query: &SearchQuery, coverage: Coverage) -> serde_json::Value {
     let excluded = |note: &str| serde_json::json!({ "searched": false, "note": note });
-    if !query.include_mail {
-        return excluded(
-            "you passed include_mail: false, so messages were left out of this answer.",
-        );
-    }
-    if query.is_fact_scoped() {
-        return excluded(
-            "this query filters on a property only a fact has (status, provenance, subject or \
-             edge), so it is a question about facts — messages, entities and prose are all out \
-             of it.",
-        );
-    }
-    // **A `kind` filter excludes mail, silently and structurally.** A message
-    // belongs to no entity, so it has no kind to match — the filter drops it
-    // exactly as it drops prose in a doc that is nobody's. Saying `searched:
-    // true` here was the field's one wrong answer, and a field a caller is told
-    // to trust has to be right in every case rather than in most of them.
-    if query.kind.is_some() {
-        return excluded(
-            "this query narrows to one entity kind, and a message belongs to no entity, so \
-             mail was left out of it. Drop `kind` to search messages too.",
-        );
+    if let Some(left_out) = MailExcluded::of(query) {
+        return excluded(left_out.note());
     }
     match coverage {
         Coverage::Unread => excluded(
@@ -241,54 +311,61 @@ fn memory_coverage(coverage: Coverage) -> serde_json::Value {
     }
 }
 
+/// **Every state of a kind, walked rather than listed.**
+///
+/// Each state names its successor in a `match`, so a state added to the enum
+/// fails to compile at that `match` and has to be placed in the walk. A list
+/// literal has no such relationship to its enum: it accepts a new state's
+/// absence silently, which for the gathering below means a note no check ever
+/// reads.
+#[cfg(test)]
+fn walk<T: Copy>(first: T, next: impl Fn(T) -> Option<T>) -> Vec<T> {
+    let mut walked = vec![first];
+    while let Some(state) = next(*walked.last().expect("the walk starts with one")) {
+        walked.push(state);
+    }
+    walked
+}
+
+/// The next coverage state — [`MailExcluded::next`]'s job for the type this
+/// module does not own.
+#[cfg(test)]
+fn next_coverage(coverage: Coverage) -> Option<Coverage> {
+    match coverage {
+        Coverage::Unread => Some(Coverage::Partial(Behind::Unscanned)),
+        Coverage::Partial(Behind::Unscanned) => Some(Coverage::Partial(Behind::Stale)),
+        Coverage::Partial(Behind::Stale) => Some(Coverage::Loaded),
+        Coverage::Loaded => None,
+    }
+}
+
 /// **Every note these two functions can put in an answer**, each labelled with
 /// the state that produces it — the input to the surface's checks on the words
 /// an agent is handed.
 ///
-/// The `Coverage` values are written out rather than looped over a list, so a
-/// state added later fails to compile here instead of quietly going unread.
+/// Both axes are walked rather than listed (see [`walk`]), so a coverage state
+/// or a query-driven exclusion added later fails to compile here instead of
+/// quietly going unread.
 #[cfg(test)]
 pub(crate) fn coverage_notes() -> Vec<(String, String)> {
     let mut found = Vec::new();
-    for coverage in [
-        Coverage::Unread,
-        Coverage::Partial(Behind::Unscanned),
-        Coverage::Partial(Behind::Stale),
-        Coverage::Loaded,
-    ] {
+    // The query answers ahead of coverage, so these notes are the same whatever
+    // the index holds. One pass, not one per coverage state.
+    for left_out in walk(MailExcluded::NotAsked, MailExcluded::next) {
+        found.push((
+            format!("search's mail coverage note ({left_out:?})"),
+            mail_coverage(&left_out.query(), Coverage::Loaded).to_string(),
+        ));
+    }
+    for coverage in walk(Coverage::Unread, next_coverage) {
         found.push((
             format!("search's memory coverage note ({coverage:?})"),
             memory_coverage(coverage).to_string(),
         ));
-        for (narrowing, query) in [
-            ("unnarrowed", SearchQuery::default()),
-            (
-                "include_mail false",
-                SearchQuery {
-                    include_mail: false,
-                    ..SearchQuery::default()
-                },
-            ),
-            (
-                "fact-scoped",
-                SearchQuery {
-                    status: Some(FactStatus::Active),
-                    ..SearchQuery::default()
-                },
-            ),
-            (
-                "kind-filtered",
-                SearchQuery {
-                    kind: Some(EntityKind::Person),
-                    ..SearchQuery::default()
-                },
-            ),
-        ] {
-            found.push((
-                format!("search's mail coverage note ({narrowing}, {coverage:?})"),
-                mail_coverage(&query, coverage).to_string(),
-            ));
-        }
+        found.push((
+            format!("search's mail coverage note ({coverage:?})"),
+            mail_coverage(&SearchQuery::default(), coverage).to_string(),
+        ));
     }
     found
 }
@@ -380,6 +457,32 @@ mod tests {
     use crate::memory::testing::*;
     use crate::orientation::essay::ORIENTATION;
     use jojobot_domain::memory::{Boot, FactId};
+
+    /// **Each query-driven exclusion is reachable, and by the query the note
+    /// gathering uses to reach it.**
+    ///
+    /// The gathering serves every note through `mail_coverage`, the path a
+    /// caller travels, rather than reading the sentence out of `note`. That is
+    /// only worth anything while each reason's query really reaches that
+    /// reason: a query that drifted would gather one reason's note twice and
+    /// drop another, and the entry count would look exactly the same.
+    #[test]
+    fn every_query_driven_exclusion_is_reached_by_its_own_query() {
+        for left_out in walk(MailExcluded::NotAsked, MailExcluded::next) {
+            assert_eq!(
+                MailExcluded::of(&left_out.query()),
+                Some(left_out),
+                "the query written for {left_out:?} reaches a different reason"
+            );
+        }
+        // The positive half's pair: an unnarrowed query holds none of these
+        // reasons, so the walk above is not simply matching everything.
+        assert_eq!(
+            MailExcluded::of(&SearchQuery::default()),
+            None,
+            "a query that narrows nothing leaves mail out for no query-side reason"
+        );
+    }
 
     /// Every argument reaches the port as the typed query it means — including the
     /// edge filter, which is the whole point of the verb.
