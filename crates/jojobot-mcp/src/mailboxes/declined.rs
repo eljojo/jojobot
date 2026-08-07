@@ -170,20 +170,54 @@ pub(crate) fn mailbox_declined(e: MailboxError) -> Result<CallToolResult, McpErr
         MailboxError::Quarantined { attempted, reason } => {
             Ok(mailbox_quarantined(&attempted, &reason))
         }
+        // **A malformed name or id is a caller mistake, so it is an answer**
+        // (rule 68). The payload of these two IS the value that was refused,
+        // so the caller sees what jojobot read.
+        MailboxError::InvalidName(ref value) | MailboxError::InvalidMessageId(ref value) => {
+            Ok(mailbox_malformed(&value.clone(), &e))
+        }
+        // The same answer, with nothing to put in `attempted`: what this
+        // refuses is the message the call carried, not something it named.
+        MailboxError::InvalidMessage(_) => Ok(mailbox_malformed("", &e)),
         other => Err(mailbox_error(other)),
     }
+}
+
+/// **A call this rail cannot carry out as written**, answered as a refusal
+/// with a way forward rather than as a protocol error (rule 68). A thrown
+/// error is not a value: the model on the other end gets a failure where it
+/// should get a next move, and the sentence saying what to do lands in a
+/// channel nothing branches on.
+///
+/// **The reason comes from the validator rather than from a copy of it here.**
+/// Each of these faults has more than one cause and the validators gain new
+/// ones; a refusal that named them would be a catalogue that goes stale on the
+/// day it is added to (rule 106).
+fn mailbox_malformed(attempted: &str, said: &MailboxError) -> CallToolResult {
+    mailbox_blocked_body(
+        attempted,
+        None,
+        format!(
+            "Nothing was written: {said}. Nothing about this needs the operator and nothing is \
+             missing from the board — the call itself is what jojobot cannot carry out. Send it \
+             again with that fixed."
+        ),
+    )
 }
 
 /// Map a domain [`MailboxError`] to an MCP error, splitting client mistakes from
 /// server-side failures — the same split [`memory_error`] makes.
 pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
     match e {
+        // **Backstops, not the intended answer.** Every one of these is a
+        // caller mistake and `mailbox_declined` answers all of them as blocked
+        // results with a way forward (rule 68). They are reached only by a verb
+        // that surfaces an error without going through that path, and they stay
+        // client errors rather than 500s for that case.
         MailboxError::InvalidName(_)
         | MailboxError::InvalidMessageId(_)
         | MailboxError::InvalidMessage(_)
         | MailboxError::UnknownMessage { .. }
-        // Reached only if a verb other than mark_processed ever surfaces one;
-        // that verb renders it as a structured result instead.
         | MailboxError::Quarantined { .. } => McpError::invalid_params(e.to_string(), None),
         // Neither of these is a caller mistake, and neither is something a
         // caller can fix by calling differently: jojobot found a card on its
@@ -206,6 +240,98 @@ pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::*;
+    use crate::mailboxes::testing::*;
+
+    /// **A caller mistake never leaves this rail through the error channel**
+    /// (rule 68). It comes back as a blocked answer carrying what is wrong and
+    /// what to do about it.
+    ///
+    /// Driven through the verbs a caller actually calls. The mapper answering
+    /// correctly proves nothing about whether a verb reaches it: two of these
+    /// faults are raised inside the store's own write, and the verb has to
+    /// route that error into the declined path for any of this to hold.
+    #[tokio::test]
+    async fn a_malformed_write_is_an_answer_rather_than_an_error() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let sid = as_bot(&jojobot, "epsilon");
+
+        // A body the record cannot carry — refused inside the domain's write.
+        let empty_body = jojobot
+            .post_message(Parameters(PostMessageArgs {
+                mailbox: "inbox".into(),
+                sid: sid.clone(),
+                body: "   ".into(),
+                subject: None,
+                in_reply_to: None,
+            }))
+            .await
+            .expect("a caller mistake is an answer, not a protocol failure");
+
+        // A name that is no name — refused before the box is even looked for,
+        // so it is not the resemblance gate answering.
+        let bad_name = jojobot
+            .post_message(Parameters(PostMessageArgs {
+                mailbox: "In Box!".into(),
+                sid: sid.clone(),
+                body: "the shipment landed".into(),
+                subject: None,
+                in_reply_to: None,
+            }))
+            .await
+            .expect("a caller mistake is an answer, not a protocol failure");
+
+        // An id that is no id.
+        let bad_id = jojobot
+            .mark_processed(Parameters(MarkProcessedArgs {
+                message_id: "not an id!".into(),
+                notes: None,
+                sid: Some(sid),
+            }))
+            .await
+            .expect("a caller mistake is an answer, not a protocol failure");
+
+        // **What each answer must carry is the validator's own sentence**, so
+        // the caller learns which fault it is and what the rule is. Read from
+        // the validator rather than written out here: pinning the relation
+        // leaves the wording free to improve, and it is also what tells these
+        // answers apart from the resemblance gate's, which would satisfy a
+        // bare `wrote: false` just as well.
+        let said = |e: MailboxError| e.to_string();
+        for (what, result, expected) in [
+            (
+                "an empty body",
+                &empty_body,
+                said(mailbox::validate_body("   ").expect_err("an empty body is refused")),
+            ),
+            (
+                "a malformed box name",
+                &bad_name,
+                said(
+                    mailbox::validate_mailbox_name(&MailboxName("In Box!".into()))
+                        .expect_err("a name with a space is refused"),
+                ),
+            ),
+            (
+                "a malformed message id",
+                &bad_id,
+                said(
+                    mailbox::validate_message_id(&MessageId("not an id!".into()))
+                        .expect_err("an id with a space is refused"),
+                ),
+            ),
+        ] {
+            let body = blocked(result);
+            assert_eq!(body["wrote"], false, "{what} wrote something: {body}");
+            let advice = body["how_to_proceed"].as_str().expect("advice");
+            assert!(
+                advice.contains(&expected),
+                "{what} came back without the reason it was refused for.\n  wanted: \
+                 {expected}\n  got: {advice}"
+            );
+        }
+    }
 
     /// A stranded write's cause and rollback account are the adapter's own
     /// words about pages and rows — they must not reach the caller, same as
