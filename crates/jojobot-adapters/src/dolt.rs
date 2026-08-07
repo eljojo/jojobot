@@ -17,6 +17,8 @@ use std::time::Duration;
 
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 
+pub mod sessions;
+
 /// The database jojobot serves out of its data directory. Named rather than
 /// derived from the directory, so a test's temporary path and the deployed
 /// `/var/lib/jojobot/db` address the same database by the same name.
@@ -60,6 +62,9 @@ pub enum StartError {
 pub struct Dolt {
     child: tokio::process::Child,
     pool: MySqlPool,
+    /// The server's address without a database on the end, so another
+    /// database on the same server can be opened.
+    server: String,
 }
 
 impl Dolt {
@@ -100,9 +105,13 @@ impl Dolt {
         // exposed by it — the listener is loopback and the account has no
         // password to leak — and inventing a second account would be
         // ceremony over a socket only this process reaches.
-        let url = format!("mysql://root@127.0.0.1:{port}/{DATABASE}");
-        let pool = Self::once_answering(&url).await?;
-        Ok(Dolt { child, pool })
+        let server = format!("mysql://root@127.0.0.1:{port}");
+        let pool = Self::once_answering(&format!("{server}/{DATABASE}")).await?;
+        Ok(Dolt {
+            child,
+            pool,
+            server,
+        })
     }
 
     /// A pool that has answered at least once.
@@ -159,6 +168,24 @@ impl Dolt {
             });
         }
         Ok(())
+    }
+
+    /// A pool onto a database of its own on this server, created if needed.
+    ///
+    /// **For tests that need isolation from each other**, which is a real need
+    /// rather than a convenience: two contract cases sharing one database
+    /// would let one case's rows satisfy another's assertions. Production uses
+    /// [`pool`](Self::pool) and the one database.
+    pub async fn database(&self, name: &str) -> Result<MySqlPool, StartError> {
+        sqlx::query(&format!("CREATE DATABASE IF NOT EXISTS `{name}`"))
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StartError::Spawn(e.to_string()))?;
+        MySqlPoolOptions::new()
+            .max_connections(4)
+            .connect(&format!("{}/{name}", self.server))
+            .await
+            .map_err(|e| StartError::Spawn(e.to_string()))
     }
 
     /// The connection pool, for the two adapters that speak to this store.
