@@ -93,20 +93,6 @@ impl Dolt {
         })?;
         Self::init_if_empty(&database)?;
 
-        // **Refuse a port somebody already holds, before spawning anything.**
-        // The child would lose the bind and exit, and the poll below would then
-        // be answered by the server that owns the port — a different directory,
-        // with another test's records in it. Binding first turns that into a
-        // refusal instead of a silent adoption.
-        //
-        // It does not close the window on two starts racing for a free port;
-        // the child check in the readiness poll is what catches that. This is
-        // the half that is deterministic.
-        match std::net::TcpListener::bind(("127.0.0.1", port)) {
-            Ok(probe) => drop(probe),
-            Err(_) => return Err(StartError::PortTaken(port)),
-        }
-
         let child = tokio::process::Command::new("dolt")
             .arg("sql-server")
             .arg("--data-dir")
@@ -130,6 +116,7 @@ impl Dolt {
         let server = format!("mysql://root@127.0.0.1:{port}");
         let mut child = child;
         let pool = Self::once_answering(&format!("{server}/{DATABASE}"), &mut child, port).await?;
+        Self::prove_it_is_ours(&pool, data_dir, port).await?;
         Ok(Dolt {
             child,
             pool,
@@ -172,18 +159,7 @@ impl Dolt {
                 .await
             {
                 Ok(pool) => match sqlx::query("SELECT 1").execute(&pool).await {
-                    // Asked again after the answer, not only before it: a child
-                    // that lost a race for the port dies while this poll is in
-                    // flight, so the reply can arrive from the winner between
-                    // the check above and this one.
                     Ok(_) => {
-                        if child
-                            .try_wait()
-                            .map_err(|e| StartError::Spawn(e.to_string()))?
-                            .is_some()
-                        {
-                            return Err(StartError::PortTaken(port));
-                        }
                         return Ok(pool);
                     }
                     Err(e) => last = e.to_string(),
@@ -194,6 +170,57 @@ impl Dolt {
         }
         tracing::error!(error = %last, "the store's server never answered");
         Err(StartError::NeverReady(READY_WITHIN))
+    }
+
+    /// **Prove the server that answered is the one this call spawned.**
+    ///
+    /// A reply on the port is not evidence. If another server already holds it,
+    /// this call's child cannot bind and dies, and the poll above is answered
+    /// by the other one — so a start that accepted an answer would hand back a
+    /// handle to a different directory's databases and report success. Two
+    /// tests would then share one store, which is the isolation their harness
+    /// builds a database per case to get.
+    ///
+    /// **The proof is a marker only this call knows the name of.** Creating a
+    /// database makes a directory beside the others, so if it lands in OUR data
+    /// directory the server writing it is ours. A server serving somewhere else
+    /// puts it somewhere else, and the check fails.
+    ///
+    /// It is by construction rather than by proxy: no version string, no log
+    /// line, nothing about the process table. The one question asked is the one
+    /// that matters — is this the data I asked for.
+    ///
+    /// **It costs a write to find out, and on a collision that write lands on
+    /// the other server.** A bind test before spawning would avoid touching it,
+    /// and that was here and is gone: two checks answering one question means
+    /// whichever runs first hides the other, and a guard nothing can reach is a
+    /// guard nothing proves. One check, dropped again immediately, is the
+    /// trade — and the name is unique per call, so it collides with nothing.
+    async fn prove_it_is_ours(
+        pool: &MySqlPool,
+        data_dir: &Path,
+        port: u16,
+    ) -> Result<(), StartError> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let marker = format!(
+            "whose_server_{}_{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        sqlx::raw_sql(&format!("CREATE DATABASE `{marker}`"))
+            .execute(pool)
+            .await
+            .map_err(|e| StartError::Spawn(e.to_string()))?;
+        let ours = data_dir.join(&marker).exists();
+        // Cleared whether or not it landed here: on somebody else's server this
+        // is tidying up after a database we should never have made.
+        let _ = sqlx::raw_sql(&format!("DROP DATABASE `{marker}`"))
+            .execute(pool)
+            .await;
+        if !ours {
+            return Err(StartError::PortTaken(port));
+        }
+        Ok(())
     }
 
     /// Initialize the database directory if nothing is there yet.
@@ -407,6 +434,23 @@ pub(crate) mod tests {
             matches!(second, Err(StartError::PortTaken { .. })),
             "a second start on a held port must refuse, not adopt the server \
              already there"
+        );
+
+        // **And it left nothing behind on the server it collided with.** The
+        // check has to write a marker to learn whose store answered, so on a
+        // collision that write lands over there — and clearing it is part of
+        // the check rather than tidiness, because a refused start that leaves
+        // a database in somebody else's store has damaged what it was
+        // protecting.
+        let intruded: Vec<_> = std::fs::read_dir(&held.0)
+            .expect("the first server's directory is readable")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with("whose_server_"))
+            .collect();
+        assert!(
+            intruded.is_empty(),
+            "a refused start must leave no marker in the store it collided with: {intruded:?}"
         );
 
         // **The positive it rests on.** A start on a port nobody holds still
