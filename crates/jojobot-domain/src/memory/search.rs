@@ -14,9 +14,13 @@
 //! is a read-side union: nothing here writes to either context, and neither
 //! context learns anything about the other from it.
 //!
-//! Truth stays in the store; the index is a **projection**, rebuilt by full
-//! re-scan at start and updated in-process on every write. Read-back extends to
-//! it: a fact captured a moment ago is findable without a restart.
+//! Truth stays in the store; the index is a **projection**, filled by a full
+//! re-scan at start, updated in-process on every write, and **refreshed again on
+//! every read**. Read-back extends to it: a fact captured a moment ago is
+//! findable without a restart. The read-path refresh is what makes an answer
+//! backed by a reading taken for it, so a record the store has since lost stops
+//! being served — nothing inside the process can observe that loss any other
+//! way.
 //!
 //! This module is pure vocabulary — no tantivy, no I/O. The index that satisfies
 //! [`Search`] lives in the adapters.
@@ -396,12 +400,21 @@ pub enum Coverage {
 /// is the state a caller has to hear about first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Behind {
-    /// The read that fills this half at startup did not run, so only what this
-    /// process has written since is in it. Almost nothing is searchable.
+    /// No read has ever filled this half, so only what this process has written
+    /// since is in it. Almost nothing is searchable.
+    ///
+    /// **Not startup-only and not permanent.** The boot read is the first
+    /// chance, never the only one: a search refreshes each half, so the first
+    /// read that reaches the store fills it and this state ends.
     Unscanned,
-    /// This half was read whole, and one write since could not be re-read, so
-    /// the index holds the version before that write. Almost everything is
-    /// searchable.
+    /// This half was read whole and the index is holding an older version of it
+    /// than the store. Almost everything is searchable.
+    ///
+    /// **Two routes in, and the halves do not share them.** A whole-half refresh
+    /// that could not reach the store reaches this state on either half. A
+    /// committed write whose re-read could not run reaches it on the memory half
+    /// only — the mail path indexes the record the store hands back rather than
+    /// re-reading it, so it has no write-path route and none is invented.
     Stale,
 }
 

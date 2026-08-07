@@ -1,14 +1,14 @@
 //! The search projection — jojobot's front door, and the [`Memory`] decorator
 //! that keeps it honest.
 //!
-//! Two pieces, deliberately separable:
+//! Four pieces, deliberately separable:
 //!
-//! * [`FullTextIndex`] — an in-RAM tantivy index over **entities, facts and
-//!   prose at once**. Truth stays in the store; this is a projection, and it is
-//!   allowed to be one only because it is rebuilt from a full re-scan and never
-//!   written to directly. It is **not** the domain's [`Search`] port: it holds
-//!   no store, so it cannot take the reading the port promises an answer is
-//!   backed by.
+//! * [`FullTextIndex`] — an in-RAM tantivy index over **entities, facts, prose
+//!   and messages at once**. Truth stays in the store; this is a projection, and
+//!   it is allowed to be one only because it is rebuilt from a full re-scan and
+//!   never written to directly. It is **not** the domain's [`Search`] port: it
+//!   holds no store, so it cannot take the reading the port promises an answer
+//!   is backed by.
 //! * [`Retrieval`] — the [`Search`] port itself, over that index plus one
 //!   [`Refresh`] half per store. It refreshes every half before it answers, so
 //!   an answer is backed by a reading taken for it.
@@ -16,7 +16,11 @@
 //!   extends to the index**: after any successful write, the touched document is
 //!   re-scanned *from the store* and re-indexed, so a fact captured a moment ago
 //!   is findable with no restart. Re-reading rather than patching is the point —
-//!   a partial-update bug has nowhere to live.
+//!   a partial-update bug has nowhere to live. It is also the memory
+//!   [`Refresh`] half, so the same re-scan runs before every answer.
+//! * [`IndexedMailboxes`] — the mail half, and the same two jobs: every verb
+//!   that changes a message re-indexes it, and a board read runs before every
+//!   answer.
 //!
 //! Ranking is hardcoded, not configurable: text relevance, a small recency
 //! boost, and an entity whose handle or name the query matches pinned to the top
