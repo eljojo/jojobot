@@ -3,6 +3,11 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+    # **The store's engine tracks unstable, the rest of the toolchain does
+    # not.** dolt moves faster than a release channel does, and a deploying
+    # host runs the version it tracks rather than the one this flake pinned —
+    # so the version the tests run against is the newer one, not the older.
+    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -14,6 +19,7 @@
     {
       self,
       nixpkgs,
+      nixpkgs-unstable,
       rust-overlay,
       flake-utils,
       ...
@@ -23,6 +29,9 @@
       let
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs { inherit system overlays; };
+
+        # The one package taken from unstable — see the input's note.
+        dolt = (import nixpkgs-unstable { inherit system; }).dolt;
 
         # Toolchain comes from rust-toolchain.toml so dev and CI agree.
         rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
@@ -41,6 +50,19 @@
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
           inherit nativeBuildInputs buildInputs;
+          # The store's tests spawn a real `dolt`, so the check phase needs the
+          # binary the same way the dev shell does — a package build that ran
+          # the suite without it failed every one of those tests, which is the
+          # build saying the toolchain is short rather than the code being
+          # wrong.
+          nativeCheckInputs = [ dolt ];
+          # `dolt` creates `$HOME/.dolt` on its first run and refuses to start
+          # when it cannot reach a home directory. The sandbox points HOME at
+          # `/homeless-shelter`, which does not exist, so the check phase gets
+          # a writable one of its own.
+          preCheck = ''
+            export HOME="$(mktemp -d)"
+          '';
           # What `ping` reports as the running build. This has to come from
           # here: the build sandbox has no `.git` — src is a store path — so
           # the build script's git fallback cannot fire, and the deployed
@@ -63,7 +85,7 @@
             # the mailbox and session tests start a real one against a temp
             # directory, and a test that skips when a binary is missing is a
             # test nobody notices stopped running.
-            pkgs.dolt
+            dolt
           ];
           # Cargo's default ./target (gitignored) — no CARGO_TARGET_DIR override,
           # which would anchor to the shell-entry $PWD and leak artifacts if run

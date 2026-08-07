@@ -242,6 +242,9 @@ STATE_DIRECTORY=$PWD/.state cargo run -p jojobot
 ```
 
 The store's server binary comes from the flake, so run from inside `nix develop`.
+It is the one package taken from `nixpkgs-unstable` rather than the release
+channel the rest of the toolchain tracks: dolt moves faster than a channel does,
+and the tests run against the newer version a deploying host tracks.
 
 Or build the package directly:
 
