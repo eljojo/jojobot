@@ -170,7 +170,12 @@ impl Mailboxes for InMemoryMailboxes {
             let known = self.known_owners.lock().expect("owner lock");
             let permissive = *self.permissive.lock().expect("owner lock");
             if !permissive && !known.contains(owner) {
-                let index: Vec<crate::memory::Entity> = Vec::new();
+                // **Screened against the owners this store holds, not against
+                // nothing.** The real adapter has an entity index and reports
+                // what a typo probably meant; a fake that always came back with
+                // an empty list would agree with every test and disagree with
+                // the store, which is how a polite fake ships a broken adapter.
+                let index: Vec<crate::memory::Entity> = known.iter().map(stand_in).collect();
                 return Ok(Guarded::UnknownOwner {
                     attempted: owner.clone(),
                     candidates: memory_guard::screen(owner, &[], &index),
@@ -388,6 +393,24 @@ impl Mailboxes for InMemoryMailboxes {
     }
 }
 
+/// An owner handle as the entity record the near-miss screen needs.
+///
+/// The fake holds handles rather than entities, and the screen compares handles
+/// and labels — so the name is the slug, which is what a screen over the real
+/// index would be comparing against anyway for a bot named for its handle.
+fn stand_in(owner: &EntityId) -> crate::memory::Entity {
+    crate::memory::Entity {
+        kind: owner.kind().unwrap_or(crate::memory::EntityKind::Bot),
+        name: owner.slug().to_string(),
+        id: owner.clone(),
+        aliases: Vec::new(),
+        source: "fake".into(),
+        crm: None,
+        parent: None,
+        boot: Default::default(),
+    }
+}
+
 /// The shared behavioural spec — every adapter must satisfy all of it.
 ///
 /// Names here come from a fixed, openly fictional roster; nothing in this file
@@ -508,6 +531,90 @@ pub mod contract {
         let mut names: Vec<&str> = listed.iter().map(|m| m.name.as_str()).collect();
         names.sort();
         assert_eq!(names, vec!["errands", "inbox"]);
+    }
+
+    /// **A box states its one owner, and the board reports it.**
+    ///
+    /// The owner is not a claim filed somewhere else that has to be kept in
+    /// step: it is on the box, set when the box opens. A store that dropped it
+    /// on the way to the board would leave every reader unable to say whose a
+    /// box is, and nothing else records it.
+    pub async fn a_box_carries_its_owner_onto_the_board(store: &dyn Mailboxes) {
+        let first = EntityId(OWNERS[0].to_string());
+        let second = EntityId(OWNERS[1].to_string());
+        store
+            .create_mailbox(&name("inbox"), &first, None)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("not blocked");
+        store
+            .create_mailbox(&name("errands"), &second, None)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("not blocked");
+
+        let listed = store.list_mailboxes().await.expect("list ok");
+        let owner_of = |n: &str| {
+            listed
+                .iter()
+                .find(|m| m.name.as_str() == n)
+                .unwrap_or_else(|| panic!("{n} is on the board: {listed:?}"))
+                .owner
+                .clone()
+        };
+        // Two different owners, so this cannot pass on a store that hands the
+        // same handle back for every box.
+        assert_eq!(owner_of("inbox"), first);
+        assert_eq!(owner_of("errands"), second);
+    }
+
+    /// **A box is created FOR somebody, so an owner nobody knows is refused.**
+    ///
+    /// Its own answer rather than a near-miss on the name: the caller got a
+    /// different thing wrong, and a refusal that said "no such box name" would
+    /// send them renaming a box they have no business creating. Nothing is
+    /// written, and the near misses come from Memory's own screen — a typo
+    /// comes back with the handle it probably meant.
+    pub async fn a_box_for_an_owner_nobody_knows_is_refused(store: &dyn Mailboxes) {
+        // One letter off a roster handle, so a store that screens at all has
+        // something to suggest.
+        let typo = EntityId(format!("{}x", OWNERS[0]));
+        let before = store.list_mailboxes().await.expect("list ok").len();
+
+        let outcome = store
+            .create_mailbox(&name("strangers"), &typo, None)
+            .await
+            .expect("an unknown owner is an answer, not a failure");
+        let Guarded::UnknownOwner {
+            attempted,
+            candidates,
+        } = outcome
+        else {
+            panic!("a box for an owner nobody knows must be refused: {outcome:?}");
+        };
+        assert_eq!(attempted, typo);
+        assert!(
+            candidates.iter().any(|c| c.handle.as_str() == OWNERS[0]),
+            "the refusal names the handle it probably meant: {candidates:?}"
+        );
+        assert_eq!(
+            store.list_mailboxes().await.expect("list ok").len(),
+            before,
+            "a refused create writes no box"
+        );
+
+        // The positive the refusal rests on: the very same NAME opens for an
+        // owner that does resolve. Without it this passes on a store that
+        // refuses every creation for any reason at all.
+        let opened = store
+            .create_mailbox(&name("strangers"), &owner(), None)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("a resolvable owner opens the box");
+        assert_eq!(opened.name.as_str(), "strangers");
     }
 
     /// **The golden case: a typo never mints a second box.** Creating `inbx`
@@ -1440,6 +1547,8 @@ pub mod contract {
         Fut: std::future::Future<Output = S>,
     {
         create_then_list(&fresh().await).await;
+        a_box_carries_its_owner_onto_the_board(&fresh().await).await;
+        a_box_for_an_owner_nobody_knows_is_refused(&fresh().await).await;
         creating_a_near_miss_is_blocked_and_writes_nothing(&fresh().await).await;
         a_confirmed_near_miss_creates_the_sibling_box(&fresh().await).await;
         a_posted_message_lands_in_new(&fresh().await).await;
