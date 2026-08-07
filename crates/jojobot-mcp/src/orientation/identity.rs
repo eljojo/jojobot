@@ -66,12 +66,17 @@ impl Jojobot {
     /// the rules its facts carry, and the live state of the box it owns.
     /// `Err(candidates)` is the guards' answer for a name that is no bot.
     ///
-    /// **A caller answering the resume-or-new offer gets no charter.** That
-    /// offer is only ever handed back by a boot that carried the charter, so
-    /// the one reader this block is re-sent to is the reader that has it — and
-    /// it is the largest fixed block in the answer, crowding out the session
-    /// record a resume exists to deliver. The rules are not treated the same
-    /// way: they are dated claims that change one at a time.
+    /// **A caller answering the resume-or-new offer gets no charter.** It is the
+    /// largest fixed block in the answer, and it crowds out the session record a
+    /// resume exists to deliver. The rules are not treated the same way: they
+    /// are dated claims that change one at a time.
+    ///
+    /// **The reason is the size of the block, never a claim about the reader.**
+    /// Nothing here knows whether this caller has the charter: `resume` is an
+    /// ordinary argument, and a client that holds no connection can pass it on
+    /// its first call, so an answer that told the caller it already held the
+    /// text was asserting something the engine never checked. The note says
+    /// what is absent and how to get it, which is true for every reader.
     pub(crate) async fn identity(
         &self,
         index: &[Entity],
@@ -110,10 +115,8 @@ impl Jojobot {
         if answering_an_offer && let Some(obj) = body.as_object_mut() {
             obj.insert(
                 "note".into(),
-                "your charter is not in this answer. It is unchanged, and you are answering an \
-                 offer only a boot that carried it can make, so it is text you already hold. To \
-                 read it again, call start_here with your bot name and no `resume`: that boot \
-                 writes nothing and starts nothing."
+                "your charter is not in this answer. To read it, call start_here with your bot \
+                 name and no `resume`: that boot writes nothing and starts nothing."
                     .into(),
             );
         }
@@ -555,9 +558,12 @@ mod tests {
     }
 
     /// **`new` is an answer to the same offer, so it drops the charter too.**
-    /// A `resume` of either shape can only be a reply to a boot that carried
-    /// the charter — there is nothing else that hands out the sid it names, or
-    /// the word `new`.
+    ///
+    /// **And this call is the first one this server has served**, which is why
+    /// the note can say nothing about what the caller holds: `resume` is an
+    /// ordinary argument and nothing hands out a permit to use it. The way back
+    /// is the only thing an elision here can promise, so that is what is
+    /// asserted.
     #[tokio::test]
     async fn answering_the_offer_with_new_drops_the_charter_the_same_way() {
         let store = Arc::new(InMemorySessions::new());
@@ -575,6 +581,14 @@ mod tests {
         let fresh = boot_answering(&jojobot, "gamma", sid::NEW).await;
         assert!(fresh["identity"]["charter"].is_null(), "{fresh}");
         assert_eq!(fresh["identity"]["charter_elided"], true, "{fresh}");
+        let note = fresh["identity"]["note"]
+            .as_str()
+            .expect("an elision says how to undo itself");
+        assert!(
+            note.contains("start_here") && note.contains("resume"),
+            "a reader who has never been served the charter is told the call that serves it: \
+             {note}"
+        );
     }
 
     /// **A heal that cannot land is reported honestly, and is not retried into a
