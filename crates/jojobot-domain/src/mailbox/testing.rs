@@ -114,14 +114,8 @@ impl InMemoryMailboxes {
         ));
     }
 
-    /// **A message is removed from the store by hand**, the way rule 60 says a
-    /// record leaves at all: outside jojobot, with no verb of its own and
-    /// nothing telling the index it happened.
-    ///
-    /// Distinct from [`quarantine`](Self::quarantine), which leaves the card on
-    /// the board and unreadable. Both are invisible to a board read; only this
-    /// one means the record is gone.
-    /// A board read fails from here until [`sighted`](Self::sighted).
+    /// A board read fails from here until [`sighted`](Self::sighted) — the
+    /// store is up and the reading of it is not.
     pub fn blind(&self) {
         *self.blind.lock().expect("blind lock") = true;
     }
@@ -131,6 +125,13 @@ impl InMemoryMailboxes {
         *self.blind.lock().expect("blind lock") = false;
     }
 
+    /// **A message is removed from the store by hand**, the way rule 60 says a
+    /// record leaves at all: outside jojobot, with no verb of its own and
+    /// nothing telling the index it happened.
+    ///
+    /// Distinct from [`quarantine`](Self::quarantine), which leaves the card on
+    /// the board and unreadable. Both are invisible to a board read; only this
+    /// one means the record is gone.
     pub fn lose(&self, card: &MessageId) {
         self.messages
             .lock()

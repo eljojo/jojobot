@@ -413,6 +413,12 @@ impl FullTextIndex {
     /// makes a posted message findable on the next call rather than after a
     /// restart — and what keeps a hit's `state` honest, since every verb that
     /// moves a message re-indexes it.
+    ///
+    /// **The mirror is written with the postings**, exactly as
+    /// [`ingest_doc`](Self::ingest_doc) does for the other half. The mirror is
+    /// what a later board read is compared against, so a message that reached
+    /// the postings by this path and not the mirror is one the board can lose
+    /// without the index noticing.
     pub fn ingest_message(&self, message: &Message) -> Result<(), MemoryError> {
         let mut writer = self.writer.write().expect("index writer poisoned");
         writer.delete_term(Term::from_field_text(
@@ -425,6 +431,11 @@ impl FullTextIndex {
             .store(true, std::sync::atomic::Ordering::Release);
         writer.commit().map_err(store_err)?;
         drop(writer);
+
+        let mut mirror = self.messages.write().expect("mail mirror poisoned");
+        mirror.retain(|m| m.id != message.id);
+        mirror.push(message.clone());
+        drop(mirror);
         self.reader.reload().map_err(store_err)?;
         Ok(())
     }
@@ -4063,6 +4074,46 @@ mod tests {
                 .len(),
             1,
             "…and the one still on the board is still served"
+        );
+    }
+
+    /// **A message the index learned from a verb leaves it like any other.**
+    ///
+    /// The board read is not the only way a message enters this index: every
+    /// verb that writes one re-indexes it, so a message can be served without a
+    /// board read ever having carried it. Eviction compares a board read against
+    /// what the postings were written from, so a verb that writes postings and
+    /// not the mirror puts a message where that comparison cannot see it — the
+    /// board loses it and it is served for the life of the process.
+    ///
+    /// **No search between the post and the removal.** A search refreshes from
+    /// the whole board, which seats the mirror and hides exactly this. The
+    /// survivor is what proves both messages reached the index.
+    #[tokio::test]
+    async fn a_message_indexed_by_a_verb_stops_being_served_when_it_leaves_the_board() {
+        let (inner, mail, port) = a_board_of_two().await;
+        let posted =
+            mail_contract::post(mail.as_ref(), "pm", "dev", "the glaze is unmixed", 2).await;
+        mail_contract::post(mail.as_ref(), "pm", "dev", "the shelves are warped", 3).await;
+
+        inner.lose(&posted.id);
+
+        assert!(
+            port.search(&asking_for_mail("glaze"))
+                .await
+                .expect("search ok")
+                .is_empty(),
+            "the message left the board, so search must stop serving it — however it \
+             got into the index"
+        );
+        assert_eq!(
+            port.search(&asking_for_mail("warped"))
+                .await
+                .expect("search ok")
+                .len(),
+            1,
+            "…and the message posted beside it is still served, so both really \
+             reached the index"
         );
     }
 
