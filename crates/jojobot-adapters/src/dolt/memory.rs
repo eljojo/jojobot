@@ -11,12 +11,16 @@
 //! open. A schema that decided something the model leaves undecided would be a
 //! change to the model wearing a storage decision's clothes.
 //!
-//! **Two things the document store derived, this one stores.** A fact's home
-//! was the page it sat on; here it is a column, so a claim filed on one
-//! entity's page and about another reads back the same either way. And a
-//! standing nobody declared is NULL rather than the value it implies — the
-//! difference between "somebody said settled" and "nobody said" is a difference
-//! the reader has to be able to make.
+//! **A fact names ONE entity.** Whose claim it is and what it is about are the
+//! same thing (rule 147); they only ever came apart in a store where a row's
+//! page could say something the row's own cell did not, and two columns here
+//! would carry that disagreement forward as though it were a concept. The
+//! record's `home` and `subject` both read from that column, so nothing above
+//! this adapter has to know the difference has gone.
+//!
+//! **A standing nobody declared is NULL** rather than the value it implies —
+//! the difference between "somebody said settled" and "nobody said" is one the
+//! reader has to be able to make.
 //!
 //! **What this adapter does NOT carry** is the same list the mail rail's
 //! header names: no read-back guard, no escaping, no linearization lock. A
@@ -84,34 +88,22 @@ impl DoltMemory {
         Ok(entities)
     }
 
-    /// Every fact homed at `home` or about it, which is the pair `recall`
-    /// answers for: a row filed on this page is reachable here whatever its
-    /// subject says, and a row about this entity is reachable here whatever
-    /// page holds it.
-    async fn facts_touching(
+    /// Every fact naming this entity — which is the whole of what `recall`
+    /// answers for, and the whole of what a scan of it holds.
+    ///
+    /// **One question, where the document store asked two.** There a row was
+    /// reachable through the page it sat on AND through the subject cell it
+    /// carried, because those could disagree; here they are one column, so
+    /// "filed here" and "about this" are the same query rather than two that
+    /// have to be kept in step.
+    async fn facts_of(
         tx: &mut Transaction<'_, MySql>,
-        subject: &EntityId,
+        entity: &EntityId,
     ) -> Result<Vec<Fact>, MemoryError> {
         let rows = sqlx::query(&format!(
-            "SELECT {FACT_COLUMNS} FROM fact WHERE home = ? OR subject = ? ORDER BY home, id"
+            "SELECT {FACT_COLUMNS} FROM fact WHERE entity = ? ORDER BY id"
         ))
-        .bind(subject.as_str())
-        .bind(subject.as_str())
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(store)?;
-        Self::assemble(tx, &rows).await
-    }
-
-    /// The facts filed on one page, which is what a scan of that page holds.
-    async fn facts_homed(
-        tx: &mut Transaction<'_, MySql>,
-        home: &EntityId,
-    ) -> Result<Vec<Fact>, MemoryError> {
-        let rows = sqlx::query(&format!(
-            "SELECT {FACT_COLUMNS} FROM fact WHERE home = ? ORDER BY id"
-        ))
-        .bind(home.as_str())
+        .bind(entity.as_str())
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
@@ -124,7 +116,7 @@ impl DoltMemory {
         address: &FactAddress,
     ) -> Result<Option<Fact>, MemoryError> {
         let rows = sqlx::query(&format!(
-            "SELECT {FACT_COLUMNS} FROM fact WHERE home = ? AND id = ?"
+            "SELECT {FACT_COLUMNS} FROM fact WHERE entity = ? AND id = ?"
         ))
         .bind(address.home.as_str())
         .bind(address.local.as_str())
@@ -146,7 +138,7 @@ impl DoltMemory {
     ) -> Result<Vec<Fact>, MemoryError> {
         let mut facts = Vec::with_capacity(rows.len());
         for row in rows {
-            let home = EntityId(row.try_get::<String, _>("home").map_err(store)?);
+            let entity = EntityId(row.try_get::<String, _>("entity").map_err(store)?);
             let id = FactId(row.try_get::<String, _>("id").map_err(store)?);
             let event = match row
                 .try_get::<Option<String>, _>("event_kind")
@@ -159,7 +151,7 @@ impl DoltMemory {
                         "SELECT `key`, value FROM fact_event_metadata
                          WHERE fact_home = ? AND fact_id = ? ORDER BY `key`",
                     )
-                    .bind(home.as_str())
+                    .bind(entity.as_str())
                     .bind(id.as_str())
                     .fetch_all(&mut **tx)
                     .await
@@ -171,7 +163,7 @@ impl DoltMemory {
                         "SELECT entity FROM fact_event_ref
                          WHERE fact_home = ? AND fact_id = ? ORDER BY ordinal",
                     )
-                    .bind(home.as_str())
+                    .bind(entity.as_str())
                     .bind(id.as_str())
                     .fetch_all(&mut **tx)
                     .await
@@ -181,7 +173,7 @@ impl DoltMemory {
                     .collect(),
                 }),
             };
-            facts.push(fact_from(row, home, id, event)?);
+            facts.push(fact_from(row, entity, id, event)?);
         }
         Ok(facts)
     }
@@ -194,14 +186,13 @@ impl DoltMemory {
     /// ways.
     async fn write_fact(tx: &mut Transaction<'_, MySql>, fact: &Fact) -> Result<(), MemoryError> {
         sqlx::query(
-            "REPLACE INTO fact (home, id, subject, content, details, provenance, standing, status,
-                                date, edge_shape, edge_object, event_kind, derived_from_home,
+            "REPLACE INTO fact (entity, id, content, details, provenance, standing, status,
+                                date, edge_shape, edge_object, event_kind, derived_from,
                                 derived_from_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
-        .bind(fact.subject.as_str())
         .bind(&fact.content)
         .bind(fact.details.as_deref())
         .bind(fact.provenance.as_token())
@@ -273,7 +264,7 @@ impl DoltMemory {
     /// address is the pair, so two pages may hold the same local id without
     /// either being reachable through the other.
     async fn mint(tx: &mut Transaction<'_, MySql>, home: &EntityId) -> Result<FactId, MemoryError> {
-        let taken: Vec<String> = sqlx::query_scalar("SELECT id FROM fact WHERE home = ?")
+        let taken: Vec<String> = sqlx::query_scalar("SELECT id FROM fact WHERE entity = ?")
             .bind(home.as_str())
             .fetch_all(&mut **tx)
             .await
@@ -292,7 +283,7 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         home: &EntityId,
     ) -> Result<Vec<String>, MemoryError> {
-        Ok(Self::facts_homed(tx, home)
+        Ok(Self::facts_of(tx, home)
             .await?
             .iter()
             .map(|f| f.address().to_string())
@@ -302,9 +293,8 @@ impl DoltMemory {
 
 /// The columns a fact reads back from, in one place so every read takes the
 /// same ones.
-const FACT_COLUMNS: &str = "home, id, subject, content, details, provenance, standing, status, \
-                            date, edge_shape, edge_object, event_kind, derived_from_home, \
-                            derived_from_id";
+const FACT_COLUMNS: &str = "entity, id, content, details, provenance, standing, status, date, \
+                            edge_shape, edge_object, event_kind, derived_from, derived_from_id";
 
 /// A store failure, in the domain's own words. **The server's account never
 /// crosses** — no SQL, no table names, no product (rule 53); it goes to the log
@@ -345,7 +335,7 @@ fn entity_from(row: &sqlx::mysql::MySqlRow, aliases: Vec<String>) -> Result<Enti
 
 fn fact_from(
     row: &sqlx::mysql::MySqlRow,
-    home: EntityId,
+    entity: EntityId,
     id: FactId,
     event: Option<Event>,
 ) -> Result<Fact, MemoryError> {
@@ -383,7 +373,7 @@ fn fact_from(
         _ => None,
     };
     let derived_from = match (
-        row.try_get::<Option<String>, _>("derived_from_home")
+        row.try_get::<Option<String>, _>("derived_from")
             .map_err(store)?,
         row.try_get::<Option<String>, _>("derived_from_id")
             .map_err(store)?,
@@ -396,8 +386,11 @@ fn fact_from(
     };
     Ok(Fact {
         id,
-        home,
-        subject: EntityId(row.try_get::<String, _>("subject").map_err(store)?),
+        // **One column, read into both fields.** The record above this adapter
+        // still has a home and a subject; here they are the same value, so
+        // nothing that reads a `Fact` has to know the difference has gone.
+        home: entity.clone(),
+        subject: entity,
         content: row.try_get::<String, _>("content").map_err(store)?,
         details: row.try_get::<Option<String>, _>("details").map_err(store)?,
         provenance,
@@ -589,7 +582,7 @@ impl Memory for DoltMemory {
                 nearest: guard::screen(subject, &[], &index),
             });
         }
-        let facts = Self::facts_touching(&mut tx, subject).await?;
+        let facts = Self::facts_of(&mut tx, subject).await?;
         tx.commit().await.map_err(store)?;
         Ok(facts)
     }
@@ -734,7 +727,7 @@ impl Memory for DoltMemory {
                 doc_id: entity.id.to_string(),
                 title: entity.name.clone(),
                 prose,
-                facts: Self::facts_homed(&mut tx, &entity.id).await?,
+                facts: Self::facts_of(&mut tx, &entity.id).await?,
                 entity: Some(entity),
             });
         }
