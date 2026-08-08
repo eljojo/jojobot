@@ -219,12 +219,9 @@ pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
         | MailboxError::InvalidMessage(_)
         | MailboxError::UnknownMessage { .. }
         | MailboxError::Quarantined { .. } => McpError::invalid_params(e.to_string(), None),
-        // Neither of these is a caller mistake, and neither is something a
-        // caller can fix by calling differently: the store is not wired, or it
-        // failed. Both are conditions on the server side.
-        MailboxError::NotConfigured(msg) => {
-            McpError::internal_error(format!("mailboxes not configured: {msg}"), None)
-        }
+        // Not a caller mistake, and not something a caller can fix by calling
+        // differently: the store failed, which is a condition on the server
+        // side.
         MailboxError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
         }

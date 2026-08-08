@@ -578,9 +578,6 @@ pub enum MailboxError {
     /// its answers.
     #[error("store error: {0}")]
     Store(String),
-    /// The store isn't configured (no credentials).
-    #[error("mailbox store not configured: {0}")]
-    NotConfigured(String),
 }
 
 /// The Mailboxes port — five verbs over boxes and the messages in them. A

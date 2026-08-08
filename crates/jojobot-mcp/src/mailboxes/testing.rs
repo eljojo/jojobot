@@ -164,12 +164,12 @@ impl mailbox::Mailboxes for DownMailboxes {
         _: &EntityId,
         _: Option<&str>,
     ) -> Result<mailbox::Guarded<mailbox::Mailbox>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::NotConfigured(
+        Err(mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
         ))
     }
     async fn list_mailboxes(&self) -> Result<Vec<mailbox::Mailbox>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::NotConfigured(
+        Err(mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
         ))
     }
@@ -177,7 +177,7 @@ impl mailbox::Mailboxes for DownMailboxes {
         &self,
         _: mailbox::NewMessage,
     ) -> Result<mailbox::Guarded<mailbox::Message>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::NotConfigured(
+        Err(mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
         ))
     }
@@ -185,12 +185,12 @@ impl mailbox::Mailboxes for DownMailboxes {
         &self,
         _: &mailbox::MailboxName,
     ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::NotConfigured(
+        Err(mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
         ))
     }
     async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::NotConfigured(
+        Err(mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
         ))
     }
@@ -198,7 +198,7 @@ impl mailbox::Mailboxes for DownMailboxes {
         &self,
         _: &mailbox::MessageId,
     ) -> Result<mailbox::Delivered, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::NotConfigured(
+        Err(mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
         ))
     }
@@ -207,7 +207,7 @@ impl mailbox::Mailboxes for DownMailboxes {
         _: &mailbox::MessageId,
         _: Option<&str>,
     ) -> Result<mailbox::Message, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::NotConfigured(
+        Err(mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
         ))
     }
