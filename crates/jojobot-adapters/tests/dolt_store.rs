@@ -15,11 +15,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
+use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
+use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_domain::mailbox::testing::contract as mailboxes;
 use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
 use jojobot_domain::memory::EntityId;
+use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::session::testing::contract as sessions;
 
 /// A directory of this run's own, removed when it is done.
@@ -109,6 +112,62 @@ async fn dolt_satisfies_the_session_contract() {
     };
 
     sessions::run_all(fresh).await;
+
+    store.stop().await;
+}
+
+/// **The memory contract, against the real store.**
+///
+/// One store for every case, which is what this contract is written for: its
+/// assertions are subset-based — what was captured comes back, never an exact
+/// total — because it also runs against a shared, pre-populated real
+/// collection. Handing each case its own database here would prove less than
+/// the suite is designed to prove, not more.
+#[tokio::test]
+async fn dolt_satisfies_the_memory_contract() {
+    let scratch = Scratch::new("memory");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("memory")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+
+    memory::run_all(&DoltMemory::open(pool)).await;
+
+    store.stop().await;
+}
+
+/// **…and the same contract including retrieval**, with the search projection
+/// over this store.
+///
+/// It is the one thing `run_all` cannot reach: `scan` feeds the projection and
+/// no verb a caller calls returns it, so a scan that came back empty would
+/// leave every case above green and every search answer wrong. The projection
+/// itself is unchanged — it sits above the port and does not care which store
+/// answers, which is the claim this case actually tests.
+#[tokio::test]
+async fn the_indexed_dolt_store_satisfies_the_whole_contract() {
+    let scratch = Scratch::new("memory-indexed");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("memoryindexed")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+
+    let indexed = Arc::new(
+        IndexedMemory::new(Arc::new(DoltMemory::open(pool))).expect("the search index opens"),
+    );
+    memory::run_all_searchable(
+        indexed.as_ref(),
+        &Retrieval::new(indexed.index(), vec![indexed.clone()]),
+    )
+    .await;
 
     store.stop().await;
 }

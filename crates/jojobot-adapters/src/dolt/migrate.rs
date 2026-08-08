@@ -123,6 +123,31 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0007_drop_minted.sql"),
         leaves: Leaves::NoTable("minted"),
     },
+    Migration {
+        version: "0008_entity",
+        sql: include_str!("../../migrations/0008_entity.sql"),
+        leaves: Leaves::Table("entity"),
+    },
+    Migration {
+        version: "0009_entity_alias",
+        sql: include_str!("../../migrations/0009_entity_alias.sql"),
+        leaves: Leaves::Table("entity_alias"),
+    },
+    Migration {
+        version: "0010_fact",
+        sql: include_str!("../../migrations/0010_fact.sql"),
+        leaves: Leaves::Table("fact"),
+    },
+    Migration {
+        version: "0011_fact_event_metadata",
+        sql: include_str!("../../migrations/0011_fact_event_metadata.sql"),
+        leaves: Leaves::Table("fact_event_metadata"),
+    },
+    Migration {
+        version: "0012_fact_event_ref",
+        sql: include_str!("../../migrations/0012_fact_event_ref.sql"),
+        leaves: Leaves::Table("fact_event_ref"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -386,6 +411,11 @@ mod tests {
         "0005_message",
         "0006_handover",
         "0007_drop_minted",
+        "0008_entity",
+        "0009_entity_alias",
+        "0010_fact",
+        "0011_fact_event_metadata",
+        "0012_fact_event_ref",
     ];
 
     #[test]
