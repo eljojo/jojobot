@@ -61,22 +61,13 @@ impl OwnerIndex for MemoryOwners {
 
 /// A Memory failure, as the mail context's own error.
 ///
-/// `NotConfigured` survives as `NotConfigured` rather than folding into
-/// `Store`: an entity world nobody wired up is a deployment that is missing a
-/// half, and telling the caller "store error" sends them looking for an outage
-/// there isn't. Everything else is the retryable store class both rails
-/// already have.
-///
-/// ⚠️ **UNPROVEN IN THE CODE: the `NotConfigured` arm.** Nothing here goes red
-/// if it collapses into `Store` — the three cases below all fail as `Store`, and
-/// the only Memory that answers `NotConfigured` is the unconfigured Outline
-/// store, which this module has no reason to reach for. What IS held is the half
-/// that matters to the caller's roster: either arm is an error, never `Unknown`.
+/// **One class, because there is one store.** An entity world nobody wired up
+/// was a state worth telling apart when entities lived somewhere else; the two
+/// rails are the same process now, so a Memory failure here is the retryable
+/// store class and nothing else. What matters to the caller's roster is
+/// unchanged: a failure is an error, never `Unknown`.
 fn store(e: MemoryError) -> MailboxError {
-    match e {
-        MemoryError::NotConfigured(m) => MailboxError::NotConfigured(m),
-        other => MailboxError::Store(other.to_string()),
-    }
+    MailboxError::Store(e.to_string())
 }
 
 #[cfg(test)]

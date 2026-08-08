@@ -9,7 +9,6 @@
 # one. That is also why `make` itself is in the shell's inputs.
 
 CARGO ?= cargo
-INTEGRATION_SUITES := outline_integration
 
 .DEFAULT_GOAL := help
 .PHONY: help check test lint fmt fmt-check build integration
@@ -18,8 +17,6 @@ help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
 		| sed -e 's/:.*## / — /' \
 		| awk '{ printf "  \033[1m%-12s\033[0m %s\n", $$1, substr($$0, index($$0, "—")) }'
-	@echo ""
-	@echo "  integration needs credentials and touches real stores — see its rule."
 
 check: fmt-check test lint ## The DONE bar: formatted, green, clippy-clean
 
@@ -38,28 +35,14 @@ fmt-check: ## Assert the workspace is formatted, rewriting nothing
 build: ## Build the workspace
 	$(CARGO) build --workspace
 
-# **The real-dependency gate.** A slice that touches an adapter does not merge on
-# fakes alone. Credentials come from `.env` and are sourced into this recipe's
-# shell only — never echoed, never passed on a command line where they would land
-# in a process list.
+# **The real-dependency gate, and it needs no credentials any more.**
 #
-# It fails loudly when `.env` is missing rather than skipping: the suites
-# themselves panic on absent credentials for the same reason, because a gate that
-# prints "skipping" and exits green is a run that verified nothing while reading
-# as if it had.
+# Every store jojobot fronts is a process it spawns itself, so the suites that
+# run against a real one need a temporary directory and the binary already in
+# the toolchain — which is why they are ordinary `cargo test` cases rather than
+# an ignored tier somebody has to remember. `make check` runs them.
 #
-# **The golden recorders are skipped by name, so the count is the evidence.**
-# They are tools, not checks: without JOJOBOT_RECORD_GOLDENS they record nothing
-# and report `ok`, so counting them made this gate report three passing tests
-# where one thing was verified. A reader counts tests to size the evidence, and
-# a number three times the truth is worse than no number.
-integration: ## Run the suites against real stores (needs .env)
-	@test -f .env || { \
-		echo "no .env — the real-dependency suites need credentials, and a skipped run is not a green one"; \
-		exit 1; \
-	}
-	@set -a; . ./.env; set +a; \
-	for suite in $(INTEGRATION_SUITES); do \
-		echo "== $$suite"; \
-		$(CARGO) test -p jojobot-adapters --test $$suite -- --ignored --skip record_ || exit 1; \
-	done
+# This target stays as the name a person reaches for, and it runs the same
+# thing rather than pretending there is a second gate.
+integration: ## Run the suites against the real store
+	$(CARGO) test -p jojobot-adapters --test dolt_store --test dolt_without_a_home

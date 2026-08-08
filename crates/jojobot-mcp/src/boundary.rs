@@ -23,20 +23,6 @@ pub(crate) fn unreadable(what: &str, detail: &str) -> String {
     )
 }
 
-/// A write that failed and could not be undone: part of it may remain, so
-/// retrying is not a safe next move. A genuinely different class from
-/// [`store_failed`] — that one is a clean failure, where nothing was written
-/// and a retry is the reasonable answer — so it earns its own function
-/// rather than a branch inside that one.
-pub(crate) fn stranded(verb: &str, detail: &str) -> String {
-    tracing::error!(verb, detail, "stranded write reached the boundary");
-    format!(
-        "{verb} may not have finished, and jojobot could not undo the part that did. Do not \
-         try again — a repeat could double whatever landed. Tell the operator: this needs a \
-         person to look at what is actually there."
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -48,7 +34,6 @@ mod tests {
         for said in [
             store_failed("post_message", leaky),
             unreadable("message gamma-4", leaky),
-            stranded("post_message", leaky),
         ] {
             assert!(
                 !said.contains(leaky),
@@ -78,24 +63,6 @@ mod tests {
         assert!(
             unread.contains("only a person"),
             "the caller must learn a retry is pointless: {unread}"
-        );
-
-        // **A stranded write is not told to retry** — the reason it is a
-        // separate function rather than a branch of `store_failed`, whose
-        // sentence says the opposite.
-        let stranded_said = stranded("post_message", "the page vanished");
-        assert!(stranded_said.contains("post_message"), "{stranded_said}");
-        assert!(
-            !stranded_said.contains("Try once more"),
-            "a repeat could double whatever landed: {stranded_said}"
-        );
-        assert!(
-            stranded_said.contains("Do not try again"),
-            "…and it must say so plainly: {stranded_said}"
-        );
-        assert!(
-            stranded_said.contains("Tell the operator"),
-            "the caller must learn only a person can look: {stranded_said}"
         );
     }
 }

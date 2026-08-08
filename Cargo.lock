@@ -1424,7 +1424,6 @@ dependencies = [
  "async-trait",
  "jiff",
  "jojobot-domain",
- "reqwest",
  "serde",
  "serde_json",
  "sqlx",

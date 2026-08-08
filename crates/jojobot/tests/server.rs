@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use jojobot::auth::Validator;
 use jojobot::{AppState, build_app};
-use jojobot_adapters::outline::OutlineStore;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::Memory;
@@ -21,16 +20,17 @@ use tokio_util::sync::CancellationToken;
 mod support;
 
 /// The Memory and Search ports for the transport/auth tests, which never call the
-/// domain verbs — the real store, left unconfigured (no network), behind the real
-/// index. No toy store, and the same store-behind-index pairing production
-/// wires, so these tests can't pass on a shape the binary doesn't build.
+/// domain verbs — the in-memory double behind the real index, which is the same
+/// store-behind-index pairing production wires, so these tests can't pass on a
+/// shape the binary doesn't build.
 ///
-/// **Mail and sessions are the in-memory doubles here.** Production serves both
-/// from the SQL store, and nothing in this file calls a mail or session verb —
-/// these cases are about the transport and the bearer guard, which never reach
-/// either port — so standing a database process up per case would buy nothing.
-/// The cases that DO exercise those stores live in the adapter crate, against
+/// **The double rather than the real store**, for the reason mail and sessions
+/// use one here: the real one is a database process, no case in this file calls
+/// a memory verb, and standing a server up per case would buy nothing.
+///
+/// The cases that DO exercise these stores live in the adapter crate, against
 /// the real one.
+///
 /// The four ports a served app needs, as the transport/auth tests want them.
 type TestPorts = (
     Arc<dyn Memory>,
@@ -40,7 +40,7 @@ type TestPorts = (
 );
 
 fn test_ports() -> TestPorts {
-    let store: Arc<dyn Memory> = Arc::new(OutlineStore::unconfigured());
+    let store: Arc<dyn Memory> = Arc::new(InMemoryMemory::new());
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
     let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
     (

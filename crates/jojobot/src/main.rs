@@ -6,11 +6,9 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use jojobot_adapters::dolt::Dolt;
-use jojobot_adapters::dolt::carry;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::sessions::DoltSessions;
-use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
 use jojobot_adapters::owners::MemoryOwners;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, Retrieval};
 use jojobot_domain::mailbox::{Mailboxes, OwnerIndex};
@@ -101,58 +99,10 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!(dir = %dir.display(), applied = ?applied, "store: up, schema moved");
     }
 
-    // **The document store, and it is the carry's read source now.** It still
-    // holds the entities, facts and prose a person reads as pages; what it no
-    // longer does is answer a caller. Unset credentials mean no source, which
-    // is a boot with nothing to carry rather than a failure.
-    let outline = match outline_from_env() {
-        Some(cfg) => {
-            tracing::info!(base_url = %cfg.base_url, "memory: the old store is wired to carry from");
-            OutlineStore::new(http.clone(), cfg)
-        }
-        None => OutlineStore::unconfigured(),
-    };
-
     // **Memory is served from the store**, over the same pool as mail and
-    // sessions.
+    // sessions. There is no second store to reach and nothing to carry: the
+    // records moved, and the documents they came from are a person's copy now.
     let memory: Arc<dyn Memory> = Arc::new(DoltMemory::open(store.pool().clone()));
-
-    // **The one-time move, asked about on every boot.** After the first it
-    // reads one row and returns.
-    //
-    // ⚠️ **A refusal refuses the boot**, for the reason the store's own failure
-    // does: the records are either here and checked or they are not, and a
-    // server that started anyway would answer out of whatever is in the store
-    // as though it were the whole of what jojobot knows.
-    match carry::carry_over(
-        &outline,
-        &DoltMemory::open(store.pool().clone()),
-        store.pool(),
-    )
-    .await
-    {
-        carry::Carried::Carried(report) => tracing::info!(
-            entities = report.entities,
-            facts = report.facts,
-            prose = report.prose,
-            verified = report.verified,
-            "memory: the records moved into the store and read back as themselves"
-        ),
-        carry::Carried::AlreadyCarried => {
-            tracing::info!("memory: already carried by an earlier boot, and verified")
-        }
-        carry::Carried::NothingToCarry(why) => tracing::info!(
-            reason = %why,
-            "memory: no old store is wired, so there was nothing to carry — memory is served \
-             from this store, which starts out empty"
-        ),
-        carry::Carried::Refused(why) => {
-            return Err(anyhow::anyhow!(why).context(
-                "MEMORY CARRY REFUSED — memory must not be served from this store until a person \
-                 has looked at it",
-            ));
-        }
-    }
 
     // The search projection sits in FRONT of the store, so every write through
     // the port keeps the index current. Boot is a plain full re-scan — and a
@@ -318,18 +268,6 @@ fn store_port_from_env() -> u16 {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3307)
-}
-
-/// Read the Outline store's **credentials** from the environment — the only
-/// config there is; the collection and docs are discovered by convention. Both
-/// must be set; either missing → `None` (memory disabled). The adapter never
-/// reads env itself — the operator sets it here, at the composition root.
-fn outline_from_env() -> Option<OutlineConfig> {
-    let nonempty = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
-    Some(OutlineConfig {
-        base_url: nonempty("JOJOBOT_OUTLINE_URL")?,
-        token: Secret::new(nonempty("JOJOBOT_OUTLINE_TOKEN")?),
-    })
 }
 
 fn init_tracing() {

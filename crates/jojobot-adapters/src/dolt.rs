@@ -17,7 +17,6 @@ use std::time::Duration;
 
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 
-pub mod carry;
 mod ids;
 pub mod mailboxes;
 pub mod memory;
