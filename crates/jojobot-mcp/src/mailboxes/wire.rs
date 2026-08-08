@@ -213,11 +213,19 @@ pub(crate) fn message_json(message: &Message) -> serde_json::Value {
 /// infer from a missing key whether a body was withheld or empty is a reader
 /// that will eventually infer wrong.
 ///
+/// **`how_to_read` is optional because a LIST says it once.** One sentence
+/// repeated on every item of a hundred-item answer is most of that answer, and
+/// it teaches the reader nothing after the first. A receipt for a single write
+/// carries its own; a list carries one beside the list.
+///
 /// The write is still verified server-side: the store's read-back invariant
 /// means a body that did not survive storage is an error, not a mangled
 /// success. Dropping the full echo only drops the 4-8 KB report shipped back
 /// to the writer.
-pub(crate) fn message_receipt_json(message: &Message, how_to_read: &str) -> serde_json::Value {
+pub(crate) fn message_receipt_json(
+    message: &Message,
+    how_to_read: Option<&str>,
+) -> serde_json::Value {
     let mut body = message_json(message);
     if let Some(obj) = body.as_object_mut() {
         obj.insert("body".into(), serde_json::Value::Null);
@@ -227,7 +235,9 @@ pub(crate) fn message_receipt_json(message: &Message, how_to_read: &str) -> serd
             "body_head".into(),
             text::BODY_DIGEST.render(&message.body).into(),
         );
-        obj.insert("how_to_read".into(), how_to_read.into());
+        if let Some(how_to_read) = how_to_read {
+            obj.insert("how_to_read".into(), how_to_read.into());
+        }
     }
     body
 }
@@ -266,8 +276,10 @@ pub(crate) fn delivery_json(delivery: &Delivery, new_only: bool) -> serde_json::
             .map(|d| if new_only && d.seen_before {
                 let mut body = message_receipt_json(
                     &d.message,
-                    "an earlier read already handed you this one. read_message returns it in \
-                     full, or read_mailbox without new_only",
+                    Some(
+                        "an earlier read already handed you this one. read_message returns it \
+                         in full, or read_mailbox without new_only",
+                    ),
                 );
                 if let Some(obj) = body.as_object_mut() {
                     obj.insert("seen_before".into(), true.into());

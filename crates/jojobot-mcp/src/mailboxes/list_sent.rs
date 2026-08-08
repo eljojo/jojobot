@@ -5,6 +5,11 @@
 
 use super::*;
 
+/// How many messages come back when the caller does not say — the same twenty
+/// `search` answers with, and for the same reason: an answer nobody sized is an
+/// answer that grows until it is unreadable.
+const DEFAULT_LIMIT: usize = 20;
+
 /// Arguments to `list_sent`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ListSentArgs {
@@ -16,6 +21,13 @@ pub struct ListSentArgs {
     /// Only this box. Omit for every box you have posted into.
     #[serde(default)]
     pub mailbox: Option<String>,
+    /// How many messages to return, newest first. Defaults to twenty.
+    ///
+    /// **No pagination and no cursor**, as `search` has none: a second page is
+    /// a narrower question — one box, or one sender. What is left out is
+    /// counted and said, never silently dropped.
+    #[serde(default)]
+    pub limit: Option<u32>,
     /// Ship the bodies back too. Off by default: you wrote them, so the useful
     /// answer is where they got to, not what they say.
     #[serde(default)]
@@ -45,7 +57,11 @@ impl Jojobot {
                        finished with · `processed` = acted on) plus notes when the consumer \
                        recorded an outcome. Bodies are left out unless you ask for them — you \
                        wrote them — so each carries body_bytes and the opening line instead, and \
-                       says body_elided: true rather than leaving you to guess. OMIT `sender` for \
+                       says body_elided: true rather than leaving you to guess, with the one \
+                       instruction for getting them said once beside the list rather than on \
+                       every message. Twenty newest by default: raise `limit` for more, and \
+                       whatever a cut leaves out is counted under not_shown rather than \
+                       silently dropped. OMIT `sender` for \
                        your own mail — your `sid` already says who that is. Pass one to ask after \
                        somebody else's outgoing mail: it is matched exactly against the bot \
                        handle recorded on each message (`bot:gamma`), which is allowed, because \
@@ -126,7 +142,7 @@ impl Jojobot {
             .filter(|(_, m)| only.is_none_or(|name| m.mailbox.as_str() == name))
             .collect();
         sent.sort_by(|(a_at, a), (b_at, b)| b.sent_at.cmp(&a.sent_at).then_with(|| b_at.cmp(a_at)));
-        let sent: Vec<Message> = sent.into_iter().map(|(_, m)| m).collect();
+        let mut sent: Vec<Message> = sent.into_iter().map(|(_, m)| m).collect();
 
         // **Something jojobot cannot read is not a message that was never
         // sent.** The scan leaves quarantined items out — it cannot parse them,
@@ -152,10 +168,32 @@ impl Jojobot {
             })
             .collect();
 
+        // **The cut is the last thing that happens**, after the ordering, so
+        // what comes back is the newest rather than whatever the store handed
+        // over first.
+        let held = sent.len();
+        let limit = args.limit.map_or(DEFAULT_LIMIT, |l| l as usize);
+        sent.truncate(limit);
+
         json_result(&serde_json::json!({
             "sender": sender,
             "mailbox": only,
             "count": sent.len(),
+            "sent_total": held,
+            // **Eliding is never silent.** The count above is what came back;
+            // this says how many there are and what to do about it, and it is
+            // absent when nothing was cut rather than saying "0 left out".
+            "not_shown": (held > sent.len()).then(|| serde_json::json!({
+                "count": held - sent.len(),
+                "how_to_proceed": "these are the newest; raise limit, or narrow to one mailbox",
+            })),
+            // **Said once, beside the list.** It is the same sentence for every
+            // message, so carrying it on each one is most of the answer and
+            // teaches a reader nothing after the first.
+            "how_to_read": (!bodies).then_some(
+                "call list_sent again with include_bodies: true — these are your own messages, \
+                 so reading them takes no delivery from anybody",
+            ),
             "unreadable": unreadable,
             "unreadable_note": "Messages jojobot cannot read are not in the list above — \
                                 it cannot tell who sent them. If one of yours is missing, it may \
@@ -165,11 +203,7 @@ impl Jojobot {
                 .map(|m| if bodies {
                     message_json(m)
                 } else {
-                    message_receipt_json(
-                        m,
-                        "call list_sent again with include_bodies: true — this is your own \
-                         message, so reading it takes no delivery from anybody",
-                    )
+                    message_receipt_json(m, None)
                 })
                 .collect::<Vec<_>>(),
         }))
@@ -200,6 +234,7 @@ mod tests {
         let sent = json_of(
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
+                    limit: None,
                     sender: Some("bot:otto".into()),
                     mailbox: None,
                     include_bodies: None,
@@ -228,10 +263,17 @@ mod tests {
                 .expect("a head")
                 .contains("note for somebody else")
         );
+        // **The pointer is on the answer, once.** It is the same sentence for
+        // every message, so it sits beside the list rather than on each item —
+        // and a reader still learns how to get a body it was not shipped.
         assert!(
-            first["how_to_read"]
+            first.get("how_to_read").is_none(),
+            "the per-message copy is gone: {first}"
+        );
+        assert!(
+            sent["how_to_read"]
                 .as_str()
-                .expect("a pointer")
+                .expect("a pointer beside the list")
                 .contains("include_bodies")
         );
 
@@ -282,6 +324,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
+                    limit: None,
                     sender: Some("bot:otto".into()),
                     mailbox: Some("handofs".into()),
                     include_bodies: None,
@@ -322,6 +365,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
+                    limit: None,
                     sender: Some("dev (implementer)".into()),
                     mailbox: None,
                     include_bodies: None,
@@ -373,6 +417,7 @@ mod tests {
         let sent = json_of(
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
+                    limit: None,
                     sender: Some("dev (implementer)".into()),
                     mailbox: None,
                     include_bodies: None,
@@ -386,6 +431,82 @@ mod tests {
     }
 
     /// Asking for the bodies gets them — the elision is a default, not a rule.
+    /// **A limit cuts the list and says what it cut.**
+    ///
+    /// One box's worth of sent mail was 144 messages and about 117,000
+    /// characters with the bodies already left out, which is an answer nobody
+    /// can read and every caller pays for. So the list is sized, newest first.
+    ///
+    /// **What is left out is counted rather than dropped.** A short list with
+    /// no marker reads as "that is all there is", which is the one wrong thing
+    /// a truncation can say — and the marker is absent when nothing was cut,
+    /// rather than present saying zero.
+    #[tokio::test]
+    async fn a_limit_cuts_the_list_and_names_what_it_left_out() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "pm").await;
+        for n in 0..4 {
+            send(&jojobot, "pm", "otto", &format!("report {n}")).await;
+        }
+
+        let sent = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    limit: Some(2),
+                    sender: None,
+                    mailbox: None,
+                    include_bodies: None,
+                    sid: Some(as_bot(&jojobot, "otto")),
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        assert_eq!(sent["count"], 2, "the caller got what it asked for: {sent}");
+        assert_eq!(sent["sent_total"], 4, "…out of what there is: {sent}");
+        assert_eq!(sent["not_shown"]["count"], 2);
+        assert!(
+            sent["not_shown"]["how_to_proceed"]
+                .as_str()
+                .expect("a way on")
+                .contains("limit"),
+            "a cut list says how to see the rest: {sent}"
+        );
+
+        // **The newest, not the first two the store handed over.** A cut that
+        // kept the oldest would satisfy every count above.
+        let kept: Vec<&str> = sent["messages"]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .map(|m| m["body_head"].as_str().expect("a head"))
+            .collect();
+        assert!(
+            kept.iter().any(|h| h.contains("report 3"))
+                && kept.iter().any(|h| h.contains("report 2")),
+            "the newest two came back: {kept:?}"
+        );
+
+        // **And a list that fits carries no marker at all**, rather than one
+        // saying nothing was left out.
+        let whole = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    limit: None,
+                    sender: None,
+                    mailbox: None,
+                    include_bodies: None,
+                    sid: Some(as_bot(&jojobot, "otto")),
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        assert_eq!(whole["count"], 4);
+        assert!(
+            whole["not_shown"].is_null(),
+            "nothing was cut, so nothing says it was: {whole}"
+        );
+    }
+
     #[tokio::test]
     async fn a_sender_can_ask_for_the_bodies_of_their_own_mail() {
         let jojobot = mailbox_handler();
@@ -395,6 +516,7 @@ mod tests {
         let sent = json_of(
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
+                    limit: None,
                     sender: Some("bot:otto".into()),
                     mailbox: None,
                     include_bodies: Some(true),

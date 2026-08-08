@@ -121,8 +121,11 @@ impl Jojobot {
                     .await;
                 json_result(&message_receipt_json(
                     &message,
-                    "you wrote this body; jojobot verified it by reading the stored record back. \
-                     list_sent with include_bodies: true returns it, and takes no delivery",
+                    Some(
+                        "you wrote this body; jojobot verified it by reading the stored record \
+                         back. list_sent with include_bodies: true returns it, and takes no \
+                         delivery",
+                    ),
                 ))
             }
             mailbox::Guarded::Blocked {

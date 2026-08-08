@@ -77,8 +77,11 @@ impl Jojobot {
                     .await;
                 let mut body = message_receipt_json(
                     &processed,
-                    "you had this body from the read that handed it to you. read_message returns \
-                     it, and a processed message comes back unchanged — processed is terminal",
+                    Some(
+                        "you had this body from the read that handed it to you. read_message \
+                         returns it, and a processed message comes back unchanged — processed \
+                         is terminal",
+                    ),
                 );
                 if let Some(obj) = body.as_object_mut() {
                     // **Always present, never inferred from the ellipsis.** The
