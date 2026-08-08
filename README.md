@@ -307,14 +307,29 @@ The server **fails closed**, and there are two kinds of it.
 non-loopback bind. This turns a dropped-secret misconfiguration into a startup
 error rather than a silently unauthenticated `/mcp`.
 
-*No store to serve from.* Mail and sessions live in the SQL store, so the server
-refuses to start without a state directory, or when the store does not come up.
-A server that started anyway would answer with an empty board and present that
-emptiness as the truth. Each refusal names the condition it found.
+*No store to serve from.* Everything jojobot holds — mail, sessions, entities,
+facts and prose — lives in the SQL store, so the server refuses to start without
+a state directory, or when the store does not come up. A server that started
+anyway would answer as if it held nothing and present that emptiness as the
+truth. Each refusal names the condition it found.
 
-A missing `JOJOBOT_OUTLINE_URL` is **not** one of these. With no Outline wired
-there is no memory to serve: the server starts, `search` and `capture` refuse
-loudly, and mail and sessions work from the store as usual.
+A missing `JOJOBOT_OUTLINE_URL` is **not** one of these. Outline is only the
+source a first boot carries records out of, so with none wired there is simply
+nothing to carry and the server starts on an empty store.
+
+*A carry that did not finish.* The first boot after an upgrade moves the records
+in and then serves from them, in that order. If the read-back fails the boot
+dies rather than serving — the store is then holding rows nothing has checked,
+and **every later boot refuses with that state until a person looks.** That is
+deliberate: the alternative is a server treating "there are rows here" as "this
+is everything."
+
+The way out is to make the target empty again and let the boot redo it: clear
+the carried tables and the row recording the carry, then start the server. **Do
+that only after reading why the first one failed** — the journal names the
+condition, and a repair that skips the diagnosis restores the same failure.
+Nothing is lost by clearing: the carry reads its source and never writes to it,
+so the records it came from are still there.
 
 ## Auth model
 
