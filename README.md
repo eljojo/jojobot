@@ -240,9 +240,10 @@ nix develop            # drops you in a shell with the pinned toolchain
 cargo build            # build the workspace
 cargo test             # run the tests, including the auth golden tests
 
-# Mail and sessions are rows in a SQL store the server starts and supervises,
-# so it needs somewhere to keep them. The service manager hands that path over
-# in production; supply one by hand for a local run.
+# Everything jojobot holds is rows in a SQL store the server starts and
+# supervises — mail, sessions, entities, facts and prose alike — so it needs
+# somewhere to keep them. The service manager hands that path over in
+# production; supply one by hand for a local run.
 STATE_DIRECTORY=$PWD/.state cargo run -p jojobot
 ```
 
