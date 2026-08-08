@@ -291,7 +291,6 @@ All configuration is environment-driven.
 | `JOJOBOT_JWKS_URI` | Explicit JWKS URI | discovered from issuer |
 | `JOJOBOT_ALLOW_NO_AUTH` | Set to `1` to run **without auth** (dev only) | unset |
 | `JOJOBOT_ALLOWED_SUBJECTS` | Optional comma-separated `sub` allowlist (requires auth) | unset = any valid token |
-| `JOJOBOT_OUTLINE_URL` / `JOJOBOT_OUTLINE_TOKEN` | The Outline instance Memory fronts | unset |
 | `STATE_DIRECTORY` | Where the SQL store keeps its data — **required**; the service manager sets it | unset |
 | `JOJOBOT_STORE_PORT` | Loopback port the SQL store serves on | `3307` |
 
@@ -313,9 +312,10 @@ a state directory, or when the store does not come up. A server that started
 anyway would answer as if it held nothing and present that emptiness as the
 truth. Each refusal names the condition it found.
 
-A missing `JOJOBOT_OUTLINE_URL` is **not** one of these. Outline is only the
-source a first boot carries records out of, so with none wired there is simply
-nothing to carry and the server starts on an empty store.
+**The store is the only thing jojobot needs to be told about.** There is one, the
+server spawns it, and there is nothing else to configure or reach — no second
+service, no credentials, and no external instance a deployment has to keep alive
+alongside it.
 
 ⚠️ *Upgrading a server that has never carried.* **A store that has not taken its
 records in can no longer be given them: the code that moved them is gone, and
