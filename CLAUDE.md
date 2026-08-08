@@ -329,11 +329,12 @@ name roles and never an operator.
 - **Zero user PII, zero life specifics** — the bright line at the top of this
   file. It outranks every other rule here.
 - **The real-dependency gate.** A slice that touches an adapter does not merge
-  on fakes alone: run the real-dependency integration suites
-  (`crates/jojobot-adapters/tests/`, against disposable stores; credentials
-  come from `.env`) and show the output. A suite that exists but was never run
-  is a blocker, not a footnote. Sourcing `.env` to *run* the suites is
-  sanctioned; never print or copy its values.
+  on fakes alone: run the suites that exercise a real store and show the
+  output. **They need no credentials and no separate gate** — every store
+  jojobot fronts is a process it spawns itself, against a disposable database,
+  so the suites are ordinary cases the whole run already covers. **That makes
+  the gate cheap, which removes the last excuse for skipping it**: a suite that
+  exists and was never run is a blocker, not a footnote.
 - **Fakes must be hostile where reality is.** When a real store's quirk is
   discovered (normalization, silent drops, clamped pagination), bake it into
   the fake or a golden fixture — a polite fake that stores bytes verbatim is
