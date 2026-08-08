@@ -327,6 +327,14 @@ instance still holding its records elsewhere must run a build that still carries
 them, once, before taking one that does not.** A server that has already carried,
 or one that never had anything to carry, is unaffected.
 
+*What the records were carried out of is left alone.* A carry reads its source
+and never writes to it, and once it has run **nothing in jojobot can reach that
+source again** — no verb, no scan, no index. Whatever it held is still there,
+untouched and unreadable from here, and removing it is a person's job whenever
+they want it gone. **The software will not notice either way**, which is the
+point: an operator decides when their old copy stops being worth keeping, and
+nothing here has an opinion or a schedule.
+
 *A carry that did not finish.* The first boot after an upgrade moves the records
 in and then serves from them, in that order. If the read-back fails the boot
 dies rather than serving — the store is then holding rows nothing has checked,
