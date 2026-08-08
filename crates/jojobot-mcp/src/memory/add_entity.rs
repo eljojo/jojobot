@@ -9,7 +9,12 @@ use super::*;
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddEntityArgs {
     /// One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-    /// `topic`.
+    /// `topic`, `bot`.
+    ///
+    /// **`bot` is an ordinary kind here**, and creating one is what this verb
+    /// is for: nothing about an identity is compiled in, so every bot beyond
+    /// the one a fresh instance ships with is made through this call — and the
+    /// mailbox it owns opens in the same act.
     pub kind: String,
     /// The slug half of the handle (`[a-z0-9-]+`), or a full `kind:slug` id
     /// whose kind must match `kind`. The handle is permanent — choose one that
@@ -113,9 +118,11 @@ impl Jojobot {
 #[tool_router(router = add_entity_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Bring a new entity into existence (person/project/place/event/work/\
-                       thing/org/topic) — the required first step before any other write may \
-                       name it. Returns the stored entity. If its handle or any of its names \
+        description = "Bring a new entity into existence — the required first step before any \
+                       other write may name it. The kinds are the `kind` argument's, which is \
+                       the one place they are listed; creating a bot is creating an identity, \
+                       and it opens the mailbox that bot owns in the same act. Returns the \
+                       stored entity. If its handle or any of its names \
                        resembles something jojobot already knows, NOTHING is written: the \
                        result says status: blocked with candidates and how_to_proceed. Use the \
                        candidate you meant, or re-call with the override_token that refusal \

@@ -120,6 +120,58 @@ fn shipped_source() -> String {
     files.concat()
 }
 
+/// **Every kind the store accepts is a kind the surface lists.**
+///
+/// The surface listed eight and the enum has nine: `bot` was accepted and
+/// undocumented, so a caller reading it believed an identity had to be made
+/// some other way — and there is no other way, because nothing about a bot is
+/// compiled in.
+///
+/// **The list lives in ONE place**, the `kind` argument, which is what makes
+/// this checkable at all: the description used to carry a second copy, and two
+/// copies of one list is how the first one goes stale unnoticed. This pins the
+/// surviving one against the enum, so a kind added to the store cannot be
+/// missing from the only place a caller is told about it.
+///
+/// It pins tokens rather than phrasing — a rewrite of the sentence around them
+/// is free, and dropping a kind out of it is not.
+#[test]
+fn every_kind_the_store_accepts_is_listed_where_a_caller_reads() {
+    use jojobot_domain::memory::EntityKind;
+
+    let tools = Jojobot::tool_router().list_all();
+    let add_entity = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "add_entity")
+        .expect("the surface offers add_entity");
+    // **The argument's own description, read out of the schema a client
+    // receives** — not the whole schema as one string, where a token could be
+    // satisfied by any other argument's prose.
+    let schema = serde_json::to_value(&add_entity.input_schema).expect("the schema serializes");
+    // **The opening paragraph, which is where the list is** — not the whole
+    // description, where a token is satisfied by any sentence that happens to
+    // mention it. That distinction is not academic: the prose below the list
+    // says the word `bot` twice, so a check over the whole text passes with the
+    // kind missing from the list a caller actually reads.
+    let described = schema["properties"]["kind"]["description"]
+        .as_str()
+        .expect("the kind argument carries its own description")
+        .to_string();
+    let listed = described
+        .split("\n\n")
+        .next()
+        .expect("a description has a first paragraph")
+        .to_string();
+
+    for kind in EntityKind::ALL {
+        let token = kind.as_token();
+        assert!(
+            listed.contains(&format!("`{token}`")),
+            "the `kind` argument does not list `{token}`, which the store accepts: {listed}"
+        );
+    }
+}
+
 /// **The whole tool surface, named.** Production jojobot never deletes
 /// anything: the standing rule is structural at the store (the Mailboxes
 /// port has no delete operation at all), and this pins the other end — that
