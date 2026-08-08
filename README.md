@@ -60,7 +60,12 @@ never runs inference of its own — the assistant is the only mind.
 > mints at the door, saying nothing about the work, and it rides every verb —
 > reads included — because real MCP clients open a fresh connection per tool call
 > and a connection-held identity does not survive to the next one. It is written
-> on the session's own row, so a restart does not orphan it. All behind OAuth2
+> on the session's own record, so a restart does not orphan it. **Every record
+> jojobot mints an id for is addressed the same way** — drawn from OS entropy
+> over the same alphabet, saying nothing about what it names, and redrawn if the
+> store already holds it. Records that predate this keep the ids they were
+> minted with, so two shapes sit on one board: that seam is deliberate and
+> permanent, not a migration that half-ran. All behind OAuth2
 > resource-server auth, and a write is reported successful only once it has
 > landed — read back through the read path, or carried by a transaction that
 > either commits or does not.
