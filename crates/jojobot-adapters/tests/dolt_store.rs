@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jojobot_adapters::dolt::Dolt;
+use jojobot_adapters::dolt::carry;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
@@ -22,6 +23,7 @@ use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_domain::mailbox::testing::contract as mailboxes;
 use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
 use jojobot_domain::memory::EntityId;
+use jojobot_domain::memory::Memory as _;
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::session::testing::contract as sessions;
 
@@ -168,6 +170,207 @@ async fn the_indexed_dolt_store_satisfies_the_whole_contract() {
         &Retrieval::new(indexed.index(), vec![indexed.clone()]),
     )
     .await;
+
+    store.stop().await;
+}
+
+/// **The carry, over a source that disagrees with itself.**
+///
+/// The one thing only the carry can do is re-derive a fact's owner from the
+/// page its row sat on, because the old store records it nowhere else. So the
+/// source here hands back a document whose fact carries a DIFFERENT subject
+/// cell from the page holding it — the disagreement a real board can carry —
+/// and the case asserts the row lands under the page, not under the cell.
+///
+/// A fake source rather than a real Outline collection, deliberately: the
+/// disagreement is what is under test, no verb can produce it, and a case that
+/// needed credentials would not run in an ordinary `cargo test`.
+#[tokio::test]
+async fn the_carry_files_a_fact_under_the_page_it_sat_on() {
+    use jojobot_domain::memory::testing::InMemoryMemory;
+    use jojobot_domain::memory::{Boot, Entity, EntityKind, Fact, FactId, NewEntity, Provenance};
+    use jojobot_domain::memory::{FactStatus, Standing, search::DocScan};
+
+    /// A source whose scan carries the disagreement. Only `scan` is this
+    /// carry's read, so only `scan` is answered.
+    struct Placed(InMemoryMemory);
+
+    #[async_trait::async_trait]
+    impl jojobot_domain::memory::Memory for Placed {
+        async fn scan(&self) -> Result<Vec<DocScan>, jojobot_domain::memory::MemoryError> {
+            let alpha = EntityId::person("carried-alpha");
+            let beta = EntityId::person("carried-beta");
+            let entity = |id: &EntityId| Entity {
+                kind: EntityKind::Person,
+                id: id.clone(),
+                name: id.slug().to_string(),
+                aliases: Vec::new(),
+                source: "carry-fixture".into(),
+                crm: None,
+                parent: None,
+                boot: Boot::OnDemand,
+            };
+            Ok(vec![
+                DocScan {
+                    doc_id: alpha.to_string(),
+                    title: "alpha".into(),
+                    prose: "what somebody wrote on this page".into(),
+                    entity: Some(entity(&alpha)),
+                    facts: vec![Fact {
+                        id: FactId("f1".into()),
+                        // The page is alpha's; the cell says beta. A carry that
+                        // read the cell would file this under beta for good.
+                        home: alpha.clone(),
+                        subject: beta.clone(),
+                        content: "sat on alpha's page and named beta".into(),
+                        details: None,
+                        provenance: Provenance::Testimony,
+                        standing: Standing::Settled,
+                        status: FactStatus::Active,
+                        date: jiff::civil::date(2026, 3, 8),
+                        edge: None,
+                        event: None,
+                        derived_from: None,
+                    }],
+                },
+                DocScan {
+                    doc_id: beta.to_string(),
+                    title: "beta".into(),
+                    prose: String::new(),
+                    entity: Some(entity(&beta)),
+                    facts: Vec::new(),
+                },
+            ])
+        }
+        async fn add_entity(
+            &self,
+            new: NewEntity,
+        ) -> Result<jojobot_domain::memory::Guarded<Entity>, jojobot_domain::memory::MemoryError>
+        {
+            self.0.add_entity(new).await
+        }
+        async fn list_entities(
+            &self,
+            kind: Option<EntityKind>,
+        ) -> Result<Vec<Entity>, jojobot_domain::memory::MemoryError> {
+            self.0.list_entities(kind).await
+        }
+        async fn update_entity(
+            &self,
+            handle: &EntityId,
+            patch: jojobot_domain::memory::EntityPatch,
+        ) -> Result<jojobot_domain::memory::Guarded<Entity>, jojobot_domain::memory::MemoryError>
+        {
+            self.0.update_entity(handle, patch).await
+        }
+        async fn capture(
+            &self,
+            fact: jojobot_domain::memory::NewFact,
+        ) -> Result<jojobot_domain::memory::Guarded<Fact>, jojobot_domain::memory::MemoryError>
+        {
+            self.0.capture(fact).await
+        }
+        async fn recall(
+            &self,
+            subject: &EntityId,
+        ) -> Result<Vec<Fact>, jojobot_domain::memory::MemoryError> {
+            self.0.recall(subject).await
+        }
+        async fn update_fact(
+            &self,
+            address: &jojobot_domain::memory::FactAddress,
+            patch: jojobot_domain::memory::FactPatch,
+        ) -> Result<jojobot_domain::memory::Guarded<Fact>, jojobot_domain::memory::MemoryError>
+        {
+            self.0.update_fact(address, patch).await
+        }
+        async fn retract(
+            &self,
+            address: &jojobot_domain::memory::FactAddress,
+            reason: Option<&str>,
+            date: jiff::civil::Date,
+        ) -> Result<jojobot_domain::memory::Retraction, jojobot_domain::memory::MemoryError>
+        {
+            self.0.retract(address, reason, date).await
+        }
+        async fn set_prose(
+            &self,
+            entity: &EntityId,
+            prose: &str,
+        ) -> Result<String, jojobot_domain::memory::MemoryError> {
+            self.0.set_prose(entity, prose).await
+        }
+    }
+
+    let scratch = Scratch::new("carry");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("carried")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+
+    let carried = carry::carry_over(&Placed(InMemoryMemory::new()), &memory, &pool).await;
+    let carry::Carried::Carried(report) = carried else {
+        panic!("the carry completes over a readable source: {carried:?}");
+    };
+    assert_eq!(report.entities, 2);
+    assert_eq!(report.facts, 1);
+    assert_eq!(report.prose, 1);
+    assert_eq!(
+        report.verified, 3,
+        "every record was compared, not merely written: {report:?}"
+    );
+
+    // **The owner came from the page.** Read through the port, which is the
+    // only reader whose answer a caller will ever see.
+    let alpha = EntityId::person("carried-alpha");
+    let beta = EntityId::person("carried-beta");
+    let on_alpha = memory.recall(&alpha).await.expect("recall ok");
+    assert_eq!(
+        on_alpha
+            .iter()
+            .map(|f| f.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sat on alpha's page and named beta"],
+        "the row is filed under the page it sat on"
+    );
+    assert!(
+        memory.recall(&beta).await.expect("recall ok").is_empty(),
+        "…and not under the subject cell it happened to carry"
+    );
+
+    // **An old row declared no standing, so the column says nobody did.** Read
+    // as an operator would rather than through the adapter that wrote it.
+    let standing: Option<String> =
+        sqlx::query_scalar("SELECT standing FROM fact WHERE entity = ? AND id = 'f1'")
+            .bind(alpha.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("the row is readable");
+    assert_eq!(
+        standing, None,
+        "an old row carries no declared standing, and NULL is what says so"
+    );
+
+    // **The prose came with its entity**, onto the column.
+    let prose: String = sqlx::query_scalar("SELECT prose FROM entity WHERE id = ?")
+        .bind(alpha.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the row is readable");
+    assert_eq!(prose, "what somebody wrote on this page");
+
+    // **The second boot carries nothing and says so**, which is the steady
+    // state: a verified record is the whole of what it reads.
+    let again = carry::carry_over(&Placed(InMemoryMemory::new()), &memory, &pool).await;
+    assert!(
+        matches!(again, carry::Carried::AlreadyCarried),
+        "a verified record means an earlier boot already did this: {again:?}"
+    );
 
     store.stop().await;
 }

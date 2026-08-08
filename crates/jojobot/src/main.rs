@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use jojobot_adapters::dolt::Dolt;
+use jojobot_adapters::dolt::carry;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
+use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
 use jojobot_adapters::owners::MemoryOwners;
@@ -99,26 +101,58 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!(dir = %dir.display(), applied = ?applied, "store: up, schema moved");
     }
 
-    // The Memory port. Always the real Outline adapter — no toy store ships. It
-    // discovers/creates its own `jojobot` collection by name; the only config is
-    // credentials. Unset credentials yield an unconfigured store: the server
-    // still boots and serves `ping`, but `capture`/`recall` refuse loudly until
-    // Outline is wired (see the fail-soft rationale in the handoff/report).
+    // **The document store, and it is the carry's read source now.** It still
+    // holds the entities, facts and prose a person reads as pages; what it no
+    // longer does is answer a caller. Unset credentials mean no source, which
+    // is a boot with nothing to carry rather than a failure.
     let outline = match outline_from_env() {
         Some(cfg) => {
-            tracing::info!(base_url = %cfg.base_url, "memory: Outline store wired");
+            tracing::info!(base_url = %cfg.base_url, "memory: the old store is wired to carry from");
             OutlineStore::new(http.clone(), cfg)
         }
-        None => {
-            tracing::warn!(
-                "MEMORY DISABLED — set JOJOBOT_OUTLINE_URL and JOJOBOT_OUTLINE_TOKEN to enable \
-                 capture/recall. Serving ping only; memory verbs return a NotConfigured error."
-            );
-            OutlineStore::unconfigured()
-        }
+        None => OutlineStore::unconfigured(),
     };
 
-    let memory: Arc<dyn Memory> = Arc::new(outline);
+    // **Memory is served from the store**, over the same pool as mail and
+    // sessions.
+    let memory: Arc<dyn Memory> = Arc::new(DoltMemory::open(store.pool().clone()));
+
+    // **The one-time move, asked about on every boot.** After the first it
+    // reads one row and returns.
+    //
+    // ⚠️ **A refusal refuses the boot**, for the reason the store's own failure
+    // does: the records are either here and checked or they are not, and a
+    // server that started anyway would answer out of whatever is in the store
+    // as though it were the whole of what jojobot knows.
+    match carry::carry_over(
+        &outline,
+        &DoltMemory::open(store.pool().clone()),
+        store.pool(),
+    )
+    .await
+    {
+        carry::Carried::Carried(report) => tracing::info!(
+            entities = report.entities,
+            facts = report.facts,
+            prose = report.prose,
+            verified = report.verified,
+            "memory: the records moved into the store and read back as themselves"
+        ),
+        carry::Carried::AlreadyCarried => {
+            tracing::info!("memory: already carried by an earlier boot, and verified")
+        }
+        carry::Carried::NothingToCarry(why) => tracing::info!(
+            reason = %why,
+            "memory: no old store is wired, so there was nothing to carry — memory is served \
+             from this store, which starts out empty"
+        ),
+        carry::Carried::Refused(why) => {
+            return Err(anyhow::anyhow!(why).context(
+                "MEMORY CARRY REFUSED — memory must not be served from this store until a person \
+                 has looked at it",
+            ));
+        }
+    }
 
     // The search projection sits in FRONT of the store, so every write through
     // the port keeps the index current. Boot is a plain full re-scan — and a
