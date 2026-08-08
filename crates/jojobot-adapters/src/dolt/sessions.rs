@@ -26,6 +26,8 @@ use jojobot_domain::session::{
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
+use super::ids::{self, Draw};
+
 /// Sessions kept in the SQL store jojobot runs.
 ///
 /// Cloning shares the one pool rather than opening a second: a pool is the
@@ -34,6 +36,7 @@ use sqlx::{MySql, MySqlPool, Row, Transaction};
 #[derive(Clone)]
 pub struct DoltSessions {
     pool: MySqlPool,
+    draw: Draw,
 }
 
 impl DoltSessions {
@@ -44,7 +47,18 @@ impl DoltSessions {
     /// shape is decided and one order it changes in — see
     /// [`crate::dolt::migrate`].
     pub fn open(pool: MySqlPool) -> Self {
-        DoltSessions { pool }
+        DoltSessions {
+            pool,
+            draw: ids::drawing(),
+        }
+    }
+
+    /// The same store over a supplied draw, **so the collision path can be
+    /// watched through the verb that mints**. Entropy will not produce a
+    /// collision on demand.
+    #[cfg(test)]
+    pub(crate) fn drawing(pool: MySqlPool, draw: Draw) -> Self {
+        DoltSessions { pool, draw }
     }
 
     /// Read one whole session inside a transaction, or say it is not there.
@@ -235,7 +249,15 @@ impl Sessions for DoltSessions {
             return Ok(session);
         }
 
-        let id = SessionId(mint(&mut tx, "session").await?);
+        let id = SessionId(
+            mint(
+                &mut tx,
+                &self.draw,
+                "SELECT 1 FROM session WHERE id = ?",
+                None,
+            )
+            .await?,
+        );
         sqlx::query(
             "INSERT INTO session (id, sid, bot, focus, started_at, state) VALUES (?, ?, ?, ?, ?, ?)",
         )
@@ -259,7 +281,18 @@ impl Sessions for DoltSessions {
         let mut tx = self.pool.begin().await.map_err(store)?;
         Self::writable(&mut tx, id).await?;
         let ordinal = Self::next_ordinal(&mut tx, id).await?;
-        let entry_id = EntryId(mint(&mut tx, "entry").await?);
+        // **Free within its session**, which is the whole of this table's key:
+        // a chronology entry is addressed by the run it sits on and the id it
+        // wears, so a draw only has to miss the entries of that one run.
+        let entry_id = EntryId(
+            mint(
+                &mut tx,
+                &self.draw,
+                "SELECT 1 FROM journal_entry WHERE session = ? AND id = ?",
+                Some(id.as_str()),
+            )
+            .await?,
+        );
         sqlx::query(
             "INSERT INTO journal_entry (session, id, ordinal, at, text, touched, beat)
              VALUES (?, ?, ?, ?, ?, NULL, ?)",
@@ -427,25 +460,16 @@ async fn read_entry(
 /// **Inside the caller's transaction**, so two writers cannot take the same
 /// one. Opaque to everybody above this file: an id is a token, and nothing on
 /// the surface reads meaning out of it.
-async fn mint(tx: &mut Transaction<'_, MySql>, kind: &str) -> Result<String, SessionError> {
-    // **`counter`, not `next`.** This store's parser treats `next` as a
-    // reserved word and refuses the statement, which is the kind of quirk that
-    // only shows up against the real thing. The table itself comes from the
-    // migrations, like every other.
-    sqlx::query(
-        "INSERT INTO minted (kind, counter) VALUES (?, 1)
-         ON DUPLICATE KEY UPDATE counter = counter + 1",
-    )
-    .bind(kind)
-    .execute(&mut **tx)
-    .await
-    .map_err(store)?;
-    let counter: i64 = sqlx::query_scalar("SELECT counter FROM minted WHERE kind = ?")
-        .bind(kind)
-        .fetch_one(&mut **tx)
+async fn mint(
+    tx: &mut Transaction<'_, MySql>,
+    draw: &Draw,
+    taken: &'static str,
+    scope: Option<&str>,
+) -> Result<String, SessionError> {
+    ids::draw_free(tx, draw, taken, scope)
         .await
-        .map_err(store)?;
-    Ok(counter.to_string())
+        .map_err(store)?
+        .ok_or_else(|| SessionError::Store("no free id could be drawn".into()))
 }
 
 #[cfg(test)]
@@ -453,6 +477,177 @@ mod tests {
     use super::*;
     use crate::dolt::tests::{Scratch, free_port};
     use crate::dolt::{Dolt, migrate};
+
+    /// A draw that hands back a fixed sequence, so what the store does with a
+    /// candidate it cannot use is watchable.
+    fn rigged(candidates: &[&str]) -> Draw {
+        let queued = std::sync::Mutex::new(
+            candidates
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<std::collections::VecDeque<_>>(),
+        );
+        std::sync::Arc::new(move || {
+            queued
+                .lock()
+                .expect("the rigged draw is poisoned")
+                .pop_front()
+                .expect("the case supplied enough candidates")
+        })
+    }
+
+    /// **Both ids on this rail are drawn, and a candidate that is already taken
+    /// is drawn again** — watched through `begin` and `append`, the two verbs
+    /// that mint.
+    ///
+    /// **The two ids are taken differently, and that is the point of one case
+    /// covering both.** A session id has to miss every session in the store; an
+    /// entry id only has to miss the entries of the run it is being appended
+    /// to, because that table is keyed by the pair. A probe that asked the
+    /// wider question for an entry would redraw over a free id forever, and one
+    /// that asked the narrower question for a session would hand out an id
+    /// another bot's run already wears.
+    #[tokio::test]
+    async fn a_drawn_id_something_already_wears_is_drawn_again() {
+        let scratch = Scratch::new("drawn-session-ids");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        let sessions = DoltSessions::drawing(
+            store.pool().clone(),
+            rigged(&[
+                // the first run takes it
+                "aaaaaa", // the second run is handed the same one, twice, then a free one
+                "aaaaaa", "aaaaaa", "bbbbbb", // the first entry, on the second run
+                "cccccc", // the second entry is handed the entry id its own run wears
+                "cccccc", "dddddd",
+            ]),
+        );
+        let begin = async |slug: &str, sid: &str, at: &str| {
+            sessions
+                .begin(NewSession {
+                    bot: EntityId(format!("bot:{slug}")),
+                    sid: Sid(sid.into()),
+                    focus: "a run".into(),
+                    started_at: at.parse().expect("a fixed instant"),
+                })
+                .await
+                .expect("begin ok")
+        };
+
+        let first = begin("gamma", "ab12", "2026-01-01T00:00:00Z").await;
+        assert_eq!(first.id.as_str(), "aaaaaa");
+        let second = begin("delta", "cd34", "2026-01-01T00:01:00Z").await;
+        assert_eq!(
+            second.id.as_str(),
+            "bbbbbb",
+            "a session id another run wears must not be re-issued"
+        );
+
+        let entry = sessions
+            .append(
+                &second.id,
+                NewEntry::manual(
+                    "what I set out to do",
+                    "2026-01-01T00:02:00Z".parse().unwrap(),
+                ),
+            )
+            .await
+            .expect("append ok");
+        assert_eq!(entry.id.as_str(), "cccccc");
+        let next = sessions
+            .append(
+                &second.id,
+                NewEntry::manual("what I found", "2026-01-01T00:03:00Z".parse().unwrap()),
+            )
+            .await
+            .expect("append ok");
+        assert_eq!(
+            next.id.as_str(),
+            "dddddd",
+            "an entry id this run already wears must not be re-issued"
+        );
+
+        // **The positive the redraws rest on.** A store that had written over
+        // the earlier records would satisfy every assertion above.
+        let board = sessions.all_sessions().await.expect("list ok");
+        assert_eq!(board.len(), 2, "both runs stand: {board:?}");
+        let run = board
+            .iter()
+            .find(|s| s.id == second.id)
+            .expect("the second run is on the board");
+        assert_eq!(
+            run.entries
+                .iter()
+                .map(|e| (e.id.as_str(), e.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("cccccc", "what I set out to do"),
+                ("dddddd", "what I found")
+            ],
+            "both entries stand, in order, each with its own text"
+        );
+
+        store.stop().await;
+    }
+
+    /// **A drawn entry id is free within its run, not across the store.** The
+    /// narrower key is what the probe asks about, and the tell is that an id
+    /// another run's chronology wears is accepted here rather than redrawn
+    /// past — which is correct, and is the assertion that fails if the probe is
+    /// widened to the whole table.
+    #[tokio::test]
+    async fn an_entry_id_only_has_to_be_free_inside_its_own_run() {
+        let scratch = Scratch::new("entry-id-scope");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        let sessions = DoltSessions::drawing(
+            store.pool().clone(),
+            rigged(&["aaaaaa", "bbbbbb", "eeeeee", "eeeeee"]),
+        );
+        let begin = async |slug: &str, sid: &str, at: &str| {
+            sessions
+                .begin(NewSession {
+                    bot: EntityId(format!("bot:{slug}")),
+                    sid: Sid(sid.into()),
+                    focus: "a run".into(),
+                    started_at: at.parse().expect("a fixed instant"),
+                })
+                .await
+                .expect("begin ok")
+        };
+        let one = begin("gamma", "ab12", "2026-01-01T00:00:00Z").await;
+        let other = begin("delta", "cd34", "2026-01-01T00:01:00Z").await;
+
+        let mine = sessions
+            .append(
+                &one.id,
+                NewEntry::manual("mine", "2026-01-01T00:02:00Z".parse().unwrap()),
+            )
+            .await
+            .expect("append ok");
+        let theirs = sessions
+            .append(
+                &other.id,
+                NewEntry::manual("theirs", "2026-01-01T00:03:00Z".parse().unwrap()),
+            )
+            .await
+            .expect("append ok");
+        assert_eq!(
+            (mine.id.as_str(), theirs.id.as_str()),
+            ("eeeeee", "eeeeee"),
+            "two runs may each hold an entry of the same id, and neither redraws"
+        );
+
+        store.stop().await;
+    }
 
     /// Put a session row on the board that jojobot cannot read, the way a hand
     /// edit or a record from a schema nobody remembers would.

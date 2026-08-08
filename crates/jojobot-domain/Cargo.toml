@@ -13,6 +13,10 @@ rust-version.workspace = true
 # so the port method is async. async-trait keeps it dyn-compatible (Arc<dyn
 # Memory>) — no wire types leak in; this is still pure vocabulary.
 async-trait = { workspace = true }
+# getrandom: a drawn handle comes from OS entropy, and the shape rules for one
+# already live here. It is a syscall for randomness, not a store or a wire —
+# nothing about a fronted service crosses with it.
+getrandom = { workspace = true }
 serde = { workspace = true }
 jiff = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }

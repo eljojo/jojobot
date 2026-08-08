@@ -23,7 +23,6 @@ tracing.workspace = true
 # written back, and rmcp runs one task per request — so that span is serialized.
 tokio = { workspace = true }
 # The sid is minted here, from OS entropy — see `sid`.
-getrandom.workspace = true
 
 
 [dev-dependencies]

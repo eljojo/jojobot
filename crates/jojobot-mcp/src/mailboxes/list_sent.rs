@@ -107,24 +107,26 @@ impl Jojobot {
         // Built on the scan, which is the one read that moves nothing: it is
         // how the search projection is rebuilt, and its "nothing moves" is
         // pinned by the shared contract on every tier.
-        let mut sent: Vec<Message> = self
+        // **The tie breaks on the scan's own order, reversed.** The board read
+        // hands messages back oldest first, with the store's ordinal breaking a
+        // tie inside one instant, so its position IS the total order every
+        // other tier reads — and newest-first here is that order backwards.
+        //
+        // Never on the id: an id is drawn, so it sorts as nothing at all, and a
+        // tie-break that read one would be a caller-facing order resting on a
+        // shape the store is free to change.
+        let mut sent: Vec<(usize, Message)> = self
             .mailboxes
             .scan_messages()
             .await
             .map_err(mailbox_error)?
             .into_iter()
-            .filter(|m| m.sender.trim() == sender)
-            .filter(|m| only.is_none_or(|name| m.mailbox.as_str() == name))
+            .enumerate()
+            .filter(|(_, m)| m.sender.trim() == sender)
+            .filter(|(_, m)| only.is_none_or(|name| m.mailbox.as_str() == name))
             .collect();
-        // **The tie breaks on the id as a NUMBER.** Ids are a decimal counter,
-        // so ordering them as text puts `9` after `10` — the same trap the
-        // board read and the fake both avoid deliberately.
-        let minted = |id: &MessageId| id.as_str().parse::<u64>().unwrap_or(u64::MAX);
-        sent.sort_by(|a, b| {
-            b.sent_at
-                .cmp(&a.sent_at)
-                .then_with(|| minted(&b.id).cmp(&minted(&a.id)))
-        });
+        sent.sort_by(|(a_at, a), (b_at, b)| b.sent_at.cmp(&a.sent_at).then_with(|| b_at.cmp(a_at)));
+        let sent: Vec<Message> = sent.into_iter().map(|(_, m)| m).collect();
 
         // **Something jojobot cannot read is not a message that was never
         // sent.** The scan leaves quarantined items out — it cannot parse them,

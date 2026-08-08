@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use jojobot_domain::memory::EntityId;
-use jojobot_domain::session::{SID_ALPHABET, SID_LEN, Session, SessionId, is_readable_sid};
+use jojobot_domain::session::{SID_LEN, Session, SessionId, is_readable_sid};
 
 // The handle type, its alphabet and its shape rule are the domain's — a session
 // answers to it, and the store persists it. Re-exported so callers reach one
@@ -52,20 +52,11 @@ pub const NEW: &str = "new";
 /// error the door can report.
 const MINT_ATTEMPTS: usize = 64;
 
-/// Draw one candidate handle from OS entropy.
-///
-/// `256 % 32 == 0`, so the fold is uniform — no rejection sampling and no bias
-/// toward the front of the alphabet.
+/// Draw one candidate handle — [`jojobot_domain::handle::draw`] at this rail's
+/// length. The draw itself is shared with every other drawn id, so there is one
+/// alphabet, one entropy source and one place either can change.
 pub fn draw() -> String {
-    let mut bytes = [0u8; SID_LEN];
-    // The OS entropy source failing is not a condition this server can serve
-    // through: every handle it mints after that would be one it cannot promise
-    // is unguessable.
-    getrandom::fill(&mut bytes).expect("the OS entropy source is readable");
-    bytes
-        .iter()
-        .map(|b| SID_ALPHABET[*b as usize % SID_ALPHABET.len()] as char)
-        .collect()
+    jojobot_domain::handle::draw(SID_LEN)
 }
 
 /// What a handle addresses: whose session it is, and the card it landed on —

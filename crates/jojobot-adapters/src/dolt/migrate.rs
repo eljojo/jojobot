@@ -40,15 +40,46 @@ struct Migration {
     version: &'static str,
     /// The statement. One of them — see `every_migration_is_a_single_statement`.
     sql: &'static str,
-    /// **The table this statement creates**, which is how a start decides
-    /// whether an interrupted migration landed.
+    /// **What the schema looks like once this statement has run**, which is how
+    /// a start decides whether an interrupted migration landed.
     ///
     /// It is written here rather than read out of the SQL on purpose: parsing
-    /// the statement would be this file growing the language rule 106 keeps
-    /// out of it. Every migration so far creates a table. The first one that
-    /// alters a table instead will need a different question asked of the
-    /// schema, and nothing here will point that out — a test has to.
-    creates: &'static str,
+    /// the statement would be this file growing the language rule 106 keeps out
+    /// of it. A migration that ALTERS a table rather than creating or removing
+    /// one reaches neither answer, and nothing here will point that out — a
+    /// test has to.
+    leaves: Leaves,
+}
+
+/// The state a migration leaves the schema in, and the question a start asks to
+/// find out whether an interrupted one got there.
+#[derive(Clone, Copy)]
+enum Leaves {
+    /// The table this statement creates.
+    Table(&'static str),
+    /// The table this statement removes. **The same question, asked the other
+    /// way round** — a drop that was interrupted after it committed leaves
+    /// nothing behind for a "is it there" check to find, and re-running it
+    /// fails on a table that is already gone.
+    NoTable(&'static str),
+}
+
+impl Leaves {
+    /// The table this migration is about, for a log line that names it.
+    fn table(self) -> &'static str {
+        match self {
+            Leaves::Table(t) | Leaves::NoTable(t) => t,
+        }
+    }
+
+    /// Whether the schema is already in the state this migration produces.
+    async fn reached(self, pool: &MySqlPool) -> Result<bool, MigrateError> {
+        let there = object_exists(pool, self.table()).await?;
+        Ok(match self {
+            Leaves::Table(_) => there,
+            Leaves::NoTable(_) => !there,
+        })
+    }
 }
 
 /// Every migration, in the order they apply.
@@ -60,32 +91,37 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: "0001_session",
         sql: include_str!("../../migrations/0001_session.sql"),
-        creates: "session",
+        leaves: Leaves::Table("session"),
     },
     Migration {
         version: "0002_journal_entry",
         sql: include_str!("../../migrations/0002_journal_entry.sql"),
-        creates: "journal_entry",
+        leaves: Leaves::Table("journal_entry"),
     },
     Migration {
         version: "0003_minted",
         sql: include_str!("../../migrations/0003_minted.sql"),
-        creates: "minted",
+        leaves: Leaves::Table("minted"),
     },
     Migration {
         version: "0004_mailbox",
         sql: include_str!("../../migrations/0004_mailbox.sql"),
-        creates: "mailbox",
+        leaves: Leaves::Table("mailbox"),
     },
     Migration {
         version: "0005_message",
         sql: include_str!("../../migrations/0005_message.sql"),
-        creates: "message",
+        leaves: Leaves::Table("message"),
     },
     Migration {
         version: "0006_handover",
         sql: include_str!("../../migrations/0006_handover.sql"),
-        creates: "handover",
+        leaves: Leaves::Table("handover"),
+    },
+    Migration {
+        version: "0007_drop_minted",
+        sql: include_str!("../../migrations/0007_drop_minted.sql"),
+        leaves: Leaves::NoTable("minted"),
     },
 ];
 
@@ -201,10 +237,10 @@ pub async fn run(pool: &MySqlPool) -> Result<Vec<String>, MigrateError> {
         // Interrupted, and the change is standing: record it and move on.
         // Nothing is applied here, so nothing joins `applied` — the caller
         // asked what this run changed.
-        if interrupted && object_exists(pool, migration.creates).await? {
+        if interrupted && migration.leaves.reached(pool).await? {
             tracing::info!(
                 version,
-                object = migration.creates,
+                object = migration.leaves.table(),
                 "an interrupted migration had landed, and the start recorded it"
             );
             record(pool, version).await?;
@@ -349,6 +385,7 @@ mod tests {
         "0004_mailbox",
         "0005_message",
         "0006_handover",
+        "0007_drop_minted",
     ];
 
     #[test]
@@ -368,6 +405,69 @@ mod tests {
                  file with more than one can fail half-applied and never recover — split it."
             );
         }
+    }
+
+    /// **An interrupted DROP is recognized by what it leaves, which is
+    /// nothing.**
+    ///
+    /// Every migration until now created a table, so "did it land" was "is the
+    /// table there". A drop reaches the opposite state, and a runner asking the
+    /// creation question about it answers `false` for a statement that fully
+    /// succeeded — then re-issues `DROP TABLE` against a table that is already
+    /// gone, and the store refuses it. That is the same permanent wedge the
+    /// begun marker was built to end, arriving through the one shape the marker
+    /// did not know about.
+    ///
+    /// Built with the runner's own step, so this is the state a real
+    /// interruption leaves rather than an imagined one.
+    #[tokio::test]
+    async fn an_interrupted_drop_is_recognized_by_the_table_being_gone() {
+        let scratch = Scratch::new("migrate-interrupted-drop");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("droppedpartway")
+            .await
+            .expect("a database of its own");
+
+        // Everything up to the drop, applied normally.
+        run(&pool).await.expect("the schema");
+        // Then the drop is put back into the state a death in the window leaves:
+        // the ledger row taken away, the marker committed, the table already
+        // gone because the statement itself had succeeded.
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("0007_drop_minted")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "0007_drop_minted")
+            .await
+            .expect("the marker lands");
+
+        let applied = run(&pool).await.expect("the start completes the schema");
+        assert!(
+            applied.is_empty(),
+            "an interrupted drop that had landed is recorded, not re-issued: {applied:?}"
+        );
+        let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+        assert!(
+            recorded.iter().any(|v| v == "0007_drop_minted"),
+            "…and the ledger says so, so the next start asks nothing: {recorded:?}"
+        );
+        assert!(
+            !object_exists(&pool, "minted")
+                .await
+                .expect("the schema is readable"),
+            "the table stays gone — a recovery that put it back would be the drop undone"
+        );
+
+        store.stop().await;
     }
 
     /// **A migration that fails is not recorded as done.**

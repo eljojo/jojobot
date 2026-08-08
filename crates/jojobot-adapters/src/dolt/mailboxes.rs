@@ -37,6 +37,8 @@ use jojobot_domain::mailbox::{
 use jojobot_domain::memory::EntityId;
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
+use super::ids::{self, Draw};
+
 /// Mailboxes kept in the SQL store jojobot runs.
 ///
 /// Cloning shares the one pool rather than opening a second: a pool is the
@@ -46,6 +48,7 @@ use sqlx::{MySql, MySqlPool, Row, Transaction};
 pub struct DoltMailboxes {
     pool: MySqlPool,
     owners: Arc<dyn OwnerIndex>,
+    draw: Draw,
 }
 
 impl DoltMailboxes {
@@ -55,7 +58,19 @@ impl DoltMailboxes {
     /// **The schema is not this adapter's to create.** It arrives through the
     /// migrations the server applies on start — see [`crate::dolt::migrate`].
     pub fn open(pool: MySqlPool, owners: Arc<dyn OwnerIndex>) -> Self {
-        DoltMailboxes { pool, owners }
+        DoltMailboxes {
+            pool,
+            owners,
+            draw: ids::drawing(),
+        }
+    }
+
+    /// The same store over a supplied draw, **so the collision path can be
+    /// watched through the verb that mints**. Entropy will not produce a
+    /// collision on demand.
+    #[cfg(test)]
+    pub(crate) fn drawing(pool: MySqlPool, owners: Arc<dyn OwnerIndex>, draw: Draw) -> Self {
+        DoltMailboxes { pool, owners, draw }
     }
 
     /// Every box name, for the guards that screen against them.
@@ -201,23 +216,13 @@ fn refuse(card: &Card) -> Result<&Message, MailboxError> {
     }
 }
 
-/// The next id, minted inside the caller's transaction so two writers cannot
-/// take the same one.
-async fn mint(tx: &mut Transaction<'_, MySql>) -> Result<String, MailboxError> {
-    // **`counter`, not `next`.** This store's parser treats `next` as a
-    // reserved word and refuses the statement.
-    sqlx::query(
-        "INSERT INTO minted (kind, counter) VALUES ('message', 1)
-         ON DUPLICATE KEY UPDATE counter = counter + 1",
-    )
-    .execute(&mut **tx)
-    .await
-    .map_err(store)?;
-    let counter: i64 = sqlx::query_scalar("SELECT counter FROM minted WHERE kind = 'message'")
-        .fetch_one(&mut **tx)
+/// An id no message wears, drawn inside the caller's transaction — so the
+/// answer to "is it free" covers the row this call is about to write.
+async fn mint(tx: &mut Transaction<'_, MySql>, draw: &Draw) -> Result<String, MailboxError> {
+    ids::draw_free(tx, draw, "SELECT 1 FROM message WHERE id = ?", None)
         .await
-        .map_err(store)?;
-    Ok(counter.to_string())
+        .map_err(store)?
+        .ok_or_else(|| MailboxError::Store("no free message id could be drawn".into()))
 }
 
 #[async_trait]
@@ -337,7 +342,7 @@ impl Mailboxes for DoltMailboxes {
             }
         }
 
-        let id = MessageId(mint(&mut tx).await?);
+        let id = MessageId(mint(&mut tx, &self.draw).await?);
         let ordinal: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(ordinal), 0) + 1 FROM message")
             .fetch_one(&mut *tx)
             .await
@@ -559,6 +564,141 @@ mod tests {
             .expect("not blocked")
             .id;
         (store, mail, readable)
+    }
+
+    /// A draw that hands back a fixed sequence, so what the store does with a
+    /// candidate it cannot use is watchable.
+    fn rigged(candidates: &[&str]) -> Draw {
+        let queued = std::sync::Mutex::new(
+            candidates
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<std::collections::VecDeque<_>>(),
+        );
+        Arc::new(move || {
+            queued
+                .lock()
+                .expect("the rigged draw is poisoned")
+                .pop_front()
+                .expect("the case supplied enough candidates")
+        })
+    }
+
+    /// **A message id is drawn, and a candidate a row already wears is drawn
+    /// again** — watched through `post_message`, which is the verb that mints.
+    ///
+    /// Entropy will not produce a collision on demand, so the draw is supplied:
+    /// the second post is handed the id the first one took, and the store must
+    /// ride past it rather than write over a message somebody sent.
+    ///
+    /// The redraw is asked of the STORE — the primary key, inside the same
+    /// transaction — rather than of anything this process remembers, so it
+    /// holds for a row a different process wrote.
+    #[tokio::test]
+    async fn a_drawn_id_a_message_already_wears_is_drawn_again() {
+        let scratch = Scratch::new("drawn-ids");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        let mail = DoltMailboxes::drawing(
+            store.pool().clone(),
+            Arc::new(AnyOwner),
+            rigged(&["aaaaaa", "aaaaaa", "aaaaaa", "bbbbbb"]),
+        );
+        mail.create_mailbox(
+            &MailboxName("inbox".into()),
+            &EntityId("bot:gamma".into()),
+            None,
+        )
+        .await
+        .expect("create ok")
+        .written()
+        .expect("not blocked");
+
+        let post = async |body: &str| {
+            mail.post_message(NewMessage {
+                mailbox: MailboxName("inbox".into()),
+                body: body.to_string(),
+                subject: None,
+                sender: "gamma".into(),
+                sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                in_reply_to: None,
+            })
+            .await
+            .expect("post ok")
+            .written()
+            .expect("not blocked")
+        };
+
+        let first = post("the one that took the id").await;
+        assert_eq!(first.id.as_str(), "aaaaaa");
+        let second = post("the one that had to draw again").await;
+        assert_eq!(
+            second.id.as_str(),
+            "bbbbbb",
+            "the taken id must not be re-issued"
+        );
+
+        // **The positive the redraw rests on.** A store that had overwritten
+        // the first message would also satisfy "the second one has an id": both
+        // are on the board, each with the body its own sender wrote.
+        let board = mail.scan_messages().await.expect("scan ok");
+        let bodies: Vec<(&str, &str)> = board
+            .iter()
+            .map(|m| (m.id.as_str(), m.body.as_str()))
+            .collect();
+        assert!(
+            bodies.contains(&("aaaaaa", "the one that took the id"))
+                && bodies.contains(&("bbbbbb", "the one that had to draw again")),
+            "both messages stand, each with its own body: {bodies:?}"
+        );
+
+        store.stop().await;
+    }
+
+    /// **A message id has the shape of a drawn handle**, six characters from
+    /// the alphabet the session handle uses — asserted through the verb a
+    /// caller reaches, because a shape the mint produces and the verb does not
+    /// return is a shape nobody gets.
+    #[tokio::test]
+    async fn a_posted_message_wears_a_drawn_id() {
+        let (mut store, mail, first) = board("drawn-shape").await;
+        assert!(
+            jojobot_domain::handle::is_drawn(first.as_str(), 6),
+            "an id a caller is handed must be a drawn handle: {first:?}"
+        );
+
+        // **And two of them are not a sequence.** A counted id is the thing
+        // this replaced, and the tell is the second one being the first plus
+        // one — which no assertion about shape alone would catch.
+        let next = mail
+            .post_message(NewMessage {
+                mailbox: MailboxName("inbox".into()),
+                body: "the one after it".into(),
+                subject: None,
+                sender: "gamma".into(),
+                sent_at: "2026-01-01T00:00:01Z".parse().expect("a fixed instant"),
+                in_reply_to: None,
+            })
+            .await
+            .expect("post ok")
+            .written()
+            .expect("not blocked");
+        assert_ne!(next.id, first);
+        let successor = |a: &str, b: &str| match (a.parse::<u64>(), b.parse::<u64>()) {
+            (Ok(a), Ok(b)) => b == a + 1,
+            _ => false,
+        };
+        assert!(
+            !successor(first.as_str(), next.id.as_str()),
+            "the second id counted on from the first: {first:?} then {:?}",
+            next.id
+        );
+
+        store.stop().await;
     }
 
     /// Put a row on the board that jojobot cannot read as a message, the way a

@@ -4,9 +4,10 @@
 -- instants are nanoseconds and DATETIME(6) is microseconds, so a column would
 -- truncate a record that must read back as it was written.
 --
--- `ordinal` is delivery order. A message's id is minted from a counter, so the
--- ids happen to sort, but a delivery that depended on that would break the day
--- the counter's shape changes; the order is a column instead.
+-- `ordinal` is delivery order, and it is the only thing that carries it. A
+-- message's id is drawn from entropy, so it sorts as nothing at all: anything
+-- ordering messages reads this column, and a reader that sorted on the id
+-- would be putting them in an order nobody wrote.
 --
 -- `state` holds the token, not an enum. The set of states is the domain's and
 -- a column that enforced it would be a second place the set is written down —

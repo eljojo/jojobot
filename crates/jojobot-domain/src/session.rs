@@ -85,15 +85,11 @@ impl std::fmt::Display for Sid {
     }
 }
 
-/// The handle's alphabet: **Crockford's base32, lowercased** — the digits and
-/// the letters, minus `i`, `l`, `o` and `u`.
-///
-/// Those are the glyphs a reader mistakes for one another (`i`/`l`/`1`, `o`/`0`,
-/// `u`/`v`), and a mistaken handle is one jojobot must refuse rather than
-/// correct — correcting it means guessing which session somebody meant. Every
-/// symbol is inside the `[a-z0-9-]` a [`SessionId`] accepts, so a handle is
-/// always storable wherever an id is.
-pub const SID_ALPHABET: &[u8] = b"0123456789abcdefghjkmnpqrstvwxyz";
+/// The handle's alphabet — [`crate::handle::ALPHABET`], which every drawn id on
+/// every rail comes from. Named here as well because a handle's shape is part
+/// of what a session answers to, and a second spelling of the same bytes is how
+/// the two drift.
+pub use crate::handle::ALPHABET as SID_ALPHABET;
 
 /// How many characters a handle is.
 ///
@@ -110,7 +106,7 @@ pub const SID_LEN: usize = 4;
 /// told apart where they are answered, because "you mistyped it" and "that
 /// session is gone" send a caller to different places.
 pub fn is_readable_sid(sid: &str) -> bool {
-    sid.len() == SID_LEN && sid.bytes().all(|b| SID_ALPHABET.contains(&b))
+    crate::handle::is_drawn(sid, SID_LEN)
 }
 
 /// One chronology entry's id — minted by the store (a comment id).
