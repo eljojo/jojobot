@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use jojobot_adapters::dolt::Dolt;
-use jojobot_adapters::dolt::handover::{self, Carryover};
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::outline::{OutlineConfig, OutlineStore, Secret};
@@ -119,17 +118,6 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // **The document store's mail and session ports — the handover's read
-    // source, and nothing else.** Nothing writes mail or sessions there again;
-    // they are here to be carried out of, and they answer reads while the old
-    // records still matter to somebody.
-    //
-    // They come off this handle before it moves behind the memory port, which
-    // is the last moment they can. The write lock they used to share with
-    // Memory is moot for them now — a lock orders writers, and these two no
-    // longer write.
-    let from_sessions = outline.sessions();
-    let from_mail = outline.mailboxes();
     let memory: Arc<dyn Memory> = Arc::new(outline);
 
     // The search projection sits in FRONT of the store, so every write through
@@ -159,67 +147,6 @@ async fn main() -> anyhow::Result<()> {
     let mail_store: Arc<dyn Mailboxes> =
         Arc::new(DoltMailboxes::open(store.pool().clone(), owners));
     let sessions: Arc<dyn Sessions> = Arc::new(DoltSessions::open(store.pool().clone()));
-
-    // **The one-time move, asked about on every boot.** After the first it
-    // reads one row and returns; the carrying happens once. It runs before the
-    // index and the registry are built off these ports, so what it carries is
-    // what they load.
-    //
-    // ⚠️ **A refusal refuses the boot**, for the reason the store's own failure
-    // does: the records are either here and checked or they are not, and a
-    // server that started anyway would serve whatever is in the store as though
-    // it were the whole board. The refusal carries the state it found — which
-    // condition, and what it saw — because this crashes under a unit that
-    // restarts in five seconds and the log line is all a person gets.
-    match handover::carry_over(
-        &from_mail,
-        &from_sessions,
-        mail_store.as_ref(),
-        sessions.as_ref(),
-        store.pool(),
-    )
-    .await
-    {
-        Carryover::Carried(report) => {
-            tracing::info!(
-                boxes = report.boxes.verified,
-                messages = report.messages.verified,
-                sessions = report.sessions.verified,
-                entries = report.entries.verified,
-                not_carried = ?report.not_carried,
-                "handover: the board moved into the store and read back as itself"
-            );
-            // **Its own line, at warn.** These cards did not cross: they are
-            // not in the store being served from, and this is the only notice
-            // that they exist at all — as a field on a success line it is read
-            // as part of a success. Only when there are any, because an alarm
-            // that fires on every boot stops being read.
-            if !report.not_carried.is_empty() {
-                tracing::warn!(
-                    count = report.not_carried.len(),
-                    ids = ?report.not_carried,
-                    "CARDS LEFT BEHIND — the old store holds cards jojobot cannot read as \
-                     messages, so they were not carried and are not on the board being served. \
-                     Nothing was lost: they are still on the old store, where a person has to \
-                     look at them."
-                );
-            }
-        }
-        Carryover::AlreadyCarried => {
-            tracing::info!("handover: already carried by an earlier boot, and verified")
-        }
-        Carryover::NothingToCarry(why) => tracing::info!(
-            reason = %why,
-            "handover: no old store is wired, so there was nothing to carry — mail and sessions \
-             are served from this store, which starts out empty"
-        ),
-        Carryover::Refused(why) => {
-            return Err(anyhow::anyhow!(why).context(
-                "HANDOVER REFUSED — mail and sessions must not be served from this store until a \
-                 person has looked at it",
-            ));
-        }
-    }
 
     // Mail goes into the SAME index — one front door, one ranked list — so the
     // mailbox store gets the same decorator treatment Memory's does: every verb

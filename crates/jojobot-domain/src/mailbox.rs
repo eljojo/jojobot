@@ -718,7 +718,7 @@ mod tests {
     use super::*;
 
     /// The full behavioural contract holds for the fake — the same suite the
-    /// Outline adapter runs against its API double, and against real Outline.
+    /// store's own adapter runs against, so the two answer alike.
     #[tokio::test]
     async fn the_fake_satisfies_the_contract() {
         contract::run_all(|| async { InMemoryMailboxes::new() }).await;

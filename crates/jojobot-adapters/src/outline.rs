@@ -18,15 +18,6 @@
 
 mod api;
 mod codec;
-#[cfg(test)]
-mod golden;
-mod mailbox_codec;
-mod mailboxes;
-mod session_codec;
-mod sessions;
-
-pub use mailboxes::OutlineMailboxes;
-pub use sessions::OutlineSessions;
 
 use std::fmt;
 use std::sync::Arc;
@@ -112,11 +103,11 @@ pub struct OutlineConfig {
 /// stranded one means a person. It was carried as prose inside a general store
 /// error once, detecting it meant string-matching that prose, and rewording it
 /// silently broke the detection with every test green — which is why the
-/// mailbox and session contexts answer with a `Stranded` variant rather than a
+/// write paths answer with a `Stranded` variant rather than a
 /// sentence.
 ///
-/// Shared across all three contexts because all three restore identically, and
-/// three copies of this decision is how one of them drifts.
+/// Shared across every context here because they all restore identically, and
+/// a copy per context is how one of them drifts.
 pub(super) enum Restored {
     /// The page is back exactly as it was found.
     Undone,
@@ -125,14 +116,13 @@ pub(super) enum Restored {
 }
 
 /// **The connection, the collection, and the one write lock** — everything a
-/// store needs to reach jojobot's Outline collection, and the thing that makes
-/// two stores over it one writer rather than two.
+/// store needs to reach jojobot's Outline collection.
 ///
-/// Memory and Sessions write different documents in the same collection. Two
-/// separate mutexes would therefore exclude nobody, and "keyed on the resource"
-/// would be a claim with nothing behind it. Sharing this by construction — a
-/// sessions store is built *from* a memory store — is what makes it true
-/// instead of remembered.
+/// Every write here is a read-modify-write over a whole document, so the lock
+/// belongs to the workspace rather than to a caller: a mutex each would
+/// exclude nobody, and "keyed on the resource" would be a claim with nothing
+/// behind it. Anything reaching this collection shares this handle, which
+/// makes the ordering structural rather than remembered.
 pub(crate) struct Workspace {
     api: Arc<dyn OutlineApi>,
     collection: String,
@@ -282,25 +272,6 @@ impl OutlineStore {
                 lock: tokio::sync::Mutex::new(()),
             }),
         }
-    }
-
-    /// **A Sessions store over the same collection, and the same write lock.**
-    ///
-    /// Built from this store rather than beside it, because the two write
-    /// different documents in one collection: separate locks would serialize
-    /// nothing, and "two writes to the same document are linearized" would be a
-    /// claim with no mechanism under it. Sharing the workspace makes it
-    /// structural instead of remembered.
-    pub fn sessions(&self) -> OutlineSessions {
-        OutlineSessions::new(Arc::clone(&self.ws))
-    }
-
-    /// **A Mailboxes store over the same collection, and the same write lock.**
-    /// Built from this store for the reason [`sessions`](Self::sessions) is:
-    /// three stores now write different documents in one place, and a mutex
-    /// each would exclude nobody.
-    pub fn mailboxes(&self) -> OutlineMailboxes {
-        OutlineMailboxes::new(Arc::clone(&self.ws))
     }
 
     async fn resolve_collection(&self) -> Result<String, MemoryError> {
@@ -510,8 +481,7 @@ impl OutlineStore {
     /// quietly pick the wrong one. A restored page is a clean [`Store`
     /// failure](MemoryError::Store): nothing written, retrying is reasonable.
     /// A rollback that also failed is [`Stranded`](MemoryError::Stranded):
-    /// part of it may remain, and retrying is not a safe next move — the same
-    /// distinction the mailbox and session rails already draw.
+    /// part of it may remain, and retrying is not a safe next move.
     async fn undo(
         &self,
         doc: &DocRec,
@@ -1275,12 +1245,13 @@ impl Memory for OutlineStore {
     /// entity and holds no facts; its prose is still worth finding, which is why
     /// it comes back rather than being filtered out here.
     ///
-    /// **The one exception is jojobot's own machinery** — a bot's sessions page,
-    /// which is a child of the bot's page and so lives in this collection like
-    /// everything else. That generosity is the reason it has to be excluded by
-    /// name: a page with no marker is content by default, and jojobot's
-    /// bookkeeping would qualify. A search about the operator's life must not
-    /// come back with a session's focus line.
+    /// **The one exception is jojobot's own machinery** — a mailbox page or a
+    /// sessions page, left in this collection by the move onto the SQL store
+    /// and living here like everything else. That generosity is the reason
+    /// they have to be excluded by name: a page with no marker is content by
+    /// default, and this bookkeeping would qualify. A search about the
+    /// operator's life must not come back with somebody's correspondence or a
+    /// session's focus line.
     async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
         let collection_id = self.resolve_collection().await?;
         let mut docs: Vec<DocRec> = self
@@ -1358,13 +1329,11 @@ mod tests {
         /// Arms [`with_last_cell_dropped`] for the next `update_document` — the
         /// induced fault behind the restore-on-mismatch contract.
         poison: std::sync::atomic::AtomicBool,
-        poison_body: std::sync::atomic::AtomicBool,
         /// Arms [`with_column_blanked`] for the next `update_document`, naming
         /// the column to empty. The last-cell injector cannot reach a column
         /// that is followed by one which is never empty, and `standing` is
         /// exactly that — `status` and `date` always sit after it.
         poison_column: Mutex<Option<String>>,
-        refuse_update: std::sync::atomic::AtomicBool,
     }
 
     /// What the real Outline does to a markdown table on save: the editor model
@@ -1512,31 +1481,6 @@ mod tests {
         out.join("\n")
     }
 
-    /// The body half of the induced fault: the first line inside a fenced
-    /// block loses its last character. Small on purpose — a corruption the
-    /// read-back guard must notice is not the same as a page nobody could
-    /// parse.
-    fn with_a_body_line_clipped(text: &str) -> String {
-        let mut inside = false;
-        let mut clipped = false;
-        text.lines()
-            .map(|l| {
-                if l.trim_start().starts_with("```") {
-                    inside = !inside;
-                    return l.to_string();
-                }
-                if inside && !clipped && !l.trim().is_empty() && !l.contains(':') {
-                    clipped = true;
-                    let mut cut = l.to_string();
-                    cut.pop();
-                    return cut;
-                }
-                l.to_string()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     /// One write mangled at a layer the codec doesn't control — the induced
     /// fault for the restore contract: every data row loses its last cell.
     /// **Empty the named column in every data row**, leaving the row's width
@@ -1635,28 +1579,6 @@ mod tests {
             *self.poison_column.lock().unwrap() = Some(column.to_string());
         }
 
-        /// **Mangle the next write's fenced BODY instead of its rows.**
-        ///
-        /// Its own flag rather than a second effect on the row injector,
-        /// because they reach different write paths and arming both at once
-        /// would make a test's failure ambiguous about which one it caught.
-        ///
-        /// It exists because the row injector cannot corrupt a freshly posted
-        /// message at all: the last cell with anything in it is the `-`
-        /// placeholder, dropping it reads back as the same absent value, and
-        /// the write simply succeeds. A body is where a post's data actually
-        /// is.
-        fn poison_body_next_update(&self) {
-            self.poison_body.store(true, Ordering::SeqCst);
-        }
-
-        /// **Fail the next `update_document` outright**, rather than mangling
-        /// it — the transport failure, as opposed to the corruption. It is
-        /// what reaches the early returns a read-back mismatch never gets to.
-        fn refuse_next_update(&self) {
-            self.refuse_update.store(true, Ordering::SeqCst);
-        }
-
         fn stamp(&self) -> String {
             format!("{:020}", self.seq.fetch_add(1, Ordering::SeqCst))
         }
@@ -1672,29 +1594,6 @@ mod tests {
                 created_at: s,
             });
             id
-        }
-
-        /// Pre-seed a document at the top of a collection; returns its id.
-        /// The text of one mailbox's page — how a test looks at what actually
-        /// landed, without going through a reader that might be the thing
-        /// under test.
-        ///
-        /// Matched on the machinery marker as well as the name, because a
-        /// bot's own entity page also carries `name: gamma` — matching on
-        /// the name alone would find the entity page instead, and could make
-        /// a test about an orphaned message body pass by looking somewhere
-        /// that could never have one.
-        fn text_of_mailbox_page(&self, what: &str) -> String {
-            self.documents
-                .lock()
-                .unwrap()
-                .iter()
-                .map(|(_, d)| d.text.clone())
-                .find(|t| {
-                    t.lines().any(|l| l.trim() == "machinery: mailbox")
-                        && t.lines().any(|l| l.trim() == format!("name: {what}"))
-                })
-                .unwrap_or_else(|| panic!("no mailbox page named {what}"))
         }
 
         fn seed_document(&self, collection_id: &str, title: &str, text: &str) -> String {
@@ -1834,26 +1733,6 @@ mod tests {
                 .unwrap())
         }
 
-        /// **Append the way Outline appends, which is not the way a caller
-        /// hopes.** Observed against the live API rather than assumed: the
-        /// appended text lands as its own BLOCK, joined to what was there with
-        /// a blank line, and both sides are trimmed on the way through —
-        /// `"LINE ONE\n"` + `"LINE TWO\n"` came back `"LINE ONE\n\nLINE TWO"`,
-        /// and a leading newline changed nothing. The document is re-serialized
-        /// too, so a table already on the page comes back padded.
-        ///
-        /// A polite fake that concatenated the bytes would let an adapter ship
-        /// believing it could append a table row.
-        async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
-            let mut docs = self.documents.lock().unwrap();
-            let d = docs
-                .iter_mut()
-                .find(|(_, d)| d.id == id)
-                .ok_or_else(|| MemoryError::Store(format!("append_document: no doc {id}")))?;
-            let joined = format!("{}\n\n{}", d.1.text.trim_end(), text.trim());
-            d.1.text = rectangularized(&joined);
-            Ok(())
-        }
         /// A move relocates the page and touches nothing else — the live API's
         /// behaviour, and what makes it usable to repair a mis-nested create.
         async fn move_document(
@@ -1872,9 +1751,6 @@ mod tests {
         }
 
         async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
-            if self.refuse_update.swap(false, Ordering::SeqCst) {
-                return Err(MemoryError::Store("the write was refused".into()));
-            }
             let text = if self.poison.swap(false, Ordering::SeqCst) {
                 with_last_cell_dropped(text)
             } else {
@@ -1883,11 +1759,6 @@ mod tests {
             let text = match self.poison_column.lock().unwrap().take() {
                 Some(column) => with_column_blanked(&text, &column),
                 None => text,
-            };
-            let text = if self.poison_body.swap(false, Ordering::SeqCst) {
-                with_a_body_line_clipped(&text)
-            } else {
-                text
             };
             let text = rectangularized(&text);
             let text = prose_rewritten_like_the_store(&text);
@@ -2059,9 +1930,6 @@ mod tests {
         async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
             self.0.update_document(id, text).await
         }
-        async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
-            self.0.append_document(id, text).await
-        }
         async fn move_document(
             &self,
             id: &str,
@@ -2114,9 +1982,6 @@ mod tests {
         }
         async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
             self.0.update_document(id, text).await
-        }
-        async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
-            self.0.append_document(id, text).await
         }
         async fn move_document(
             &self,
@@ -2213,105 +2078,6 @@ mod tests {
                 .any(|d| parse_id_marker(&d.text).as_deref() == Some("place:riverbend")),
             "the create landed; only the placement did not"
         );
-    }
-
-    /// **A chronology entry that quotes a table survives being one.**
-    ///
-    /// The fake re-serializes tables because the real store does — that is the
-    /// quirk the production edge-loss bug lived in. But the real store applies
-    /// it to *tables*, and a pipe-leading line inside a fenced block is not one:
-    /// verified against live Outline, which leaves it exactly as written. A fake
-    /// that rectangularized it would be wrong rather than hostile, and would
-    /// fail a write that production accepts — the mirror image of the bug the
-    /// rectangularization exists to catch, and just as expensive.
-    #[tokio::test]
-    async fn an_entry_quoting_a_table_is_not_re_serialized_as_one() {
-        use jojobot_domain::session::Sessions as _;
-
-        let sessions = OutlineStore::from_api(FakeOutline::new(), COLL).sessions();
-        let begun = sessions
-            .begin(jojobot_domain::session::NewSession {
-                bot: EntityId::new(EntityKind::Bot, "gamma"),
-                sid: jojobot_domain::session::Sid("ab12".into()),
-                focus: "the first run".into(),
-                started_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
-            })
-            .await
-            .expect("begin should succeed");
-
-        // Deliberately RAGGED. A tidy table survives rectangularization by
-        // accident, so quoting one would prove nothing: this one loses a cell
-        // and gains a padded one the moment the fake treats it as a table.
-        let quoted = "the counts were:\n| kind | n |\n| --- | --- |\n\
-                      | fact | 3 | dropped |\n| bare |\nand that was all";
-        sessions
-            .append(
-                &begun.id,
-                jojobot_domain::session::NewEntry::manual(
-                    quoted,
-                    "2026-07-28T00:01:00Z".parse().expect("a timestamp"),
-                ),
-            )
-            .await
-            .expect("append should succeed");
-
-        let read = sessions
-            .read_session(&begun.id)
-            .await
-            .expect("read should succeed");
-        assert_eq!(
-            read.entries[0].text, quoted,
-            "a table inside somebody's entry is their prose, not the page's table"
-        );
-    }
-
-    /// **Two runs of one bot beginning at once do not collide.** Both reads see
-    /// the same page, both mint the next id off it, and both write the whole
-    /// table back — so without the lock the second write is built from a page
-    /// that no longer exists and one of the two sessions is simply gone, with
-    /// each caller holding a `Session` that says otherwise.
-    ///
-    /// Run through the yielding transport, which suspends **after** a write
-    /// commits as well as before, because that is where the network suspends: a
-    /// real create is a round trip and the page has changed server-side before
-    /// the response arrives. A double that only yields before the call would
-    /// pass this on broken code.
-    #[tokio::test]
-    async fn two_runs_of_one_bot_beginning_at_once_both_survive() {
-        use jojobot_domain::session::Sessions as _;
-
-        let fake = FakeOutline::new();
-        let sessions = Arc::new(OutlineStore::from_api(Arc::new(Yielding(fake)), COLL).sessions());
-        let bot = EntityId::new(EntityKind::Bot, "gamma");
-
-        let begin = |sid: &'static str, focus: &'static str| {
-            let sessions = Arc::clone(&sessions);
-            let bot = bot.clone();
-            async move {
-                sessions
-                    .begin(jojobot_domain::session::NewSession {
-                        bot,
-                        sid: jojobot_domain::session::Sid(sid.into()),
-                        focus: focus.into(),
-                        started_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
-                    })
-                    .await
-                    .expect("begin should succeed")
-            }
-        };
-        let (one, two) = tokio::join!(begin("ab12", "the first run"), begin("cd34", "the second"));
-
-        assert_ne!(one.id, two.id, "two runs are two rows, not one id twice");
-        let all = sessions.all_sessions().await.expect("all_sessions");
-        assert_eq!(all.len(), 2, "neither write was lost: {all:?}");
-        for begun in [&one, &two] {
-            let seen = all
-                .iter()
-                .find(|s| s.id == begun.id)
-                .unwrap_or_else(|| panic!("{} is not on the page", begun.id));
-            assert_eq!(seen.sid, begun.sid, "and each kept its own handle");
-            assert_eq!(seen.focus, begun.focus);
-        }
     }
 
     /// …and the same contract **including retrieval**, with the search projection
@@ -2453,9 +2219,6 @@ mod tests {
                 .await;
             tokio::task::yield_now().await;
             out
-        }
-        async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
-            self.0.append_document(id, text).await
         }
         async fn move_document(
             &self,
@@ -2855,9 +2618,6 @@ mod tests {
             self.written.store(true, Ordering::SeqCst);
             done
         }
-        async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
-            self.inner.append_document(id, text).await
-        }
         async fn move_document(
             &self,
             id: &str,
@@ -2973,337 +2733,6 @@ mod tests {
                 .iter()
                 .any(|(_, d)| parse_id_marker(&d.text).as_deref() == Some("person:alpha")),
             "the create landed, which is what makes the retry advice wrong"
-        );
-    }
-
-    /// **The write mangles, and then the rollback fails too.**
-    ///
-    /// The one double that can reach a stranded record: the first
-    /// `update_document` goes through the poisoned fake, so the read-back
-    /// mismatches and a restore is attempted; every update after that is
-    /// refused, so the restore is the one that fails. A double that failed the
-    /// FIRST write would never reach a rollback at all, which is why this
-    /// counts rather than simply erroring.
-    struct RollbackFails {
-        inner: Arc<FakeOutline>,
-        armed: std::sync::atomic::AtomicBool,
-        mangled: std::sync::atomic::AtomicBool,
-    }
-
-    impl RollbackFails {
-        fn over(inner: Arc<FakeOutline>) -> Arc<Self> {
-            Arc::new(RollbackFails {
-                inner,
-                armed: std::sync::atomic::AtomicBool::new(false),
-                mangled: std::sync::atomic::AtomicBool::new(false),
-            })
-        }
-
-        /// **Armed by the test, after its fixture is in place.** Setting the
-        /// trap at construction would spring it on whatever the setup writes,
-        /// and the write under test would never reach a rollback at all.
-        fn arm(&self) {
-            self.armed.store(true, Ordering::SeqCst);
-        }
-    }
-
-    #[async_trait]
-    impl OutlineApi for RollbackFails {
-        async fn list_collections(
-            &self,
-            offset: u64,
-            limit: u64,
-        ) -> Result<Vec<CollectionRec>, MemoryError> {
-            self.inner.list_collections(offset, limit).await
-        }
-        async fn create_collection(
-            &self,
-            name: &str,
-            description: &str,
-        ) -> Result<CollectionRec, MemoryError> {
-            self.inner.create_collection(name, description).await
-        }
-        async fn list_documents(
-            &self,
-            collection_id: &str,
-            offset: u64,
-            limit: u64,
-        ) -> Result<Vec<DocRec>, MemoryError> {
-            self.inner
-                .list_documents(collection_id, offset, limit)
-                .await
-        }
-        async fn create_document(
-            &self,
-            collection_id: &str,
-            title: &str,
-            text: &str,
-            parent_id: Option<&str>,
-        ) -> Result<DocRec, MemoryError> {
-            self.inner
-                .create_document(collection_id, title, text, parent_id)
-                .await
-        }
-        async fn update_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
-            if !self.armed.load(Ordering::SeqCst) {
-                return self.inner.update_document(id, text).await;
-            }
-            // The write under test: it lands, mangled, so the read-back
-            // mismatches and a rollback is attempted.
-            if !self.mangled.swap(true, Ordering::SeqCst) {
-                self.inner.poison_next_update();
-                return self.inner.update_document(id, text).await;
-            }
-            // …and the rollback is the write that fails.
-            Err(MemoryError::Store("the store refuses this write".into()))
-        }
-        async fn append_document(&self, id: &str, text: &str) -> Result<(), MemoryError> {
-            self.inner.append_document(id, text).await
-        }
-        async fn move_document(
-            &self,
-            id: &str,
-            collection_id: &str,
-            parent_id: Option<&str>,
-        ) -> Result<(), MemoryError> {
-            self.inner.move_document(id, collection_id, parent_id).await
-        }
-    }
-
-    /// **A refused post leaves nothing behind — not even the body it wrote
-    /// first.**
-    ///
-    /// A post is two writes: the body block, then the row. When the row's
-    /// read-back failed, the rollback restored the page as it stood AFTER the
-    /// body had landed — so the body survived, keyed to an id no row claimed.
-    ///
-    /// Nothing in the system can see that debris. The listing verb reads rows,
-    /// and an orphaned body is not a row, so a sender checking for wreckage
-    /// before retrying gets a clean answer that is wrong. The next post then
-    /// mints the same id, reads the leftover body, and is refused for a
-    /// DIFFERENT reason than the first attempt was — which reads as one
-    /// recurring failure and is two. That is what turned a single escaped
-    /// character into a page the operator had to repair by hand.
-    #[tokio::test]
-    async fn a_refused_post_leaves_no_orphaned_body_behind() {
-        use jojobot_domain::mailbox::Mailboxes as _;
-
-        let fake = FakeOutline::new();
-        let outline = OutlineStore::from_api(fake.clone(), COLL);
-        let owner = EntityId::new(EntityKind::Bot, "gamma");
-        ensure(&outline, &owner).await;
-        let mailboxes = outline.mailboxes();
-        let name = jojobot_domain::mailbox::MailboxName("gamma".into());
-        mailboxes
-            .create_mailbox(&name, &owner, None)
-            .await
-            .expect("the box opens")
-            .written()
-            .expect("not blocked");
-
-        // The induced fault drops the row's last cell, so the row reads back
-        // changed and the post is refused.
-        fake.poison_body_next_update();
-        let refused = mailboxes
-            .post_message(jojobot_domain::mailbox::NewMessage {
-                mailbox: name.clone(),
-                body: "the shipment landed".into(),
-                subject: None,
-                sender: "bot:delta".into(),
-                sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
-                in_reply_to: None,
-            })
-            .await;
-        assert!(refused.is_err(), "the mangled row must be refused");
-
-        // **The page is as it was before the attempt.** Both halves: no row,
-        // and no body either — the second is the one that survived before.
-        let page = fake.text_of_mailbox_page(&name.to_string());
-        assert!(
-            !page.contains("the shipment landed"),
-            "the body it wrote first is still on the page: {page}"
-        );
-
-        // And the proof that it matters: the next post lands cleanly rather
-        // than meeting its predecessor's leftovers.
-        let posted = mailboxes
-            .post_message(jojobot_domain::mailbox::NewMessage {
-                mailbox: name,
-                body: "the shipment landed".into(),
-                subject: None,
-                sender: "bot:delta".into(),
-                sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
-                in_reply_to: None,
-            })
-            .await
-            .expect("the retry posts")
-            .written()
-            .expect("not blocked");
-        assert_eq!(posted.body, "the shipment landed");
-    }
-
-    /// **The orphan has a second door: the row write never happening at all.**
-    ///
-    /// A refused post was fixed for the case where the row reads back wrong.
-    /// The body lands first, so every path that leaves between the body
-    /// landing and the row's read-back leaves the same orphan — and those
-    /// paths returned on a question mark, so the rollback never ran.
-    ///
-    /// A surviving orphan is worse than debris now. A body is matched to a row
-    /// by id, ids are minted from ROWS only, so a body keyed to an id no row
-    /// claims is picked up by the next message to mint that id — which reads
-    /// back carrying somebody else's abandoned text instead of its own.
-    #[tokio::test]
-    async fn a_post_whose_row_write_fails_leaves_no_orphaned_body() {
-        use jojobot_domain::mailbox::Mailboxes as _;
-
-        let fake = FakeOutline::new();
-        let outline = OutlineStore::from_api(fake.clone(), COLL);
-        let owner = EntityId::new(EntityKind::Bot, "gamma");
-        ensure(&outline, &owner).await;
-        let mailboxes = outline.mailboxes();
-        let name = jojobot_domain::mailbox::MailboxName("gamma".into());
-        mailboxes
-            .create_mailbox(&name, &owner, None)
-            .await
-            .expect("the box opens")
-            .written()
-            .expect("not blocked");
-
-        let post = |body: &'static str| {
-            let mailboxes = outline.mailboxes();
-            let name = name.clone();
-            async move {
-                mailboxes
-                    .post_message(jojobot_domain::mailbox::NewMessage {
-                        mailbox: name,
-                        body: body.into(),
-                        subject: None,
-                        sender: "bot:delta".into(),
-                        sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
-                        in_reply_to: None,
-                    })
-                    .await
-            }
-        };
-
-        // The body append succeeds; the row write is refused outright.
-        fake.refuse_next_update();
-        assert!(
-            post("the abandoned body").await.is_err(),
-            "a refused row write must not report success"
-        );
-
-        let page = fake.text_of_mailbox_page(&name.to_string());
-        assert!(
-            !page.contains("the abandoned body"),
-            "the body it wrote first survived a path that never rolled back: {page}"
-        );
-
-        // **And the consequence, which is the reason this matters.** The next
-        // message mints the id the orphan was keyed to, so a surviving orphan
-        // would come back as this message's body.
-        let posted = post("its own body")
-            .await
-            .expect("the next post lands")
-            .written()
-            .expect("not blocked");
-        assert_eq!(
-            posted.body, "its own body",
-            "a message must never read back carrying somebody else's abandoned text"
-        );
-    }
-
-    /// A failed rollback is a VARIANT, not a sentence, in the mailbox
-    /// context: string-matching prose inside a general store error would let
-    /// rewording that prose silently break detection while every test stays
-    /// green. The session context has its own, and a test in one proves
-    /// nothing about the other.
-    ///
-    /// `notes` is the last column of a message row, which is what makes
-    /// `mark_processed` with a note the write the induced fault can spoil.
-    #[tokio::test]
-    async fn a_mailbox_write_whose_rollback_also_fails_is_stranded_too() {
-        use jojobot_domain::mailbox::Mailboxes as _;
-
-        let fake = FakeOutline::new();
-        let api = RollbackFails::over(fake);
-        let outline = OutlineStore::from_api(api.clone(), COLL);
-        let owner = EntityId::new(EntityKind::Bot, "gamma");
-        ensure(&outline, &owner).await;
-        let mailboxes = outline.mailboxes();
-        let name = jojobot_domain::mailbox::MailboxName("gamma".into());
-        mailboxes
-            .create_mailbox(&name, &owner, None)
-            .await
-            .expect("the box opens")
-            .written()
-            .expect("not blocked");
-        let posted = mailboxes
-            .post_message(jojobot_domain::mailbox::NewMessage {
-                mailbox: name,
-                body: "the shipment landed".into(),
-                subject: None,
-                sender: "bot:delta".into(),
-                sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
-                in_reply_to: None,
-            })
-            .await
-            .expect("post ok")
-            .written()
-            .expect("not blocked");
-
-        api.arm();
-        let outcome = mailboxes.mark_processed(&posted.id, Some("acted on")).await;
-
-        let Err(err) = outcome else {
-            panic!("a mangled write with a failed rollback must not report success");
-        };
-        assert!(
-            matches!(err, jojobot_domain::mailbox::MailboxError::Stranded { .. }),
-            "a failed rollback must be its own variant, not a sentence inside a store error: \
-             {err:?}"
-        );
-    }
-
-    /// …and in the session context, where `focus` is the last column and
-    /// `begin` is the write that fills it.
-    #[tokio::test]
-    async fn a_session_write_whose_rollback_also_fails_is_stranded_too() {
-        use jojobot_domain::session::Sessions as _;
-
-        let fake = FakeOutline::new();
-        let api = RollbackFails::over(fake);
-        let sessions = OutlineStore::from_api(api.clone(), COLL).sessions();
-        let bot = EntityId::new(EntityKind::Bot, "gamma");
-        // One run first, so the page and its table exist before the trap is set.
-        sessions
-            .begin(jojobot_domain::session::NewSession {
-                bot: bot.clone(),
-                sid: jojobot_domain::session::Sid("ab12".into()),
-                focus: "the first run".into(),
-                started_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
-            })
-            .await
-            .expect("begin ok");
-
-        api.arm();
-        let outcome = sessions
-            .begin(jojobot_domain::session::NewSession {
-                bot,
-                sid: jojobot_domain::session::Sid("cd34".into()),
-                focus: "the second run".into(),
-                started_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
-            })
-            .await;
-
-        let Err(err) = outcome else {
-            panic!("a mangled write with a failed rollback must not report success");
-        };
-        assert!(
-            matches!(err, jojobot_domain::session::SessionError::Stranded { .. }),
-            "a failed rollback must be its own variant, not a sentence inside a store error: \
-             {err:?}"
         );
     }
 
@@ -3631,6 +3060,99 @@ mod tests {
         assert!(
             !scanned[0].doc_id.is_empty(),
             "a scan always says which doc"
+        );
+    }
+
+    /// **The pages the old mail and session rails left behind are machinery,
+    /// and the scan still excludes them.**
+    ///
+    /// jojobot writes no such page any more — mail and sessions are rows in the
+    /// SQL store. The pages remain: the move copied the records and deleted
+    /// nothing, so the document store holds a mailbox page per box and a
+    /// sessions page per bot, for as long as a person keeps them.
+    ///
+    /// **What leaks if the filter goes is every one of them at once.** A
+    /// mailbox page carries message subjects and bodies; a sessions page
+    /// carries every focus line and chronology entry of every run of that bot.
+    /// A question about the operator's life would come back answered with
+    /// somebody's correspondence and an agent's private working notes.
+    ///
+    /// Seeded as the pages that exist, rather than written through a port —
+    /// nothing writes this shape now, and the leftovers are the whole reason
+    /// the exclusion still has work to do.
+    #[tokio::test]
+    async fn a_page_the_old_rails_left_behind_is_never_scanned_as_content() {
+        let fake = FakeOutline::new();
+        let coll = fake.seed_collection(COLL, &owned_desc());
+
+        // Strings that exist nowhere else, so a hit can only have come off one
+        // of these pages: one in a table cell, one inside a fenced block.
+        const SUBJECT: &str = "the monorail contract needs a decision";
+        const BODY: &str = "gamma says the escaping is not the cause";
+        const FOCUS: &str = "chasing the monorail flake";
+        const ENTRY: &str = "ruled out the escaping, it is the read-back";
+
+        fake.seed_document(
+            &coll,
+            "gamma",
+            &format!(
+                "_Managed by jojobot._\n\n\
+                 ```yaml\nmachinery: mailbox\nname: gamma\nowner: bot:gamma\n```\n\n\
+                 ### ⚙ messages\n\n\
+                 | id | state | sender | sent | subject | in-reply-to | notes |\n\
+                 | --- | --- | --- | --- | --- | --- | --- |\n\
+                 | gamma-1 | new | delta | 2026-07-28T00:00:00Z | {SUBJECT} | - | - |\n\n\
+                 ### ⚙ bodies\n\n\
+                 ```jojobot-message\nid: gamma-1\n{BODY}\n```\n"
+            ),
+        );
+        fake.seed_document(
+            &coll,
+            "gamma's sessions",
+            &format!(
+                "_Managed by jojobot._\n\n\
+                 ```yaml\nmachinery: sessions\nof: bot:gamma\n```\n\n\
+                 ### ⚙ sessions\n\n\
+                 | id | sid | focus | started | state |\n\
+                 | --- | --- | --- | --- | --- |\n\
+                 | gamma-1 | ab12 | {FOCUS} | 2026-07-28T00:00:00Z | active |\n\n\
+                 ### ⚙ chronology\n\n\
+                 ```jojobot-entry\nid: e1\nsession: gamma-1\n{ENTRY}\n```\n"
+            ),
+        );
+
+        // A restart: the index is rebuilt by reading every document, which is
+        // the path a leak appears on. Searching an index this process has been
+        // writing to would prove nothing about what the scan admits.
+        let restarted =
+            Arc::new(IndexedMemory::new(Arc::new(store(fake.clone()))).expect("index opens"));
+        restarted.rebuild().await.expect("rebuild ok");
+
+        for secret in [SUBJECT, BODY, FOCUS, ENTRY] {
+            let hits = restarted
+                .search_via_port(&SearchQuery::text(secret))
+                .await
+                .expect("search ok");
+            assert!(
+                hits.is_empty(),
+                "a leftover rail page must never be reachable as content — {secret:?} came back \
+                 as {hits:?}"
+            );
+        }
+
+        // **The positive the exclusion rests on.** An ordinary page in the same
+        // collection, read by the same rebuild, IS found — so the assertions
+        // above are the filter working rather than a scan that returned nothing.
+        fake.seed_document(&coll, "Trip notes", "The pass was closed on Tuesday.");
+        let after = Arc::new(IndexedMemory::new(Arc::new(store(fake))).expect("index opens"));
+        after.rebuild().await.expect("rebuild ok");
+        assert!(
+            !after
+                .search_via_port(&SearchQuery::text("pass closed"))
+                .await
+                .expect("search ok")
+                .is_empty(),
+            "the same scan admits an ordinary page"
         );
     }
 
@@ -4101,319 +3623,6 @@ mod tests {
     // nothing marked their absence: `make check` stayed green over an adapter
     // with no coverage at any tier. Two of them are the ONLY thing standing
     // between the operator's mail and markdown normalization.
-
-    /// **The Mailboxes contract, unchanged, over Outline.** Same claim as the
-    /// sessions one: the spec is untouched, so this was a storage move.
-    #[tokio::test]
-    async fn the_outline_mailbox_store_satisfies_the_contract() {
-        jojobot_domain::mailbox::testing::contract::run_all(|| async {
-            // **The owners are written first, because this store resolves them
-            // by reading Memory.** A box belongs to a bot by construction, so
-            // `create_mailbox` refuses an owner it cannot find — which is the
-            // contract's stated precondition and the reason its factory is
-            // async. The fake meets it in its constructor; here it is I/O.
-            let outline = store(FakeOutline::new());
-            for owner in jojobot_domain::mailbox::testing::contract::OWNERS {
-                outline
-                    .add_entity(jojobot_domain::memory::NewEntity {
-                        id: jojobot_domain::memory::EntityId((*owner).to_string()),
-                        name: owner.trim_start_matches("bot:").to_string(),
-                        aliases: Vec::new(),
-                        source: "user-named".into(),
-                        crm: None,
-                        parent: None,
-                        boot: Default::default(),
-                        override_token: None,
-                    })
-                    .await
-                    .expect("the owner is written")
-                    .written()
-                    .expect("not blocked");
-            }
-            outline.mailboxes()
-        })
-        .await;
-    }
-
-    /// **The write lock is what makes two posts into one box two messages, and
-    /// nothing in this context was holding it to that.**
-    ///
-    /// Every mailbox write is a read-modify-write over a whole page: read it,
-    /// mint the next id off what is on it, append the body, then put the WHOLE
-    /// table back. Two posts running at once both read the same page, both mint
-    /// the same next id, and both write a table built from a page that no
-    /// longer exists — so the second put erases the first message and both
-    /// callers hold a `Message` saying otherwise. Nothing on the surface can
-    /// then find it: it is not `new`, not `read`, not quarantined, not
-    /// anywhere.
-    ///
-    /// **Deleting the lock from this whole context left the suite green.** That
-    /// is the finding — the mailbox tier had no test that could tell a
-    /// linearized store from a racing one, so the mechanism the rule rests on
-    /// was load-bearing and unguarded. Sessions had this test; mailboxes did
-    /// not, and they share the lock precisely because they write different
-    /// documents in one collection.
-    ///
-    /// Run through the yielding transport, which suspends **after** a write
-    /// commits as well as before, because that is where the network suspends: a
-    /// real put is a round trip and the page has changed server-side before the
-    /// response arrives. A double that only yielded before the call would pass
-    /// this on broken code.
-    #[tokio::test]
-    async fn two_messages_posted_at_once_into_one_box_both_survive() {
-        use jojobot_domain::mailbox::Mailboxes as _;
-
-        let fake = FakeOutline::new();
-        let outline = OutlineStore::from_api(Arc::new(Yielding(fake)), COLL);
-        let owner = EntityId::new(EntityKind::Bot, "gamma");
-        outline
-            .add_entity(jojobot_domain::memory::NewEntity {
-                id: owner.clone(),
-                name: "gamma".into(),
-                aliases: Vec::new(),
-                source: "user-named".into(),
-                crm: None,
-                parent: None,
-                boot: Default::default(),
-                override_token: None,
-            })
-            .await
-            .expect("the owner is written")
-            .written()
-            .expect("not blocked");
-        let mailboxes = Arc::new(outline.mailboxes());
-        let name = jojobot_domain::mailbox::MailboxName("gamma".into());
-        mailboxes
-            .create_mailbox(&name, &owner, None)
-            .await
-            .expect("the box opens")
-            .written()
-            .expect("not blocked");
-
-        let post = |sender: &'static str, body: &'static str| {
-            let mailboxes = Arc::clone(&mailboxes);
-            let mailbox = name.clone();
-            async move {
-                mailboxes
-                    .post_message(jojobot_domain::mailbox::NewMessage {
-                        mailbox,
-                        body: body.into(),
-                        subject: None,
-                        sender: sender.into(),
-                        sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
-                        in_reply_to: None,
-                    })
-                    .await
-                    .expect("post_message should succeed")
-                    .written()
-                    .expect("not blocked")
-            }
-        };
-        let (one, two) = tokio::join!(
-            post("bot:delta", "the first shipment landed"),
-            post("bot:epsilon", "the second shipment landed")
-        );
-
-        assert_ne!(one.id, two.id, "two messages are two ids, not one id twice");
-        let all = mailboxes.scan_messages().await.expect("scan_messages");
-        assert_eq!(all.len(), 2, "neither write was lost: {all:?}");
-        for posted in [&one, &two] {
-            let seen = all
-                .iter()
-                .find(|m| m.id == posted.id)
-                .unwrap_or_else(|| panic!("{} is not on the page: {all:?}", posted.id));
-            assert_eq!(seen.body, posted.body, "…and each kept its own body");
-            assert_eq!(seen.sender, posted.sender);
-        }
-    }
-
-    /// **The Sessions contract, unchanged, over Outline.** The same spec the
-    /// fake satisfies and the Vikunja adapter satisfied — that it passes here
-    /// with no edit to it is the whole proof that this was a storage move and
-    /// not a redesign.
-    #[tokio::test]
-    async fn the_outline_sessions_store_satisfies_the_contract() {
-        jojobot_domain::session::testing::contract::run_all(|| {
-            store(FakeOutline::new()).sessions()
-        })
-        .await;
-    }
-
-    /// **Mail is in the index; the page it lives on is not.** Both halves, in
-    /// one test, because getting either wrong is silent and they fail in
-    /// opposite directions.
-    ///
-    /// Sessions are excluded from search on purpose and mail is included on
-    /// purpose, and both now live on pages in the collection the boot scan
-    /// reads. So the exclusion has to be surgical: exclude the page's raw
-    /// markdown as content, and let the messages through by their own path.
-    /// Exclude too much and mail vanishes from search; exclude too little and a
-    /// question about the operator's life comes back with the raw markdown of a
-    /// box, bodies quoted out of their envelopes.
-    #[tokio::test]
-    async fn mail_reaches_the_index_but_the_page_it_sits_on_does_not() {
-        use jojobot_domain::mailbox::{MailboxName, Mailboxes as _, NewMessage};
-        use jojobot_domain::memory::search::{Hit, SearchQuery};
-
-        let outline = store(FakeOutline::new());
-        let index = Arc::new(IndexedMemory::new(Arc::new(outline.clone())).expect("index opens"));
-        let mail =
-            crate::search::IndexedMailboxes::new(Arc::new(outline.mailboxes()), index.index());
-
-        // A box has an owner now — it belongs to a bot and is named for it.
-        // That is the one adaptation this recovered test needed; everything it
-        // asserts about the index is untouched.
-        let inbox = MailboxName("gamma".into());
-        let owner = jojobot_domain::memory::EntityId("bot:gamma".into());
-        outline
-            .add_entity(jojobot_domain::memory::NewEntity {
-                id: owner.clone(),
-                name: "Gamma".into(),
-                aliases: Vec::new(),
-                source: "user-named".into(),
-                crm: None,
-                parent: None,
-                boot: Default::default(),
-                override_token: None,
-            })
-            .await
-            .expect("the owner exists")
-            .written()
-            .expect("not blocked");
-        mail.create_mailbox(&inbox, &owner, None)
-            .await
-            .expect("create ok")
-            .written()
-            .expect("not blocked");
-        mail.post_message(NewMessage {
-            mailbox: inbox.clone(),
-            body: "the monorail contract needs a decision".into(),
-            subject: Some("monorail".into()),
-            sender: "gamma".into(),
-            sent_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
-            in_reply_to: None,
-        })
-        .await
-        .expect("post ok")
-        .written()
-        .expect("not blocked");
-
-        // **Direction one, through the BOOT path.** Searching the index this
-        // process has been writing to proves only that the incremental write
-        // works — it survives `scan_messages` returning nothing, which is the
-        // failure that matters: a restart rebuilds from that read, and a broken
-        // one loses every message older than the process while looking fine.
-        // So this is a restart: a fresh index, both halves rebuilt from the
-        // store, and only then the question.
-        let restarted =
-            Arc::new(IndexedMemory::new(Arc::new(outline.clone())).expect("index opens"));
-        restarted.rebuild().await.expect("memory rebuild ok");
-        let restarted_mail =
-            crate::search::IndexedMailboxes::new(Arc::new(outline.mailboxes()), restarted.index());
-        restarted_mail.rebuild().await.expect("mail rebuild ok");
-
-        let hits = restarted
-            .search_via_port(&SearchQuery {
-                text: Some("monorail".into()),
-                // Asked for: mail is opt-in, and what this asserts is that the
-                // mail half survived a restart, not what a bare query does.
-                include_mail: true,
-                ..Default::default()
-            })
-            .await
-            .expect("search ok");
-        assert!(
-            hits.iter().any(|h| matches!(h, Hit::Message { .. })),
-            "mail survives a restart and is in the one ranked list: {hits:?}"
-        );
-
-        // Direction two, on that same rebuilt index: the page carrying the mail
-        // is not content. The rebuild is what reads every document, so this is
-        // the path where a leak would appear.
-        let after = restarted
-            .search_via_port(&SearchQuery {
-                text: Some("monorail".into()),
-                ..Default::default()
-            })
-            .await
-            .expect("search ok");
-        assert!(
-            !after
-                .iter()
-                .any(|h| matches!(h, Hit::Prose { .. } | Hit::Entity { .. })),
-            "the raw page must never surface as content: {after:?}"
-        );
-    }
-
-    /// **The sessions half of the same exclusion — a session page is machinery,
-    /// not content.**
-    ///
-    /// **Both flavours of machinery need their own assertion.** The sibling
-    /// above covers a mailbox page; this covers a session page, and the two
-    /// are separate tests because one exclusion filter serves both and a
-    /// single test would leave whichever flavour it did not write unguarded.
-    ///
-    /// **What leaks if this breaks is not a stray marker.** A session page holds
-    /// every focus line, every chronology entry and the closing story of every
-    /// run of that bot. One unguarded filter in `scan` is all that keeps them
-    /// out, and a question about the operator's life would come back answered
-    /// with an agent's private working notes.
-    ///
-    /// Written through the real path — `begin` then `append`, so the page is
-    /// produced exactly as production produces it — rather than by seeding
-    /// markdown, which would prove only that a hand-written marker is honoured.
-    #[tokio::test]
-    async fn a_sessions_page_is_machinery_and_never_scanned_into_the_index() {
-        use jojobot_domain::memory::search::SearchQuery;
-        use jojobot_domain::session::{NewEntry, NewSession, Sessions as _, Sid};
-
-        let outline = store(FakeOutline::new());
-        let sessions = outline.sessions();
-
-        // Two strings that exist nowhere else, so a hit can only have come off
-        // the session page: one in the focus, one in a chronology entry.
-        const FOCUS: &str = "chasing the monorail flake";
-        const ENTRY: &str = "ruled out the escaping, it is the read-back";
-
-        let begun = sessions
-            .begin(NewSession {
-                bot: EntityId::new(EntityKind::Bot, "gamma"),
-                sid: Sid("ab12".into()),
-                focus: FOCUS.into(),
-                started_at: "2026-07-28T00:00:00Z".parse().expect("a timestamp"),
-            })
-            .await
-            .expect("begin ok");
-        sessions
-            .append(
-                &begun.id,
-                NewEntry::manual(ENTRY, "2026-07-28T01:00:00Z".parse().expect("a timestamp")),
-            )
-            .await
-            .expect("append ok");
-
-        // A restart: the index is rebuilt by reading every document, which is
-        // the path a leak appears on. Searching an index this process has been
-        // writing to would prove nothing about what the scan admits.
-        let restarted =
-            Arc::new(IndexedMemory::new(Arc::new(outline.clone())).expect("index opens"));
-        restarted.rebuild().await.expect("rebuild ok");
-
-        for secret in [FOCUS, ENTRY] {
-            let hits = restarted
-                .search_via_port(&SearchQuery {
-                    text: Some(secret.into()),
-                    ..Default::default()
-                })
-                .await
-                .expect("search ok");
-            assert!(
-                hits.is_empty(),
-                "a session's own record must never be reachable as content — {secret:?} came \
-                 back as {hits:?}"
-            );
-        }
-    }
 
     /// The fake stores what the real Outline would store: the editor model
     /// re-serializes every markdown table RECTANGULAR AT THE HEADER'S WIDTH —
