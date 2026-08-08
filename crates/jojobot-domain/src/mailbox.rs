@@ -250,20 +250,6 @@ pub fn validate_notes(notes: Option<&str>) -> Result<(), MailboxError> {
     Ok(())
 }
 
-/// The human-visible half of a message card: `"<sender>: <subject>"`, or the
-/// opening of the body when the message declares no subject.
-///
-/// The subject wins because it is the title the poster actually wrote; the body
-/// head is the fallback that existed before there was anywhere to write one.
-///
-/// How the head is fitted — one line, cut on a word boundary, saying it was cut
-/// — is [`text::MESSAGE_TITLE`], which is where the budget lives and what the
-/// golden test pins.
-pub fn message_title(sender: &str, subject: Option<&str>, body: &str) -> String {
-    let head = normalize_subject(subject).unwrap_or_else(|| body.to_string());
-    format!("{}: {}", sender.trim(), text::MESSAGE_TITLE.render(&head))
-}
-
 /// Normalize a body to the form that survives a round-trip through the store:
 /// edge whitespace is not significant, and no store preserves it; CRLF line
 /// endings become plain `\n`, because a store that reconstructs text
@@ -588,30 +574,6 @@ pub enum MailboxError {
         /// Why the card cannot be read.
         reason: String,
     },
-    /// **A write failed, and putting the record back failed too.** It is left
-    /// mid-verb: not written, not restored, and not something the caller can
-    /// retry its way out of.
-    ///
-    /// Its own variant on purpose. Whether a rollback worked is the one thing a
-    /// caller cannot infer from anything else in the answer, and the last time
-    /// it was carried as a sentence inside a general store error, detecting it
-    /// meant string-matching that sentence — so rewording it silently broke the
-    /// detection with every test green.
-    #[error(
-        "{verb} failed ({cause}) AND putting it back failed ({rollback}) — {} is left mid-{verb}, \
-         and a person has to look",
-        .stranded.join(", ")
-    )]
-    Stranded {
-        /// The verb that failed.
-        verb: String,
-        /// The ids left mid-write.
-        stranded: Vec<String>,
-        /// What failed first.
-        cause: String,
-        /// Why the rollback could not undo it.
-        rollback: String,
-    },
     /// The underlying store failed — it, or the layer that carries and parses
     /// its answers.
     #[error("store error: {0}")]
@@ -625,9 +587,10 @@ pub enum MailboxError {
 /// store-backed adapter stands behind it in production; a fake stands behind it
 /// in tests. Three invariants bind every adapter:
 ///
-/// * **read-back** — a write succeeds only if reading it back through the read
-///   path returns it. A read-back mismatch restores the prior state before
-///   erroring, so a retry can trust what it finds.
+/// * **a write is reported successful only once it has landed** — read back
+///   through the read path, or carried by a transaction that either commits or
+///   does not. Which of the two is the store's business; that a caller told
+///   `Written` can read it back is the port's.
 /// * **the guard is on the write path** — a write that names a mailbox screens
 ///   against the live list first, so it cannot be skipped by a caller who forgot.
 /// * **never create on a miss** — an unknown mailbox comes back blocked with the
@@ -778,122 +741,6 @@ mod tests {
         assert!(MessageState::New.is_unprocessed());
         assert!(MessageState::Read.is_unprocessed());
         assert!(!MessageState::Processed.is_unprocessed());
-    }
-
-    /// The title is the human-visible half of the card: who it is from, then the
-    /// opening of what they said — cut on a word boundary, never mid-word, and
-    /// always one line.
-    #[test]
-    fn a_title_is_the_sender_and_the_opening_of_the_body() {
-        assert_eq!(
-            message_title("alpha", None, "the shipment landed"),
-            "alpha: the shipment landed"
-        );
-        assert_eq!(
-            message_title("  alpha  ", None, "  the shipment\n  landed  "),
-            "alpha: the shipment landed",
-            "a title is one line, whatever the body's shape"
-        );
-
-        let long = "the shipment landed this morning and the crates are stacked by the north door";
-        let title = message_title("alpha", None, long);
-        assert!(title.starts_with("alpha: the shipment landed this morning"));
-        assert!(
-            title.ends_with('…'),
-            "a cut title says it was cut: {title:?}"
-        );
-        assert!(
-            !title.trim_end_matches('…').ends_with(' '),
-            "the cut lands on a word, not on the space after it: {title:?}"
-        );
-        assert!(
-            long.starts_with(title.trim_start_matches("alpha: ").trim_end_matches('…')),
-            "the kept part is a prefix of the body, never a mangled word: {title:?}"
-        );
-    }
-
-    /// **The golden: every byte a message card's title has ever been given.**
-    /// Card titles are stored on a live board, so this strategy's output is not
-    /// an implementation detail — changing it rewrites what a person sees on
-    /// cards that already exist. Recorded literally, so a refactor underneath
-    /// (the shared text engine) has something that can only pass by producing
-    /// the same bytes, and a deliberate change to the rules has to come here
-    /// and say so.
-    #[test]
-    fn the_message_title_golden() {
-        let cases: [(&str, &str); 8] = [
-            ("short one", "alpha: short one"),
-            (
-                "read the hand-off\n\nthen scoped the slice",
-                "alpha: read the hand-off then scoped the slice",
-            ),
-            // No backtick strip here — a title keeps them; only the focus line
-            // has to survive a fenced machine block.
-            (
-                "started on `working_session`, which was the wrong shape",
-                "alpha: started on `working_session`, which was the wrong shape",
-            ),
-            (
-                &"w".repeat(60),
-                "alpha: wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
-            ),
-            (
-                &"w".repeat(59),
-                "alpha: wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
-            ),
-            (
-                "counted the crates and reconciled them against the manifest twice over",
-                "alpha: counted the crates and reconciled them against the manifest…",
-            ),
-            (
-                &"x".repeat(80),
-                "alpha: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…",
-            ),
-            ("   ", "alpha: "),
-        ];
-        for (input, expected) in cases {
-            assert_eq!(
-                message_title("alpha", None, input),
-                expected,
-                "the stored title changed for {input:?}"
-            );
-        }
-    }
-
-    /// A single word longer than the whole budget has no boundary to cut on —
-    /// it is still cut, because a title is a title.
-    #[test]
-    fn a_title_cuts_an_unbroken_word_rather_than_running_forever() {
-        let title = message_title("alpha", None, &"x".repeat(200));
-        assert!(title.chars().count() < 100, "got {}", title.chars().count());
-        assert!(title.ends_with('…'));
-    }
-
-    /// **A declared subject is the title.** That is the whole point of having
-    /// the field: the convention it replaces — "put a title on the first line"
-    /// — was unenforceable and unreadable, because every body has a first line
-    /// and nothing said whether it was meant as one. A blank subject is no
-    /// subject, so the body head is still the fallback.
-    #[test]
-    fn a_subject_becomes_the_title_and_a_blank_one_does_not() {
-        assert_eq!(
-            message_title(
-                "alpha",
-                Some("the shipment"),
-                "it landed at dawn and is stacked"
-            ),
-            "alpha: the shipment"
-        );
-        assert_eq!(
-            message_title("alpha", Some("  "), "it landed at dawn"),
-            "alpha: it landed at dawn",
-            "a blank subject is no subject — the body head still stands in"
-        );
-        // A subject is cut on a word boundary exactly as a body head is: it is
-        // caller text, and the title budget does not care where it came from.
-        let long = message_title("alpha", Some(&"word ".repeat(40)), "body");
-        assert!(long.ends_with('…'), "got {long:?}");
-        assert!(long.chars().count() < 100, "got {}", long.chars().count());
     }
 
     /// A subject rides in the machine block and in the card title, so it obeys

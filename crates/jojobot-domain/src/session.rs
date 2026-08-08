@@ -519,37 +519,17 @@ pub enum SessionError {
         /// The session it is on.
         session: String,
     },
-    /// A write failed, and putting the record back failed too. Its own variant
-    /// for the reason the mailbox context's is: whether the rollback worked is
-    /// the one thing a caller cannot infer from anything else in the answer.
-    #[error(
-        "{verb} failed ({cause}) AND putting it back failed ({rollback}) — {} is left mid-{verb}, \
-         and a person has to look",
-        .stranded.join(", ")
-    )]
-    Stranded {
-        /// The verb that failed.
-        verb: String,
-        /// The ids left mid-write.
-        stranded: Vec<String>,
-        /// What failed first.
-        cause: String,
-        /// Why the rollback could not undo it.
-        rollback: String,
-    },
     /// The underlying store failed.
     #[error("store error: {0}")]
     Store(String),
-    /// The store isn't configured (no credentials).
-    #[error("session store not configured: {0}")]
-    NotConfigured(String),
 }
 
 /// The Sessions port. A store-backed adapter stands behind it in production; a
 /// fake stands behind it in tests. The invariants every adapter holds:
 ///
-/// * **read-back** — a write succeeds only if reading it back through the read
-///   path returns it, and a mismatch restores the prior state before erroring.
+/// * **a write is reported successful only once it has landed** — read back
+///   through the read path, or carried by a transaction that either commits or
+///   does not.
 /// * **closed is closed, for writes** — nothing appends to, amends, or changes
 ///   the focus of a closed session, whichever end it reached, and no rollback
 ///   moves a card out of a terminal column.

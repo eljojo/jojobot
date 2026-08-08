@@ -101,7 +101,7 @@ impl Jojobot {
             // was touched — a closed run, an unknown session, a malformed
             // entry — and dressing those as uncertain would send a caller to
             // go and look for a write that provably never happened.
-            Err(e) if !matches!(e, SessionError::Store(_) | SessionError::Stranded { .. }) => {
+            Err(e) if !matches!(e, SessionError::Store(_)) => {
                 return session_declined(e);
             }
             Err(e) => {

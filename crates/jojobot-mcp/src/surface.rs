@@ -669,14 +669,14 @@ fn a_word_is_only_found_where_it_is_a_word() {
 fn no_agent_facing_text_teaches_the_store() {
     // Each word, and what an agent wrongly concludes from meeting it.
     const RETIRED: &[(&str, &str)] = &[
-        ("card", "a message is a row on a page, not a card"),
+        ("card", "a message is a record in a box, not a card"),
         ("kanban", "the board is gone"),
         ("funnel", "there are no columns to move between"),
         ("task board", "mail left the task layer entirely"),
         ("task system", "mail left the task layer entirely"),
         (
             "mailbox label",
-            "a box is a page owned by its bot, not a label",
+            "a box is owned by its bot, not a label on something else",
         ),
         (
             "document",

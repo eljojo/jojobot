@@ -220,13 +220,8 @@ pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
         | MailboxError::UnknownMessage { .. }
         | MailboxError::Quarantined { .. } => McpError::invalid_params(e.to_string(), None),
         // Neither of these is a caller mistake, and neither is something a
-        // caller can fix by calling differently: jojobot found a card on its
-        // own board that belongs to another project and refused, or a write
-        // failed and could not be undone, leaving a card mid-verb. Both are
-        // integrity conditions on the server side that need a person.
-        MailboxError::Stranded { .. } => {
-            McpError::internal_error(crate::boundary::stranded("this call", &e.to_string()), None)
-        }
+        // caller can fix by calling differently: the store is not wired, or it
+        // failed. Both are conditions on the server side.
         MailboxError::NotConfigured(msg) => {
             McpError::internal_error(format!("mailboxes not configured: {msg}"), None)
         }
@@ -330,43 +325,5 @@ mod tests {
                  {expected}\n  got: {advice}"
             );
         }
-    }
-
-    /// A stranded write's cause and rollback account are the adapter's own
-    /// words about pages and rows — they must not reach the caller, same as
-    /// every other store-class failure on this rail.
-    #[test]
-    fn a_stranded_write_does_not_carry_the_adapters_own_words() {
-        let leaky_cause = "the page for gamma has no table";
-        let leaky_rollback = "the row vanished from the document";
-        let err = mailbox_error(MailboxError::Stranded {
-            verb: "post_message".into(),
-            stranded: vec!["gamma-4".into()],
-            cause: leaky_cause.into(),
-            rollback: leaky_rollback.into(),
-        });
-        assert!(
-            !err.message.contains(leaky_cause) && !err.message.contains(leaky_rollback),
-            "the adapter's own words crossed: {}",
-            err.message
-        );
-        // **Not "Try once more."** A stranded write may have half-landed, so a
-        // repeat could double it — the caller needs to be told not to retry,
-        // never the opposite.
-        assert!(
-            !err.message.contains("Try once more"),
-            "a stranded write must not invite a retry: {}",
-            err.message
-        );
-        assert!(
-            err.message.contains("Do not try again"),
-            "…and must say so plainly: {}",
-            err.message
-        );
-        assert!(
-            err.message.contains("Tell the operator") || err.message.contains("tell the operator"),
-            "a caller needs the way out that is actually safe: {}",
-            err.message
-        );
     }
 }
