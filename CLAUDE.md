@@ -207,15 +207,14 @@ Shipped and live:
 
 - **M5** — Sessions: a bot is a **role**, a session is **one mortal run of it**
   — the unit of work, not of connection, so it survives a disconnect or a
-  device hop. **A page of its bot's own, one row per session**: the row carries
+  device hop. **One record per run, in the store**: it carries
   **state** (`active` → `wrapped` | `abandoned`; **`wrapped` is the last word,
   because wrapping folds the still-open focus into the closing story as one
   last chronology entry — `abandoned → active` is the one legal walk-back,
   since a run nobody wrapped up left nothing to fold**) and the
-  **focus as current truth**, rewritten in place; the **chronology is appended
-  below it**, one block per entry (append-only, oldest first; only the newest
-  entry amendable). The page is jojobot's own machinery, so the boot scan does
-  not read it as content and `search` never sees it.
+  **focus as current truth**, rewritten in place; the **chronology hangs off
+  it**, one entry per beat (append-only, oldest first; only the newest
+  entry amendable).
   **`start_here` is the start verb** — there is no `start_session`, because
   there is no moment between "I am gamma" and "gamma is working". Booting with
   a bot name hands back a `sid` immediately when there is nothing to resume,
@@ -234,7 +233,10 @@ Shipped and live:
   publishing nowhere.
   jojobot writes **its own beats** too — one per verb class per session, count
   kept current, marked apart from what the session said about itself.
-  Session records deliberately stay **out of the search index**.
+  Session records deliberately stay **out of the search index**, and so does
+  any document the memory scan finds marked as jojobot's own machinery — a
+  filter worth keeping whether or not jojobot still writes such documents,
+  because what they hold is correspondence and chronologies rather than content.
 
 > **Identity is the SESSION ID, because no real client holds a connection.**
 > The binding was per-MCP-session and the design assumed a client keeps one

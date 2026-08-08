@@ -48,7 +48,7 @@ never runs inference of its own — the assistant is the only mind.
 > arrives unasked; a **skill** is a procedure and is fetched by name through the
 > same door. Every boot lists the skills by name and when-to-use and never their
 > bodies, so a session learns what exists without paying for what it does not
-> need. jojobot decides nothing about when one applies — the caller asks. **Sessions** live on a page of their bot's own, one row each:
+> need. jojobot decides nothing about when one applies — the caller asks. **Sessions** are the store's own records, one per run of a bot:
 > a focus that is current truth, an append-only chronology (the session's own
 > beats plus jojobot's, marked apart), and `active` → `wrapped` | `abandoned` —
 > **`wrapped` is the last word, because wrapping folds the still-open focus into
@@ -286,7 +286,7 @@ All configuration is environment-driven.
 | `JOJOBOT_JWKS_URI` | Explicit JWKS URI | discovered from issuer |
 | `JOJOBOT_ALLOW_NO_AUTH` | Set to `1` to run **without auth** (dev only) | unset |
 | `JOJOBOT_ALLOWED_SUBJECTS` | Optional comma-separated `sub` allowlist (requires auth) | unset = any valid token |
-| `JOJOBOT_OUTLINE_URL` / `JOJOBOT_OUTLINE_TOKEN` | The Outline instance Memory fronts, and the store mail and sessions are carried out of | unset |
+| `JOJOBOT_OUTLINE_URL` / `JOJOBOT_OUTLINE_TOKEN` | The Outline instance Memory fronts | unset |
 | `STATE_DIRECTORY` | Where the SQL store keeps its data — **required**; the service manager sets it | unset |
 | `JOJOBOT_STORE_PORT` | Loopback port the SQL store serves on | `3307` |
 
@@ -303,16 +303,13 @@ non-loopback bind. This turns a dropped-secret misconfiguration into a startup
 error rather than a silently unauthenticated `/mcp`.
 
 *No store to serve from.* Mail and sessions live in the SQL store, so the server
-refuses to start without a state directory, or when the store does not come up,
-or when the one-time carry of mail and sessions into it will not say the records
-came across whole. A server that started anyway would answer with an empty board
-and present that emptiness as the truth. Each refusal names the condition it
-found; the one that needs a person is a carry recorded as begun and never
-verified, which means rows landed and nothing checked them.
+refuses to start without a state directory, or when the store does not come up.
+A server that started anyway would answer with an empty board and present that
+emptiness as the truth. Each refusal names the condition it found.
 
 A missing `JOJOBOT_OUTLINE_URL` is **not** one of these. With no Outline wired
-there is nothing to carry and no memory to serve: the server starts, `search`
-and `capture` refuse loudly, and mail and sessions work from an empty store.
+there is no memory to serve: the server starts, `search` and `capture` refuse
+loudly, and mail and sessions work from the store as usual.
 
 ## Auth model
 
