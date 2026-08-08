@@ -395,32 +395,6 @@ pub async fn run(
         }
     }
 
-    // **The counters have to clear what was carried.** Ids come across as they
-    // are, so a counter still at zero would mint an id a carried record already
-    // wears and the next write would collide on a record nobody could see.
-    advance(
-        &mut tx,
-        "message",
-        highest(messages.iter().map(|m| m.id.as_str())),
-    )
-    .await?;
-    advance(
-        &mut tx,
-        "session",
-        highest(sessions.iter().map(|s| s.id.as_str())),
-    )
-    .await?;
-    advance(
-        &mut tx,
-        "entry",
-        highest(
-            sessions
-                .iter()
-                .flat_map(|s| s.entries.iter().map(|e| e.id.as_str())),
-        ),
-    )
-    .await?;
-
     tx.commit().await.map_err(target)?;
 
     // **Read back through the new store's own read path**, not the rows just
@@ -564,37 +538,6 @@ pub async fn carry_over(
             Err(refused) => Carryover::Refused(refused),
         },
     }
-}
-
-/// The largest numeric id among those carried, or zero.
-///
-/// Ids are a counter rendered decimal. One that is not a number belongs to no
-/// counter this store mints from, so it cannot collide and does not raise it.
-fn highest<'a>(ids: impl Iterator<Item = &'a str>) -> i64 {
-    ids.filter_map(|id| id.parse::<i64>().ok())
-        .max()
-        .unwrap_or(0)
-}
-
-/// Raise a counter so it will never mint an id a carried record already wears.
-async fn advance(
-    tx: &mut Transaction<'_, MySql>,
-    kind: &str,
-    highest: i64,
-) -> Result<(), HandoverError> {
-    if highest <= 0 {
-        return Ok(());
-    }
-    sqlx::query(
-        "INSERT INTO minted (kind, counter) VALUES (?, ?)
-         ON DUPLICATE KEY UPDATE counter = GREATEST(counter, VALUES(counter))",
-    )
-    .bind(kind)
-    .bind(highest)
-    .execute(&mut **tx)
-    .await
-    .map_err(target)?;
-    Ok(())
 }
 
 /// Compare every carried record against what the new store hands back.
@@ -1003,15 +946,6 @@ mod tests {
         held
     }
 
-    /// The id counters, by name and value, in an order a comparison can rely
-    /// on. **The one table the handover writes that no guard asks about.**
-    async fn counters(pool: &MySqlPool) -> Vec<(String, i64)> {
-        sqlx::query_as("SELECT kind, counter FROM minted ORDER BY kind")
-            .fetch_all(pool)
-            .await
-            .expect("the counters are readable")
-    }
-
     /// The old board, with a message in **each** state and a session with a
     /// chronology on it.
     ///
@@ -1218,96 +1152,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["hand-edited"],
             "the unreadable card is reported as not carried: {report:?}"
-        );
-
-        // **The counters cleared what was carried — ALL THREE of them.**
-        // Ids come across as they are, so a counter left where it was mints an
-        // id a carried record already wears and the first write after the
-        // cutover collides on a record nobody can see.
-        //
-        // Each counter is exercised by writing the thing it mints for. Proving
-        // one of the three proves nothing about the other two: they are three
-        // separate rows named by three separate strings, and a misspelling in
-        // any of them is silent until the first write lands on top of a carried
-        // record.
-        let posted = mail
-            .post_message(NewMessage {
-                mailbox: MailboxName("gamma".into()),
-                body: "the first message written after the move".into(),
-                subject: None,
-                sender: "gamma".into(),
-                sent_at: at(9),
-                in_reply_to: None,
-            })
-            .await
-            .expect("the store takes a new message after the handover")
-            .written()
-            .expect("not blocked");
-        assert!(
-            mail.scan_messages()
-                .await
-                .expect("scan ok")
-                .iter()
-                .filter(|m| m.id == posted.id)
-                .count()
-                == 1,
-            "the new message got an id nothing else wears"
-        );
-
-        // The session counter, and the entry counter under it.
-        let fresh = sessions
-            .begin(NewSession {
-                bot: EntityId("bot:gamma".into()),
-                sid: Sid("efgh".into()),
-                focus: "the first run after the move".into(),
-                started_at: at(9),
-            })
-            .await
-            .expect("the store takes a new session after the handover");
-        let carried_ids: Vec<String> = sessions
-            .all_sessions()
-            .await
-            .expect("list ok")
-            .iter()
-            .map(|s| s.id.to_string())
-            .collect();
-        assert_eq!(
-            carried_ids
-                .iter()
-                .filter(|id| *id == &fresh.id.to_string())
-                .count(),
-            1,
-            "the new session got an id nothing else wears: {carried_ids:?}"
-        );
-
-        let appended = sessions
-            .append(
-                &fresh.id,
-                NewEntry::manual("the first beat after the move", at(10)),
-            )
-            .await
-            .expect("the store takes a new entry after the handover");
-        let carried = sessions.all_sessions().await.expect("list ok");
-        // **Beyond every carried id, not merely different from them.** An
-        // absence of collision can be luck — two id shapes that happen not to
-        // overlap — and luck is not what the counter is for.
-        //
-        // Only ids that are numbers count here, because only those come from a
-        // counter this store mints from. A source whose entry ids wear a prefix
-        // contributes none, the counter is left at zero, and nothing can
-        // collide because this store never mints that shape. That is why
-        // `highest` ignores them rather than trying to read a number out.
-        let numeric = |id: &str| id.parse::<i64>().ok();
-        let carried_entries: Vec<i64> = carried
-            .iter()
-            .flat_map(|s| s.entries.iter())
-            .filter(|e| e.id != appended.id)
-            .filter_map(|e| numeric(e.id.as_str()))
-            .collect();
-        let minted = numeric(appended.id.as_str()).expect("this store mints numeric entry ids");
-        assert!(
-            carried_entries.iter().all(|carried| *carried < minted),
-            "the new entry's id is beyond every carried one: {minted} against {carried_entries:?}"
         );
 
         // The chronology came across in order, read through the new store.
@@ -2522,16 +2366,10 @@ mod tests {
     /// instead, which sends them looking for a squatter that is their own
     /// half-done work.
     ///
-    /// **What the repair leaves behind, and why it does not matter.** The id
-    /// counters in `minted` were committed with the rows and no statement above
-    /// clears them — and `must_be_empty` never looks at that table, so nothing
-    /// would notice if they had been. It is safe in the direction it fails:
-    /// `advance` raises a counter with `GREATEST`, so a carry over the same
-    /// board leaves them where they already were, and a counter that is too
-    /// high mints an id nothing wears while one that is too low mints an id
-    /// something does. Asserted below rather than reasoned about, because it is
-    /// the one thing about this repair that is true by accident of one
-    /// operator.
+    /// **The id counters are not part of the repair.** The handover writes
+    /// nothing to `minted`: the ids it carries come from the old store and wear
+    /// its prefixes, so they belong to no counter this store mints from and
+    /// cannot collide with one. The five statements are the whole of it.
     #[tokio::test]
     async fn the_halfway_state_is_repaired_by_clearing_what_was_carried_and_its_record() {
         let (old_mail, old_sessions) = old_board().await;
@@ -2560,18 +2398,6 @@ mod tests {
             matches!(wedged, Carryover::Refused(HandoverError::Halfway { .. })),
             "a person is only needed because the boot cannot get out of this itself: {wedged:?}"
         );
-        let counters_before = counters(store.pool()).await;
-        assert_eq!(
-            counters_before,
-            vec![
-                ("entry".to_string(), 3),
-                ("message".to_string(), 3),
-                ("session".to_string(), 1)
-            ],
-            "the interrupted run committed its counters with its rows — an empty table here \
-             would make the comparisons below true of nothing"
-        );
-
         // ---- THE REPAIR ------------------------------------------------------
         for statement in [
             "DELETE FROM journal_entry",
@@ -2604,16 +2430,6 @@ mod tests {
             None,
             "and the record went with them, so the next boot is a first boot"
         );
-        // **And they leave the counters standing**, which is the one thing the
-        // runbook does not undo and no guard would notice if it did. Pinned
-        // here rather than in the prose, because it is the whole of what makes
-        // the repair safe to run without touching that table.
-        assert_eq!(
-            counters(store.pool()).await,
-            counters_before,
-            "the repair does not clear `minted`, and `must_be_empty` never asks about it"
-        );
-
         // ---- THE NEXT BOOT ---------------------------------------------------
         let repaired =
             carry_over(&old_mail, &old_sessions, &healthy, &sessions, store.pool()).await;
@@ -2670,42 +2486,6 @@ mod tests {
             "and its chronology still says what happened first"
         );
 
-        // The re-carry raised them to the same place it had raised them the
-        // first time, so the leftover made no difference either way — which is
-        // the direction that has to be true for the runbook to be safe.
-        assert_eq!(
-            counters(store.pool()).await,
-            counters_before,
-            "the carry over the same board puts the counters where they already were"
-        );
-
-        // And the only thing they are for: the first write after the repair
-        // lands on an id nothing carried wears.
-        let posted = healthy
-            .post_message(NewMessage {
-                mailbox: MailboxName("gamma".into()),
-                body: "the first message written after the repair".into(),
-                subject: None,
-                sender: "gamma".into(),
-                sent_at: at(9),
-                in_reply_to: None,
-            })
-            .await
-            .expect("the repaired store takes a message")
-            .written()
-            .expect("not blocked");
-        assert_eq!(
-            healthy
-                .scan_messages()
-                .await
-                .expect("scan ok")
-                .iter()
-                .filter(|m| m.id == posted.id)
-                .count(),
-            1,
-            "the id it minted is one no carried message already wore"
-        );
-
         store.stop().await;
     }
 
@@ -2719,9 +2499,11 @@ mod tests {
     /// of those they are looking at.
     ///
     /// The condition is produced the way a real one arrives: a target whose
-    /// schema is not the shape this build writes to. Dropping a table one of the
-    /// carrying statements needs is the smallest version of a restored or
-    /// hand-repaired data directory.
+    /// schema is not the shape this build writes to. Dropping a column one of
+    /// the carrying statements binds is the smallest version of a restored or
+    /// hand-repaired data directory. It is a column of the LAST kind carried, so
+    /// every other kind is already written when the refusal lands and the
+    /// rollback below has something to undo.
     ///
     /// **And it is the RETRYABLE failure, which is the claim the whole
     /// no-fatal-branch reasoning rests on.** [`HandoverError::Target`] can only
@@ -2746,10 +2528,10 @@ mod tests {
             .await
             .expect("a database of this case's own");
         migrate::run(&broken).await.expect("the schema");
-        sqlx::raw_sql("DROP TABLE minted")
+        sqlx::raw_sql("ALTER TABLE journal_entry DROP COLUMN beat")
             .execute(&broken)
             .await
-            .expect("the counter table goes");
+            .expect("the column goes");
 
         let outcome = run(
             &old_mail,
@@ -2764,7 +2546,7 @@ mod tests {
             panic!("a target that will not take the rows is its own failure: {outcome:?}");
         };
         assert!(
-            why.contains("minted"),
+            why.contains("beat"),
             "the refusal names what the store refused, so a person can act on the log line \
              alone: {why:?}"
         );
@@ -2789,7 +2571,7 @@ mod tests {
         assert!(report.whole(), "every kind came through whole: {report:?}");
 
         // **And the refused target is left EMPTY.** Every insert this run made
-        // went into the transaction the counter statement killed, so the
+        // went into the transaction the chronology statement killed, so the
         // rollback took all of them with it. Counted through ordinary queries
         // rather than through `must_be_empty`, which is the guard being checked
         // rather than a witness to it.
@@ -2811,13 +2593,13 @@ mod tests {
         );
 
         // **The retry, which is what the restart actually does.** The cause is
-        // repaired — the counter table put back with the statement that makes
-        // it — and the boot runs again against THE SAME target, through the
-        // verb a boot calls.
-        sqlx::raw_sql(include_str!("../../migrations/0003_minted.sql"))
+        // repaired — the column put back in the shape its migration gives it —
+        // and the boot runs again against THE SAME target, through the verb a
+        // boot calls.
+        sqlx::raw_sql("ALTER TABLE journal_entry ADD COLUMN beat VARCHAR(191) NULL")
             .execute(&broken)
             .await
-            .expect("the counter table is put back");
+            .expect("the column is put back");
 
         let retried = carry_over(
             &old_mail,

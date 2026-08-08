@@ -1435,17 +1435,15 @@ async fn the_handover_carries_a_real_board_across() {
 
     // ---- the first write of each kind lands on an id nothing carried wears -
     //
-    // ⚠️ **Against THIS source the counters are a no-op, and that is safe by
-    // shape rather than by the advance working.** The document store mints
-    // `gamma-1`, `e1` — prefixed — and this store mints bare decimals, so
-    // `highest` reads none of them, no counter moves, and nothing can collide
-    // because the two shapes are disjoint.
+    // **The property holds by the shape of the ids, and this is where that is
+    // watched.** The document store mints `gamma-1`, `e1` — prefixed — and this
+    // store mints bare decimals, so the two shapes are disjoint and a carried id
+    // is one this store's counters will never reach.
     //
-    // So the assertions below cannot fail for an Outline source. They are here
-    // because they are the property the cutover actually needs, and they would
-    // fail the day either side's id shape changed. **The counter logic itself is
-    // proven in the fast suite**, where the source mints numeric ids and each of
-    // the three counters reddens when its kind is misspelled.
+    // It is asserted against the real source rather than against a double,
+    // because the shape is the source's and a double is free to mint whatever it
+    // likes. These go red the day either side's id shape changes, which is the
+    // day the cutover would start writing on top of a carried record.
     let fresh_message = new_mail
         .post_message(NewMessage {
             mailbox: MailboxName("gamma".into()),
