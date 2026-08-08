@@ -317,6 +317,15 @@ A missing `JOJOBOT_OUTLINE_URL` is **not** one of these. Outline is only the
 source a first boot carries records out of, so with none wired there is simply
 nothing to carry and the server starts on an empty store.
 
+⚠️ *Upgrading a server that has never carried.* **A store that has not taken its
+records in can no longer be given them: the code that moved them is gone, and
+nothing will tell you.** A server upgraded straight past that point starts
+cleanly on an empty schema and answers as though it knows nothing — there is no
+error, because the thing that would have noticed is what was removed. **An
+instance still holding its records elsewhere must run a build that still carries
+them, once, before taking one that does not.** A server that has already carried,
+or one that never had anything to carry, is unaffected.
+
 *A carry that did not finish.* The first boot after an upgrade moves the records
 in and then serves from them, in that order. If the read-back fails the boot
 dies rather than serving — the store is then holding rows nothing has checked,
