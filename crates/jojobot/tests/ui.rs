@@ -40,6 +40,18 @@ mod support;
 const CLIENT_ID: &str = "jojobot-ui";
 const READER: &str = "sub-reader";
 
+/// A body past the budget the digest strategy declares, with a distinct opening
+/// and a distinct last line — so a page can be asserted to carry both the
+/// summary and the whole of it.
+const LONG_BODY: &str = "The survey needs a second pair of eyes on the north section, because the \
+counts taken there disagree with the ones from last season and nobody has said which of them is \
+right. This closing sentence is the tail of the long body.";
+
+/// The same, for a chronology beat.
+const LONG_BEAT: &str = "Set out to reconcile the two counts and found that the disagreement is in \
+the north section alone, which narrows it to one afternoon of records rather than the whole \
+season. This closing sentence is the tail of the long beat.";
+
 /// A fixed instant, so nothing here reads a clock.
 const FIXED_INSTANT: jiff::Timestamp = jiff::Timestamp::constant(1_780_000_000, 0);
 
@@ -256,6 +268,18 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
         .await
         .expect("the message is posted");
 
+    mailboxes
+        .post_message(NewMessage {
+            mailbox: MailboxName("otto".to_string()),
+            body: LONG_BODY.to_string(),
+            subject: Some("The north section counts".to_string()),
+            sender: "bot:gamma".to_string(),
+            sent_at: FIXED_INSTANT,
+            in_reply_to: None,
+        })
+        .await
+        .expect("the long message is posted");
+
     let sessions = Arc::new(InMemorySessions::new());
     let session = sessions
         .begin(NewSession {
@@ -273,6 +297,10 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
         )
         .await
         .expect("the beat is recorded");
+    sessions
+        .append(&session.id, NewEntry::manual(LONG_BEAT, FIXED_INSTANT))
+        .await
+        .expect("the long beat is recorded");
 
     Board {
         memory,
@@ -640,6 +668,18 @@ fn section<'a>(body: &'a str, id: &str) -> &'a str {
         Some(end) => &rest[..end],
         None => rest,
     }
+}
+
+/// The text of the one folded block in this chunk of a page.
+fn summary_of(chunk: &str) -> &str {
+    let opened = chunk
+        .split_once("<summary>")
+        .unwrap_or_else(|| panic!("nothing is folded here: {chunk}"))
+        .1;
+    opened
+        .split_once("</summary>")
+        .unwrap_or_else(|| panic!("a summary that never closes: {chunk}"))
+        .0
 }
 
 /// Fetch a page as a logged-in browser.
@@ -1016,11 +1056,12 @@ async fn reading_a_bot_page_takes_no_delivery() {
         .scan_messages()
         .await
         .expect("the board is readable");
-    assert_eq!(after.len(), 1, "the message is still there");
-    assert_eq!(
-        after[0].state,
-        MessageState::New,
-        "a message nobody has taken is still waiting after the page was served"
+    assert_eq!(after.len(), 2, "the mail is still there");
+    assert!(
+        after
+            .iter()
+            .all(|message| message.state == MessageState::New),
+        "mail nobody has taken is still waiting after the page was served: {after:?}"
     );
 
     // Same guarantee on the other rail: rendering a bot's runs must not begin
@@ -1035,6 +1076,86 @@ async fn reading_a_bot_page_takes_no_delivery() {
         runs[0].state,
         SessionState::Active,
         "a run still going is still going after the page was served"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn a_long_body_is_collapsed_to_its_opening_and_still_whole_on_the_page() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _board) =
+        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let body = read(&client, addr, "/bot:otto/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let mail = section(&body, "mailbox");
+
+    // Collapsed: the ellipsis is what the digest strategy adds when it cuts, so
+    // a summary carrying one is a body shown by its opening.
+    let summary = summary_of(mail);
+    assert!(
+        summary.contains('…'),
+        "a long body is folded to the opening the digest strategy renders: {mail}"
+    );
+    assert!(
+        summary.contains("bytes"),
+        "a folded block states how much of it there is: {mail}"
+    );
+    // And whole: the full text is on this page, not a fetch away. Without this
+    // the assertion above passes against a page that threw the body out.
+    assert!(
+        mail.contains("This closing sentence is the tail of the long body."),
+        "the whole body stays on the page: {mail}"
+    );
+    // The pairing that makes both mean something: the short message is NOT
+    // collapsed, so a page that folded everything would fail here.
+    assert_eq!(
+        mail.matches("<details>").count(),
+        1,
+        "only the body that outgrew the budget is collapsed: {mail}"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn a_long_beat_is_collapsed_the_same_way_as_a_long_body() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _board) =
+        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let body = read(&client, addr, "/bot:otto/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    // A chronology entry is somebody's writing at the same lengths a message
+    // body reaches, so it is folded by the same rule rather than a second one.
+    let chronology = body
+        .split_once("<h3>")
+        .expect("the chronology is on the page")
+        .1;
+    assert!(
+        summary_of(chronology).contains('…'),
+        "a long beat is folded to its opening: {chronology}"
+    );
+    assert!(
+        chronology.contains("This closing sentence is the tail of the long beat."),
+        "the whole beat stays on the page: {chronology}"
+    );
+    assert_eq!(
+        chronology.matches("<details>").count(),
+        1,
+        "only the beat that outgrew the budget is collapsed: {chronology}"
     );
     ct.cancel();
 }

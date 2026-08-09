@@ -10,6 +10,7 @@ use axum::{
 };
 
 use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact};
+use jojobot_domain::text;
 
 use crate::AppState;
 use crate::ui::tree;
@@ -253,14 +254,14 @@ async fn mailbox_section(state: &AppState, bot: &EntityId) -> String {
         for message in mail {
             out.push_str(&format!(
                 "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n\
-                 <tr><td colspan=\"6\"><pre>{}</pre></td></tr>\n",
+                 <tr><td colspan=\"6\">{}</td></tr>\n",
                 escape(message.id.as_str()),
                 escape(message.state.as_token()),
                 escape(&message.sender),
                 escape(message.subject.as_deref().unwrap_or("")),
                 escape(&message.sent_at.to_string()),
                 escape(message.notes.as_deref().unwrap_or("")),
-                escape(&message.body),
+                block(&message.body),
             ));
         }
         out.push_str("</table>\n");
@@ -312,15 +313,44 @@ async fn sessions_section(state: &AppState, bot: &EntityId) -> String {
         ));
         for entry in &run.entries {
             out.push_str(&format!(
-                "<tr><td>{}</td><td>{}</td><td><pre>{}</pre></td></tr>\n",
+                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>\n",
                 escape(&entry.at.to_string()),
                 escape(entry.beat.as_deref().unwrap_or("")),
-                escape(&entry.text),
+                block(&entry.text),
             ));
         }
         out.push_str("</table>\n");
     }
     out
+}
+
+/// A block somebody wrote — whole, and folded to its opening when it is long.
+///
+/// **Nothing is left out.** The full text is inside the element, on this page:
+/// a window for reading your own instance that dropped the end of a record
+/// would be the wrong tool, and the fold is about scanning a page rather than
+/// about what it carries. So there is no marker saying where to get the rest —
+/// the rest is here.
+///
+/// **The opening and the size are jojobot's existing answers, not new ones.**
+/// `BODY_DIGEST` is the strategy every other surface uses for the opening of a
+/// body it is not shipping up front, and the byte count beside it is what
+/// `body_bytes` carries. A second convention invented in a rendering pass would
+/// be a second answer to how much of a body is enough to recognize it by.
+fn block(text: &str) -> String {
+    let digest = text::BODY_DIGEST.render(text);
+    // The ellipsis is what the strategy appends when it cuts, so this asks the
+    // discipline whether the text is long rather than reading its budget a
+    // second time here.
+    if !digest.ends_with('…') {
+        return format!("<pre>{}</pre>", escape(text));
+    }
+    format!(
+        "<details><summary>{} ({} bytes)</summary><pre>{}</pre></details>",
+        escape(&digest),
+        text.len(),
+        escape(text),
+    )
 }
 
 /// A section that could not be read.
