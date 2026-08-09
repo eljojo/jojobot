@@ -305,6 +305,13 @@ name roles and never an operator.
 - **Strict TDD.** A feature is proven by an automated test; every bug fix
   starts from a failing test you watched fail FIRST. A manual run proves
   nothing.
+- **Every feature appears in a user story.** A feature that no story exercises
+  is a finding. This is a second bar, not the same one: a unit test proves the
+  feature works, and a story proves the feature can be reached through the
+  served surface. A capability can hold full unit coverage and still be
+  invisible to every session that did not already know it was there. **A call
+  with no assertion is not coverage** — a beat asserts what came back, what
+  changed, or what a later read returns.
 - **Commits: one per coherent problem.** A milestone lands as a handful of
   commits — never one per file or checklist item, never dozens. **A fix and
   the test that proves it are ONE problem**, however a task listed them.
