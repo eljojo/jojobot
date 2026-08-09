@@ -206,6 +206,7 @@ pub(crate) async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
                 brief: None,
                 skill: None,
                 resume: None,
+                sid: None,
             }))
             .await
             .expect("the boot call is ok"),
@@ -225,6 +226,7 @@ pub(crate) async fn boot_answering(
                 brief: None,
                 skill: None,
                 resume: Some(answer.into()),
+                sid: None,
             }))
             .await
             .expect("the boot call is ok"),

@@ -34,6 +34,15 @@ pub struct OrientArgs {
     /// that are.
     #[serde(default)]
     pub skill: Option<String>,
+    /// The session handle you are already carrying, if you have one — the same
+    /// `sid` that rides every other call you make. Leave it off when you have
+    /// none: this door is where one comes from, so a first boot has nothing to
+    /// pass. **A handle is never turned away here**, whatever became of it: the
+    /// answer says whether the one you carried still addresses your session, so
+    /// a session that came back to a server it does not recognise learns that
+    /// in the same call it re-orients with.
+    #[serde(default)]
+    pub sid: Option<String>,
 }
 
 /// **The one orienting door**, with or without an identity: the world-model
@@ -82,15 +91,24 @@ impl Jojobot {
                        sweep and that repair are the only things a boot writes. Name no bot at \
                        all and this is an orientation \
                        preview: read-only, the world and the snapshot, no identity and no \
-                       session. THIS DOOR TAKES NO SESSION HANDLE — it is what hands one out. \
-                       That handle rides every verb after it, reads included, because it is how \
-                       jojobot knows which bot is asking."
+                       session. THIS DOOR IS WHERE A SESSION HANDLE COMES FROM, and it takes one \
+                       too: that handle rides every verb after it, reads included, because it is \
+                       how jojobot knows which bot is asking — and this call is one of them. Pass \
+                       `sid` if you are already carrying one and the answer says whether it still \
+                       addresses your session; leave it off on a first boot, when you have none. \
+                       A handle is never turned away here, whatever became of it: this is the \
+                       door you come back to."
     )]
     pub(crate) async fn start_here(
         &self,
         Parameters(args): Parameters<OrientArgs>,
     ) -> Result<CallToolResult, McpError> {
         let bot = named_bot(args.bot.as_deref())?;
+        // **The handle a caller brought is answered, never declined** — this
+        // door is the way back, so a caller whose handle stopped addressing
+        // anything is the one who most needs it to open. See
+        // [`Jojobot::standing`].
+        let carried = self.standing(args.sid.as_deref());
         let resume = args
             .resume
             .as_deref()
@@ -144,6 +162,7 @@ impl Jojobot {
                         "when_to_use": skill.when_to_use,
                         "body": skill.body,
                     },
+                    "carried_session": carried,
                 })),
                 None => Ok(handle_declined(
                     wanted,
@@ -161,7 +180,7 @@ impl Jojobot {
                 )),
             };
         }
-        self.orient(bot.as_ref(), args.brief.unwrap_or(false), resume)
+        self.orient(bot.as_ref(), args.brief.unwrap_or(false), resume, carried)
             .await
     }
 }
@@ -195,6 +214,7 @@ mod tests {
                 brief: None,
                 skill: Some("evidence".into()),
                 resume: Some("jm7z".into()),
+                sid: None,
             }))
             .await
             .expect("start_here ok");
@@ -216,6 +236,7 @@ mod tests {
                 brief: None,
                 skill: Some("evidence".into()),
                 resume: Some("jm7z".into()),
+                sid: None,
             }))
             .await
             .expect("start_here ok");
@@ -227,6 +248,107 @@ mod tests {
                 .unwrap_or_default()
                 .contains("two calls"),
             "the skill guard must answer this one: {body}"
+        );
+    }
+
+    /// **The instructed mid-session fetch, with the handle in hand.**
+    ///
+    /// This door's own description sends a booted session back for a procedure
+    /// by name, and a booted session is carrying its `sid` — the essay tells it
+    /// to, on writes and reads alike. So the fetch takes one, hands back the
+    /// body, and says what the handle is worth on the way past.
+    ///
+    /// Paired with what the fetch must NOT become: reading a procedure is a
+    /// read, so it still starts nothing, handle or no handle.
+    #[tokio::test]
+    async fn a_skill_is_fetched_with_the_handle_the_session_is_carrying() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let live = booted(&jojobot, "gamma").await;
+
+        let fetched = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    bot: None,
+                    brief: None,
+                    skill: Some("evidence".into()),
+                    resume: None,
+                    sid: Some(live.clone()),
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert!(
+            fetched["skill"]["body"]
+                .as_str()
+                .is_some_and(|body| !body.is_empty()),
+            "the procedure comes back to the session that asked for it: {fetched}"
+        );
+        assert_eq!(fetched["carried_session"], "held", "{fetched}");
+        assert!(
+            store
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok")
+                .is_empty(),
+            "a fetch is a read: it begins nothing, whoever asks"
+        );
+    }
+
+    /// **The door never turns a handle away, and says what the one you carried
+    /// is worth.**
+    ///
+    /// This is the door a session comes back to when the surface stops looking
+    /// like the one it booted on — and every handle is dead after a restart, so
+    /// refusing one here would shut the way back on exactly the caller that
+    /// needs it, in the words of the call it just made.
+    ///
+    /// Three answers, each pairing with the others: a live handle is `held`, a
+    /// handle nothing is holding is `gone` and the answer still lands whole,
+    /// and a call carrying none says nothing about one. Without the first this
+    /// passes against a door that says `gone` to everything.
+    #[tokio::test]
+    async fn the_door_says_what_the_handle_you_carried_is_worth() {
+        let jojobot = with_sessions(Arc::new(InMemorySessions::new()));
+        make_bot(&jojobot, "gamma").await;
+        let live = booted(&jojobot, "gamma").await;
+
+        let orienting = async |sid: Option<String>| {
+            json_of(
+                &jojobot
+                    .start_here(Parameters(OrientArgs {
+                        bot: None,
+                        brief: Some(true),
+                        skill: None,
+                        resume: None,
+                        sid,
+                    }))
+                    .await
+                    .expect("start_here ok"),
+            )
+        };
+
+        let held = orienting(Some(live.clone())).await;
+        assert_eq!(held["carried_session"], "held", "{held}");
+
+        // Well-formed and never minted — the shape every handle takes once the
+        // process holding it has gone.
+        let lost = orienting(Some("2gf7".into())).await;
+        assert_eq!(lost["carried_session"], "gone", "{lost}");
+        assert_ne!(
+            lost["status"], "blocked",
+            "the door a lost session comes back to must not turn it away: {lost}"
+        );
+        assert_eq!(
+            lost["snapshot"]["entities"]["available"], true,
+            "…and must answer whole, which is what it was called for: {lost}"
+        );
+
+        let anonymous = orienting(None).await;
+        assert!(
+            anonymous["carried_session"].is_null(),
+            "a call carrying no handle is told nothing about one: {anonymous}"
         );
     }
 
@@ -256,6 +378,7 @@ mod tests {
                 brief: None,
                 skill: None,
                 resume: None,
+                sid: None,
             }))
             .await
             .expect("start_here ok");
@@ -329,6 +452,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     resume: None,
+                    sid: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -343,6 +467,7 @@ mod tests {
                     brief: Some(true),
                     skill: None,
                     resume: None,
+                    sid: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -399,6 +524,7 @@ mod tests {
                         brief: None,
                         skill: None,
                         resume: None,
+                        sid: None,
                     }))
                     .await
                     .expect("start_here ok"),
@@ -410,6 +536,7 @@ mod tests {
                         brief: Some(true),
                         skill: None,
                         resume: None,
+                        sid: None,
                     }))
                     .await
                     .expect("start_here ok"),
@@ -455,6 +582,7 @@ mod tests {
                     brief: Some(true),
                     skill: None,
                     resume: None,
+                    sid: None,
                 }))
                 .await
                 .expect("boot ok"),
@@ -476,6 +604,7 @@ mod tests {
                 brief: None,
                 skill: None,
                 resume: None,
+                sid: None,
             }))
             .await
             .expect("orientation still lands");
@@ -503,6 +632,7 @@ mod tests {
                 brief: None,
                 skill: None,
                 resume: Some("new".into()),
+                sid: None,
             }))
             .await
             .expect("a misuse is an answer, not a protocol failure");
@@ -544,6 +674,7 @@ mod tests {
                 brief: None,
                 skill: None,
                 resume: None,
+                sid: None,
             }))
             .await
             .expect_err("another kind must be refused");
@@ -579,6 +710,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     resume: None,
+                    sid: None,
                 }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
@@ -595,6 +727,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     resume: None,
+                    sid: None,
                 }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
@@ -658,6 +791,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     resume: None,
+                    sid: None,
                 }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),

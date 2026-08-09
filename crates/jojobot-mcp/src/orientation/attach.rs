@@ -345,6 +345,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     resume: None,
+                    sid: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -743,6 +744,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     resume: Some(handle.clone()),
+                    sid: None,
                 }))
                 .await
                 .expect("a dead handle is an answer, not a protocol failure"),
@@ -762,6 +764,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     resume: Some("k3fo".into()),
+                    sid: None,
                 }))
                 .await
                 .expect("an unreadable handle is an answer too"),
@@ -787,6 +790,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     resume: Some(gammas.clone()),
+                    sid: None,
                 }))
                 .await
                 .expect("somebody else's handle is an answer, not a protocol failure"),
@@ -1033,6 +1037,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     resume: Some(held.as_str().into()),
+                    sid: None,
                 }))
                 .await
                 .expect("a wrapped run is an answer, not a protocol failure"),
@@ -1319,6 +1324,7 @@ mod tests {
                 brief: None,
                 skill: None,
                 resume: None,
+                sid: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {
                 entry: "the first beat".into(),
@@ -1395,6 +1401,7 @@ mod tests {
                 brief: None,
                 skill: None,
                 resume: None,
+                sid: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {
                 entry: "the first beat, which is what mints the card".into(),

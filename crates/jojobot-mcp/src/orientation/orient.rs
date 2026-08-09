@@ -16,6 +16,9 @@ impl Jojobot {
         bot: Option<&EntityId>,
         brief: bool,
         resume: Option<&str>,
+        // What the handle this caller arrived with is worth — from
+        // [`Jojobot::standing`], and `Null` when they arrived with none.
+        carried: serde_json::Value,
     ) -> Result<CallToolResult, McpError> {
         // The entity index is read ONCE for the whole answer. Three parts of
         // a boot need it — the counts by kind, which boxes the caller drains,
@@ -169,6 +172,12 @@ impl Jojobot {
             "snapshot": snapshot,
             "identity": identity,
             "session": session,
+            // **The handle you arrived with, and the one this call hands you,
+            // are two different things** — so they are two fields. `session` is
+            // the run this door just started or picked up; this says what the
+            // handle you were already carrying is worth, which is what a caller
+            // that came back to a server it does not recognise is really asking.
+            "carried_session": carried,
         }))
     }
 }
@@ -347,6 +356,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     resume: None,
+                    sid: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -427,6 +437,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     resume: None,
+                    sid: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -491,6 +502,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     resume: None,
+                    sid: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -612,6 +624,7 @@ mod skills_are_indexed_not_shipped {
                     brief: None,
                     resume: None,
                     skill: None,
+                    sid: None,
                 }))
                 .await
                 .expect("start_here answers"),
@@ -666,6 +679,7 @@ mod skills_are_indexed_not_shipped {
                     brief: None,
                     resume: None,
                     skill: Some("recommend".into()),
+                    sid: None,
                 }))
                 .await
                 .expect("start_here answers"),
@@ -698,6 +712,7 @@ mod skills_are_indexed_not_shipped {
                     brief: None,
                     skill: Some("recommend".into()),
                     resume: None,
+                    sid: None,
                 }))
                 .await
                 .expect("start_here answers"),
@@ -736,6 +751,7 @@ mod skills_are_indexed_not_shipped {
                     brief: None,
                     resume: None,
                     skill: Some("recomend".into()),
+                    sid: None,
                 }))
                 .await
                 .expect("start_here answers"),

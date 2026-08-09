@@ -166,23 +166,54 @@ mod tests {
         assert!(advice.contains("provenance"), "{advice}");
     }
 
-    /// **A verb that takes nothing says so**, rather than offering an empty
-    /// list of arguments to choose from. `ping` is the one verb with no
-    /// parameters at all, so an empty property set means "takes nothing" and
-    /// never "takes anything".
+    /// **The two doors reached without an identity implement the handle**, so
+    /// this check lets it through. A session is taught to carry its `sid` on
+    /// every call, reads included, and these two are the calls it makes most:
+    /// the door it re-enters to fetch a procedure, and the probe it reaches for
+    /// when the surface looks wrong. Refusing the caller that does what it was
+    /// told is the shape this check exists to prevent, not to produce.
+    ///
+    /// Paired with the negative it rests on: an argument neither door has is
+    /// still refused, and the refusal names the handle among the ones they take.
     #[tokio::test]
-    async fn a_verb_with_no_arguments_refuses_every_one_of_them() {
+    async fn the_doors_reached_without_an_identity_implement_the_handle() {
         let jojobot = handler();
-        let advice = advice(
-            jojobot.unimplemented_arguments(&call("ping", serde_json::json!({"sid": "any"}))),
-        );
-        assert!(advice.contains("no arguments"), "{advice}");
-        assert!(
-            jojobot
-                .unimplemented_arguments(&call("ping", serde_json::json!({})))
-                .is_none(),
-            "a probe that sends nothing is not refused"
-        );
+        for door in ["start_here", "ping"] {
+            assert!(
+                jojobot
+                    .unimplemented_arguments(&call(door, serde_json::json!({"sid": "any"})))
+                    .is_none(),
+                "{door} turned back the handle every session is told to carry"
+            );
+            let advice = advice(
+                jojobot.unimplemented_arguments(&call(door, serde_json::json!({"session": "any"}))),
+            );
+            assert!(
+                advice.contains("session") && advice.contains("sid"),
+                "{door}: the refusal names what it did not understand, and the handle it does \
+                 take: {advice}"
+            );
+        }
+    }
+
+    /// **The wording for a verb that takes nothing has no verb behind it any
+    /// more**, and this is where that is said out loud rather than a test
+    /// quietly deleted.
+    ///
+    /// `ping` was the one verb publishing no properties at all, so the refusal
+    /// it earned — "it takes no arguments at all" — was the only exercise that
+    /// branch had. It implements the handle now. The branch stays for the next
+    /// verb that takes nothing, and this fails on the day there is one, which
+    /// is the day the refusal above wants writing again.
+    #[test]
+    fn no_served_verb_publishes_an_empty_argument_schema() {
+        for tool in Jojobot::tool_router().list_all() {
+            assert!(
+                !published(&tool.input_schema).is_empty(),
+                "{} publishes no arguments — the branch that answers for one is reachable again",
+                tool.name
+            );
+        }
     }
 
     /// **A verb this server does not serve is the router's answer, not this

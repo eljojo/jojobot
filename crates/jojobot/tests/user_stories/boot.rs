@@ -85,6 +85,15 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
         "a skill named in the index is fetchable by name: {fetched}"
     );
 
+    // And again from inside the session, which is where the door sends a
+    // booted caller when the index names something it needs. The handle rides
+    // this call like every other one this session makes: fetching a procedure
+    // mid-run is the ordinary path, and carrying the handle is not a reason to
+    // be turned back at it.
+    s.call("start_here", json!({"skill": "rhythms"}))
+        .await
+        .says("\"body\"");
+
     // What was already true stays reachable. The machine is new; jojobot's
     // memory is not.
     s.recall("person:ned-flanders").await.says("left-handed");

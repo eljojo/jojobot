@@ -152,6 +152,29 @@ impl Jojobot {
         self.caller(sid).map(|_| ())
     }
 
+    /// **What the handle a caller carried is worth — for the doors that are
+    /// reached without an identity and must never turn one away.**
+    ///
+    /// One is where a handle comes from; the other is what a session reaches
+    /// for when the surface stops looking like the one it booted on. Both are
+    /// the way back, and every handle stops addressing anything the moment the
+    /// process holding it goes — so declining one at either would close the way
+    /// back on precisely the caller taking it, in the words of the call they
+    /// just made.
+    ///
+    /// The handle is ANSWERED instead: `held` while it still addresses that
+    /// session, `gone` once it does not, and nothing at all when none was
+    /// carried. [`Jojobot::attributable`] is the same idea for the verbs that
+    /// write, where the answer has to be a refusal: a write is worth less than
+    /// nothing if nobody can be told whose it was.
+    pub(crate) fn standing(&self, sid: Option<&str>) -> serde_json::Value {
+        match sid.map(str::trim).filter(|s| !s.is_empty()) {
+            None => serde_json::Value::Null,
+            Some(raw) if self.registry.lookup(raw).is_some() => "held".into(),
+            Some(_) => "gone".into(),
+        }
+    }
+
     /// The caller, required — for the verbs that write to a session.
     pub(crate) fn identified(&self, sid: Option<&str>) -> Result<Caller, CallToolResult> {
         match self.caller(sid)? {

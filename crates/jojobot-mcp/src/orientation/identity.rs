@@ -469,6 +469,7 @@ mod tests {
                 brief: None,
                 skill: None,
                 resume: None,
+                sid: None,
             }))
             .await
             .expect_err("this door boots bots");
