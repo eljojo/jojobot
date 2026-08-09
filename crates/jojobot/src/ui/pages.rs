@@ -339,10 +339,13 @@ async fn sessions_section(state: &AppState, bot: &EntityId) -> String {
 /// be a second answer to how much of a body is enough to recognize it by.
 fn block(text: &str) -> String {
     let digest = text::BODY_DIGEST.render(text);
-    // The ellipsis is what the strategy appends when it cuts, so this asks the
-    // discipline whether the text is long rather than reading its budget a
-    // second time here.
-    if !digest.ends_with('…') {
+    // The ellipsis is what the strategy appends when it cuts — and it is also a
+    // character people type, so on its own it folds a one-line message that
+    // trails off, with nothing behind the fold. The strategy hands back a
+    // string and no cut flag, so the other half of the question is asked of the
+    // budget it cut against: below that, it cannot have cut, and the ellipsis
+    // is the writer's own.
+    if !digest.ends_with('…') || text.chars().count() <= text::BODY_DIGEST.budget {
         return format!("<pre>{}</pre>", escape(text));
     }
     format!(
@@ -541,7 +544,32 @@ fn html(body: &str) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::escape;
+    use super::{block, escape};
+
+    /// **A fold is a promise that there is more behind it.** The long half is
+    /// the positive the short half depends on: without it, a `block` that never
+    /// folded anything would pass the second assertion alone.
+    #[test]
+    fn a_block_folds_only_when_the_digest_left_something_out() {
+        let long = "counted the crates. ".repeat(20);
+        let folded = block(&long);
+        assert!(
+            folded.starts_with("<details>"),
+            "a block past the digest's budget folds: {folded}"
+        );
+        assert!(
+            folded.contains(&long),
+            "and the whole text is behind the fold: {folded}"
+        );
+
+        // An ellipsis somebody typed is not the strategy saying it cut.
+        let trails_off = "well, that settles it…";
+        assert_eq!(
+            block(trails_off),
+            format!("<pre>{trails_off}</pre>"),
+            "a short block that trails off has nothing to hide"
+        );
+    }
 
     #[test]
     fn a_name_a_person_wrote_cannot_close_a_tag() {
