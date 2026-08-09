@@ -321,9 +321,12 @@ impl Session {
     pub async fn refused(&self, tool: &str, mut args: Value) -> Answer {
         args["sid"] = self.sid.clone().into();
         // **Both refusal shapes count, and they are different answers.** A
-        // domain refusal comes back as a `blocked` body with a way forward; an
-        // argument jojobot's schema does not admit is a client error and never
-        // reaches the domain at all. A tripwire that accepted only one would
+        // `blocked` body with a way forward is the answer jojobot writes
+        // itself — either a domain refusal, or the argument gate turning back
+        // a top-level argument the verb does not implement before dispatch,
+        // with nothing written. A VALUE the schema cannot deserialize at all —
+        // an unknown `kind`, an unknown `shape` — still fails in the client and
+        // never reaches the domain. A tripwire that accepted only one would
         // pass the day a refusal moved from one shape to the other.
         let body = match self
             .client

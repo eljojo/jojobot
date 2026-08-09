@@ -432,11 +432,13 @@ fn the_session_verbs_are_described_by_the_one_address_they_take() {
 /// **Nothing agent-facing tells a caller to declare who it is.**
 ///
 /// `sender` left `PostMessageArgs` when it became derived from the `sid`,
-/// and three texts went on describing it. `PostMessageArgs` does not deny
-/// unknown fields, so a caller following those sentences emits a `sender`
-/// that is silently dropped, then calls `list_sent` with the string it
-/// invented, gets nothing, and concludes its report never arrived — which
-/// is the exact failure `list_sent` exists to prevent.
+/// and three texts went on describing it. Since the argument gate — see
+/// [`crate::arguments`] — such a sentence no longer costs a lie, it costs
+/// the call: `sender` is a top-level argument `post_message` does not
+/// implement, so a caller following the sentence gets `blocked` before
+/// dispatch and the message it meant to leave is never written. The text is
+/// what breaks the call, and the refusal contradicting the surface's own
+/// words is the caller's only clue.
 ///
 /// **Asserted as absence of the token, not as a list of today's
 /// sentences.** The essay and `post_message` have no honest use for the
