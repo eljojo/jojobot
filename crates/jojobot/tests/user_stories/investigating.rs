@@ -50,6 +50,18 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .says("\"provenance\":\"inference\"")
         .never_says("\"method\"");
 
+    // A session writes its own beats as it goes, and this one is wrong in a
+    // detail the moment after it is written. The newest entry is the one a
+    // session may rewrite; everything older is what happened.
+    s.journal("ruled out the power supply on sigma").await;
+    s.call(
+        "amend_journal",
+        json!({"entry": "ruled out the power supply on sigma and tau, not sigma alone"}),
+    )
+    .await
+    .says("not sigma alone")
+    .never_says("\"text\":\"ruled out the power supply on sigma\"");
+
     s.wrap("read what the last run believed").await;
 
     // ── session 2 · the incident ────────────────────────────────────────────

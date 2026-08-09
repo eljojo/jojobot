@@ -60,8 +60,21 @@ async fn throwing_a_birthday_party() {
     let s = story.session().await;
 
     s.add("person:patana", "Patana").await;
-    s.add("person:barney-gumble", "Barney").await;
+    // Everybody says the nickname and nobody says the name on the record, so
+    // the record carries both. An alias is another label on one person, not a
+    // second person to keep in step.
+    s.call(
+        "add_entity",
+        json!({
+            "kind": "person", "handle": "barney-gumble", "name": "Barney",
+            "aliases": ["Barn"], "source": "user-named",
+        }),
+    )
+    .await;
     s.add("person:ned-flanders", "Ned").await;
+
+    // The name the operator actually says finds them.
+    s.find("Barn").await.says("person:barney-gumble");
 
     for guest in [
         "person:patana",
@@ -156,6 +169,20 @@ async fn throwing_a_birthday_party() {
 
     // ── session 4 · what to cook ────────────────────────────────────────────
     let s = story.session().await;
+
+    // The venue went in under the short name everybody says. Giving it its
+    // proper one edits the same entity rather than standing a second one
+    // beside it: the handle is permanent and the label is not.
+    s.call(
+        "update_entity",
+        json!({"handle": "place:moes", "name": "Moe's Tavern"}),
+    )
+    .await
+    .says("Moe's Tavern");
+    s.list("place")
+        .await
+        .says("Moe's Tavern")
+        .never_says("\"name\":\"Moe's\"");
 
     // The multi-hop: from the party, to who is attending, to what they eat.
     // The first hop is one call and the second is real too.

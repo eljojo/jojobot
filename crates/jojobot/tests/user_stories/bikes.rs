@@ -54,8 +54,22 @@ async fn keeping_track_of_bikes() {
         "hanging in the basement, unridden for two years",
     )
     .await;
-    s.fact("thing:road-bike", "needs tyres before it can be sold")
-        .await;
+    // The claim stays one crisp line, and the nuance that would ruin it as a
+    // claim rides beside it instead of being folded into the sentence.
+    s.call(
+        "capture",
+        json!({
+            "subject": "thing:road-bike",
+            "content": "needs tyres before it can be sold",
+            "details": "the rear rim is worn too, so tyres alone may not be enough",
+            "provenance": "testimony",
+        }),
+    )
+    .await;
+    s.recall("thing:road-bike")
+        .await
+        .says("\"content\":\"needs tyres before it can be sold\"")
+        .says("the rear rim is worn too");
 
     // GAP — both of those are STATES rather than descriptions. Nothing carries
     // state, so they read as permanent truths about the bike and will still
