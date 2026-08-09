@@ -9,7 +9,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 
-use jojobot_domain::memory::{Entity, EntityId, Fact};
+use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact};
 
 use crate::AppState;
 use crate::ui::tree;
@@ -182,7 +182,163 @@ pub async fn node(State(state): State<AppState>, Path(path): Path<String>) -> Re
         body.push_str(&format!("<h2>Prose</h2>\n<pre>{}</pre>\n", escape(&prose)));
     }
 
+    // The records that are not entities hang off the one entity that owns
+    // them, so they are reached by walking from a handle like everything else.
+    if entity.kind == EntityKind::Bot {
+        body.push_str(&mailbox_section(&state, &entity.id).await);
+        body.push_str(&sessions_section(&state, &entity.id).await);
+    }
+
     html(&page(&format!("Index of {canonical}"), &body))
+}
+
+/// The mailbox this bot owns, and the mail sitting in it.
+///
+/// **This read takes no delivery.** `list_mailboxes` and `scan_messages` move
+/// nothing and mark nothing, which is what lets a window watch the mail rail
+/// without changing it. The delivery verbs are not reachable from here and must
+/// not become so: a page that marked a message read would take it out of the
+/// waiting state its real consumer has never seen it in.
+async fn mailbox_section(state: &AppState, bot: &EntityId) -> String {
+    let boxes = match state.mailboxes.list_mailboxes().await {
+        Ok(boxes) => boxes,
+        Err(err) => return blind("Mailbox", "the mail rail", &err.to_string()),
+    };
+    let owned: Vec<_> = boxes
+        .into_iter()
+        .filter(|box_| &box_.owner == bot)
+        .collect();
+    if owned.is_empty() {
+        return "<h2>Mailbox</h2>\n<p>This bot owns no mailbox.</p>\n".to_string();
+    }
+
+    let messages = match state.mailboxes.scan_messages().await {
+        Ok(messages) => messages,
+        Err(err) => return blind("Mailbox", "the mail rail", &err.to_string()),
+    };
+
+    let mut out = String::new();
+    for box_ in owned {
+        out.push_str(&format!(
+            "<h2>Mailbox {}</h2>\n<p>{} new, {} read, {} processed",
+            escape(box_.name.as_str()),
+            box_.counts.new,
+            box_.counts.read,
+            box_.counts.processed,
+        ));
+        if !box_.quarantined.is_empty() {
+            // Invisible to every other verb, so this is the only place its
+            // existence is stated at all.
+            out.push_str(&format!(
+                ", and {} jojobot cannot read",
+                box_.quarantined.len()
+            ));
+        }
+        out.push_str(".</p>\n");
+
+        let mut mail: Vec<_> = messages
+            .iter()
+            .filter(|message| message.mailbox == box_.name)
+            .collect();
+        mail.sort_by_key(|message| message.sent_at);
+
+        if mail.is_empty() {
+            out.push_str("<p>Nothing has been left here.</p>\n");
+            continue;
+        }
+        out.push_str(
+            "<table id=\"mailbox\">\n<tr><th>Id</th><th>State</th><th>From</th><th>About</th>\
+             <th>Sent</th><th>Outcome</th></tr>\n",
+        );
+        for message in mail {
+            out.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n\
+                 <tr><td colspan=\"6\"><pre>{}</pre></td></tr>\n",
+                escape(message.id.as_str()),
+                escape(message.state.as_token()),
+                escape(&message.sender),
+                escape(message.subject.as_deref().unwrap_or("")),
+                escape(&message.sent_at.to_string()),
+                escape(message.notes.as_deref().unwrap_or("")),
+                escape(&message.body),
+            ));
+        }
+        out.push_str("</table>\n");
+    }
+    out
+}
+
+/// Every run of this bot, newest first, each with the chronology it wrote.
+///
+/// `sessions_of` is a read: it begins nothing, closes nothing and sweeps
+/// nothing. Booting is what starts a run, and this page is not a boot.
+async fn sessions_section(state: &AppState, bot: &EntityId) -> String {
+    let mut runs = match state.sessions.sessions_of(bot).await {
+        Ok(runs) => runs,
+        Err(err) => return blind("Runs", "the session records", &err.to_string()),
+    };
+    if runs.is_empty() {
+        return "<h2>Runs</h2>\n<p>This bot has never run.</p>\n".to_string();
+    }
+    runs.sort_by_key(|run| std::cmp::Reverse(run.started_at));
+
+    let mut out = String::from(
+        "<h2>Runs</h2>\n<table id=\"sessions\">\n\
+         <tr><th>Session</th><th>State</th><th>Working on</th><th>Started</th>\
+         <th>Beats</th></tr>\n",
+    );
+    for run in &runs {
+        out.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            escape(run.sid.as_ref().map_or("", |sid| sid.as_str())),
+            escape(run.state.as_token()),
+            escape(&run.focus),
+            escape(&run.started_at.to_string()),
+            run.entries.len(),
+        ));
+    }
+    out.push_str("</table>\n");
+
+    // The chronology is the record of the run, so it is on the page rather
+    // than a click away. A beat jojobot wrote is marked apart from one the
+    // session wrote, because they are different kinds of evidence.
+    for run in &runs {
+        if run.entries.is_empty() {
+            continue;
+        }
+        out.push_str(&format!(
+            "<h3>Chronology of {}</h3>\n<table>\n<tr><th>When</th><th>Beat</th><th>Entry</th></tr>\n",
+            escape(run.sid.as_ref().map_or("", |sid| sid.as_str())),
+        ));
+        for entry in &run.entries {
+            out.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td><pre>{}</pre></td></tr>\n",
+                escape(&entry.at.to_string()),
+                escape(entry.beat.as_deref().unwrap_or("")),
+                escape(&entry.text),
+            ));
+        }
+        out.push_str("</table>\n");
+    }
+    out
+}
+
+/// A section that could not be read.
+///
+/// **It says so rather than rendering as empty.** "Nothing is here" and
+/// "jojobot could not look" are different claims, and the reader of this page
+/// is reading it to debug the instance it serves: the first sends them to the
+/// record, the second to the layer that would not answer. The store's own
+/// words go to the log, not to the page: this text names jojobot's vocabulary,
+/// never the storage product's furniture.
+fn blind(heading: &str, what: &str, err: &str) -> String {
+    tracing::warn!(error = %err, "the listing could not read {what}");
+    format!(
+        "<h2>{}</h2>\n<p>jojobot could not read {}, so this section is missing rather \
+         than empty.</p>\n",
+        escape(heading),
+        escape(what),
+    )
 }
 
 /// The path as links, one per ancestor, so any level is a click away.

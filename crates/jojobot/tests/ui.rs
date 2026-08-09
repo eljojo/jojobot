@@ -23,13 +23,15 @@ use jojobot::config::UiConfig;
 use jojobot::ui::Ui;
 use jojobot::{AppState, build_app};
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
-use jojobot_domain::mailbox::Mailboxes;
+use jojobot_domain::mailbox::testing::InMemoryMailboxes;
+use jojobot_domain::mailbox::{MailboxName, Mailboxes, MessageState, NewMessage};
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::memory::{
     Boot, Edge, EdgeShape, Entity, EntityId, EntityKind, Memory, NewEntity, NewFact, Provenance,
 };
-use jojobot_domain::session::Sessions;
+use jojobot_domain::session::testing::InMemorySessions;
+use jojobot_domain::session::{NewEntry, NewSession, SessionState, Sessions, Sid};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
@@ -37,6 +39,9 @@ mod support;
 
 const CLIENT_ID: &str = "jojobot-ui";
 const READER: &str = "sub-reader";
+
+/// A fixed instant, so nothing here reads a clock.
+const FIXED_INSTANT: jiff::Timestamp = jiff::Timestamp::constant(1_780_000_000, 0);
 
 // --- the issuer ------------------------------------------------------------
 
@@ -214,24 +219,92 @@ async fn seed(store: &dyn Memory) {
     store.capture(fact).await.expect("the fact is written");
 }
 
+/// Every store the server is spawned over, kept so a test can read the records
+/// back **after** a page has been served. Asserting that a page changed nothing
+/// needs the store, not the page.
+struct Board {
+    memory: Arc<dyn Memory>,
+    mailboxes: Arc<InMemoryMailboxes>,
+    sessions: Arc<InMemorySessions>,
+}
+
+/// A bot with the three record types hanging off it: the mailbox it owns, one
+/// message waiting in `new`, one run of it, and a beat in that run's
+/// chronology.
+async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
+    let bot = EntityId::new(EntityKind::Bot, "otto");
+    memory
+        .add_entity(NewEntity::new(bot.clone(), "Otto", "the fixture roster"))
+        .await
+        .expect("the bot is written");
+
+    let mailboxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+    let box_name = MailboxName("otto".to_string());
+    mailboxes
+        .create_mailbox(&box_name, &bot, None)
+        .await
+        .expect("the box opens");
+    mailboxes
+        .post_message(NewMessage {
+            mailbox: box_name,
+            body: "The trail survey needs a second pair of eyes.".to_string(),
+            subject: Some("A second pair of eyes".to_string()),
+            sender: "bot:gamma".to_string(),
+            sent_at: FIXED_INSTANT,
+            in_reply_to: None,
+        })
+        .await
+        .expect("the message is posted");
+
+    let sessions = Arc::new(InMemorySessions::new());
+    let session = sessions
+        .begin(NewSession {
+            bot: bot.clone(),
+            sid: Sid("ot1x".to_string()),
+            focus: "Reading the survey".to_string(),
+            started_at: FIXED_INSTANT,
+        })
+        .await
+        .expect("the run begins");
+    sessions
+        .append(
+            &session.id,
+            NewEntry::manual("Set out to read the survey end to end.", FIXED_INSTANT),
+        )
+        .await
+        .expect("the beat is recorded");
+
+    Board {
+        memory,
+        mailboxes,
+        sessions,
+    }
+}
+
+async fn seeded_board() -> Board {
+    seeded_board_over(seeded_memory().await).await
+}
+
 async fn spawn_jojobot(
     endpoints: IssuerEndpoints,
     allowed: &[&str],
     idp: &support::TestIdp,
 ) -> (SocketAddr, CancellationToken) {
-    spawn_jojobot_over(endpoints, allowed, idp, seeded_memory().await).await
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, allowed, idp, seeded_board().await).await;
+    (addr, ct)
 }
 
 async fn spawn_jojobot_over(
     endpoints: IssuerEndpoints,
     allowed: &[&str],
     idp: &support::TestIdp,
-    store: Arc<dyn Memory>,
-) -> (SocketAddr, CancellationToken) {
+    board: Board,
+) -> (SocketAddr, CancellationToken, Board) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
+    let indexed =
+        Arc::new(IndexedMemory::new(board.memory.clone()).expect("the search index opens"));
     let search: Arc<dyn Search> = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
 
     let ui_cfg = UiConfig {
@@ -253,11 +326,8 @@ async fn spawn_jojobot_over(
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
         memory: indexed.clone(),
         search,
-        mailboxes: Arc::new(
-            jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
-        ) as Arc<dyn Mailboxes>,
-        sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new())
-            as Arc<dyn Sessions>,
+        mailboxes: board.mailboxes.clone() as Arc<dyn Mailboxes>,
+        sessions: board.sessions.clone() as Arc<dyn Sessions>,
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: Some(Arc::new(ui)),
     };
@@ -271,7 +341,7 @@ async fn spawn_jojobot_over(
             .await
             .unwrap();
     });
-    (addr, ct)
+    (addr, ct, board)
 }
 
 /// A browser: it does not follow redirects on its own here, so every hop is
@@ -811,8 +881,13 @@ async fn a_path_that_could_never_be_a_handle_is_not_found_rather_than_a_login() 
 async fn an_entity_whose_parent_is_missing_is_shown_as_damaged_rather_than_hidden() {
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) =
-        spawn_jojobot_over(endpoints, &[READER], &idp, memory_with_an_orphan().await).await;
+    let (addr, ct, _board) = spawn_jojobot_over(
+        endpoints,
+        &[READER],
+        &idp,
+        seeded_board_over(memory_with_an_orphan().await).await,
+    )
+    .await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
@@ -839,6 +914,127 @@ async fn an_entity_whose_parent_is_missing_is_shown_as_damaged_rather_than_hidde
     assert!(
         section(&body, "roots").contains("href=\"/person:alpha/\""),
         "a genuine root is still a root: {body}"
+    );
+    ct.cancel();
+}
+
+// --- the other record types -------------------------------------------------
+
+#[tokio::test]
+async fn a_bot_page_shows_the_mailbox_it_owns_and_the_mail_in_it() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _board) =
+        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let body = read(&client, addr, "/bot:otto/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    let mail = section(&body, "mailbox");
+    assert!(
+        mail.contains("A second pair of eyes"),
+        "a message's subject is what a reader scans: {body}"
+    );
+    assert!(
+        mail.contains("bot:gamma"),
+        "who sent it is half of what a message is: {body}"
+    );
+    assert!(
+        mail.contains("new"),
+        "the state is what says whether anybody has taken it: {body}"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn a_bot_page_shows_its_runs_and_what_each_one_recorded() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _board) =
+        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let body = read(&client, addr, "/bot:otto/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    let runs = section(&body, "sessions");
+    assert!(
+        runs.contains("ot1x"),
+        "a run is told from another by its sid: {body}"
+    );
+    assert!(
+        runs.contains("Reading the survey"),
+        "the focus says what the run is for: {body}"
+    );
+    assert!(
+        runs.contains("active"),
+        "whether a run is still going is on it: {body}"
+    );
+    assert!(
+        body.contains("Set out to read the survey end to end."),
+        "the chronology is the record of the run, so it is on the page: {body}"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn reading_a_bot_page_takes_no_delivery() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, board) =
+        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let body = read(&client, addr, "/bot:otto/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    // The positive half: the page really did serve the message. Without it the
+    // assertion below passes against a page that shows nothing at all.
+    assert!(
+        section(&body, "mailbox").contains("A second pair of eyes"),
+        "the page must actually render the mail it is being checked for: {body}"
+    );
+
+    // The half this slice exists for. A window that took delivery would change
+    // the thing it was built to observe, and the bot on the other end would pay
+    // for it — a message it never saw, gone from its next delivery.
+    let after = board
+        .mailboxes
+        .scan_messages()
+        .await
+        .expect("the board is readable");
+    assert_eq!(after.len(), 1, "the message is still there");
+    assert_eq!(
+        after[0].state,
+        MessageState::New,
+        "a message nobody has taken is still waiting after the page was served"
+    );
+
+    // Same guarantee on the other rail: rendering a bot's runs must not begin
+    // one, close one, or sweep one. The page is not a boot.
+    let runs = board
+        .sessions
+        .sessions_of(&EntityId::new(EntityKind::Bot, "otto"))
+        .await
+        .expect("the runs are readable");
+    assert_eq!(runs.len(), 1, "the page began no run and ended none");
+    assert_eq!(
+        runs[0].state,
+        SessionState::Active,
+        "a run still going is still going after the page was served"
     );
     ct.cancel();
 }
