@@ -142,7 +142,9 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
             }),
         )
         .await;
-    reported.says(&dispatched);
+    // Field-qualified: an id is a bare digit and every receipt carries a
+    // timestamp, so a plain substring passes on the clock alone.
+    reported.says(&format!("\"in_reply_to\":\"{dispatched}\""));
     let report = reported.field("id");
 
     g.processed(&dispatched, "built and reported").await;
@@ -152,7 +154,10 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // connection. The report is findable without opening the box, and taking
     // delivery of the one message the hit names leaves the rest of it alone.
     let s = story.session().await;
-    s.find_including_mail("Shipped it").await.says(&report);
+    s.find_including_mail("Shipped it")
+        .await
+        .says(&format!("\"id\":\"{report}\""))
+        .says("\"subject\":\"Done\"");
     s.call("read_message", json!({"message_id": &report}))
         .await
         .says("Shipped it, green, one commit.");

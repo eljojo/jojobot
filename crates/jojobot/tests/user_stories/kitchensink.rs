@@ -58,7 +58,10 @@ async fn nothing_on_the_surface_goes_unexercised() {
         )
         .await;
     refusal.says("person:homer");
-    s.list("person").await.never_says("person:homer-simpson");
+    s.list("person")
+        .await
+        .says("person:homer")
+        .never_says("person:homer-simpson");
 
     // The refusal mints a token, and sending it back is how a caller says it
     // read the candidates and judged them a different person.
@@ -178,8 +181,10 @@ async fn nothing_on_the_surface_goes_unexercised() {
         .says(&moved_past)
         .never_says(&told);
 
-    // `limit` sizes the answer, and what is left out is counted rather than
-    // dropped in silence.
+    // `limit` sizes the answer, and `count` is what came back rather than what
+    // matched — this surface has no truncation marker at all, so a caller who
+    // wants to know there was more asks a narrower question. (`not_shown`
+    // belongs to `list_sent`, not here.)
     s.call("search", json!({"query": "walks to work", "limit": 1}))
         .await
         .says("\"count\":1");
@@ -187,7 +192,7 @@ async fn nothing_on_the_surface_goes_unexercised() {
     s.wrap("provenance moved, and the three filters that need no words")
         .await;
 
-    // ── where a sender's own mail got to ────────────────────────────────────
+    // ── where a sender's mail got to ────────────────────────────────────────
     let s = story.session().await;
 
     s.post("epsilon", "First", "One for epsilon.").await;
@@ -200,16 +205,29 @@ async fn nothing_on_the_surface_goes_unexercised() {
         .says("First")
         .says("Second");
 
-    // `mailbox` narrows to one box; `sender` says whose outgoing mail to read
-    // and is matched exactly, so naming this session's own bot is the same
-    // answer as omitting it.
-    s.call(
-        "list_sent",
-        json!({"mailbox": "epsilon", "sender": "bot:otto"}),
-    )
-    .await
-    .says("First")
-    .never_says("Second");
+    // `mailbox` narrows to one box.
+    s.call("list_sent", json!({"mailbox": "epsilon"}))
+        .await
+        .says("First")
+        .never_says("Second");
+
+    // `sender` says WHOSE outgoing mail to read, matched exactly against the
+    // handle on each message. It has to name a bot that is NOT this one to
+    // prove anything — omitting it already answers with your own — and reading
+    // another sender's is allowed, because where a message got to is not
+    // private to whoever wrote it.
+    let other = story.as_bot("bot:epsilon").await;
+    other
+        .post("assistant", "Third", "One from another sender.")
+        .await;
+    other
+        .wrap("posted once, so there is somebody else's outbox")
+        .await;
+    s.call("list_sent", json!({"sender": "bot:epsilon"}))
+        .await
+        .says("Third")
+        .never_says("First")
+        .never_says("Second");
 
     // `limit` sizes it the way it sizes a search, newest first.
     s.call("list_sent", json!({"limit": 1}))

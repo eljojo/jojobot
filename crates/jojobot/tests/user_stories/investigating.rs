@@ -62,7 +62,20 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     .says("not sigma alone")
     .never_says("\"text\":\"ruled out the power supply on sigma\"");
 
-    s.wrap("read what the last run believed").await;
+    // That answer carries the one entry and no chronology, so it reads exactly
+    // the same whether the beat was rewritten or a second one was pushed beside
+    // it — and an append leaves the wrong wording standing on the record. The
+    // wrap serves the whole chronology: the amended wording is on it, the old
+    // wording is gone from it rather than outnumbered, and the length is pinned
+    // because an appended entry is what a rewrite would not add.
+    s.call(
+        "wrap_session",
+        json!({"story": "read what the last run believed"}),
+    )
+    .await
+    .says("\"entry_count\":4")
+    .says("not sigma alone")
+    .never_says("\"text\":\"ruled out the power supply on sigma\"");
 
     // ── session 2 · the incident ────────────────────────────────────────────
     let s = story.session().await;

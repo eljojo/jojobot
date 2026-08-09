@@ -29,7 +29,14 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
     // deployment from another.
     let (pong, unbooted) = story.call("ping", json!({})).await;
     pong.says("\"status\":\"ok\"").says("\"build\"");
-    assert!(unbooted.is_none(), "a liveness probe starts no session");
+    // What is checkable from out here is the payload: the answer carries no
+    // handle, so a caller cannot come away from a probe holding a session.
+    // Whether the server opened one behind it is not visible — ping names no
+    // bot, and the only wire-visible session state is a boot's offer, per-bot.
+    assert!(
+        unbooted.is_none(),
+        "ping's answer carries no session handle"
+    );
 
     let (booted, s) = story.full_boot().await;
 
