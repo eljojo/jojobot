@@ -27,36 +27,81 @@ pub async fn index(State(state): State<AppState>) -> Response {
             return unreadable(err);
         }
     };
+    let by_id: HashMap<&EntityId, &Entity> = entities.iter().map(|e| (&e.id, e)).collect();
 
-    let mut roots: Vec<Entity> = entities
-        .into_iter()
-        .filter(|entity| entity.parent.is_none())
-        .collect();
+    let mut roots: Vec<&Entity> = Vec::new();
+    let mut unreachable: Vec<&Entity> = Vec::new();
+    for entity in &entities {
+        match &entity.parent {
+            None => roots.push(entity),
+            // It is filed under a handle no entity has, so it is nobody's
+            // child and no descent from a root arrives at it. Listed here or
+            // listed nowhere.
+            Some(parent) if !by_id.contains_key(parent) => unreachable.push(entity),
+            Some(_) => {}
+        }
+    }
     roots.sort_by(|a, b| a.id.cmp(&b.id));
+    unreachable.sort_by(|a, b| a.id.cmp(&b.id));
 
-    let mut rows = String::new();
+    let mut body = String::from(
+        "<h1>Index of /</h1>\n<table id=\"roots\">\n<tr><th>Name</th><th>Called</th></tr>\n",
+    );
     for entity in &roots {
-        rows.push_str(&row(entity, "/"));
+        body.push_str(&row(entity, &by_id));
     }
     if roots.is_empty() {
-        rows.push_str("<tr><td colspan=\"2\">Nothing is filed here yet.</td></tr>");
+        body.push_str("<tr><td colspan=\"2\">Nothing is filed here yet.</td></tr>\n");
     }
+    body.push_str("</table>\n");
+    body.push_str(&damaged(&unreachable, &by_id));
 
-    html(&page(
-        "Index of /",
-        &format!(
-            "<h1>Index of /</h1>\n<table>\n<tr><th>Name</th><th>Called</th></tr>\n{rows}</table>\n"
-        ),
-    ))
+    html(&page("Index of /", &body))
+}
+
+/// The entities that name a parent nobody has.
+///
+/// **Shown as damaged, not folded in with the roots.** Promoting one would
+/// render a broken record as a normal one, and this is the only page that can
+/// say the record is broken at all. The section is absent when there are none:
+/// a standing "damaged" heading over an empty table on a healthy store teaches
+/// a reader to skip it, which is what it costs when it matters.
+fn damaged(unreachable: &[&Entity], by_id: &HashMap<&EntityId, &Entity>) -> String {
+    if unreachable.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "<h2>Filed under something that is not there</h2>\n\
+         <p>Each of these names a parent no entity has, so nothing below a root reaches it. \
+         No jojobot write can produce this, so these records were changed elsewhere.</p>\n\
+         <table id=\"unreachable\">\n\
+         <tr><th>Name</th><th>Called</th><th>Filed under</th></tr>\n",
+    );
+    for entity in unreachable {
+        let handle = escape(entity.id.as_str());
+        out.push_str(&format!(
+            "<tr><td><a href=\"{}\">{handle}/</a></td><td>{}</td><td>{} (not found)</td></tr>\n",
+            escape(&tree::canonical_path(entity, by_id)),
+            escape(&entity.name),
+            escape(entity.parent.as_ref().map_or("", EntityId::as_str)),
+        ));
+    }
+    out.push_str("</table>\n");
+    out
 }
 
 /// One entity as a row: its handle, linking to where it lives, and the name it
 /// goes by.
-fn row(entity: &Entity, at: &str) -> String {
+///
+/// **The link is the ancestry walk, the same one the node page redirects to.**
+/// A row that built the path from where it happened to be listed would be a
+/// second answer to where a thing lives, and the two would disagree the first
+/// time a record was damaged.
+fn row(entity: &Entity, by_id: &HashMap<&EntityId, &Entity>) -> String {
     let handle = escape(entity.id.as_str());
     format!(
-        "<tr><td><a href=\"{}{handle}/\">{handle}/</a></td><td>{}</td></tr>\n",
-        escape(at),
+        "<tr><td><a href=\"{}\">{handle}/</a></td><td>{}</td></tr>\n",
+        escape(&tree::canonical_path(entity, by_id)),
         escape(&entity.name)
     )
 }
@@ -124,9 +169,9 @@ pub async fn node(State(state): State<AppState>, Path(path): Path<String>) -> Re
     if children.is_empty() {
         body.push_str("<p>Nothing sits under this.</p>\n");
     } else {
-        body.push_str("<table>\n<tr><th>Name</th><th>Called</th></tr>\n");
+        body.push_str("<table id=\"children\">\n<tr><th>Name</th><th>Called</th></tr>\n");
         for child in children {
-            body.push_str(&row(child, &canonical));
+            body.push_str(&row(child, &by_id));
         }
         body.push_str("</table>\n");
     }

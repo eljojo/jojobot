@@ -43,6 +43,21 @@ impl InMemoryMemory {
         Self::default()
     }
 
+    /// Put an entity in the store without the write guard seeing it — **the
+    /// only way to stage a record the port refuses to write.**
+    ///
+    /// A parent that names nothing is the case this exists for: `add_entity`
+    /// blocks it, here and in the real store alike, so a record that holds one
+    /// came from a hand edit outside jojobot rather than from a verb. A fixture
+    /// for that state has to enter the same way the state does, and a flag on
+    /// the guard would make the state writable, which is the opposite of true.
+    pub fn past_the_guard(&self, entity: Entity) {
+        self.entities
+            .lock()
+            .expect("fake mutex poisoned")
+            .push(entity);
+    }
+
     /// The entity index the write guard screens against.
     fn index(&self) -> Vec<Entity> {
         self.entities.lock().expect("fake mutex poisoned").clone()

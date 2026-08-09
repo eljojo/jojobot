@@ -27,7 +27,7 @@ use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::memory::{
-    Edge, EdgeShape, EntityId, EntityKind, Memory, NewEntity, NewFact, Provenance,
+    Boot, Edge, EdgeShape, Entity, EntityId, EntityKind, Memory, NewEntity, NewFact, Provenance,
 };
 use jojobot_domain::session::Sessions;
 use serde_json::json;
@@ -148,7 +148,34 @@ async fn spawn_idp(id_token: String) -> (SocketAddr, IssuerEndpoints) {
 /// Two roots and one child under the first, so a page can be wrong in a way a
 /// single entity would hide.
 async fn seeded_memory() -> Arc<dyn Memory> {
-    let store: Arc<dyn Memory> = Arc::new(InMemoryMemory::new());
+    let store = Arc::new(InMemoryMemory::new());
+    seed(store.as_ref()).await;
+    store
+}
+
+/// The seeded roster plus one entity whose parent names nothing.
+///
+/// **It is staged past the guard because that is the only way this state
+/// arises.** `add_entity` refuses a parent that is not there, in the fake and
+/// in the real store alike, so a record holding one came from a hand edit
+/// outside jojobot rather than from a verb.
+async fn memory_with_an_orphan() -> Arc<dyn Memory> {
+    let store = Arc::new(InMemoryMemory::new());
+    seed(store.as_ref()).await;
+    store.past_the_guard(Entity {
+        id: EntityId::new(EntityKind::Thing, "sigma"),
+        kind: EntityKind::Thing,
+        name: "Sigma".to_string(),
+        aliases: Vec::new(),
+        source: "the fixture roster".to_string(),
+        crm: None,
+        parent: Some(EntityId::new(EntityKind::Person, "ghost")),
+        boot: Boot::default(),
+    });
+    store
+}
+
+async fn seed(store: &dyn Memory) {
     for new in [
         NewEntity::new(
             EntityId::new(EntityKind::Person, "alpha"),
@@ -185,8 +212,6 @@ async fn seeded_memory() -> Arc<dyn Memory> {
         EntityId::new(EntityKind::Place, "shelbyville"),
     ));
     store.capture(fact).await.expect("the fact is written");
-
-    store
 }
 
 async fn spawn_jojobot(
@@ -194,10 +219,18 @@ async fn spawn_jojobot(
     allowed: &[&str],
     idp: &support::TestIdp,
 ) -> (SocketAddr, CancellationToken) {
+    spawn_jojobot_over(endpoints, allowed, idp, seeded_memory().await).await
+}
+
+async fn spawn_jojobot_over(
+    endpoints: IssuerEndpoints,
+    allowed: &[&str],
+    idp: &support::TestIdp,
+    store: Arc<dyn Memory>,
+) -> (SocketAddr, CancellationToken) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let store = seeded_memory().await;
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
     let search: Arc<dyn Search> = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
 
@@ -407,6 +440,12 @@ async fn a_logged_in_browser_reads_the_index_of_the_roots() {
         !body.contains("topic:widgets"),
         "a child belongs under its parent, not at the top: {body}"
     );
+    // Nothing here is damaged, so the damaged section is not here. A standing
+    // empty one would teach a reader to skip it.
+    assert!(
+        !body.contains("id=\"unreachable\""),
+        "a healthy store shows no damage report: {body}"
+    );
     ct.cancel();
 }
 
@@ -515,6 +554,23 @@ async fn the_login_will_not_land_a_browser_off_this_server() {
 }
 
 // --- descending -------------------------------------------------------------
+
+/// One table of a page, from its id to the end of that table.
+///
+/// **The sections are told apart by id rather than by the words around them.**
+/// A heading is prose and will be improved; an id is a name, and renaming one
+/// is a real change to what the page offers.
+fn section<'a>(body: &'a str, id: &str) -> &'a str {
+    let anchor = format!("id=\"{id}\"");
+    let start = body
+        .find(&anchor)
+        .unwrap_or_else(|| panic!("no section {id} on this page: {body}"));
+    let rest = &body[start..];
+    match rest.find("</table>") {
+        Some(end) => &rest[..end],
+        None => rest,
+    }
+}
 
 /// Fetch a page as a logged-in browser.
 async fn read(
@@ -747,6 +803,42 @@ async fn a_path_that_could_never_be_a_handle_is_not_found_rather_than_a_login() 
     assert!(
         gated.status().is_redirection(),
         "a handle path is behind the login whether or not anything is filed at it"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn an_entity_whose_parent_is_missing_is_shown_as_damaged_rather_than_hidden() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) =
+        spawn_jojobot_over(endpoints, &[READER], &idp, memory_with_an_orphan().await).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let body = read(&client, addr, "/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    // It sits under a handle nobody has, so it is nobody's child — and it is
+    // not a root either. Without a place of its own it is on no page at all.
+    assert!(
+        section(&body, "unreachable").contains("href=\"/thing:sigma/\""),
+        "an entity whose parent is missing must still be reachable: {body}"
+    );
+    // Promoting it to a root would show a damaged record as a normal one.
+    assert!(
+        !section(&body, "roots").contains("thing:sigma"),
+        "a record with a dangling parent is not a root: {body}"
+    );
+    // The pairing: the roots list still works in the same read, so the
+    // assertion above cannot pass against a page that files everything as
+    // damaged.
+    assert!(
+        section(&body, "roots").contains("href=\"/person:alpha/\""),
+        "a genuine root is still a root: {body}"
     );
     ct.cancel();
 }
