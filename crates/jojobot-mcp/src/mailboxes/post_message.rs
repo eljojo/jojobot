@@ -58,8 +58,7 @@ impl Jojobot {
                        bot behind the `sid` you pass, so a reply can always find you and nothing \
                        can be posted under somebody else's name. A `sid` jojobot is not holding \
                        comes back status: blocked and nothing is written. YOUR BODY IS NOT \
-                       ECHOED BACK — you wrote it, and \
-                       jojobot verified it by reading the stored record back, so the answer carries \
+                       ECHOED BACK — you wrote it, so the answer carries \
                        the id, the state and body_bytes with body_elided: true rather than the \
                        text. `list_sent` with include_bodies returns it and takes no delivery. \
                        `in_reply_to` links this message to the one it \
@@ -122,9 +121,8 @@ impl Jojobot {
                 json_result(&message_receipt_json(
                     &message,
                     Some(
-                        "you wrote this body; jojobot verified it by reading the stored record \
-                         back. list_sent with include_bodies: true returns it, and takes no \
-                         delivery",
+                        "you wrote this body, so it is not shipped back to you. list_sent with \
+                         include_bodies: true returns it, and takes no delivery",
                     ),
                 ))
             }
@@ -149,6 +147,71 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::mailboxes::testing::*;
+
+    /// **The surface tells a caller what it has, never how jojobot satisfied
+    /// itself.** How the server checks its own write is jojobot's business, and
+    /// a caller told about the guard reasons about the guard. The word also
+    /// carried two claims under one meaning: the bytes reached storage, which
+    /// is what it checked, and the message is true, which it never checked.
+    ///
+    /// The useful half stands on its own — the body is not echoed back, and
+    /// `list_sent` is the verb that returns it — so both halves of the pair
+    /// below read the same answer: an answer carrying nothing at all would
+    /// satisfy the negative by itself.
+    #[tokio::test]
+    async fn the_post_receipt_does_not_explain_how_the_server_checks_its_own_write() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "pm").await;
+
+        let posted = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    mailbox: "pm".into(),
+                    sid: as_bot(&jojobot, "otto"),
+                    body: "the kiln reached temperature".into(),
+                    subject: None,
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("post ok"),
+        );
+        let how_to_read = posted["how_to_read"].as_str().expect("a pointer");
+        assert!(
+            posted["id"].as_str().is_some(),
+            "the receipt still identifies the message: {posted}"
+        );
+        assert_eq!(posted["state"], "new");
+        assert_eq!(posted["body_elided"], true);
+        assert!(
+            how_to_read.contains("list_sent"),
+            "the caller still gets the verb that hands the body over: {how_to_read}"
+        );
+        assert!(
+            !how_to_read.to_lowercase().contains("verif"),
+            "the receipt describes the server's own check: {how_to_read}"
+        );
+    }
+
+    /// The same line, on the description a client reads before it calls
+    /// anything. It is the served text rather than the source literal, so a
+    /// description that never reaches the tool list cannot satisfy it.
+    #[test]
+    fn the_post_description_does_not_explain_how_the_server_checks_its_own_write() {
+        let tools = Jojobot::tool_router().list_all();
+        let served = tools
+            .iter()
+            .find(|tool| tool.name == "post_message")
+            .expect("post_message is served");
+        let description = served.description.as_deref().expect("a description");
+        assert!(
+            description.contains("list_sent"),
+            "the caller is still told where the body is: {description}"
+        );
+        assert!(
+            !description.to_lowercase().contains("verif"),
+            "the description explains the server's own check: {description}"
+        );
+    }
 
     /// **Blocked is a result, not a protocol error** — the same shape the Memory
     /// verbs use, so one client-side branch handles both contexts.
