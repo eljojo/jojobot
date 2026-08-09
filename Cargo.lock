@@ -1399,6 +1399,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64",
+ "jiff",
  "jojobot-adapters",
  "jojobot-domain",
  "jojobot-mcp",

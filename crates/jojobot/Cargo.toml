@@ -43,6 +43,9 @@ rmcp = { workspace = true, features = [
     "transport-streamable-http-client-reqwest",
     "reqwest-native-tls",
 ] }
+# The fixtures the listing is read against carry dated facts, and a date here is
+# the domain's civil date.
+jiff.workspace = true
 rsa = { version = "0.9", features = ["pem"] }
 rand = "0.8"
 base64 = "0.22"

@@ -19,6 +19,7 @@
 
 pub mod login;
 pub mod pages;
+pub mod tree;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -257,6 +258,17 @@ pub async fn require_browser(
         .ui
         .as_ref()
         .expect("require_browser mounted without a UI");
+
+    // **A path that could never name an entity is missing, login or no login.**
+    // The listing is mounted on a catch-all, so every path this server does not
+    // implement arrives here — and answering those with "go and log in" names
+    // the wrong problem to a client probing for an endpoint (rule 68). Handle
+    // grammar is public, so refusing on shape leaks nothing; whether anything
+    // is filed at a well-formed path stays behind the gate.
+    let path = req.uri().path();
+    if path != "/" && tree::segments(path).is_none() {
+        return pages::not_found();
+    }
 
     let session = req
         .headers()

@@ -17,6 +17,7 @@ use axum::{
     routing::{get, post},
 };
 use base64::Engine;
+use jiff::civil::Date;
 use jojobot::auth::IssuerEndpoints;
 use jojobot::config::UiConfig;
 use jojobot::ui::Ui;
@@ -25,7 +26,9 @@ use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::memory::testing::InMemoryMemory;
-use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity};
+use jojobot_domain::memory::{
+    Edge, EdgeShape, EntityId, EntityKind, Memory, NewEntity, NewFact, Provenance,
+};
 use jojobot_domain::session::Sessions;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -167,6 +170,22 @@ async fn seeded_memory() -> Arc<dyn Memory> {
     );
     child.parent = Some(EntityId::new(EntityKind::Person, "alpha"));
     store.add_entity(child).await.expect("the child is written");
+
+    // A fact held at the child, drawing a relation out of the subtree — so a
+    // page can be asserted to follow a relation somewhere its own branch does
+    // not reach.
+    let mut fact = NewFact::about(
+        EntityId::new(EntityKind::Topic, "widgets"),
+        "The widget stall runs on Thursdays",
+        Date::constant(2026, 3, 4),
+    );
+    fact.provenance = Provenance::Testimony;
+    fact.edge = Some(Edge::new(
+        EdgeShape::Location,
+        EntityId::new(EntityKind::Place, "shelbyville"),
+    ));
+    store.capture(fact).await.expect("the fact is written");
+
     store
 }
 
@@ -492,5 +511,242 @@ async fn the_login_will_not_land_a_browser_off_this_server() {
     let landed = client.get(location(&back)).send().await.unwrap();
 
     assert_eq!(location(&landed), "/");
+    ct.cancel();
+}
+
+// --- descending -------------------------------------------------------------
+
+/// Fetch a page as a logged-in browser.
+async fn read(
+    client: &reqwest::Client,
+    jojobot: SocketAddr,
+    path: &str,
+    cookie: &str,
+) -> reqwest::Response {
+    client
+        .get(format!("http://{jojobot}{path}"))
+        .header(reqwest::header::COOKIE, cookie)
+        .send()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_node_page_lists_what_is_below_it() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/person:alpha/", &cookie).await;
+    assert_eq!(page.status(), reqwest::StatusCode::OK);
+    let body = page.text().await.unwrap();
+
+    assert!(
+        body.contains("href=\"/person:alpha/topic:widgets/\""),
+        "a child must be a link to its own place in the tree: {body}"
+    );
+    // The pairing: a sibling of this node is not below it, so a page that
+    // listed everything would pass the assertion above and fail this one.
+    assert!(
+        !body.contains("href=\"/person:alpha/place:shelbyville/\""),
+        "a root is not a child of another root: {body}"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn a_node_page_shows_the_facts_held_there_and_who_backs_them() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let body = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        body.contains("The widget stall runs on Thursdays"),
+        "the claim itself must be on the page: {body}"
+    );
+    assert!(
+        body.contains("testimony"),
+        "a claim is read differently depending on who backs it, so the page says: {body}"
+    );
+    assert!(
+        body.contains("2026-03-04"),
+        "a fact carries its date: {body}"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn a_relation_is_a_link_to_the_entity_on_the_other_end() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let body = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        body.contains("location"),
+        "the relation's shape is what it means, so it is named: {body}"
+    );
+    assert!(
+        body.contains("href=\"/place:shelbyville/\""),
+        "a relation must be followable to where that entity actually lives: {body}"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn a_path_that_is_not_where_an_entity_lives_lands_at_the_one_that_is() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    // The handle is identity and the path is position. A handle typed at the
+    // top is the same entity, so it is sent to where that entity sits rather
+    // than served at a second URL of its own.
+    let response = read(&client, addr, "/topic:widgets/", &cookie).await;
+    assert!(
+        response.status().is_redirection(),
+        "got {}",
+        response.status()
+    );
+    assert_eq!(location(&response), "/person:alpha/topic:widgets/");
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn a_handle_nobody_has_is_not_found() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    for missing in ["/person:ghost/", "/not-a-handle/"] {
+        let response = read(&client, addr, missing, &cookie).await;
+        assert_eq!(
+            response.status(),
+            reqwest::StatusCode::NOT_FOUND,
+            "{missing} names nothing, so it is missing rather than empty"
+        );
+    }
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn a_node_page_is_closed_to_a_browser_with_no_session() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+
+    let response = browser()
+        .get(format!("http://{addr}/person:alpha/"))
+        .send()
+        .await
+        .unwrap();
+
+    assert!(response.status().is_redirection());
+    let to = location(&response);
+    assert!(to.starts_with("/ui/login"), "{to}");
+    assert!(
+        to.contains("person%3Aalpha"),
+        "the login must carry the page the browser wanted: {to}"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn the_listing_does_not_take_over_what_was_already_served() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+
+    // The listing is mounted on a catch-all, so the paths that were already
+    // there have to keep winning — and none of them may start answering the
+    // login redirect the listing answers with.
+    let health = client
+        .get(format!("http://{addr}/healthz"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(health.status(), reqwest::StatusCode::OK);
+    assert_eq!(health.text().await.unwrap(), "ok");
+
+    let metadata = client
+        .get(format!(
+            "http://{addr}/.well-known/oauth-protected-resource"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(metadata.status(), reqwest::StatusCode::OK);
+    assert!(
+        metadata
+            .text()
+            .await
+            .unwrap()
+            .contains("authorization_servers"),
+        "the protected-resource metadata must still be the metadata"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn a_path_that_could_never_be_a_handle_is_not_found_rather_than_a_login() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+
+    // The listing is mounted on a catch-all, so every path this server does not
+    // implement now reaches it. A path that is not a handle path can never name
+    // an entity, so it is missing — telling a client probing for an endpoint to
+    // go and log in names the wrong problem, and it is the one a client
+    // discovering this server actually hits.
+    for probe in [
+        "/.well-known/oauth-authorization-server",
+        "/robots.txt",
+        "/nope/nope",
+    ] {
+        let response = browser()
+            .get(format!("http://{addr}{probe}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            reqwest::StatusCode::NOT_FOUND,
+            "{probe} is not a listing path, so it is missing"
+        );
+    }
+
+    // The pairing: a path that COULD name an entity still asks for a login,
+    // because whether it does is not something an anonymous caller may learn.
+    let gated = browser()
+        .get(format!("http://{addr}/person:ghost/"))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        gated.status().is_redirection(),
+        "a handle path is behind the login whether or not anything is filed at it"
+    );
     ct.cancel();
 }
