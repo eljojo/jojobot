@@ -163,15 +163,29 @@ impl Jojobot {
     /// just made.
     ///
     /// The handle is ANSWERED instead: `held` while it still addresses that
-    /// session, `gone` once it does not, and nothing at all when none was
-    /// carried. [`Jojobot::attributable`] is the same idea for the verbs that
-    /// write, where the answer has to be a refusal: a write is worth less than
-    /// nothing if nobody can be told whose it was.
+    /// session, `gone` once it does not, `malformed` when it is no handle
+    /// jojobot could have minted, and nothing at all when none was carried.
+    /// [`Jojobot::attributable`] is the same idea for the verbs that write,
+    /// where the answer has to be a refusal: a write is worth less than nothing
+    /// if nobody can be told whose it was.
+    ///
+    /// **`malformed` and `gone` are two answers because they send a caller to
+    /// two places** — the same distinction [`Jojobot::caller`] makes in its
+    /// refusals, over the same shape check, so there is one notion of what
+    /// reads as a handle. `gone` means boot again; `malformed` means look at
+    /// what you sent, and a handle that arrived upcased, truncated or quoted
+    /// still addresses a live session once the string is fixed. Answering that
+    /// one `gone` abandons a run the caller could have walked back into.
     pub(crate) fn standing(&self, sid: Option<&str>) -> serde_json::Value {
-        match sid.map(str::trim).filter(|s| !s.is_empty()) {
-            None => serde_json::Value::Null,
-            Some(raw) if self.registry.lookup(raw).is_some() => "held".into(),
-            Some(_) => "gone".into(),
+        let Some(raw) = sid.map(str::trim).filter(|s| !s.is_empty()) else {
+            return serde_json::Value::Null;
+        };
+        if !sid::is_readable(raw) {
+            return "malformed".into();
+        }
+        match self.registry.lookup(raw) {
+            Some(_) => "held".into(),
+            None => "gone".into(),
         }
     }
 

@@ -123,11 +123,14 @@ mod tests {
     /// answered that with a refusal would be one more thing that stopped
     /// working.
     ///
-    /// Three answers, and each pairs with the others: a live handle is `held`,
-    /// a handle nothing is holding is `gone`, and a probe carrying none says
-    /// nothing about one. Without the first this passes against a probe that
-    /// says `gone` to everything; without the last, against one that invents a
-    /// standing for a caller that has no handle at all.
+    /// Four answers, and each pairs with the others: a live handle is `held`, a
+    /// well-formed handle nothing is holding is `gone`, a string that is no
+    /// handle at all is `malformed`, and a probe carrying none says nothing
+    /// about one. Without the first this passes against a probe that says
+    /// `gone` to everything; without the third, against one that tells a caller
+    /// whose handle arrived upcased or truncated to abandon a session it could
+    /// still reach by fixing the string; without the last, against one that
+    /// invents a standing for a caller that has no handle at all.
     #[tokio::test]
     async fn the_probe_says_whether_the_handle_it_was_handed_is_still_held() {
         let jojobot = with_sessions(Arc::new(InMemorySessions::new()));
@@ -162,6 +165,26 @@ mod tests {
         assert!(
             lost["build"].as_str().is_some(),
             "…and still say which build it is, which is what it was asked: {lost}"
+        );
+
+        // **The same four characters, upcased — and a different answer.** This
+        // is the handle a client quoted, cased or truncated on the way through,
+        // and `gone` would send its holder off to boot a second run while the
+        // one it is carrying is still reachable by fixing the string. Read
+        // beside `lost` above: the two must not collapse into one word in
+        // either direction.
+        let mistyped = json_of(
+            &jojobot
+                .ping(Parameters(PingArgs {
+                    sid: Some("2GF7".into()),
+                }))
+                .await
+                .expect("ping answers"),
+        );
+        assert_eq!(mistyped["carried_session"], "malformed", "{mistyped}");
+        assert_eq!(
+            mistyped["status"], "ok",
+            "a probe carrying a handle it mistyped is answered, not refused: {mistyped}"
         );
 
         let anonymous = json_of(

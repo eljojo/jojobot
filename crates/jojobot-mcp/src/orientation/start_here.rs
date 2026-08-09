@@ -304,10 +304,13 @@ mod tests {
     /// refusing one here would shut the way back on exactly the caller that
     /// needs it, in the words of the call it just made.
     ///
-    /// Three answers, each pairing with the others: a live handle is `held`, a
-    /// handle nothing is holding is `gone` and the answer still lands whole,
-    /// and a call carrying none says nothing about one. Without the first this
-    /// passes against a door that says `gone` to everything.
+    /// Four answers, each pairing with the others: a live handle is `held`, a
+    /// well-formed handle nothing is holding is `gone` and the answer still
+    /// lands whole, a string that is no handle at all is `malformed`, and a
+    /// call carrying none says nothing about one. Without the first this passes
+    /// against a door that says `gone` to everything; without the third,
+    /// against a door that tells a caller whose handle arrived upcased or
+    /// truncated that its session ended.
     #[tokio::test]
     async fn the_door_says_what_the_handle_you_carried_is_worth() {
         let jojobot = with_sessions(Arc::new(InMemorySessions::new()));
@@ -343,6 +346,19 @@ mod tests {
         assert_eq!(
             lost["snapshot"]["entities"]["available"], true,
             "…and must answer whole, which is what it was called for: {lost}"
+        );
+
+        // **The same four characters, upcased — and a different answer.** A
+        // handle a client quoted, cased or truncated names nothing either, and
+        // `gone` sends its holder to boot a second run; `malformed` sends it to
+        // look at what it sent, which is the one that gets it back to the
+        // session still sitting there. Read beside `lost` above: the two must
+        // not collapse into one word in either direction.
+        let mistyped = orienting(Some("2GF7".into())).await;
+        assert_eq!(mistyped["carried_session"], "malformed", "{mistyped}");
+        assert_ne!(
+            mistyped["status"], "blocked",
+            "…and a mistyped handle is answered here too, never refused: {mistyped}"
         );
 
         let anonymous = orienting(None).await;
