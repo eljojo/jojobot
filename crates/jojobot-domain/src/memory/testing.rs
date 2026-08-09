@@ -51,6 +51,11 @@ impl InMemoryMemory {
     /// came from a hand edit outside jojobot rather than from a verb. A fixture
     /// for that state has to enter the same way the state does, and a flag on
     /// the guard would make the state writable, which is the opposite of true.
+    ///
+    /// **It is for standing up damage, never for convenience.** A fixture
+    /// `add_entity` could have built is built with `add_entity`, however much
+    /// tidier this looks: reaching for this because seeding through the port is
+    /// tedious grows a second way to create entities that no rule governs.
     pub fn past_the_guard(&self, entity: Entity) {
         self.entities
             .lock()
