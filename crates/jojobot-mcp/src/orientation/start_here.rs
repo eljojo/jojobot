@@ -96,8 +96,8 @@ impl Jojobot {
                        how jojobot knows which bot is asking — and this call is one of them. Pass \
                        `sid` if you are already carrying one and the answer says whether it still \
                        addresses your session; leave it off on a first boot, when you have none. \
-                       A handle is never turned away here, whatever became of it: this is the \
-                       door you come back to."
+                       The `sid` you carry is never turned away here, whatever became of it: this \
+                       is the door you come back to."
     )]
     pub(crate) async fn start_here(
         &self,
