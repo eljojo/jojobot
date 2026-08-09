@@ -280,6 +280,13 @@ impl Session {
         }
     }
 
+    /// This run's own handle — what a later boot offers back when this one
+    /// stops without wrapping, and what a story compares against to say the
+    /// run was resumed rather than replaced.
+    pub fn sid(&self) -> &str {
+        &self.sid
+    }
+
     /// **The tripwire for a gap the SURFACE has, rather than a record.**
     ///
     /// A gap marker says a capability is missing. Where the missing thing

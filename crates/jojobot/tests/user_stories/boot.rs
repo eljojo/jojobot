@@ -7,6 +7,8 @@
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
 //! call is the missing capability, written the way it would be asked for.
 
+use serde_json::json;
+
 use super::dsl::Story;
 
 #[tokio::test]
@@ -20,6 +22,15 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
     s.wrap("recorded, then the session ended").await;
 
     // ── turn one · a session with nothing local, on its own connection ──────
+
+    // First: is anything there, and which build is it? No identity is needed
+    // to ask, and it starts nothing. A session whose verb list looks wrong for
+    // what it was told this server does has no other way to tell one
+    // deployment from another.
+    let (pong, unbooted) = story.call("ping", json!({})).await;
+    pong.says("\"status\":\"ok\"").says("\"build\"");
+    assert!(unbooted.is_none(), "a liveness probe starts no session");
+
     let (booted, s) = story.full_boot().await;
 
     // The method is server-side and needs no relearning on a fresh machine:
@@ -104,6 +115,55 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
 
     s.wrap("oriented, memory intact, still waiting to be told who is asking")
         .await;
+
+    // ── later · a run that stopped, and the boot that picks it up ───────────
+
+    // A run that says what it is working on and then stops without telling its
+    // story. Nothing auto-wraps it, and that is what leaves it to be found.
+    let interrupted = story.session().await;
+    interrupted
+        .call(
+            "journal",
+            json!({
+                "entry": "started going through what is already recorded, to work out what this \
+                          machine does not need to be told",
+                "focus": "what jojobot already holds about ned-flanders",
+            }),
+        )
+        .await;
+    let stopped = interrupted.sid().to_string();
+
+    // The next boot does not start a fresh run over the top of it. It offers
+    // the one that stopped, says what that run was working on so two of them
+    // could be told apart, and hands back no handle until the choice is
+    // answered.
+    let (offer, unanswered) = story
+        .call("start_here", json!({"bot": "otto", "brief": true}))
+        .await;
+    offer
+        .says(&stopped)
+        .says("what jojobot already holds about ned-flanders");
+    assert!(
+        unanswered.is_none(),
+        "an unanswered offer hands back no handle — a sid here means the boot chose for us"
+    );
+
+    // Answering it inherits that run rather than starting a second beside it,
+    // so the chronology continues instead of beginning again.
+    let (resumed, picked_up) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": &stopped}),
+        )
+        .await;
+    resumed.says("\"resumed\":true");
+    let s = picked_up.expect("answering the offer hands back the handle");
+    assert_eq!(
+        s.sid(),
+        stopped,
+        "resuming continues that run rather than minting one beside it"
+    );
+    s.wrap("finished what the run before it started").await;
 
     story.finish().await;
 }
