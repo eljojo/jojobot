@@ -25,6 +25,8 @@ mod curveball;
 mod dsl;
 #[path = "user_stories/investigating.rs"]
 mod investigating;
+#[path = "user_stories/kitchensink.rs"]
+mod kitchensink;
 #[path = "user_stories/moving.rs"]
 mod moving;
 #[path = "user_stories/party.rs"]

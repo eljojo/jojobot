@@ -758,6 +758,32 @@ impl Answer {
             .to_string()
     }
 
+    /// A value the answer's advice tells the caller to send back, read out
+    /// from `key: "…"`.
+    ///
+    /// **The override token rides inside the advice rather than in a field of
+    /// its own**, so a story that wants to send one back has to read it out of
+    /// there. This keys on the ARGUMENT NAME the advice says to send it under —
+    /// something a rename would be a real change to — and not on the sentence
+    /// around it, which is ours to improve.
+    pub fn advised(&self, key: &str) -> String {
+        let body: Value = serde_json::from_str(&self.body)
+            .unwrap_or_else(|e| panic!("the {} is not json: {e}: {}", self.what, self.body));
+        let advice = body["how_to_proceed"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the {} carries no advice: {}", self.what, self.body));
+        let marker = format!("{key}: \"");
+        let from = advice
+            .find(&marker)
+            .unwrap_or_else(|| panic!("the {} names no {key}: {advice}", self.what))
+            + marker.len();
+        let rest = &advice[from..];
+        let to = rest
+            .find('"')
+            .unwrap_or_else(|| panic!("the {key} in the {} is unterminated: {advice}", self.what));
+        rest[..to].to_string()
+    }
+
     pub fn says(&self, needle: &str) -> &Self {
         assert!(
             self.body.contains(needle),
