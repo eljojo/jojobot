@@ -21,6 +21,27 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // which is what makes the dispatch below possible at all.
     s.add("bot:gamma", "Gamma").await;
 
+    // An identity is handle · charter · rules · memory · one box, and the
+    // charter is the part the coordinator writes when it stands somebody up.
+    // An implementer nobody has told what it is for is one that guesses.
+    s.call(
+        "set_charter",
+        json!({
+            "bot": "bot:gamma",
+            "prose": "You build one scoped slice at a time, test-first, and report to otto.",
+        }),
+    )
+    .await
+    .says("test-first");
+
+    // The charter travels with the identity rather than with whoever wrote
+    // it: the implementer's own boot hands it back, over a connection this
+    // session never touched.
+    let (chartered, _) = story
+        .call("start_here", json!({"bot": "gamma", "brief": true}))
+        .await;
+    chartered.says("test-first");
+
     // The work queue itself is not modelled here: projects are entities and
     // nest, tasks are not and stay on the board they came from. The queue is
     // the mailbox rail, which is what it is for.
@@ -95,19 +116,58 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
 
     // The implementer, on its own connection, which never met the coordinator.
     let g = story.as_bot("bot:gamma").await;
+
+    // Polling is how a session finds out whether anything is waiting. It
+    // reports the counts and takes delivery of nothing, which is why the
+    // delivery below still hands over the dispatch itself.
+    g.call("read_mailbox", json!({"counts_only": true}))
+        .await
+        .says("\"new\":1")
+        .never_says("Build the second field");
     g.drain()
         .await
         .says("Build the second field")
         .says("report back");
-    g.post("otto", "Done", "Shipped it, green, one commit.")
+
+    // The report answers the dispatch rather than arriving unattached, so a
+    // reader coming to this later has the two as one exchange.
+    let reported = g
+        .call(
+            "post_message",
+            json!({
+                "mailbox": "otto",
+                "subject": "Done",
+                "body": "Shipped it, green, one commit.",
+                "in_reply_to": &dispatched,
+            }),
+        )
         .await;
+    reported.says(&dispatched);
+    let report = reported.field("id");
+
     g.processed(&dispatched, "built and reported").await;
     g.wrap("did the work and reported").await;
 
     // The round trip completes across three sessions that never shared a
-    // connection.
+    // connection. The report is findable without opening the box, and taking
+    // delivery of the one message the hit names leaves the rest of it alone.
     let s = story.session().await;
-    s.drain().await.says("Shipped it, green, one commit.");
+    s.find_including_mail("Shipped it").await.says(&report);
+    s.call("read_message", json!({"message_id": &report}))
+        .await
+        .says("Shipped it, green, one commit.");
+
+    // A message already taken comes back on the next delivery — still
+    // counted, still owed, and with its body left out, because this consumer
+    // was handed it once. Asking for it back is the read a crashed one makes.
+    s.drain()
+        .await
+        .says("\"seen_before\":true")
+        .says("\"body_elided\":true")
+        .says("\"body\":null");
+    s.call("read_mailbox", json!({"new_only": false}))
+        .await
+        .says("\"body\":\"Shipped it, green, one commit.\"");
 
     // GAP — the rail carried the work and kept no record of it. A message is
     // `processed`, and that is the whole of what a later session learns: not
@@ -198,6 +258,15 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // than letting an empty result read as "nobody filed that".
     s.find("prose codec").await.says("\"searched\":false");
     s.find_including_mail("prose codec").await.says("delta");
+
+    // …and where its own mail got to is a read of its own, taking delivery of
+    // nothing: gamma's slice has been finished with, delta's is still waiting
+    // to be picked up.
+    s.call("list_sent", json!({}))
+        .await
+        .says("Take the prose codec")
+        .says("\"state\":\"processed\"")
+        .says("\"state\":\"new\"");
 
     // GAP — two slices are now in flight and nothing says so. A message is
     // `new`, `read` or `processed`, which is the state of a message and not

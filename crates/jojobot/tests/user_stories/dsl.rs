@@ -177,6 +177,40 @@ impl Story {
         Session { client, sid }
     }
 
+    /// **Any verb, before there is a session to make it from.**
+    ///
+    /// [`Session::call`] rides a `sid`; this is the same escape hatch one step
+    /// earlier, for the calls a caller makes before it holds an identity — the
+    /// door itself, and a liveness probe. Nothing is injected into `args`,
+    /// because the point of these calls is what they do without a session.
+    ///
+    /// Hands back the session when the answer carried a `sid`, and none when
+    /// it did not. **That is a real distinction and not a convenience**: a boot
+    /// with a run worth picking up answers with the choice and no handle, so a
+    /// story asserting the offer has to be able to see the absence.
+    pub async fn call(&self, tool: &str, args: Value) -> (Answer, Option<Session>) {
+        let client = self.connect().await;
+        let body = call(&client, tool, args).await;
+        assert_ne!(
+            body["status"], "blocked",
+            "{tool} was refused, so this part of the story is not reachable: {body}"
+        );
+        let answer = Answer {
+            what: format!("the answer from {tool}"),
+            body: body.to_string(),
+        };
+        match body["session"]["sid"].as_str() {
+            Some(sid) => {
+                let sid = sid.to_string();
+                (answer, Some(Session { client, sid }))
+            }
+            None => {
+                client.cancel().await.unwrap();
+                (answer, None)
+            }
+        }
+    }
+
     /// Fetch a shipped procedure by name, through the same door a boot uses.
     /// No bot and no session: reading a skill starts nothing.
     pub async fn skill(&self, name: &str) -> Value {
@@ -212,6 +246,36 @@ impl Session {
         let body = call(&self.client, tool, args).await;
         Answer {
             what,
+            body: body.to_string(),
+        }
+    }
+
+    /// **Any verb, any arguments — the success-path twin of [`Session::refused`].**
+    ///
+    /// A story reaches the whole served surface through this one method, so a
+    /// capability can be exercised the day it ships rather than the day
+    /// somebody writes an adapter for it here. The named methods below are for
+    /// the moves stories make constantly and earn their place by being used
+    /// everywhere; **a verb does not get one just for existing** — that is the
+    /// habit that let six verbs and fourteen arguments go unexercised while
+    /// every one of them was reachable over the wire.
+    ///
+    /// The `sid` rides along as it does on every other call. A `blocked`
+    /// answer fails the beat, for the reason this file's header gives: in a
+    /// story a refusal means the use case is not reachable, and [`refused`] is
+    /// where that is the expected answer.
+    ///
+    /// [`refused`]: Session::refused
+    pub async fn call(&self, tool: &str, args: Value) -> Answer {
+        let mut args = args;
+        args["sid"] = self.sid.clone().into();
+        let body = call(&self.client, tool, args).await;
+        assert_ne!(
+            body["status"], "blocked",
+            "{tool} was refused, so this part of the story is not reachable: {body}"
+        );
+        Answer {
+            what: format!("the answer from {tool}"),
             body: body.to_string(),
         }
     }
@@ -672,6 +736,19 @@ impl Answer {
             what: format!("claim {address}"),
             body: fact.to_string(),
         }
+    }
+
+    /// One top-level field of the answer, as a string — the id a later beat
+    /// addresses this thing through. Panics rather than returning an empty
+    /// string when the field is missing, so a beat built on it cannot go on
+    /// asserting against nothing.
+    pub fn field(&self, name: &str) -> String {
+        let body: Value = serde_json::from_str(&self.body)
+            .unwrap_or_else(|e| panic!("the {} is not json: {e}: {}", self.what, self.body));
+        body[name]
+            .as_str()
+            .unwrap_or_else(|| panic!("the {} carries no {name}: {}", self.what, self.body))
+            .to_string()
     }
 
     pub fn says(&self, needle: &str) -> &Self {
