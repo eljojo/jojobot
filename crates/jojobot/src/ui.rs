@@ -87,7 +87,6 @@ struct Live {
 /// The UI's OAuth client and its browser sessions.
 pub struct Ui {
     client_id: String,
-    client_secret: Option<String>,
     redirect_uri: String,
     endpoints: IssuerEndpoints,
     /// Validates the ID token the issuer returns, and authorizes its subject
@@ -112,7 +111,6 @@ impl Ui {
     ) -> Self {
         Self {
             client_id: cfg.client_id.clone(),
-            client_secret: cfg.client_secret.clone(),
             redirect_uri: cfg.redirect_uri(),
             endpoints,
             id_tokens,
@@ -343,7 +341,6 @@ mod tests {
         Ui::new(
             &UiConfig {
                 client_id: "jojobot-ui".to_string(),
-                client_secret: None,
                 base_url: "https://jojobot.test".to_string(),
             },
             IssuerEndpoints {

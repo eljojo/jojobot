@@ -416,7 +416,6 @@ async fn spawn_jojobot_at(
 
     let ui_cfg = UiConfig {
         client_id: CLIENT_ID.to_string(),
-        client_secret: None,
         base_url: format!("{scheme}://{addr}"),
     };
     let ui = Ui::new(

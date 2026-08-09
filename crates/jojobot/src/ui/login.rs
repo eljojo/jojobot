@@ -136,14 +136,15 @@ async fn exchange(ui: &Ui, code: &str, verifier: &str) -> anyhow::Result<String>
         ("code_verifier", verifier),
     ];
 
-    let mut request = ui.http.post(&ui.endpoints.token_endpoint).form(&form);
-    // `client_secret_basic` — the OIDC default for a confidential client. A
-    // public client sends nothing, and PKCE is what stands in its place.
-    if let Some(secret) = &ui.client_secret {
-        request = request.basic_auth(&ui.client_id, Some(secret));
-    }
-
-    let response = request.send().await?.error_for_status()?;
+    // A public client: nothing authenticates this request but the verifier,
+    // which only the process that started the login holds.
+    let response = ui
+        .http
+        .post(&ui.endpoints.token_endpoint)
+        .form(&form)
+        .send()
+        .await?
+        .error_for_status()?;
     let tokens: TokenResponse = response.json().await?;
     tokens.id_token.ok_or_else(|| {
         anyhow::anyhow!("the issuer returned no id_token, so there is nothing saying who logged in")

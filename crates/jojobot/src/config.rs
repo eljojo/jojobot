@@ -28,13 +28,14 @@ pub struct AuthConfig {
 /// jojobot is also a client of the same issuer — authorization code with PKCE,
 /// then a session of its own. The client must be registered at the issuer,
 /// which is why every field here is runtime configuration.
+///
+/// **A public client, always.** PKCE binds the code to the process that started
+/// the login, so there is no secret to hold — and a secret a browser-facing
+/// client does not need is one nobody has to deploy, rotate or leak.
 #[derive(Debug, Clone)]
 pub struct UiConfig {
     /// The client id the issuer registered for this UI.
     pub client_id: String,
-    /// The client secret, when the issuer registered a confidential client.
-    /// Absent means a public client, which PKCE is what protects.
-    pub client_secret: Option<String>,
     /// The origin a browser reaches this server on, scheme included. The
     /// redirect URI is built from it, so it must match what the issuer holds.
     pub base_url: String,
@@ -73,7 +74,7 @@ impl Config {
     /// - `JOJOBOT_ALLOWED_SUBJECTS` — optional comma-separated `sub` allowlist.
     /// - `JOJOBOT_UI_CLIENT_ID` — set to serve the browser UI (OAuth client id).
     /// - `JOJOBOT_UI_BASE_URL` — the origin a browser reaches this server on.
-    /// - `JOJOBOT_UI_CLIENT_SECRET` — optional; for a confidential client.
+    /// - `JOJOBOT_UI_CLIENT_SECRET` — gone; setting it refuses to start.
     pub fn from_env() -> anyhow::Result<Self> {
         Self::build(RawEnv::from_env())
     }
@@ -135,15 +136,22 @@ impl Config {
             }
         }
 
+        // The UI is a public client and PKCE is what protects it, so a secret is
+        // no longer read anywhere. Refusing beats ignoring: an operator who left
+        // one in an environment file would otherwise keep deploying a credential
+        // in the belief it authenticates something.
+        if raw.ui_client_secret_set {
+            anyhow::bail!(
+                "JOJOBOT_UI_CLIENT_SECRET is set but the browser UI is a public client — its \
+                 login is authorization code with PKCE and sends no client secret. Unset it, and \
+                 delete the secret at the issuer if nothing else uses it."
+            );
+        }
+
         // Field by field rather than by reference: `auth` above has already taken
         // ownership of the fields it needed, so the struct as a whole is no
         // longer borrowable.
-        let ui = build_ui(
-            raw.ui_client_id,
-            raw.ui_client_secret,
-            raw.ui_base_url,
-            auth.is_some(),
-        )?;
+        let ui = build_ui(raw.ui_client_id, raw.ui_base_url, auth.is_some())?;
 
         Ok(Config {
             bind,
@@ -163,7 +171,6 @@ impl Config {
 /// so a client id with no issuer refuses to start rather than opening a door.
 fn build_ui(
     client_id: Option<String>,
-    client_secret: Option<String>,
     base_url: Option<String>,
     auth_enabled: bool,
 ) -> anyhow::Result<Option<UiConfig>> {
@@ -192,7 +199,6 @@ fn build_ui(
 
     Ok(Some(UiConfig {
         client_id,
-        client_secret: client_secret.filter(|s| !s.is_empty()),
         base_url,
     }))
 }
@@ -208,7 +214,9 @@ struct RawEnv {
     allowed_subjects: Option<String>,
     allow_no_auth: bool,
     ui_client_id: Option<String>,
-    ui_client_secret: Option<String>,
+    /// Whether a client secret was set, never its value — the flow has no use
+    /// for one, and the only thing left to do with it is refuse to start.
+    ui_client_secret_set: bool,
     ui_base_url: Option<String>,
 }
 
@@ -225,7 +233,8 @@ impl RawEnv {
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
             ui_client_id: std::env::var("JOJOBOT_UI_CLIENT_ID").ok(),
-            ui_client_secret: std::env::var("JOJOBOT_UI_CLIENT_SECRET").ok(),
+            ui_client_secret_set: std::env::var("JOJOBOT_UI_CLIENT_SECRET")
+                .is_ok_and(|v| !v.is_empty()),
             ui_base_url: std::env::var("JOJOBOT_UI_BASE_URL").ok(),
         }
     }
@@ -299,7 +308,7 @@ mod tests {
             allowed_subjects: subjects.map(str::to_string),
             allow_no_auth: false,
             ui_client_id: None,
-            ui_client_secret: None,
+            ui_client_secret_set: false,
             ui_base_url: None,
         }
     }
@@ -341,7 +350,7 @@ mod tests {
             allowed_subjects: Some("sub-1".to_string()),
             allow_no_auth: true,
             ui_client_id: None,
-            ui_client_secret: None,
+            ui_client_secret_set: false,
             ui_base_url: None,
         };
         assert!(
@@ -388,7 +397,7 @@ mod tests {
             allowed_subjects: None,
             allow_no_auth,
             ui_client_id: None,
-            ui_client_secret: None,
+            ui_client_secret_set: false,
             ui_base_url: None,
         }
     }
@@ -403,7 +412,7 @@ mod tests {
             allowed_subjects: None,
             allow_no_auth: true,
             ui_client_id: client_id.map(str::to_string),
-            ui_client_secret: None,
+            ui_client_secret_set: false,
             ui_base_url: base_url.map(str::to_string),
         }
     }
@@ -443,6 +452,22 @@ mod tests {
         let ui = cfg.ui.expect("the UI is configured");
         assert_eq!(ui.client_id, "jojobot-ui");
         assert_eq!(ui.redirect_uri(), "https://jojobot.test/ui/callback");
+    }
+
+    #[test]
+    fn refuses_a_client_secret_the_login_cannot_use() {
+        // The secret is gone from the flow. A variable that no longer does
+        // anything must not be quietly ignored: left in an environment file it
+        // would go on being deployed as if it authenticated something.
+        let raw = RawEnv {
+            ui_client_secret_set: true,
+            ..raw_ui(
+                Some("https://issuer.example"),
+                Some("jojobot-ui"),
+                Some("https://jojobot.test"),
+            )
+        };
+        assert!(Config::build(raw).is_err());
     }
 
     #[test]
