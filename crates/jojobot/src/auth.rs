@@ -339,10 +339,13 @@ mod tests {
     use rsa::traits::PublicKeyParts;
     use rsa::{RsaPrivateKey, RsaPublicKey};
     use serde::Serialize;
+    use serde_json::{Value, json};
 
     const ISS: &str = "https://issuer.test";
     const AUD: &str = "https://jojobot.test/mcp";
     const KID: &str = "test-key-1";
+    /// What an ID token is minted for — the UI's client id, never the resource.
+    const CLIENT_AUD: &str = "jojobot-ui";
 
     #[derive(Serialize)]
     struct TestClaims {
@@ -654,6 +657,182 @@ mod tests {
         let other = gen_keypair();
         let token = sign(&signer.enc, KID, &good_claims());
         assert!(validator(other.decoding).validate(&token).is_err());
+    }
+
+    // --- Discovery: the constructors that stand up the browser login ---
+
+    /// Serve a discovery document and a JWKS over real HTTP; returns the issuer
+    /// base URL. The document is built from that URL because `jwks_uri` is
+    /// absolute, and it is taken verbatim so a test can publish a partial one.
+    async fn spawn_issuer(doc: impl FnOnce(&str) -> Value, jwks: Value) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let doc = doc(&base);
+        let app = axum::Router::new()
+            .route(
+                "/.well-known/openid-configuration",
+                axum::routing::get(move || {
+                    let doc = doc.clone();
+                    async move { axum::Json(doc) }
+                }),
+            )
+            .route(
+                "/jwks",
+                axum::routing::get(move || {
+                    let jwks = jwks.clone();
+                    async move { axum::Json(jwks) }
+                }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        base
+    }
+
+    /// Everything an issuer publishes: keys plus both login endpoints.
+    fn whole_doc(base: &str) -> Value {
+        json!({
+            "jwks_uri": format!("{base}/jwks"),
+            "authorization_endpoint": format!("{base}/authorize"),
+            "token_endpoint": format!("{base}/token"),
+        })
+    }
+
+    fn jwks_doc(kp: &KeyPair) -> Value {
+        json!({ "keys": [{ "kty": "RSA", "use": "sig", "kid": KID, "n": kp.n, "e": kp.e }] })
+    }
+
+    /// A config naming a live test issuer; `audience` is the resource one, which
+    /// is what `discover_for_audience` must override.
+    fn discovery_config(issuer: &str, allowed: &[&str]) -> AuthConfig {
+        AuthConfig {
+            issuer: issuer.to_string(),
+            audience: AUD.to_string(),
+            jwks_uri: None,
+            allowed_subjects: allowed.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn claims_for(issuer: &str, sub: &str, audience: &str) -> TestClaims {
+        TestClaims {
+            sub: sub.to_string(),
+            iss: issuer.to_string(),
+            aud: audience.to_string(),
+            exp: now() + 3600,
+            nbf: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn discover_for_audience_binds_the_audience_it_is_passed() {
+        // The whole reason the second constructor exists: the ID token is minted
+        // for the client, so a validator built this way must accept the client
+        // audience and reject the resource one it was configured with.
+        let kp = gen_keypair();
+        let issuer = spawn_issuer(whole_doc, jwks_doc(&kp)).await;
+        let cfg = discovery_config(&issuer, &[]);
+        let v = Validator::discover_for_audience(&cfg, CLIENT_AUD, &reqwest::Client::new())
+            .await
+            .expect("discovery succeeds against a live issuer");
+
+        let id_token = sign(&kp.enc, KID, &claims_for(&issuer, "sub-alpha", CLIENT_AUD));
+        let claims = v
+            .validate(&id_token)
+            .expect("a token for the client audience must be accepted");
+        assert_eq!(claims.sub, "sub-alpha");
+
+        let resource_token = sign(&kp.enc, KID, &claims_for(&issuer, "sub-alpha", AUD));
+        let err = v
+            .validate(&resource_token)
+            .expect_err("a token for the configured resource audience must NOT be accepted");
+        assert!(
+            matches!(err, AuthError::Rejected(_)),
+            "expected an audience rejection, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn discover_for_audience_carries_the_allowlist() {
+        // The second constructor rebuilds the validator by hand; a regression that
+        // forgets the allowlist here authorizes anyone who can log in.
+        let kp = gen_keypair();
+        let issuer = spawn_issuer(whole_doc, jwks_doc(&kp)).await;
+        let cfg = discovery_config(&issuer, &["sub-alpha"]);
+        let v = Validator::discover_for_audience(&cfg, CLIENT_AUD, &reqwest::Client::new())
+            .await
+            .expect("discovery succeeds against a live issuer");
+
+        let listed = sign(&kp.enc, KID, &claims_for(&issuer, "sub-alpha", CLIENT_AUD));
+        let listed = v.validate(&listed).expect("token is valid");
+        assert!(
+            v.authorize(&listed).is_ok(),
+            "the allowlisted subject must be authorized"
+        );
+
+        let stranger = sign(&kp.enc, KID, &claims_for(&issuer, "sub-beta", CLIENT_AUD));
+        let stranger = v.validate(&stranger).expect("token is valid");
+        let err = v
+            .authorize(&stranger)
+            .expect_err("an off-list subject must be forbidden");
+        assert!(
+            matches!(err, AuthError::Forbidden(_)),
+            "expected Forbidden, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn discover_endpoints_needs_both_endpoints_published() {
+        let kp = gen_keypair();
+        let whole = spawn_issuer(whole_doc, jwks_doc(&kp)).await;
+        let http = reqwest::Client::new();
+
+        let endpoints = discover_endpoints(&whole, &http)
+            .await
+            .expect("an issuer publishing both endpoints is usable");
+        assert_eq!(
+            endpoints.authorization_endpoint,
+            format!("{whole}/authorize")
+        );
+        assert_eq!(endpoints.token_endpoint, format!("{whole}/token"));
+
+        let partial = spawn_issuer(
+            |base| json!({ "jwks_uri": format!("{base}/jwks"), "authorization_endpoint": format!("{base}/authorize") }),
+            jwks_doc(&kp),
+        )
+        .await;
+        let err = discover_endpoints(&partial, &http)
+            .await
+            .expect_err("a missing token_endpoint must be an error, not a default");
+        assert!(
+            err.to_string().contains("token_endpoint"),
+            "the error must name the missing endpoint, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn discovery_failure_is_an_error() {
+        // Both constructors read the discovery document first; an issuer that does
+        // not answer must surface as an error rather than a panic or a validator
+        // built on defaults.
+        let kp = gen_keypair();
+        let live = spawn_issuer(whole_doc, jwks_doc(&kp)).await;
+        let unreachable = format!("{live}/nowhere");
+        let http = reqwest::Client::new();
+
+        assert!(
+            discover_endpoints(&live, &http).await.is_ok(),
+            "the live issuer must be reachable, or the negative below proves nothing"
+        );
+
+        let err = discover_endpoints(&unreachable, &http)
+            .await
+            .expect_err("an unreadable discovery document must be an error");
+        assert!(err.to_string().contains("404"), "got: {err}");
+
+        let cfg = discovery_config(&unreachable, &[]);
+        // Not `expect_err`: a `Validator` is deliberately not `Debug`.
+        let Err(err) = Validator::discover_for_audience(&cfg, CLIENT_AUD, &http).await else {
+            panic!("discovery failure must fail the validator, not default it");
+        };
+        assert!(err.to_string().contains("404"), "got: {err}");
     }
 
     #[test]

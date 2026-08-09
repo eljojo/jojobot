@@ -24,14 +24,14 @@ use jojobot::ui::Ui;
 use jojobot::{AppState, build_app};
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
-use jojobot_domain::mailbox::{MailboxName, Mailboxes, MessageState, NewMessage};
+use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage};
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::memory::{
     Boot, Edge, EdgeShape, Entity, EntityId, EntityKind, Memory, NewEntity, NewFact, Provenance,
 };
 use jojobot_domain::session::testing::InMemorySessions;
-use jojobot_domain::session::{NewEntry, NewSession, SessionState, Sessions, Sid};
+use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
@@ -54,6 +54,29 @@ season. This closing sentence is the tail of the long beat.";
 
 /// A fixed instant, so nothing here reads a clock.
 const FIXED_INSTANT: jiff::Timestamp = jiff::Timestamp::constant(1_780_000_000, 0);
+
+/// Markup somebody typed, in a value a page renders.
+///
+/// **One payload per field, named after the field**, so an assertion covers the
+/// call site that renders *that* value: a corpus carrying a single shared
+/// payload lets one escaped field stand in for every raw one beside it. `<b>`
+/// is not in this listing's own vocabulary, so a `<b>` on a served page is the
+/// writer's.
+fn typed(field: &str) -> String {
+    format!("<b>{field} & \"quoted\"</b>")
+}
+
+/// The same text as a page has to carry it: markup a person typed is **text**,
+/// so it arrives as character references or it arrives as document. Spelled out
+/// here from the encoding rather than borrowed from the renderer — an
+/// expectation that called the code under test would agree with it by
+/// construction.
+fn as_text(raw: &str) -> String {
+    raw.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
 
 // --- the issuer ------------------------------------------------------------
 
@@ -201,7 +224,10 @@ async fn seed(store: &dyn Memory) {
         ),
         NewEntity::new(
             EntityId::new(EntityKind::Place, "shelbyville"),
-            "Shelbyville",
+            // A name is free text a person wrote, and this one bites: it is
+            // rendered in a root's row on the index and in the record table on
+            // its own page.
+            format!("Shelbyville {}", typed("place-name")),
             "the fixture roster",
         ),
     ] {
@@ -229,6 +255,24 @@ async fn seed(store: &dyn Memory) {
         EntityId::new(EntityKind::Place, "shelbyville"),
     ));
     store.capture(fact).await.expect("the fact is written");
+
+    // A claim and a portrait are free text too, and they land in different
+    // parts of a node page — the fact table and the prose block.
+    store
+        .capture(NewFact::about(
+            EntityId::new(EntityKind::Topic, "widgets"),
+            typed("fact-content"),
+            Date::constant(2026, 3, 5),
+        ))
+        .await
+        .expect("the markup-bearing fact is written");
+    store
+        .set_prose(
+            &EntityId::new(EntityKind::Topic, "widgets"),
+            &format!("What the stall is for {}", typed("prose")),
+        )
+        .await
+        .expect("the prose is written");
 }
 
 /// Every store the server is spawned over, kept so a test can read the records
@@ -280,6 +324,20 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
         .await
         .expect("the long message is posted");
 
+    // Short, so the fold stays the long body's alone — this one is here for the
+    // two free-text fields a message carries.
+    mailboxes
+        .post_message(NewMessage {
+            mailbox: MailboxName("otto".to_string()),
+            body: typed("message-body"),
+            subject: Some(typed("message-subject")),
+            sender: "bot:gamma".to_string(),
+            sent_at: FIXED_INSTANT,
+            in_reply_to: None,
+        })
+        .await
+        .expect("the markup-bearing message is posted");
+
     let sessions = Arc::new(InMemorySessions::new());
     let session = sessions
         .begin(NewSession {
@@ -301,6 +359,13 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
         .append(&session.id, NewEntry::manual(LONG_BEAT, FIXED_INSTANT))
         .await
         .expect("the long beat is recorded");
+    sessions
+        .append(
+            &session.id,
+            NewEntry::manual(typed("chronology-beat"), FIXED_INSTANT),
+        )
+        .await
+        .expect("the markup-bearing beat is recorded");
 
     Board {
         memory,
@@ -328,6 +393,20 @@ async fn spawn_jojobot_over(
     idp: &support::TestIdp,
     board: Board,
 ) -> (SocketAddr, CancellationToken, Board) {
+    spawn_jojobot_at(endpoints, allowed, idp, board, "http").await
+}
+
+/// The same, with the **configured origin's scheme** as a knob. It decides one
+/// thing this suite cares about — whether the session cookie is marked `Secure`
+/// — and a real instance behind a tunnel is configured `https` while the process
+/// itself still listens on plain TCP.
+async fn spawn_jojobot_at(
+    endpoints: IssuerEndpoints,
+    allowed: &[&str],
+    idp: &support::TestIdp,
+    board: Board,
+    scheme: &str,
+) -> (SocketAddr, CancellationToken, Board) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -338,7 +417,7 @@ async fn spawn_jojobot_over(
     let ui_cfg = UiConfig {
         client_id: CLIENT_ID.to_string(),
         client_secret: None,
-        base_url: format!("http://{addr}"),
+        base_url: format!("{scheme}://{addr}"),
     };
     let ui = Ui::new(
         &ui_cfg,
@@ -401,10 +480,26 @@ fn query_of(url: &str) -> HashMap<String, String> {
         .collect()
 }
 
+/// What a browser sends back: the pair, without the attributes that govern
+/// *when* it sends it. Those attributes are the subject of a test of their own,
+/// so they are separated here rather than thrown away here.
+fn session_pair(set_cookie: &str) -> String {
+    set_cookie
+        .split(';')
+        .next()
+        .expect("a cookie header has a first field")
+        .to_string()
+}
+
+/// Walk the whole login and hand back the session cookie a browser would send.
+async fn log_in(client: &reqwest::Client, jojobot: SocketAddr, from: &str) -> String {
+    session_pair(&log_in_raw(client, jojobot, from).await)
+}
+
 /// Walk the whole login: the gate turns the browser away, the login sends it to
 /// the issuer, the issuer sends it back with a code, and the callback opens a
-/// session. Returns the session cookie.
-async fn log_in(client: &reqwest::Client, jojobot: SocketAddr, from: &str) -> String {
+/// session. Returns the `Set-Cookie` the server sent, **whole**.
+async fn log_in_raw(client: &reqwest::Client, jojobot: SocketAddr, from: &str) -> String {
     let turned_away = client
         .get(format!("http://{jojobot}{from}"))
         .send()
@@ -438,9 +533,6 @@ async fn log_in(client: &reqwest::Client, jojobot: SocketAddr, from: &str) -> St
         .get(reqwest::header::SET_COOKIE)
         .expect("a completed login sets a session cookie")
         .to_str()
-        .unwrap()
-        .split(';')
-        .next()
         .unwrap()
         .to_string()
 }
@@ -621,6 +713,87 @@ async fn a_login_is_spent_once() {
         replayed.status(),
         reqwest::StatusCode::BAD_REQUEST,
         "a callback replayed with a spent state must not open a second session"
+    );
+    ct.cancel();
+}
+
+/// **The flags are the session's whole defence, so they are asserted, not
+/// discarded.** The cookie value alone says nothing about what reaches it:
+/// `HttpOnly` is what keeps a script on the page from reading it, and
+/// `SameSite` is what stops another site spending it on the reader's behalf.
+///
+/// `Secure` is the one that is conditional — it is taken from the **configured
+/// origin**, so both branches are walked here. An instance served over https
+/// must never hand its cookie to a plain-http request; an instance configured
+/// over http would never see the cookie come back at all if it did.
+#[tokio::test]
+async fn the_session_cookie_is_closed_to_script_and_to_another_site() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+
+    let set_cookie = log_in_raw(&client, addr, "/").await;
+
+    // The positive the negatives lean on: this is a real session cookie, not an
+    // empty header a `contains` would be asked about in vain.
+    assert!(
+        session_pair(&set_cookie).contains('=')
+            && session_pair(&set_cookie).split('=').nth(1) != Some(""),
+        "a completed login must set a session cookie with a value: {set_cookie}"
+    );
+    assert!(
+        set_cookie.contains("HttpOnly"),
+        "a cookie a script can read is a cookie an XSS takes: {set_cookie}"
+    );
+    assert!(
+        set_cookie.contains("SameSite=Lax"),
+        "without SameSite another site spends the session on the reader's behalf: {set_cookie}"
+    );
+    assert!(
+        !set_cookie.contains("; Secure"),
+        "an origin configured over plain http would never get a Secure cookie back: {set_cookie}"
+    );
+    ct.cancel();
+
+    // The other branch of the one conditional flag. The process still listens on
+    // plain TCP — there is no TLS in this test — so the issuer's callback comes
+    // back addressed `https` and the scheme is swapped to reach the same
+    // handler. What is under test is the cookie that handler writes.
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _board) =
+        spawn_jojobot_at(endpoints, &[READER], &idp, seeded_board().await, "https").await;
+    let client = browser();
+
+    let turned_away = client.get(format!("http://{addr}/")).send().await.unwrap();
+    let sent_out = client
+        .get(format!("http://{addr}{}", location(&turned_away)))
+        .send()
+        .await
+        .unwrap();
+    let back = client.get(location(&sent_out)).send().await.unwrap();
+    let callback = location(&back);
+    assert!(
+        callback.starts_with(&format!("https://{addr}/ui/callback")),
+        "the configured origin is what the issuer sends the browser back to: {callback}"
+    );
+    let opened = client
+        .get(callback.replace("https://", "http://"))
+        .send()
+        .await
+        .unwrap();
+    let secure = opened
+        .headers()
+        .get(reqwest::header::SET_COOKIE)
+        .expect("a completed login sets a session cookie")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        secure.contains("; Secure"),
+        "an origin configured over https must never hand its cookie to a plain-http request: \
+         {secure}"
     );
     ct.cancel();
 }
@@ -872,6 +1045,36 @@ async fn the_listing_does_not_take_over_what_was_already_served() {
             .contains("authorization_servers"),
         "the protected-resource metadata must still be the metadata"
     );
+
+    // The route the whole agent surface lives on. A catch-all in front of it
+    // would not fail loudly: `/mcp` is not a handle path, so the listing would
+    // report it missing, and every client would read that as a server that does
+    // not speak MCP.
+    let mcp = client
+        .get(format!("http://{addr}/mcp"))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        !mcp.status().is_redirection(),
+        "/mcp answers a program, not a person, so it is never sent to a login: {} to {}",
+        mcp.status(),
+        mcp.headers()
+            .get(reqwest::header::LOCATION)
+            .map_or("nowhere", |to| to.to_str().unwrap_or("nowhere")),
+    );
+    assert_ne!(
+        mcp.status(),
+        reqwest::StatusCode::NOT_FOUND,
+        "the listing's catch-all must not swallow the transport"
+    );
+    // And it is the transport itself answering, not merely something that is
+    // not the listing: the words are the streamable-HTTP transport's own.
+    let refusal = mcp.text().await.unwrap();
+    assert!(
+        refusal.contains("text/event-stream"),
+        "/mcp must still be the MCP transport, stating its own terms: {refusal}"
+    );
     ct.cancel();
 }
 
@@ -1026,8 +1229,62 @@ async fn a_bot_page_shows_its_runs_and_what_each_one_recorded() {
     ct.cancel();
 }
 
+/// Every rail a page can reach, read the way the next reader would read it:
+/// `scan` is the memory rail whole — every doc, its entity, its prose and the
+/// facts in its table — beside the mail on the board and the runs on record.
+///
+/// Rendered to strings so a difference prints as one, and sorted so a store's
+/// ordering is never mistaken for a change.
+struct Rails {
+    memory: Vec<String>,
+    mail: Vec<String>,
+    runs: Vec<String>,
+}
+
+async fn rails(board: &Board) -> Rails {
+    let mut memory: Vec<String> = board
+        .memory
+        .scan()
+        .await
+        .expect("the store is readable")
+        .iter()
+        .map(|doc| format!("{doc:?}"))
+        .collect();
+    let mut mail: Vec<String> = board
+        .mailboxes
+        .scan_messages()
+        .await
+        .expect("the mail rail is readable")
+        .iter()
+        .map(|message| format!("{message:?}"))
+        .collect();
+    let mut runs: Vec<String> = board
+        .sessions
+        .sessions_of(&EntityId::new(EntityKind::Bot, "otto"))
+        .await
+        .expect("the runs are readable")
+        .iter()
+        .map(|run| format!("{run:?}"))
+        .collect();
+    memory.sort();
+    mail.sort();
+    runs.sort();
+    Rails { memory, mail, runs }
+}
+
+/// **The listing is a window, and this is the pane.**
+///
+/// Looking through it must not change what is on the other side: a page that
+/// took delivery of a message, began a run, or touched a doc would alter the
+/// thing it was built to observe, and the bot on the other end would pay for it
+/// — a message it never saw, gone from its next delivery.
+///
+/// **Every page kind, and every rail.** Each handler reaches a different set of
+/// verbs — the index lists, a node page also recalls and scans, a bot page adds
+/// the mail and the runs — and a rail nobody reads back is a rail a page is free
+/// to write to.
 #[tokio::test]
-async fn reading_a_bot_page_takes_no_delivery() {
+async fn looking_through_the_listing_writes_to_no_rail() {
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (addr, ct, board) =
@@ -1035,48 +1292,114 @@ async fn reading_a_bot_page_takes_no_delivery() {
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let body = read(&client, addr, "/bot:otto/", &cookie)
+    let before = rails(&board).await;
+    assert!(
+        !before.memory.is_empty() && !before.mail.is_empty() && !before.runs.is_empty(),
+        "two empty rails compare equal and prove nothing: {:?}",
+        (&before.memory, &before.mail, &before.runs)
+    );
+
+    let index = read(&client, addr, "/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let node = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let bot = read(&client, addr, "/bot:otto/", &cookie)
         .await
         .text()
         .await
         .unwrap();
 
-    // The positive half: the page really did serve the message. Without it the
-    // assertion below passes against a page that shows nothing at all.
+    // The positive half, one per page: each really did serve the records it is
+    // about to be checked against. Without it a handler that returned nothing
+    // would pass every assertion below.
     assert!(
-        section(&body, "mailbox").contains("A second pair of eyes"),
-        "the page must actually render the mail it is being checked for: {body}"
+        index.contains("href=\"/person:alpha/\""),
+        "the index must render the roots it is being checked for: {index}"
+    );
+    assert!(
+        node.contains("The widget stall runs on Thursdays"),
+        "the node page must render the facts held there: {node}"
+    );
+    assert!(
+        section(&bot, "mailbox").contains("A second pair of eyes"),
+        "the bot page must render the mail: {bot}"
+    );
+    assert!(
+        section(&bot, "sessions").contains("ot1x"),
+        "the bot page must render the runs: {bot}"
     );
 
-    // The half this slice exists for. A window that took delivery would change
-    // the thing it was built to observe, and the bot on the other end would pay
-    // for it — a message it never saw, gone from its next delivery.
-    let after = board
-        .mailboxes
-        .scan_messages()
-        .await
-        .expect("the board is readable");
-    assert_eq!(after.len(), 2, "the mail is still there");
-    assert!(
-        after
-            .iter()
-            .all(|message| message.state == MessageState::New),
-        "mail nobody has taken is still waiting after the page was served: {after:?}"
-    );
-
-    // Same guarantee on the other rail: rendering a bot's runs must not begin
-    // one, close one, or sweep one. The page is not a boot.
-    let runs = board
-        .sessions
-        .sessions_of(&EntityId::new(EntityKind::Bot, "otto"))
-        .await
-        .expect("the runs are readable");
-    assert_eq!(runs.len(), 1, "the page began no run and ended none");
+    let after = rails(&board).await;
     assert_eq!(
-        runs[0].state,
-        SessionState::Active,
-        "a run still going is still going after the page was served"
+        before.memory, after.memory,
+        "serving a page rewrote the entity store"
     );
+    assert_eq!(
+        before.mail, after.mail,
+        "serving a page took delivery, or moved mail the bot has never seen"
+    );
+    assert_eq!(
+        before.runs, after.runs,
+        "serving a page began, ended or swept a run — the page is not a boot"
+    );
+    ct.cancel();
+}
+
+/// **Escaping is a property of the served page, not of a function.**
+///
+/// Every value below is free text somebody wrote, and each reaches the browser
+/// through a different call site. A pure-function test proves the escaper
+/// transforms a string; it says nothing about whether the twenty places that
+/// render one call it, and against a corpus with no markup in it the escaper is
+/// the identity — so the corpus carries the markup and the assertion reads the
+/// page.
+#[tokio::test]
+async fn markup_a_writer_typed_arrives_as_text_and_not_as_document() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _board) =
+        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    for (path, fields) in [
+        ("/", &["place-name"][..]),
+        ("/place:shelbyville/", &["place-name"][..]),
+        (
+            "/person:alpha/topic:widgets/",
+            &["fact-content", "prose"][..],
+        ),
+        (
+            "/bot:otto/",
+            &["message-subject", "message-body", "chronology-beat"][..],
+        ),
+    ] {
+        let page = read(&client, addr, path, &cookie)
+            .await
+            .text()
+            .await
+            .unwrap();
+        for field in fields {
+            let raw = typed(field);
+            // The pair, in the same read: the value is on the page, and it is on
+            // it as text. Either alone passes against a page that dropped the
+            // value entirely.
+            assert!(
+                page.contains(&as_text(&raw)),
+                "{path} must carry the {field} a writer typed, escaped: {page}"
+            );
+            assert!(
+                !page.contains(&raw),
+                "{path} handed a writer's markup to the browser as document, at the {field}: {page}"
+            );
+        }
+    }
     ct.cancel();
 }
 
