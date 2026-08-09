@@ -5,7 +5,7 @@
 //! that path is its URL. Nothing here reads a store — it is arithmetic over
 //! entities the caller already has, which is what makes it testable without one.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use jojobot_domain::memory::{Entity, EntityId};
 
@@ -36,22 +36,30 @@ pub fn segments(path: &str) -> Option<Vec<EntityId>> {
 /// at creation, so a cycle is unreachable through the write path — but this
 /// reads whatever the store holds, and a page that hangs on a hand-edited
 /// record is worse than one that shows a short path.
+///
+/// **The seen-handle check is the whole bound.** Every step appends a handle
+/// the chain does not already hold, so the walk stops after the entities the
+/// caller passed in, however they are wired. A depth limit behind it could only
+/// fire on a chain of that many *distinct* ancestors — a real tree, whose real
+/// path it would cut short and call a loop.
+///
+/// The check is a set beside the chain, not a scan of it: this runs once per
+/// entity in a listing, and a scan per step makes the page quadratic in the
+/// depth of the deepest ancestry it holds.
 pub fn canonical_path(entity: &Entity, by_id: &HashMap<&EntityId, &Entity>) -> String {
     let mut chain = vec![entity.id.as_str()];
+    let mut seen: HashSet<&str> = HashSet::from([entity.id.as_str()]);
     let mut walker = entity;
     while let Some(parent) = walker
         .parent
         .as_ref()
         .and_then(|parent| by_id.get(parent).copied())
     {
-        if chain.contains(&parent.id.as_str()) {
+        if !seen.insert(parent.id.as_str()) {
             break;
         }
         chain.push(parent.id.as_str());
         walker = parent;
-        if chain.len() > 64 {
-            break;
-        }
     }
     chain.reverse();
     format!("/{}/", chain.join("/"))
@@ -60,7 +68,7 @@ pub fn canonical_path(entity: &Entity, by_id: &HashMap<&EntityId, &Entity>) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jojobot_domain::memory::Boot;
+    use jojobot_domain::memory::{Boot, EntityKind};
 
     fn entity(id: &str, parent: Option<&str>) -> Entity {
         let id = EntityId(id.to_string());
@@ -118,6 +126,70 @@ mod tests {
         // A record no write path can produce, and a page that hung on it would
         // be a worse answer than a short path.
         assert_eq!(canonical_path(&one, &by_id), "/person:y/person:x/");
+    }
+
+    /// A rung of a chain too long to spell out — built through the constructor
+    /// rather than written, so these indices are not handles in this source for
+    /// the roster gate to read as names.
+    fn step(n: usize) -> EntityId {
+        EntityId::new(EntityKind::Topic, format!("step-{n:03}"))
+    }
+
+    /// `count` entities in one line, oldest first. `wrap` points the oldest at
+    /// the newest, which closes the line into a loop no write path produces.
+    fn line(count: usize, wrap: bool) -> Vec<Entity> {
+        (0..count)
+            .map(|n| {
+                let parent = match n {
+                    0 if wrap => Some(step(count - 1)),
+                    0 => None,
+                    _ => Some(step(n - 1)),
+                };
+                entity(step(n).as_str(), parent.as_ref().map(EntityId::as_str))
+            })
+            .collect()
+    }
+
+    fn by_id(entities: &[Entity]) -> HashMap<&EntityId, &Entity> {
+        entities.iter().map(|e| (&e.id, e)).collect()
+    }
+
+    fn depth(path: &str) -> usize {
+        path.split('/').filter(|s| !s.is_empty()).count()
+    }
+
+    /// **An ancestry deeper than the depth limit that used to sit behind the
+    /// cycle check.** That limit only ever fired here — on a real chain, whose
+    /// path it cut to its last handles and then served as the canonical one: a
+    /// URL, and a heading, stating an ancestry the record does not have.
+    #[test]
+    fn a_deep_ancestry_keeps_every_handle() {
+        let deep = line(70, false);
+        let by_id = by_id(&deep);
+        let path = canonical_path(deep.last().expect("70 entities"), &by_id);
+
+        assert_eq!(depth(&path), 70, "every ancestor is a segment: {path}");
+        assert!(path.starts_with(&format!("/{}/", step(0))), "{path}");
+        assert!(path.ends_with(&format!("/{}/", step(69))), "{path}");
+    }
+
+    /// **The case the depth limit was supposed to be for, with it gone.** A
+    /// loop longer than that limit still ends: the walk stops at the first
+    /// handle it already holds, so the entities the caller passed in are its
+    /// bound.
+    #[test]
+    fn a_loop_longer_than_the_old_depth_limit_still_ends() {
+        let looped = line(70, true);
+        let by_id = by_id(&looped);
+        let path = canonical_path(&looped[0], &by_id);
+
+        assert_eq!(depth(&path), 70, "each handle once, then it stops: {path}");
+        assert!(path.ends_with(&format!("/{}/", step(0))), "{path}");
+        // Counting the segments is not enough on its own: a walk that took a
+        // handle twice and dropped another would count the same. What bounds
+        // this walk is that no handle is ever revisited, so assert that.
+        let walked: HashSet<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        assert_eq!(walked.len(), 70, "a handle was walked twice: {path}");
     }
 
     #[test]
