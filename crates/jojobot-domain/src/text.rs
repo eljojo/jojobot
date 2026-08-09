@@ -153,11 +153,19 @@ pub const MESSAGE_TITLE: Fitted = Fitted {
     when_empty: None,
 };
 
-/// **The opening of a body, for an answer that is not shipping the body back.**
+/// **The opening of a long block, wherever the whole block is not shown up
+/// front.**
 ///
-/// Enough to recognize which message this is beside its byte count, which is
+/// Enough to recognize which record this is beside its byte count, which is
 /// what an author verifying their own write actually needs — they wrote the
 /// body, so sending it back to them is the one reader it teaches nothing.
+///
+/// **A message body is the first case, not the only one.** A chronology entry
+/// is somebody's writing at the same lengths a body reaches, and a page that
+/// folds one asks the same question: how much of this is enough to recognize it
+/// by. That question has one answer here rather than one per surface, so a
+/// caller that needs to know whether a block is long asks whether this strategy
+/// cut it instead of reading the budget again.
 pub const BODY_DIGEST: Fitted = Fitted {
     name: "body-digest",
     budget: 120,
