@@ -52,6 +52,18 @@ const SESSION_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 /// form and an abandoned one is exactly what an attacker replays.
 const LOGIN_TTL: Duration = Duration::from_secs(10 * 60);
 
+/// How many half-finished logins are held at once. `/ui/login` is public, and
+/// age alone does not bound a table an unauthenticated caller can fill faster
+/// than the TTL empties it. A personal instance logs in from a handful of
+/// browsers, so the cap is far above real use and far below memory pressure.
+///
+/// **It is a cap that evicts, never one that refuses.** Filling it costs an
+/// unauthenticated caller nothing, so refusing at the brim would trade bounded
+/// memory for a lock-out on the only door — the cheaper attack of the two. A
+/// dropped half-finished login costs its owner one retry; a refused one costs
+/// the operator the way in.
+const MAX_PENDING: usize = 64;
+
 /// A login that has been sent to the issuer and not yet come back.
 struct Pending {
     /// The PKCE verifier this login's challenge was derived from. It never
@@ -63,16 +75,10 @@ struct Pending {
     started: Instant,
 }
 
-/// A browser that has logged in.
-#[derive(Clone, Debug)]
-pub struct Browser {
-    /// The issuer's subject id for whoever is reading. Not displayed; it is what
-    /// the allowlist was checked against and what a log line names.
-    pub subject: String,
-}
-
+/// A browser that has logged in. **Liveness and nothing else** — who it is was
+/// settled at the callback, against the same allowlist `/mcp` uses, and the
+/// listing is read-only, so no page downstream has a subject to ask for.
 struct Live {
-    browser: Browser,
     /// When the session was opened. Sessions expire rather than refresh, so a
     /// browser left open overnight logs in again in the morning.
     opened: Instant,
@@ -118,7 +124,9 @@ impl Ui {
     }
 
     /// Start a login: draw a state and a PKCE verifier, remember where the
-    /// browser was going, and return the URL to send it to.
+    /// browser was going, and return the URL to send it to. **A login always
+    /// starts** — a full table makes room by dropping the login nearest expiry
+    /// rather than turning this one away ([`MAX_PENDING`]).
     fn begin_login(&self, next: &str) -> String {
         let state = draw(24);
         let verifier = draw(64);
@@ -130,6 +138,19 @@ impl Ui {
                 .lock()
                 .expect("the pending map is not poisoned");
             pending.retain(|_, p| p.started.elapsed() < LOGIN_TTL);
+            // **Oldest by `started`** — the one the TTL was about to take
+            // anyway, so eviction only ever runs the clock forward on the login
+            // least likely to still have a browser waiting on it.
+            while pending.len() >= MAX_PENDING {
+                let Some(oldest) = pending
+                    .iter()
+                    .min_by_key(|(_, p)| p.started)
+                    .map(|(state, _)| state.clone())
+                else {
+                    break;
+                };
+                pending.remove(&oldest);
+            }
             pending.insert(
                 state.clone(),
                 Pending {
@@ -170,7 +191,7 @@ impl Ui {
 
     /// Open a session for a subject the issuer vouched for, and return the
     /// cookie value that addresses it.
-    fn open_session(&self, subject: String) -> String {
+    fn open_session(&self) -> String {
         let token = draw(32);
         let mut browsers = self
             .browsers
@@ -180,21 +201,20 @@ impl Ui {
         browsers.insert(
             token.clone(),
             Live {
-                browser: Browser { subject },
                 opened: Instant::now(),
             },
         );
         token
     }
 
-    /// The browser this cookie value addresses, if it is still logged in.
-    fn browser(&self, token: &str) -> Option<Browser> {
+    /// Whether this cookie value still addresses a logged-in browser.
+    fn is_live(&self, token: &str) -> bool {
         let mut browsers = self
             .browsers
             .lock()
             .expect("the session map is not poisoned");
         browsers.retain(|_, live| live.opened.elapsed() < SESSION_TTL);
-        browsers.get(token).map(|live| live.browser.clone())
+        browsers.contains_key(token)
     }
 
     /// The `Set-Cookie` value for a freshly opened session.
@@ -249,11 +269,7 @@ fn cookie_value<'a>(header: &'a str, name: &str) -> Option<&'a str> {
 /// A browser with no session is **sent to the login**, not refused: it is a
 /// person following a link, and a 401 in a browser is a dead end. The path it
 /// was going to rides along so the login lands it where it meant to be.
-pub async fn require_browser(
-    State(state): State<AppState>,
-    mut req: Request,
-    next: Next,
-) -> Response {
+pub async fn require_browser(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let ui = state
         .ui
         .as_ref()
@@ -270,27 +286,23 @@ pub async fn require_browser(
         return pages::not_found();
     }
 
-    let session = req
+    let logged_in = req
         .headers()
         .get(header::COOKIE)
         .and_then(|value| value.to_str().ok())
         .and_then(|header| cookie_value(header, SESSION_COOKIE))
-        .and_then(|token| ui.browser(token));
+        .is_some_and(|token| ui.is_live(token));
 
-    match session {
-        Some(browser) => {
-            req.extensions_mut().insert(browser);
-            next.run(req).await
-        }
-        None => {
-            let wanted = req
-                .uri()
-                .path_and_query()
-                .map(|pq| pq.as_str())
-                .unwrap_or("/");
-            Redirect::to(&format!("/ui/login?next={}", encode_component(wanted))).into_response()
-        }
+    if logged_in {
+        return next.run(req).await;
     }
+
+    let wanted = req
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or("/");
+    Redirect::to(&format!("/ui/login?next={}", encode_component(wanted))).into_response()
 }
 
 /// A refusal a person reads, rather than a JSON body a program would.
@@ -322,6 +334,85 @@ mod tests {
         assert_eq!(
             encode_component("https://jojobot.test/ui/callback"),
             "https%3A%2F%2Fjojobot.test%2Fui%2Fcallback"
+        );
+    }
+
+    /// A UI whose issuer is never reached — every assertion below stops at the
+    /// pending table, which is filled before a browser goes anywhere.
+    fn a_ui() -> Ui {
+        Ui::new(
+            &UiConfig {
+                client_id: "jojobot-ui".to_string(),
+                client_secret: None,
+                base_url: "https://jojobot.test".to_string(),
+            },
+            IssuerEndpoints {
+                authorization_endpoint: "https://issuer.test/authorize".to_string(),
+                token_endpoint: "https://issuer.test/token".to_string(),
+            },
+            Validator::from_keys("https://issuer.test", "jojobot-ui", HashMap::new()),
+            reqwest::Client::new(),
+        )
+    }
+
+    fn state_of(url: &str) -> String {
+        url.split('&')
+            .find_map(|pair| pair.strip_prefix("state="))
+            .expect("a login URL carries its state")
+            .to_string()
+    }
+
+    /// `/ui/login` is unauthenticated, so the only thing standing between it and
+    /// an unbounded map is a cap on how many half-finished logins are held. The
+    /// TTL does not do it: ten minutes is long enough to insert a great many.
+    ///
+    /// **But the cap may never cost anybody the way in.** Filling the table is
+    /// cheap and takes no credentials, so a cap that refuses hands an
+    /// unauthenticated caller a lock-out on the only door — worse than the
+    /// memory it bounds. That half is [`Ui::begin_login`]'s return type: it
+    /// hands back a URL and has no way to say no. What is left for a test is
+    /// the other half — one login past the cap, and the table still does not
+    /// grow.
+    #[test]
+    fn a_full_table_evicts_rather_than_refusing_a_login() {
+        let ui = a_ui();
+        for _ in 0..=MAX_PENDING {
+            let _ = ui.begin_login("/");
+        }
+
+        assert_eq!(
+            ui.pending.lock().unwrap().len(),
+            MAX_PENDING,
+            "the table grew past the cap of {MAX_PENDING}"
+        );
+    }
+
+    /// Which one goes matters: the honest choice is the login closest to
+    /// expiring anyway. A flood cannot then push out a login started *during*
+    /// it, which is the one a person is most likely still sitting in front of.
+    #[test]
+    fn the_login_a_full_table_evicts_is_the_oldest() {
+        let ui = a_ui();
+        let before = state_of(&ui.begin_login("/"));
+        // `started` is what "oldest" reads, so put this login unambiguously
+        // behind everything the flood inserts.
+        std::thread::sleep(Duration::from_millis(2));
+
+        let survivor = state_of(&ui.begin_login("/"));
+        // The rest of the flood: how far the table fills is the other test's
+        // business, so nothing is asserted about these.
+        for _ in 2..=MAX_PENDING {
+            let _ = ui.begin_login("/");
+        }
+
+        assert!(
+            ui.claim_login(&before).is_none(),
+            "the oldest half-finished login survived the flood, so something \
+             younger was evicted instead"
+        );
+        assert!(
+            ui.claim_login(&survivor).is_some(),
+            "a login started during the flood was evicted before the older one"
         );
     }
 

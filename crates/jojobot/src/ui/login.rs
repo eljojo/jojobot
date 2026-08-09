@@ -121,7 +121,7 @@ pub async fn finish(State(state): State<AppState>, Query(callback): Query<Callba
     };
 
     tracing::info!(subject = %claims.sub, "a browser logged in to the listing");
-    let cookie = ui.session_cookie(&ui.open_session(claims.sub));
+    let cookie = ui.session_cookie(&ui.open_session());
     ([(header::SET_COOKIE, cookie)], Redirect::to(&pending.next)).into_response()
 }
 
@@ -150,16 +150,61 @@ async fn exchange(ui: &Ui, code: &str, verifier: &str) -> anyhow::Result<String>
     })
 }
 
-/// Whether this is a path on this server and not somewhere else. A path, one
-/// leading slash, and no second one — `//elsewhere.example` is a URL a browser
-/// follows off-site.
+/// Whether this is a path on this server and not somewhere else.
+///
+/// **A character class, not a list of bad prefixes.** What a redirect target
+/// may contain is decided here positively: one leading slash and no second one,
+/// then printable ASCII only, with the backslash a browser reads as a slash
+/// left out. A prefix rule cannot hold this line — ASCII tab and newline are
+/// removed by the URL parser *before* it parses, so `/<TAB>/elsewhere.example`
+/// has the shape of a local path and the meaning of a protocol-relative one.
+/// Anything a real path needs beyond this set arrives percent-encoded.
 fn is_local_path(next: &str) -> bool {
-    next.starts_with('/') && !next.starts_with("//") && !next.contains('\\')
+    next.len() <= MAX_NEXT
+        && next.starts_with('/')
+        && !next.starts_with("//")
+        && next.bytes().all(|b| b.is_ascii_graphic() && b != b'\\')
 }
+
+/// The longest `next` this login will carry. `/ui/login` is public and each hit
+/// retains one verbatim until the login is claimed or times out, so what an
+/// unauthenticated caller can park here is bounded. Long enough for any handle
+/// path this server serves.
+const MAX_NEXT: usize = 512;
 
 #[cfg(test)]
 mod tests {
-    use super::is_local_path;
+    use super::{MAX_NEXT, is_local_path};
+
+    /// The bytes as they arrive, not the shapes they resemble:
+    /// `?next=/%09/elsewhere.example/` decodes to a real tab, and `HeaderValue`
+    /// carries it. Step 2 of WHATWG URL parsing removes ASCII tab and newline
+    /// *before* parsing, so a browser handed `Location: /<TAB>/elsewhere.example/`
+    /// resolves `//elsewhere.example/` and leaves this origin — having just
+    /// watched a genuine login succeed.
+    #[test]
+    fn a_next_carrying_a_stripped_byte_is_not_a_path_on_this_server() {
+        for stripped in ["/\t/elsewhere.example/", "/\n/elsewhere.example/"] {
+            assert!(
+                !is_local_path(stripped),
+                "{stripped:?} was accepted as a local path"
+            );
+        }
+        // The positive these lean on: an ordinary path still round-trips, so a
+        // green bar here is not a predicate that refuses everything.
+        assert!(is_local_path("/person:alpha/"));
+    }
+
+    #[test]
+    fn a_next_longer_than_a_path_is_not_carried() {
+        let long = format!("/{}", "a".repeat(MAX_NEXT));
+        assert!(
+            !is_local_path(&long),
+            "a next of {} bytes was accepted",
+            long.len()
+        );
+        assert!(is_local_path(&format!("/{}", "a".repeat(MAX_NEXT - 1))));
+    }
 
     #[test]
     fn only_a_path_on_this_server_is_followed_after_a_login() {
