@@ -87,6 +87,16 @@ async fn nothing_on_the_surface_goes_unexercised() {
     .says("\"source\":\"crm-card\"");
     s.list("person").await.says("card-8150");
 
+    // An edit replaces the alias list whole, and a name added that way finds
+    // the person exactly as one given at creation does.
+    s.call(
+        "update_entity",
+        json!({"handle": "person:homer", "aliases": ["Dad"]}),
+    )
+    .await
+    .says("Dad");
+    s.find("Dad").await.says("person:homer");
+
     // A rename INTO a name something else already answers to meets the same
     // gate a creation does, and the same token lifts it.
     let relabel = s
@@ -127,6 +137,26 @@ async fn nothing_on_the_surface_goes_unexercised() {
         .claim(&told)
         .says("\"provenance\":\"inference\"")
         .never_says("\"provenance\":\"testimony\"");
+
+    // Details move on an existing claim the way content does, and an empty
+    // string is what clears them — which is why they are not merely omitted.
+    s.call(
+        "update_fact",
+        json!({"address": &told, "details": "he says it takes twenty minutes"}),
+    )
+    .await
+    .says("twenty minutes");
+    s.recall("person:homer")
+        .await
+        .claim(&told)
+        .says("twenty minutes");
+    s.call("update_fact", json!({"address": &told, "details": ""}))
+        .await;
+    s.recall("person:homer")
+        .await
+        .claim(&told)
+        .says("\"content\":\"walks to work\"")
+        .never_says("twenty minutes");
 
     // ── the search filters no story asked in ────────────────────────────────
 
