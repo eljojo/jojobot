@@ -4,6 +4,7 @@
 pub mod auth;
 pub mod config;
 pub mod routes;
+pub mod ui;
 
 use std::sync::Arc;
 
@@ -51,6 +52,10 @@ pub struct AppState {
     /// connection. Built and filled from the board before the server serves, so
     /// the first caller after a restart gets the same answer as the second.
     pub registry: Arc<jojobot_mcp::sid::SessionRegistry>,
+    /// The browser UI's OAuth client and its logged-in browsers. `None` means
+    /// the UI is not configured, and then it is not mounted at all — there is no
+    /// state in which its pages are reachable without a login.
+    pub ui: Option<Arc<crate::ui::Ui>>,
 }
 
 /// Build the full HTTP application: the guarded MCP transport plus the public
@@ -110,12 +115,32 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
         ));
     }
 
-    Router::new()
+    // **The listing is mounted only when it is configured**, and it cannot be
+    // configured without an issuer. That is the whole of the no-bypass rule:
+    // there is no build, flag or environment in which these pages answer without
+    // a login, because without a login they are not routes at all.
+    let ui_router = state.ui.is_some().then(|| {
+        Router::new()
+            .route("/", get(ui::pages::index))
+            .route_layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                ui::require_browser,
+            ))
+            // The login is outside the gate. A gate over the way in has nowhere
+            // to send anybody.
+            .route("/ui/login", get(ui::login::begin))
+            .route("/ui/callback", get(ui::login::finish))
+    });
+
+    let mut app = Router::new()
         .route("/healthz", get(routes::health))
         .route(
             "/.well-known/oauth-protected-resource",
             get(routes::protected_resource_metadata),
         )
-        .merge(mcp_router)
-        .with_state(state)
+        .merge(mcp_router);
+    if let Some(ui_router) = ui_router {
+        app = app.merge(ui_router);
+    }
+    app.with_state(state)
 }

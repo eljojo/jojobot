@@ -136,38 +136,27 @@ impl Validator {
     /// TODO: key rotation is handled by restart only; add live JWKS re-fetch on
     /// an unknown `kid` (with a cooldown) so rotation doesn't need a bounce.
     pub async fn discover(cfg: &AuthConfig, http: &reqwest::Client) -> anyhow::Result<Self> {
-        let jwks_uri = match &cfg.jwks_uri {
-            Some(uri) => uri.clone(),
-            None => {
-                let url = format!(
-                    "{}/.well-known/openid-configuration",
-                    cfg.issuer.trim_end_matches('/')
-                );
-                let disco: Discovery = http
-                    .get(&url)
-                    .send()
-                    .await?
-                    .error_for_status()?
-                    .json()
-                    .await?;
-                disco.jwks_uri
-            }
-        };
+        Ok(Self::from_config(cfg, fetch_keys(cfg, http).await?))
+    }
 
-        let jwks: Jwks = http
-            .get(&jwks_uri)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-
-        let keys = keyset_from_jwks(jwks.keys)?;
-        if keys.is_empty() {
-            anyhow::bail!("no usable RSA signing keys in JWKS at {jwks_uri}");
-        }
-
-        Ok(Self::from_config(cfg, keys))
+    /// The same discovery, bound to a different audience and carrying the same
+    /// allowlist.
+    ///
+    /// **The browser UI needs this because an ID token is minted for the client,
+    /// not for the resource.** `/mcp` requires `aud` to be this server; the ID
+    /// token that says who logged in requires `aud` to be the UI's client id.
+    /// Both are the same issuer and the same keys, and both are checked by this
+    /// one module — a second audience is not a second way in.
+    pub async fn discover_for_audience(
+        cfg: &AuthConfig,
+        audience: &str,
+        http: &reqwest::Client,
+    ) -> anyhow::Result<Self> {
+        let keys = fetch_keys(cfg, http).await?;
+        Ok(
+            Self::from_keys(cfg.issuer.clone(), audience.to_string(), keys)
+                .with_allowed_subjects(cfg.allowed_subjects.clone()),
+        )
     }
 
     /// Validate a raw JWT string. Returns the claims on success.
@@ -210,6 +199,81 @@ pub fn bearer_from_header(value: Option<&str>) -> Result<&str, AuthError> {
         .ok_or(AuthError::MissingToken)
 }
 
+/// Fetch the issuer's signing keys — the JWKS URI is configured, or discovered.
+/// A keyless result is an error rather than a validator that trusts nothing
+/// usefully.
+async fn fetch_keys(
+    cfg: &AuthConfig,
+    http: &reqwest::Client,
+) -> anyhow::Result<HashMap<String, DecodingKey>> {
+    let jwks_uri = match &cfg.jwks_uri {
+        Some(uri) => uri.clone(),
+        None => discovery_document(&cfg.issuer, http).await?.jwks_uri,
+    };
+
+    let jwks: Jwks = http
+        .get(&jwks_uri)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let keys = keyset_from_jwks(jwks.keys)?;
+    if keys.is_empty() {
+        anyhow::bail!("no usable RSA signing keys in JWKS at {jwks_uri}");
+    }
+    Ok(keys)
+}
+
+/// Where the issuer sends a browser, and where a code is exchanged.
+///
+/// Read from the issuer rather than configured, so an issuer that moves an
+/// endpoint does not need a redeployment with new settings.
+#[derive(Debug, Clone)]
+pub struct IssuerEndpoints {
+    /// Where a browser is sent to log in.
+    pub authorization_endpoint: String,
+    /// Where an authorization code is exchanged for tokens.
+    pub token_endpoint: String,
+}
+
+/// Read the issuer's OIDC discovery document for the two endpoints an OAuth
+/// client needs. An issuer that publishes neither cannot serve a browser login,
+/// so a missing endpoint is an error rather than a default.
+pub async fn discover_endpoints(
+    issuer: &str,
+    http: &reqwest::Client,
+) -> anyhow::Result<IssuerEndpoints> {
+    let disco = discovery_document(issuer, http).await?;
+    let authorization_endpoint = disco.authorization_endpoint.ok_or_else(|| {
+        anyhow::anyhow!(
+            "issuer {issuer} publishes no authorization_endpoint; it cannot log a browser in"
+        )
+    })?;
+    let token_endpoint = disco.token_endpoint.ok_or_else(|| {
+        anyhow::anyhow!("issuer {issuer} publishes no token_endpoint; an authorization code could not be exchanged")
+    })?;
+    Ok(IssuerEndpoints {
+        authorization_endpoint,
+        token_endpoint,
+    })
+}
+
+async fn discovery_document(issuer: &str, http: &reqwest::Client) -> anyhow::Result<Discovery> {
+    let url = format!(
+        "{}/.well-known/openid-configuration",
+        issuer.trim_end_matches('/')
+    );
+    Ok(http
+        .get(&url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
+}
+
 /// Build the `kid -> decoding key` map from a JWKS document. RSA keys only.
 fn keyset_from_jwks(jwks: Vec<Jwk>) -> anyhow::Result<HashMap<String, DecodingKey>> {
     let mut keys = HashMap::new();
@@ -236,6 +300,12 @@ fn keyset_from_jwks(jwks: Vec<Jwk>) -> anyhow::Result<HashMap<String, DecodingKe
 #[derive(Deserialize)]
 struct Discovery {
     jwks_uri: String,
+    /// Optional here because the resource-server path does not need them; the
+    /// browser login does, and says so where it reads them.
+    #[serde(default)]
+    authorization_endpoint: Option<String>,
+    #[serde(default)]
+    token_endpoint: Option<String>,
 }
 
 #[derive(Deserialize)]

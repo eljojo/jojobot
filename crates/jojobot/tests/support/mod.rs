@@ -6,6 +6,10 @@
 //! the library's public surface; these tests use only the real public API
 //! (`Validator::from_keys` + `with_allowed_subjects`).
 
+// Each integration binary compiles this module separately and reaches for a
+// different part of it, so what one uses reads as dead to another.
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -57,19 +61,30 @@ impl TestIdp {
     /// A validator trusting this issuer's key, bound to `ISS`/`AUD`, carrying the
     /// given subject allowlist — the exact construction path `discover()` uses.
     pub fn validator(&self, allowed: &[&str]) -> Validator {
+        self.validator_for(AUD, allowed)
+    }
+
+    /// The same validator bound to another audience — what an ID token carries,
+    /// which is the client it was minted for rather than the resource.
+    pub fn validator_for(&self, audience: &str, allowed: &[&str]) -> Validator {
         let decoding = DecodingKey::from_rsa_components(&self.n, &self.e).unwrap();
         let mut keys = HashMap::new();
         keys.insert(KID.to_string(), decoding);
-        Validator::from_keys(ISS, AUD, keys)
+        Validator::from_keys(ISS, audience, keys)
             .with_allowed_subjects(allowed.iter().map(|s| s.to_string()))
     }
 
     /// Mint a validly-signed RS256 token for the given subject id.
     pub fn token(&self, sub: &str) -> String {
+        self.token_for(sub, AUD)
+    }
+
+    /// Mint a validly-signed RS256 token for a subject and an audience.
+    pub fn token_for(&self, sub: &str, audience: &str) -> String {
         let claims = Claims {
             sub: sub.to_string(),
             iss: ISS.to_string(),
-            aud: AUD.to_string(),
+            aud: audience.to_string(),
             exp: now() + 3600,
         };
         let mut header = Header::new(Algorithm::RS256);

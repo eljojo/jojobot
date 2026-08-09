@@ -20,6 +20,35 @@ pub struct AuthConfig {
     pub allowed_subjects: Vec<String>,
 }
 
+/// The browser UI's OAuth **client** settings. Present only when the UI is
+/// enabled.
+///
+/// The MCP surface is a resource server: it verifies a token somebody else
+/// obtained. A browser holds no token, so serving pages to a person means
+/// jojobot is also a client of the same issuer — authorization code with PKCE,
+/// then a session of its own. The client must be registered at the issuer,
+/// which is why every field here is runtime configuration.
+#[derive(Debug, Clone)]
+pub struct UiConfig {
+    /// The client id the issuer registered for this UI.
+    pub client_id: String,
+    /// The client secret, when the issuer registered a confidential client.
+    /// Absent means a public client, which PKCE is what protects.
+    pub client_secret: Option<String>,
+    /// The origin a browser reaches this server on, scheme included. The
+    /// redirect URI is built from it, so it must match what the issuer holds.
+    pub base_url: String,
+}
+
+impl UiConfig {
+    /// Where the issuer sends the browser back to. Derived rather than
+    /// configured separately: two settings that must agree are one setting that
+    /// can disagree.
+    pub fn redirect_uri(&self) -> String {
+        format!("{}/ui/callback", self.base_url.trim_end_matches('/'))
+    }
+}
+
 /// Full server configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -29,6 +58,8 @@ pub struct Config {
     pub resource: String,
     /// `None` means auth is disabled — a dev-only mode that logs loudly.
     pub auth: Option<AuthConfig>,
+    /// `None` means the browser UI is not served at all.
+    pub ui: Option<UiConfig>,
 }
 
 impl Config {
@@ -40,6 +71,9 @@ impl Config {
     /// - `JOJOBOT_AUDIENCE` — required audience (default: the resource id).
     /// - `JOJOBOT_JWKS_URI` — optional JWKS override.
     /// - `JOJOBOT_ALLOWED_SUBJECTS` — optional comma-separated `sub` allowlist.
+    /// - `JOJOBOT_UI_CLIENT_ID` — set to serve the browser UI (OAuth client id).
+    /// - `JOJOBOT_UI_BASE_URL` — the origin a browser reaches this server on.
+    /// - `JOJOBOT_UI_CLIENT_SECRET` — optional; for a confidential client.
     pub fn from_env() -> anyhow::Result<Self> {
         Self::build(RawEnv::from_env())
     }
@@ -101,12 +135,66 @@ impl Config {
             }
         }
 
+        // Field by field rather than by reference: `auth` above has already taken
+        // ownership of the fields it needed, so the struct as a whole is no
+        // longer borrowable.
+        let ui = build_ui(
+            raw.ui_client_id,
+            raw.ui_client_secret,
+            raw.ui_base_url,
+            auth.is_some(),
+        )?;
+
         Ok(Config {
             bind,
             resource,
             auth,
+            ui,
         })
     }
+}
+
+/// Assemble the UI's client settings, or `None` when the UI is not enabled.
+///
+/// **The UI is never served without authentication.** It is a page a person
+/// reads, so it cannot carry a bearer token the way `/mcp` does; its login IS
+/// the issuer, and without one there is nobody to log in against. A UI that
+/// served anyway would be the development bypass this design refuses to have —
+/// so a client id with no issuer refuses to start rather than opening a door.
+fn build_ui(
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    base_url: Option<String>,
+    auth_enabled: bool,
+) -> anyhow::Result<Option<UiConfig>> {
+    let Some(client_id) = client_id.filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+
+    if !auth_enabled {
+        anyhow::bail!(
+            "JOJOBOT_UI_CLIENT_ID is set but JOJOBOT_ISSUER is not — the browser UI logs in \
+             through the issuer, so without one it could only be served open. Set \
+             JOJOBOT_ISSUER, or unset JOJOBOT_UI_CLIENT_ID."
+        );
+    }
+
+    // The redirect URI is derived from this, and the issuer only sends a browser
+    // to a URI it holds. A guessed origin sends the login somewhere the issuer
+    // will refuse, and the failure surfaces at the issuer rather than here.
+    let base_url = base_url.filter(|s| !s.is_empty()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "JOJOBOT_UI_CLIENT_ID is set but JOJOBOT_UI_BASE_URL is not — the login's redirect URI \
+             is built from it and must match the one registered at the issuer. Set it to the \
+             origin a browser reaches this server on, scheme included."
+        )
+    })?;
+
+    Ok(Some(UiConfig {
+        client_id,
+        client_secret: client_secret.filter(|s| !s.is_empty()),
+        base_url,
+    }))
 }
 
 /// Raw environment values, read once. Kept separate from [`Config::build`] so
@@ -119,6 +207,9 @@ struct RawEnv {
     jwks_uri: Option<String>,
     allowed_subjects: Option<String>,
     allow_no_auth: bool,
+    ui_client_id: Option<String>,
+    ui_client_secret: Option<String>,
+    ui_base_url: Option<String>,
 }
 
 impl RawEnv {
@@ -133,6 +224,9 @@ impl RawEnv {
             allow_no_auth: std::env::var("JOJOBOT_ALLOW_NO_AUTH")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
+            ui_client_id: std::env::var("JOJOBOT_UI_CLIENT_ID").ok(),
+            ui_client_secret: std::env::var("JOJOBOT_UI_CLIENT_SECRET").ok(),
+            ui_base_url: std::env::var("JOJOBOT_UI_BASE_URL").ok(),
         }
     }
 }
@@ -204,6 +298,9 @@ mod tests {
             jwks_uri: None,
             allowed_subjects: subjects.map(str::to_string),
             allow_no_auth: false,
+            ui_client_id: None,
+            ui_client_secret: None,
+            ui_base_url: None,
         }
     }
 
@@ -243,6 +340,9 @@ mod tests {
             jwks_uri: None,
             allowed_subjects: Some("sub-1".to_string()),
             allow_no_auth: true,
+            ui_client_id: None,
+            ui_client_secret: None,
+            ui_base_url: None,
         };
         assert!(
             Config::build(raw).is_err(),
@@ -287,7 +387,62 @@ mod tests {
             jwks_uri: None,
             allowed_subjects: None,
             allow_no_auth,
+            ui_client_id: None,
+            ui_client_secret: None,
+            ui_base_url: None,
         }
+    }
+
+    fn raw_ui(issuer: Option<&str>, client_id: Option<&str>, base_url: Option<&str>) -> RawEnv {
+        RawEnv {
+            bind: "127.0.0.1:8080".to_string(),
+            resource: None,
+            issuer: issuer.map(str::to_string),
+            audience: None,
+            jwks_uri: None,
+            allowed_subjects: None,
+            allow_no_auth: true,
+            ui_client_id: client_id.map(str::to_string),
+            ui_client_secret: None,
+            ui_base_url: base_url.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn the_ui_refuses_to_be_served_without_an_issuer() {
+        // The UI's login IS the issuer. Serving it without one could only mean
+        // serving it open, which is the bypass this design does not have.
+        let raw = raw_ui(None, Some("jojobot-ui"), Some("https://jojobot.test"));
+        assert!(Config::build(raw).is_err());
+    }
+
+    #[test]
+    fn the_ui_refuses_to_guess_its_own_origin() {
+        // The redirect URI is derived from the base URL and the issuer only
+        // honours a URI it holds, so an unset origin is a misconfiguration
+        // rather than something to default.
+        let raw = raw_ui(Some("https://issuer.example"), Some("jojobot-ui"), None);
+        assert!(Config::build(raw).is_err());
+    }
+
+    #[test]
+    fn the_ui_is_off_unless_a_client_id_names_it() {
+        let cfg = Config::build(raw_ui(Some("https://issuer.example"), None, None))
+            .expect("no UI is a valid configuration");
+        assert!(cfg.ui.is_none());
+    }
+
+    #[test]
+    fn the_redirect_uri_is_the_callback_on_the_configured_origin() {
+        let cfg = Config::build(raw_ui(
+            Some("https://issuer.example"),
+            Some("jojobot-ui"),
+            Some("https://jojobot.test/"),
+        ))
+        .expect("a complete UI configuration");
+        let ui = cfg.ui.expect("the UI is configured");
+        assert_eq!(ui.client_id, "jojobot-ui");
+        assert_eq!(ui.redirect_uri(), "https://jojobot.test/ui/callback");
     }
 
     #[test]

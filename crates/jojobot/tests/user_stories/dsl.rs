@@ -69,6 +69,7 @@ impl Story {
             mailboxes: boxes,
             sessions: Arc::new(InMemorySessions::new()),
             registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
+            ui: None,
         };
         let ct = CancellationToken::new();
         let app = build_app(state, ct.child_token());

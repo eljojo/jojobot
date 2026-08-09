@@ -69,6 +69,33 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // **The browser listing, when it is configured.** It is the same issuer and
+    // the same allowlist as `/mcp`; what differs is that a browser cannot carry
+    // a bearer token, so jojobot obtains one for it. Configuration refuses a UI
+    // without an issuer, so this arm cannot be reached with auth disabled.
+    let ui = match (&config.auth, &config.ui) {
+        (Some(auth_cfg), Some(ui_cfg)) => {
+            let endpoints = jojobot::auth::discover_endpoints(&auth_cfg.issuer, &http)
+                .await
+                .context("reading the issuer's discovery document for the browser login")?;
+            let id_tokens = Validator::discover_for_audience(auth_cfg, &ui_cfg.client_id, &http)
+                .await
+                .context("building the ID-token validator from the issuer JWKS")?;
+            tracing::info!(
+                client_id = %ui_cfg.client_id,
+                redirect_uri = %ui_cfg.redirect_uri(),
+                "browser listing enabled"
+            );
+            Some(Arc::new(jojobot::ui::Ui::new(
+                ui_cfg,
+                endpoints,
+                id_tokens,
+                http.clone(),
+            )))
+        }
+        _ => None,
+    };
+
     // **The SQL store jojobot runs itself**, brought up and migrated before
     // anything else is wired.
     //
@@ -228,6 +255,7 @@ async fn main() -> anyhow::Result<()> {
         mailboxes,
         sessions,
         registry,
+        ui,
     };
 
     let ct = CancellationToken::new();

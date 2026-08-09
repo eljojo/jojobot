@@ -23,6 +23,10 @@ serde.workspace = true
 serde_json.workspace = true
 jsonwebtoken.workspace = true
 reqwest.workspace = true
+# PKCE: the challenge is base64url of a SHA-256, and both halves are spelled out
+# in RFC 7636. Nothing else here hashes or encodes.
+sha2 = "0.10"
+base64 = "0.22"
 thiserror.workspace = true
 anyhow.workspace = true
 tracing.workspace = true

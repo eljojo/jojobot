@@ -67,8 +67,11 @@ jsonwebtoken = { version = "11", default-features = false, features = [
 # native-tls (OpenSSL) — the reliably-cached path in nixpkgs. The only TLS
 # client here is the JWKS fetch to the issuer; the MCP transport terminates TLS
 # at the ingress, not in-process.
+# `form`: the browser UI exchanges an authorization code at the issuer's token
+# endpoint, and OAuth's token request is form-encoded.
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
+    "form",
     "default-tls",
 ] }
 
