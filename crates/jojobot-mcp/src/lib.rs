@@ -30,6 +30,7 @@
 use std::sync::Arc;
 
 mod answer;
+mod arguments;
 mod beat;
 mod boundary;
 mod caller;
@@ -95,9 +96,8 @@ use session::wire::*;
 
 #[derive(Clone)]
 pub struct Jojobot {
-    // Consumed by the `#[tool_handler]` macro's generated routing; rustc's
-    // dead-code pass can't see through the macro, hence the allow.
-    #[allow(dead_code)]
+    /// The verb table this handler dispatches through, and the source the
+    /// argument gate reads a verb's published arguments from.
     tool_router: ToolRouter<Jojobot>,
     /// The Memory port. Injected: real Outline in production, a fake in tests.
     memory: Arc<dyn Memory>,
@@ -162,6 +162,30 @@ impl Jojobot {
 
 #[tool_handler]
 impl ServerHandler for Jojobot {
+    /// **Every call passes the argument gate before anything runs.**
+    ///
+    /// `#[tool_handler]` writes this method only when the impl does not, so
+    /// this is the generated dispatch with one check in front of it: an
+    /// argument the named verb does not implement comes back as a blocked
+    /// answer and never reaches the verb — see [`crate::arguments`]. Putting it
+    /// here rather than in each verb is what makes it true of every verb,
+    /// including the next one somebody writes.
+    ///
+    /// The router is the one built with this handler rather than a fresh one
+    /// per call, because the check and the dispatch have to agree about which
+    /// verbs exist.
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<CallToolResponse, McpError> {
+        if let Some(refused) = self.unimplemented_arguments(&request) {
+            return Ok(refused.into());
+        }
+        let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        self.tool_router.call(call).await
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()

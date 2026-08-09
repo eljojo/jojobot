@@ -135,8 +135,29 @@ async fn keeping_track_of_bikes() {
     // not reachable, so it cannot be its own thing with its own history, and
     // "how many km on the chain since I fitted it" has nothing to hang on.
     //   s.add_under("thing:gravel-bike", "thing:bike-chain", "Chain").await;
-    // The chain goes in as its own thing and lands flat: nothing on the
-    // created record says what it is part of.
+    //
+    // Asking for it anyway is refused, and the refusal names the argument.
+    // The alternative is worse than the gap: a flat entity created and success
+    // reported, which leaves a caller unable to tell "parentage is not on the
+    // surface yet" from "I set it and it worked".
+    s.refused(
+        "add_entity",
+        json!({
+            "kind": "thing", "handle": "bike-chain", "name": "Chain",
+            "source": "user-named", "parent": "thing:gravel-bike",
+        }),
+    )
+    .await
+    .says("parent")
+    // A blocked ANSWER with a way forward, not a schema error thrown back at
+    // the client: `wrote` is the field only the refusal carries, and a
+    // deserializer failing would never reach it.
+    .says("\"wrote\":false");
+    s.list("thing").await.never_says("thing:bike-chain");
+
+    // The same creation without it lands, so the refusal is about the argument
+    // and not about the entity. The chain goes in as its own thing and lands
+    // flat: nothing on the created record says what it is part of.
     s.add("thing:bike-chain", "Chain").await;
     s.list("thing")
         .await
