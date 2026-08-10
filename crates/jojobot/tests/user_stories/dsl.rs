@@ -30,17 +30,154 @@ pub struct Story {
     bot: String,
 }
 
+/// **A store that can stop being readable, the way a real one does.**
+///
+/// The service behind memory is a process on a network: it is up when jojobot
+/// boots or it is not, and it can go away afterwards. Every other story runs
+/// against a store that is always there, so the degraded half of the surface —
+/// what a search says about its own coverage — has never been reached by one.
+///
+/// It stages the WORLD, not the answer. Only `scan` fails, which is the read
+/// that fills the index; reads and writes still land, exactly as they would
+/// against a store whose listing call is failing. Nothing here touches the
+/// index or the coverage it reports: the story asks jojobot through the served
+/// surface and jojobot works out what to say.
+pub struct Blindable {
+    inner: Arc<InMemoryMemory>,
+    blind: std::sync::atomic::AtomicBool,
+}
+
+impl Blindable {
+    fn new() -> Self {
+        Blindable {
+            inner: Arc::new(InMemoryMemory::new()),
+            blind: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// The store stops answering the read that fills the index.
+    pub fn goes_away(&self) {
+        self.blind.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// …and comes back.
+    pub fn comes_back(&self) {
+        self.blind
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[async_trait::async_trait]
+impl jojobot_domain::memory::Memory for Blindable {
+    async fn scan(
+        &self,
+    ) -> Result<Vec<jojobot_domain::memory::search::DocScan>, jojobot_domain::memory::MemoryError>
+    {
+        if self.blind.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(jojobot_domain::memory::MemoryError::Store(
+                "the store cannot be read".into(),
+            ));
+        }
+        self.inner.scan().await
+    }
+
+    async fn add_entity(
+        &self,
+        new: jojobot_domain::memory::NewEntity,
+    ) -> Result<
+        jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,
+        jojobot_domain::memory::MemoryError,
+    > {
+        self.inner.add_entity(new).await
+    }
+
+    async fn list_entities(
+        &self,
+        kind: Option<jojobot_domain::memory::EntityKind>,
+    ) -> Result<Vec<jojobot_domain::memory::Entity>, jojobot_domain::memory::MemoryError> {
+        self.inner.list_entities(kind).await
+    }
+
+    async fn update_entity(
+        &self,
+        handle: &jojobot_domain::memory::EntityId,
+        patch: jojobot_domain::memory::EntityPatch,
+    ) -> Result<
+        jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,
+        jojobot_domain::memory::MemoryError,
+    > {
+        self.inner.update_entity(handle, patch).await
+    }
+
+    async fn capture(
+        &self,
+        fact: jojobot_domain::memory::NewFact,
+    ) -> Result<
+        jojobot_domain::memory::Guarded<jojobot_domain::memory::Fact>,
+        jojobot_domain::memory::MemoryError,
+    > {
+        self.inner.capture(fact).await
+    }
+
+    async fn recall(
+        &self,
+        subject: &jojobot_domain::memory::EntityId,
+    ) -> Result<Vec<jojobot_domain::memory::Fact>, jojobot_domain::memory::MemoryError> {
+        self.inner.recall(subject).await
+    }
+
+    async fn update_fact(
+        &self,
+        address: &jojobot_domain::memory::FactAddress,
+        patch: jojobot_domain::memory::FactPatch,
+    ) -> Result<
+        jojobot_domain::memory::Guarded<jojobot_domain::memory::Fact>,
+        jojobot_domain::memory::MemoryError,
+    > {
+        self.inner.update_fact(address, patch).await
+    }
+
+    async fn retract(
+        &self,
+        address: &jojobot_domain::memory::FactAddress,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+    ) -> Result<jojobot_domain::memory::Retraction, jojobot_domain::memory::MemoryError> {
+        self.inner.retract(address, reason, date).await
+    }
+
+    async fn set_prose(
+        &self,
+        entity: &jojobot_domain::memory::EntityId,
+        prose: &str,
+    ) -> Result<String, jojobot_domain::memory::MemoryError> {
+        self.inner.set_prose(entity, prose).await
+    }
+}
+
 impl Story {
+    /// Serve a fresh jojobot whose memory store can be taken away — the same
+    /// server every other story gets, wired over a [`Blindable`]. Hands back
+    /// the store beside the story, because taking it away is the story's move.
+    pub async fn begin_over_a_store_that_can_go_away(bot: &str) -> (Self, Arc<Blindable>) {
+        let store = Arc::new(Blindable::new());
+        let story = Self::serve(bot, store.clone()).await;
+        (story, store)
+    }
+
     /// Serve a fresh jojobot and stand the bot up, the way an operator would.
     /// `bot` carries its kind prefix, for the same reason `add` does.
     pub async fn begin(bot: &str) -> Self {
+        Self::serve(bot, Arc::new(InMemoryMemory::new())).await
+    }
+
+    async fn serve(bot: &str, store: Arc<dyn jojobot_domain::memory::Memory>) -> Self {
         let bot = bot
             .strip_prefix("bot:")
             .expect("a bot handle carries its kind prefix");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let indexed =
-            Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens"));
+        let indexed = Arc::new(IndexedMemory::new(store).expect("index opens"));
         let indexed_for_seed = indexed.clone();
         // **Mail goes through the search index, exactly as the binary wires
         // it.** Both worlds sit behind one `search`, so a fixture holding the

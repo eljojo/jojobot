@@ -251,9 +251,9 @@ fn mail_coverage(query: &SearchQuery, coverage: Coverage) -> serde_json::Value {
     }
     match coverage {
         Coverage::Unread => excluded(
-            "jojobot has not been able to read the mailbox world, so NO message is searchable \
-             right now — this is not 'nothing matched'. The memory half of this answer is \
-             complete. start_here's snapshot says whether the mailbox world is reachable at all.",
+            "NO message is searchable right now — this is not 'nothing matched'. The memory half \
+             of this answer is complete. start_here's snapshot says whether the mailbox world is \
+             reachable at all.",
         ),
         // Searched, and said so — hits are real. But the board read failed, so
         // only what this server has handled since is in there, and a caller
@@ -267,10 +267,10 @@ fn mail_coverage(query: &SearchQuery, coverage: Coverage) -> serde_json::Value {
         Coverage::Partial(behind) => serde_json::json!({
             "searched": true,
             "behind": behind.as_token(),
-            "note": "PARTIAL: jojobot could not read the mailbox world at startup, so only \
-                     messages it has handled since are searchable. Any hit here is real, but an \
-                     older message may be missing — this is not a complete answer over mail. \
-                     start_here's snapshot says whether the mailbox world is reachable at all.",
+            "note": "PARTIAL: the index holds only the messages jojobot has handled since this \
+                     server started, so an older message may be missing. Any hit here is real — \
+                     this is not a complete answer over mail. start_here's snapshot says whether \
+                     the mailbox world is reachable at all.",
         }),
         Coverage::Loaded => serde_json::json!({ "searched": true }),
     }
@@ -290,9 +290,9 @@ fn memory_coverage(coverage: Coverage) -> serde_json::Value {
     match coverage {
         Coverage::Unread => serde_json::json!({
             "searched": false,
-            "note": "jojobot could not read the memory store at startup, so NO entity, fact or \
-                     prose is searchable right now — this is not 'nothing matched'. The memory \
-                     verbs are unaffected: recall reads the store directly and is complete.",
+            "note": "NO entity, fact or prose is searchable right now — this is not 'nothing \
+                     matched'. The memory verbs are unaffected: recall reads the store directly \
+                     and is complete.",
         }),
         // **Two states, two notes.** They differ in how much is missing, which
         // is the whole of what a caller does with the answer: one says trust an
@@ -303,16 +303,15 @@ fn memory_coverage(coverage: Coverage) -> serde_json::Value {
             "behind": behind.as_token(),
             "note": match behind {
                 Behind::Unscanned =>
-                    "PARTIAL: jojobot could not read the memory store at startup, so only what \
-                     it has written since is searchable. Any hit here is real, but anything \
-                     older may be missing — this is not a complete answer over memory. recall \
-                     reads the store directly and is complete.",
+                    "PARTIAL: the index holds only what jojobot has written since this server \
+                     started, so anything older may be missing. Any hit here is real — this is \
+                     not a complete answer over memory. recall reads the store directly and is \
+                     complete.",
                 Behind::Stale =>
-                    "PARTIAL: at least one entity is indexed as it stood BEFORE a write that \
-                     landed, because jojobot could not re-read it afterwards. Every hit here is \
-                     real, but one of them may be a version the store has moved past, and a \
-                     fact written since may be missing. recall reads the store directly and is \
-                     complete — use it when the answer matters.",
+                    "PARTIAL: the index holds an OLDER version of at least one entity than the \
+                     store does. Every hit here is real, but one of them may be a version the \
+                     store has moved past, and a fact written since may be missing. recall reads \
+                     the store directly and is complete — use it when the answer matters.",
             },
         }),
         Coverage::Loaded => serde_json::json!({ "searched": true }),
@@ -425,11 +424,13 @@ impl Jojobot {
                        Whenever `mail` carries a `note`, that note says which case you are in — \
                        read it before concluding a message does not exist. `memory` answers the \
                        same question about entities, facts and prose: searched: false means the \
-                       memory store was never read, and searched: true with a note means the \
+                       nothing in memory is searchable right now, and searched: true with a \
+                       note means the \
                        index is behind the store, where `behind` says how much: `unscanned` (the \
-                       startup read never ran, so only what jojobot has written since is in \
-                       there) or `stale` (one entity could not be re-read after a write, so it \
-                       is indexed as it stood before it). The hits are real either way, and \
+                       index holds only what jojobot has written since this server started) or \
+                       `stale` (the index holds an older version of one entity than \
+                       the store, so a hit may be a version the store has moved past). The hits \
+                       are real either way, and \
                        `recall` reads the store itself. No \
                        pagination — raise `limit` or ask a better question."
     )]
@@ -1088,6 +1089,171 @@ mod tests {
             unscanned["memory"]["note"], stale["memory"]["note"],
             "the two states make different claims, so they cannot share a note"
         );
+    }
+
+    /// **A `stale` answer says where the caller stands, never what the server
+    /// did to find out.**
+    ///
+    /// The two surfaces that carry it — the coverage note on the answer and the
+    /// tool description a caller plans against — are checked together, because
+    /// a caller reads whichever one it reaches first and both are the surface.
+    ///
+    /// The needles are the mechanism vocabulary and the verb the caller acts
+    /// on, never a sentence: the wording stays free to improve, and an
+    /// assertion that only knows the mechanism is absent passes identically
+    /// against an empty string.
+    #[tokio::test]
+    async fn a_stale_answer_states_the_callers_position_and_not_the_mechanism() {
+        let stale = json_of(
+            &handler_with(Arc::new(SpySearch::over_memory(
+                Coverage::Partial(Behind::Stale),
+                Vec::new(),
+            )))
+            .search(Parameters(SearchArgs {
+                query: Some("alpha".into()),
+                ..search_args()
+            }))
+            .await
+            .expect("search ok"),
+        );
+        let note = stale["memory"]["note"]
+            .as_str()
+            .expect("a partial answer says it is partial")
+            .to_string();
+
+        let tools = Jojobot::tool_router().list_all();
+        let description = tools
+            .iter()
+            .find(|t| t.name == "search")
+            .expect("search is a tool")
+            .description
+            .as_deref()
+            .unwrap_or_default()
+            .to_string();
+
+        for (surface, text, present) in [
+            ("the coverage note", note.as_str(), "PARTIAL"),
+            ("the search description", description.as_str(), "stale"),
+        ] {
+            assert!(
+                text.contains(present),
+                "{surface} has to state the caller is looking at a partial answer ({present:?}): \
+                 {text}"
+            );
+            assert!(
+                text.contains("recall"),
+                "{surface} has to name the verb that reads the store instead: {text}"
+            );
+            for mechanism in ["re-read", "could not"] {
+                assert!(
+                    !text.contains(mechanism),
+                    "{surface} narrates how jojobot checked itself ({mechanism:?}) instead of what \
+                     the caller holds: {text}"
+                );
+            }
+        }
+    }
+
+    /// **Every coverage note states where the caller stands, and none of them
+    /// narrates what the server tried.**
+    ///
+    /// The `stale` note was converted on its own and the same construction
+    /// survived in four more places, across both halves. Converting one half
+    /// would leave the two telling a caller different kinds of thing, which is
+    /// the one-vocabulary property [`Coverage`]'s own doc comment claims, so
+    /// all of them are checked here together.
+    ///
+    /// **What must survive the rewording is where the line falls** — everything
+    /// before this server started may be missing, everything written since is
+    /// there. That is how the index is arranged and a caller acts on it; the
+    /// attempt that left it that way is the server's business.
+    #[tokio::test]
+    async fn no_coverage_note_narrates_what_the_server_tried() {
+        let asking = || SearchArgs {
+            query: Some("alpha".into()),
+            include_mail: Some(true),
+            ..search_args()
+        };
+        let note = async |spy: SpySearch, half: &str| -> String {
+            json_of(
+                &handler_with(Arc::new(spy))
+                    .search(Parameters(asking()))
+                    .await
+                    .expect("search ok"),
+            )[half]["note"]
+                .as_str()
+                .expect("a half that is behind says so")
+                .to_string()
+        };
+
+        // Each half sends a caller somewhere different when it is behind, so
+        // each is pinned to its own verb rather than to a shared word.
+        let surfaces = [
+            (
+                "the memory half, never read",
+                note(
+                    SpySearch::over_memory(Coverage::Unread, Vec::new()),
+                    "memory",
+                )
+                .await,
+                "recall",
+            ),
+            (
+                "the memory half, unscanned",
+                note(
+                    SpySearch::over_memory(Coverage::Partial(Behind::Unscanned), Vec::new()),
+                    "memory",
+                )
+                .await,
+                "recall",
+            ),
+            (
+                "the mail half, never read",
+                note(SpySearch::with_no_mail_indexed(), "mail").await,
+                "start_here",
+            ),
+            (
+                "the mail half, unscanned",
+                note(
+                    SpySearch::covering(Coverage::Partial(Behind::Unscanned), Vec::new()),
+                    "mail",
+                )
+                .await,
+                "start_here",
+            ),
+            (
+                "the search description",
+                Jojobot::tool_router()
+                    .list_all()
+                    .iter()
+                    .find(|t| t.name == "search")
+                    .expect("search is a tool")
+                    .description
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_string(),
+                "unscanned",
+            ),
+        ];
+
+        for (surface, text, present) in surfaces {
+            assert!(
+                text.contains(present),
+                "{surface} has to tell a caller what to do about it ({present:?}): {text}"
+            );
+            for mechanism in [
+                "could not",
+                "has not been able",
+                "never ran",
+                "was never read",
+            ] {
+                assert!(
+                    !text.contains(mechanism),
+                    "{surface} narrates an attempt the server made ({mechanism:?}) instead of \
+                     what the caller holds: {text}"
+                );
+            }
+        }
     }
 
     /// **A `kind` filter excludes every message, and the answer has to say so.**

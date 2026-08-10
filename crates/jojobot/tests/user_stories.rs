@@ -21,6 +21,8 @@ mod challenge;
 mod coordinating;
 #[path = "user_stories/curveball.rs"]
 mod curveball;
+#[path = "user_stories/degraded.rs"]
+mod degraded;
 #[path = "user_stories/dsl.rs"]
 mod dsl;
 #[path = "user_stories/investigating.rs"]
