@@ -61,10 +61,19 @@ pub fn seed_for(source: &str) -> anyhow::Result<Seed> {
     }
     Ok(Seed::new().message(
         "assistant",
-        "from before the room opened",
+        SEEDED_SUBJECT,
         "The delta list was left half sorted.",
     ))
 }
+
+/// **The subject the furniture carries, and it is how a check tells the
+/// furniture apart from a handoff.**
+///
+/// Posting into a box its sender owns delivers nothing, so this message is
+/// still unfinished when a cold session arrives — sitting in that box beside
+/// the handoff an earlier phase left, and indistinguishable from it by state.
+/// A check that means the handoff has to be able to say which one it means.
+const SEEDED_SUBJECT: &str = "from before the room opened";
 
 /// A check that held, with what it found.
 fn held(name: &str, saying: impl Into<String>) -> Outcome {
@@ -447,9 +456,10 @@ impl Expectation for TheRunWasLeftOpen {
 /// with a visible external side effect, read back through the same board the
 /// mail check reads.
 ///
-/// **The positive it rests on is that something was waiting.** "Nothing is
+/// **The positive it rests on is that a handoff was waiting.** "Nothing is
 /// unhandled" is true of a board that never carried a message, so a phase whose
-/// room had no mail reports that it tested nothing rather than reporting held.
+/// room held nothing for the reader reports that it tested nothing rather than
+/// reporting held.
 ///
 /// What it deliberately does NOT check is whether the model found it the right
 /// way. That is the judgement the report carries and no assertion can hold it.
@@ -469,8 +479,9 @@ impl Expectation for TheHandoffWasPickedUp {
             );
         };
         // **One refusal, not three.** The phase fails three ways — nothing was
-        // waiting, nobody took it, nobody recorded what they did — and a
-        // separate guard per cause is a guard nothing can observe: whichever
+        // left for the reader, nobody took what was left, nobody recorded what
+        // they did — and a separate guard per cause is a guard nothing can
+        // observe: whichever
         // one is removed, the next refuses the same room for a different
         // reason, and a test reading only held-or-not cannot tell them apart.
         //
@@ -480,46 +491,58 @@ impl Expectation for TheHandoffWasPickedUp {
         // reader gets carries every count rather than a sentence chosen from
         // three.
         //
-        // **"Nobody took it" is a comparison across the boundary, not a count
-        // on one side of it.** Something waiting and something retired are two
-        // existence facts, and both are true of a room where the message that
-        // was waiting is still waiting and a different one was retired beside
-        // it — so what says the handoff was picked up is that the unhandled
-        // count fell.
-        let waiting = unhandled_in(&before.mail);
-        let still = unhandled_in(&after.mail);
-        let recorded = noted_in(&after.mail);
-        if waiting == 0 || recorded == 0 || still >= waiting {
+        // **"Nobody took it" is a claim about one message, not about a count.**
+        // The box the cold session meets holds the handoff and the furniture,
+        // both unfinished and alike in every count — so a session that retires
+        // the furniture and never touches the handoff drops the unfinished
+        // total by one, exactly as the session under test would. What says the
+        // handoff was picked up is that the id of a message that was waiting
+        // for it, and was not the furniture, comes back retired with a note.
+        let waiting = handoffs_in(&before.mail);
+        let retired = retired_with_a_note(&after.mail);
+        let picked_up: Vec<&String> = waiting.iter().filter(|id| retired.contains(id)).collect();
+        if waiting.is_empty() || picked_up.is_empty() {
             return missed(
                 self.name(),
                 format!(
-                    "the phase leaves a message taken and retired with a note; this room shows \
-                     {waiting} waiting before it, {still} still waiting after and {recorded} \
-                     retired with a note"
+                    "the phase leaves the message an earlier one left taken and retired with a \
+                     note; this room shows {} such message(s) waiting before it, of which {} came \
+                     back retired with a note ({} message(s) are retired with a note in all)",
+                    waiting.len(),
+                    picked_up.len(),
+                    retired.len(),
                 ),
             );
         }
         held(
             self.name(),
-            format!("{waiting} message(s) were waiting and {recorded} were retired with a note"),
+            format!(
+                "{} of the {} message(s) left for the reader were taken and retired with a note",
+                picked_up.len(),
+                waiting.len(),
+            ),
         )
     }
 }
 
-/// How many messages a board reading shows as not yet finished.
-fn unhandled_in(reading: &str) -> usize {
+/// The ids of the messages a board reading leaves for a later session — every
+/// one not yet finished, except the furniture the room was seeded with.
+fn handoffs_in(reading: &str) -> Vec<String> {
     messages(reading)
         .iter()
-        .filter(|hit| hit["state"] != "processed")
-        .count()
+        .filter(|hit| hit["state"] != "processed" && hit["subject"] != SEEDED_SUBJECT)
+        .filter_map(|hit| hit["id"].as_str().map(str::to_string))
+        .collect()
 }
 
-/// How many retired messages carry an account of what was done with them.
-fn noted_in(reading: &str) -> usize {
+/// The ids of the retired messages carrying an account of what was done with
+/// them.
+fn retired_with_a_note(reading: &str) -> Vec<String> {
     messages(reading)
         .iter()
         .filter(|hit| hit["state"] == "processed" && hit["notes"].is_string())
-        .count()
+        .filter_map(|hit| hit["id"].as_str().map(str::to_string))
+        .collect()
 }
 
 /// The message hits in a board reading.

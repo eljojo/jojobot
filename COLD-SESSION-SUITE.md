@@ -213,9 +213,14 @@ travel. This failed wholesale in production once, on two clients at once.
 > 31. Call `read_mailbox` with counts only, twice. Expected: the same counts
 >     both times and nothing moved out of `new`. Report FAIL if the second call
 >     disagrees with the first.
-> 32. Look at the boxes the phase 1 snapshot named. Report which show you
->     counts and which show only a name. Expected: counts for the box your bot
->     owns, names only for everyone else's.
+> 32. Go back to the snapshot the step 4 boot gave you and look at the mail
+>     hanging off each bot on it. Report, bot by bot, whether you were shown
+>     counts and what stood there instead when you were not. Expected: counts on
+>     the box your own bot owns, and on anybody else's an entry saying its counts
+>     were withheld — neither the numbers nor the name of the box. Report whether
+>     you could tell "withheld" from "empty", and **if your own bot is the only
+>     one on that board, say so** rather than reasoning about boxes you cannot
+>     see.
 > 33. Find a way to read another bot's live mail. Expected: there is none — the
 >     verb that takes delivery has no box argument. Report what you found when
 >     you looked, and whether anything told you why.
@@ -296,9 +301,10 @@ where to look. Nothing in this block names a verb on purpose.
 > 51. Read what that run recorded. Report whether somebody with none of its
 >     context — you — could tell what it had done and what to do next, and name
 >     the part that was missing if any was.
-> 52. **Somebody left something for you.** Find it and act on it: take delivery
->     of it, and mark it handled with a note saying what you did. Report how
->     you found it and whether anything told you it was waiting.
+> 52. **Somebody left something for you, and it may not be the only thing
+>     waiting.** Find what is there and act on it: take delivery, and mark each
+>     one handled with a note saying what you did. Report how you found them and
+>     whether anything told you they were waiting.
 > 53. **Find out what this server knows about `smoke-alpha`.** Report what you
 >     found, how you found it, and whether the claim read as something somebody
 >     confirmed or as something an AI worked out.
@@ -391,9 +397,9 @@ exists only in the model's answer, by design.
 | 5 · the procedures | runner-reported | Nothing. Skills are shipped, not stored. |
 | 6 · the session record | **assertable** | One run for `assistant` with two entries, the second carrying the amended text and the first unchanged, plus jojobot's own beats. |
 | 7 · mail, read-only | **assertable, as no-change** | Every mailbox in the same state as before the phase. This is the phase whose whole claim is that nothing moved. |
-| 8 · writes | **assertable, richest** | `person:smoke-alpha` with exactly one active fact, carrying the rewritten wording and `inference` provenance. No `person:smoke-alfa`. `bot:smoke-gamma` with its charter and a mailbox named for it. One message in the `assistant` box, state `new`. |
+| 8 · writes | **assertable, richest** | `person:smoke-alpha` with exactly one active fact, carrying the rewritten wording and `inference` provenance. No `person:smoke-alfa`. `bot:smoke-gamma` with its charter and a mailbox named for it. Two messages in the `assistant` box, both `new`: the one the room was furnished with and the one step 45 posts. |
 | 9 · stopping | **assertable** | The run still open — not wrapped — with a further entry and a focus. |
-| 10 · the reader | **assertable** | The run from phases 2–9 now `wrapped`, its final entry carrying the focus; the phase 8 message now `processed` with a note; a second run for `assistant`. Steps 50, 51 and 53 are runner-reported on top of that. |
+| 10 · the reader | **assertable** | The run from phases 2–9 now `wrapped`, its final entry carrying the focus; the message step 45 posted now `processed` with a note — the furniture sits beside it and what the reader does with that is not pinned; a second run for `assistant`. Steps 50, 51 and 53 are runner-reported on top of that. |
 | 11 · the ending | **assertable** | A third run for `assistant`, and the wrapped one still wrapped. |
 
 **The trap in this table.** Phases 2 and 7 are assertable only as absence or

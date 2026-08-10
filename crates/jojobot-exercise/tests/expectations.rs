@@ -649,6 +649,142 @@ async fn the_cold_reader_check_refuses_a_room_where_a_different_message_was_reti
     );
 }
 
+/// **Phase 10 names the message it means, or the furniture answers for it.**
+///
+/// When the cold session arrives, the room a run really builds has TWO
+/// unfinished messages in that box: the one the room was furnished with, and
+/// the handoff phase 8 left. A session that retires the furniture and never
+/// touches the handoff moves the unfinished count down by one, so a check
+/// reading counts holds over exactly the run the phase exists to catch.
+///
+/// The room is furnished the way the binary furnishes one, because a case that
+/// wrote its own second message could not see this. Both ways in one case: the
+/// same room with the handoff retired as well must hold, or a check that
+/// refused everything would pass the half above on its own.
+#[tokio::test]
+async fn the_cold_reader_check_is_not_satisfied_by_retiring_the_furniture() {
+    let (_room, surface, sid) = room().await;
+    expectations::seed_for(expectations::COLD_SESSION_SUITE)
+        .expect("a seed for the suite")
+        .furnish(&surface)
+        .await
+        .expect("the room is furnished");
+
+    let board = async || {
+        surface
+            .call(
+                "search",
+                json!({"query": "*", "include_mail": true, "limit": 200}),
+            )
+            .await
+    };
+    let retire = async |id: &str, notes: &str| {
+        as_the_agent(&surface, &sid, "read_message", json!({"message_id": id})).await;
+        as_the_agent(
+            &surface,
+            &sid,
+            "mark_processed",
+            json!({"message_id": id, "notes": notes}),
+        )
+        .await;
+    };
+
+    // The handoff phase 8 leaves, beside the furniture.
+    let posted = as_the_agent(
+        &surface,
+        &sid,
+        "post_message",
+        json!({
+            "to": "assistant",
+            "subject": "what I worked out about smoke-alpha",
+            "body": "Written for whoever comes next.",
+        }),
+    )
+    .await;
+    let handoff = serde_json::from_str::<Value>(&posted)
+        .ok()
+        .and_then(|b| b["id"].as_str().map(str::to_string))
+        .expect("the message id");
+    let waiting = board().await;
+
+    // The positive the whole case rests on: the furnished room really does put
+    // a second message in that box, so the confusion below is available.
+    let furniture = message_ids(&waiting)
+        .into_iter()
+        .find(|id| id != &handoff)
+        .expect("the furnished room left no message of its own for the handoff to hide behind");
+
+    // The session that read the box, retired the furniture with a note, and
+    // left the handoff exactly where it was.
+    retire(&furniture, "noted and filed").await;
+    let wrong_one = board().await;
+
+    let boundaries = |after: &str| {
+        vec![
+            Boundary {
+                before: "Phase 10 — the reader".to_string(),
+                mail: waiting.clone(),
+                world: String::new(),
+                board: String::new(),
+                runs_offered: 0,
+            },
+            Boundary {
+                before: "Phase 11 — the ending".to_string(),
+                mail: after.to_string(),
+                world: String::new(),
+                board: String::new(),
+                runs_offered: 0,
+            },
+        ]
+    };
+    let judge_across = async |after: &str| -> Outcome {
+        let boundaries = boundaries(after);
+        let seen = Observed {
+            room: &surface,
+            boundaries: &boundaries,
+        };
+        let all =
+            expectations::for_playbook(expectations::COLD_SESSION_SUITE).expect("expectations");
+        let one = all
+            .into_iter()
+            .find(|e| e.name().starts_with("Phase 10"))
+            .expect("the phase 10 expectation");
+        one.check(&seen).await
+    };
+
+    let missed_it = judge_across(&wrong_one).await;
+    assert!(
+        !missed_it.held,
+        "the handoff was never touched and the check held on the furniture instead: {}",
+        missed_it.saying,
+    );
+
+    // And the run the phase is written for: the handoff itself, taken and
+    // retired with a note.
+    retire(&handoff, "picked it up and carried on").await;
+    let picked_up = judge_across(&board().await).await;
+    assert!(
+        picked_up.held,
+        "the handoff was taken and retired with a note and the check did not hold: {}",
+        picked_up.saying,
+    );
+}
+
+/// The id of every message hit on a board reading.
+fn message_ids(reading: &str) -> Vec<String> {
+    serde_json::from_str::<Value>(reading)
+        .ok()
+        .and_then(|body| {
+            body["results"].as_array().map(|hits| {
+                hits.iter()
+                    .filter(|hit| hit["hit"] == "message")
+                    .filter_map(|hit| hit["id"].as_str().map(str::to_string))
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
+}
+
 /// **Phase 7's claim has to be able to hold on the room a run really builds.**
 ///
 /// The check rests on there having been mail to leave alone, and the playbook

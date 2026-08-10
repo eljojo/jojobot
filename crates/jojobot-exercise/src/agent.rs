@@ -73,6 +73,22 @@ pub struct Invocation {
     pub cwd: std::path::PathBuf,
 }
 
+impl Invocation {
+    /// **The process this line starts, built and not yet spawned.**
+    ///
+    /// Separate from spawning because [`cwd`](Invocation::cwd) is the one part
+    /// of the line that is not on the line: an argument that goes missing shows
+    /// up in the args a test can read, while a working directory that is
+    /// computed and never applied leaves the CLI inheriting the caller's — and
+    /// walking up out of it for instructions. So the directory is applied here,
+    /// where the applying is readable.
+    pub fn command(&self) -> tokio::process::Command {
+        let mut command = tokio::process::Command::new(&self.program);
+        command.args(&self.args).current_dir(&self.cwd);
+        command
+    }
+}
+
 /// What one invocation produced.
 pub struct Worked {
     /// Everything it printed.
@@ -168,19 +184,14 @@ impl Agent {
                 invocation.cwd.display(),
             )
         })?;
-        let done = tokio::process::Command::new(&invocation.program)
-            .args(&invocation.args)
-            .current_dir(&invocation.cwd)
-            .output()
-            .await
-            .with_context(|| {
-                format!(
-                    "running {} — the agent CLI is the operator's own tool, the same one they are \
-                     already logged in to, and this project neither ships nor installs it: it has \
-                     to be on PATH before a run starts",
-                    invocation.program,
-                )
-            })?;
+        let done = invocation.command().output().await.with_context(|| {
+            format!(
+                "running {} — the agent CLI is the operator's own tool, the same one they are \
+                 already logged in to, and this project neither ships nor installs it: it has to \
+                 be on PATH before a run starts",
+                invocation.program,
+            )
+        })?;
         let mut said = String::from_utf8_lossy(&done.stdout).to_string();
         if !done.status.success() {
             said.push_str(&format!(
@@ -331,6 +342,11 @@ mod tests {
     /// The positive it rests on is in the same case: the instruction file it is
     /// being kept away from is looked up rather than assumed, so a repository
     /// that stopped carrying one fails here instead of passing vacuously.
+    ///
+    /// **Read off the process, not off the field.** A directory computed
+    /// correctly and never handed to the CLI leaves it starting wherever the
+    /// caller stood, which is inside this tree — so the line's own idea of
+    /// where it runs is not what this asks.
     #[test]
     fn the_agent_is_started_outside_the_tree_that_carries_our_instructions() {
         let line = Agent::new("sonnet").invocation("http://room", &Conversation::fresh(), "go");
@@ -338,11 +354,19 @@ mod tests {
             .ancestors()
             .find(|dir| dir.join("CLAUDE.md").is_file())
             .expect("this repository carries instructions, which is the whole reason for the case");
+        let process = line.command();
+        let started_in = process.as_std().get_current_dir().expect(
+            "the process carries no working directory, so the CLI starts where the caller stood",
+        );
+        assert_eq!(
+            started_in, line.cwd,
+            "the process is started somewhere other than the empty directory the line names",
+        );
         assert!(
-            !line.cwd.starts_with(coaching),
+            !started_in.starts_with(coaching),
             "the agent is started under {}, which carries the instructions it must not read: {}",
             coaching.display(),
-            line.cwd.display(),
+            started_in.display(),
         );
     }
 
