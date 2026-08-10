@@ -149,8 +149,8 @@ Two consequences worth stating outright, because they surprise people:
 | tool | what a caller is doing |
 |---|---|
 | `capture` | Remembering a fact about something, with its provenance and optionally one typed edge to another entity. |
-| `recall` | Reading back what is recorded about one subject. |
-| `search` | Finding something across everything held — entities, facts, prose, messages and the bot's own past runs in one ranked list, each hit arriving with its surroundings. |
+| `recall` | Asking the graph a precise question and getting that shape back. Select the objects — a handle, a kind, a declared type, a key and the value it holds — say what of each comes back (its facts, its prose), and walk its edges to a depth, in either direction. The answer nests, and it is always objects, so a caller never branches on which question it asked. Reads the store directly rather than the search index. |
+| `search` | Finding something across everything held — entities, facts, prose, messages and the bot's own past runs in one ranked list, each hit arriving with its surroundings. **The breadth, where `recall` is the precision:** reach for this when you do not know where to look. |
 | `add_entity` | Bringing a new thing into memory. Screened against near-misses first, so a typo never mints a duplicate. |
 | `update_entity` | Maintaining what a thing is called, and its other metadata. |
 | `update_fact` | Correcting something recorded wrong — rewritten in place, never as an addendum. Also how a claim gets confirmed, or a refutation recorded as standing truth. |

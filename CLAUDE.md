@@ -110,6 +110,14 @@ Shipped and live:
   `connection` says a link is there and that how it relates was not recorded —
   an admission, never a weaker `about`, because filing an unknown link as a
   claim laundres it into one.
+- **The graph query** — `recall` is the precise lookup and `search` is the
+  breadth. `recall` selects objects (a handle · a kind · a declared type · a
+  key and its value), says what of each comes back (facts · prose), and walks
+  their edges to a depth in either direction — the edges an object draws, or
+  the edges drawn at it. **The answer nests and is always objects**, never a
+  bare fact list, so a caller does not branch on which question it asked. It
+  reads the store directly rather than the search index, which is what makes it
+  the way past an index that cannot scan.
 
 > **One front door, over both worlds.** Mail is in the same `search` — no
 > second verb, one ranked list — and **opt-in**: `include_mail: true` reaches
