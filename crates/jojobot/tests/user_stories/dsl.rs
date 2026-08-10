@@ -369,8 +369,29 @@ pub struct Session {
 }
 
 impl Session {
+    /// **The handle this session carries — unless the story named one.**
+    ///
+    /// The default does not move: every story here leaves `sid` out and gets
+    /// this session's, and a harness that made them pass one would be a
+    /// rewrite of all of them for nothing.
+    ///
+    /// What it must ALSO do is send the handle a story picked, because a
+    /// caller sending a handle jojobot no longer holds is behaviour with a
+    /// guard behind it, and a harness that overwrites the argument puts that
+    /// use case out of a story's reach — rule 152, arriving through an
+    /// argument rather than through a verb. **One rule, stated once: if the
+    /// story put `sid` in the arguments, it stands exactly as written**, `null`
+    /// included, which is how a story sends no handle at all. A named method
+    /// per verb would satisfy 152's letter and rebuild the thing it exists to
+    /// catch.
+    fn riding(&self, args: &mut Value) {
+        if args.get("sid").is_none() {
+            args["sid"] = self.sid.clone().into();
+        }
+    }
+
     async fn write(&self, what: &str, tool: &str, mut args: Value) -> Value {
-        args["sid"] = self.sid.clone().into();
+        self.riding(&mut args);
         let body = call(&self.client, tool, args).await;
         assert_ne!(
             body["status"], "blocked",
@@ -380,7 +401,7 @@ impl Session {
     }
 
     async fn read(&self, what: String, tool: &str, mut args: Value) -> Answer {
-        args["sid"] = self.sid.clone().into();
+        self.riding(&mut args);
         let body = call(&self.client, tool, args).await;
         Answer {
             what,
@@ -398,15 +419,17 @@ impl Session {
     /// habit that let six verbs and fourteen arguments go unexercised while
     /// every one of them was reachable over the wire.
     ///
-    /// The `sid` rides along as it does on every other call. A `blocked`
+    /// The `sid` rides along as it does on every other call, and a story that
+    /// names one sends that one — see [`riding`]. A `blocked`
     /// answer fails the beat, for the reason this file's header gives: in a
     /// story a refusal means the use case is not reachable, and [`refused`] is
     /// where that is the expected answer.
     ///
     /// [`refused`]: Session::refused
+    /// [`riding`]: Session::riding
     pub async fn call(&self, tool: &str, args: Value) -> Answer {
         let mut args = args;
-        args["sid"] = self.sid.clone().into();
+        self.riding(&mut args);
         let body = call(&self.client, tool, args).await;
         assert_ne!(
             body["status"], "blocked",
@@ -457,7 +480,7 @@ impl Session {
     /// one place a story asserts a use case is NOT reachable, and it fails on
     /// the day the write starts landing.
     pub async fn refused(&self, tool: &str, mut args: Value) -> Answer {
-        args["sid"] = self.sid.clone().into();
+        self.riding(&mut args);
         // **Both refusal shapes count, and they are different answers.** A
         // `blocked` body with a way forward is the answer jojobot writes
         // itself — either a domain refusal, or the argument gate turning back
