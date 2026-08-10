@@ -1,0 +1,33 @@
+[package]
+name = "jojobot-exercise"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# **The third test tier.** The other two ask whether the code works; this one
+# drives a real model through the surface as shipped and asks whether the
+# surface teaches itself. It costs money, so nothing here runs from `cargo
+# test` — the paid half is a binary somebody has to invoke, and the machinery
+# below it is a library with ordinary free tests.
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+# The session ids a run names its own conversations with.
+getrandom.workspace = true
+# The MCP client the driver reaches the spawned server with — the same crate
+# and the same transport a real client uses, so what is under test is the
+# served surface rather than a shortcut into the process.
+rmcp = { workspace = true, features = [
+    "client",
+    "transport-streamable-http-client-reqwest",
+    "reqwest-native-tls",
+] }
+
+[dev-dependencies]
+# The room tests spawn the shipped server, so they need an async runtime
+# with process control — the same features the server itself takes.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "time"] }

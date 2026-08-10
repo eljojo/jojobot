@@ -1449,6 +1449,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "jojobot-exercise"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "getrandom 0.4.3",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "jojobot-mcp"
 version = "0.1.0"
 dependencies = [

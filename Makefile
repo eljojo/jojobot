@@ -11,7 +11,7 @@
 CARGO ?= cargo
 
 .DEFAULT_GOAL := help
-.PHONY: help check test lint fmt fmt-check build integration
+.PHONY: help check test lint fmt fmt-check build integration paid
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
@@ -46,3 +46,22 @@ build: ## Build the workspace
 # thing rather than pretending there is a second gate.
 integration: ## Run the suites against the real store
 	$(CARGO) test -p jojobot-adapters --test dolt_store --test dolt_without_a_home
+
+# **The third tier, and it is billed.**
+#
+# The suites above ask whether the code works. This one drives a REAL model
+# through the surface as shipped, against an instance built from nothing, and
+# asserts over what is in the store afterwards — the one question a scripted
+# client cannot ask, because a scripted client is told which verb to call.
+#
+# It is named for what it costs. It reaches the network, it spends money, and
+# `make check` must never run it: nothing here is a `cargo test` case, so it
+# happens when somebody types it and at no other time.
+#
+#     make paid PLAYBOOK=<path> [MODEL=<name>]
+PLAYBOOK ?=
+MODEL ?=
+paid: build ## Drive a REAL model through a playbook — reaches the network and COSTS MONEY
+	@test -n "$(PLAYBOOK)" || { echo "make paid needs a playbook: make paid PLAYBOOK=<path>"; exit 2; }
+	$(CARGO) run -q -p jojobot-exercise -- \
+		--playbook $(PLAYBOOK) $(if $(MODEL),--model $(MODEL),)
