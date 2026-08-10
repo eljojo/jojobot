@@ -73,9 +73,10 @@ never runs inference of its own — the assistant is the only mind.
 ## Vision & roadmap
 
 jojobot's mission is to move an assistant's *method* out of prose (rules files,
-skills, per-session caches) into software: versioned, tested, enforced. The
-roadmap is a ladder of **capabilities** — each release is named "after this,
-I can ___", never after infrastructure.
+skills, per-session caches) into software: versioned, tested, enforced. **The
+roadmap is the work-queue board, not a document** — every release, rock and
+slice lives there. It is a ladder of **capabilities**: each release is named
+"after this, I can ___", never after infrastructure.
 
 Shipped so far: memory, search and edges, mailboxes, bots (AI identities with a
 handle, charter, rules, memory and an owned mailbox), every session on the
@@ -239,6 +240,13 @@ Development uses a Nix flake (a Rust toolchain, `pkg-config`, and OpenSSL):
 nix develop            # drops you in a shell with the pinned toolchain
 cargo build            # build the workspace
 cargo test             # run the tests, including the auth golden tests
+make check             # the DONE bar: formatted, green, clippy-clean — all free
+
+# A third tier, deliberately apart from `make check` and never run by it: it
+# drives a real model through a playbook against an instance it spawns and
+# throws away, and it costs money. It needs the agent CLI on your PATH; this
+# repo does not provision one.
+make paid
 
 # Everything jojobot holds is rows in a SQL store the server starts and
 # supervises — mail, sessions, entities, facts and prose alike — so it needs

@@ -73,6 +73,13 @@ A call with no assertion is not coverage. Where a beat needs something that does
 not exist, it is marked as a gap rather than worked around, and the marker goes
 red on the day the capability lands.
 
+There is a third bar above this one, and stories cannot reach it. A story is
+written by somebody who already knows the answer, so it proves a capability is
+reachable and never that it was reached. `COLD-SESSION-SUITE.md` is the script a
+real model is driven through against a throwaway instance, and what it asserts is
+what the model left in the store rather than anything it said. It runs under
+`make paid`, which costs money and which `make check` never invokes.
+
 ## Fixtures and examples are fictional, always
 
 Every name, place and organisation in this repository comes from a fixed fictional

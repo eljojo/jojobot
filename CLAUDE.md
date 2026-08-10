@@ -31,10 +31,13 @@ and has burned this project three times. When in doubt, it doesn't cross.
 
 ## Where the design lives
 
-- The **product roadmap & vision** and the **architecture doc** (bounded
-  contexts, data model, decisions, as-built records) live in the user's private
-  wiki, not in this repo. The coordinator session owns them and reconciles them
-  after every slice.
+- **The roadmap is the work-queue board**, not a document. Every release, rock
+  and slice lives there; a release that exists only in prose is one nobody
+  works. **The decision log** — every rule the operator has set, one line each —
+  and **the brief** that renders it live in the operator's private wiki, not in
+  this repo. The coordinator session owns all three and reconciles them after
+  every slice. There is no architecture document: it was retired for being false
+  about the code in a dozen places, and as-built detail comes from the repo.
 - **Migration note:** while behaviour migrates, most operating context still
   lives in a private repo of the user's. Sessions on the user's machine may read
   it for orientation. **Nothing life-specific may cross back into this repo** —
@@ -293,7 +296,7 @@ parameters; the curated list lives in the README.
 
 The capabilities after these — events remembered where they happened · trace ·
 portraits · attention · sessions booting from jojobot — are ordered, not
-scheduled, in the roadmap.
+scheduled, on the work-queue board.
 
 **Layering: engine + bot.** The engine (this repo) is user-agnostic code; a
 bot and its rules are *data* in the user's own store. Nothing about any
@@ -312,6 +315,13 @@ name roles and never an operator.
   invisible to every session that did not already know it was there. **A call
   with no assertion is not coverage** — a beat asserts what came back, what
   changed, or what a later read returns.
+- **And a third bar, which neither of the first two can reach: whether a session
+  that was told nothing FINDS the capability.** A story is written by somebody
+  who already knows the answer, so it can only prove a capability is reachable —
+  never that it was reached. `COLD-SESSION-SUITE.md` is the script a real model
+  is driven through against a throwaway instance, and its assertions are over
+  what the model LEFT in the store, never over what it said. It is in addition
+  to the stories, never instead of them.
 - **Commits: one per coherent problem.** A milestone lands as a handful of
   commits — never one per file or checklist item, never dozens. **A fix and
   the test that proves it are ONE problem**, however a task listed them.
@@ -349,7 +359,13 @@ name roles and never an operator.
 - **Hexagonal, domain-driven.** `jojobot-domain` stays pure (no I/O, no MCP);
   each fronted service's quirks live in its adapter, quarantined.
 - **Green bar before DONE:** `cargo test` green and `cargo clippy` clean, run
-  through the flake (`nix develop -c cargo test`).
+  through the flake (`nix develop -c cargo test`). That is `make check`, and it
+  is free.
+- **`make paid` is a third tier and `make check` never runs it.** It reaches the
+  network, drives a real model through a playbook against an instance it spawns
+  and throws away, and it costs money. **It must never run by accident**, which
+  is why it stands apart rather than hiding behind an ignore marker. It needs
+  the agent CLI on the PATH; this repo does not provision one.
 - **A test must travel the path it claims to exercise.** Calling a function
   directly proves the function, not that it is wired to anything. Assert that
   a value survives a journey by sending it on the journey, through the surface
