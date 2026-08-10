@@ -90,7 +90,7 @@ async fn throwing_a_birthday_party() {
         .await;
     }
 
-    s.fact("person:patana", "vegetarian").await;
+    let patana_eats = s.fact("person:patana", "vegetarian").await;
     s.fact("person:barney-gumble", "does not drink").await;
     s.fact("person:ned-flanders", "bringing a partner").await;
 
@@ -128,33 +128,40 @@ async fn throwing_a_birthday_party() {
     // ── session 3 · the replies trickle in ──────────────────────────────────
     let s = story.session().await;
 
-    s.fact("person:patana", "coming to the party").await;
-
+    // A reply is worth a KEY rather than only a sentence. The edge says these
+    // two stand in an attendance relation and nothing more — it does not claim
+    // anybody is there, any more than `location` claims somebody is still at a
+    // place — so which way the reply went goes on the record as `answer`,
+    // where a later question can ask for it.
+    //
     // Not coming is information as load-bearing as coming, so it gets the same
-    // edge. The shape says these two stand in an attendance relation; it does
-    // not claim anybody is there, any more than `location` claims somebody is
-    // still at a place. Which way it went lives in the fact.
-    s.fact_about(
-        "person:barney-gumble",
-        "cannot make it, away that weekend",
-        "attendance",
-        "event:birthday-party",
-    )
-    .await;
+    // edge and the same key.
+    for (guest, said, answer) in [
+        ("person:patana", "coming to the party", "yes"),
+        (
+            "person:barney-gumble",
+            "cannot make it, away that weekend",
+            "no",
+        ),
+    ] {
+        s.call(
+            "capture",
+            json!({
+                "subject": guest, "content": said, "provenance": "testimony",
+                "shape": "attendance", "object": "event:birthday-party",
+                "event_type": "reply", "metadata": {"answer": answer},
+            }),
+        )
+        .await;
+    }
 
     s.find("cannot make").await.says("person:barney-gumble");
     s.recall("person:barney-gumble")
         .await
         .says("away that weekend");
 
-    // GAP — and here is what the walk costs. Asking the party for its guests
-    // returns everyone who relates to it in one call, which is the graph doing
-    // its job — and the one who is coming, the one who is not, and the one who
-    // has not answered come back indistinguishable, because the edge carries
-    // nothing but its shape. The answer is only in each fact's prose, so the
-    // question worth asking costs a read per guest and a judgement per read.
-    //   s.through("attendance", "event:birthday-party", "person").with_answer("yes").await;
-    s.has_no_verb("rsvp", &["capture", "search"]).await;
+    // Asking the party for its guests returns everyone who relates to it, in
+    // one call — the graph doing its job.
     let guests = s
         .through("attendance", "event:birthday-party", "person")
         .await;
@@ -162,8 +169,33 @@ async fn throwing_a_birthday_party() {
         .says("person:patana")
         .says("person:barney-gumble")
         .says("person:ned-flanders");
-    //   s.through("attendance", "event:birthday-party").where_key("rsvp", "no").await;
-    //   s.through("attendance", "event:birthday-party").missing_key("rsvp").await;
+
+    // And who actually said yes is its own question now, rather than a read
+    // per guest and a judgement per read. The key carries the reply, so the
+    // one who is coming and the one who is not stop coming back
+    // indistinguishable.
+    s.shape(
+        "the guests who said yes",
+        json!({"fields": [{"key": "answer", "value": "yes"}]}),
+    )
+    .await
+    .says("person:patana")
+    .never_says("person:barney-gumble");
+
+    s.shape(
+        "the guests who said no",
+        json!({"fields": [{"key": "answer", "value": "no"}]}),
+    )
+    .await
+    .says("person:barney-gumble")
+    .never_says("person:patana");
+
+    // GAP — but the one who has NOT answered is still not askable. Every
+    // filter here says which records to keep, and "the guests carrying no
+    // reply at all" is a question about a record that does not exist.
+    //   s.shape("the guests who have not replied",
+    //           json!({"fields": [{"key": "answer", "missing": true}]})).await;
+    s.has_no_verb("rsvp", &["capture", "recall"]).await;
 
     s.wrap("two replies in, one outstanding").await;
 
@@ -184,19 +216,37 @@ async fn throwing_a_birthday_party() {
         .says("Moe's Tavern")
         .never_says("\"name\":\"Moe's\"");
 
-    // The multi-hop: from the party, to who is attending, to what they eat.
-    // The first hop is one call and the second is real too.
+    // The multi-hop, taken the long way first: who is attending, then what
+    // each of them eats. Two calls, and the session holds the answer to the
+    // first while it asks the second.
     s.through("attendance", "event:birthday-party", "person")
         .await
         .says("person:patana");
     s.recall("person:patana").await.says("vegetarian");
     s.find("vegetarian").await.says("person:patana");
 
-    // GAP — but not in one question. "What do my guests eat" is event →
-    // attendees → their dietary facts, which is two calls and a session
-    // holding the intermediate result rather than one walk.
-    //   s.through("attendance", "event:birthday-party").recall_all().await;
-    s.has_no_verb("recall_all", &["search", "recall"]).await;
+    // **And then in ONE question.** "What do my guests eat" is the party, the
+    // edges drawn at it, and each guest's own page — a walk that returns the
+    // shape rather than a list the session has to walk itself.
+    let table = s
+        .shape(
+            "the party, its guests, and what each of them eats",
+            json!({
+                "subject": "event:birthday-party",
+                "follow": {"shape": "attendance", "direction": "in"},
+            }),
+        )
+        .await;
+    table
+        .says("person:patana")
+        .says("vegetarian")
+        .says("does not drink")
+        .says("bringing a partner");
+
+    // The shape is the answer: the guests hang off the party rather than
+    // arriving beside it, so the session reads who eats what without holding
+    // anything.
+    table.claim(&patana_eats).says("vegetarian");
 
     // The practical half, and the one actually worried about. It is not a
     // verb: "do I have enough chairs" is arithmetic over two things already

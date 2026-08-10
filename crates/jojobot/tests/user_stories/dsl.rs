@@ -759,6 +759,16 @@ impl Session {
         .await
     }
 
+    /// **The graph query.** `recall` takes the shape of the answer — which
+    /// objects, what of each, which edges to walk — so a story writes the
+    /// question's own shape rather than reaching for a verb per question.
+    ///
+    /// `what` is the question in the operator's words, so a failure names the
+    /// thing that could not be asked rather than a bag of arguments.
+    pub async fn shape(&self, what: &str, args: Value) -> Answer {
+        self.read(what.to_string(), "recall", args).await
+    }
+
     /// The same walk with no kind at all — everything pointing at `object`,
     /// whatever sort of thing it is.
     ///
@@ -910,15 +920,27 @@ impl Answer {
         let body: Value = serde_json::from_str(&self.body)
             .unwrap_or_else(|e| panic!("the {} is not json: {e}: {}", self.what, self.body));
         // **Wherever the answer keeps its claims.** `recall` answers with
-        // objects, each carrying its own; other answers carry a flat list. A
-        // claim is picked by its ADDRESS, which is unique across both shapes,
-        // so looking in both is not a guess about which verb replied.
-        let mut carried: Vec<&Value> = body["facts"].as_array().into_iter().flatten().collect();
-        let objects = body["objects"].as_array().into_iter().flatten();
-        carried.extend(objects.flat_map(|o| o["facts"].as_array().into_iter().flatten()));
-        let fact = carried
+        // objects, each carrying its own and each carrying the objects it
+        // reached; other answers carry a flat list. A claim is picked by its
+        // ADDRESS, which is unique across every shape, so gathering from all
+        // of them is not a guess about which verb replied — and reaching into
+        // the walk is the point, because what a nested object carries is
+        // exactly what a story about a walk is asserting on.
+        fn carried(body: &Value, into: &mut Vec<Value>) {
+            into.extend(body["facts"].as_array().into_iter().flatten().cloned());
+            for object in body["objects"]
+                .as_array()
+                .into_iter()
+                .chain(body["connected"].as_array())
+                .flatten()
+            {
+                carried(object, into);
+            }
+        }
+        let mut found = Vec::new();
+        carried(&body, &mut found);
+        let fact = found
             .iter()
-            .copied()
             .find(|f| f["address"] == address)
             .unwrap_or_else(|| {
                 panic!(

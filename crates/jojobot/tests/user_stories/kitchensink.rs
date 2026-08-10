@@ -227,6 +227,46 @@ async fn nothing_on_the_surface_goes_unexercised() {
     .await
     .says("edge.weight");
 
+    // ── how far a walk went, and where it stopped ───────────────────────────
+    //
+    // Homer belongs to the club and the club is somewhere, so an outbound walk
+    // of two hops has somewhere to go twice. One hop reaches the club; two
+    // reaches the town it is in.
+    s.add("place:shelbyville", "Shelbyville").await;
+    s.fact_about(
+        "org:springfield-cyclery",
+        "the workshop is over there",
+        "location",
+        "place:shelbyville",
+    )
+    .await;
+
+    let one = s
+        .shape(
+            "what Homer is connected to",
+            json!({"subject": "person:homer", "follow": {"direction": "out"}, "facts": false}),
+        )
+        .await;
+    one.says("org:springfield-cyclery")
+        .never_says("place:shelbyville");
+
+    // **And the club says its own edges were not followed**, rather than
+    // coming back with an empty `connected` that a reader would take for "the
+    // club is connected to nothing". The note names the way to the rest.
+    one.says("\"unwalked\"").says("deeper follow");
+
+    s.shape(
+        "what Homer is connected to, and what that is connected to",
+        json!({
+            "subject": "person:homer",
+            "follow": {"direction": "out", "depth": 2},
+            "facts": false,
+        }),
+    )
+    .await
+    .says("org:springfield-cyclery")
+    .says("place:shelbyville");
+
     s.wrap("provenance moved, and the three filters that need no words")
         .await;
 

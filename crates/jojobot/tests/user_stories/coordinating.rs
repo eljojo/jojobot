@@ -249,12 +249,40 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     let s = story.session().await;
 
     s.add("bot:delta", "Delta").await;
+    s.call(
+        "set_charter",
+        json!({
+            "bot": "bot:delta",
+            "prose": "You take the codec work, test-first, and you never touch gamma's slice.",
+        }),
+    )
+    .await
+    .says("codec work");
     s.post(
         "delta",
         "Take the prose codec",
         "Second slice, independent of gamma's. Report back when it is green.",
     )
     .await;
+
+    // **The roster, with what each one is for, in one call.** The coordinator
+    // is handing work to two implementers now and has to know who is who —
+    // and reading what an identity is for used to mean booting AS it, one at a
+    // time, which is the wrong act for a question.
+    //
+    // Nothing in the question names a charter. It asks for objects of a kind
+    // and for their prose, and a charter IS a bot's prose, so this falls out
+    // of the general query rather than out of a verb that knows what a charter
+    // is. This session is otto throughout and becomes nobody.
+    s.shape(
+        "every implementer, and what each one is for",
+        json!({"kind": "bot", "prose": true, "facts": false}),
+    )
+    .await
+    .says("bot:gamma")
+    .says("test-first")
+    .says("bot:delta")
+    .says("codec work");
 
     // Where the coordinator's own mail got to is readable without taking
     // delivery of anything, and the search finds work filed for somebody else

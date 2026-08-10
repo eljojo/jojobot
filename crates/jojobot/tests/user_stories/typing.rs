@@ -112,6 +112,35 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     // a record sharing no key with the type is not a weak match.
     found.never_says("rode it to the coast");
 
+    // ── the same type, asked as a question about THINGS ─────────────────────
+    //
+    // Search answers with the records. The other question is "which of my
+    // things have been serviced at all", and that is about the objects rather
+    // than about their rows — so it goes to the query that returns objects,
+    // and each one arrives holding only the records that answered.
+    let serviced = s
+        .shape(
+            "the things carrying a service record",
+            json!({ "answers_type": "service" }),
+        )
+        .await;
+    serviced.says("thing:gravel-bike");
+    serviced.says("new chain and a full clean");
+    // The negative in the same answer: the outing shares no key with the type,
+    // so it is not one of the records that answered, even though it sits on
+    // the object that came back.
+    serviced.never_says("rode it to the coast");
+
+    // And narrowed further by a value, which is the axis a type alone does not
+    // have: the service that cost nothing.
+    s.shape(
+        "the things with a service that cost nothing",
+        json!({ "fields": [{ "key": "cost", "value": "0" }] }),
+    )
+    .await
+    .says("reseated the hose, no charge")
+    .never_says("new chain and a full clean");
+
     // ── a name nobody declared says so, and says what there is ──────────────
     let missing = s
         .refused("search", json!({ "answers_type": "warranty", "limit": 50 }))
