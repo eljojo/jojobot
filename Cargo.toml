@@ -96,6 +96,10 @@ sqlx = { version = "0.8", default-features = false, features = [
 # predict is a handle a caller could forge. OS entropy, no PRNG state to seed. ---
 getrandom = "0.4"
 
+# --- the kernel's own cleanup: a spawned server is asked to die with the
+# process that spawned it, which is the one ending an unwind cannot reach ---
+libc = "0.2"
+
 # --- errors + logging ---
 thiserror = "2"
 anyhow = "1"

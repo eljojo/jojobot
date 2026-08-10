@@ -108,7 +108,8 @@ impl Dolt {
         let home = Self::server_home(data_dir)?;
         Self::init_if_empty(&database, &home)?;
 
-        let child = tokio::process::Command::new("dolt")
+        let mut spawning = tokio::process::Command::new("dolt");
+        spawning
             .env("DOLT_ROOT_PATH", &home)
             .arg("sql-server")
             .arg("--data-dir")
@@ -119,7 +120,9 @@ impl Dolt {
             .arg(port.to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+        die_with_this_process(&mut spawning);
+        let child = spawning
             .spawn()
             .map_err(|e| StartError::Spawn(e.to_string()))?;
 
@@ -357,12 +360,59 @@ impl Dolt {
     }
 
     /// Stop the server. Called on the way down; `Drop` covers the paths that
-    /// do not get to call it.
+    /// do not get to call it, and the kernel covers the paths where nothing in
+    /// this process runs at all — see [`die_with_this_process`].
     pub async fn stop(&mut self) {
         self.pool.close().await;
         let _ = self.child.kill().await;
     }
 }
+
+/// **Ask the kernel to kill the store the moment jojobot dies, however jojobot
+/// dies.**
+///
+/// `kill_on_drop` and [`Dolt::stop`] cover every ending that gets to run Rust:
+/// a return, an unwind, a value going out of scope. They cover none of the
+/// endings where nothing in this process runs — a kill, an out-of-memory kill,
+/// a machine going down — and a store that outlives its owner holds a port and
+/// gigabytes of memory until somebody goes looking for it. The one cleanup that
+/// survives an ending like that belongs to the kernel, so the kernel is asked
+/// for it.
+///
+/// ⚠️ **The flag follows the thread that forks, not the process.** The signal
+/// is sent when the spawning thread exits, whenever that is — so a store must
+/// be started from a thread that lives as long as the store is wanted, or it is
+/// killed underneath a caller still using it. jojobot starts its store on the
+/// thread `main` runs on, and a test starts one on the thread that test runs
+/// on; both outlive every use of what they started.
+#[cfg(target_os = "linux")]
+fn die_with_this_process(spawning: &mut tokio::process::Command) {
+    let parent = std::process::id() as libc::pid_t;
+    // SAFETY: the closure runs in the forked child between fork and exec, where
+    // only async-signal-safe calls are allowed. It is two system calls and an
+    // error value built from an integer — no allocation, no lock, no logging.
+    unsafe {
+        spawning.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // **The parent can already be gone**, having died between the fork
+            // and the line above — and then the signal just asked for has
+            // already been sent and missed, leaving a server nobody will ever
+            // collect. Reading the parent back is what closes that window:
+            // refusing to exec fails the spawn, which is a caller's error to
+            // handle rather than a process nobody owns.
+            if libc::getppid() != parent {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
+    }
+}
+
+/// Where no such flag exists, `Drop` is the whole of the cleanup.
+#[cfg(not(target_os = "linux"))]
+fn die_with_this_process(_spawning: &mut tokio::process::Command) {}
 
 #[cfg(test)]
 pub(crate) mod tests {

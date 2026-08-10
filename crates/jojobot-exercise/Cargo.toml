@@ -18,6 +18,9 @@ anyhow.workspace = true
 async-trait.workspace = true
 # The session ids a run names its own conversations with.
 getrandom.workspace = true
+# A room's server is asked to die with the run that opened it, and the store
+# a dead run left behind is signalled by pid — both are kernel calls.
+libc.workspace = true
 # The MCP client the driver reaches the spawned server with — the same crate
 # and the same transport a real client uses, so what is under test is the
 # served surface rather than a shortcut into the process.

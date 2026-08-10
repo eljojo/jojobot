@@ -30,6 +30,9 @@ tokio = { workspace = true }
 sqlx = { workspace = true }
 # The store's startup failures are a typed enum like every other error here.
 thiserror = { workspace = true }
+# The store's server is asked to die with jojobot, and that is a kernel flag set
+# between the fork and the exec rather than anything the parent can do after.
+libc = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
