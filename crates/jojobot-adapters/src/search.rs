@@ -292,16 +292,27 @@ pub struct FullTextIndex {
     /// that never reached the store learned no handles, so there is nothing to
     /// put in a set keyed by them. Both mean the index holds an older version
     /// than the store, so both read out as the same word to a caller.
-    memory_refresh_failed: std::sync::atomic::AtomicBool,
+    ///
+    /// **Stamped in [`mark_seq`](Self::mark_seq), like a behind mark, and zero
+    /// when there is none.** A reading of the whole corpus clears it only when
+    /// its own reading began after the failure — a bare flag was cleared by any
+    /// reading that completed, so one already in flight landed afterwards and
+    /// vouched for a store it had never seen in that state.
+    memory_refresh_failed_at: std::sync::atomic::AtomicU64,
     /// The messages these postings were written from — the mail half's mirror,
     /// and the same thing [`docs`](Self::docs) is for the memory half: what a
     /// later board read is compared against so a refresh writes only where the
     /// store has moved.
     messages: RwLock<Vec<Message>>,
     /// Whether the last board read failed to reach the store. The mail half's
-    /// [`memory_refresh_failed`](Self::memory_refresh_failed), for the same
+    /// [`memory_refresh_failed_at`](Self::memory_refresh_failed_at), for the same
     /// reason and read out as the same word.
-    mail_refresh_failed: std::sync::atomic::AtomicBool,
+    ///
+    /// **Stamped in [`mark_seq`](Self::mark_seq) and cleared by comparison**,
+    /// exactly as [`memory_refresh_failed_at`](Self::memory_refresh_failed_at)
+    /// is: a board read already in flight when another failed used to land
+    /// afterwards and clear a failure its own snapshot predates.
+    mail_refresh_failed_at: std::sync::atomic::AtomicU64,
 }
 
 impl FullTextIndex {
@@ -323,9 +334,9 @@ impl FullTextIndex {
             memory_touched: std::sync::atomic::AtomicBool::new(false),
             behind: RwLock::new(std::collections::BTreeMap::new()),
             mark_seq: std::sync::atomic::AtomicU64::new(0),
-            memory_refresh_failed: std::sync::atomic::AtomicBool::new(false),
+            memory_refresh_failed_at: std::sync::atomic::AtomicU64::new(0),
             messages: RwLock::new(Vec::new()),
-            mail_refresh_failed: std::sync::atomic::AtomicBool::new(false),
+            mail_refresh_failed_at: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -333,17 +344,28 @@ impl FullTextIndex {
     /// so the mail half is a version behind. Cleared by the next board read that
     /// lands.
     pub fn mail_refresh_failed(&self) {
-        self.mail_refresh_failed
-            .store(true, std::sync::atomic::Ordering::Release);
+        let at = self
+            .mark_seq
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            + 1;
+        self.mail_refresh_failed_at
+            .store(at, std::sync::atomic::Ordering::Release);
     }
 
     /// Record that the refresh this answer should have been built on could not
     /// reach the store, so the whole memory half is a version behind. Cleared by
     /// the next [`ingest_all`](Self::ingest_all), which is the only thing that
     /// can clear it: nothing smaller than a full scan knows the corpus is whole.
+    ///
+    /// **The failure is stamped as it goes on**, the same way a behind mark is,
+    /// so a reading that began earlier cannot clear it. See [`ReadingPoint`].
     pub fn refresh_failed(&self) {
-        self.memory_refresh_failed
-            .store(true, std::sync::atomic::Ordering::Release);
+        let at = self
+            .mark_seq
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            + 1;
+        self.memory_refresh_failed_at
+            .store(at, std::sync::atomic::Ordering::Release);
     }
 
     /// Record that this entity's document is indexed as it stands in the store.
@@ -398,8 +420,15 @@ impl FullTextIndex {
     /// The two halves are replaced independently on purpose: they come from two
     /// stores, either one can be down while the other is fine, and a rebuild of
     /// one must never evict the other's hits.
+    /// **Test-only, because it takes its own reading point.** A caller that
+    /// has just read the board must take the point BEFORE that read and hand
+    /// it to [`ingest_mail_changes`](Self::ingest_mail_changes); this one is
+    /// handed its messages directly, so there is no read for a point to
+    /// precede.
+    #[cfg(test)]
     pub fn ingest_mail(&self, messages: &[Message]) -> Result<(), MemoryError> {
-        self.ingest_mail_changes(messages).map(|_| ())
+        let began = self.reading_begins();
+        self.ingest_mail_changes(messages, began).map(|_| ())
     }
 
     /// Bring the mail half to what this board read says the board is, writing
@@ -409,7 +438,14 @@ impl FullTextIndex {
     /// A message the board read no longer carries leaves the index: removed by
     /// hand, or on a card that has become unreadable and so is absent from
     /// every board read. Both are the same absence and get the same answer.
-    pub fn ingest_mail_changes(&self, messages: &[Message]) -> Result<usize, MemoryError> {
+    /// `began` is where the mark sequence stood **before** the board read that
+    /// produced `messages` — see [`ReadingPoint`]. It is what lets this clear a
+    /// failure it began after and leave one that happened while it was reading.
+    pub fn ingest_mail_changes(
+        &self,
+        messages: &[Message],
+        began: ReadingPoint,
+    ) -> Result<usize, MemoryError> {
         let (rewrite, evict) = {
             let mirror = self.messages.read().expect("mail mirror poisoned");
             changed_and_gone(
@@ -450,8 +486,21 @@ impl FullTextIndex {
         // board, which is the only thing this flag reports.
         self.mail_loaded
             .store(true, std::sync::atomic::Ordering::Release);
-        self.mail_refresh_failed
-            .store(false, std::sync::atomic::Ordering::Release);
+        // The memory half's rule, on the other half's flag: this read clears a
+        // failure it began after and leaves one that landed while it was in
+        // flight. Exchanged against the value just read, so a failure arriving
+        // in between is kept rather than overwritten.
+        let failed_at = self
+            .mail_refresh_failed_at
+            .load(std::sync::atomic::Ordering::Acquire);
+        if failed_at != 0 && failed_at <= began.0 {
+            let _ = self.mail_refresh_failed_at.compare_exchange(
+                failed_at,
+                0,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            );
+        }
         if changed > 0 {
             self.reader.reload().map_err(store_err)?;
         }
@@ -596,8 +645,22 @@ impl FullTextIndex {
             .write()
             .expect("behind poisoned")
             .retain(|_, at| *at > began.0);
-        self.memory_refresh_failed
-            .store(false, std::sync::atomic::Ordering::Release);
+        // The same rule as the marks above, on the flag that speaks for the
+        // whole corpus: this reading clears a failure it began after, and
+        // leaves one that happened while it was in flight. The exchange is
+        // against the value just read, so a failure landing in between is not
+        // lost.
+        let failed_at = self
+            .memory_refresh_failed_at
+            .load(std::sync::atomic::Ordering::Acquire);
+        if failed_at != 0 && failed_at <= began.0 {
+            let _ = self.memory_refresh_failed_at.compare_exchange(
+                failed_at,
+                0,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            );
+        }
         if changed > 0 {
             self.reader.reload().map_err(store_err)?;
         }
@@ -1019,7 +1082,9 @@ impl FullTextIndex {
             self.mail_loaded.load(Acquire),
             self.mail_touched.load(Acquire),
         ) {
-            (true, _) if self.mail_refresh_failed.load(Acquire) => Coverage::Partial(Behind::Stale),
+            (true, _) if self.mail_refresh_failed_at.load(Acquire) != 0 => {
+                Coverage::Partial(Behind::Stale)
+            }
             (true, _) => Coverage::Loaded,
             (false, true) => Coverage::Partial(Behind::Unscanned),
             (false, false) => Coverage::Unread,
@@ -1043,7 +1108,7 @@ impl FullTextIndex {
     /// than the store does, which is the only thing a caller can act on.
     pub fn memory_coverage(&self) -> Coverage {
         use std::sync::atomic::Ordering::Acquire;
-        let behind_now = self.memory_refresh_failed.load(Acquire)
+        let behind_now = self.memory_refresh_failed_at.load(Acquire) != 0
             || !self.behind.read().expect("behind poisoned").is_empty();
         match (
             self.memory_loaded.load(Acquire),
@@ -1607,8 +1672,13 @@ impl IndexedMailboxes {
     /// Load the mail half from a full board read — the boot path. Returns how
     /// many messages were indexed.
     pub async fn rebuild(&self) -> Result<usize, MailboxError> {
+        // Before the read, never after — the point has to predate the board
+        // read it will be handed back with.
+        let began = self.index.reading_begins();
         let messages = self.inner.scan_messages().await?;
-        self.index.ingest_mail(&messages).map_err(indexing)?;
+        self.index
+            .ingest_mail_changes(&messages, began)
+            .map_err(indexing)?;
         Ok(messages.len())
     }
 
@@ -1650,9 +1720,10 @@ impl Refresh for IndexedMailboxes {
     /// the board stop being served. That fix is a rollback, unprovable for the
     /// identical reason, and it is carded rather than shipped blind.
     async fn refresh(&self) {
+        let began = self.index.reading_begins();
         match self.inner.scan_messages().await {
             Ok(messages) => {
-                if self.index.ingest_mail_changes(&messages).is_err() {
+                if self.index.ingest_mail_changes(&messages, began).is_err() {
                     self.index.mail_refresh_failed();
                 }
             }
@@ -2864,6 +2935,212 @@ mod tests {
         );
     }
 
+    /// **A board that hands back the messages it was given, and can stop
+    /// answering** — [`Scanned`]'s opposite number for the mail half, hostile
+    /// about the one thing this half's coverage turns on.
+    ///
+    /// It only scans. Every other verb on the port is unimplemented, because
+    /// what is under test here is what the refresh does with a board read, and
+    /// a double that could do more would invite a test that proves less.
+    struct Board {
+        messages: RwLock<Vec<Message>>,
+        /// The board stops answering a read, so the refresh behind an answer
+        /// fails and the mail half is left a version behind.
+        blind: std::sync::atomic::AtomicBool,
+        /// **A board read that has taken its snapshot and not answered yet** —
+        /// the window a real read has and this double otherwise does not, since
+        /// it answers without ever suspending. See [`Scanned::park`].
+        park: std::sync::atomic::AtomicBool,
+        parked: std::sync::atomic::AtomicBool,
+    }
+
+    impl Board {
+        fn new(messages: Vec<Message>) -> Arc<Self> {
+            Arc::new(Board {
+                messages: RwLock::new(messages),
+                blind: std::sync::atomic::AtomicBool::new(false),
+                park: std::sync::atomic::AtomicBool::new(false),
+                parked: std::sync::atomic::AtomicBool::new(false),
+            })
+        }
+
+        fn blinded(&self) {
+            self.blind.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn sighted(&self) {
+            self.blind.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn hold_reads(&self) {
+            self.park.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn read_is_holding(&self) -> bool {
+            self.parked.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn release_reads(&self) {
+            self.park.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl jojobot_domain::mailbox::Mailboxes for Board {
+        async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+            if self.blind.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(MailboxError::Store("the board cannot be read".into()));
+            }
+            let snapshot = self.messages.read().expect("messages poisoned").clone();
+            if self.park.load(std::sync::atomic::Ordering::SeqCst) {
+                self.parked.store(true, std::sync::atomic::Ordering::SeqCst);
+                while self.park.load(std::sync::atomic::Ordering::SeqCst) {
+                    tokio::task::yield_now().await;
+                }
+                self.parked
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+            Ok(snapshot)
+        }
+
+        async fn create_mailbox(
+            &self,
+            _: &MailboxName,
+            _: &jojobot_domain::memory::EntityId,
+            _: Option<&str>,
+        ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError>
+        {
+            unimplemented!("this double only scans messages")
+        }
+
+        async fn list_mailboxes(
+            &self,
+        ) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+            unimplemented!("this double only scans messages")
+        }
+
+        async fn post_message(
+            &self,
+            _: jojobot_domain::mailbox::NewMessage,
+        ) -> Result<jojobot_domain::mailbox::Guarded<Message>, MailboxError> {
+            unimplemented!("this double only scans messages")
+        }
+
+        async fn read_mailbox(
+            &self,
+            _: &MailboxName,
+        ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
+        {
+            unimplemented!("this double only scans messages")
+        }
+
+        async fn read_message(
+            &self,
+            _: &MessageId,
+        ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
+            unimplemented!("this double only scans messages")
+        }
+
+        async fn mark_processed(
+            &self,
+            _: &MessageId,
+            _: Option<&str>,
+        ) -> Result<Message, MailboxError> {
+            unimplemented!("this double only scans messages")
+        }
+    }
+
+    /// The mail half's twin of the corpus-failure race above. A board read
+    /// already in flight when another one fails must not clear that failure:
+    /// its own snapshot was taken before the board stopped answering.
+    #[tokio::test]
+    async fn a_board_read_in_flight_does_not_clear_a_failure_it_predates() {
+        let board = Board::new(vec![message(
+            "42",
+            "pm",
+            "dev",
+            Some("the kiln slice"),
+            "the damper is still hand-cut",
+            MessageState::New,
+        )]);
+        let index = Arc::new(FullTextIndex::open().expect("index opens"));
+        let mail = Arc::new(IndexedMailboxes::new(board.clone(), index.clone()));
+        mail.rebuild().await.expect("rebuild");
+        assert_eq!(
+            index.mail_coverage(),
+            Coverage::Loaded,
+            "a board read that just succeeded is complete coverage"
+        );
+
+        board.hold_reads();
+        let refreshing = tokio::spawn({
+            let mail = mail.clone();
+            async move { Refresh::refresh(mail.as_ref()).await }
+        });
+        while !board.read_is_holding() {
+            tokio::task::yield_now().await;
+        }
+
+        // Underneath it: another read cannot reach the board at all. It fails
+        // on the blind check before it can park.
+        board.blinded();
+        Refresh::refresh(mail.as_ref()).await;
+        assert_eq!(
+            index.mail_coverage(),
+            Coverage::Partial(Behind::Stale),
+            "the index says the mail half is behind, which is what must survive"
+        );
+
+        board.sighted();
+        board.release_reads();
+        refreshing.await.expect("the refresh task");
+
+        assert_eq!(
+            index.mail_coverage(),
+            Coverage::Partial(Behind::Stale),
+            "a board read taken before the failure cannot vouch for the board after it"
+        );
+    }
+
+    /// The other direction, and the positive both rest on: a read that began
+    /// after the failure clears it, and a run with nothing failed reports
+    /// complete. Without these, never clearing satisfies every negative.
+    #[tokio::test]
+    async fn a_board_read_that_began_after_a_failure_clears_it() {
+        let board = Board::new(vec![message(
+            "42",
+            "pm",
+            "dev",
+            None,
+            "the damper is still hand-cut",
+            MessageState::New,
+        )]);
+        let index = Arc::new(FullTextIndex::open().expect("index opens"));
+        let mail = Arc::new(IndexedMailboxes::new(board.clone(), index.clone()));
+        mail.rebuild().await.expect("rebuild");
+        assert_eq!(
+            index.mail_coverage(),
+            Coverage::Loaded,
+            "nothing has failed yet, so nothing is behind"
+        );
+
+        board.blinded();
+        Refresh::refresh(mail.as_ref()).await;
+        assert_eq!(
+            index.mail_coverage(),
+            Coverage::Partial(Behind::Stale),
+            "a read that could not reach the board leaves the index behind"
+        );
+
+        board.sighted();
+        Refresh::refresh(mail.as_ref()).await;
+        assert_eq!(
+            index.mail_coverage(),
+            Coverage::Loaded,
+            "a read taken after the failure speaks for the board as it stands"
+        );
+    }
+
     /// A store that just hands back the docs it was given, and can drop them.
     ///
     /// Its doc ids are deliberately **not** entity handles — the real store's
@@ -3137,6 +3414,107 @@ mod tests {
             store.memory_coverage_via_port(),
             Coverage::Partial(Behind::Stale),
             "a reading taken before the write cannot vouch for the write"
+        );
+    }
+
+    /// **A reading in flight does not clear a corpus failure its snapshot
+    /// predates** — the sibling of the mark race above, on the flag rather than
+    /// on the set.
+    ///
+    /// One reading of the whole corpus says "the index holds the store". A
+    /// refresh that could not reach the store at all says the opposite, about
+    /// everything at once. If the first was already in flight when the second
+    /// failed, it lands afterwards and clears a failure it never saw — and
+    /// coverage comes back complete on the strength of a reading taken before
+    /// the store stopped answering.
+    ///
+    /// The claim here is weaker than the mark race's and still wrong in the
+    /// same direction: the index does hold a full reading, just an older one
+    /// than the caller is being promised.
+    #[tokio::test]
+    async fn a_reading_in_flight_does_not_clear_a_corpus_failure_it_predates() {
+        let inner = one_page();
+        let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
+        store.rebuild().await.expect("rebuild");
+        assert_eq!(
+            store.memory_coverage_via_port(),
+            Coverage::Loaded,
+            "a scan that just succeeded is complete coverage"
+        );
+
+        // A search's whole-corpus refresh reads the store and holds its answer.
+        inner.hold_scans();
+        let searching = tokio::spawn({
+            let store = store.clone();
+            async move { store.search_via_port(&SearchQuery::text("Alpha")).await }
+        });
+        while !inner.scan_is_holding() {
+            tokio::task::yield_now().await;
+        }
+
+        // Underneath it: a refresh of the whole corpus cannot reach the store.
+        // It fails on the blind check before it can park, so this one does not
+        // queue up behind the reading being held.
+        inner.blinded();
+        Refresh::refresh(store.as_ref()).await;
+        assert_eq!(
+            store.memory_coverage_via_port(),
+            Coverage::Partial(Behind::Stale),
+            "the index says it is behind the store, which is what must survive"
+        );
+
+        // The held reading now answers with the snapshot it took beforehand.
+        inner.sighted();
+        inner.release_scans();
+        searching
+            .await
+            .expect("the search task")
+            .expect("the search answers");
+
+        assert_eq!(
+            store.memory_coverage_via_port(),
+            Coverage::Partial(Behind::Stale),
+            "a reading taken before the failure cannot vouch for the store after it"
+        );
+    }
+
+    /// **The other direction, and the positive both directions rest on.**
+    ///
+    /// A failure that a reading BEGAN AFTER is exactly the one that reading is
+    /// entitled to clear: it read the store later than the failure, so it
+    /// speaks for the store as it stands. Without this the test above is
+    /// satisfied by a flag that is never cleared at all, which reports every
+    /// answer as behind forever.
+    ///
+    /// And a run where nothing failed reports complete, or "behind" would be
+    /// the only state this index can produce.
+    #[tokio::test]
+    async fn a_reading_that_began_after_a_failure_clears_it() {
+        let inner = one_page();
+        let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
+        store.rebuild().await.expect("rebuild");
+        assert_eq!(
+            store.memory_coverage_via_port(),
+            Coverage::Loaded,
+            "nothing has failed yet, so nothing is behind"
+        );
+
+        inner.blinded();
+        Refresh::refresh(store.as_ref()).await;
+        assert_eq!(
+            store.memory_coverage_via_port(),
+            Coverage::Partial(Behind::Stale),
+            "a refresh that could not reach the store leaves the index behind"
+        );
+
+        // A reading that starts now sees the store after the failure, so its
+        // word is good.
+        inner.sighted();
+        Refresh::refresh(store.as_ref()).await;
+        assert_eq!(
+            store.memory_coverage_via_port(),
+            Coverage::Loaded,
+            "a reading taken after the failure speaks for the store as it stands"
         );
     }
 
