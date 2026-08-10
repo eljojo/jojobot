@@ -23,7 +23,8 @@ code, tests, fixtures, docs, commit messages, branch names, error strings.
 The line binds text *bound for* the repo, not just files inside it: a
 hand-off task, an example, a report that will become a commit message is
 covered the moment it is written. Fixture names come from the fictional
-roster (Simpsons universe + greek letters) —
+roster — characters from the Simpsons, South Park, Family Guy or Bob's
+Burgers, plus greek letters —
 `crates/jojobot-domain/tests/fixture_roster.rs` is the allowlist and CI
 enforces it. An example quoted from the user's private docs gets a roster
 substitution BEFORE it crosses; that quote path is the standing leak vector

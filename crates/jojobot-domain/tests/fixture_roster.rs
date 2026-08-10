@@ -1,8 +1,9 @@
 //! The fixture roster — the machine gate on life specifics.
 //!
 //! Every entity handle written anywhere in this workspace's sources must name
-//! an openly fictional thing: the Simpsons universe, greek letters, or an
-//! obviously synthetic token. The roster below is the complete allowlist.
+//! an openly fictional thing: a character from the Simpsons, South Park,
+//! Family Guy or Bob's Burgers, a greek letter, or an obviously synthetic
+//! token. The roster below is the complete allowlist.
 //! Adding a name is a conscious, reviewed diff — and it is NEVER a person,
 //! place, event, or organization from the operator's life, no matter which
 //! branch or commit it would ride in on.
