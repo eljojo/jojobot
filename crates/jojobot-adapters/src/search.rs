@@ -42,6 +42,7 @@ use jojobot_domain::memory::{
     Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction,
     guard::{self, MatchReason},
     search::{self, Behind, Coverage, DocScan, EntityRef, Hit, Search, SearchQuery},
+    types::DeclaredType,
 };
 
 /// How much a fresh fact is worth against text relevance. Small on purpose: it
@@ -132,6 +133,13 @@ struct Fields {
     /// location edge to somewhere else and an unrelated link to alpha. Neither
     /// field is wrong; the pair is what the caller actually asked about.
     edge_pair: Field,
+    /// **One term per key a fact's event payload carries.**
+    ///
+    /// A type is a set of key names and a record answers it by carrying at
+    /// least one of them, so the question is set membership over strings —
+    /// which is what a term index is. The values are deliberately not here: a
+    /// type filter asks which keys a record holds, never what is in them.
+    meta_key: Field,
     /// A session's own id — its own namespace again, for the same reason
     /// `message_id` is not `doc_id`: three stores, three id spaces, and one
     /// shared field would let a page id evict a run.
@@ -158,6 +166,7 @@ impl Fields {
             edge_shape: b.add_text_field("edge_shape", STRING),
             edge_object: b.add_text_field("edge_object", STRING),
             edge_pair: b.add_text_field("edge_pair", STRING),
+            meta_key: b.add_text_field("meta_key", STRING),
             session_id: b.add_text_field("session_id", STRING),
             owner: b.add_text_field("owner", STRING),
             payload: b.add_text_field("payload", STORED),
@@ -941,6 +950,15 @@ impl FullTextIndex {
                     format!("{}={}", edge.shape.as_token(), edge.object),
                 );
             }
+            // **Every key the payload carries, so a type filter is a clause.**
+            // A type is answered by the keys a record holds, and holding one is
+            // the whole of the match — so the question the caller asks is
+            // answerable from postings, and asking it here means the answer is
+            // drawn from the whole corpus rather than from the page the limit
+            // happened to buy.
+            for key in fact.event.iter().flat_map(|e| e.metadata.keys()) {
+                document.add_text(f.meta_key, key.trim());
+            }
             writer.add_document(document).map_err(store_err)?;
         }
 
@@ -1042,6 +1060,28 @@ impl FullTextIndex {
                 )),
                 None => clauses.push(self.must_term(f.edge_object, edge.object.as_str())),
             }
+        }
+        // **The type filter is a clause, like every other filter here.** A
+        // record answers a type by carrying at least one of its keys, so the
+        // clause is a disjunction over the key names and the index narrows to
+        // the records that answer before the depth cut ever applies. Filtering
+        // the ranked page instead would drop every answer that did not happen
+        // to rank in the top few — and for a type-only query nothing ranks, so
+        // which records survived would be an arbitrary tie-break reported as
+        // "nothing answers this type".
+        if let Some(declared) = &query.answers_type {
+            let keys: Vec<(Occur, Box<dyn Query>)> = declared
+                .fields
+                .iter()
+                .map(|field| {
+                    let q: Box<dyn Query> = Box::new(TermQuery::new(
+                        Term::from_field_text(f.meta_key, field.key.trim()),
+                        IndexRecordOption::Basic,
+                    ));
+                    (Occur::Should, q)
+                })
+                .collect();
+            clauses.push((Occur::Must, Box::new(BooleanQuery::new(keys))));
         }
         clauses
     }
@@ -1316,6 +1356,17 @@ impl FullTextIndex {
         // sessions asking the same question see the same list in the same order.
         ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
 
+        // **How each record answers, written onto the hit.** The selecting was
+        // done by the clause in `fact_clauses`, over the whole corpus; this
+        // says how, which is the thing the caller asked for and which only the
+        // payload can answer. Nothing is expected to be dropped here — a record
+        // reaching this point carries a declared key — and the filter stays a
+        // filter so that a record which somehow does not cannot arrive claiming
+        // an answer it has not got.
+        if let Some(declared) = &query.answers_type {
+            ranked.retain_mut(|(_, _, hit)| answer_with(declared, hit));
+        }
+
         let mut hits = self.pinned(query, &mirror);
         for (_, _, hit) in ranked {
             if !hits.contains(&hit) {
@@ -1343,6 +1394,11 @@ impl Payload {
                 subject: resolve(mirror, &fact.subject),
                 home: resolve(mirror, &fact.home),
                 fact,
+                // **Filled in later, by the one step that knows the type.**
+                // Turning a payload into a hit does not know what was asked,
+                // and a record answers a type only in the context of a query
+                // that named one.
+                answers: None,
             },
             Payload::Prose {
                 doc_id,
@@ -1706,6 +1762,46 @@ impl Memory for IndexedMemory {
 
     async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
         self.inner.scan_entity(entity).await
+    }
+
+    // **Nothing is refreshed on either of these.** A declaration is not a
+    // document: it says which keys a writer should fill and is carried by no
+    // entity, so there is no doc for the projection to re-read. Refreshing
+    // something here would be this wrapper inventing a document the store does
+    // not hold.
+    async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
+        self.inner.declare_type(declared).await
+    }
+
+    async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
+        self.inner.declared_types().await
+    }
+}
+
+/// **Does this record answer the type, and if so, say how — on the hit.**
+///
+/// Structural: the record is never asked what it was declared to be, only what
+/// it carries. An event's payload IS the record here, so a hit that is not a
+/// fact, and a fact carrying no event, answer no type — they have no keys to
+/// answer with.
+///
+/// A record carrying none of the type's keys is dropped, because that is not a
+/// weak match, it is not a match. A record carrying some is kept and says which
+/// it lacks: hiding partial matches would hide exactly the records worth
+/// finding.
+fn answer_with(declared: &DeclaredType, hit: &mut Hit) -> bool {
+    let Hit::Fact { fact, answers, .. } = hit else {
+        return false;
+    };
+    let Some(event) = &fact.event else {
+        return false;
+    };
+    match declared.matched_by(&event.metadata) {
+        Some(found) => {
+            *answers = Some(Box::new(found));
+            true
+        }
+        None => false,
     }
 }
 
@@ -2653,6 +2749,103 @@ mod tests {
             hits.iter().all(|h| matches!(h, Hit::Fact { .. })),
             "a fact-only filter must not surface entities or prose: {hits:?}"
         );
+    }
+
+    /// **A type query is answered from the whole corpus, not from a page of it.**
+    ///
+    /// The corpus here is deliberately far bigger than the candidate depth the
+    /// limit buys, and the two records that answer are ordinary in every other
+    /// way — nothing about them ranks. A type filter that ran over an already
+    /// truncated page would answer `0` here and say nothing about it, which is
+    /// byte-identical to "nothing in memory answers this type".
+    ///
+    /// The small limits are paired with a limit past the whole corpus, in the
+    /// same read: without the positive, a zero could just as well mean the
+    /// records were never indexed.
+    #[tokio::test]
+    async fn a_type_query_reaches_past_the_candidate_depth() {
+        use jojobot_domain::memory::types::{Field as Key, ValueType};
+        let declared = DeclaredType::new(
+            "delivery",
+            vec![
+                Key::new("arrives", ValueType::Date),
+                Key::new("crates", ValueType::Number),
+            ],
+        );
+
+        let mut facts: Vec<Fact> = (1..=200)
+            .map(|n| {
+                fact(
+                    "person:alpha",
+                    &format!("plain-{n}"),
+                    "an ordinary claim with no payload on it",
+                    date(2026, 1, 1),
+                )
+            })
+            .collect();
+        for (n, keys) in [
+            (
+                "answering-whole",
+                vec![("arrives", "2026-08-10"), ("crates", "4")],
+            ),
+            ("answering-partial", vec![("arrives", "2026-08-11")]),
+        ] {
+            facts.push(Fact {
+                event: Some(Event {
+                    kind: "a-type-nobody-declared".into(),
+                    metadata: keys
+                        .into_iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect(),
+                    refs: vec![],
+                }),
+                ..fact(
+                    "person:alpha",
+                    n,
+                    "an ordinary claim, with a payload on it",
+                    date(2026, 1, 1),
+                )
+            });
+        }
+        let index = index_of(vec![scan(
+            "doc-1",
+            Some(entity("person:alpha", "Alpha")),
+            "",
+            facts,
+        )]);
+
+        let answering = |limit: usize| -> Vec<String> {
+            index
+                .search(&SearchQuery {
+                    answers_type: Some(declared.clone()),
+                    limit,
+                    ..Default::default()
+                })
+                .expect("search ok")
+                .iter()
+                .filter_map(|h| match h {
+                    Hit::Fact { fact, answers, .. } if answers.is_some() => Some(fact.id.0.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        let mut past_the_corpus = answering(500);
+        past_the_corpus.sort();
+        assert_eq!(
+            past_the_corpus,
+            vec!["answering-partial", "answering-whole"],
+            "the corpus holds exactly two records that answer",
+        );
+        for limit in [20, 50] {
+            let mut found = answering(limit);
+            found.sort();
+            assert_eq!(
+                found,
+                vec!["answering-partial", "answering-whole"],
+                "both records answer at limit {limit}, however deep in the corpus they sit",
+            );
+        }
     }
 
     /// The limit is honoured, and defaults to twenty.
@@ -3769,6 +3962,12 @@ mod tests {
             unimplemented!("this double only scans")
         }
         async fn list_entities(&self, _: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
+            unimplemented!("this double only scans")
+        }
+        async fn declare_type(&self, _: DeclaredType) -> Result<DeclaredType, MemoryError> {
+            unimplemented!("this double only scans")
+        }
+        async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
             unimplemented!("this double only scans")
         }
         /// Rename the entity on the page that declares it. **No guard**, for the
@@ -5561,6 +5760,7 @@ mod tests {
         )]);
         let alpha = EntityRef::resolved(&entity("person:alpha", "Alpha"));
         let expected = vec![Hit::Fact {
+            answers: None,
             fact: linked,
             subject: alpha.clone(),
             home: alpha,
@@ -5641,6 +5841,7 @@ mod tests {
         assert_eq!(
             hits,
             vec![Hit::Fact {
+                answers: None,
                 fact: edged,
                 subject: alpha.clone(),
                 home: alpha,

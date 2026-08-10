@@ -210,6 +210,7 @@ fn the_tool_surface_is_exactly_this_list() {
             "add_entity",
             "amend_journal",
             "capture",
+            "declare_type",
             "journal",
             "list_entities",
             "list_sent",

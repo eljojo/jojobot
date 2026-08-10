@@ -166,6 +166,17 @@ mod tests {
             async fn add_entity(&self, _: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
+            async fn declare_type(
+                &self,
+                _: jojobot_domain::memory::types::DeclaredType,
+            ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
+                unimplemented!("the owner index only reads the index")
+            }
+            async fn declared_types(
+                &self,
+            ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
+                unimplemented!("the owner index only reads the index")
+            }
             async fn update_entity(
                 &self,
                 _: &EntityId,

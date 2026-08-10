@@ -222,6 +222,7 @@ pub(crate) fn add_args(kind: &str, handle: &str, name: &str) -> AddEntityArgs {
 
 pub(crate) fn search_args() -> SearchArgs {
     SearchArgs {
+        answers_type: None,
         query: None,
         kind: None,
         status: None,
@@ -248,6 +249,17 @@ impl Memory for UnindexedMemory {
     }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.0.add_entity(new).await
+    }
+    async fn declare_type(
+        &self,
+        declared: jojobot_domain::memory::types::DeclaredType,
+    ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
+        self.0.declare_type(declared).await
+    }
+    async fn declared_types(
+        &self,
+    ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
+        self.0.declared_types().await
     }
     async fn update_entity(
         &self,

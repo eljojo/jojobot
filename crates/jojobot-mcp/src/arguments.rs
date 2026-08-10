@@ -78,6 +78,13 @@ fn fields<'a>(
     if let Some(reference) = node.get("$ref").and_then(|r| r.as_str()) {
         return definition(reference, root).and_then(|target| fields(target, root, depth + 1));
     }
+    // **A list of objects publishes its names once, on the element.** Every
+    // item of a list is the same shape, so the names a caller may send inside
+    // one are the element's names — and a walk that stopped at the array would
+    // leave every name inside it unchecked while every other test stayed green.
+    if let Some(items) = node.get("items") {
+        return fields(items, root, depth + 1);
+    }
     // The null branch of an optional field publishes nothing, so the first
     // branch that does is the shape being described.
     ["anyOf", "oneOf", "allOf"]

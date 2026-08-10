@@ -59,6 +59,7 @@ use jojobot_domain::memory::{
     event::Event,
     guard::{self, EntityMatch},
     search::{Behind, Coverage, DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, Search, SearchQuery},
+    types::{DeclaredType, Field, ValueType},
     validate_edge,
 };
 use jojobot_domain::session::{

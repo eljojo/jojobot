@@ -35,6 +35,10 @@ pub struct InMemoryMemory {
     /// The human half of each entity's doc, keyed by handle — replaced whole by
     /// `set_prose`, exactly as the real store replaces the region.
     prose: Mutex<std::collections::HashMap<EntityId, String>>,
+    /// The type declarations, one per name. A `Vec` rather than a map because
+    /// the real store keeps them as rows and the order they were declared in
+    /// is part of what each one says.
+    types: Mutex<Vec<super::types::DeclaredType>>,
 }
 
 impl InMemoryMemory {
@@ -451,6 +455,24 @@ impl Memory for InMemoryMemory {
             }))
             .collect())
     }
+
+    async fn declare_type(
+        &self,
+        declared: super::types::DeclaredType,
+    ) -> Result<super::types::DeclaredType, MemoryError> {
+        super::types::validate_type(&declared)?;
+        let declared = declared.normalized();
+        let mut held = self.types.lock().unwrap();
+        // Replaced whole, the way the real store replaces the rows sharing the
+        // name: a type is the keys it names now.
+        held.retain(|t| t.name != declared.name);
+        held.push(declared.clone());
+        Ok(declared)
+    }
+
+    async fn declared_types(&self) -> Result<Vec<super::types::DeclaredType>, MemoryError> {
+        Ok(self.types.lock().unwrap().clone())
+    }
 }
 
 /// The behavioural contract every [`Memory`] adapter must satisfy. Each function
@@ -466,6 +488,7 @@ impl Memory for InMemoryMemory {
 pub mod contract {
     use super::*;
     use crate::memory::search::{EdgeFilter, Hit, Search, SearchQuery};
+    use crate::memory::types::{DeclaredType, Field, ValueType};
     use crate::memory::{
         Boot, Edge, EdgeShape, FACTS_HEADER, FactStatus, Provenance, event::Event,
     };
@@ -3915,6 +3938,7 @@ pub mod contract {
                     fact,
                     subject: s,
                     home,
+                    ..
                 } if fact.subject == subject => Some((s.clone(), home.clone())),
                 _ => None,
             })
@@ -3997,6 +4021,439 @@ pub mod contract {
         .await
     }
 
+    // --- declared types ------------------------------------------------------
+
+    /// Declare a type the store is expected to keep.
+    async fn declare<M: Memory>(store: &M, declared: DeclaredType) -> DeclaredType {
+        let name = declared.name.clone();
+        store
+            .declare_type(declared)
+            .await
+            .unwrap_or_else(|e| panic!("declaring '{name}' should succeed: {e}"))
+    }
+
+    /// One type out of the store's own listing.
+    async fn read_type<M: Memory>(store: &M, name: &str) -> DeclaredType {
+        store
+            .declared_types()
+            .await
+            .expect("declared_types should succeed")
+            .into_iter()
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("declared_types must return '{name}'"))
+    }
+
+    /// **A declared type reads back, complete and in the order it was
+    /// declared.**
+    ///
+    /// The order is a claim and not a convenience: an answer names the keys a
+    /// record holds and lacks in the type's own order, so a store that sorted
+    /// them by name would replace an order somebody chose with one nobody did.
+    /// It is asserted with keys whose declared order is NOT their alphabetical
+    /// order, or a sorting store passes this unchanged.
+    pub async fn a_declared_type_reads_back<M: Memory>(store: &M) {
+        let declared = DeclaredType::new(
+            "contract-tenancy",
+            vec![
+                Field::new("starts", ValueType::Date),
+                Field::new("rooms", ValueType::Number),
+                Field::new("building", ValueType::Reference),
+                Field::new("active", ValueType::Boolean),
+            ],
+        );
+        let written = declare(store, declared.clone()).await;
+        assert_eq!(written, declared, "the store returns what it stored");
+        assert_eq!(
+            read_type(store, "contract-tenancy").await,
+            declared,
+            "…and a later read returns it unchanged, keys and order and all",
+        );
+
+        // The negative the read rests on: nothing invents a type nobody
+        // declared. Without it the assertions above hold on a store that
+        // answers every question with every type it can think of.
+        let known = store
+            .declared_types()
+            .await
+            .expect("declared_types should succeed");
+        assert!(
+            !known.iter().any(|t| t.name == "contract-never-declared"),
+            "a type nobody declared is not in the store: {known:?}",
+        );
+    }
+
+    /// **Declaring again replaces the keys whole.**
+    ///
+    /// A type is the set of keys it names now. One that accumulated every key
+    /// it had ever named would describe no record at all, and every match
+    /// against it would report keys the writer had already dropped as lacking.
+    pub async fn declaring_a_type_again_replaces_its_keys<M: Memory>(store: &M) {
+        declare(
+            store,
+            DeclaredType::new(
+                "contract-parcel",
+                vec![
+                    Field::new("weight", ValueType::Number),
+                    Field::new("sender", ValueType::Reference),
+                ],
+            ),
+        )
+        .await;
+        let second = DeclaredType::new(
+            "contract-parcel",
+            vec![
+                Field::new("weight", ValueType::Number),
+                Field::new("arrives", ValueType::Date),
+            ],
+        );
+        declare(store, second.clone()).await;
+
+        assert_eq!(
+            read_type(store, "contract-parcel").await,
+            second,
+            "the second declaration is what the type is now",
+        );
+        assert_eq!(
+            store
+                .declared_types()
+                .await
+                .expect("declared_types should succeed")
+                .iter()
+                .filter(|t| t.name == "contract-parcel")
+                .count(),
+            1,
+            "and it replaced the first rather than standing beside it",
+        );
+    }
+
+    /// **A type with no keys is refused, and the store keeps nothing.**
+    ///
+    /// A type arrives complete with its fields. A bare name is a type nobody
+    /// can query by, and it would have to be configured into usefulness before
+    /// it did anything.
+    ///
+    /// Both halves: the refusal, and that the refusal wrote nothing. A store
+    /// that errored after inserting the name would pass the first alone.
+    pub async fn a_type_with_no_keys_is_refused_and_writes_nothing<M: Memory>(store: &M) {
+        let refused = store
+            .declare_type(DeclaredType::new("contract-empty", vec![]))
+            .await;
+        assert!(
+            matches!(refused, Err(MemoryError::InvalidType(_))),
+            "a type is the keys it names: {refused:?}",
+        );
+        let known = store
+            .declared_types()
+            .await
+            .expect("declared_types should succeed");
+        assert!(
+            !known.iter().any(|t| t.name == "contract-empty"),
+            "a refused declaration leaves nothing behind: {known:?}",
+        );
+
+        // The positive it rests on: the same store takes a declaration that
+        // does name a key, so the absence above is the refusal and not a store
+        // that declares nothing at all.
+        declare(
+            store,
+            DeclaredType::new("contract-not-empty", vec![Field::new("x", ValueType::Text)]),
+        )
+        .await;
+        assert_eq!(read_type(store, "contract-not-empty").await.fields.len(), 1);
+    }
+
+    /// **Two types may name one key and mean their own thing by it — through
+    /// the store.**
+    ///
+    /// Keys are scoped by the type that names them and registered nowhere, so
+    /// there is no list of legal keys anywhere and nothing to keep in step. A
+    /// store keying its rows on the key name alone would lose one of these, and
+    /// nothing above it could tell.
+    pub async fn two_stored_types_may_name_one_key<M: Memory>(store: &M) {
+        declare(
+            store,
+            DeclaredType::new(
+                "contract-seating",
+                vec![Field::new("seats", ValueType::Text)],
+            ),
+        )
+        .await;
+        declare(
+            store,
+            DeclaredType::new(
+                "contract-booking",
+                vec![Field::new("seats", ValueType::Number)],
+            ),
+        )
+        .await;
+
+        assert_eq!(
+            read_type(store, "contract-seating").await.fields[0].holds,
+            ValueType::Text,
+        );
+        assert_eq!(
+            read_type(store, "contract-booking").await.fields[0].holds,
+            ValueType::Number,
+            "one key name, two types, and each keeps what it declared",
+        );
+    }
+
+    /// **A type read back out of the store still matches a record nobody
+    /// declared.**
+    ///
+    /// The journey, rather than the function: the declaration goes into the
+    /// store, comes back out, and matches a loose bag of keys that was never
+    /// told which type it was. This is what makes matching structural in the
+    /// built system rather than in one pure function — a store that mangled a
+    /// key name or a value type would leave the domain's own cases green and
+    /// every real query wrong.
+    pub async fn a_stored_type_matches_a_record_that_never_declared_it<M: Memory>(store: &M) {
+        declare(
+            store,
+            DeclaredType::new(
+                "contract-shipment",
+                vec![
+                    Field::new("weight", ValueType::Number),
+                    Field::new("arrives", ValueType::Date),
+                ],
+            ),
+        )
+        .await;
+        let stored = read_type(store, "contract-shipment").await;
+
+        let loose: std::collections::BTreeMap<String, String> = [("weight", "12")]
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        let found = stored
+            .matched_by(&loose)
+            .expect("a record carrying one of the keys answers the type");
+        assert_eq!(found.held, vec!["weight"]);
+        assert_eq!(
+            found.lacking,
+            vec!["arrives"],
+            "a partial match comes back and names what it lacks: {found:?}",
+        );
+
+        // And the negative it rests on, with the same stored type: a record
+        // sharing no key is not a match, or "it matched" says nothing.
+        let unrelated: std::collections::BTreeMap<String, String> =
+            [("mood".to_string(), "curious".to_string())]
+                .into_iter()
+                .collect();
+        assert_eq!(stored.matched_by(&unrelated), None);
+    }
+
+    /// **Search finds a record by the keys it carries, and the record never
+    /// said which type it was.**
+    ///
+    /// This is the card's load-bearing claim, exercised through the verb a
+    /// caller actually uses rather than through the matcher. The record is
+    /// stored with an event type name that is not the type being searched for,
+    /// so nothing on the record admits it to the answer: only its keys do. A
+    /// build that matched on the declared name instead would pass every case
+    /// in the domain and fail this one.
+    ///
+    /// Both matches come back in the one answer — complete and partial — and
+    /// the partial names what it lacks. Complete-versus-partial is reported,
+    /// never filtered.
+    pub async fn search_finds_records_that_answer_a_type_structurally<M: Memory, S: Search>(
+        store: &M,
+        search: &S,
+    ) {
+        let declared = store
+            .declare_type(DeclaredType::new(
+                "contract-crate",
+                vec![
+                    Field::new("weight", ValueType::Number),
+                    Field::new("arrives", ValueType::Date),
+                ],
+            ))
+            .await
+            .expect("declaring should succeed");
+
+        // Carries both keys, and calls itself something else entirely.
+        let whole = capture(
+            store,
+            NewFact {
+                event: Some(Event {
+                    kind: "a-type-nobody-defined".into(),
+                    metadata: [
+                        ("weight".to_string(), "12".to_string()),
+                        ("arrives".to_string(), "2026-08-10".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    refs: vec![],
+                }),
+                ..NewFact::about(
+                    EntityId::person("contract-crate-whole"),
+                    "the crate is on its way",
+                    date(2026, 8, 1),
+                )
+            },
+        )
+        .await;
+        // Carries one of them.
+        let partial = capture(
+            store,
+            NewFact {
+                event: Some(Event {
+                    kind: "a-type-nobody-defined".into(),
+                    metadata: [("weight".to_string(), "3".to_string())]
+                        .into_iter()
+                        .collect(),
+                    refs: vec![],
+                }),
+                ..NewFact::about(
+                    EntityId::person("contract-crate-partial"),
+                    "a lighter one, and nobody wrote down when it lands",
+                    date(2026, 8, 2),
+                )
+            },
+        )
+        .await;
+        // Carries neither, and is an event all the same.
+        let unrelated = capture(
+            store,
+            NewFact {
+                event: Some(Event {
+                    kind: "a-type-nobody-defined".into(),
+                    metadata: [("mood".to_string(), "curious".to_string())]
+                        .into_iter()
+                        .collect(),
+                    refs: vec![],
+                }),
+                ..NewFact::about(
+                    EntityId::person("contract-crate-unrelated"),
+                    "nothing to do with crates",
+                    date(2026, 8, 3),
+                )
+            },
+        )
+        .await;
+
+        let hits = found(
+            search,
+            SearchQuery {
+                answers_type: Some(declared),
+                limit: 50,
+                ..Default::default()
+            },
+        )
+        .await;
+        let answered: Vec<(&Fact, &crate::memory::types::Match)> = hits
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Fact { fact, answers, .. } => Some((fact, answers.as_deref()?)),
+                _ => None,
+            })
+            .collect();
+
+        let (_, whole_match) = answered
+            .iter()
+            .find(|(f, _)| f.id == whole.id && f.home == whole.home)
+            .unwrap_or_else(|| panic!("a record carrying every key must come back: {answered:?}"));
+        assert!(
+            whole_match.complete(),
+            "…and it says so, rather than the caller counting keys: {whole_match:?}",
+        );
+
+        let (_, partial_match) = answered
+            .iter()
+            .find(|(f, _)| f.id == partial.id && f.home == partial.home)
+            .unwrap_or_else(|| {
+                panic!("a partial match is returned, not filtered out: {answered:?}")
+            });
+        assert!(!partial_match.complete(), "{partial_match:?}");
+        assert_eq!(
+            partial_match.lacking,
+            vec!["arrives"],
+            "and it names what it lacks, by name: {partial_match:?}",
+        );
+
+        // **The negative, and it rests on the two positives above.** A record
+        // sharing no key with the type is not a weak match, it is not a match:
+        // without this, "it matched" says nothing, because everything would.
+        assert!(
+            !answered
+                .iter()
+                .any(|(f, _)| f.id == unrelated.id && f.home == unrelated.home),
+            "a record carrying none of the keys is not in the answer: {answered:?}",
+        );
+    }
+
+    /// **A type query says which keys are wrong, and returns the record
+    /// anyway.**
+    ///
+    /// The typed path is not a gate at read time either. A value that does not
+    /// hold what the type declared comes back flagged, with what was declared
+    /// and what is actually there, on a record that is still found.
+    pub async fn a_type_query_flags_a_bad_value_and_returns_the_record<M: Memory, S: Search>(
+        store: &M,
+        search: &S,
+    ) {
+        let declared = store
+            .declare_type(DeclaredType::new(
+                "contract-pallet",
+                vec![Field::new("arrives", ValueType::Date)],
+            ))
+            .await
+            .expect("declaring should succeed");
+
+        let messy = capture(
+            store,
+            NewFact {
+                event: Some(Event {
+                    kind: "a-type-nobody-defined".into(),
+                    metadata: [("arrives".to_string(), "next tuesday".to_string())]
+                        .into_iter()
+                        .collect(),
+                    refs: vec![],
+                }),
+                ..NewFact::about(
+                    EntityId::person("contract-pallet-messy"),
+                    "somebody wrote the date in words",
+                    date(2026, 8, 4),
+                )
+            },
+        )
+        .await;
+
+        let hits = found(
+            search,
+            SearchQuery {
+                answers_type: Some(declared),
+                limit: 50,
+                ..Default::default()
+            },
+        )
+        .await;
+        let flagged = hits
+            .iter()
+            .find_map(|h| match h {
+                Hit::Fact { fact, answers, .. }
+                    if fact.id == messy.id && fact.home == messy.home =>
+                {
+                    answers.as_deref()
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the record is found, not dropped: {hits:?}"));
+
+        assert!(
+            flagged.complete(),
+            "a bad value is not a missing key: {flagged:?}",
+        );
+        assert_eq!(flagged.mistyped.len(), 1, "{flagged:?}");
+        assert_eq!(flagged.mistyped[0].key, "arrives");
+        assert_eq!(flagged.mistyped[0].declared, ValueType::Date);
+        assert_eq!(
+            flagged.mistyped[0].value, "next tuesday",
+            "the reader sees the mistake rather than being told one happened",
+        );
+    }
+
     /// Run the whole contract, **including retrieval**, against a store that
     /// carries the search projection. The search half can't live in `run_all`:
     /// the bare Memory port has no read side for it.
@@ -4012,6 +4469,9 @@ pub mod contract {
         search_pins_a_named_entity_first(store, search).await;
         search_fact_hits_name_their_subject_and_home(store, search).await;
         search_entity_hits_carry_their_edges(store, search).await;
+
+        search_finds_records_that_answer_a_type_structurally(store, search).await;
+        a_type_query_flags_a_bad_value_and_returns_the_record(store, search).await;
     }
 
     /// Run the whole contract against one store.
@@ -4088,5 +4548,11 @@ pub mod contract {
         update_fact_requires_an_existing_edge_object(store).await;
         malformed_entity_fields_are_rejected(store).await;
         a_cross_link_takes_the_task_layers_own_grammar(store).await;
+
+        a_declared_type_reads_back(store).await;
+        declaring_a_type_again_replaces_its_keys(store).await;
+        a_type_with_no_keys_is_refused_and_writes_nothing(store).await;
+        two_stored_types_may_name_one_key(store).await;
+        a_stored_type_matches_a_record_that_never_declared_it(store).await;
     }
 }

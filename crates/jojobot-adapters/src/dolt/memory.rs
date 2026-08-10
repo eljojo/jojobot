@@ -32,10 +32,13 @@ use jiff::civil::Date;
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
     FactPatch, FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance,
-    Retraction, Standing, apply_entity_patch, apply_fact_patch, event::Event, guard,
-    normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
-    search, standing_of, validate_content, validate_details, validate_edge, validate_entity,
-    validate_event, validate_prose, validate_subject,
+    Retraction, Standing, apply_entity_patch, apply_fact_patch,
+    event::Event,
+    guard, normalize_content, normalize_details, normalize_prose, retraction_of,
+    screen_entity_patch, search, standing_of,
+    types::{DeclaredType, Field, ValueType, validate_type},
+    validate_content, validate_details, validate_edge, validate_entity, validate_event,
+    validate_prose, validate_subject,
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
@@ -733,6 +736,65 @@ impl Memory for DoltMemory {
         }
         tx.commit().await.map_err(store)?;
         Ok(scanned)
+    }
+
+    /// **A type is the set of rows sharing its name**, so declaring one is
+    /// deleting those rows and writing the new set. One transaction, because a
+    /// type that was half replaced would describe a record nobody declared.
+    async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
+        validate_type(&declared)?;
+        let declared = declared.normalized();
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        sqlx::query("DELETE FROM type_field WHERE type_name = ?")
+            .bind(&declared.name)
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        for (ordinal, field) in declared.fields.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO type_field (type_name, key_name, ordinal, holds)
+                 VALUES (?, ?, ?, ?)",
+            )
+            .bind(&declared.name)
+            .bind(&field.key)
+            .bind(ordinal as i64 + 1)
+            .bind(field.holds.as_token())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        }
+        tx.commit().await.map_err(store)?;
+        Ok(declared)
+    }
+
+    /// The rows, gathered back into the types they are.
+    ///
+    /// **A row whose `holds` names no value type reads as text** rather than
+    /// dropping the key. Text holds anything, so the key still describes what a
+    /// writer should fill and still matches a record — where dropping it would
+    /// quietly shrink a type and report the key as one no record carries.
+    async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
+        let rows = sqlx::query(
+            "SELECT type_name, key_name, holds FROM type_field
+             ORDER BY type_name, ordinal",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+
+        let mut types: Vec<DeclaredType> = Vec::new();
+        for row in rows {
+            let name: String = row.get("type_name");
+            let field = Field::new(
+                &row.get::<String, _>("key_name"),
+                ValueType::of_token(&row.get::<String, _>("holds")).unwrap_or(ValueType::Text),
+            );
+            match types.last_mut() {
+                Some(last) if last.name == name => last.fields.push(field),
+                _ => types.push(DeclaredType::new(&name, vec![field])),
+            }
+        }
+        Ok(types)
     }
 }
 

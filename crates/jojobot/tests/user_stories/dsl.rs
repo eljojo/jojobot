@@ -98,6 +98,21 @@ impl jojobot_domain::memory::Memory for Blindable {
         self.inner.list_entities(kind).await
     }
 
+    async fn declare_type(
+        &self,
+        declared: jojobot_domain::memory::types::DeclaredType,
+    ) -> Result<jojobot_domain::memory::types::DeclaredType, jojobot_domain::memory::MemoryError>
+    {
+        self.inner.declare_type(declared).await
+    }
+
+    async fn declared_types(
+        &self,
+    ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, jojobot_domain::memory::MemoryError>
+    {
+        self.inner.declared_types().await
+    }
+
     async fn update_entity(
         &self,
         handle: &jojobot_domain::memory::EntityId,

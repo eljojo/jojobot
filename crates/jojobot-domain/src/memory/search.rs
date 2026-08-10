@@ -29,7 +29,7 @@ use std::collections::HashSet;
 
 use super::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactStatus, MemoryError, Provenance,
-    validate_edge, validate_subject,
+    types, validate_edge, validate_subject,
 };
 use crate::mailbox::Message;
 use crate::session::SessionId;
@@ -148,6 +148,20 @@ pub struct SearchQuery {
     pub subject: Option<EntityId>,
     /// Facts drawing a matching edge.
     pub edge: Option<EdgeFilter>,
+    /// **Records that answer a type, matched STRUCTURALLY.**
+    ///
+    /// It carries the declaration itself rather than a name, because nothing
+    /// below this point needs a store: a record answers a type by the keys it
+    /// carries, so the keys are the whole of what a search needs. Resolving a
+    /// name to a declaration happens once, at the surface, where a name that
+    /// names no type can be answered as a name that names no type.
+    ///
+    /// **A record is never asked what it was declared to be.** One carrying
+    /// these keys comes back whether or not anybody declared anything, and a
+    /// record carrying some of them comes back too, saying which it lacks — a
+    /// filter that kept only complete matches would hide exactly the records
+    /// worth finding.
+    pub answers_type: Option<types::DeclaredType>,
     /// Whether messages are in the answer. **False by default, and worth
     /// setting true.**
     ///
@@ -191,6 +205,7 @@ impl Default for SearchQuery {
             provenance: None,
             subject: None,
             edge: None,
+            answers_type: None,
             asked_by: None,
             include_mail: false,
             limit: DEFAULT_LIMIT,
@@ -226,6 +241,10 @@ impl SearchQuery {
             || self.provenance.is_some()
             || self.subject.is_some()
             || self.edge.is_some()
+            // A type is answered by the keys a record carries, and a record
+            // with keys is a fact. Naming one says entities and prose are not
+            // what the caller is after, exactly as the filters above do.
+            || self.answers_type.is_some()
     }
 
     /// Reject a query that cannot be served, before any index work: no text and
@@ -234,7 +253,8 @@ impl SearchQuery {
     pub fn validate(&self) -> Result<(), MemoryError> {
         if self.terms().is_none() && self.kind.is_none() && !self.is_fact_scoped() {
             return Err(MemoryError::InvalidQuery(
-                "give a query, or at least one filter (kind, status, provenance, subject, edge)"
+                "give a query, or at least one filter (kind, status, provenance, subject, edge, \
+                 answers_type)"
                     .into(),
             ));
         }
@@ -243,6 +263,12 @@ impl SearchQuery {
         }
         if let Some(subject) = &self.subject {
             validate_subject(subject)?;
+        }
+        // The same validator the declaring path uses. A query carrying a
+        // declaration no store would have kept is the caller's mistake, and it
+        // must read as one rather than as an honest empty answer.
+        if let Some(declared) = &self.answers_type {
+            types::validate_type(declared)?;
         }
         // The same rule the write path applies, reused rather than restated: a
         // filter combination no write could ever produce must read as the
@@ -338,6 +364,18 @@ pub enum Hit {
     Fact {
         /// The fact, address and all.
         fact: Fact,
+        /// **How this record answers the type the query named**, when it named
+        /// one: the keys it holds, the keys it lacks by name, and any whose
+        /// value is not what the type said it holds.
+        ///
+        /// `None` when the query named no type. It is never `None` for a hit a
+        /// type query returned — a record that answers none of a type's keys is
+        /// not a match at all, so it is not in the answer to be reported on.
+        ///
+        /// **Boxed** so that the one variant carrying it does not set the size
+        /// of every hit in a result list: most hits are not fact hits and no
+        /// hit at all carries this unless a type was asked for.
+        answers: Option<Box<types::Match>>,
         /// The entity the fact is about, resolved.
         subject: EntityRef,
         /// The entity whose doc holds the row, resolved. Usually the same as

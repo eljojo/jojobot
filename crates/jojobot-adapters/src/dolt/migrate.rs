@@ -148,6 +148,11 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0012_fact_event_ref.sql"),
         leaves: Leaves::Table("fact_event_ref"),
     },
+    Migration {
+        version: "0013_type_field",
+        sql: include_str!("../../migrations/0013_type_field.sql"),
+        leaves: Leaves::Table("type_field"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -416,6 +421,7 @@ mod tests {
         "0010_fact",
         "0011_fact_event_metadata",
         "0012_fact_event_ref",
+        "0013_type_field",
     ];
 
     #[test]

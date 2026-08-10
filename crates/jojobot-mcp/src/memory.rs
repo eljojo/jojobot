@@ -15,6 +15,7 @@ use crate::*;
 
 pub mod add_entity;
 pub mod capture;
+pub mod declare_type;
 pub mod declined;
 pub mod list_entities;
 pub mod parse;
@@ -34,6 +35,7 @@ pub mod wire;
 // second home for the items.
 pub use add_entity::AddEntityArgs;
 pub use capture::CaptureArgs;
+pub use declare_type::{DeclareTypeArgs, FieldArgs};
 pub use list_entities::ListEntitiesArgs;
 pub use recall::RecallArgs;
 pub use retract::RetractArgs;
@@ -55,6 +57,7 @@ pub(crate) use wire::*;
 pub(crate) fn router() -> ToolRouter<Jojobot> {
     Jojobot::add_entity_router()
         + Jojobot::capture_router()
+        + Jojobot::declare_type_router()
         + Jojobot::list_entities_router()
         + Jojobot::recall_router()
         + Jojobot::retract_router()

@@ -44,6 +44,20 @@ pub struct SearchArgs {
     /// question ("which people are in X") is answered in one call.
     #[serde(default)]
     pub edge: Option<EdgeFilterArgs>,
+    /// **Records that answer this type, by name.** Matching is STRUCTURAL: a
+    /// record carrying the type's keys comes back whether or not anybody
+    /// declared it to be one, so this finds records nobody filed under it.
+    ///
+    /// A record carrying only some of the keys comes back too, saying which it
+    /// lacks — partial matches are the ones usually worth finding, so they are
+    /// reported and never filtered out. Each hit carries an `answers_type`
+    /// saying which keys it holds, which it lacks by name, and any whose value
+    /// is not what the type said it holds.
+    ///
+    /// A name no type answers to comes back blocked, naming the types that do
+    /// exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answers_type: Option<String>,
     /// Whether messages left in mailboxes are searched too. **Defaults to
     /// false, and worth passing true** when you are looking for what a session
     /// knows: a report filed for another session is exactly the context you
@@ -97,12 +111,20 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
             fact,
             subject,
             home,
+            answers,
         } => {
             let mut body = fact_json(fact);
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("hit".into(), "fact".into());
                 obj.insert("about".into(), entity_ref_json(subject));
                 obj.insert("home".into(), entity_ref_json(home));
+                // **How this record answers the type that was asked for.**
+                // Absent when no type was asked for, rather than rendered
+                // empty: a caller who named no type is not being told this
+                // record answers nothing.
+                if let Some(found) = answers {
+                    obj.insert("answers_type".into(), answers_json(found));
+                }
             }
             body
         }
@@ -464,6 +486,41 @@ impl Jojobot {
         if let Err(refused) = self.attributable(args.sid.as_deref()) {
             return Ok(refused);
         }
+        // **The name is resolved to its declaration here, once.** Everything
+        // below takes the keys rather than the name, so nothing deeper needs a
+        // store to answer a type question — and a name nobody declared is
+        // answered here, where the roster to offer instead is in reach.
+        let declared = match &args.answers_type {
+            None => None,
+            Some(wanted) => {
+                let known = match self.memory.declared_types().await {
+                    Ok(known) => known,
+                    Err(e) => return memory_declined("search", e),
+                };
+                match known.iter().find(|t| t.name == wanted.trim()) {
+                    Some(found) => Some(found.clone()),
+                    None => {
+                        let names: Vec<&str> = known.iter().map(|t| t.name.as_str()).collect();
+                        return Ok(blocked_body(
+                            &EntityId(String::new()),
+                            &[],
+                            format!(
+                                "Nothing was searched for a type: no type is called \
+                                 '{wanted}'. Declaring a type is write-time help and never a \
+                                 precondition — a record is found by the keys it carries — so \
+                                 if you know the keys, search for them another way rather than \
+                                 declaring a type to reach them. Types that do exist: {}.",
+                                if names.is_empty() {
+                                    "none yet".to_string()
+                                } else {
+                                    names.join(", ")
+                                }
+                            ),
+                        ));
+                    }
+                }
+            }
+        };
         let edge = args
             .edge
             .as_ref()
@@ -475,6 +532,7 @@ impl Jojobot {
             })
             .transpose()?;
         let query = SearchQuery {
+            answers_type: declared,
             asked_by: asking.as_ref().map(|c| c.bot.clone()),
             text: args.query,
             kind: args.kind.as_deref().map(parse_kind).transpose()?,
@@ -585,6 +643,7 @@ mod tests {
         let jojobot = handler_with(spy.clone());
         jojobot
             .search(Parameters(SearchArgs {
+                answers_type: None,
                 query: Some("winter".into()),
                 kind: Some("person".into()),
                 status: Some("superseded".into()),
@@ -1426,6 +1485,7 @@ mod tests {
                 edges: vec![guild.clone()],
             },
             Hit::Fact {
+                answers: None,
                 fact,
                 subject: EntityRef::resolved(&alpha),
                 home: EntityRef::resolved(&alpha),

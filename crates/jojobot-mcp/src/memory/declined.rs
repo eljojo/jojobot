@@ -183,7 +183,7 @@ pub(crate) fn memory_declined(
         // gets a failure where it should get a next move, and the sentence
         // saying what to do lands in a channel nothing branches on.
         //
-        // One arm for all six, interpolating the validator's own sentence
+        // One arm for all of them, interpolating the validator's own sentence
         // rather than restating it. Each of these faults has several causes
         // and the validators gain more; naming them here would be a catalogue
         // that goes stale on the day it is added to (rule 106).
@@ -192,7 +192,8 @@ pub(crate) fn memory_declined(
         | MemoryError::InvalidAddress(_)
         | MemoryError::InvalidEntity(_)
         | MemoryError::InvalidEdge(_)
-        | MemoryError::InvalidQuery(_) => Ok(blocked_body(
+        | MemoryError::InvalidQuery(_)
+        | MemoryError::InvalidType(_) => Ok(blocked_body(
             &EntityId(String::new()),
             &[],
             format!(
@@ -234,6 +235,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::InvalidEntity(_)
         | MemoryError::InvalidEdge(_)
         | MemoryError::InvalidQuery(_)
+        | MemoryError::InvalidType(_)
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NotRetractable { .. }

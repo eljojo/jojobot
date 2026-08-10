@@ -75,6 +75,50 @@ pub(crate) fn entity_ref_json(reference: &EntityRef) -> serde_json::Value {
     })
 }
 
+/// **A type declaration on the wire**: its name and its keys, in the order it
+/// declared them.
+///
+/// The order is carried rather than sorted, because it is what the declaration
+/// said, and a hit names the keys a record holds and lacks in that same order.
+pub(crate) fn declared_type_json(declared: &DeclaredType) -> serde_json::Value {
+    serde_json::json!({
+        "name": declared.name,
+        "fields": declared
+            .fields
+            .iter()
+            .map(|f| serde_json::json!({ "key": f.key, "holds": f.holds.as_token() }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// **How a record answers a type, on the wire.**
+///
+/// `complete` is stated rather than left to be worked out from `lacking` being
+/// empty: what a caller branches on is whether the record is whole, and making
+/// them derive it invites two callers to derive it differently.
+///
+/// `lacking` names the keys, because the caller's next move is to fill them or
+/// to ignore them, and both need the names. `mistyped` carries what the type
+/// said and what the record actually holds, so a reader sees the mistake
+/// rather than being told one happened. Neither is a reason the record was
+/// withheld: it is here.
+pub(crate) fn answers_json(found: &jojobot_domain::memory::types::Match) -> serde_json::Value {
+    serde_json::json!({
+        "complete": found.complete(),
+        "held": found.held,
+        "lacking": found.lacking,
+        "mistyped": found
+            .mistyped
+            .iter()
+            .map(|m| serde_json::json!({
+                "key": m.key,
+                "declared": m.declared.as_token(),
+                "value": m.value,
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
 /// An edge on the wire. `type` carries schema.org's word for the shape —
 /// `memberOf`, `attendee` — where the input token is `membership`, `attendance`.
 pub(crate) fn edge_json(edge: &Edge) -> serde_json::Value {

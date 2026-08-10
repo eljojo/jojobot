@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 pub mod event;
 pub mod guard;
 pub mod search;
+pub mod types;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
@@ -1422,6 +1423,12 @@ pub enum MemoryError {
     /// [`SearchQuery::validate`](search::SearchQuery::validate)).
     #[error("invalid query: {0}")]
     InvalidQuery(String),
+    /// The type declaration is malformed for storage: no keys, a key named
+    /// twice, or a name that is not one plain label (see
+    /// [`validate_type`](types::validate_type)). **It never says a record is
+    /// wrong** — nothing on this path checks a record against a declaration.
+    #[error("invalid type: {0}")]
+    InvalidType(String),
     /// The addressed fact doesn't exist, in an entity that does. Never
     /// auto-created, never guessed at — the live addresses come back so the
     /// caller can retarget. An address that misses on its *handle* is
@@ -1678,6 +1685,36 @@ pub trait Memory: Send + Sync {
             .into_iter()
             .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == entity)))
     }
+
+    /// **Declare a type: a name, and the keys a record of it carries.**
+    ///
+    /// Write-time help. It tells a writer which keys to fill and what belongs
+    /// in them, and it admits nothing: a record carrying these keys answers
+    /// this type whether or not this was ever called (see
+    /// [`DeclaredType::matched_by`](types::DeclaredType::matched_by)). So this
+    /// verb can never make a record findable or stop one being found.
+    ///
+    /// **The declaration is replaced whole**, for the reason prose is: a type
+    /// is the set of keys it names NOW, and one that accumulated every key it
+    /// ever named would describe no record. Returns what was stored, which a
+    /// subsequent [`declared_types`](Memory::declared_types) must return
+    /// unchanged.
+    ///
+    /// A malformed declaration is [`MemoryError::InvalidType`]. Nothing else
+    /// is refused — there is no near-miss screen here, because a type name
+    /// that resembles another names a second set of keys rather than a second
+    /// copy of one thing.
+    async fn declare_type(
+        &self,
+        declared: types::DeclaredType,
+    ) -> Result<types::DeclaredType, MemoryError>;
+
+    /// Every type anybody has declared, each complete with its keys in the
+    /// order it declared them.
+    ///
+    /// **The declarations are not the records**, and a caller reading this is
+    /// reading what a writer was told to fill, never what the store holds.
+    async fn declared_types(&self) -> Result<Vec<types::DeclaredType>, MemoryError>;
 }
 
 #[cfg(test)]

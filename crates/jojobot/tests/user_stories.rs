@@ -39,6 +39,8 @@ mod sourcing;
 mod spotlight;
 #[path = "user_stories/stale_handle.rs"]
 mod stale_handle;
+#[path = "user_stories/typing.rs"]
+mod typing;
 #[path = "user_stories/unprompted.rs"]
 mod unprompted;
 #[path = "user_stories/unsourced.rs"]
