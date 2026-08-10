@@ -41,7 +41,12 @@ never runs inference of its own — the assistant is the only mind.
 > blind, or behind, and when it is behind it says which way — `unscanned` when
 > no read has filled it yet, `stale` when the index holds an older version than
 > the store. An answer that could not read a store says so rather than reading
-> as "nothing matched". On top of both, **bots**: an AI identity is an entity of kind `bot`
+> as "nothing matched". **Every answer also carries a status bar**: a small block
+> with what the caller should know and did not ask about, mail waiting being the
+> first of them. It is attached where answers are dispatched rather than by each
+> verb, so a verb written tomorrow carries it without doing anything, and it is
+> absent entirely when there is nothing to say — including on a refusal, because
+> "every answer" has to mean those too. On top of both, **bots**: an AI identity is an entity of kind `bot`
 > with a charter, rules, memory and one owned mailbox. **`start_here` is the one
 > door**: it takes an optional bot name, and naming one **starts or resumes that
 > bot's session**, because a bot is a role and a session is one mortal run of it.
@@ -151,6 +156,7 @@ Two consequences worth stating outright, because they surprise people:
 | `update_fact` | Correcting something recorded wrong — rewritten in place, never as an addendum. Also how a claim gets confirmed, or a refutation recorded as standing truth. |
 | `retract` | Taking back an EVENT — one way, never reversed, and never a flag on an edit. Nothing is removed: the record is marked, and a dated account of why lands beside it when one is given, so the two read as one story. Facts are not retracted; they are fixed. |
 | `list_entities` | Seeing what exists, by kind. |
+| `declare_type` | Naming the set of keys a kind of record carries, so a key means the same thing across records and the graph can be filtered on it. A record answers a type by the keys it holds, so records written before the type was declared answer it too. |
 | `set_charter` | Writing an identity's charter — the orienting text that says what it is and where its work lives. |
 
 **Mailboxes — leaving word and taking delivery**
