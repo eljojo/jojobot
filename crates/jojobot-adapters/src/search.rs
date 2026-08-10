@@ -77,6 +77,16 @@ enum Payload {
     Message {
         message: Message,
     },
+    /// One beat of a session's chronology, with the run it belongs to and the
+    /// bot that owns it. **The owner rides the payload as well as the index
+    /// field**, because a hit has to say whose it is to a reader, not only to
+    /// the query that found it.
+    Session {
+        session: jojobot_domain::session::SessionId,
+        bot: EntityId,
+        working_on: Option<String>,
+        text: String,
+    },
 }
 
 /// The hit-class token, indexed so a query can ask for one class of thing.
@@ -84,6 +94,10 @@ const CLASS_ENTITY: &str = "entity";
 const CLASS_FACT: &str = "fact";
 const CLASS_PROSE: &str = "prose";
 const CLASS_MESSAGE: &str = "message";
+/// A beat from a session's chronology. **Owner-scoped at query time**, never
+/// at ingest: what a bot may read is a property of the asker, and an index that
+/// held only one bot's runs could not serve the next one.
+const CLASS_SESSION: &str = "session";
 
 /// The index's fields. One schema for all three hit classes — a mixed ranked list
 /// is the requirement, and one schema is what makes it one query.
@@ -118,6 +132,13 @@ struct Fields {
     /// location edge to somewhere else and an unrelated link to alpha. Neither
     /// field is wrong; the pair is what the caller actually asked about.
     edge_pair: Field,
+    /// A session's own id — its own namespace again, for the same reason
+    /// `message_id` is not `doc_id`: three stores, three id spaces, and one
+    /// shared field would let a page id evict a run.
+    session_id: Field,
+    /// **The bot a session belongs to**, and the only field any query scopes an
+    /// answer by. Entities, facts and prose are the operator's and carry none.
+    owner: Field,
     /// The stored [`Payload`], as JSON.
     payload: Field,
 }
@@ -137,6 +158,8 @@ impl Fields {
             edge_shape: b.add_text_field("edge_shape", STRING),
             edge_object: b.add_text_field("edge_object", STRING),
             edge_pair: b.add_text_field("edge_pair", STRING),
+            session_id: b.add_text_field("session_id", STRING),
+            owner: b.add_text_field("owner", STRING),
             payload: b.add_text_field("payload", STORED),
         };
         (b.build(), fields)
@@ -313,6 +336,12 @@ pub struct FullTextIndex {
     /// is: a board read already in flight when another failed used to land
     /// afterwards and clear a failure its own snapshot predates.
     mail_refresh_failed_at: std::sync::atomic::AtomicU64,
+    /// The runs these postings were written from — the session half's mirror,
+    /// and the same thing [`docs`](Self::docs) and [`messages`](Self::messages)
+    /// are for the other two halves. This half is refreshed before every
+    /// answer, so what it is compared against decides whether an ordinary
+    /// search commits the shared index or touches nothing.
+    sessions: RwLock<Vec<jojobot_domain::session::Session>>,
 }
 
 impl FullTextIndex {
@@ -337,6 +366,7 @@ impl FullTextIndex {
             memory_refresh_failed_at: std::sync::atomic::AtomicU64::new(0),
             messages: RwLock::new(Vec::new()),
             mail_refresh_failed_at: std::sync::atomic::AtomicU64::new(0),
+            sessions: RwLock::new(Vec::new()),
         })
     }
 
@@ -559,6 +589,96 @@ impl FullTextIndex {
             ))
             .map_err(store_err)?;
         Ok(())
+    }
+
+    /// Write one beat of a session's chronology.
+    ///
+    /// **One document per entry, not per run.** A run is a list of beats a
+    /// month apart; indexing it whole would make a hit point at the run and
+    /// leave a reader to find the line, and would put a snippet around text
+    /// that is mostly not what matched.
+    fn write_session_entry(
+        &self,
+        writer: &IndexWriter,
+        session: &jojobot_domain::session::Session,
+        entry: &jojobot_domain::session::JournalEntry,
+    ) -> Result<(), MemoryError> {
+        let f = &self.fields;
+        writer
+            .add_document(doc!(
+                f.class => CLASS_SESSION,
+                f.text => format!("{} {}", entry.text, session.focus),
+                f.session_id => session.id.0.as_str(),
+                f.owner => session.bot.to_string(),
+                f.payload => payload_json(&Payload::Session {
+                    session: session.id.clone(),
+                    bot: session.bot.clone(),
+                    working_on: Some(session.focus.clone()).filter(|f| !f.is_empty()),
+                    text: entry.text.clone(),
+                })?,
+            ))
+            .map_err(store_err)?;
+        Ok(())
+    }
+
+    /// Bring the **session** half of the index to what this read of the runs
+    /// says, and return how many runs had to be written or evicted.
+    ///
+    /// Every bot's runs go in. **The scoping is at query time and nowhere
+    /// else**: an index holding only the asker's runs would have to be rebuilt
+    /// per caller, and the first bot to search would decide what the second one
+    /// could find.
+    ///
+    /// **Incremental, for the reason [`ingest_changes`](Self::ingest_changes)
+    /// is.** This half is refreshed before every answer, so an ingest that
+    /// rewrote it wholesale would take the writer lock, commit the shared index
+    /// and reload the reader once per search — work that grows with every run
+    /// every bot has ever had rather than with what changed. When nothing
+    /// moved, which is the ordinary case, no lock is taken and nothing is
+    /// committed.
+    ///
+    /// The comparison is of two full readings, keyed by run: a run is rewritten
+    /// when this reading and the mirror disagree about it, and evicted when the
+    /// reading no longer holds it at all.
+    pub fn ingest_sessions(
+        &self,
+        sessions: &[jojobot_domain::session::Session],
+    ) -> Result<usize, MemoryError> {
+        let (rewrite, evict) = {
+            let mirror = self.sessions.read().expect("session mirror poisoned");
+            changed_and_gone(
+                &sessions
+                    .iter()
+                    .map(|s| (s.id.0.as_str(), s))
+                    .collect::<Vec<_>>(),
+                &mirror
+                    .iter()
+                    .map(|s| (s.id.0.as_str(), s))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let changed = rewrite.len() + evict.len();
+        if changed == 0 {
+            return Ok(0);
+        }
+
+        let mut writer = self.writer.write().expect("index writer poisoned");
+        // **By run id, never by class.** A whole-class delete is what made this
+        // a rewrite of everything; a run's own id is the key its entries were
+        // written under, so evicting one leaves the others in place.
+        for id in evict.iter().chain(rewrite.iter().map(|s| &s.id.0)) {
+            writer.delete_term(Term::from_field_text(self.fields.session_id, id));
+        }
+        for session in &rewrite {
+            for entry in &session.entries {
+                self.write_session_entry(&writer, session, entry)?;
+            }
+        }
+        writer.commit().map_err(store_err)?;
+        drop(writer);
+        *self.sessions.write().expect("session mirror poisoned") = sessions.to_vec();
+        self.reader.reload().map_err(store_err)?;
+        Ok(changed)
     }
 
     /// State that this scan is the whole memory corpus.
@@ -940,7 +1060,7 @@ impl FullTextIndex {
         if query.include_mail {
             classes.push(CLASS_MESSAGE);
         }
-        let classes: Vec<(Occur, Box<dyn Query>)> = classes
+        let mut classes: Vec<(Occur, Box<dyn Query>)> = classes
             .into_iter()
             .map(|class| {
                 let q: Box<dyn Query> = Box::new(TermQuery::new(
@@ -950,6 +1070,32 @@ impl FullTextIndex {
                 (Occur::Should, q)
             })
             .collect();
+        // **Sessions come in only for a caller that says who it is, and only
+        // that caller's own.** The owner term is MUST *inside* this class's
+        // clause rather than beside it: a global one would demand an owner of
+        // entities and prose, which carry none, and quietly empty the answer.
+        //
+        // No `asked_by` means no session hit — not every session. A caller
+        // with no identity is not everybody.
+        if let Some(asker) = query.asked_by.as_ref() {
+            let mine: Box<dyn Query> = Box::new(BooleanQuery::new(vec![
+                (
+                    Occur::Must,
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(f.class, CLASS_SESSION),
+                        IndexRecordOption::Basic,
+                    )) as Box<dyn Query>,
+                ),
+                (
+                    Occur::Must,
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(f.owner, &asker.to_string()),
+                        IndexRecordOption::Basic,
+                    )) as Box<dyn Query>,
+                ),
+            ]));
+            classes.push((Occur::Should, mine));
+        }
         clauses.push((Occur::Must, Box::new(BooleanQuery::new(classes))));
         if let Some(kind) = query.kind {
             // Prose in a doc that is nobody's entity has no kind, so a kind
@@ -1153,6 +1299,13 @@ impl FullTextIndex {
                         let age_days = (newest - fact.date).get_days().max(0) as f32;
                         RECENCY_WEIGHT / (1.0 + age_days / 365.25)
                     }
+                    // **A session ranks below everything else it shares an
+                    // answer with.** It is context rather than an answer:
+                    // reachable when it is what you are looking for, never
+                    // crowding out what a search is usually for. The demotion
+                    // is a subtraction rather than a filter, so a session that
+                    // is the only match still comes back.
+                    (Payload::Session { .. }, _) => -SESSION_DEMOTION,
                     _ => 0.0,
                 };
                 let hit = payload.into_hit(&terms, &mirror);
@@ -1221,6 +1374,19 @@ impl Payload {
                 snippet: snippet(&message.body, terms),
                 message,
             },
+            // A run's own beat. Like mail it resolves nothing: what surrounds
+            // it is its own run, which it carries.
+            Payload::Session {
+                session,
+                bot,
+                working_on,
+                text,
+            } => Hit::Session {
+                snippet: snippet(&text, terms),
+                session,
+                bot,
+                working_on,
+            },
         }
     }
 }
@@ -1233,8 +1399,16 @@ fn tiebreak(hit: &Hit) -> String {
         Hit::Fact { fact, .. } => fact.address().to_string(),
         Hit::Prose { doc_id, .. } => doc_id.clone(),
         Hit::Message { message, .. } => format!("{}/{}", message.mailbox, message.id),
+        Hit::Session { session, bot, .. } => format!("{bot}/{}", session.0),
     }
 }
+
+/// **How far a session hit is pushed down the list.** Large enough that a
+/// session loses to any other hit it shares an answer with, and a subtraction
+/// rather than a filter so a run that is the only match is still reachable —
+/// a rank so low it never surfaces would satisfy "lower priority" and defeat
+/// the point of indexing sessions at all.
+const SESSION_DEMOTION: f32 = 1_000.0;
 
 /// How much prose rides around a match.
 const SNIPPET_RADIUS: usize = 120;
@@ -1684,6 +1858,51 @@ impl IndexedMailboxes {
 
     fn reindex(&self, message: &Message) -> Result<(), MailboxError> {
         self.index.ingest_message(message).map_err(indexing)
+    }
+}
+
+/// **The session half of the index, over the sessions store.**
+///
+/// It decorates nothing: sessions are written through their own port and this
+/// only reads them, so there is no verb to wrap. What it owns is the same job
+/// the other two halves own — filling its share of the index at boot, and
+/// refreshing it before an answer, from its own store.
+pub struct IndexedSessions {
+    inner: Arc<dyn jojobot_domain::session::Sessions>,
+    index: Arc<FullTextIndex>,
+}
+
+impl IndexedSessions {
+    pub fn new(
+        inner: Arc<dyn jojobot_domain::session::Sessions>,
+        index: Arc<FullTextIndex>,
+    ) -> Self {
+        IndexedSessions { inner, index }
+    }
+
+    /// Load every bot's runs — the boot path. Returns how many were indexed.
+    ///
+    /// **Every bot's, not the asker's.** Who may read a run is decided when a
+    /// query asks; an index built per caller would let the first bot to search
+    /// decide what the second one could find.
+    pub async fn rebuild(&self) -> Result<usize, jojobot_domain::session::SessionError> {
+        let sessions = self.inner.all_sessions().await?;
+        self.index
+            .ingest_sessions(&sessions)
+            .map_err(|e| jojobot_domain::session::SessionError::Store(e.to_string()))?;
+        Ok(sessions.len())
+    }
+}
+
+#[async_trait]
+impl Refresh for IndexedSessions {
+    async fn refresh(&self) {
+        // A read that cannot reach the store leaves the last good one standing.
+        // The session half reports no coverage of its own, so an answer says
+        // nothing about how far behind it is — see the note on the card.
+        if let Ok(sessions) = self.inner.all_sessions().await {
+            let _ = self.index.ingest_sessions(&sessions);
+        }
     }
 }
 
@@ -3138,6 +3357,285 @@ mod tests {
             index.mail_coverage(),
             Coverage::Loaded,
             "a read taken after the failure speaks for the board as it stands"
+        );
+    }
+
+    /// One run with one beat, owned by `bot` — the fixture the owner-scoping
+    /// cases are built from.
+    fn run(id: &str, bot: &str, focus: &str, beat: &str) -> jojobot_domain::session::Session {
+        use jojobot_domain::session::{EntryId, JournalEntry, Session, SessionId, SessionState};
+        Session {
+            id: SessionId(id.into()),
+            sid: None,
+            bot: EntityId(bot.into()),
+            focus: focus.into(),
+            started_at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
+            state: SessionState::Active,
+            entries: vec![JournalEntry {
+                id: EntryId("e1".into()),
+                at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
+                text: beat.into(),
+                touched: None,
+                beat: None,
+            }],
+        }
+    }
+
+    /// **A bot finds its own run, does not find another bot's, and the second
+    /// is distinguishable from an index that holds nothing.**
+    ///
+    /// All three in one read, because an owner filter and an empty index look
+    /// identical to a caller: a bot searching its own history and getting
+    /// nothing reads it as "there is no such thing" rather than "that is not
+    /// yours". A case that only asserts the absence passes on a build that
+    /// indexes no session at all, which is the failure this one is written
+    /// against.
+    #[test]
+    fn a_bot_finds_its_own_run_and_not_another_bots() {
+        let index = FullTextIndex::open().expect("index opens");
+        index
+            .ingest_sessions(&[
+                run(
+                    "s-gamma",
+                    "bot:gamma",
+                    "the kiln slice",
+                    "the damper is hand-cut",
+                ),
+                run(
+                    "s-otto",
+                    "bot:otto",
+                    "the kiln slice",
+                    "the damper is hand-cut",
+                ),
+            ])
+            .expect("sessions ingested");
+
+        let asking = |bot: &str| SearchQuery {
+            text: Some("damper".into()),
+            asked_by: Some(EntityId(bot.into())),
+            ..SearchQuery::default()
+        };
+
+        let mine = index.search(&asking("bot:gamma")).expect("search ok");
+        let owners: Vec<String> = mine
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Session { bot, .. } => Some(bot.to_string()),
+                _ => None,
+            })
+            .collect();
+
+        // The positive, first and in the same read: gamma's own beat comes back.
+        assert!(
+            owners.contains(&"bot:gamma".to_string()),
+            "a bot must find its own run: {mine:?}"
+        );
+        // And the negative it makes meaningful: otto's does not, in the same
+        // answer that just proved the index is not empty.
+        assert!(
+            !owners.contains(&"bot:otto".to_string()),
+            "another bot's run is not this bot's to read: {mine:?}"
+        );
+
+        // …and the mirror image, so the filter is scoping rather than hiding
+        // one fixture: otto asking finds otto's and not gamma's.
+        let theirs = index.search(&asking("bot:otto")).expect("search ok");
+        let theirs: Vec<String> = theirs
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Session { bot, .. } => Some(bot.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            theirs,
+            vec!["bot:otto".to_string()],
+            "the same query asked by the other bot returns that bot's run and only it"
+        );
+    }
+
+    /// **A refresh that finds the runs unchanged rewrites nothing.**
+    ///
+    /// The session half is refreshed before every answer, so an ingest that
+    /// rewrote the whole half regardless would take the writer lock, commit the
+    /// shared index and reload the reader once per search — work that grows
+    /// with every run every bot has ever had rather than with what changed.
+    /// It is the rule the memory half states forty lines away and applies.
+    ///
+    /// Paired with the positives it rests on: the first ingest writes, a
+    /// changed run writes again, and a run the store no longer holds is
+    /// evicted. Without those, a build that ingested nothing at all would
+    /// satisfy the zero.
+    #[test]
+    fn a_session_ingest_that_changes_nothing_writes_nothing() {
+        let index = FullTextIndex::open().expect("index opens");
+        let corpus = |beat: &str| {
+            vec![
+                run("s-gamma", "bot:gamma", "the kiln slice", beat),
+                run(
+                    "s-otto",
+                    "bot:otto",
+                    "the kiln slice",
+                    "the damper is hand-cut",
+                ),
+            ]
+        };
+
+        assert_eq!(
+            index
+                .ingest_sessions(&corpus("the damper is hand-cut"))
+                .expect("sessions ingested"),
+            2,
+            "the first reading has both runs to write",
+        );
+        assert_eq!(
+            index
+                .ingest_sessions(&corpus("the damper is hand-cut"))
+                .expect("sessions ingested"),
+            0,
+            "the same runs again are already held, so nothing is rewritten",
+        );
+        assert_eq!(
+            index
+                .ingest_sessions(&corpus("the damper is cut by hand"))
+                .expect("sessions ingested"),
+            1,
+            "the run whose beat moved is rewritten, and only it",
+        );
+
+        // …and the run the store no longer holds goes with it, or a session
+        // deleted anywhere would be served from this index for ever.
+        let remaining = vec![run(
+            "s-otto",
+            "bot:otto",
+            "the kiln slice",
+            "the damper is hand-cut",
+        )];
+        assert_eq!(
+            index
+                .ingest_sessions(&remaining)
+                .expect("sessions ingested"),
+            1,
+            "the run that left the store is evicted",
+        );
+        let gone = index
+            .search(&SearchQuery {
+                text: Some("damper".into()),
+                asked_by: Some(EntityId("bot:gamma".into())),
+                ..SearchQuery::default()
+            })
+            .expect("search ok");
+        assert!(
+            !gone.iter().any(|h| matches!(h, Hit::Session { .. })),
+            "an evicted run is no longer served: {gone:?}",
+        );
+    }
+
+    /// **A session is reachable, and it loses to anything else that matched.**
+    ///
+    /// Both halves, because each alone is satisfiable by the wrong build. A
+    /// rank so low the hit never surfaces satisfies "lower priority" and
+    /// defeats the ruling; a session that outranks a fact buries what a search
+    /// is usually for. So: a query only the session matches returns it, and a
+    /// query both match puts the other one first.
+    #[test]
+    fn a_session_is_reachable_and_ranks_below_what_it_shares_an_answer_with() {
+        let index = FullTextIndex::open().expect("index opens");
+        index
+            .ingest_all(
+                &[DocScan {
+                    doc_id: "outline-uuid-1".into(),
+                    title: "Alpha".into(),
+                    prose: "the kiln was relined last spring".into(),
+                    entity: Some(entity("person:alpha", "Alpha")),
+                    facts: Vec::new(),
+                }],
+                index.reading_begins(),
+            )
+            .expect("memory ingested");
+        index
+            .ingest_sessions(&[run(
+                "s-gamma",
+                "bot:gamma",
+                "the kiln slice",
+                // Deliberately a far stronger match on the shared term than the
+                // entity is: without the demotion this session outranks it, so
+                // the ordering below is the demotion's doing and not the
+                // scorer's.
+                // Deliberately a far stronger match on the shared term than the
+                // prose is, and on a term that pins nothing: without the
+                // demotion this session outranks it, so the ordering below is
+                // the demotion's doing rather than the scorer's or the pin's.
+                "kiln kiln kiln kiln the damper is hand-cut",
+            )])
+            .expect("sessions ingested");
+
+        let asking = |text: &str| SearchQuery {
+            text: Some(text.into()),
+            asked_by: Some(EntityId("bot:gamma".into())),
+            ..SearchQuery::default()
+        };
+
+        // Reachable: nothing else in the corpus says "damper".
+        let alone = index.search(&asking("damper")).expect("search ok");
+        assert!(
+            alone.iter().any(|h| matches!(h, Hit::Session { .. })),
+            "a session must be findable when it is what you are looking for: {alone:?}"
+        );
+
+        // …and demoted: both match "Alpha", and the entity comes first.
+        let shared = index.search(&asking("kiln")).expect("search ok");
+        let first_session = shared
+            .iter()
+            .position(|h| matches!(h, Hit::Session { .. }))
+            .expect("the session matched this query too, or the ordering below proves nothing");
+        let first_other = shared
+            .iter()
+            .position(|h| !matches!(h, Hit::Session { .. }))
+            .expect("something other than a session matched, or there is nothing to rank against");
+        assert!(
+            first_other < first_session,
+            "a session is context, not an answer, and ranks below what it shares a list with: \
+             {shared:?}"
+        );
+    }
+
+    /// **A caller with no identity gets no session hit at all** — and the same
+    /// index answers one that does, so this is the scoping and not an empty
+    /// index.
+    #[test]
+    fn a_caller_with_no_identity_gets_no_session_hit() {
+        let index = FullTextIndex::open().expect("index opens");
+        index
+            .ingest_sessions(&[run(
+                "s-gamma",
+                "bot:gamma",
+                "the kiln slice",
+                "the damper is hand-cut",
+            )])
+            .expect("sessions ingested");
+
+        let anonymous = index
+            .search(&SearchQuery {
+                text: Some("damper".into()),
+                ..SearchQuery::default()
+            })
+            .expect("search ok");
+        assert!(
+            !anonymous.iter().any(|h| matches!(h, Hit::Session { .. })),
+            "a caller with no identity is not everybody: {anonymous:?}"
+        );
+
+        let identified = index
+            .search(&SearchQuery {
+                text: Some("damper".into()),
+                asked_by: Some(EntityId("bot:gamma".into())),
+                ..SearchQuery::default()
+            })
+            .expect("search ok");
+        assert!(
+            identified.iter().any(|h| matches!(h, Hit::Session { .. })),
+            "…and the same index does answer a caller that says who it is: {identified:?}"
         );
     }
 

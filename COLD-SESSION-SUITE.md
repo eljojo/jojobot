@@ -198,10 +198,13 @@ travel. This failed wholesale in production once, on two clients at once.
 >     cannot verify is the finding, not a pass.
 > 29. In that chronology, look for entries jojobot wrote about you rather than
 >     entries you wrote. Report whether you can tell the two apart, and how.
-> 30. `search` for the exact words you journalled in step 25. Session records
->     are deliberately outside the search surface, so not finding them is the
->     designed answer. Report either way, and report whether anything told you
->     that before you tried.
+> 30. `search` for the exact words you journalled in step 25. Expected: you
+>     find it, as a hit that says it is a session — your own run, carrying that
+>     run's handle and a snippet, and sitting below the other kinds of hit in
+>     the list. A run is only ever returned to the bot that owns it, so the one
+>     you get back is yours. Report what came back and where in the list it
+>     sat, and report whether anything told you sessions were searchable at all
+>     before you tried.
 
 ## Phase 7 — mail, without taking on work
 
@@ -348,9 +351,11 @@ settled design. Check a finding against this list before it becomes work.
 
 * **The closing story opens with the focus line.** Wrapping folds the session's
   still-open focus into the story as one entry, deliberately.
-* **Journalled text is not findable by `search`.** Session records are
-  deliberately outside the search index, and so is anything the memory scan
-  finds marked as jojobot's own machinery.
+* **A session hit comes back last, and only to the bot whose run it is.**
+  Journalled text is findable by `search`; it is demoted rather than filtered,
+  so a run is reachable when it is what you are after and never crowds out what
+  a search is usually for. What stays outside the index is anything the memory
+  scan finds marked as jojobot's own machinery.
 * **Mail is opt-in in `search`.** A model that does not pass the flag sees no
   messages and is right not to. Phase 4 asks whether it would have known to
   ask; "no" there is a finding about the surface, not about the default.

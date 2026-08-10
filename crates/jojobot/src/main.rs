@@ -10,7 +10,7 @@ use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::owners::MemoryOwners;
-use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, Retrieval};
+use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
 use jojobot_domain::mailbox::{Mailboxes, OwnerIndex};
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::search::Search;
@@ -186,9 +186,24 @@ async fn main() -> anyhow::Result<()> {
     // a record removed outside jojobot — the only way one leaves at all — stops
     // being served. Neither decorator can reach the other's store, which is why
     // the port is not on either of them.
+    // **The third half: a bot's own runs.** Owner-scoped when a query asks, so
+    // every bot's runs are indexed and each caller is served only its own.
+    let runs = Arc::new(IndexedSessions::new(sessions.clone(), indexed.index()));
+    match runs.rebuild().await {
+        Ok(count) => tracing::info!(
+            sessions = count,
+            "search: sessions indexed from a full read"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "SESSION SEARCH DEGRADED — the boot read of the runs failed, so `search` starts with \
+             no session hits. Any run this process refreshes is indexed as it goes; restart once \
+             the store reads to get the rest back."
+        ),
+    }
     let search: Arc<dyn Search> = Arc::new(Retrieval::new(
         indexed.index(),
-        vec![indexed.clone(), mailboxes.clone()],
+        vec![indexed.clone(), mailboxes.clone(), runs],
     ));
     let mailboxes: Arc<dyn Mailboxes> = mailboxes;
 

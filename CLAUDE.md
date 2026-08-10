@@ -236,10 +236,13 @@ Shipped and live:
   publishing nowhere.
   jojobot writes **its own beats** too — one per verb class per session, count
   kept current, marked apart from what the session said about itself.
-  Session records deliberately stay **out of the search index**, and so does
-  any document the memory scan finds marked as jojobot's own machinery — a
-  filter worth keeping whether or not jojobot still writes such documents,
-  because what they hold is correspondence and chronologies rather than content.
+  Session records are **in the search index, scoped by owner**: a bot finds its
+  own runs and nobody else's, and they rank below everything else because a run
+  is context rather than an answer. A caller that names no bot gets no session
+  hit at all. Any document the memory scan finds marked as jojobot's own
+  machinery still stays out — a filter worth keeping whether or not jojobot
+  still writes such documents, because what they hold is correspondence and
+  chronologies rather than content.
 
 > **Identity is the SESSION ID, because no real client holds a connection.**
 > The binding was per-MCP-session and the design assumed a client keeps one

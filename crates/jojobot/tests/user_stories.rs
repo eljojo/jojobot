@@ -35,6 +35,8 @@ mod moving;
 mod party;
 #[path = "user_stories/sourcing.rs"]
 mod sourcing;
+#[path = "user_stories/spotlight.rs"]
+mod spotlight;
 #[path = "user_stories/stale_handle.rs"]
 mod stale_handle;
 #[path = "user_stories/unprompted.rs"]

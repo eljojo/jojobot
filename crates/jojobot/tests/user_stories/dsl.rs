@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use jojobot::{AppState, build_app};
-use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, Retrieval};
+use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::session::testing::InMemorySessions;
@@ -187,12 +187,15 @@ impl Story {
             Arc::new(InMemoryMailboxes::knowing_any_owner()),
             indexed.index(),
         ));
-        // **The retrieval port over BOTH halves, exactly as the binary wires
-        // it.** A port over memory alone answers without ever refreshing mail,
-        // which is a poorer jojobot than the deployment this stands for.
+        // **The retrieval port over ALL THREE halves, exactly as the binary
+        // wires it.** A port over fewer answers without ever refreshing the
+        // rest, which is a poorer jojobot than the deployment this stands for —
+        // and a story would report the fixture's limits as the software's.
+        let runs = Arc::new(InMemorySessions::new());
+        let indexed_runs = Arc::new(IndexedSessions::new(runs.clone(), indexed.index()));
         let search = Arc::new(Retrieval::new(
             indexed.index(),
-            vec![indexed.clone(), mail.clone()],
+            vec![indexed.clone(), mail.clone(), indexed_runs],
         ));
         let boxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> = mail;
         let boxes_for_seed = boxes.clone();
@@ -204,7 +207,7 @@ impl Story {
             memory: indexed.clone(),
             search,
             mailboxes: boxes,
-            sessions: Arc::new(InMemorySessions::new()),
+            sessions: runs,
             registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
             ui: None,
         };
@@ -946,6 +949,12 @@ impl Answer {
             .find('"')
             .unwrap_or_else(|| panic!("the {key} in the {} is unterminated: {advice}", self.what));
         rest[..to].to_string()
+    }
+
+    /// The answer as it came back, for a beat that has to reason about the
+    /// ORDER of what is in it rather than only about what is there.
+    pub fn raw(&self) -> &str {
+        &self.body
     }
 
     pub fn says(&self, needle: &str) -> &Self {

@@ -122,6 +122,21 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
             "notes": message.notes,
             "snippet": snippet,
         }),
+        // A beat from the caller's own run. It carries the run's handle rather
+        // than the whole chronology: what a reader does next is resume it or
+        // read on, and both take the handle.
+        Hit::Session {
+            session,
+            bot,
+            working_on,
+            snippet,
+        } => serde_json::json!({
+            "hit": "session",
+            "session": session.0,
+            "bot": bot.to_string(),
+            "working_on": working_on,
+            "snippet": snippet,
+        }),
         Hit::Prose {
             title,
             entity,
@@ -442,6 +457,10 @@ impl Jojobot {
         // This verb publishes a `sid` and says it is what tells jojobot who is
         // asking, so a handle that addresses nothing is refused rather than
         // dropped.
+        let asking = match self.caller(args.sid.as_deref()) {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
         if let Err(refused) = self.attributable(args.sid.as_deref()) {
             return Ok(refused);
         }
@@ -456,6 +475,7 @@ impl Jojobot {
             })
             .transpose()?;
         let query = SearchQuery {
+            asked_by: asking.as_ref().map(|c| c.bot.clone()),
             text: args.query,
             kind: args.kind.as_deref().map(parse_kind).transpose()?,
             status: args.status.as_deref().map(parse_status).transpose()?,

@@ -32,6 +32,7 @@ use super::{
     validate_edge, validate_subject,
 };
 use crate::mailbox::Message;
+use crate::session::SessionId;
 
 /// One document as the index needs it: its prose, the entity it is (if it is
 /// one), and the facts in its table. This is the shape a **full re-scan** yields,
@@ -162,6 +163,21 @@ pub struct SearchQuery {
     /// something off: the safe branch is the default, never the documented
     /// preference (rule 62).
     pub include_mail: bool,
+    /// **Who is asking, when anybody is** — the bot the caller booted as.
+    ///
+    /// It is what scopes session hits: a bot finds its own runs and nobody
+    /// else's. **Absent means no session hit comes back at all**, rather than
+    /// all of them: a caller with no identity is not everybody, and the safe
+    /// branch is the default here for the same reason it is on `include_mail`.
+    ///
+    /// **Owner-scoping is what replaced keeping sessions out of the index.**
+    /// What makes a run safe to index is who may read it, not whether it is
+    /// there — and the exclusion cost a bot access to its own work while
+    /// buying nothing this does not.
+    ///
+    /// It scopes nothing else. Entities, facts and prose are the operator's
+    /// and every bot may see them; mail has its own rule and its own flag.
+    pub asked_by: Option<EntityId>,
     /// How many results to return.
     pub limit: usize,
 }
@@ -175,6 +191,7 @@ impl Default for SearchQuery {
             provenance: None,
             subject: None,
             edge: None,
+            asked_by: None,
             include_mail: false,
             limit: DEFAULT_LIMIT,
         }
@@ -338,6 +355,30 @@ pub enum Hit {
         /// The message, envelope and all. Its `body` is the whole stored text;
         /// what a caller is shown around the match is `snippet`.
         message: Message,
+        /// The matching text with enough around it to read.
+        snippet: String,
+    },
+    /// **A beat from a session's chronology, matched by its text** — a bot's
+    /// own working history, reachable the way everything else is.
+    ///
+    /// **Owner-scoped, and that is what makes it safe to index at all.** A
+    /// session is one bot's account of its own run; another bot's is not
+    /// theirs to read. The rule lives on who may see a hit rather than on
+    /// whether the record is in the index, because keeping it out cost a bot
+    /// access to its own work and bought nothing the scoping does not.
+    ///
+    /// **It ranks below every other kind.** A session is context rather than
+    /// an answer: reachable when it is what you are looking for, never
+    /// crowding out what a search is usually for.
+    Session {
+        /// Which run it belongs to, so a caller can resume or read on.
+        session: SessionId,
+        /// The bot whose run it is — the owner the scoping is measured
+        /// against, and never somebody else's.
+        bot: EntityId,
+        /// What the session says it is working on, when it still has one:
+        /// the line that tells two runs apart.
+        working_on: Option<String>,
         /// The matching text with enough around it to read.
         snippet: String,
     },
