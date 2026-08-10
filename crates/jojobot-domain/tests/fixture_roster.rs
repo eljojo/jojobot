@@ -11,10 +11,19 @@
 //! very strings this gate exists to keep out.
 //!
 //! Scope: handle-shaped text (`kind:slug`) in every `.rs`, `.md` and `.json`
-//! file under `crates/`, comments included — comments are where past leaks
-//! lived, and recorded fixtures are where they would live next.
-//! Bare slugs handed to constructors are out of reach for a text scan; the
-//! handle form is where every leak so far has entered.
+//! file under `crates/`, and in the markdown at the workspace root, which is
+//! where this repository's prose about itself lives. A comment is read on the
+//! same terms as code and on no wider ones — the handle form is what the scan
+//! looks for, wherever it sits, and comments are where past leaks lived. Bare
+//! slugs handed to constructors are out of reach for a text scan; the handle
+//! form is where every leak so far has entered.
+//!
+//! **A life specific written in ordinary words passes this gate, because
+//! nothing here is looking for it.** A comment, a doc string or a fixture that
+//! names a real person, place or event in prose carries nothing handle-shaped,
+//! so this suite has no opinion on it. A green run says one thing: no unlisted
+//! handle. It is not a clearance for the text around one. What holds that line
+//! is somebody's attention, and there is no second gate behind it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -90,6 +99,7 @@ const ROSTER: &[&str] = &[
     "person:zenit",
     "person:zenith",
     "person:zzz",
+    "person:zzz-nobody",
     "place:a",
     "place:atlas",
     "place:bet",
@@ -163,6 +173,57 @@ fn scanned_sources(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// The workspace root the gate scans from.
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// **Every file the gate reads, from one root** — so the two tests below
+/// cannot disagree about what the corpus is. They ask opposite questions of
+/// the same set: one that no handle in it is off the roster, one that no
+/// roster entry is unused by it. Given two file lists those questions stop
+/// being opposites, and a handle in a file only one of them reads is either
+/// an unreviewed name or a roster entry reported as orphaned.
+fn scanned_files(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    scanned_sources(&root.join("crates"), &mut out);
+    root_markdown(root, &mut out);
+    out
+}
+
+/// **The markdown sitting at the root of the workspace**, which is where this
+/// repository's prose about itself lives.
+///
+/// Prose about this software names handles — a document saying what a session
+/// should write carries the handles it should write — so the root is the one
+/// place the gate exists for and was not looking. Not recursive: everything
+/// below the root is either `crates`, which [`scanned_sources`] already walks,
+/// or build output.
+fn root_markdown(root: &Path, out: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(root).expect("readable workspace root") {
+        let path = entry.expect("readable dir entry").path();
+        if path.is_file() && path.extension().is_some_and(|e| e == "md") {
+            out.push(path);
+        }
+    }
+}
+
+/// Every off-roster handle in these files, as `handle in path`.
+fn violations_in(files: &[PathBuf]) -> Vec<String> {
+    let mut violations = Vec::new();
+    for file in files {
+        let text = fs::read_to_string(file).expect("readable source file");
+        for handle in handles_in(&text) {
+            if !ROSTER.contains(&handle.as_str()) {
+                violations.push(format!("{} in {}", handle, file.display()));
+            }
+        }
+    }
+    violations.sort();
+    violations.dedup();
+    violations
+}
+
 /// Every `kind:slug` occurrence in the text, comments included.
 fn handles_in(text: &str) -> Vec<String> {
     let mut found = Vec::new();
@@ -190,6 +251,103 @@ fn handles_in(text: &str) -> Vec<String> {
     found
 }
 
+/// A workspace of this test's own, removed when it is done — so a case about
+/// what the gate scans can put a file where it wants one without writing into
+/// the repository the real gate is reading in the same run.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(what: &str) -> Self {
+        let path =
+            std::env::temp_dir().join(format!("jojobot-roster-{}-{what}", std::process::id()));
+        fs::create_dir_all(path.join("crates")).expect("a scratch workspace");
+        Scratch(path)
+    }
+
+    /// Write one file under the scratch root and return nothing — the point is
+    /// where it lands, and the test reads it back through the gate.
+    fn write(&self, relative: &str, text: &str) {
+        let path = self.0.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("a directory for the file");
+        }
+        fs::write(path, text).expect("a written file");
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// **The gate reads markdown at the root of the workspace, not only under
+/// `crates`.**
+///
+/// The root is where this repository's prose lives, and prose about this
+/// software names handles: a document describing what a session should write
+/// carries the handles it should write. Those files were outside the scan, so
+/// an unlisted name in one was not a red run anywhere — the one file class the
+/// gate exists for, in the one place it did not look.
+///
+/// Each half is paired, because a scan that reads nothing satisfies every
+/// negative on its own: an off-roster handle at the root must be REPORTED, and
+/// a roster handle in the same position must NOT be.
+#[test]
+fn the_gate_reads_markdown_at_the_workspace_root() {
+    let unlisted = unlisted_handle();
+    let scratch = Scratch::new("root-markdown");
+    scratch.write("ROOT-DOC.md", &format!("the suite writes {unlisted} here"));
+    scratch.write("crates/kept.rs", "// person:milhouse is listed");
+
+    let violations = violations_in(&scanned_files(&scratch.0));
+
+    assert!(
+        violations.iter().any(|v| v.contains(&unlisted)),
+        "an unlisted handle in a root markdown file has to be reported: {violations:?}"
+    );
+    assert!(
+        !violations.iter().any(|v| v.contains("person:milhouse")),
+        "…and a roster handle must still pass, or the report above is the scan \
+         failing rather than the gate working: {violations:?}"
+    );
+}
+
+/// A handle no roster entry matches, **assembled rather than written**: the
+/// gate reads this file too, so spelling one out here would be an unlisted
+/// handle in the workspace and the real scan would report it.
+fn unlisted_handle() -> String {
+    const KIND: &str = "person";
+    format!("{KIND}:zzz-not-on-the-roster")
+}
+
+/// **Widening the root did not stop the gate reading under `crates`.**
+///
+/// The behaviour that was already there is asserted rather than assumed: the
+/// same call that now reaches the root still reports an unlisted handle in a
+/// source file, which is the property every earlier version of this gate had.
+#[test]
+fn the_gate_still_reads_sources_under_crates() {
+    let unlisted = unlisted_handle();
+    let scratch = Scratch::new("under-crates");
+    scratch.write(
+        "crates/whatever/src/lib.rs",
+        &format!("// {unlisted} in a comment"),
+    );
+    scratch.write("crates/whatever/fixture.md", "person:milhouse is listed");
+
+    let violations = violations_in(&scanned_files(&scratch.0));
+
+    assert!(
+        violations.iter().any(|v| v.contains(&unlisted)),
+        "an unlisted handle under crates has to be reported: {violations:?}"
+    );
+    assert!(
+        !violations.iter().any(|v| v.contains("person:milhouse")),
+        "…and a roster handle there must still pass: {violations:?}"
+    );
+}
+
 /// **Every entry on the allowlist is one the workspace actually uses.**
 ///
 /// The roster's value is that adding a name is a conscious, reviewed diff. An
@@ -203,9 +361,7 @@ fn handles_in(text: &str) -> Vec<String> {
 /// are the fictional names this repo contains, plus some it used to" is not.
 #[test]
 fn the_roster_carries_no_name_the_workspace_has_stopped_using() {
-    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates");
-    let mut files = Vec::new();
-    scanned_sources(&crates, &mut files);
+    let files = scanned_files(&workspace_root());
     let corpus: String = files
         .iter()
         .filter(|f| f.file_name().is_some_and(|n| n != "fixture_roster.rs"))
@@ -228,22 +384,10 @@ fn the_roster_carries_no_name_the_workspace_has_stopped_using() {
 
 #[test]
 fn every_handle_in_the_workspace_is_on_the_fictional_roster() {
-    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates");
-    let mut files = Vec::new();
-    scanned_sources(&crates, &mut files);
+    let files = scanned_files(&workspace_root());
     assert!(files.len() > 10, "the scan must actually see the workspace");
 
-    let mut violations = Vec::new();
-    for file in &files {
-        let text = fs::read_to_string(file).expect("readable source file");
-        for handle in handles_in(&text) {
-            if !ROSTER.contains(&handle.as_str()) {
-                violations.push(format!("{} in {}", handle, file.display()));
-            }
-        }
-    }
-    violations.sort();
-    violations.dedup();
+    let violations = violations_in(&files);
     assert!(
         violations.is_empty(),
         "handles outside the fictional roster — if the name is openly fictional, \
