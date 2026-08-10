@@ -19,35 +19,168 @@
 //! with a way forward (rule 68) — and it would have to be spelled on every
 //! struct, which is a list that goes stale the first time somebody forgets it.
 //!
-//! **Top level only.** A sub-object's own fields — today only `search`'s
-//! `edge` — are not walked, because resolving the `$ref` a nested schema is
-//! published as is a second mechanism and this one is honest about its edge
-//! rather than pretending to cover it.
+//! **Every level, by the one mechanism.** An argument that is a struct of its
+//! own — today only `search`'s `edge` — is judged against the names ITS schema
+//! publishes, by the same walk, reached through the indirection schemars emits
+//! for a nested type. Nothing here enumerates what a level may contain: the
+//! permitted shape is declared once, by the structs, and read at every depth.
 
 use super::*;
 
-/// The argument names a verb publishes, or none when its schema names no
-/// properties at all — which is a verb that takes nothing, not a verb that
-/// takes anything.
-fn published(schema: &serde_json::Map<String, serde_json::Value>) -> Vec<&str> {
-    schema
-        .get("properties")
-        .and_then(|p| p.as_object())
-        .map(|p| p.keys().map(String::as_str).collect())
-        .unwrap_or_default()
+/// How deep the walk follows a schema before it stops. A struct that referred
+/// to itself would otherwise resolve for ever; stopping leaves that level
+/// unresolvable, which the coverage test turns into a red bar rather than a
+/// silent pass.
+const MAX_DEPTH: usize = 8;
+
+/// The arguments a verb publishes at its own level, or none when its schema
+/// names no properties at all — which is a verb that takes nothing, not a verb
+/// that takes anything.
+fn published(
+    schema: &serde_json::Map<String, serde_json::Value>,
+) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    schema.get("properties")?.as_object()
 }
 
-/// Every argument in the call that the verb does not implement, in the order
-/// the caller sent them.
-fn unimplemented<'a>(
-    arguments: &'a serde_json::Map<String, serde_json::Value>,
-    known: &[&str],
-) -> Vec<&'a str> {
-    arguments
-        .keys()
-        .map(String::as_str)
-        .filter(|name| !known.contains(name))
-        .collect()
+/// The schema a `$ref` names, looked up in the root's `$defs`.
+fn definition<'a>(
+    reference: &str,
+    root: &'a serde_json::Map<String, serde_json::Value>,
+) -> Option<&'a serde_json::Value> {
+    let name = reference.strip_prefix("#/$defs/")?;
+    root.get("$defs")?.as_object()?.get(name)
+}
+
+/// **What one schema node publishes**, following the indirection a nested
+/// struct is emitted through.
+///
+/// schemars writes an optional struct field as `anyOf` of a `$ref` into
+/// `$defs` and a null branch, and a required one as the `$ref` alone. Both
+/// arrive here, and so does the plain inline object; each is the same question
+/// — which names does this level have — asked one hop further away.
+///
+/// `None` means this node describes no set of names: a string, a number, or a
+/// shape nothing here knows how to follow. The two are not distinguished on
+/// the call path, because a caller cannot act on the difference; they are
+/// distinguished by the coverage test, which is where an unfollowable shape
+/// has to go red.
+fn fields<'a>(
+    node: &'a serde_json::Value,
+    root: &'a serde_json::Map<String, serde_json::Value>,
+    depth: usize,
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    if depth >= MAX_DEPTH {
+        return None;
+    }
+    if let Some(own) = node.get("properties").and_then(|p| p.as_object()) {
+        return Some(own);
+    }
+    if let Some(reference) = node.get("$ref").and_then(|r| r.as_str()) {
+        return definition(reference, root).and_then(|target| fields(target, root, depth + 1));
+    }
+    // The null branch of an optional field publishes nothing, so the first
+    // branch that does is the shape being described.
+    ["anyOf", "oneOf", "allOf"]
+        .iter()
+        .filter_map(|keyword| node.get(keyword))
+        .filter_map(|branches| branches.as_array())
+        .flatten()
+        .find_map(|branch| fields(branch, root, depth + 1))
+}
+
+/// One place a call can name an argument: the call itself, or a sub-object
+/// inside it. Each is judged against the names its own schema publishes.
+struct Level {
+    /// The path a refusal names it by — empty at the top level, where the
+    /// verb's own name is what the caller sees.
+    path: String,
+    /// What this level publishes, in schema order.
+    takes: Vec<String>,
+    /// What the caller sent here that this level does not have.
+    unknown: Vec<String>,
+}
+
+impl Level {
+    /// How a refusal names one of this level's arguments: bare at the top,
+    /// and qualified below it, because `weight` alone sends a caller looking
+    /// at the wrong level.
+    fn naming(&self, argument: &str) -> String {
+        if self.path.is_empty() {
+            argument.to_string()
+        } else {
+            format!("{}.{argument}", self.path)
+        }
+    }
+
+    /// What this level does take, said the way its own reader needs it.
+    fn offering(&self) -> String {
+        match (self.path.as_str(), self.takes.is_empty()) {
+            ("", true) => "it takes no arguments at all".to_string(),
+            ("", false) => format!("it takes: {}", self.takes.join(", ")),
+            (path, true) => format!("{path} takes no arguments at all"),
+            (path, false) => format!("{path} takes: {}", self.takes.join(", ")),
+        }
+    }
+}
+
+/// Every level of the call that was handed a name it does not have, outermost
+/// first, each carrying what it does take. A level the caller got entirely
+/// right is left out.
+fn unimplemented(
+    sent: &serde_json::Map<String, serde_json::Value>,
+    here: &serde_json::Map<String, serde_json::Value>,
+    root: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+    found: &mut Vec<Level>,
+) {
+    let mut level = Level {
+        path: path.to_string(),
+        takes: here.keys().cloned().collect(),
+        unknown: Vec::new(),
+    };
+    let mut deeper = Vec::new();
+    for (name, value) in sent {
+        let Some(node) = here.get(name) else {
+            level.unknown.push(name.clone());
+            continue;
+        };
+        // A sub-object is judged only when the caller sent one and the schema
+        // describes one. Anything else is a value, and values are the
+        // deserializer's business.
+        let Some(names) = fields(node, root, 0) else {
+            continue;
+        };
+        let below = if path.is_empty() {
+            name.clone()
+        } else {
+            format!("{path}.{name}")
+        };
+        match value {
+            serde_json::Value::Object(inner) => deeper.push((inner, names, below)),
+            // **A list element is a level too.** A caller names arguments
+            // inside one exactly as inside a sub-object, so it is judged
+            // against the same names — every element of a list shares one
+            // shape, which is why one set of names serves them all. The index
+            // rides the path, because a caller fixing a list of five needs to
+            // know which element to look at.
+            serde_json::Value::Array(items) => {
+                for (at, item) in items.iter().enumerate() {
+                    if let Some(inner) = item.as_object() {
+                        deeper.push((inner, names, format!("{below}[{at}]")));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // Outermost first: a caller reads the level they typed at before the one
+    // inside it.
+    if !level.unknown.is_empty() {
+        found.push(level);
+    }
+    for (inner, names, below) in deeper {
+        unimplemented(inner, names, root, &below, found);
+    }
 }
 
 impl Jojobot {
@@ -67,21 +200,29 @@ impl Jojobot {
     ) -> Option<CallToolResult> {
         let arguments = request.arguments.as_ref()?;
         let tool = self.tool_router.get(&request.name)?;
-        let known = published(&tool.input_schema);
-        let unknown = unimplemented(arguments, &known);
-        if unknown.is_empty() {
+        let root = &tool.input_schema;
+        let empty = serde_json::Map::new();
+        let top = published(root).unwrap_or(&empty);
+        let mut levels = Vec::new();
+        unimplemented(arguments, top, root, "", &mut levels);
+        if levels.is_empty() {
             return None;
         }
         // **Both halves, because a caller acts on both.** Which argument was
-        // not understood, so they can tell a typo from a capability that is not
-        // here yet; and what the verb does take, so the next call is one they
-        // can write without going back to the schema.
-        let named = unknown.join(", ");
-        let takes = if known.is_empty() {
-            "it takes no arguments at all".to_string()
-        } else {
-            format!("it takes: {}", known.join(", "))
-        };
+        // not understood — by its path, so a name inside a sub-object does not
+        // send them looking at the wrong level — and what the level that met it
+        // does take, so the next call is one they can write without going back
+        // to the schema.
+        let named = levels
+            .iter()
+            .flat_map(|level| level.unknown.iter().map(|name| level.naming(name)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let takes = levels
+            .iter()
+            .map(Level::offering)
+            .collect::<Vec<_>>()
+            .join("; ");
         Some(misused(format!(
             "Nothing was written. {} does not implement {named} — {takes}. An argument this \
              surface does not have is refused rather than dropped, because a call that quietly \
@@ -148,6 +289,106 @@ mod tests {
         );
     }
 
+    /// **The same defect one level down.** `search`'s `edge` is the one
+    /// argument on this surface that is a struct of its own, and its fields
+    /// went unread: a caller sending `weight` inside it had the search done
+    /// without it and got a success answer, which is the whole reason this
+    /// check exists.
+    ///
+    /// The refusal names the argument by its **path**, because `weight` alone
+    /// sends a caller looking at the wrong level, and it says what the
+    /// sub-object takes rather than what the verb takes — the names that would
+    /// have worked are the ones beside the mistake.
+    ///
+    /// Paired with the positive: a well-formed `edge` passes straight through.
+    /// Without that, this passes identically on a check that turns back every
+    /// call carrying a sub-object.
+    #[tokio::test]
+    async fn an_argument_a_sub_object_does_not_implement_is_refused_by_path() {
+        let jojobot = handler();
+        let advice = advice(jojobot.unimplemented_arguments(&call(
+            "search",
+            serde_json::json!({
+                "query": "the guild",
+                "edge": {"shape": "membership", "object": "org:guild", "weight": 3},
+                "sid": "any",
+            }),
+        )));
+        assert!(
+            advice.contains("edge.weight"),
+            "the refusal names which level the argument sat at: {advice}"
+        );
+        assert!(
+            advice.contains("shape") && advice.contains("object"),
+            "…and what that level does take: {advice}"
+        );
+
+        assert!(
+            jojobot
+                .unimplemented_arguments(&call(
+                    "search",
+                    serde_json::json!({
+                        "query": "the guild",
+                        "edge": {"shape": "membership", "object": "org:guild"},
+                        "sid": "any",
+                    }),
+                ))
+                .is_none(),
+            "a well-formed sub-object was turned back"
+        );
+    }
+
+    /// **The same defect inside a LIST of objects.** `declare_type`'s `fields`
+    /// is a list, and a list element is a level a caller names arguments at
+    /// exactly as a sub-object is: a key inside one that the surface does not
+    /// have was dropped by serde and the call answered `ok`.
+    ///
+    /// This goes through `unimplemented_arguments` — the walk a call actually
+    /// takes — rather than through `fields`, the helper that reads the schema.
+    /// The helper follows a list already; the walk is what did not, so a case
+    /// that asked the helper would have been green against the defect.
+    ///
+    /// Paired with the positive: a well-formed list passes straight through.
+    /// Without it this passes identically on a check that turns back every call
+    /// carrying a list.
+    #[tokio::test]
+    async fn an_argument_a_list_element_does_not_implement_is_refused_by_path() {
+        let jojobot = handler();
+        let advice = advice(jojobot.unimplemented_arguments(&call(
+            "declare_type",
+            serde_json::json!({
+                "name": "warranty",
+                "fields": [
+                    {"key": "expires", "holds": "date"},
+                    {"key": "cost", "holds": "number", "required": true, "unit": "eur"},
+                ],
+                "sid": "any",
+            }),
+        )));
+        assert!(
+            advice.contains("fields[1].required") && advice.contains("fields[1].unit"),
+            "the refusal names every argument inside the list, by path and by element: {advice}"
+        );
+        assert!(
+            advice.contains("key") && advice.contains("holds"),
+            "…and what a list element does take: {advice}"
+        );
+
+        assert!(
+            jojobot
+                .unimplemented_arguments(&call(
+                    "declare_type",
+                    serde_json::json!({
+                        "name": "warranty",
+                        "fields": [{"key": "expires", "holds": "date"}],
+                        "sid": "any",
+                    }),
+                ))
+                .is_none(),
+            "a well-formed list was turned back"
+        );
+    }
+
     /// **Every argument that was not understood, not just the first**, and what
     /// the verb does take beside them — a caller fixing one at a time
     /// round-trips once per mistake, and one told only what is wrong has to go
@@ -209,11 +450,64 @@ mod tests {
     fn no_served_verb_publishes_an_empty_argument_schema() {
         for tool in Jojobot::tool_router().list_all() {
             assert!(
-                !published(&tool.input_schema).is_empty(),
+                published(&tool.input_schema).is_some_and(|takes| !takes.is_empty()),
                 "{} publishes no arguments — the branch that answers for one is reachable again",
                 tool.name
             );
         }
+    }
+
+    /// **Every sub-object the surface publishes is one this walk can follow.**
+    ///
+    /// This is the failure that would pass every other test here. A resolver
+    /// that cannot follow a schema shape finds no names, judges nothing, and
+    /// degrades exactly to the top-level check that came before it — which is
+    /// green. So the day schemars emits a nested type some other way, or a verb
+    /// grows a sub-object written differently, nothing would go red and the
+    /// nested half would quietly stop running.
+    ///
+    /// The tell is read out of the schema TEXT, on purpose: asking the walk
+    /// whether the walk found something proves nothing. A node whose JSON
+    /// mentions a reference, an object type or properties is one a caller can
+    /// send an object for, and every one of those must resolve to a set of
+    /// names.
+    #[test]
+    fn every_sub_object_on_the_surface_is_one_the_walk_can_follow() {
+        /// Does this argument's schema describe something a caller sends an
+        /// object for? Read from the text, so it shares no code with `fields`.
+        fn nests(node: &serde_json::Value) -> bool {
+            let text = node.to_string();
+            ["\"$ref\"", "\"type\":\"object\"", "\"properties\""]
+                .iter()
+                .any(|marker| text.contains(marker))
+        }
+
+        let mut examined = 0;
+        for tool in Jojobot::tool_router().list_all() {
+            let root = &tool.input_schema;
+            let Some(properties) = root.get("properties").and_then(|p| p.as_object()) else {
+                continue;
+            };
+            for (name, node) in properties {
+                if !nests(node) {
+                    continue;
+                }
+                examined += 1;
+                assert!(
+                    fields(node, root, 0).is_some(),
+                    "{}'s `{name}` is a sub-object this walk cannot follow, so its fields go \
+                     unchecked and nothing else here notices: {node}",
+                    tool.name,
+                );
+            }
+        }
+        // The positive the sweep rests on: it looked at something. Without
+        // this, a surface that published no sub-object at all — or a `nests`
+        // that stopped recognising one — would pass this test in silence.
+        assert!(
+            examined > 0,
+            "no sub-object was examined, so this test asserted nothing"
+        );
     }
 
     /// **A verb this server does not serve is the router's answer, not this

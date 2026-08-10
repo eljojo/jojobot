@@ -189,6 +189,44 @@ async fn nothing_on_the_surface_goes_unexercised() {
         .await
         .says("\"count\":1");
 
+    // ── an argument this surface does not have, at either level ─────────────
+
+    // The positive both refusals rest on: a well-formed `edge` walks the graph
+    // and comes back with the member. Without it, "the call was refused" would
+    // read the same on a build where every edge is refused.
+    s.add("org:springfield-cyclery", "Springfield Cyclery")
+        .await;
+    s.fact_about(
+        "person:homer",
+        "joined in the spring",
+        "membership",
+        "org:springfield-cyclery",
+    )
+    .await;
+    s.through("membership", "org:springfield-cyclery", "person")
+        .await
+        .says("person:homer");
+
+    // An argument the verb does not implement is refused by name, and nothing
+    // runs.
+    s.refused("search", json!({"query": "cyclery", "weight": 3}))
+        .await
+        .says("weight");
+
+    // …and so is one inside a sub-object, named by the path that says which
+    // level it sat at. A caller told only `weight` would go looking at the
+    // wrong one.
+    s.refused(
+        "search",
+        json!({
+            "edge": {
+                "shape": "membership", "object": "org:springfield-cyclery", "weight": 3,
+            },
+        }),
+    )
+    .await
+    .says("edge.weight");
+
     s.wrap("provenance moved, and the three filters that need no words")
         .await;
 

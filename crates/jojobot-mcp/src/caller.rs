@@ -917,6 +917,186 @@ mod tests {
         );
     }
 
+    /// **A handle that is present must be good on the READS too.**
+    ///
+    /// `search`, `recall` and `list_entities` each publish a `sid` and each
+    /// document it as what tells jojobot which bot is asking — and none of them
+    /// read it. A handle jojobot never minted, and a string that is no handle at
+    /// all, both came back with the whole answer, so a caller was told its read
+    /// was attributed while nothing had looked at the handle. An argument a verb
+    /// publishes and drops reports success for work it did not do, and optional
+    /// means implemented rather than tolerated.
+    ///
+    /// **Both halves in one run.** These are the most travelled verbs on the
+    /// surface, so the way this fix fails is a refusal that swallows a
+    /// legitimate caller: a good handle and no handle at all must still answer
+    /// in full. A test watching only the two bad handles passes identically on a
+    /// build that turns everybody away.
+    #[tokio::test]
+    async fn a_bad_sid_is_refused_by_the_reads_that_publish_it() {
+        use jojobot_domain::memory::Boot;
+
+        /// The three reads, each called the way a caller reaches it, with the
+        /// key its payload arrives under.
+        async fn reads(
+            jojobot: &Jojobot,
+            sid: Option<String>,
+        ) -> Vec<(&'static str, &'static str, serde_json::Value)> {
+            vec![
+                (
+                    "search",
+                    "results",
+                    json_of(
+                        &jojobot
+                            .search(Parameters(SearchArgs {
+                                query: Some("alpha".into()),
+                                sid: sid.clone(),
+                                ..search_args()
+                            }))
+                            .await
+                            .expect("call ok"),
+                    ),
+                ),
+                (
+                    "recall",
+                    "facts",
+                    json_of(
+                        &jojobot
+                            .recall(Parameters(RecallArgs {
+                                subject: "alpha".into(),
+                                sid: sid.clone(),
+                            }))
+                            .await
+                            .expect("call ok"),
+                    ),
+                ),
+                (
+                    "list_entities",
+                    "entities",
+                    json_of(
+                        &jojobot
+                            .list_entities(Parameters(ListEntitiesArgs { kind: None, sid }))
+                            .await
+                            .expect("call ok"),
+                    ),
+                ),
+            ]
+        }
+
+        // The search port answers with a hit, so "answers in full" below is a
+        // populated list rather than an empty one every build would produce.
+        let jojobot = handler_with(Arc::new(SpySearch::answering(vec![Hit::Entity {
+            entity: Entity {
+                id: EntityId("person:alpha".into()),
+                kind: EntityKind::Person,
+                name: "Alpha".into(),
+                aliases: Vec::new(),
+                source: "test-fixture".into(),
+                crm: None,
+                parent: None,
+                boot: Boot::OnDemand,
+            },
+            doc_id: "doc-alpha".into(),
+            edges: Vec::new(),
+        }])));
+        capture_ok(&jojobot, capture_args("alpha", "plays go")).await;
+        let good = writing_as(&jojobot);
+
+        // What the chronology holds before any read is taken. Reads are
+        // attributed and never journalled, and resolving the handle must not
+        // change that.
+        let told =
+            |sessions: Vec<Session>| -> usize { sessions.iter().map(|s| s.entries.len()).sum() };
+        let before = told(
+            jojobot
+                .sessions
+                .all_sessions()
+                .await
+                .expect("all_sessions ok"),
+        );
+        // The capture above wrote one, so the count below is comparing a real
+        // chronology rather than two empty sweeps.
+        assert!(before > 0, "the fixture wrote no beat to hold steady");
+
+        // **The positives, and they carry the negatives below.** A live handle
+        // and no handle at all are both legitimate, and both answer in full.
+        for (verb, payload, body) in reads(&jojobot, Some(good.clone()))
+            .await
+            .into_iter()
+            .chain(reads(&jojobot, None).await)
+        {
+            assert_ne!(
+                body["status"], "blocked",
+                "{verb} refused a caller it must serve: {body}"
+            );
+            let got = body[payload]
+                .as_array()
+                .unwrap_or_else(|| panic!("{verb} must answer with {payload}: {body}"));
+            assert!(
+                !got.is_empty(),
+                "{verb} answered with an empty {payload}, so the refusals below prove nothing: \
+                 {body}"
+            );
+        }
+
+        // `!!!!` is no handle jojobot could have minted; `zzzz` is one it could
+        // have and never did. They send a caller to two different places, so
+        // both are here.
+        for bad in ["!!!!", "zzzz"] {
+            for (verb, payload, body) in reads(&jojobot, Some(bad.to_string())).await {
+                assert_eq!(
+                    body["status"], "blocked",
+                    "{verb} served a full answer for a handle that addresses nothing: {body}"
+                );
+                assert_eq!(body["wrote"], false, "{verb}: {body}");
+                assert_eq!(
+                    body["attempted"], bad,
+                    "{verb} must name the handle it refused: {body}"
+                );
+                assert!(
+                    body[payload].is_null(),
+                    "{verb} refused and answered anyway: {body}"
+                );
+                let how = body["how_to_proceed"]
+                    .as_str()
+                    .expect("a refusal carries a way forward");
+                assert!(!how.trim().is_empty(), "{verb}: {body}");
+            }
+        }
+
+        // The dead handle's way out is the door; the malformed one's is the
+        // string the caller sent, so the two must not read as one answer.
+        let advice = |body: &serde_json::Value| -> String {
+            body["how_to_proceed"]
+                .as_str()
+                .expect("a refusal carries a way forward")
+                .to_string()
+        };
+        let dead = advice(&reads(&jojobot, Some("zzzz".into())).await[0].2);
+        let malformed = advice(&reads(&jojobot, Some("!!!!".into())).await[0].2);
+        assert!(
+            dead.contains("start_here"),
+            "a session that is gone is told where to get another: {dead}"
+        );
+        assert_ne!(
+            dead, malformed,
+            "two handles that fail differently got one answer"
+        );
+
+        // …and none of the eighteen reads above wrote a beat.
+        assert_eq!(
+            told(
+                jojobot
+                    .sessions
+                    .all_sessions()
+                    .await
+                    .expect("all_sessions ok")
+            ),
+            before,
+            "a read journalled"
+        );
+    }
+
     /// **Two tool calls in flight on one handle must not fork the session.**
     /// rmcp runs one task per request, and the card behind a handle is read,
     /// awaited across, and written back — so without a gate both calls see "no

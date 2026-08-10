@@ -31,6 +31,13 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<ListEntitiesArgs>,
     ) -> Result<CallToolResult, McpError> {
+        // Resolved before the read runs — see [`Jojobot::attributable`]. This
+        // verb publishes a `sid` and says it is what tells jojobot who is
+        // asking, so a handle that addresses nothing is refused rather than
+        // dropped.
+        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+            return Ok(refused);
+        }
         let kind = args.kind.as_deref().map(parse_kind).transpose()?;
         let entities = self
             .memory

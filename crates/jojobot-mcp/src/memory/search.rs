@@ -437,6 +437,13 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<SearchArgs>,
     ) -> Result<CallToolResult, McpError> {
+        // Resolved before the query is built — see [`Jojobot::attributable`].
+        // This verb publishes a `sid` and says it is what tells jojobot who is
+        // asking, so a handle that addresses nothing is refused rather than
+        // dropped.
+        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+            return Ok(refused);
+        }
         let edge = args
             .edge
             .as_ref()
