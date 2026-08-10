@@ -89,6 +89,7 @@ const ROSTER: &[&str] = &[
     "person:kappa",
     "person:maude",
     "person:milhouse",
+    "person:ned-flander",
     "person:ned-flanders",
     "person:otto",
     "person:patana",

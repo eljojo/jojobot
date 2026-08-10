@@ -487,6 +487,7 @@ impl Memory for InMemoryMemory {
 /// and carries no user PII, not even in test data.
 pub mod contract {
     use super::*;
+    use crate::memory::graph;
     use crate::memory::search::{EdgeFilter, Hit, Search, SearchQuery};
     use crate::memory::types::{DeclaredType, Field, ValueType};
     use crate::memory::{
@@ -4475,6 +4476,189 @@ pub mod contract {
     }
 
     /// Run the whole contract against one store.
+    /// **A kind selects its objects, and each one's page comes back whole.**
+    ///
+    /// The journey rather than the function: the prose goes into the store,
+    /// and a query that named a KIND — never a handle — brings it back. A
+    /// charter is prose, so this is the shape behind "the objects of a kind,
+    /// with their prose", and nothing on this path knows what a charter is.
+    ///
+    /// It asserts containment rather than the whole list: the contract runs
+    /// every case against one store, so other cases' entities are legitimately
+    /// there. The negative it rests on is a different kind, which must NOT be
+    /// in a kind-scoped answer however many objects share the store.
+    pub async fn a_graph_query_selects_a_kind_and_returns_its_prose<M: Memory>(store: &M) {
+        let one = EntityId::new(EntityKind::Bot, "contract-graph-one");
+        let two = EntityId::new(EntityKind::Bot, "contract-graph-two");
+        let outsider = EntityId::person("contract-graph-outsider");
+        for id in [&one, &two, &outsider] {
+            ensure(store, id).await;
+        }
+        // Several paragraphs, because prose comes back WHOLE and a store that
+        // kept the first line would satisfy a one-line fixture.
+        let charter = "Keeps the roster.\n\nHard line: never writes to the ledger.\n\nWorks in \
+                       the yard.";
+        store
+            .set_prose(&one, charter)
+            .await
+            .expect("set_prose should succeed");
+        store
+            .set_prose(&outsider, "Not a bot, and holds a page anyway.")
+            .await
+            .expect("set_prose should succeed");
+
+        let found = graph::walk(
+            store,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    kind: Some(EntityKind::Bot),
+                    ..graph::Selection::default()
+                },
+                include: graph::Include {
+                    facts: false,
+                    prose: true,
+                },
+                follow: None,
+            },
+        )
+        .await
+        .expect("a kind is a selection");
+
+        let page = |id: &EntityId| {
+            found
+                .iter()
+                .find(|o| &o.entity.id == id)
+                .map(|o| o.prose.clone().unwrap_or_default())
+        };
+        assert_eq!(
+            page(&one).as_deref(),
+            Some(charter),
+            "the page comes back whole, through a query that named only a kind",
+        );
+        assert_eq!(
+            page(&two).as_deref(),
+            Some(""),
+            "a bot with no page comes back with an empty one, not missing from the answer",
+        );
+        assert_eq!(
+            page(&outsider),
+            None,
+            "and the kind filter holds: a person is not in an answer about bots",
+        );
+    }
+
+    /// **A key's VALUE selects, over a value that survived storage — and the
+    /// edge beside it is walkable from either end.**
+    ///
+    /// Two claims about the store in one case, because they are one write.
+    /// The value carries the punctuation battery for the reason
+    /// [`an_event_survives_capture`] does: a markdown store rewrites markdown,
+    /// so a filter comparing against what the caller SENT will miss what the
+    /// store KEPT, and a fake that stores bytes verbatim never shows it.
+    ///
+    /// The negative is the same key with the other value, which must select
+    /// the other record — a build ignoring the value passes the positive and
+    /// fails here.
+    pub async fn a_graph_query_filters_on_a_stored_value_and_walks_an_edge<M: Memory>(store: &M) {
+        let gathering = EntityId::new(EntityKind::Event, "contract-graph-gathering");
+        let coming = EntityId::person("contract-graph-coming");
+        let staying = EntityId::person("contract-graph-staying");
+        ensure(store, &gathering).await;
+
+        let yes = "yes = certain, ~confirmed~ 100% ünïcode";
+        let reply = |who: &EntityId, answer: &str, said: &str| NewFact {
+            edge: Some(Edge::new(EdgeShape::Attendance, gathering.clone())),
+            event: Some(Event {
+                kind: "contract-reply".into(),
+                metadata: [("answer".to_string(), answer.to_string())]
+                    .into_iter()
+                    .collect(),
+                refs: Vec::new(),
+            }),
+            ..NewFact::about(who.clone(), said, date(2026, 8, 10))
+        };
+        capture(store, reply(&coming, yes, "will be there")).await;
+        capture(store, reply(&staying, "no", "cannot make it")).await;
+
+        let selected = |answer: &str| {
+            let answer = answer.to_string();
+            async move {
+                let found = graph::walk(
+                    store,
+                    &graph::GraphQuery {
+                        select: graph::Selection {
+                            fields: vec![graph::FieldFilter::holding("answer", &answer)],
+                            ..graph::Selection::default()
+                        },
+                        ..graph::GraphQuery::default()
+                    },
+                )
+                .await
+                .expect("a key filter is a selection");
+                found
+                    .iter()
+                    .map(|o| o.entity.id.clone())
+                    .collect::<Vec<_>>()
+            }
+        };
+        let confirmed = selected(yes).await;
+        assert!(
+            confirmed.contains(&coming),
+            "the value the store KEPT is what the filter must match: {confirmed:?}",
+        );
+        assert!(
+            !confirmed.contains(&staying),
+            "and the other answer is not in it: {confirmed:?}",
+        );
+        let declined = selected("no").await;
+        assert!(
+            declined.contains(&staying) && !declined.contains(&coming),
+            "the same key with the other value selects the other record: {declined:?}",
+        );
+
+        // The edge, walked back from the thing both records point at. The
+        // guests were never named in this query: they are reached.
+        let walked = graph::walk(
+            store,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(gathering.clone()),
+                    ..graph::Selection::default()
+                },
+                include: graph::Include::default(),
+                follow: Some(graph::Follow {
+                    shape: Some(EdgeShape::Attendance),
+                    direction: graph::Direction::In,
+                    depth: 1,
+                }),
+            },
+        )
+        .await
+        .expect("a subject with a walk");
+        let reached: Vec<&EntityId> = walked[0].connected.iter().map(|o| &o.entity.id).collect();
+        assert!(
+            reached.contains(&&coming) && reached.contains(&&staying),
+            "both guests hang off the gathering: {reached:?}",
+        );
+        let brought = walked[0]
+            .connected
+            .iter()
+            .find(|o| o.entity.id == coming)
+            .expect("the guest who is coming");
+        assert!(
+            brought.facts.iter().any(|f| f.content == "will be there"),
+            "and a reached object arrives carrying its own records: {brought:?}",
+        );
+        assert_eq!(
+            brought.via,
+            Some(graph::Via {
+                shape: EdgeShape::Attendance,
+                direction: graph::Direction::In,
+            }),
+            "which says how the walk got to it",
+        );
+    }
+
     pub async fn run_all<M: Memory>(store: &M) {
         capture_reads_back(store).await;
         preserves_all_fields(store).await;
@@ -4554,5 +4738,8 @@ pub mod contract {
         a_type_with_no_keys_is_refused_and_writes_nothing(store).await;
         two_stored_types_may_name_one_key(store).await;
         a_stored_type_matches_a_record_that_never_declared_it(store).await;
+
+        a_graph_query_selects_a_kind_and_returns_its_prose(store).await;
+        a_graph_query_filters_on_a_stored_value_and_walks_an_edge(store).await;
     }
 }

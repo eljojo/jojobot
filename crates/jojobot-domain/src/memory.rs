@@ -21,6 +21,7 @@ use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
 pub mod event;
+pub mod graph;
 pub mod guard;
 pub mod search;
 pub mod types;
