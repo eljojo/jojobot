@@ -155,7 +155,12 @@ Shipped and live:
 > instance; the rule now runs across the surface. What a caller demonstrably
 > already has is not shipped back to them — `post_message` and `mark_processed`
 > answer with a receipt (id, state, notes, `body_bytes`, the opening line)
-> rather than echoing a body its own author wrote, `read_mailbox`'s `new_only`
+> rather than echoing a body its own author wrote. **`post_message` also takes
+> delivery of the caller's own box in the same call**, and the answer says how
+> that delivery was taken: writing is a moment a bot is demonstrably present, so
+> reading and posting are one round trip rather than two, and a bot that posts at
+> the end of a piece of work does not meet its own mail afterwards flagged as
+> something it has already seen. `read_mailbox`'s `new_only`
 > stops re-shipping a deliberately held-open message on every poll, and
 > `start_here` takes `brief` so a caller who does not need the orientation
 > essay can skip it and withholds the charter from a resume, marked so that

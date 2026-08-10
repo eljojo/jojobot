@@ -25,13 +25,15 @@ never runs inference of its own — the assistant is the only mind.
 > has is not shipped back**: the two verbs that echoed a body now answer with a
 > receipt, a poll can ask for news only, and orientation can be skipped by a
 > session that has read it — always with a marker saying what was left out and
-> how to get it. **A queue belongs to whoever drains it**: every box is listed
-> by name, and its per-state counts go to the bot that owns it (or to anyone,
-> when nobody does), so a sender sees that a box exists without being handed
-> somebody else's workload — while a quarantined message is reported to
-> everyone, because that is a fault in storage rather than a queue.
-> **`search` spans both**: one ranked list over entities, facts, prose and
-> messages, mail **opt-in** through `include_mail` and searchable in every
+> how to get it. **A queue belongs to whoever drains it**: a box is named and
+> counted to the bot that owns it, and every other bot comes back as a handle
+> with its counts left out, so nobody is handed somebody else's workload — while
+> a quarantined message is reported to everyone, because that is a fault in
+> storage rather than a queue. **Posting takes delivery of the caller's own box
+> in the same call**, so a bot that writes at the end of a piece of work does not
+> meet its own mail afterwards as though it had never seen it.
+> **`search` spans both**: one ranked list over entities, facts, prose, messages
+> and a bot's own past runs, mail **opt-in** through `include_mail` and searchable in every
 > state (`processed` archives too), each mail hit carrying its box, state,
 > sender and id. **Every answer is backed by a read taken for it** — each half
 > re-reads its own store before answering, so a record the store has since lost
@@ -143,7 +145,7 @@ Two consequences worth stating outright, because they surprise people:
 |---|---|
 | `capture` | Remembering a fact about something, with its provenance and optionally one typed edge to another entity. |
 | `recall` | Reading back what is recorded about one subject. |
-| `search` | Finding something across everything held — entities, facts, prose and messages in one ranked list, each hit arriving with its surroundings. |
+| `search` | Finding something across everything held — entities, facts, prose, messages and the bot's own past runs in one ranked list, each hit arriving with its surroundings. |
 | `add_entity` | Bringing a new thing into memory. Screened against near-misses first, so a typo never mints a duplicate. |
 | `update_entity` | Maintaining what a thing is called, and its other metadata. |
 | `update_fact` | Correcting something recorded wrong — rewritten in place, never as an addendum. Also how a claim gets confirmed, or a refutation recorded as standing truth. |
