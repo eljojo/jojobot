@@ -301,6 +301,14 @@ pub struct Object {
     pub prose: Option<String>,
     /// The objects one hop further out, each carrying its own.
     pub connected: Vec<Object>,
+    /// **This object has edges nobody followed.** Either the walk ran out of
+    /// hops here, or the objects beyond it were already in the answer.
+    ///
+    /// Without it an empty `connected` says two different things — the walk
+    /// stopped, or there is nothing there — and a reader who has to infer
+    /// which will eventually infer wrong. A caller that wants the rest asks
+    /// again with a deeper walk, or from this handle.
+    pub unwalked: bool,
 }
 
 /// **The walk, over a store's own documents.** Pure: no I/O, no store, so the
@@ -444,22 +452,33 @@ impl<'a> Ctx<'a> {
         };
 
         let mut connected = Vec::new();
+        let mut unwalked = false;
         if let Some(follow) = follow {
-            let next = (follow.depth > 1).then(|| Follow {
-                depth: follow.depth - 1,
-                ..follow.clone()
-            });
-            for (shape, reached) in self.neighbours(id, &kept, follow) {
-                // The visited set is per root, so a cycle stops and two roots
-                // that share a neighbour each still report it.
-                if !seen.insert(reached.clone()) {
-                    continue;
+            let reachable = self.neighbours(id, &kept, follow);
+            if follow.depth == 0 {
+                // The ceiling. The neighbours are computed and not returned,
+                // which is the one case where an empty `connected` would
+                // otherwise read as "nothing is there".
+                unwalked = !reachable.is_empty();
+            } else {
+                let next = Follow {
+                    depth: follow.depth - 1,
+                    ..follow.clone()
+                };
+                for (shape, reached) in reachable {
+                    // The visited set is per root, so a cycle stops and two
+                    // roots that share a neighbour each still report it — and
+                    // the object whose edge was not followed says so.
+                    if !seen.insert(reached.clone()) {
+                        unwalked = true;
+                        continue;
+                    }
+                    let via = Some(Via {
+                        shape,
+                        direction: follow.direction,
+                    });
+                    connected.push(self.expand(&reached, via, query, Some(&next), seen));
                 }
-                let via = Some(Via {
-                    shape,
-                    direction: follow.direction,
-                });
-                connected.push(self.expand(&reached, via, query, next.as_ref(), seen));
             }
         }
 
@@ -476,6 +495,7 @@ impl<'a> Ctx<'a> {
                 .prose
                 .then(|| self.prose.get(id).copied().unwrap_or_default().to_string()),
             connected,
+            unwalked,
         }
     }
 
@@ -1016,6 +1036,64 @@ mod tests {
             from_patana(1)[0].connected[0].connected.is_empty(),
             "one hop stops at the party: {:?}",
             from_patana(1),
+        );
+    }
+
+    /// **A walk that stopped says so, and one that ran out of graph does
+    /// not.** An empty `connected` otherwise means two different things —
+    /// the hops ran out, or there is nothing there — and a reader who has to
+    /// infer which will eventually infer wrong.
+    ///
+    /// Three states in one case, because the flag is only worth anything if it
+    /// is off when it should be: cut short at the ceiling, cut short by a
+    /// neighbour already in the answer, and genuinely at the end of the graph.
+    #[test]
+    fn an_object_says_when_it_has_edges_nobody_followed() {
+        let scanned = store();
+        let from_patana = |depth: usize| {
+            resolve(
+                &scanned,
+                &GraphQuery {
+                    select: Selection {
+                        subject: Some(EntityId("person:patana".into())),
+                        ..Selection::default()
+                    },
+                    include: Include {
+                        facts: false,
+                        prose: false,
+                    },
+                    follow: Some(Follow {
+                        shape: None,
+                        direction: Direction::Out,
+                        depth,
+                    }),
+                },
+            )
+            .expect("a walk out of a subject")
+        };
+
+        let one = from_patana(1);
+        let party = &one[0].connected[0];
+        assert!(
+            party.connected.is_empty() && party.unwalked,
+            "the party was reached on the last hop and its own edges were not followed: {party:?}",
+        );
+        assert!(
+            !one[0].unwalked,
+            "and the root's one edge WAS followed, so nothing was left out there: {:?}",
+            one[0],
+        );
+
+        let two = from_patana(2);
+        let party = &two[0].connected[0];
+        assert!(
+            party.unwalked,
+            "at two hops the party still points back at Patana, who is already in the answer: \
+             {party:?}",
+        );
+        assert!(
+            !party.connected[0].unwalked,
+            "and the tavern draws no edge at all, so nothing was left out there: {party:?}",
         );
     }
 
