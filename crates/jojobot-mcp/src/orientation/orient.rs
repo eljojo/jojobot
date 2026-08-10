@@ -113,7 +113,8 @@ impl Jojobot {
                 let mine = self.ownership_of(boxes, bot);
                 serde_json::json!({
                     "available": true,
-                    "note": "the entity roster is unreadable, so mail is listed by owner here                              rather than beside the bots",
+                    "note": "the entity roster is unreadable, so mail is listed by owner here \
+                             rather than beside the bots",
                     "by_owner": boxes
                         .iter()
                         .map(|b| serde_json::json!({
@@ -293,6 +294,20 @@ mod tests {
         assert_eq!(
             booted["snapshot"]["entities"]["available"], false,
             "the entity index must be down, or this proves nothing: {booted}"
+        );
+        // **The note beside it is prose somebody reads.** A run of spaces in
+        // one is source indentation that escaped a wrapped literal — the
+        // file's own layout arriving in a sentence.
+        let note = booted["snapshot"]["mail"]["note"]
+            .as_str()
+            .expect("the degraded shape says why it is shaped that way");
+        assert!(
+            note.contains("listed by owner"),
+            "the note explains this shape: {note:?}"
+        );
+        assert!(
+            !note.contains("  "),
+            "…as one run of prose, with none of the source's indentation in it: {note:?}"
         );
     }
 

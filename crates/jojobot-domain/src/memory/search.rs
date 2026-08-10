@@ -230,9 +230,10 @@ impl SearchQuery {
             .filter(|t| !t.is_empty())
     }
 
-    /// Is this query scoped to **facts alone**? `status`, `provenance`, `subject`
-    /// and `edge` are properties only a fact has, so naming one is a statement
-    /// that entities and prose are not what the caller is looking for.
+    /// Is this query scoped to **facts alone**? `status`, `provenance`,
+    /// `subject`, `edge` and `answers_type` are properties only a fact has, so
+    /// naming one is a statement that entities and prose are not what the
+    /// caller is looking for.
     ///
     /// The *default* status (active only) does not count — a default must not
     /// silently narrow a search to one hit type.

@@ -225,9 +225,9 @@ impl MailExcluded {
                  find a report another session filed."
             }
             MailExcluded::FactScoped => {
-                "this query filters on a property only a fact has (status, provenance, subject \
-                 or edge), so it is a question about facts — messages, entities and prose are \
-                 all out of it."
+                "this query filters on a property only a fact has (status, provenance, subject, \
+                 edge or answers_type), so it is a question about facts — messages, entities and \
+                 prose are all out of it."
             }
             MailExcluded::KindFiltered => {
                 "this query narrows to one entity kind, and a message belongs to no entity, so \
@@ -604,6 +604,37 @@ mod tests {
             None,
             "a query that asks for mail and narrows nothing holds none of these reasons"
         );
+    }
+
+    /// **The note names every filter that can reach it.** A caller reading
+    /// "this query filters on a property only a fact has" and then a list
+    /// without the filter they passed is told their answer was narrowed by
+    /// something they never sent — and goes looking for it.
+    ///
+    /// A type filter is that case: it is fact-only for the same reason the
+    /// others are, and it is the one a caller passes deliberately.
+    #[test]
+    fn the_fact_scoped_note_names_every_filter_that_reaches_it() {
+        let by_type = SearchQuery {
+            answers_type: Some(DeclaredType {
+                name: "kiln-firing".into(),
+                fields: Vec::new(),
+            }),
+            ..asking_for_mail()
+        };
+        assert_eq!(
+            MailExcluded::of(&by_type),
+            Some(MailExcluded::FactScoped),
+            "a type filter is one of the fact-only filters"
+        );
+        let served = mail_coverage(&by_type, Coverage::Loaded);
+        let note = served["note"].as_str().expect("a note");
+        for filter in ["status", "provenance", "subject", "edge", "answers_type"] {
+            assert!(
+                note.contains(filter),
+                "the note leaves out {filter}, which is one of the filters that reaches it: {note}"
+            );
+        }
     }
 
     /// **Mail is opt-in at the door, and the opt-in reaches the port.**
