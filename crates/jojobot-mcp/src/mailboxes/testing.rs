@@ -93,7 +93,7 @@ pub(crate) async fn send_titled(
 ) -> serde_json::Value {
     let result = jojobot
         .post_message(Parameters(PostMessageArgs {
-            mailbox: mailbox.into(),
+            to: mailbox.into(),
             sid: as_bot(jojobot, sender),
             subject: subject.map(str::to_string),
             body: body.into(),
@@ -119,6 +119,26 @@ pub(crate) async fn owning(jojobot: &Jojobot, bot: &str) -> String {
     as_bot(jojobot, bot)
 }
 
+/// A second box for a bot that already has one — **written straight to the
+/// store**, because no verb on this surface can produce it: a box opens with
+/// its bot, and nothing else opens one. One box per bot is what every read
+/// path is entitled to assume, so this is the damage those paths must report.
+pub(crate) async fn a_second_box(jojobot: &Jojobot, bot: &str, name: &str) {
+    let written = jojobot
+        .mailboxes
+        .create_mailbox(
+            &MailboxName(name.into()),
+            &EntityId::new(EntityKind::Bot, bot),
+            None,
+        )
+        .await
+        .expect("the store writes it");
+    assert!(
+        matches!(written, mailbox::Guarded::Written(_)),
+        "the fixture second box {name:?} was never opened, so nothing below is damage"
+    );
+}
+
 /// A mailbox world that answers nothing. Shared by both orientation doors:
 /// they make the same promise, so they are held to it by the same double.
 pub(crate) struct DownMailboxes;
@@ -136,6 +156,41 @@ pub(crate) fn handler_with_mailboxes_down(memory: Arc<InMemoryMemory>) -> Jojobo
 /// A store that reads fine and refuses every creation — the shape the crash
 /// window takes when the heal itself cannot land.
 pub(crate) struct UnopenableMailboxes(pub(crate) InMemoryMailboxes);
+
+/// **A store that says how often the board was read.** `list_mailboxes` hands
+/// back the whole table, so how many times one answer reaches for it is the
+/// difference between deriving several facts from one read and asking the
+/// store the same question twice.
+pub(crate) struct CountingMailboxes {
+    inner: InMemoryMailboxes,
+    listings: std::sync::atomic::AtomicUsize,
+}
+
+impl CountingMailboxes {
+    /// How many times the board has been read so far. A test takes it either
+    /// side of the call it is measuring, because the fixtures that stage the
+    /// world read the board too.
+    pub(crate) fn listings(&self) -> usize {
+        self.listings.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+/// A handler over a board that counts its own reads, and the handle the test
+/// asks for the count.
+pub(crate) fn counting_handler() -> (Jojobot, Arc<CountingMailboxes>) {
+    let mailboxes = Arc::new(CountingMailboxes {
+        inner: InMemoryMailboxes::knowing_any_owner(),
+        listings: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let jojobot = Jojobot::new(
+        Arc::new(InMemoryMemory::new()),
+        Arc::new(SpySearch::default()),
+        mailboxes.clone(),
+        Arc::new(InMemorySessions::new()),
+        crate::harness::seeded_registry(),
+    );
+    (jojobot, mailboxes)
+}
 
 /// Write a bot straight to Memory, with no box — the damage the heal exists
 /// to repair. The surface cannot produce this state, which is the point.
@@ -184,6 +239,7 @@ impl mailbox::Mailboxes for DownMailboxes {
     async fn read_mailbox(
         &self,
         _: &mailbox::MailboxName,
+        _: mailbox::TakenBy,
     ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
         Err(mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
@@ -237,8 +293,9 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
     async fn read_mailbox(
         &self,
         name: &mailbox::MailboxName,
+        taken_by: mailbox::TakenBy,
     ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
-        self.0.read_mailbox(name).await
+        self.0.read_mailbox(name, taken_by).await
     }
     async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
         self.0.scan_messages().await
@@ -255,5 +312,51 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
         notes: Option<&str>,
     ) -> Result<mailbox::Message, mailbox::MailboxError> {
         self.0.mark_processed(id, notes).await
+    }
+}
+
+#[async_trait]
+impl mailbox::Mailboxes for CountingMailboxes {
+    async fn create_mailbox(
+        &self,
+        name: &mailbox::MailboxName,
+        owner: &EntityId,
+        note: Option<&str>,
+    ) -> Result<mailbox::Guarded<mailbox::Mailbox>, mailbox::MailboxError> {
+        self.inner.create_mailbox(name, owner, note).await
+    }
+    async fn list_mailboxes(&self) -> Result<Vec<mailbox::Mailbox>, mailbox::MailboxError> {
+        self.listings
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.inner.list_mailboxes().await
+    }
+    async fn post_message(
+        &self,
+        new: mailbox::NewMessage,
+    ) -> Result<mailbox::Guarded<mailbox::Message>, mailbox::MailboxError> {
+        self.inner.post_message(new).await
+    }
+    async fn read_mailbox(
+        &self,
+        name: &mailbox::MailboxName,
+        taken_by: mailbox::TakenBy,
+    ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
+        self.inner.read_mailbox(name, taken_by).await
+    }
+    async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
+        self.inner.scan_messages().await
+    }
+    async fn read_message(
+        &self,
+        id: &mailbox::MessageId,
+    ) -> Result<mailbox::Delivered, mailbox::MailboxError> {
+        self.inner.read_message(id).await
+    }
+    async fn mark_processed(
+        &self,
+        id: &mailbox::MessageId,
+        notes: Option<&str>,
+    ) -> Result<mailbox::Message, mailbox::MailboxError> {
+        self.inner.mark_processed(id, notes).await
     }
 }

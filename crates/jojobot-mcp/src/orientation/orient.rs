@@ -95,50 +95,99 @@ impl Jojobot {
         // and it posed the same question the own-box norm then has to answer in
         // prose: is that unread one mine? An anonymous `start_here` owns
         // nothing, which is exactly right for a caller that only posts.
+        //
+        // **Mail hangs off the bot that owns it, and is no longer a population
+        // of its own.** A box belongs to exactly one bot and is not a peer of
+        // it, so a boot that listed boxes beside bots asked a caller to hold
+        // two directories and the correspondence between them. Addressing is by
+        // handle now; a box name is not something anybody needs.
         let listed = self.mailboxes.list_mailboxes().await;
-        let mailboxes = match listed {
-            Ok(boxes) => {
-                let mine = self.ownership_of(&boxes, bot);
+        let mail = match &listed {
+            // **When there is no roster to hang mail on, mail answers for
+            // itself.** The bots come from Memory, so a Memory that cannot be
+            // read would otherwise take the whole mail board down with it —
+            // and whose box is whose is the mail world's own fact, never
+            // Memory's. So an unreadable entity index costs the roster and
+            // nothing else.
+            Ok(boxes) if entities["available"] == serde_json::Value::Bool(false) => {
+                let mine = self.ownership_of(boxes, bot);
                 serde_json::json!({
-                "available": true,
-                "counts_shown_for": mine.shown_for(&boxes),
-                "note": mine.note(),
-                "boxes": boxes
-                    .iter()
-                    .map(|b| {
-                        if mine.drains(b.name.as_str()) {
-                            let mut body = mailbox_json(b);
-                            if let Some(obj) = body.as_object_mut() {
-                                obj.insert("yours".into(), true.into());
-                            }
-                            body
-                        } else {
-                            serde_json::json!({
-                                "name": b.name.as_str(),
-                                "yours": false,
-                                "counts": serde_json::Value::Null,
-                                "counts_elided": true,
-                                // **Quarantine is not a count, and it does not
-                                // ride out with them.** It is the only place an
-                                // unreadable card's existence shows, and the
-                                // caller who most needs it is a SENDER — who by
-                                // definition does not drain this box, and would
-                                // otherwise conclude their message was never
-                                // sent. What is scoped away is somebody's
-                                // queue, never a fault on the board.
-                                "quarantined": quarantined_json(b),
-                            })
-                        }
-                    })
-                    .collect::<Vec<_>>(),
+                    "available": true,
+                    "note": "the entity roster is unreadable, so mail is listed by owner here                              rather than beside the bots",
+                    "by_owner": boxes
+                        .iter()
+                        .map(|b| serde_json::json!({
+                            "owner": b.owner.as_str(),
+                            "yours": mine.drains(b.name.as_str()),
+                            "mail": match mine.drains(b.name.as_str()) {
+                                true => mailbox_json(b),
+                                false => serde_json::json!({
+                                    "counts": serde_json::Value::Null,
+                                    "counts_elided": true,
+                                    "quarantined": quarantined_json(b),
+                                }),
+                            },
+                        }))
+                        .collect::<Vec<_>>(),
                 })
             }
+            Ok(_) => serde_json::json!({ "available": true }),
             Err(_) => serde_json::json!({
                 "available": false,
                 "note": "the mailbox world is not reachable right now — its tools will say why",
             }),
         };
-        let snapshot = serde_json::json!({ "entities": entities, "mailboxes": mailboxes });
+        let mut entities = entities;
+        if let (Ok(boxes), Some(object)) = (&listed, entities.as_object_mut()) {
+            let mine = self.ownership_of(boxes, bot);
+            let by_owner = |handle: &str| {
+                let owned: Vec<_> = boxes
+                    .iter()
+                    .filter(|b| b.owner.as_str() == handle)
+                    .collect();
+                match owned.as_slice() {
+                    [] => None,
+                    [b] => Some(match mine.drains(b.name.as_str()) {
+                        true => mailbox_json(b),
+                        // Somebody else's queue is not yours to weigh. Their
+                        // quarantine still rides out: it is the only place an
+                        // unreadable card shows, and the caller who most needs
+                        // it is a SENDER, who would otherwise conclude their
+                        // message was never sent.
+                        false => serde_json::json!({
+                            "counts": serde_json::Value::Null,
+                            "counts_elided": true,
+                            "quarantined": quarantined_json(b),
+                        }),
+                    }),
+                    // **Two boxes is damage, and no count over one of them is
+                    // an answer.** One box per bot is settled, so weighing the
+                    // first match would tell a session its mail was measured
+                    // whole while a second box sat beside it, unnamed.
+                    several => Some(several_boxes_json(several.iter().copied())),
+                }
+            };
+            if let Some(serde_json::Value::Array(bots)) = object.get_mut("bots") {
+                for entry in bots.iter_mut() {
+                    let Some(handle) = entry.as_str().map(str::to_string) else {
+                        continue;
+                    };
+                    // Yours is a fact about identity, not about the board: the
+                    // bot you booted as is the one whose mail is yours.
+                    let yours = bot.is_some_and(|booted| booted.as_str() == handle);
+                    *entry = serde_json::json!({
+                        "handle": handle,
+                        "yours": yours,
+                        // **Absent rather than empty when a bot has no box.**
+                        // A box opens with the bot that owns it, so this is
+                        // damage, and it is named where a boot repairs it
+                        // rather than rendered as a bot with a quiet inbox.
+                        "mail": by_owner(&handle),
+                    });
+                }
+            }
+        }
+        let snapshot = serde_json::json!({ "entities": entities, "mail": mail });
         // **Only after the identity resolved.** A name that is no bot boots
         // nothing, so it starts no session and sweeps nothing either — binding
         // a connection to an identity jojobot just refused would be a session
@@ -217,20 +266,45 @@ mod tests {
             Arc::new(InMemorySessions::new()),
             crate::harness::seeded_registry(),
         );
-        // Read through the boot snapshot, which is where the scoping lives:
-        // this is the door that applies the ownership rule.
-        let listed = boot(&blind, "dev").await["snapshot"]["mailboxes"].clone();
+        // **Read through the identity, which is where a caller's own mail now
+        // lives.** The snapshot hangs mail off the bots, and the bots come from
+        // Memory — so when Memory cannot be read there is no roster to hang
+        // anything on. The caller's own box does not depend on that: it is the
+        // mail world's own answer, and this is the half that must not go quiet.
+        let booted = boot(&blind, "dev").await;
+        // **Mail answers for itself when there is no roster to hang it on.**
+        // The bots come from Memory, so folding mail onto them would let an
+        // unreadable entity index take the mail board down with it — and whose
+        // box is whose is the mail world's own fact.
+        let mine = booted["snapshot"]["mail"]["by_owner"]
+            .as_array()
+            .unwrap_or_else(|| panic!("mail answers by owner here: {booted}"))
+            .iter()
+            .find(|b| b["yours"] == true)
+            .unwrap_or_else(|| panic!("the caller's own box is named: {booted}"))
+            .clone();
 
-        assert_eq!(listed["boxes"][0]["yours"], true, "{listed}");
         assert_eq!(
-            listed["boxes"][0]["counts"]["new"], 1,
-            "the mail world knows whose box this is without asking Memory: {listed}"
+            mine["mail"]["counts"]["new"], 1,
+            "the mail world knows whose box this is without asking Memory: {booted}"
         );
+        // The positive it rests on: Memory really is unreadable in this boot,
+        // so the counts above cannot have come from a roster.
         assert_eq!(
-            listed["counts_shown_for"],
-            serde_json::json!(["dev"]),
-            "{listed}"
+            booted["snapshot"]["entities"]["available"], false,
+            "the entity index must be down, or this proves nothing: {booted}"
         );
+    }
+
+    /// One bot's entry out of a boot's snapshot, by bare name.
+    fn bot_entry(booted: &serde_json::Value, name: &str) -> serde_json::Value {
+        booted["snapshot"]["entities"]["bots"]
+            .as_array()
+            .expect("the bots")
+            .iter()
+            .find(|b| b["handle"] == format!("bot:{name}"))
+            .unwrap_or_else(|| panic!("{name} is on the board: {booted}"))
+            .clone()
     }
 
     /// **A fault on the board is not somebody's queue, and it is not scoped
@@ -257,23 +331,17 @@ mod tests {
         );
 
         let booted = boot(&jojobot, "gamma").await;
-        let theirs = booted["snapshot"]["mailboxes"]["boxes"]
-            .as_array()
-            .expect("boxes")
-            .iter()
-            .find(|b| b["name"] == "delta")
-            .expect("delta's box")
-            .clone();
+        let theirs = bot_entry(&booted, "delta");
         assert_eq!(theirs["yours"], false);
         assert!(
-            theirs["counts"].is_null(),
+            theirs["mail"]["counts"].is_null(),
             "somebody else's queue stays theirs: {theirs}"
         );
         assert_eq!(
-            theirs["quarantined"]["count"], 1,
+            theirs["mail"]["quarantined"]["count"], 1,
             "…and the fault on it does not: {booted}"
         );
-        assert_eq!(theirs["quarantined"]["ids"][0], "4212");
+        assert_eq!(theirs["mail"]["quarantined"]["ids"][0], "4212");
     }
 
     /// A boot sees its own box's counts in the snapshot, and names only for the
@@ -287,27 +355,17 @@ mod tests {
         send(&jojobot, "delta", "sigma", "not your business").await;
 
         let booted = boot(&jojobot, "gamma").await;
-        let boxes = booted["snapshot"]["mailboxes"]["boxes"]
-            .as_array()
-            .expect("boxes")
-            .clone();
-        let find = |name: &str| {
-            boxes
-                .iter()
-                .find(|b| b["name"] == name)
-                .expect("the box")
-                .clone()
-        };
+        let find = |name: &str| bot_entry(&booted, name);
 
         assert_eq!(
-            find("gamma")["counts"]["new"],
+            find("gamma")["mail"]["counts"]["new"],
             1,
-            "my box, counted: {booted}"
+            "my mail, counted: {booted}"
         );
         assert_eq!(find("gamma")["yours"], true);
         assert!(
-            find("delta")["counts"].is_null(),
-            "somebody else's, name only: {booted}"
+            find("delta")["mail"]["counts"].is_null(),
+            "somebody else's queue is not mine to weigh: {booted}"
         );
         assert_eq!(find("delta")["yours"], false);
         // No `ownership_known` flag: it could only ever say `true` where it
@@ -316,15 +374,120 @@ mod tests {
         // false. A field that cannot vary is a question a reader branches on
         // and learns nothing from.
         assert!(
-            booted["snapshot"]["mailboxes"]
-                .get("ownership_known")
-                .is_none(),
+            find("gamma")["mail"].get("ownership_known").is_none(),
             "a flag that cannot be false is not an answer: {booted}"
         );
 
         // The bot's own box still comes back in full under `identity`, which is
         // the whole point of booting as somebody.
         assert_eq!(booted["identity"]["owned_mailbox"]["counts"]["new"], 1);
+    }
+
+    /// **A bot holding two boxes is damage on the board too, not a bot with a
+    /// tidy inbox.** Rendering the first match's counts would tell a session
+    /// its mail is weighed and whole while a second box sits beside it,
+    /// unnamed and uncounted — the same half-answer a read of one of them
+    /// would be.
+    #[tokio::test]
+    async fn a_boot_reports_a_bot_holding_two_boxes_as_damage() {
+        let jojobot = mailbox_handler();
+        make_bot(&jojobot, "gamma").await;
+        send(&jojobot, "gamma", "delta", "your hand-off").await;
+        a_second_box(&jojobot, "gamma", "sigma").await;
+
+        let booted = boot(&jojobot, "gamma").await;
+        let mine = bot_entry(&booted, "gamma");
+        assert_eq!(
+            mine["yours"], true,
+            "this is the caller's own entry, or the rest proves nothing: {booted}"
+        );
+        assert!(
+            mine["mail"]["counts"].is_null(),
+            "a count over one of two boxes is a number nobody can use: {mine}"
+        );
+        let damage = mine["mail"]["damage"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the entry says what is wrong with it: {mine}"));
+        assert!(
+            damage.contains("gamma") && damage.contains("sigma"),
+            "…and names both boxes, or nobody can go and look: {damage}"
+        );
+    }
+
+    /// **The two halves of one boot say the same thing about a bot's own
+    /// box.** `identity.owned_mailbox` is the field a session is pointed at,
+    /// and the snapshot beside it is the field it can cross-check against — so
+    /// a payload that weighs one of two boxes in the first and refuses to weigh
+    /// them in the second hands a session half its mail as all of it, as
+    /// settled truth, next to a sentence saying that cannot be done. Neither
+    /// half is checkable on its own; this reads both out of one answer.
+    #[tokio::test]
+    async fn both_halves_of_a_boot_refuse_to_weigh_a_bot_holding_two_boxes() {
+        let jojobot = mailbox_handler();
+        make_bot(&jojobot, "gamma").await;
+        // Mail first: a bot already holding two boxes cannot be posted to, so
+        // the fixture's mail has to land while it holds one.
+        send(&jojobot, "gamma", "delta", "your hand-off").await;
+        a_second_box(&jojobot, "gamma", "sigma").await;
+
+        let booted = boot(&jojobot, "gamma").await;
+        let identity = booted["identity"]["owned_mailbox"].clone();
+        let snapshot = bot_entry(&booted, "gamma")["mail"].clone();
+
+        // **The positives both refusals rest on.** Both halves are in this one
+        // payload and both are about a readable world — an answer missing
+        // either half would satisfy every "is null" below without refusing
+        // anything.
+        assert_eq!(
+            identity["available"], true,
+            "the mailbox world answered, so this is a ruling and not an outage: {booted}"
+        );
+        let refused = snapshot["damage"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the snapshot half calls it damage: {booted}"));
+        let owned = identity["damage"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the identity half calls it damage too: {booted}"));
+        assert_eq!(
+            owned, refused,
+            "one payload, one account of what is wrong: {booted}"
+        );
+        assert!(
+            owned.contains("gamma") && owned.contains("sigma"),
+            "…naming both boxes, or nobody can go and look: {owned}"
+        );
+        assert!(
+            owned.contains("person"),
+            "…and saying it takes a person, because no verb of the caller's repairs it: {owned}"
+        );
+
+        // Neither half weighs a box, and neither picks one as the answer.
+        assert!(
+            identity["counts"].is_null() && snapshot["counts"].is_null(),
+            "a count over one of two boxes is a number nobody can use: {booted}"
+        );
+        assert!(
+            identity["name"].is_null(),
+            "naming one of the two is the same choice as counting it: {identity}"
+        );
+
+        // …and there is mail in one of those boxes, still waiting — so this
+        // refused an answer it could have given, rather than passing because
+        // the board is empty.
+        let held: Vec<_> = jojobot
+            .mailboxes
+            .list_mailboxes()
+            .await
+            .expect("list ok")
+            .into_iter()
+            .filter(|b| b.owner == EntityId::new(EntityKind::Bot, "gamma"))
+            .collect();
+        assert_eq!(held.len(), 2, "the fixture holds two boxes for one bot");
+        assert_eq!(
+            held.iter().map(|b| b.counts.new).sum::<usize>(),
+            1,
+            "and the message is there to be counted: {held:?}"
+        );
     }
 
     /// **The door's own next step was unreachable from the door.**
@@ -362,9 +525,15 @@ mod tests {
                 .expect("start_here ok"),
         );
         let entities = &anonymous["snapshot"]["entities"];
+        let handles: Vec<&str> = entities["bots"]
+            .as_array()
+            .expect("a roster")
+            .iter()
+            .map(|b| b["handle"].as_str().expect("a handle"))
+            .collect();
         assert_eq!(
-            entities["bots"],
-            serde_json::json!(["bot:delta", "bot:gamma"]),
+            handles,
+            ["bot:delta", "bot:gamma"],
             "the door has to name what it counts: {anonymous}"
         );
         // A person is not an identity you can boot as, so the roster is not
@@ -376,8 +545,12 @@ mod tests {
         // grading one.
         let listed = entities["bots"].as_array().expect("a roster");
         assert!(
-            listed.iter().all(serde_json::Value::is_string),
-            "names, not records carrying counts or charters: {anonymous}"
+            listed.iter().all(|b| b["mail"]["counts"].is_null()),
+            "no queue is weighed for a caller that drains none: {anonymous}"
+        );
+        assert!(
+            listed.iter().all(|b| b.get("charter").is_none()),
+            "and no charter rides out with the roster: {anonymous}"
         );
 
         // …and the name it hands over actually boots, which is the whole claim.
@@ -408,19 +581,20 @@ mod tests {
             .as_str()
             .expect("the identity names its box")
             .to_string();
-        let on_the_board: Vec<&str> = booted["snapshot"]["mailboxes"]["boxes"]
+        let on_the_board: Vec<String> = booted["snapshot"]["entities"]["bots"]
             .as_array()
-            .expect("boxes")
+            .expect("the bots")
             .iter()
-            .map(|b| b["name"].as_str().expect("a name"))
+            .filter(|b| !b["mail"].is_null())
+            .map(|b| b["handle"].as_str().expect("a handle").to_string())
             .collect();
         assert!(
-            on_the_board.contains(&named.as_str()),
-            "the identity named {named:?}, and the snapshot beside it does not list it: {booted}"
+            on_the_board.contains(&format!("bot:{named}")),
+            "the identity named {named:?}, and the snapshot beside it gives it no mail: {booted}"
         );
-        // …and the other bot's box is on the same board, so this is not passing
-        // because the board holds exactly one thing.
-        assert!(on_the_board.contains(&"delta"), "{booted}");
+        // …and the other bot's mail is on the same board, so this is not
+        // passing because the board holds exactly one thing.
+        assert!(on_the_board.contains(&"bot:delta".to_string()), "{booted}");
     }
 
     /// **One orientation, one door.** Naming a bot is `start_here` plus an
@@ -447,9 +621,26 @@ mod tests {
             anonymous["orientation"], identified["orientation"],
             "the world-model is one text, or the two doors teach different jojobots"
         );
+        // **What EXISTS is one answer; whose queue it is, is not.** The bots
+        // themselves are the shared invariant — their mail is scoped to the
+        // caller, which is the whole point of scoping, so a full-equality
+        // assertion here would be asserting the scoping does not happen.
+        let handles = |body: &serde_json::Value| -> Vec<String> {
+            body["snapshot"]["entities"]["bots"]
+                .as_array()
+                .expect("the bots")
+                .iter()
+                .map(|b| b["handle"].as_str().expect("a handle").to_string())
+                .collect()
+        };
         assert_eq!(
-            anonymous["snapshot"]["entities"], identified["snapshot"]["entities"],
+            handles(&anonymous),
+            handles(&identified),
             "what exists is one answer, whoever asks"
+        );
+        assert_eq!(
+            anonymous["snapshot"]["entities"]["by_kind"],
+            identified["snapshot"]["entities"]["by_kind"],
         );
         // The mailbox half is deliberately NOT equal once a bot drains a
         // box — that is the whole point of scoping counts to the caller — so
@@ -458,11 +649,11 @@ mod tests {
         // a full-equality assertion could pass for a reason that has nothing
         // to do with the invariant being claimed.
         let names = |body: &serde_json::Value| -> Vec<String> {
-            body["snapshot"]["mailboxes"]["boxes"]
+            body["snapshot"]["entities"]["bots"]
                 .as_array()
-                .expect("boxes")
+                .expect("the bots")
                 .iter()
-                .map(|b| b["name"].as_str().expect("a name").to_string())
+                .map(|b| b["handle"].as_str().expect("a handle").to_string())
                 .collect()
         };
         assert_eq!(
@@ -485,15 +676,7 @@ mod tests {
         make_box(&jojobot, "dev").await;
         send(&jojobot, "dev", "delta", "your hand-off").await;
 
-        let counts_for = |body: &serde_json::Value| -> serde_json::Value {
-            body["snapshot"]["mailboxes"]["boxes"]
-                .as_array()
-                .expect("boxes")
-                .iter()
-                .find(|b| b["name"] == "dev")
-                .expect("the box")
-                .clone()
-        };
+        let counts_for = |body: &serde_json::Value| bot_entry(body, "dev");
 
         let anonymous = json_of(
             &jojobot
@@ -507,19 +690,25 @@ mod tests {
                 .await
                 .expect("start_here ok"),
         );
-        assert!(counts_for(&anonymous)["counts"].is_null(), "{anonymous}");
+        assert!(
+            counts_for(&anonymous)["mail"]["counts"].is_null(),
+            "{anonymous}"
+        );
         assert_eq!(counts_for(&anonymous)["yours"], false);
         // Elided, never silently — the same rule the whole surface keeps: a
         // reader must not have to infer withheld from empty.
-        assert_eq!(counts_for(&anonymous)["counts_elided"], true, "{anonymous}");
         assert_eq!(
-            anonymous["snapshot"]["mailboxes"]["counts_shown_for"],
-            serde_json::json!([]),
-            "…and the answer names what it counted, which is nothing: {anonymous}"
+            counts_for(&anonymous)["mail"]["counts_elided"],
+            true,
+            "{anonymous}"
         );
 
         let identified = boot(&jojobot, "dev").await;
-        assert_eq!(counts_for(&identified)["counts"]["new"], 1, "{identified}");
+        assert_eq!(
+            counts_for(&identified)["mail"]["counts"]["new"],
+            1,
+            "{identified}"
+        );
         assert_eq!(counts_for(&identified)["yours"], true);
     }
 
@@ -592,7 +781,7 @@ mod tests {
         );
 
         // …and the snapshot degrades beside it, exactly as it does anonymously.
-        assert_eq!(body["snapshot"]["mailboxes"]["available"], false);
+        assert_eq!(body["snapshot"]["mail"]["available"], false);
     }
 }
 

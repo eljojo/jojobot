@@ -251,7 +251,7 @@ mod tests {
         // A body the record cannot carry — refused inside the domain's write.
         let empty_body = jojobot
             .post_message(Parameters(PostMessageArgs {
-                mailbox: "inbox".into(),
+                to: "inbox".into(),
                 sid: sid.clone(),
                 body: "   ".into(),
                 subject: None,
@@ -264,7 +264,7 @@ mod tests {
         // so it is not the resemblance gate answering.
         let bad_name = jojobot
             .post_message(Parameters(PostMessageArgs {
-                mailbox: "In Box!".into(),
+                to: "In Box!".into(),
                 sid: sid.clone(),
                 body: "the shipment landed".into(),
                 subject: None,
@@ -297,12 +297,14 @@ mod tests {
                 said(mailbox::validate_body("   ").expect_err("an empty body is refused")),
             ),
             (
-                "a malformed box name",
+                // **The addressee is a bot handle now, so the handle grammar
+                // is what refuses it.** A name that is no handle must not read
+                // as a colleague nobody has heard of.
+                "a malformed addressee",
                 &bad_name,
-                said(
-                    mailbox::validate_mailbox_name(&MailboxName("In Box!".into()))
-                        .expect_err("a name with a space is refused"),
-                ),
+                jojobot_domain::memory::validate_subject(&EntityId("bot:In Box!".into()))
+                    .expect_err("a handle with a space and a bang is refused")
+                    .to_string(),
             ),
             (
                 "a malformed message id",

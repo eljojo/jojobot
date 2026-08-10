@@ -435,8 +435,9 @@ impl Jojobot {
                        prose AND the messages in mailboxes at once. `query` is free text (ALL \
                        words must match) and is optional when a filter narrows it: kind · status \
                        (default active; superseded is excluded unless named) · provenance · \
-                       subject · edge {shape, object} · include_mail; a call with neither query \
-                       nor filter is refused. kind + edge answers a cross-entity question in one \
+                       subject · edge {shape, object} · answers_type; a call with neither query \
+                       nor one of those filters is refused, and include_mail is not one of them \
+                       — it says what to search, not what to narrow to. kind + edge answers a cross-entity question in one \
                        call (\"which people are in X\") by walking typed edges — prose that \
                        merely mentions X is not an answer. No hit comes back bare: a fact \
                        carries the whole claim, its address (feed that to update_fact), and who it \
@@ -460,7 +461,7 @@ impl Jojobot {
                        hits are real but anything older than this server's start is missing. \
                        Whenever `mail` carries a `note`, that note says which case you are in — \
                        read it before concluding a message does not exist. `memory` answers the \
-                       same question about entities, facts and prose: searched: false means the \
+                       same question about entities, facts and prose: searched: false means \
                        nothing in memory is searchable right now, and searched: true with a \
                        note means the \
                        index is behind the store, where `behind` says how much: `unscanned` (the \
@@ -833,6 +834,7 @@ mod tests {
                 state: mailbox::MessageState::Processed,
                 notes: Some("filed".into()),
                 in_reply_to: None,
+                taken_by: None,
             },
             snippet: "…the damper is still hand-cut…".into(),
         }]));
@@ -957,6 +959,7 @@ mod tests {
                     state: mailbox::MessageState::New,
                     notes: None,
                     in_reply_to: None,
+                    taken_by: None,
                 },
                 snippet: "…the damper…".into(),
             }]

@@ -30,7 +30,7 @@ use async_trait::async_trait;
 use jiff::Timestamp;
 use jojobot_domain::mailbox::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
-    MessageId, MessageState, NewMessage, OwnerIndex, OwnerLookup, StateCounts, guard,
+    MessageId, MessageState, NewMessage, OwnerIndex, OwnerLookup, StateCounts, TakenBy, guard,
     normalize_body, normalize_notes, normalize_subject, validate_body, validate_mailbox_name,
     validate_message_id, validate_notes, validate_sender, validate_subject,
 };
@@ -89,8 +89,13 @@ impl DoltMailboxes {
     /// card be counted here and refused there.
     async fn cards(&self, tx: &mut Transaction<'_, MySql>) -> Result<Vec<Card>, MailboxError> {
         let rows = sqlx::query(
-            "SELECT id, mailbox, ordinal, body, subject, sender, sent_at, state, notes, in_reply_to
-             FROM message",
+            // **A LEFT join, because a message that has not been delivered has
+            // no row over there** — and that absence is a fact about the
+            // message rather than a reason to leave it out.
+            "SELECT m.id, m.mailbox, m.ordinal, m.body, m.subject, m.sender, m.sent_at, m.state,
+                    m.notes, m.in_reply_to, d.taken_by
+             FROM message m
+             LEFT JOIN message_delivery d ON d.message_id = m.id",
         )
         .fetch_all(&mut **tx)
         .await
@@ -198,6 +203,13 @@ fn card_from(row: &sqlx::mysql::MySqlRow) -> Result<Card, MailboxError> {
                 .try_get::<Option<String>, _>("in_reply_to")
                 .map_err(store)?
                 .map(MessageId),
+            // A token this build cannot read says nothing rather than
+            // claiming somebody looked — see `TakenBy::of_token`.
+            taken_by: row
+                .try_get::<Option<String>, _>("taken_by")
+                .map_err(store)?
+                .as_deref()
+                .and_then(TakenBy::of_token),
         }),
         ordinal,
     ))
@@ -357,6 +369,7 @@ impl Mailboxes for DoltMailboxes {
             state: MessageState::New,
             notes: None,
             in_reply_to: message.in_reply_to,
+            taken_by: None,
         };
         sqlx::query(
             "INSERT INTO message
@@ -379,7 +392,11 @@ impl Mailboxes for DoltMailboxes {
         Ok(Guarded::Written(stored))
     }
 
-    async fn read_mailbox(&self, name: &MailboxName) -> Result<Guarded<Delivery>, MailboxError> {
+    async fn read_mailbox(
+        &self,
+        name: &MailboxName,
+        taken_by: TakenBy,
+    ) -> Result<Guarded<Delivery>, MailboxError> {
         validate_mailbox_name(name)?;
         let names = self.names().await?;
         if let guard::Decision::Block(candidates) = guard::decide_existing(name, &names) {
@@ -406,10 +423,22 @@ impl Mailboxes for DoltMailboxes {
                     .execute(&mut *tx)
                     .await
                     .map_err(store)?;
+                // **Written with the state change, in the same transaction.**
+                // A message recorded as delivered with no record of how, or
+                // the reverse, is a record that says two things.
+                sqlx::query("INSERT INTO message_delivery (message_id, taken_by) VALUES (?, ?)")
+                    .bind(message.id.as_str())
+                    .bind(taken_by.as_token())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(store)?;
             }
             delivered.push(Delivered {
                 message: Message {
                     state: MessageState::Read,
+                    // The first delivery is the one recorded, so a leftover
+                    // keeps the way it was taken the first time.
+                    taken_by: message.taken_by.or(Some(taken_by)),
                     ..message.clone()
                 },
                 seen_before,
@@ -452,6 +481,16 @@ impl Mailboxes for DoltMailboxes {
                 .execute(&mut *tx)
                 .await
                 .map_err(store)?;
+            // **Written with the state change, in the same transaction**, for
+            // the reason `read_mailbox` writes it that way: a message recorded
+            // as delivered with no record of how says two things. Taking one
+            // message by id is somebody looking.
+            sqlx::query("INSERT INTO message_delivery (message_id, taken_by) VALUES (?, ?)")
+                .bind(id.as_str())
+                .bind(TakenBy::Reading.as_token())
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
         }
         let state = if seen_before {
             message.state
@@ -460,6 +499,11 @@ impl Mailboxes for DoltMailboxes {
         };
         let message = Message {
             state,
+            // The first delivery is the one recorded, so a message already
+            // taken keeps the way it was taken then.
+            taken_by: message
+                .taken_by
+                .or((!seen_before).then_some(TakenBy::Reading)),
             ..message.clone()
         };
         tx.commit().await.map_err(store)?;
@@ -828,7 +872,7 @@ mod tests {
         // A delivery hands over what a consumer can act on. Handing over a card
         // nobody can parse would make it owed work that cannot be done.
         let jojobot_domain::mailbox::Guarded::Written(delivery) = mail
-            .read_mailbox(&MailboxName("inbox".into()))
+            .read_mailbox(&MailboxName("inbox".into()), TakenBy::Reading)
             .await
             .expect("read ok")
         else {

@@ -844,7 +844,7 @@ impl Session {
             .write(
                 &format!("posting to {mailbox}"),
                 "post_message",
-                json!({"mailbox": mailbox, "subject": subject, "body": body}),
+                json!({"to": mailbox, "subject": subject, "body": body}),
             )
             .await;
         sent["id"]

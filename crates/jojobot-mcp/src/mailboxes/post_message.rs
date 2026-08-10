@@ -8,9 +8,14 @@ use super::*;
 /// Arguments to `post_message`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PostMessageArgs {
-    /// The box to leave it in. **It must already exist** — an unknown name comes
-    /// back with candidates and nothing is written.
-    pub mailbox: String,
+    /// **The bot to write to** — a colleague, not a container: a bare name
+    /// like `gamma`, or its full handle. You address the identity and jojobot
+    /// finds its mail; a bot has exactly one box, and what that box is called
+    /// is not something you should have to know.
+    ///
+    /// **It must already exist** — a name no bot answers to comes back with
+    /// candidates and nothing is written.
+    pub to: String,
     /// The message itself. Prose: paragraphs are fine.
     pub body: String,
     /// **Your session id.** Required here, because it is what jojobot records
@@ -39,32 +44,163 @@ pub struct PostMessageArgs {
     pub in_reply_to: Option<String>,
 }
 
+/// **A bare name is a bot.** `gamma` and `bot:gamma` address the same colleague, and
+/// a caller writing to one should not have to spell the kind — this surface has
+/// exactly one kind of correspondent.
+pub(crate) fn bot_handle(named: &str) -> EntityId {
+    let named = named.trim();
+    match named.contains(':') {
+        true => EntityId(named.to_string()),
+        false => EntityId(format!("bot:{named}")),
+    }
+}
+
 /// Leave a message in a box.
+impl Jojobot {
+    /// **Nothing was written: that addressee has nowhere to receive.**
+    ///
+    /// Three different repairs wearing one refusal, and the answer says which:
+    /// a name no bot answers to (the ordinary caller mistake, answered with the
+    /// bots that do exist), a bot whose box is missing, and a bot holding more
+    /// than one — the last two being damage rather than anything a caller did.
+    pub(crate) async fn no_such_addressee(
+        &self,
+        addressee: &EntityId,
+        found: OwnBox,
+    ) -> CallToolResult {
+        let roster = self.bot_roster().await;
+        // **The near-miss screen, over the bot directory.** A typo must not
+        // send a report somewhere nobody reads, and the candidates are names
+        // the caller already knows: the same screen a creation is held to,
+        // asked the other way round.
+        let nearby = match self.memory.list_entities(Some(EntityKind::Bot)).await {
+            Ok(bots) => guard::screen(addressee, &[addressee.slug()], &bots),
+            Err(_) => Vec::new(),
+        };
+        let how_to_proceed = match found {
+            OwnBox::Several(boxes) => format!(
+                "Nothing was written. '{addressee}' owns more than one mailbox ({}), and one bot \
+                 has exactly one. This is damage rather than anything you did: jojobot will not \
+                 guess which half of somebody's mail to deliver. Report it — it needs a person.",
+                boxes
+                    .iter()
+                    .map(|b| b.as_str().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+            OwnBox::None => format!(
+                "Nothing was written. '{addressee}' has no mailbox. A box opens with the bot that \
+                 owns it, so this is a creation that did not finish rather than a step somebody \
+                 skipped — booting that bot with start_here opens it. If you meant somebody \
+                 else: {roster}.",
+            ),
+            OwnBox::Unreadable => "Nothing was written. jojobot could not read the mail board, so \
+                 it cannot say where this belongs. Nothing is wrong with your call — try it again."
+                .to_string(),
+            OwnBox::The(_) => unreachable!("a resolved box is not a refusal"),
+        };
+        // The blocked shape every other refusal on this surface wears, with
+        // the addressee as what was attempted: a caller branches on `status`,
+        // never on which gate fired.
+        blocked_body(addressee, &nearby, how_to_proceed)
+    }
+
+    /// Every bot on the board, for a refusal that offers somewhere to go.
+    /// Names only: a caller that named the wrong one is choosing, not weighing.
+    async fn bot_roster(&self) -> String {
+        let Ok(boxes) = self.mailboxes.list_mailboxes().await else {
+            return "jojobot cannot read the board to say who is there".to_string();
+        };
+        let mut names: Vec<String> = boxes
+            .iter()
+            .map(|held| held.owner.to_string())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        names.sort();
+        match names.is_empty() {
+            true => "no bot has a mailbox yet".to_string(),
+            false => names.join(", "),
+        }
+    }
+    /// **Your own waiting mail, taken as part of posting.**
+    ///
+    /// A real delivery: everything unprocessed moves out of `new` and becomes
+    /// yours to finish, exactly as opening the box would. It is recorded as
+    /// taken by POSTING rather than by reading, so the sender's own view stays
+    /// honest — `new` is the only pickup signal a sender has, and this is the
+    /// one way mail leaves it without anybody looking.
+    ///
+    /// `None` when there is nothing to hand over or nowhere to read from. A
+    /// post that could not also deliver is still a post that succeeded: the
+    /// message was filed, which is what the caller asked for.
+    async fn delivered_with_the_post(
+        &self,
+        bot: &EntityId,
+        posted_into: &mailbox::MailboxName,
+    ) -> Option<serde_json::Value> {
+        let OwnBox::The(own) = self.own_box(bot).await else {
+            return None;
+        };
+        // **A note you left yourself is not mail you have received.** Posting
+        // into your own box and taking delivery in the same call would hand
+        // you back the message you had just written, marked as delivered — the
+        // call undoing itself, and the one message on the board a caller
+        // demonstrably already has.
+        if &own == posted_into {
+            return None;
+        }
+        let taken = self
+            .mailboxes
+            .read_mailbox(&own, mailbox::TakenBy::Posting)
+            .await
+            .ok()?;
+        let mailbox::Guarded::Written(delivery) = taken else {
+            return None;
+        };
+        if delivery.messages.is_empty() {
+            return None;
+        }
+        // The same rendering `read_mailbox` uses, so mail taken this way reads
+        // identically to mail somebody went and got. `new_only` is the same
+        // default too: a leftover is still owed, and its body was shipped once.
+        Some(delivery_json(&delivery, true))
+    }
+}
+
 #[tool_router(router = post_message_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Leave a message for someone who is not in this conversation. The box \
-                       must ALREADY EXIST — an unknown name comes back status: blocked with \
-                       candidates and nothing is written. There is no verb that opens a box: a \
-                       box is some bot's own and arrives with it, so a name nobody answers to is \
-                       a name nobody drains. Returns the stored message, including the id that \
-                       read_message and mark_processed later target. Give it a `subject`: one \
-                       line saying what the message is about, which is what a reader sees on the \
+        description = "Leave a message for someone who is not in this conversation. THE GATE IS \
+                       THE ADDRESSEE'S MAILBOX, not the name alone: `to` must come down to exactly \
+                       one box jojobot can read, so a name no colleague answers to and a colleague \
+                       whose mail is missing or doubled both come back status: blocked with \
+                       nothing written. The answer says which — the first is a name to fix, \
+                       offered the bots that do exist; the second is damage on a bot that really \
+                       is there, and it says what repairs it. There is no verb that opens a box: a \
+                       box is some bot's own and arrives with it, so a name nobody answers to is a \
+                       name nobody drains. Returns the stored message, including the id that \
+                       read_message and mark_processed later target. Give it a `subject`: one line \
+                       saying what the message is about, which is what a reader sees on the \
                        listing and on a search hit before opening anything — put it there rather \
-                       than on the body's first line. The `state` you get back is the state as \
-                       it stands — it can already say `read` if a person picked the message up \
-                       in between, and that is success, not a problem: the message exists and \
-                       someone has it. The sender is not yours to declare: jojobot records the \
-                       bot behind the `sid` you pass, so a reply can always find you and nothing \
-                       can be posted under somebody else's name. A `sid` jojobot is not holding \
-                       comes back status: blocked and nothing is written. YOUR BODY IS NOT \
-                       ECHOED BACK — you wrote it, so the answer carries \
+                       than on the body's first line. The `state` you get back is the state as it \
+                       stands — it can already say `read` if a person picked the message up in \
+                       between, and that is success, not a problem: the message exists and someone \
+                       has it. POSTING ALSO DELIVERS: anything waiting in YOUR OWN box rides back \
+                       with this answer under your_mail — out of `new` and yours to finish, \
+                       exactly as read_mailbox would have handed it over — so read it rather than \
+                       treating this as a write. Posting into your own box delivers nothing, and a \
+                       post that had nothing to hand over still succeeded. The sender is not yours \
+                       to declare: jojobot records the bot behind the `sid` you pass, so a reply \
+                       can always find you and nothing can be posted under somebody else's name. A \
+                       `sid` jojobot is not holding comes back status: blocked and nothing is \
+                       written. YOUR BODY IS NOT ECHOED BACK — you wrote it, so the answer carries \
                        the id, the state and body_bytes with body_elided: true rather than the \
                        text. `list_sent` with include_bodies returns it and takes no delivery. \
-                       `in_reply_to` links this message to the one it \
-                       answers: optional, it must name a message that exists (a miss comes back \
-                       blocked, nothing written), and it says only that the two are one exchange \
-                       — it does not deliver the original, handle it, or oblige anybody."
+                       `in_reply_to` links this message to the one it answers: optional, it must \
+                       name a message that exists (a miss comes back blocked, nothing written), \
+                       and it says only that the two are one exchange — it does not deliver the \
+                       original, handle it, or oblige anybody."
     )]
     pub(crate) async fn post_message(
         &self,
@@ -91,8 +227,27 @@ impl Jojobot {
                 &e,
             ));
         }
+        // **The addressee is a bot, and its box is found by owner.** A box is
+        // named for its handle by convention and nothing enforces that, so
+        // reading ownership is what makes the address a fact rather than a
+        // guess about what somebody called their box.
+        let addressee = bot_handle(&args.to);
+        // **A name that is no handle is refused as one**, before anything looks
+        // for a box. Without this, `In Box!` reads as a colleague nobody has
+        // heard of — which sends the caller looking for a missing bot when what
+        // is wrong is the name they typed.
+        if let Err(e) = jojobot_domain::memory::validate_subject(&addressee) {
+            return Ok(misused(format!(
+                "Nothing was written: {e}. Write to a bot by name — a bare name like 'gamma', or \
+                 its full handle."
+            )));
+        }
+        let destination = match self.own_box(&addressee).await {
+            OwnBox::The(name) => name,
+            elsewhere => return Ok(self.no_such_addressee(&addressee, elsewhere).await),
+        };
         let new = NewMessage {
-            mailbox: MailboxName(args.mailbox.trim().to_string()),
+            mailbox: destination,
             body: args.body,
             subject: args.subject,
             sender: caller.bot.as_str().to_string(),
@@ -118,13 +273,27 @@ impl Jojobot {
             mailbox::Guarded::Written(message) => {
                 self.beat("post_message", message.mailbox.as_str(), Some(&args.sid))
                     .await;
-                json_result(&message_receipt_json(
+                let mut body = message_receipt_json(
                     &message,
                     Some(
                         "you wrote this body, so it is not shipped back to you. list_sent with \
                          include_bodies: true returns it, and takes no delivery",
                     ),
-                ))
+                );
+                // **Posting takes delivery of your own box, in the same call.**
+                // The moment an agent posts is the moment a reply is most
+                // likely waiting, because posting is what it does at the end of
+                // a piece of work — and two agents each holding an unread reply
+                // are two agents talking past each other, with nothing blocked
+                // and nothing to notice.
+                if let Some(delivered) = self
+                    .delivered_with_the_post(&caller.bot, &message.mailbox)
+                    .await
+                    && let Some(object) = body.as_object_mut()
+                {
+                    object.insert("your_mail".into(), delivered);
+                }
+                json_result(&body)
             }
             mailbox::Guarded::Blocked {
                 attempted,
@@ -166,7 +335,7 @@ mod tests {
         let posted = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
-                    mailbox: "pm".into(),
+                    to: "pm".into(),
                     sid: as_bot(&jojobot, "otto"),
                     body: "the kiln reached temperature".into(),
                     subject: None,
@@ -215,14 +384,19 @@ mod tests {
 
     /// **Blocked is a result, not a protocol error** — the same shape the Memory
     /// verbs use, so one client-side branch handles both contexts.
+    ///
+    /// And what is screened is the ADDRESSEE, because that is what a caller now
+    /// names. A typo in a colleague's name must not send a report somewhere
+    /// nobody reads, and the candidates come from the bot directory the caller
+    /// already knows.
     #[tokio::test]
-    async fn posting_into_an_unknown_box_is_blocked_not_an_error() {
+    async fn writing_to_a_bot_that_is_not_there_is_blocked_not_an_error() {
         let jojobot = mailbox_handler();
-        make_box(&jojobot, "inbox").await;
+        make_box(&jojobot, "epsilon").await;
 
         let result = jojobot
             .post_message(Parameters(PostMessageArgs {
-                mailbox: "inbx".into(),
+                to: "epsilo".into(),
                 sid: as_bot(&jojobot, "epsilon"),
                 body: "the shipment landed".into(),
                 subject: None,
@@ -231,16 +405,15 @@ mod tests {
             .await
             .expect("a blocked post is a successful call");
         let body = blocked(&result);
-        assert_eq!(body["attempted"], "inbx");
-        assert_eq!(body["candidates"][0]["name"], "inbox");
-        assert_eq!(body["candidates"][0]["reason"], "near");
-        let advice = body["how_to_proceed"].as_str().expect("advice");
-        // The way out is a candidate, because there is no verb: nothing opens
-        // a box on its own, so advice naming one would point at nothing.
-        assert!(
-            advice.contains("bot"),
-            "…and it says why: a box is some bot's own: {advice}"
+        assert_eq!(
+            body["attempted"], "bot:epsilo",
+            "a bare name is a bot, and the refusal says which handle it tried: {body}"
         );
+        assert_eq!(
+            body["candidates"][0]["handle"], "bot:epsilon",
+            "the colleague they meant is offered: {body}"
+        );
+        let advice = body["how_to_proceed"].as_str().expect("advice");
         assert!(
             !advice.contains("create_mailbox"),
             "never a verb that does not exist: {advice}"
@@ -259,7 +432,7 @@ mod tests {
         let body = blocked(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
-                    mailbox: "inbox".into(),
+                    to: "inbox".into(),
                     sid: "  ".into(),
                     body: "the shipment landed".into(),
                     subject: None,
@@ -295,7 +468,7 @@ mod tests {
         let posted = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
-                    mailbox: "pm".into(),
+                    to: "pm".into(),
                     sid: as_bot(&jojobot, "otto"),
                     body: long.clone(),
                     subject: Some("the crate count".into()),
@@ -356,7 +529,7 @@ mod tests {
         let reply = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
-                    mailbox: "pm".into(),
+                    to: "pm".into(),
                     sid: as_bot(&jojobot, "otto"),
                     body: "the kiln slice is done".into(),
                     subject: None,
@@ -386,7 +559,7 @@ mod tests {
         let dangling = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
-                    mailbox: "pm".into(),
+                    to: "pm".into(),
                     sid: as_bot(&jojobot, "otto"),
                     body: "answering something nobody said".into(),
                     subject: None,
@@ -405,7 +578,7 @@ mod tests {
         let unlinked = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
-                    mailbox: "pm".into(),
+                    to: "pm".into(),
                     sid: as_bot(&jojobot, "otto"),
                     body: "answering nothing in particular".into(),
                     subject: None,

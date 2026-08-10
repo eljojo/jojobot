@@ -40,6 +40,8 @@ pub mod orientation;
 pub mod seed;
 pub mod session;
 pub mod sid;
+mod status_bar;
+pub(crate) use status_bar::OwnBox;
 
 pub(crate) use answer::*;
 pub(crate) use caller::*;
@@ -180,11 +182,26 @@ impl ServerHandler for Jojobot {
         request: CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
+        // Read before dispatch, because dispatch consumes the request. Every
+        // verb on this surface publishes `sid`, so this reaches the caller
+        // without any verb having to hand it over — and it is read ahead of the
+        // gate, because the gate's refusal is an answer and carries the block
+        // like every other one.
+        let sid = request
+            .arguments
+            .as_ref()
+            .and_then(|args| args.get("sid"))
+            .and_then(|sid| sid.as_str())
+            .map(str::to_string);
         if let Some(refused) = self.unimplemented_arguments(&request) {
-            return Ok(refused.into());
+            let mut answered: CallToolResponse = refused.into();
+            self.add_status_bar(&mut answered, sid.as_deref()).await;
+            return Ok(answered);
         }
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        self.tool_router.call(call).await
+        let mut answered = self.tool_router.call(call).await?;
+        self.add_status_bar(&mut answered, sid.as_deref()).await;
+        Ok(answered)
     }
 
     fn get_info(&self) -> ServerInfo {

@@ -17,6 +17,8 @@ mod bikes;
 mod boot;
 #[path = "user_stories/challenge.rs"]
 mod challenge;
+#[path = "user_stories/colleagues.rs"]
+mod colleagues;
 #[path = "user_stories/coordinating.rs"]
 mod coordinating;
 #[path = "user_stories/curveball.rs"]
@@ -39,6 +41,10 @@ mod sourcing;
 mod spotlight;
 #[path = "user_stories/stale_handle.rs"]
 mod stale_handle;
+#[path = "user_stories/statusbar.rs"]
+mod statusbar;
+#[path = "user_stories/talkingpast.rs"]
+mod talkingpast;
 #[path = "user_stories/typing.rs"]
 mod typing;
 #[path = "user_stories/unprompted.rs"]

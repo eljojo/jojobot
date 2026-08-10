@@ -761,7 +761,7 @@ mod tests {
         let posted = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
-                    mailbox: "somewhere".into(),
+                    to: "somewhere".into(),
                     body: "something to retire later".into(),
                     sid: booted(&jojobot, "gamma").await,
                     subject: None,

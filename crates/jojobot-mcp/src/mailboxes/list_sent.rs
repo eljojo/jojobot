@@ -18,9 +18,11 @@ pub struct ListSentArgs {
     /// that is, and your own mail is what this verb is for.
     #[serde(default)]
     pub sender: Option<String>,
-    /// Only this box. Omit for every box you have posted into.
+    /// **Only what you sent to this bot** — a bare name like `gamma`, or its
+    /// full handle. Omit for everyone you have written to. You addressed a
+    /// colleague, so this is how you ask after them.
     #[serde(default)]
-    pub mailbox: Option<String>,
+    pub to: Option<String>,
     /// How many messages to return, newest first. Defaults to twenty.
     ///
     /// **No pagination and no cursor**, as `search` has none: a second page is
@@ -47,8 +49,8 @@ impl Jojobot {
                        NOTHING: no state changes, nobody's delivery is taken, and the messages \
                        stay exactly as owed as they were. It answers whether something you sent \
                        arrived and whether anyone has read it — questions every other verb could \
-                       only answer by taking delivery of the box you posted into. A `mailbox` \
-                       that names no box comes back status: blocked with candidates, never an \
+                       only answer by taking delivery of the box you posted into. A `to` that \
+                       names no colleague comes back status: blocked with candidates, never an \
                        empty list, because an empty list would read as 'it never arrived'. Messages \
                        jojobot cannot read are reported separately under \
                        `unreadable`: it cannot tell who sent them, so one of yours could be \
@@ -89,36 +91,28 @@ impl Jojobot {
             return Ok(session_unbound());
         };
         let sender = sender.as_str();
-        let only = args
-            .mailbox
-            .as_deref()
-            .map(str::trim)
-            .filter(|m| !m.is_empty());
-        let bodies = args.include_bodies.unwrap_or(false);
-
-        // **A named box must exist, exactly as it must for every other verb
-        // that names one.** Without this a typo answered `count: 0` — and this
-        // verb's whole job is answering "did my report land", so a mistyped box
-        // says "no" and the sender posts it again. The near-miss screen is the
-        // read-side twin of "a typo must never mint a box".
-        if let Some(name) = only {
-            let name = MailboxName(name.to_string());
-            let known = self
-                .mailboxes
-                .list_mailboxes()
-                .await
-                .map_err(mailbox_error)?;
-            let names: Vec<MailboxName> = known.iter().map(|b| b.name.clone()).collect();
-            if let mailbox::guard::Decision::Block(candidates) =
-                mailbox::guard::decide_existing(&name, &names)
-            {
-                return Ok(mailbox_blocked(
-                    &name,
-                    &candidates,
-                    BlockedBox::MustExist("list_sent"),
-                ));
+        // **Named as a bot, resolved to their box.** You wrote to a colleague,
+        // so you ask after a colleague — what their box is called is not
+        // something a sender should have to know to check on their own mail.
+        //
+        // This is the whole existence screen: a box that came back from a read
+        // of who owns what is a box that is on the board, so nothing below has
+        // a name left to check.
+        let addressed_to = args.to.as_deref().map(str::trim).filter(|m| !m.is_empty());
+        let mut only: Option<String> = None;
+        if let Some(named) = addressed_to {
+            let addressee = crate::mailboxes::post_message::bot_handle(named);
+            match self.own_box(&addressee).await {
+                OwnBox::The(name) => only = Some(name.as_str().to_string()),
+                // **The same refusal posting gives, and for the same reason.**
+                // This verb answers "did my report land", so a typo answered
+                // with a confident zero says "no, it did not" — and the sender
+                // writes it again, leaving duplicate mail behind the original.
+                elsewhere => return Ok(self.no_such_addressee(&addressee, elsewhere).await),
             }
         }
+        let only = only.as_deref();
+        let bodies = args.include_bodies.unwrap_or(false);
 
         // Built on the scan, which is the one read that moves nothing: it is
         // how the search projection is rebuilt, and its "nothing moves" is
@@ -236,7 +230,7 @@ mod tests {
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
                     sender: Some("bot:otto".into()),
-                    mailbox: None,
+                    to: None,
                     include_bodies: None,
                     sid: None,
                 }))
@@ -310,23 +304,22 @@ mod tests {
         );
     }
 
-    /// **A mistyped box is a near miss, not an empty outbox.** This verb's
-    /// whole job is answering "did my report land", so answering `count: 0` for
-    /// a typo says "no, it did not" — and the sender posts it again, leaving
-    /// duplicate mail with the original still unprocessed. Every other verb
-    /// that names a box screens it; this was the one that did not.
+    /// **A mistyped colleague is a near miss, not an empty outbox.** This
+    /// verb's whole job is answering "did my report land", so answering
+    /// `count: 0` for a typo says "no, it did not" — and the sender writes it
+    /// again, leaving duplicate mail with the original still unprocessed.
     #[tokio::test]
-    async fn a_mistyped_box_is_blocked_with_candidates_rather_than_answering_empty() {
+    async fn a_mistyped_addressee_is_blocked_with_candidates_rather_than_answering_empty() {
         let jojobot = mailbox_handler();
-        make_box(&jojobot, "handoffs").await;
-        send(&jojobot, "handoffs", "otto", "the kiln slice is done").await;
+        make_box(&jojobot, "epsilon").await;
+        send(&jojobot, "epsilon", "otto", "the kiln slice is done").await;
 
         let body = json_of(
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
                     sender: Some("bot:otto".into()),
-                    mailbox: Some("handofs".into()),
+                    to: Some("epsilo".into()),
                     include_bodies: None,
                     sid: None,
                 }))
@@ -335,15 +328,68 @@ mod tests {
         );
         assert_eq!(body["status"], "blocked", "{body}");
         assert_ne!(body["count"], 0, "…and never a confident zero: {body}");
-        let names: Vec<&str> = body["candidates"]
+        let handles: Vec<&str> = body["candidates"]
             .as_array()
             .expect("candidates")
             .iter()
-            .map(|c| c["name"].as_str().expect("a name"))
+            .map(|c| c["handle"].as_str().expect("a handle"))
             .collect();
         assert!(
-            names.contains(&"handoffs"),
-            "the box they meant is named: {body}"
+            handles.contains(&"bot:epsilon"),
+            "the colleague they meant is named: {body}"
+        );
+    }
+
+    /// **Narrowing to a colleague costs ONE read of the board.** The name is
+    /// turned into a box by asking who owns what, and a box that came back from
+    /// that read exists by construction — so any further check that it exists
+    /// fetches the whole table to answer a question already answered.
+    ///
+    /// Measured as the difference against the same call without `to`, so it
+    /// states what narrowing costs rather than counting whatever this verb
+    /// happens to do for its own reasons. Paired with both answers, because a
+    /// call that returned nothing would read the board cheaply too.
+    #[tokio::test]
+    async fn narrowing_to_a_colleague_costs_one_read_of_the_board() {
+        let (jojobot, board) = counting_handler();
+        make_box(&jojobot, "epsilon").await;
+        send(&jojobot, "epsilon", "otto", "the kiln slice is done").await;
+        let asking = |to: Option<String>| ListSentArgs {
+            limit: None,
+            sender: Some("bot:otto".into()),
+            to,
+            include_bodies: None,
+            sid: None,
+        };
+
+        let before = board.listings();
+        let everywhere = json_of(
+            &jojobot
+                .list_sent(Parameters(asking(None)))
+                .await
+                .expect("list_sent ok"),
+        );
+        let unscoped = board.listings() - before;
+
+        let before = board.listings();
+        let narrowed = json_of(
+            &jojobot
+                .list_sent(Parameters(asking(Some("epsilon".into()))))
+                .await
+                .expect("list_sent ok"),
+        );
+        let scoped = board.listings() - before;
+
+        assert_eq!(everywhere["count"], 1, "the message is there: {everywhere}");
+        assert_eq!(
+            narrowed["count"], 1,
+            "…and narrowing to its box still finds it: {narrowed}"
+        );
+        assert_eq!(narrowed["mailbox"], "epsilon", "{narrowed}");
+        assert_eq!(
+            scoped - unscoped,
+            1,
+            "naming a colleague costs the one read that resolves them"
         );
     }
 
@@ -367,7 +413,7 @@ mod tests {
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
                     sender: Some("dev (implementer)".into()),
-                    mailbox: None,
+                    to: None,
                     include_bodies: None,
                     sid: None,
                 }))
@@ -419,7 +465,7 @@ mod tests {
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
                     sender: Some("dev (implementer)".into()),
-                    mailbox: None,
+                    to: None,
                     include_bodies: None,
                     sid: None,
                 }))
@@ -454,7 +500,7 @@ mod tests {
                 .list_sent(Parameters(ListSentArgs {
                     limit: Some(2),
                     sender: None,
-                    mailbox: None,
+                    to: None,
                     include_bodies: None,
                     sid: Some(as_bot(&jojobot, "otto")),
                 }))
@@ -493,7 +539,7 @@ mod tests {
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
                     sender: None,
-                    mailbox: None,
+                    to: None,
                     include_bodies: None,
                     sid: Some(as_bot(&jojobot, "otto")),
                 }))
@@ -518,7 +564,7 @@ mod tests {
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
                     sender: Some("bot:otto".into()),
-                    mailbox: None,
+                    to: None,
                     include_bodies: Some(true),
                     sid: None,
                 }))

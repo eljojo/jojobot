@@ -17,7 +17,7 @@ use crate::memory::{EntityId, guard as memory_guard};
 
 use super::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
-    MessageId, MessageState, NOTES_BUDGET, NewMessage, StateCounts, guard, normalize_body,
+    MessageId, MessageState, NOTES_BUDGET, NewMessage, StateCounts, TakenBy, guard, normalize_body,
     normalize_notes, normalize_subject, validate_body, validate_mailbox_name, validate_message_id,
     validate_notes, validate_sender, validate_subject,
 };
@@ -309,6 +309,7 @@ impl Mailboxes for InMemoryMailboxes {
             state: MessageState::New,
             notes: None,
             in_reply_to: message.in_reply_to,
+            taken_by: None,
         };
         self.messages
             .lock()
@@ -317,7 +318,11 @@ impl Mailboxes for InMemoryMailboxes {
         Ok(Guarded::Written(stored))
     }
 
-    async fn read_mailbox(&self, name: &MailboxName) -> Result<Guarded<Delivery>, MailboxError> {
+    async fn read_mailbox(
+        &self,
+        name: &MailboxName,
+        taken_by: TakenBy,
+    ) -> Result<Guarded<Delivery>, MailboxError> {
         validate_mailbox_name(name)?;
         let names = self.names();
         if let guard::Decision::Block(candidates) = guard::decide_existing(name, &names) {
@@ -342,6 +347,13 @@ impl Mailboxes for InMemoryMailboxes {
             })
             .map(|m| {
                 let seen_before = m.state == MessageState::Read;
+                // **The FIRST delivery is the one recorded.** A leftover was
+                // taken once already; saying it was taken again by whatever
+                // moved it this time would rewrite the sender's signal every
+                // time the recipient posted anything.
+                if m.state == MessageState::New {
+                    m.taken_by = Some(taken_by);
+                }
                 m.state = MessageState::Read;
                 Delivered {
                     message: m.clone(),
@@ -394,6 +406,10 @@ impl Mailboxes for InMemoryMailboxes {
         let seen_before = message.state != MessageState::New;
         if !seen_before {
             message.state = MessageState::Read;
+            // Taking one message by id is somebody looking, so the delivery is
+            // recorded the same way opening a box is. A pickup that recorded
+            // nothing would read back as though nobody took it.
+            message.taken_by = Some(TakenBy::Reading);
         }
         Ok(Delivered {
             message: message.clone(),
@@ -533,7 +549,7 @@ pub mod contract {
     /// Read a box, asserting the guard waved it through.
     pub async fn read(store: &dyn Mailboxes, mailbox: &str) -> Delivery {
         store
-            .read_mailbox(&name(mailbox))
+            .read_mailbox(&name(mailbox), TakenBy::Reading)
             .await
             .expect("read_mailbox should succeed")
             .written()
@@ -1536,7 +1552,7 @@ pub mod contract {
             attempted,
             candidates,
         } = store
-            .read_mailbox(&name("inbx"))
+            .read_mailbox(&name("inbx"), TakenBy::Reading)
             .await
             .expect("a blocked read is a result, not a failure")
         else {
@@ -1615,6 +1631,107 @@ pub mod contract {
     /// to be written, which is I/O. The fake seeds them synchronously and does
     /// not need this; the Outline adapter does, and running this suite against
     /// it is the point of the shape.
+    /// **How a delivery was taken is recorded, and the two ways differ.**
+    ///
+    /// `new` is the only pickup signal a sender has, and mail now leaves it two
+    /// ways: somebody opened their box, or somebody posted and their waiting
+    /// mail came back with the answer. Both are real deliveries; only one means
+    /// anybody looked. A store that recorded them the same would leave a sender
+    /// reading `read` and concluding somebody picked their message up.
+    ///
+    /// Every claim in one case, against one board, because they are one fact
+    /// seen from three moments: before delivery, after one taken by reading,
+    /// and after one taken by posting.
+    pub async fn a_delivery_records_how_it_was_taken(store: &dyn Mailboxes) {
+        create(store, "takenby-read").await;
+        create(store, "takenby-post").await;
+        post(store, "takenby-read", "bot:gamma", "went and got this", 0).await;
+        post(store, "takenby-post", "bot:gamma", "this came along", 0).await;
+
+        // Waiting: nothing has happened to it, and that is not "nobody looked".
+        let waiting = scanned(store, "takenby-read").await;
+        assert_eq!(
+            waiting[0].taken_by, None,
+            "a message still in new has no delivery to describe: {waiting:?}",
+        );
+
+        // Taken by reading — somebody opened the box.
+        let by_reading = read(store, "takenby-read").await;
+        assert_eq!(
+            by_reading.messages[0].message.taken_by,
+            Some(TakenBy::Reading),
+        );
+
+        // Taken by posting — it came back with an answer nobody asked for.
+        let taken = store
+            .read_mailbox(&name("takenby-post"), TakenBy::Posting)
+            .await
+            .expect("read_mailbox should succeed")
+            .written()
+            .expect("the guard must not block it");
+        assert_eq!(
+            taken.messages[0].message.taken_by,
+            Some(TakenBy::Posting),
+            "the two ways are told apart, or the sender's signal is worthless",
+        );
+
+        // …and it survives storage rather than only the answer that wrote it.
+        let stored = scanned(store, "takenby-post").await;
+        assert_eq!(stored[0].taken_by, Some(TakenBy::Posting));
+
+        // **The FIRST delivery is the one recorded.** A leftover taken again
+        // by a later posting keeps how it was really taken; rewriting it would
+        // destroy the signal every time the recipient posted anything.
+        let again = store
+            .read_mailbox(&name("takenby-read"), TakenBy::Posting)
+            .await
+            .expect("read_mailbox should succeed")
+            .written()
+            .expect("the guard must not block it");
+        assert!(again.messages[0].seen_before, "it is a leftover");
+        assert_eq!(
+            again.messages[0].message.taken_by,
+            Some(TakenBy::Reading),
+            "a leftover keeps the way it was first taken: {again:?}",
+        );
+
+        // **A delivery by id is a delivery.** Taking one message deliberately
+        // is the most looked-at a message ever gets, so a store that recorded
+        // nothing here would read back as though nobody took it — the same
+        // wrong answer the two ways above exist to prevent.
+        create(store, "takenby-id").await;
+        post(store, "takenby-id", "bot:gamma", "picked out by hand", 0).await;
+        let one = scanned(store, "takenby-id").await;
+        assert_eq!(one[0].taken_by, None, "nothing has taken it yet: {one:?}",);
+        let by_id = store
+            .read_message(&one[0].id)
+            .await
+            .expect("read_message should succeed");
+        assert_eq!(
+            by_id.message.taken_by,
+            Some(TakenBy::Reading),
+            "taking one message by id is somebody looking: {by_id:?}",
+        );
+        let stored_by_id = scanned(store, "takenby-id").await;
+        assert_eq!(
+            stored_by_id[0].taken_by,
+            Some(TakenBy::Reading),
+            "…and it survives storage rather than only the answer: {stored_by_id:?}",
+        );
+    }
+
+    /// Every message in one box, as the store holds it — the read that proves
+    /// a claim survived storage rather than only the answer that wrote it.
+    async fn scanned(store: &dyn Mailboxes, mailbox: &str) -> Vec<Message> {
+        store
+            .scan_messages()
+            .await
+            .expect("scan_messages should succeed")
+            .into_iter()
+            .filter(|m| m.mailbox.as_str() == mailbox)
+            .collect()
+    }
+
     pub async fn run_all<S, F, Fut>(fresh: F) -> ()
     where
         S: Mailboxes,
@@ -1654,5 +1771,6 @@ pub mod contract {
         reading_an_unknown_mailbox_is_blocked(&fresh().await).await;
         processing_an_unknown_message_is_a_miss(&fresh().await).await;
         malformed_input_is_refused(&fresh().await).await;
+        a_delivery_records_how_it_was_taken(&fresh().await).await;
     }
 }

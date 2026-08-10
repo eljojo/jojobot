@@ -179,7 +179,7 @@ async fn the_writes_check_fails_on_an_empty_room_and_holds_once_every_part_is_th
         &sid,
         "post_message",
         json!({
-            "mailbox": "assistant",
+            "to": "assistant",
             "subject": "a smoke message",
             "body": "Something for whoever comes next.",
         }),
@@ -265,7 +265,7 @@ async fn the_no_change_check_needs_a_boundary_and_needs_mail_to_be_there() {
         &sid,
         "post_message",
         json!({
-            "mailbox": "assistant",
+            "to": "assistant",
             "subject": "left where it was",
             "body": "Nobody is to take delivery of this.",
         }),

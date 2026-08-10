@@ -36,7 +36,7 @@ pub struct ReadMailboxArgs {
 
 /// Which mailbox gate stopped a write — because the way out of each is
 /// different, and one copy-pasted paragraph fits neither.
-/// Why a read had no box to open. Three states, three different next moves —
+/// Why a read has no ONE box to open. Each state is a different next move —
 /// one generic miss would be advice that fits none of them.
 enum NoBox {
     /// No handle, so no identity, so no box.
@@ -48,6 +48,10 @@ enum NoBox {
     /// its bot — so this is a broken identity rather than an incomplete one,
     /// and it takes a person rather than a verb.
     Broken,
+    /// A bot with more than one box. One box per bot is settled, so this is
+    /// damage too — and the opposite repair from [`NoBox::Broken`]: no boot
+    /// heals it, because jojobot cannot know which of them is the real one.
+    Several(Vec<mailbox::MailboxName>),
 }
 
 /// The refusal a read gets when there is no box behind its handle.
@@ -57,8 +61,8 @@ fn no_box_for(attempted: &str, why: NoBox) -> CallToolResult {
             "Nothing was delivered. This call carried no `sid`, and a read opens the box of \
              whoever is asking — so jojobot has nobody to open one for. Call start_here with \
              your bot name to get a handle, then pass it on every call. To leave mail in \
-             somebody else's box you do not need one of your own: post_message writes without \
-             reading."
+             somebody else's box you do not need one of your own: post_message leaves mail in a \
+             box without reading that box."
                 .to_string()
         }
         NoBox::Unknowable => {
@@ -76,7 +80,21 @@ fn no_box_for(attempted: &str, why: NoBox) -> CallToolResult {
              of yours and no person, because the owner is known and the name is its handle. Tell \
              the operator afterwards: mail sent to you before the repair was refused as an \
              unknown box and was never stored. Posting into other boxes still works and needs \
-             none of this: post_message writes without reading."
+             none of this: post_message leaves mail in a box without reading that box."
+        ),
+        NoBox::Several(boxes) => format!(
+            "Nothing was delivered, and nothing moved out of new. '{attempted}' owns more than \
+             one mailbox ({}), and one bot has exactly one. This is damage rather than anything \
+             you did: draining one of them would hand you half your mail and report it as all of \
+             it, so jojobot will not choose. Report it — it needs a person, and no boot repairs \
+             it, because which box is the real one is not something jojobot can work out. Posting \
+             into other boxes still works and needs none of this: post_message leaves mail in a \
+             box without reading that box.",
+            boxes
+                .iter()
+                .map(|b| b.as_str().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
         ),
     };
     let body = serde_json::json!({
@@ -101,14 +119,20 @@ impl Jojobot {
     /// norm is structural.
     ///
     /// **Posting keeps its name, deliberately.** `post_message` reaches
-    /// somebody else's box and writes without reading, which is exactly the
-    /// shape of a request — and is the way forward this refusal points at. The
+    /// somebody else's box and leaves mail there without reading it, which is
+    /// exactly the shape of a request — and is the way forward this refusal
+    /// points at. The only box it takes delivery of is the sender's own. The
     /// asymmetry is the design.
     ///
-    /// Three ways to have no box, and they are not one answer: the caller has
-    /// no identity, jojobot cannot read who owns what, or the bot has no box
-    /// at all. A bot can never claim a box nobody has opened, so that is not
-    /// a fourth case.
+    /// Four ways to have no one box, and they are not one answer: the caller
+    /// has no identity, jojobot cannot read who owns what, the bot has no box
+    /// at all, or it holds more than one. A bot can never claim a box nobody
+    /// has opened, so that is not a fifth case.
+    ///
+    /// **More than one is damage, and it refuses rather than choosing.** One
+    /// box per bot is settled everywhere else on this surface; taking the
+    /// first match here would drain one box, leave the other's mail waiting,
+    /// and report the delivery as whole.
     ///
     /// The whole record, not just its name. Counting needs the box's
     /// per-state counts and its unreadable report, and both are already in
@@ -132,10 +156,21 @@ impl Jojobot {
             Ok(boxes) => boxes,
             Err(_) => return Err(no_box_for(caller.bot.as_str(), NoBox::Unknowable)),
         };
-        boxes
+        // The count is taken over the list already in hand: which of the four
+        // answers this is depends on how many boxes name this owner, and
+        // asking the board a second time would be two reads that can disagree.
+        let mut owned: Vec<Mailbox> = boxes
             .into_iter()
-            .find(|b| b.owner == caller.bot)
-            .ok_or_else(|| no_box_for(caller.bot.as_str(), NoBox::Broken))
+            .filter(|b| b.owner == caller.bot)
+            .collect();
+        match owned.len() {
+            1 => Ok(owned.remove(0)),
+            0 => Err(no_box_for(caller.bot.as_str(), NoBox::Broken)),
+            _ => Err(no_box_for(
+                caller.bot.as_str(),
+                NoBox::Several(owned.into_iter().map(|b| b.name).collect()),
+            )),
+        }
     }
 }
 
@@ -198,7 +233,8 @@ impl Jojobot {
         let new_only = args.new_only.unwrap_or(true);
         match self
             .mailboxes
-            .read_mailbox(&name)
+            // Somebody opened their box: they were looking.
+            .read_mailbox(&name, mailbox::TakenBy::Reading)
             .await
             .map_err(mailbox_error)?
         {
@@ -589,6 +625,63 @@ mod tests {
         );
     }
 
+    /// **A bot holding two boxes is damage, and a read says so rather than
+    /// picking one.** One box per bot is settled, so draining the first match
+    /// would hand over half somebody's mail and report it as all of it — the
+    /// caller could not tell a whole delivery from a partial one, and the
+    /// second box's mail would sit there with nothing said about it.
+    #[tokio::test]
+    async fn a_read_by_a_bot_holding_two_boxes_refuses_rather_than_draining_one() {
+        let jojobot = mailbox_handler();
+        let reader = owning(&jojobot, "gamma").await;
+        // Mail first: posting to a bot that already holds two boxes is itself
+        // refused, so the fixture's own mail has to land while it holds one.
+        send(&jojobot, "gamma", "delta", "the shipment landed").await;
+        a_second_box(&jojobot, "gamma", "sigma").await;
+
+        let refused = blocked(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(reader.clone()),
+                }))
+                .await
+                .expect("an answer, not a protocol failure"),
+        );
+        let how = refused["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            how.contains("gamma") && how.contains("sigma"),
+            "the refusal names both boxes, or nobody can go and look: {how}"
+        );
+        assert!(
+            how.contains("person"),
+            "…and says it takes a person, because no verb of the caller's repairs it: {how}"
+        );
+        assert!(
+            refused["messages"].is_null(),
+            "a refusal is not a delivery with a status on it: {refused}"
+        );
+
+        // **The positive the refusal rests on.** There is mail in one of those
+        // boxes, still in `new` — so this refused a delivery it could have
+        // made, rather than reporting an empty board as damage.
+        let held: Vec<_> = jojobot
+            .mailboxes
+            .list_mailboxes()
+            .await
+            .expect("list ok")
+            .into_iter()
+            .filter(|b| b.owner == EntityId::new(EntityKind::Bot, "gamma"))
+            .collect();
+        assert_eq!(held.len(), 2, "the fixture holds two boxes for one bot");
+        assert_eq!(
+            held.iter().map(|b| b.counts.new).sum::<usize>(),
+            1,
+            "and the message is still waiting, untaken: {held:?}"
+        );
+    }
+
     /// **The safe branch is the DEFAULT, not the documented preference.** A
     /// caller that passes nothing gets the cheap, common read — news whole,
     /// leftovers named but not re-shipped — and pays for the expensive one only
@@ -607,7 +700,7 @@ mod tests {
         let held = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
-                    mailbox: "dev".into(),
+                    to: "dev".into(),
                     sid: as_bot(&jojobot, "delta"),
                     body: held_body.clone(),
                     subject: None,
@@ -710,7 +803,7 @@ mod tests {
         let held = json_of(
             &jojobot
                 .post_message(Parameters(PostMessageArgs {
-                    mailbox: "dev".into(),
+                    to: "dev".into(),
                     sid: as_bot(&jojobot, "delta"),
                     body: held_body.clone(),
                     subject: None,

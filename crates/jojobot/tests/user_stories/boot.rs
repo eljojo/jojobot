@@ -104,7 +104,7 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
     assert!(
         booted["snapshot"]["entities"]["bots"]
             .as_array()
-            .is_some_and(|bots| bots.iter().any(|b| b == "bot:otto")),
+            .is_some_and(|bots| bots.iter().any(|b| b["handle"] == "bot:otto")),
         "the snapshot names the bots, so an identity is choosable rather than guessed: {booted}"
     );
 

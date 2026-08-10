@@ -1155,7 +1155,7 @@ async fn the_subject_constraint_is_refused_by_the_verb_and_stated_on_the_paramet
     let refused = blocked(
         &jojobot
             .post_message(Parameters(PostMessageArgs {
-                mailbox: "dev".into(),
+                to: "dev".into(),
                 body: "the shipment landed".into(),
                 subject: Some("what `post_message` does with a title".into()),
                 in_reply_to: None,
@@ -1178,7 +1178,7 @@ async fn the_subject_constraint_is_refused_by_the_verb_and_stated_on_the_paramet
     let too_long = blocked(
         &jojobot
             .post_message(Parameters(PostMessageArgs {
-                mailbox: "dev".into(),
+                to: "dev".into(),
                 body: "the shipment landed".into(),
                 subject: Some("w".repeat(200)),
                 in_reply_to: None,
@@ -1200,7 +1200,7 @@ async fn the_subject_constraint_is_refused_by_the_verb_and_stated_on_the_paramet
     let posted = json_of(
         &jojobot
             .post_message(Parameters(PostMessageArgs {
-                mailbox: "dev".into(),
+                to: "dev".into(),
                 body: "the shipment landed".into(),
                 subject: Some("what post_message does with a title".into()),
                 in_reply_to: None,

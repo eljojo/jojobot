@@ -452,6 +452,60 @@ pub struct Message {
     /// nothing.
     #[serde(default)]
     pub in_reply_to: Option<MessageId>,
+    /// **How this message left `new`**, once it has. `None` while it is still
+    /// waiting, and `None` for every message delivered before there was a
+    /// record of how — neither of those is broken, and neither may be read as
+    /// "nobody looked".
+    #[serde(default)]
+    pub taken_by: Option<TakenBy>,
+}
+
+/// **How a message left `new`.**
+///
+/// A message moves out of `new` when somebody takes delivery, and there are now
+/// two ways that happens: somebody went to their box, or somebody posted and
+/// their waiting mail came with the answer. Both are real deliveries and both
+/// are owed work.
+///
+/// **It exists because `new` is the only pickup signal a sender has.** Without
+/// this, a sender reading `list_sent` sees `read` and concludes somebody looked
+/// — when what actually happened is that the recipient posted something
+/// unrelated and the mail rode along. Nothing is lost either way, because a
+/// message nobody acted on comes back as a leftover; what would be lost is the
+/// sender's ability to tell "they have seen this" from "it reached them".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TakenBy {
+    /// Somebody opened their box, or took this one message by id. They were
+    /// looking.
+    Reading,
+    /// The owner posted a message and this came back with the answer. It
+    /// reached them; nobody went looking for it.
+    Posting,
+}
+
+impl TakenBy {
+    /// The token this reads and writes as.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            TakenBy::Reading => "reading",
+            TakenBy::Posting => "posting",
+        }
+    }
+
+    /// The way a token names, or nothing when it names none.
+    ///
+    /// **A token this build does not know reads as nothing rather than as
+    /// reading.** Claiming somebody looked is the one answer that cannot be
+    /// walked back by a later reader, so an unreadable record says nothing
+    /// instead.
+    pub fn of_token(token: &str) -> Option<TakenBy> {
+        match token.trim() {
+            "reading" => Some(TakenBy::Reading),
+            "posting" => Some(TakenBy::Posting),
+            _ => None,
+        }
+    }
 }
 
 /// One message as `read_mailbox` delivers it.
@@ -645,7 +699,16 @@ pub trait Mailboxes: Send + Sync {
     /// dropped from it.** Somebody handled it; handing it over anyway would put
     /// an already-processed message into a consumer's batch flagged as fresh
     /// mail, which is the double-processing this context exists to prevent.
-    async fn read_mailbox(&self, name: &MailboxName) -> Result<Guarded<Delivery>, MailboxError>;
+    ///
+    /// `taken_by` says HOW the delivery happened, and it is an argument rather
+    /// than something this decides: the store cannot tell whether somebody
+    /// opened their box or posted and had their mail come back with the
+    /// answer, and that difference is the only pickup signal a sender has.
+    async fn read_mailbox(
+        &self,
+        name: &MailboxName,
+        taken_by: TakenBy,
+    ) -> Result<Guarded<Delivery>, MailboxError>;
 
     /// Take delivery of **one** message by id, moving that one `new → read` and
     /// leaving the rest of its box exactly where it is.

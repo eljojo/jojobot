@@ -37,24 +37,6 @@ impl Ownership {
     pub(crate) fn drains(&self, name: &str) -> bool {
         self.mine.iter().any(|m| m == name)
     }
-
-    /// Which of the boxes actually on the board this answer counted.
-    pub(crate) fn shown_for(&self, boxes: &[Mailbox]) -> Vec<String> {
-        boxes
-            .iter()
-            .map(|b| b.name.as_str())
-            .filter(|name| self.drains(name))
-            .map(str::to_string)
-            .collect()
-    }
-
-    /// The clause that says what this listing's counts mean, including when it
-    /// cannot say.
-    pub(crate) fn note(&self) -> &'static str {
-        "Counts are shown for the boxes you drain. A box somebody else works is listed by \
-         name only — it exists and you can post into it; what is waiting in it belongs to \
-         whoever works it."
-    }
 }
 
 impl Jojobot {
@@ -130,6 +112,32 @@ pub(crate) fn mailbox_json(mailbox: &Mailbox) -> serde_json::Value {
     })
 }
 
+/// **A bot holding more than one box, where a box would otherwise go.** One
+/// box per bot is settled, so this is damage: it names every box, weighs none
+/// of them, and says the repair takes a person — which of them is the real one
+/// is not something jojobot can work out.
+///
+/// One rendering, because a boot answers this question TWICE — once for the
+/// caller's own identity and once for its entry on the board — and the two
+/// halves of one payload disagreeing about whether the mail was measured is
+/// worse than either half alone. The counts key is present and null with
+/// `counts_elided` beside it, the same way every other withheld count on this
+/// surface is: eliding is never silent.
+pub(crate) fn several_boxes_json<'a>(
+    boxes: impl IntoIterator<Item = &'a Mailbox>,
+) -> serde_json::Value {
+    let named: Vec<&str> = boxes.into_iter().map(|b| b.name.as_str()).collect();
+    serde_json::json!({
+        "counts": serde_json::Value::Null,
+        "counts_elided": true,
+        "damage": format!(
+            "owns more than one mailbox ({}), and one bot has exactly one. jojobot will not \
+             weigh half of somebody's mail as though it were all of it. It needs a person.",
+            named.join(", "),
+        ),
+    })
+}
+
 /// What is on a box that jojobot cannot read as a message.
 ///
 /// **Rendered apart from the counts, because it is scoped differently.** Counts
@@ -201,6 +209,16 @@ pub(crate) fn message_json(message: &Message) -> serde_json::Value {
         // link, never a status: it says these two are one exchange and nothing
         // about whether either has been handled.
         "in_reply_to": message.in_reply_to.as_ref().map(|id| id.as_str()),
+        // **How it left `new`, for the sender who is asking whether anybody
+        // looked.** `reading` means somebody opened their box or took this
+        // message by id; `posting` means it came back with the answer to
+        // something they posted, so it reached them and nobody went looking.
+        //
+        // Null while it is still waiting, and null for anything delivered
+        // before there was a record of how. **Neither may be read as "nobody
+        // looked"** — null says nothing was recorded, never that nothing
+        // happened.
+        "taken_by": message.taken_by.map(|taken| taken.as_token()),
     })
 }
 

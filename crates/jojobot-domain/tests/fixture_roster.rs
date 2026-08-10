@@ -43,6 +43,7 @@ const KINDS: [&str; 9] = [
 const ROSTER: &[&str] = &[
     "bot:assistant",
     "bot:delta",
+    "bot:epsilo",
     "bot:epsilon",
     "bot:gamm",
     "bot:gamma",

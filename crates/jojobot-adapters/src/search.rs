@@ -2089,9 +2089,10 @@ impl Mailboxes for IndexedMailboxes {
     async fn read_mailbox(
         &self,
         name: &jojobot_domain::mailbox::MailboxName,
+        taken_by: jojobot_domain::mailbox::TakenBy,
     ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
     {
-        let delivered = self.inner.read_mailbox(name).await?;
+        let delivered = self.inner.read_mailbox(name, taken_by).await?;
         if let jojobot_domain::mailbox::Guarded::Written(delivery) = &delivered {
             for message in &delivery.messages {
                 self.reindex(&message.message)?;
@@ -3441,6 +3442,7 @@ mod tests {
         async fn read_mailbox(
             &self,
             _: &MailboxName,
+            _: jojobot_domain::mailbox::TakenBy,
         ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
         {
             unimplemented!("this double only scans messages")
@@ -4809,6 +4811,7 @@ mod tests {
             state,
             notes: None,
             in_reply_to: None,
+            taken_by: None,
         }
     }
 

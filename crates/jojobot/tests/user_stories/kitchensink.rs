@@ -243,8 +243,8 @@ async fn nothing_on_the_surface_goes_unexercised() {
         .says("First")
         .says("Second");
 
-    // `mailbox` narrows to one box.
-    s.call("list_sent", json!({"mailbox": "epsilon"}))
+    // `to` narrows to one colleague.
+    s.call("list_sent", json!({"to": "epsilon"}))
         .await
         .says("First")
         .never_says("Second");

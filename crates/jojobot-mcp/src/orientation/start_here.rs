@@ -62,9 +62,9 @@ impl Jojobot {
                        identity. Explains what jojobot is and how its world fits together — \
                        entities, facts, provenance, edges, mailboxes — with worked examples, and \
                        returns a live snapshot of what exists right now (entities by kind, EVERY \
-                       BOT NAMED so you can see which identities you could boot as, and every \
-                       mailbox by name — with counts for the ones you drain), so you start \
-                       oriented instead of guessing. IT ALSO LISTS THE SKILLS this build \
+                       BOT NAMED so you can see which identities you could boot as, each with \
+                       its own mail beside it — counts on the one box you drain, elided on \
+                       everybody else's), so you start oriented instead of guessing. IT ALSO LISTS THE SKILLS this build \
                        ships — a name and what each is FOR, never the procedures themselves. \
                        When one of them matches the job in front of you, call this again with \
                        skill: its name and you get that body. Nothing here decides when a \
@@ -432,21 +432,21 @@ mod tests {
         assert_eq!(body["snapshot"]["entities"]["count"], 2);
         assert_eq!(body["snapshot"]["entities"]["by_kind"]["person"], 1);
         assert_eq!(body["snapshot"]["entities"]["by_kind"]["bot"], 1);
-        let boxes = body["snapshot"]["mailboxes"]["boxes"]
+        let bots = body["snapshot"]["entities"]["bots"]
             .as_array()
-            .expect("mailboxes listed");
-        // Anonymous orientation drains nothing, so it sees no queue: every
-        // box has a drainer, so a box is either yours or somebody's, and
-        // this caller is nobody.
-        assert_eq!(boxes[0]["name"], "inbox");
+            .expect("the bots");
+        // Mail hangs off the bot that owns it — there is no second population.
+        // Anonymous orientation drains nothing, so it sees no queue: every box
+        // has an owner, so mail is either yours or somebody's, and this caller
+        // is nobody.
         assert_eq!(
-            boxes[0]["yours"], false,
+            bots[0]["yours"], false,
             "an anonymous caller drains nothing"
         );
         assert!(
-            boxes[0]["counts"].is_null(),
+            bots[0]["mail"]["counts"].is_null(),
             "…and somebody else's queue is not its to weigh: {:?}",
-            boxes[0]
+            bots[0]
         );
     }
 
@@ -515,7 +515,7 @@ mod tests {
         // Everything that changes between calls is still here.
         assert_eq!(brief["snapshot"], full["snapshot"]);
         assert_eq!(brief["snapshot"]["entities"]["available"], true);
-        assert!(brief["snapshot"]["mailboxes"].is_object());
+        assert!(brief["snapshot"]["mail"].is_object());
     }
 
     /// There is no version stamp on the essay, deliberately: every way of
@@ -626,7 +626,7 @@ mod tests {
             .expect("orientation still lands");
         let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
         assert!(body["orientation"].as_str().is_some_and(|o| !o.is_empty()));
-        assert_eq!(body["snapshot"]["mailboxes"]["available"], false);
+        assert_eq!(body["snapshot"]["mail"]["available"], false);
     }
 
     /// **A misuse is an ANSWER, not a thrown error.** `resume` responds to an

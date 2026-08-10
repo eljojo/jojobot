@@ -135,7 +135,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .call(
             "post_message",
             json!({
-                "mailbox": "otto",
+                "to": "otto",
                 "subject": "Done",
                 "body": "Shipped it, green, one commit.",
                 "in_reply_to": &dispatched,

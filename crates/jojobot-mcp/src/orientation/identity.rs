@@ -196,16 +196,40 @@ impl Jojobot {
         //
         // A box this bot owns is a box that exists — ownership is stated on
         // the box, so there is no separate "claimed but not yet created" state
-        // to handle, and no `exists` field either: `available` is the only
-        // question a reader still has to branch on.
-        let Some(mailbox) = boxes.into_iter().find(|b| &b.owner == bot) else {
-            return Ok(self.heal_missing_box(bot).await);
-        };
-        let mut body = mailbox_json(&mailbox);
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("available".into(), true.into());
+        // to handle, and no `exists` field either.
+        //
+        // **Owning several boxes is damage, and it is reported rather than
+        // resolved.** One box per bot is settled everywhere else on this
+        // surface, and this is the field a boot points every session at: taking
+        // the first match hands a session half its mail, counted, as the whole
+        // of it — and hands it that beside a snapshot in the same payload
+        // refusing to weigh the very same box. The heal does not run here
+        // either. It is legitimate only because there is exactly one correct
+        // box; with two on the board, which one is real is not derivable, so
+        // nothing opens, merges or picks one.
+        let mut owned: Vec<Mailbox> = boxes.into_iter().filter(|b| &b.owner == bot).collect();
+        match owned.len() {
+            1 => {
+                let mut body = mailbox_json(&owned.remove(0));
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("available".into(), true.into());
+                }
+                Ok(body)
+            }
+            0 => Ok(self.heal_missing_box(bot).await),
+            _ => {
+                let mut body = several_boxes_json(owned.iter());
+                if let Some(obj) = body.as_object_mut() {
+                    // The board answered, so this is a ruling about what is on
+                    // it rather than an outage — and `name` is null because
+                    // naming one of the boxes is the same choice as counting
+                    // it. The damage text carries all of them.
+                    obj.insert("available".into(), true.into());
+                    obj.insert("name".into(), serde_json::Value::Null);
+                }
+                Ok(body)
+            }
         }
-        Ok(body)
     }
 
     /// Open the box this bot should have had, and **say that it was missing.**
