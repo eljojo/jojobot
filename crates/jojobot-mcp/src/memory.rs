@@ -66,3 +66,54 @@ pub(crate) fn router() -> ToolRouter<Jojobot> {
         + Jojobot::update_entity_router()
         + Jojobot::update_fact_router()
 }
+
+impl Jojobot {
+    /// **A type name, resolved to the declaration it stands for — once, here.**
+    ///
+    /// Everything below this point takes the KEYS rather than the name, so
+    /// nothing deeper needs a store to answer a type question. A name nobody
+    /// declared is answered here too, where the roster to offer instead is in
+    /// reach.
+    ///
+    /// Shared by the two verbs that take a type, so the refusal a caller reads
+    /// cannot come to differ between them. `did` names what the call was doing
+    /// when it stopped, because "nothing was searched" and "nothing was
+    /// recalled" are the same sentence about different work.
+    pub(crate) async fn declared(
+        &self,
+        wanted: &str,
+        did: &str,
+    ) -> Result<DeclaredType, CallToolResult> {
+        let known = match self.memory.declared_types().await {
+            Ok(known) => known,
+            // The store itself failed. It is not a name mistake, so it gets the
+            // refusal that says so rather than a roster the caller cannot act on.
+            Err(e) => {
+                return Err(blocked_body(
+                    &EntityId(String::new()),
+                    &[],
+                    format!("Nothing was {did}: {e}."),
+                ));
+            }
+        };
+        if let Some(found) = known.iter().find(|t| t.name == wanted.trim()) {
+            return Ok(found.clone());
+        }
+        let names: Vec<&str> = known.iter().map(|t| t.name.as_str()).collect();
+        Err(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was {did} for a type: no type is called '{wanted}'. Declaring a type is \
+                 write-time help and never a precondition — a record is found by the keys it \
+                 carries — so if you know the keys, ask for them another way rather than \
+                 declaring a type to reach them. Types that do exist: {}.",
+                if names.is_empty() {
+                    "none yet".to_string()
+                } else {
+                    names.join(", ")
+                }
+            ),
+        ))
+    }
+}

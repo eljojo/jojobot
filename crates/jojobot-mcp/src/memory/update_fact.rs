@@ -330,15 +330,12 @@ mod tests {
         );
         let body = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs {
-                    subject: "alpha".into(),
-                    sid: None,
-                }))
+                .recall(Parameters(recall_args("alpha")))
                 .await
                 .expect("recall ok"),
         );
         assert_eq!(
-            body["facts"].as_array().unwrap().len(),
+            body["objects"][0]["facts"].as_array().unwrap().len(),
             1,
             "nothing was created"
         );

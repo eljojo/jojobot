@@ -493,34 +493,10 @@ impl Jojobot {
         // answered here, where the roster to offer instead is in reach.
         let declared = match &args.answers_type {
             None => None,
-            Some(wanted) => {
-                let known = match self.memory.declared_types().await {
-                    Ok(known) => known,
-                    Err(e) => return memory_declined("search", e),
-                };
-                match known.iter().find(|t| t.name == wanted.trim()) {
-                    Some(found) => Some(found.clone()),
-                    None => {
-                        let names: Vec<&str> = known.iter().map(|t| t.name.as_str()).collect();
-                        return Ok(blocked_body(
-                            &EntityId(String::new()),
-                            &[],
-                            format!(
-                                "Nothing was searched for a type: no type is called \
-                                 '{wanted}'. Declaring a type is write-time help and never a \
-                                 precondition — a record is found by the keys it carries — so \
-                                 if you know the keys, search for them another way rather than \
-                                 declaring a type to reach them. Types that do exist: {}.",
-                                if names.is_empty() {
-                                    "none yet".to_string()
-                                } else {
-                                    names.join(", ")
-                                }
-                            ),
-                        ));
-                    }
-                }
-            }
+            Some(wanted) => match self.declared(wanted, "searched").await {
+                Ok(declared) => Some(declared),
+                Err(refused) => return Ok(refused),
+            },
         };
         let edge = args
             .edge

@@ -959,12 +959,12 @@ mod tests {
                 ),
                 (
                     "recall",
-                    "facts",
+                    "objects",
                     json_of(
                         &jojobot
                             .recall(Parameters(RecallArgs {
-                                subject: "alpha".into(),
                                 sid: sid.clone(),
+                                ..recall_args("alpha")
                             }))
                             .await
                             .expect("call ok"),

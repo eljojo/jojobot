@@ -378,15 +378,15 @@ mod tests {
         // could not resolve takes the whole thing with it.
         let recalled = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs {
-                    subject: "person:alpha".into(),
-                    sid: None,
-                }))
+                .recall(Parameters(recall_args("person:alpha")))
                 .await
                 .expect("recall ok"),
         );
         assert!(
-            recalled["facts"].as_array().expect("a list").is_empty(),
+            recalled["objects"][0]["facts"]
+                .as_array()
+                .expect("a list")
+                .is_empty(),
             "a blocked event wrote nothing: {recalled}"
         );
     }
@@ -497,14 +497,14 @@ mod tests {
 
         let recalled = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs {
-                    subject: "alpha".into(),
-                    sid: None,
-                }))
+                .recall(Parameters(recall_args("alpha")))
                 .await
                 .expect("recall ok"),
         );
-        assert_eq!(recalled["facts"][0]["edge"]["type"], "memberOf");
+        assert_eq!(
+            recalled["objects"][0]["facts"][0]["edge"]["type"],
+            "memberOf"
+        );
     }
 
     /// The shape set is closed, and the response spellings are not input tokens —
@@ -578,15 +578,15 @@ mod tests {
 
         let recalled = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs {
-                    subject: "alpha".into(),
-                    sid: None,
-                }))
+                .recall(Parameters(recall_args("alpha")))
                 .await
                 .expect("recall ok"),
         );
         assert!(
-            recalled["facts"].as_array().unwrap().is_empty(),
+            recalled["objects"][0]["facts"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
             "a blocked edge object must write no fact: {recalled}"
         );
     }
@@ -601,15 +601,14 @@ mod tests {
 
         let body = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs {
-                    subject: "alpha".into(),
-                    sid: None,
-                }))
+                .recall(Parameters(recall_args("alpha")))
                 .await
                 .expect("recall ok"),
         );
-        assert_eq!(body["subject"], "person:alpha");
-        let facts = body["facts"].as_array().expect("recall returns a list");
+        assert_eq!(body["objects"][0]["id"], "person:alpha");
+        let facts = body["objects"][0]["facts"]
+            .as_array()
+            .expect("recall returns a list");
         assert!(
             facts.iter().any(|f| {
                 f["address"] == captured["address"] && f["content"] == "drinks oat milk"
@@ -671,15 +670,15 @@ mod tests {
 
         let recalled = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs {
-                    subject: "person:alpha".into(),
-                    sid: None,
-                }))
+                .recall(Parameters(recall_args("person:alpha")))
                 .await
                 .expect("recall answers"),
         );
         assert_eq!(
-            recalled["facts"].as_array().expect("facts").len(),
+            recalled["objects"][0]["facts"]
+                .as_array()
+                .expect("facts")
+                .len(),
             2,
             "a refused capture wrote nothing: {recalled}"
         );
@@ -719,14 +718,14 @@ mod tests {
         // …and it is on the page, not just in the answer.
         let recalled = json_of(
             &jojobot
-                .recall(Parameters(RecallArgs {
-                    subject: "person:alpha".into(),
-                    sid: None,
-                }))
+                .recall(Parameters(recall_args("person:alpha")))
                 .await
                 .expect("recall answers"),
         );
-        assert_eq!(recalled["facts"][0]["standing"], "open", "{recalled}");
+        assert_eq!(
+            recalled["objects"][0]["facts"][0]["standing"], "open",
+            "{recalled}"
+        );
     }
 
     /// An unknown `standing` is a client error, not a silent default — a

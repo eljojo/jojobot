@@ -115,6 +115,21 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
     }
 }
 
+/// **The whole-page query**: one handle, its facts, no walk. What `recall`
+/// answered before it could walk, and still the commonest thing asked of it.
+pub(crate) fn recall_args(subject: &str) -> RecallArgs {
+    RecallArgs {
+        subject: Some(subject.into()),
+        kind: None,
+        answers_type: None,
+        fields: None,
+        facts: None,
+        prose: None,
+        follow: None,
+        sid: None,
+    }
+}
+
 pub(crate) fn update_args(address: &str) -> UpdateFactArgs {
     UpdateFactArgs {
         address: address.into(),

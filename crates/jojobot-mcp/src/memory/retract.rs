@@ -170,13 +170,13 @@ mod tests {
         let recalled = json_of(
             &jojobot
                 .recall(Parameters(RecallArgs {
-                    subject: "person:alpha".into(),
                     sid: Some(crate::harness::TEST_SID.into()),
+                    ..recall_args("person:alpha")
                 }))
                 .await
                 .expect("recall ok"),
         );
-        assert_eq!(recalled["facts"][0]["status"], "active");
+        assert_eq!(recalled["objects"][0]["facts"][0]["status"], "active");
     }
 
     /// **One way, on the surface too.** A second retraction and an edit back to
@@ -218,14 +218,14 @@ mod tests {
         let recalled = json_of(
             &jojobot
                 .recall(Parameters(RecallArgs {
-                    subject: "person:alpha".into(),
                     sid: Some(crate::harness::TEST_SID.into()),
+                    ..recall_args("person:alpha")
                 }))
                 .await
                 .expect("recall ok"),
         );
         assert_eq!(
-            recalled["facts"][0]["status"], "retracted",
+            recalled["objects"][0]["facts"][0]["status"], "retracted",
             "neither one moved it: {recalled}"
         );
     }

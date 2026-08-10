@@ -375,6 +375,19 @@ impl<'a> Ctx<'a> {
             }
         }
 
+        // **A record can arrive twice.** These documents are assembled from
+        // per-entity reads, and a record about one entity that sits on
+        // another's page belongs to both — so both reads return it. Its
+        // address is what says it is one record.
+        for bucket in facts.values_mut() {
+            let mut seen = HashSet::new();
+            bucket.retain(|f| seen.insert((f.home.clone(), f.id.clone())));
+        }
+        for bucket in inbound.values_mut() {
+            let mut seen = HashSet::new();
+            bucket.retain(|link| seen.insert(link.clone()));
+        }
+
         let mut index: Vec<Entity> = entities.values().map(|e| (*e).clone()).collect();
         index.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
         Ctx {
@@ -538,15 +551,79 @@ impl<'a> Ctx<'a> {
     }
 }
 
-/// **The walk, against a store.** One read: the query needs every document's
-/// entity, prose, facts and edges, and a walk assembled from several reads
-/// could answer from a graph that was never all true at once.
+/// **The walk, against a store — through TARGETED reads, never the boot scan.**
+///
+/// The scan is the search index's read, and reading it here would tie this verb
+/// to the index's fate: a store the index cannot scan is exactly when a caller
+/// needs the verb that reads past it, and one built on `scan` would fail in the
+/// same breath. So this assembles what the query needs out of
+/// [`list_entities`](super::Memory::list_entities),
+/// [`recall`](super::Memory::recall) and
+/// [`scan_entity`](super::Memory::scan_entity).
+///
+/// **It reads only what the query asks for.** One handle costs the entity index
+/// and that handle's records. A walk costs every entity's records, because
+/// which objects it reaches is not known until it has been walked, and an
+/// inbound walk has to ask who points here.
 pub async fn walk<M>(store: &M, query: &GraphQuery) -> Result<Vec<Object>, MemoryError>
 where
     M: super::Memory + ?Sized,
 {
     query.validate()?;
-    let scanned = store.scan().await?;
+    // The entity index: what exists, what a kind selects, and what a handle
+    // that names nothing is screened against.
+    let entities = store.list_entities(None).await?;
+    let select = &query.select;
+    if let Some(subject) = &select.subject
+        && !entities.iter().any(|e| &e.id == subject)
+    {
+        return Err(MemoryError::UnknownEntity {
+            attempted: subject.to_string(),
+            nearest: guard::screen(subject, &[], &entities),
+        });
+    }
+
+    // **Whose records are needed.** A walk cannot know where it will go, and a
+    // filter over records cannot choose objects without reading theirs — both
+    // need all of them. Everything else needs only what it named.
+    let everyones = query.follow.is_some() || select.filters_facts();
+    let wanted: Vec<&Entity> = entities
+        .iter()
+        .filter(|e| {
+            everyones
+                || select.subject.as_ref() == Some(&e.id)
+                || (select.subject.is_none() && select.kind.is_none_or(|k| e.kind == k))
+        })
+        .collect();
+
+    // A document per entity, so a kind selection and a near-miss screen see
+    // everything that exists — with records and prose filled in only for the
+    // entities this query actually reads.
+    let mut scanned: Vec<DocScan> = Vec::with_capacity(entities.len());
+    for entity in &entities {
+        let read = wanted.iter().any(|w| w.id == entity.id);
+        let facts = if read {
+            store.recall(&entity.id).await?
+        } else {
+            Vec::new()
+        };
+        let prose = if read && query.include.prose {
+            store
+                .scan_entity(&entity.id)
+                .await?
+                .map(|doc| doc.prose)
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        scanned.push(DocScan {
+            doc_id: entity.id.to_string(),
+            title: entity.name.clone(),
+            prose,
+            facts,
+            entity: Some(entity.clone()),
+        });
+    }
     resolve(&scanned, query)
 }
 

@@ -909,10 +909,16 @@ impl Answer {
     pub fn claim(&self, address: &str) -> Answer {
         let body: Value = serde_json::from_str(&self.body)
             .unwrap_or_else(|e| panic!("the {} is not json: {e}: {}", self.what, self.body));
-        let fact = body["facts"]
-            .as_array()
-            .unwrap_or_else(|| panic!("the {} carries no facts: {}", self.what, self.body))
+        // **Wherever the answer keeps its claims.** `recall` answers with
+        // objects, each carrying its own; other answers carry a flat list. A
+        // claim is picked by its ADDRESS, which is unique across both shapes,
+        // so looking in both is not a guess about which verb replied.
+        let mut carried: Vec<&Value> = body["facts"].as_array().into_iter().flatten().collect();
+        let objects = body["objects"].as_array().into_iter().flatten();
+        carried.extend(objects.flat_map(|o| o["facts"].as_array().into_iter().flatten()));
+        let fact = carried
             .iter()
+            .copied()
             .find(|f| f["address"] == address)
             .unwrap_or_else(|| {
                 panic!(

@@ -95,6 +95,20 @@ pub(crate) fn parse_shape(raw: &str) -> Result<EdgeShape, McpError> {
     })
 }
 
+/// Parse a walk-direction token. **Omitted means `out`** — the edges an
+/// object's own records draw, which is the end the record itself is written
+/// on. A token that names neither direction is refused rather than defaulted,
+/// because guessing which way a caller meant to walk answers a question they
+/// did not ask.
+pub(crate) fn parse_direction(raw: Option<&str>) -> Result<Direction, McpError> {
+    match raw.map(str::trim).filter(|d| !d.is_empty()) {
+        None => Ok(Direction::default()),
+        Some(token) => Direction::of_token(token).ok_or_else(|| {
+            McpError::invalid_params(format!("direction must be out or in, got '{token}'"), None)
+        }),
+    }
+}
+
 pub(crate) fn parse_edge(shape: Option<&str>, object: Option<&str>) -> ParsedEdge {
     match (
         shape.map(str::trim).filter(|s| !s.is_empty()),
