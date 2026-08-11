@@ -26,12 +26,18 @@
 //! handle. It is not a clearance for the text around one. What holds that line
 //! is somebody's attention, and there is no second gate behind it.
 
+use jojobot_domain::memory::EntityKind;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const KINDS: [&str; 9] = [
-    "person", "place", "event", "work", "thing", "org", "topic", "project", "bot",
-];
+/// Every kind token a handle can carry, **derived from the enum rather than
+/// copied out of it**. A hand-written copy is a list that drifts silently: this
+/// one sat a kind behind for the whole life of `pet`, and a kind the scan does
+/// not know is a kind whose handles are never compared against the roster at
+/// all.
+fn kinds() -> Vec<&'static str> {
+    EntityKind::ALL.iter().map(|k| k.as_token()).collect()
+}
 
 /// The complete allowlist. Keep it sorted; keep it fictional.
 ///
@@ -233,7 +239,7 @@ fn violations_in(files: &[PathBuf]) -> Vec<String> {
 /// Every `kind:slug` occurrence in the text, comments included.
 fn handles_in(text: &str) -> Vec<String> {
     let mut found = Vec::new();
-    for kind in KINDS {
+    for kind in kinds() {
         let needle = format!("{kind}:");
         for (idx, _) in text.match_indices(&needle) {
             // A word/URL character right before means this is the tail of
@@ -301,7 +307,7 @@ impl Drop for Scratch {
 /// a roster handle in the same position must NOT be.
 #[test]
 fn the_gate_reads_markdown_at_the_workspace_root() {
-    let unlisted = unlisted_handle();
+    let unlisted = unlisted_handle("person");
     let scratch = Scratch::new("root-markdown");
     scratch.write("ROOT-DOC.md", &format!("the suite writes {unlisted} here"));
     scratch.write("crates/kept.rs", "// person:milhouse is listed");
@@ -319,12 +325,40 @@ fn the_gate_reads_markdown_at_the_workspace_root() {
     );
 }
 
-/// A handle no roster entry matches, **assembled rather than written**: the
-/// gate reads this file too, so spelling one out here would be an unlisted
-/// handle in the workspace and the real scan would report it.
-fn unlisted_handle() -> String {
-    const KIND: &str = "person";
-    format!("{KIND}:zzz-not-on-the-roster")
+/// A handle of that kind no roster entry matches, **assembled rather than
+/// written**: the gate reads this file too, so spelling one out here would be
+/// an unlisted handle in the workspace and the real scan would report it.
+fn unlisted_handle(kind: &str) -> String {
+    format!("{kind}:zzz-not-on-the-roster")
+}
+
+/// **The gate reads the newest kind the domain declares.**
+///
+/// The scan's kind list was hand-written, and it fell a kind behind the enum
+/// the moment `pet` was added: no `pet:` handle was extracted, so none was ever
+/// compared against the roster, and an off-roster name under that kind shipped
+/// green. The list is derived now, and this is the case that fails if it ever
+/// stops being.
+///
+/// Paired like the others, and for a sharper reason here: the half that says an
+/// unlisted handle is reported is the only one a blind scan cannot satisfy.
+#[test]
+fn the_gate_reads_the_newest_kind_the_domain_declares() {
+    let unlisted = unlisted_handle("pet");
+    let scratch = Scratch::new("newest-kind");
+    scratch.write("crates/kennel/src/lib.rs", &format!("// {unlisted}"));
+    scratch.write("crates/kennel/fixture.md", "pet:snowball is listed");
+
+    let violations = violations_in(&scanned_files(&scratch.0));
+
+    assert!(
+        violations.iter().any(|v| v.contains(&unlisted)),
+        "an unlisted handle under the newest kind has to be reported: {violations:?}"
+    );
+    assert!(
+        !violations.iter().any(|v| v.contains("pet:snowball")),
+        "…and a roster handle of that kind must still pass: {violations:?}"
+    );
 }
 
 /// **Widening the root did not stop the gate reading under `crates`.**
@@ -334,7 +368,7 @@ fn unlisted_handle() -> String {
 /// source file, which is the property every earlier version of this gate had.
 #[test]
 fn the_gate_still_reads_sources_under_crates() {
-    let unlisted = unlisted_handle();
+    let unlisted = unlisted_handle("person");
     let scratch = Scratch::new("under-crates");
     scratch.write(
         "crates/whatever/src/lib.rs",
