@@ -113,11 +113,21 @@ Shipped and live:
 - **The graph query** — `recall` is the precise lookup and `search` is the
   breadth. `recall` selects objects (a handle · a kind · a declared type · a
   key and its value), says what of each comes back (facts · prose), and walks
-  their edges to a depth in either direction — the edges an object draws, or
-  the edges drawn at it. **The answer nests and is always objects**, never a
-  bare fact list, so a caller does not branch on which question it asked. It
+  to a depth in either direction. **Two kinds of link:** an **edge**, followed
+  by one of the five shapes; and a **relation**, a key some type declared to
+  hold a reference, followed by that key's own name. **A relation is
+  key-scoped** — it reaches everything using that key, so *which of those are
+  pets* is a selection (a kind plus a key filter), never a walk: traversal
+  reaches, selection chooses. **The answer nests and is always objects**, never
+  a bare fact list, so a caller does not branch on which question it asked. It
   reads the store directly rather than the search index, which is what makes it
   the way past an index that cannot scan.
+- **What declaring a type buys** — a walk carries its own record filters, and a
+  key's declared value type licenses comparison on it: before/after on a date,
+  less/greater on a number, equals on anything. **Nothing is gated by
+  declaring** — an undeclared record is still found by the keys it carries, and
+  matching stays structural. Declaring is what buys ordering and traversal on
+  top of that, which is the first thing it is worth beyond write-time help.
 
 > **One front door, over both worlds.** Mail is in the same `search` — no
 > second verb, one ranked list — and **opt-in**: `include_mail: true` reaches
@@ -190,7 +200,7 @@ Shipped and live:
 > from a missing key will eventually infer wrong. What the full echo *proved* is
 > untouched — read-back happens server-side, so a body that did not survive
 > storage is still an error rather than a success with mangled bytes.
-- **M4** — Bots: a ninth entity kind, `bot` — an AI identity is handle ·
+- **M4** — Bots: the `bot` entity kind — an AI identity is handle ·
   charter (its doc's prose, written through `set_charter`) · rules (plain
   facts, so each carries its own provenance) · memory · one owned mailbox,
   opened with the bot in the same act and named for its handle.
