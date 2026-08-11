@@ -240,12 +240,15 @@ impl Link {
 pub struct Follow {
     /// What to travel along: any edge, one shape, or a declared relation.
     pub along: Along,
-    /// **Which end to leave by**, for a walk along edges. `None` is outbound.
+    /// **Which end to leave by**, for a relation as much as for an edge shape.
+    /// `None` is outbound.
     ///
-    /// It is optional because a relation's NAME already says which way it goes,
-    /// so a direction beside one is an argument this verb does not implement —
-    /// refused rather than silently dropped, which needs the two to be
-    /// distinguishable from each other.
+    /// A relation is followed by its KEY, and one key name cannot encode two
+    /// ways. The same entity can both hold a key and be pointed at by one: out
+    /// of a record, `owner` reaches the handle that record holds; in to an
+    /// entity, `owner` reaches every record pointing at it. Without a direction
+    /// beside the name the walk answers one of those two questions and gives no
+    /// sign of the other.
     pub direction: Option<Direction>,
     /// How many hops. One is the neighbours; two is the neighbours' neighbours.
     pub depth: usize,
@@ -270,7 +273,7 @@ impl Follow {
     }
 
     /// The direction this walk leaves by. Outbound unless it says otherwise,
-    /// and a relation's own name overrules it.
+    /// whether the walk follows an edge shape or a relation's key.
     fn direction(&self) -> Direction {
         self.direction.unwrap_or_default()
     }
