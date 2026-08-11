@@ -253,7 +253,7 @@ impl Jojobot {
         // offer instead is in reach.
         let answers_type = match &args.answers_type {
             None => None,
-            Some(wanted) => match self.declared(wanted, "recalled").await {
+            Some(wanted) => match self.declared(wanted, "recalled").await? {
                 Ok(declared) => Some(declared),
                 Err(refused) => return Ok(refused),
             },

@@ -316,6 +316,70 @@ mod tests {
         }
     }
 
+    /// **The store being down is a failure, not a blocked answer** — the other
+    /// half of the line this module draws, over the one read both typed verbs
+    /// make before anything else.
+    ///
+    /// `declared_types` has exactly one fallible step, so every error reachable
+    /// through it is the store. A client following the published instructions
+    /// branches on `status`, and `blocked` tells it the call was ITS mistake:
+    /// it fixes the type name it got right, and never retries the outage.
+    ///
+    /// Driven through both verbs that take `answers_type`, because the resolve
+    /// is shared and a channel is chosen at each call site — one of them
+    /// swallowing the error back into `Ok` is exactly the drift this pins.
+    #[tokio::test]
+    async fn a_store_that_cannot_list_types_is_a_failure_rather_than_the_callers_mistake() {
+        let jojobot = Jojobot::new(
+            Arc::new(DownMemory(
+                Down::TypeRoster,
+                Arc::new(InMemoryMemory::new()),
+            )),
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            seeded_registry(),
+        );
+        let sid = writing_as(&jojobot);
+
+        let recalled = jojobot
+            .recall(Parameters(RecallArgs {
+                sid: Some(sid.clone()),
+                answers_type: Some("pet".into()),
+                ..recall_args("person:bart")
+            }))
+            .await;
+        let searched = jojobot
+            .search(Parameters(SearchArgs {
+                sid: Some(sid),
+                answers_type: Some("pet".into()),
+                ..search_args()
+            }))
+            .await;
+
+        for (verb, result) in [("recall", recalled), ("search", searched)] {
+            let err = match result {
+                Err(err) => err,
+                Ok(ok) => panic!(
+                    "{verb} handed an outage back as a caller-fixable answer: {}",
+                    text_of(&ok)
+                ),
+            };
+            // The adapter's own words stay inside, as everywhere else on this
+            // rail — what crosses is that it was the store and to try again.
+            assert!(
+                !err.message.contains("the type roster cannot be read"),
+                "{verb} let the adapter's own words cross: {}",
+                err.message
+            );
+            assert!(
+                err.message.contains("Try once more"),
+                "{verb} left the caller without its next move: {}",
+                err.message
+            );
+        }
+    }
+
     /// A store failure's own account must not reach the caller — the same
     /// invariant the mailbox and session rails hold, through the same
     /// function.

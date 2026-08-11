@@ -261,7 +261,7 @@ mod tests {
         send(&seeded, "dev", "delta", "your hand-off").await;
 
         let blind = Jojobot::new(
-            Arc::new(UnindexedMemory(memory)),
+            Arc::new(DownMemory(Down::EntityIndex, memory)),
             Arc::new(SpySearch::default()),
             boxes,
             Arc::new(InMemorySessions::new()),

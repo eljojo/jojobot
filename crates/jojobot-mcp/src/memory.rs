@@ -79,28 +79,33 @@ impl Jojobot {
     /// cannot come to differ between them. `did` names what the call was doing
     /// when it stopped, because "nothing was searched" and "nothing was
     /// recalled" are the same sentence about different work.
+    ///
+    /// **Two nested answers, because there are two channels and this decides
+    /// which.** The outer `Err` is a failure the verb hands straight on with
+    /// `?`; the inner `Err` is a blocked body — a successful result the caller
+    /// acts on. A single error type here would have let each call site pick,
+    /// and both of them picked the blocked one for an outage.
     pub(crate) async fn declared(
         &self,
         wanted: &str,
-        did: &str,
-    ) -> Result<DeclaredType, CallToolResult> {
+        did: &'static str,
+    ) -> Result<Result<DeclaredType, CallToolResult>, McpError> {
         let known = match self.memory.declared_types().await {
             Ok(known) => known,
-            // The store itself failed. It is not a name mistake, so it gets the
-            // refusal that says so rather than a roster the caller cannot act on.
-            Err(e) => {
-                return Err(blocked_body(
-                    &EntityId(String::new()),
-                    &[],
-                    format!("Nothing was {did}: {e}."),
-                ));
-            }
+            // **Not a name mistake — the store is down.** `declared_types` has
+            // exactly one fallible step, so nothing else is reachable here, and
+            // a blocked body would tell a client branching on `status`, as the
+            // published instructions tell it to, that the outage was its own
+            // call to fix. Which faults are the caller's is `memory_declined`'s
+            // one answer; asking it is what keeps a second copy of that line
+            // from drifting away from it.
+            Err(e) => return memory_declined(did, e).map(Err),
         };
         if let Some(found) = known.iter().find(|t| t.name == wanted.trim()) {
-            return Ok(found.clone());
+            return Ok(Ok(found.clone()));
         }
         let names: Vec<&str> = known.iter().map(|t| t.name.as_str()).collect();
-        Err(blocked_body(
+        Ok(Err(blocked_body(
             &EntityId(String::new()),
             &[],
             format!(
@@ -114,6 +119,6 @@ impl Jojobot {
                     names.join(", ")
                 }
             ),
-        ))
+        )))
     }
 }

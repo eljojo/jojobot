@@ -493,7 +493,7 @@ impl Jojobot {
         // answered here, where the roster to offer instead is in reach.
         let declared = match &args.answers_type {
             None => None,
-            Some(wanted) => match self.declared(wanted, "searched").await {
+            Some(wanted) => match self.declared(wanted, "searched").await? {
                 Ok(declared) => Some(declared),
                 Err(refused) => return Ok(refused),
             },

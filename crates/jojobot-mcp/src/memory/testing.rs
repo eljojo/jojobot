@@ -250,51 +250,68 @@ pub(crate) fn search_args() -> SearchArgs {
     }
 }
 
+/// **Which ONE read a [`DownMemory`] cannot answer.** One at a time, because a
+/// port that failed wholesale could not say which read the surface under test
+/// actually depends on.
+pub(crate) enum Down {
+    /// The entity index — the shape an Outline outage takes for the one read
+    /// ownership depends on.
+    EntityIndex,
+    /// The type roster — the one fallible step behind every `answers_type`
+    /// argument.
+    TypeRoster,
+}
+
 /// A handler whose mailbox world answers nothing, over a memory the caller
 /// may already have populated — a bot has to be stood up while the world is
 /// up, since a claim that cannot be screened is refused.
-/// A Memory whose ENTITY INDEX cannot be read, everything else working —
-/// the shape an Outline outage takes for the one read ownership depends on.
-pub(crate) struct UnindexedMemory(pub(crate) Arc<InMemoryMemory>);
+/// A Memory with [`Down`]'s one read failing and everything else working.
+pub(crate) struct DownMemory(pub(crate) Down, pub(crate) Arc<InMemoryMemory>);
 
 #[async_trait]
-impl Memory for UnindexedMemory {
-    async fn list_entities(&self, _: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
-        Err(MemoryError::Store("the entity index cannot be read".into()))
+impl Memory for DownMemory {
+    async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
+        match self.0 {
+            Down::EntityIndex => Err(MemoryError::Store("the entity index cannot be read".into())),
+            Down::TypeRoster => self.1.list_entities(kind).await,
+        }
     }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
-        self.0.add_entity(new).await
+        self.1.add_entity(new).await
     }
     async fn declare_type(
         &self,
         declared: jojobot_domain::memory::types::DeclaredType,
     ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
-        self.0.declare_type(declared).await
+        self.1.declare_type(declared).await
     }
     async fn declared_types(
         &self,
     ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
-        self.0.declared_types().await
+        match self.0 {
+            Down::TypeRoster => Err(MemoryError::Store("the type roster cannot be read".into())),
+            Down::EntityIndex => self.1.declared_types().await,
+        }
     }
     async fn update_entity(
         &self,
         id: &EntityId,
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        self.0.update_entity(id, patch).await
+        self.1.update_entity(id, patch).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
-        self.0.capture(fact).await
+        self.1.capture(fact).await
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        self.0.recall(subject).await
+        self.1.recall(subject).await
     }
     async fn update_fact(
         &self,
         address: &FactAddress,
         patch: FactPatch,
     ) -> Result<Guarded<Fact>, MemoryError> {
-        self.0.update_fact(address, patch).await
+        self.1.update_fact(address, patch).await
     }
     async fn retract(
         &self,
@@ -302,12 +319,12 @@ impl Memory for UnindexedMemory {
         reason: Option<&str>,
         date: jiff::civil::Date,
     ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
-        self.0.retract(address, reason, date).await
+        self.1.retract(address, reason, date).await
     }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        self.0.set_prose(entity, prose).await
+        self.1.set_prose(entity, prose).await
     }
     async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
-        self.0.scan().await
+        self.1.scan().await
     }
 }
