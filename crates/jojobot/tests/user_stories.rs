@@ -35,6 +35,8 @@ mod kitchensink;
 mod moving;
 #[path = "user_stories/party.rs"]
 mod party;
+#[path = "user_stories/pets.rs"]
+mod pets;
 #[path = "user_stories/sourcing.rs"]
 mod sourcing;
 #[path = "user_stories/spotlight.rs"]
