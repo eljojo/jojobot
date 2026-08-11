@@ -29,12 +29,12 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
     // ── the records, written with nobody's type in mind ─────────────────────
     let s = story.session().await;
     s.add("person:bart", "Bart").await;
-    s.add("thing:santas-little-helper", "Santa's Little Helper")
+    s.add("pet:santas-little-helper", "Santa's Little Helper")
         .await;
-    s.add("thing:snowball", "Snowball").await;
+    s.add("pet:snowball", "Snowball").await;
 
     s.event_with(
-        "thing:santas-little-helper",
+        "pet:santas-little-helper",
         "the greyhound, came home from the track",
         "pet",
         json!({ "born": "2019-04-15", "weight": "27", "owner": "person:bart" }),
@@ -42,7 +42,7 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
     )
     .await;
     s.event_with(
-        "thing:snowball",
+        "pet:snowball",
         "the cat",
         "pet",
         json!({ "born": "2024-11-02", "weight": "4", "owner": "person:bart" }),
@@ -99,7 +99,7 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
         .shape(
             "who the greyhound belongs to",
             json!({
-                "subject": "thing:santas-little-helper",
+                "subject": "pet:santas-little-helper",
                 "facts": false,
                 "follow": { "relation": "owner" },
             }),
@@ -123,8 +123,8 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
             }),
         )
         .await;
-    pets.says("thing:santas-little-helper");
-    pets.says("thing:snowball");
+    pets.says("pet:santas-little-helper");
+    pets.says("pet:snowball");
     // The pump's record shares no key with `pet`, so it answers the type not at
     // all and the walk does not reach it. That is what makes the two hits above
     // mean something.
@@ -160,8 +160,8 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
             }),
         )
         .await;
-    older.says("thing:santas-little-helper");
-    older.never_says("thing:snowball");
+    older.says("pet:santas-little-helper");
+    older.never_says("pet:snowball");
     // The pet it did not keep is an edge nobody followed, and the answer says
     // so rather than leaving an empty list to be read as "there are no others".
     older.says("unwalked");
@@ -173,8 +173,8 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
         json!({ "fields": [{ "key": "weight", "compare": "less", "value": "10" }] }),
     )
     .await
-    .says("thing:snowball")
-    .never_says("thing:santas-little-helper");
+    .says("pet:snowball")
+    .never_says("pet:santas-little-helper");
 
     // ── and what a declaration does NOT license ─────────────────────────────
     //

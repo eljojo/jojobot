@@ -982,7 +982,7 @@ pub mod contract {
 
     // --- the entity model ----------------------------------------------------
 
-    /// A fact can be about any of the nine kinds, not just people — and each
+    /// A fact can be about any of the ten kinds, not just people — and each
     /// lands in its own home, addressable under its own handle.
     pub async fn every_kind_holds_facts<M: Memory>(store: &M) {
         for kind in EntityKind::ALL {
@@ -4771,6 +4771,41 @@ pub mod contract {
         );
     }
 
+    /// **A kind the code learned today survives the store.**
+    ///
+    /// The store keeps a kind as a string and reads it back off the handle, so
+    /// a kind arriving in the enum needs nothing migrated — but that is a claim
+    /// about the store rather than about the enum, and only a store can answer
+    /// it. The negative is the filter: a pet is not returned by a listing of
+    /// things, so the kind is carried rather than defaulted to something.
+    pub async fn a_pet_is_its_own_kind_in_the_store<M: Memory>(store: &M) {
+        let cat = EntityId::new(EntityKind::Pet, "contract-pet-cat");
+        ensure(store, &cat).await;
+
+        let read = store
+            .list_entities(Some(EntityKind::Pet))
+            .await
+            .expect("a listing of pets");
+        let found = read
+            .iter()
+            .find(|e| e.id == cat)
+            .expect("the pet comes back from a listing of its own kind");
+        assert_eq!(
+            found.kind,
+            EntityKind::Pet,
+            "and it reads back as a pet rather than as whatever a store defaults to: {found:?}",
+        );
+
+        let things = store
+            .list_entities(Some(EntityKind::Thing))
+            .await
+            .expect("a listing of things");
+        assert!(
+            !things.iter().any(|e| e.id == cat),
+            "a pet is not a thing, and the store's own filter agrees: {things:?}",
+        );
+    }
+
     pub async fn run_all<M: Memory>(store: &M) {
         capture_reads_back(store).await;
         preserves_all_fields(store).await;
@@ -4854,5 +4889,6 @@ pub mod contract {
         a_graph_query_selects_a_kind_and_returns_its_prose(store).await;
         a_graph_query_filters_on_a_stored_value_and_walks_an_edge(store).await;
         a_declared_reference_key_is_walkable_against_the_store(store).await;
+        a_pet_is_its_own_kind_in_the_store(store).await;
     }
 }

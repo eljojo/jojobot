@@ -29,7 +29,7 @@ pub mod types;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
-/// The nine kinds of noun jojobot knows about — a **closed** set, each earned
+/// The ten kinds of noun jojobot knows about — a **closed** set, each earned
 /// by an inventory of real data. Closed is the point: an id whose kind isn't one
 /// of these is not an entity id, so no unknown kind can enter the store, and
 /// every consumer that matches on a kind is exhaustive by construction.
@@ -61,12 +61,19 @@ pub enum EntityKind {
     /// other — **nothing about a bot is compiled in**; a bot is data in the
     /// operator's own store, and this kind is only what lets it be one.
     Bot,
+    /// A companion animal: a dog, a cat, a horse.
+    ///
+    /// **Not a `thing`.** `thing` is a named possession, and a pet is not one.
+    /// The kind set follows the life it models rather than its own tidiness, so
+    /// a part of that life this size gets a noun of its own instead of the
+    /// nearest one already here.
+    Pet,
 }
 
 impl EntityKind {
     /// Every kind, in declaration order — the enumeration `list_entities`
     /// filters over and the guard scans.
-    pub const ALL: [EntityKind; 9] = [
+    pub const ALL: [EntityKind; 10] = [
         EntityKind::Person,
         EntityKind::Project,
         EntityKind::Place,
@@ -76,6 +83,7 @@ impl EntityKind {
         EntityKind::Org,
         EntityKind::Topic,
         EntityKind::Bot,
+        EntityKind::Pet,
     ];
 
     /// The wire token — the `kind:` prefix of an id and the frontmatter value.
@@ -90,6 +98,7 @@ impl EntityKind {
             EntityKind::Org => "org",
             EntityKind::Topic => "topic",
             EntityKind::Bot => "bot",
+            EntityKind::Pet => "pet",
         }
     }
 
@@ -209,7 +218,7 @@ impl Boot {
 }
 
 /// An entity as its doc's frontmatter carries it. **Lean and uniform across all
-/// nine kinds** — no per-kind fields: what varies between a person and a place
+/// ten kinds** — no per-kind fields: what varies between a person and a place
 /// is the *facts* about them, not the record's shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entity {
@@ -1764,10 +1773,10 @@ mod tests {
         }
     }
 
-    /// All nine kinds round-trip through their wire token, and nothing else
+    /// All ten kinds round-trip through their wire token, and nothing else
     /// parses — the enum is closed, so an unknown kind can never enter the store.
     #[test]
-    fn the_nine_kinds_round_trip_and_the_set_is_closed() {
+    fn the_ten_kinds_round_trip_and_the_set_is_closed() {
         let all = [
             (EntityKind::Person, "person"),
             (EntityKind::Project, "project"),
@@ -1778,12 +1787,13 @@ mod tests {
             (EntityKind::Org, "org"),
             (EntityKind::Topic, "topic"),
             (EntityKind::Bot, "bot"),
+            (EntityKind::Pet, "pet"),
         ];
         for (kind, token) in all {
             assert_eq!(kind.as_token(), token);
             assert_eq!(EntityKind::from_token(token), Some(kind));
         }
-        assert_eq!(EntityKind::ALL.len(), 9, "nine kinds, no more");
+        assert_eq!(EntityKind::ALL.len(), 10, "ten kinds, no more");
         for unknown in ["receipt", "self", "Person", "", "peson"] {
             assert_eq!(
                 EntityKind::from_token(unknown),

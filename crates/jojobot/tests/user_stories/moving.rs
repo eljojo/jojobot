@@ -202,20 +202,32 @@ async fn moving_abroad() {
     s.fact("thing:red-bike", "ships in the container, boxed")
         .await;
 
-    // GAP — `pet` is a decided kind and is not built. Typed as a `thing`, the
-    // model says something false about a member of the household, and the
-    // vaccines, the import permit and the crate booking have nowhere honest to
-    // live.
-    //   s.add("pet:snowball", "Snowball").await;
-    s.refused(
-        "add_entity",
-        json!({
-            "kind": "pet", "handle": "snowball", "name": "Snowball",
-            "source": "user-named",
-        }),
+    // A member of the household, filed as one. The bike above ships in the
+    // container and the cat does not, and the model now says which is which
+    // rather than calling both a possession.
+    s.add("pet:snowball", "Snowball").await;
+    s.fact("pet:snowball", "rabies shot done, boosters up to date")
+        .await;
+    s.fact(
+        "pet:snowball",
+        "import permit applied for, four weeks quoted",
+    )
+    .await;
+    s.fact(
+        "pet:snowball",
+        "travel crate booked in the cabin, not the hold",
+    )
+    .await;
+    // The three claims above had nowhere honest to live while a cat was a
+    // thing, so the beat that proves the kind arrived is that they are on her
+    // page and readable back off it.
+    s.shape(
+        "what has to happen before the cat can fly",
+        json!({ "subject": "pet:snowball" }),
     )
     .await
-    .says("pet");
+    .says("import permit")
+    .says("travel crate");
 
     s.add("event:departure-flight", "Departure").await;
     s.fact(

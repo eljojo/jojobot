@@ -9,7 +9,10 @@ use super::*;
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddEntityArgs {
     /// One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-    /// `topic`, `bot`.
+    /// `topic`, `bot`, `pet`.
+    ///
+    /// **A pet is a `pet` and not a `thing`.** `thing` is a named possession —
+    /// a bike, a machine — and a companion animal is not one.
     ///
     /// **`bot` is an ordinary kind here**, and creating one is what this verb
     /// is for: nothing about an identity is compiled in, so every bot beyond

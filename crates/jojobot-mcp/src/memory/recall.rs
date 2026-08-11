@@ -622,8 +622,8 @@ mod tests {
         let jojobot = handler();
         for (kind, slug, name) in [
             ("person", "bart", "Bart"),
-            ("thing", "santas-little-helper", "Santa's Little Helper"),
-            ("thing", "snowball", "Snowball"),
+            ("pet", "santas-little-helper", "Santa's Little Helper"),
+            ("pet", "snowball", "Snowball"),
         ] {
             jojobot
                 .add_entity(Parameters(add_args(kind, slug, name)))
@@ -663,7 +663,7 @@ mod tests {
                         .into_iter()
                         .collect(),
                     ),
-                    ..capture_args(&format!("thing:{slug}"), "one of the pets")
+                    ..capture_args(&format!("pet:{slug}"), "one of the pets")
                 },
             )
             .await;
@@ -691,7 +691,7 @@ mod tests {
             .collect();
         assert_eq!(
             reached,
-            vec!["thing:santas-little-helper", "thing:snowball"],
+            vec!["pet:santas-little-helper", "pet:snowball"],
             "the reverse of a declared reference key is the has-many: {has_many}"
         );
         assert_eq!(
@@ -726,7 +726,7 @@ mod tests {
             .collect();
         assert_eq!(
             kept,
-            vec!["thing:santas-little-helper"],
+            vec!["pet:santas-little-helper"],
             "the ordering the declaration licenses narrows what the walk reaches: {older}"
         );
     }

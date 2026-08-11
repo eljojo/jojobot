@@ -175,6 +175,10 @@ pub(crate) fn type_name(kind: EntityKind) -> &'static str {
         // schema.org has no bot; `SoftwareApplication` is its nearest word for
         // a non-human actor, and it is the one a model already knows.
         EntityKind::Bot => "SoftwareApplication",
+        // schema.org has no animal either, and its nearest available word is
+        // `Product` — which states the one thing this kind exists to deny. So
+        // the word here is the plain one every model already knows.
+        EntityKind::Pet => "Pet",
     }
 }
 
@@ -183,7 +187,7 @@ mod tests {
     use super::*;
 
     /// **The response vocabulary, whole.** Every kind renders its schema.org
-    /// name — and the table is walked from `EntityKind::ALL`, so a ninth kind
+    /// name — and the table is walked from `EntityKind::ALL`, so a new kind
     /// cannot arrive without someone deciding what it is called on the wire.
     ///
     /// The other half is the input grammar, which is **unchanged**: the names
@@ -200,6 +204,7 @@ mod tests {
             (EntityKind::Topic, "topic", "Topic"),
             (EntityKind::Project, "project", "Project"),
             (EntityKind::Bot, "bot", "SoftwareApplication"),
+            (EntityKind::Pet, "pet", "Pet"),
         ];
         assert_eq!(
             table.len(),

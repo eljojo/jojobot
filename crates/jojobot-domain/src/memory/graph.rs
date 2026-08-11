@@ -1717,10 +1717,10 @@ mod tests {
         vec![
             doc(entity("person:bart", "Bart"), "Bart's page.", Vec::new()),
             doc(
-                entity("thing:santas-little-helper", "Santa's Little Helper"),
+                entity("pet:santas-little-helper", "Santa's Little Helper"),
                 "The greyhound's page.",
                 vec![pet_record(
-                    "thing:santas-little-helper",
+                    "pet:santas-little-helper",
                     "f1",
                     "the greyhound",
                     "2019-04-15",
@@ -1728,10 +1728,10 @@ mod tests {
                 )],
             ),
             doc(
-                entity("thing:snowball", "Snowball"),
+                entity("pet:snowball", "Snowball"),
                 "The cat's page.",
                 vec![pet_record(
-                    "thing:snowball",
+                    "pet:snowball",
                     "f1",
                     "the cat",
                     "2024-11-02",
@@ -1783,7 +1783,7 @@ mod tests {
             .expect("a declared relation is followable")
         };
 
-        let forward = walk("thing:santas-little-helper", "owner");
+        let forward = walk("pet:santas-little-helper", "owner");
         assert_eq!(
             handles(&forward[0].connected),
             vec!["person:bart"],
@@ -1801,7 +1801,7 @@ mod tests {
         let reverse = walk("person:bart", "pet.owner");
         assert_eq!(
             handles(&reverse[0].connected),
-            vec!["thing:santas-little-helper", "thing:snowball"],
+            vec!["pet:santas-little-helper", "pet:snowball"],
             "and `type.key` reaches every record pointing back — the has-many: {reverse:?}",
         );
         assert_eq!(
@@ -1821,7 +1821,7 @@ mod tests {
     fn nothing_is_a_relation_until_a_declaration_says_it_is() {
         let query = GraphQuery {
             select: Selection {
-                subject: Some(EntityId("thing:santas-little-helper".into())),
+                subject: Some(EntityId("pet:santas-little-helper".into())),
                 ..Selection::default()
             },
             include: Include {
@@ -1975,7 +1975,7 @@ mod tests {
         let found = born_before(&[pet()]).expect("the declaration licenses it");
         assert_eq!(
             handles(&found),
-            vec!["thing:santas-little-helper"],
+            vec!["pet:santas-little-helper"],
             "the older pet is before the date and the younger one is not: {found:?}",
         );
 
@@ -1995,7 +1995,7 @@ mod tests {
             },
         )
         .expect("a declared number licenses an ordering");
-        assert_eq!(handles(&lighter), vec!["thing:snowball"]);
+        assert_eq!(handles(&lighter), vec!["pet:snowball"]);
 
         resolve(
             &scanned,
@@ -2028,7 +2028,7 @@ mod tests {
             },
         )
         .expect("equality needs no declaration");
-        assert_eq!(handles(&found), vec!["thing:snowball"]);
+        assert_eq!(handles(&found), vec!["pet:snowball"]);
     }
 
     /// **A walk can filter what it reaches**, which is what the record filters
@@ -2065,7 +2065,7 @@ mod tests {
         let all = from_bart(Vec::new());
         assert_eq!(
             handles(&all[0].connected),
-            vec!["thing:santas-little-helper", "thing:snowball"],
+            vec!["pet:santas-little-helper", "pet:snowball"],
             "unfiltered, the walk reaches both pets: {all:?}",
         );
 
@@ -2076,7 +2076,7 @@ mod tests {
         )]);
         assert_eq!(
             handles(&older[0].connected),
-            vec!["thing:santas-little-helper"],
+            vec!["pet:santas-little-helper"],
             "and filtered, it reaches only the pet born before the date: {older:?}",
         );
         assert!(
