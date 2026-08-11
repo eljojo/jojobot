@@ -4724,6 +4724,7 @@ pub mod contract {
                         },
                         follow: Some(graph::Follow {
                             along: graph::Along::Relation(relation),
+                            direction: Some(graph::Direction::In),
                             ..graph::Follow::hop()
                         }),
                     },
@@ -4733,18 +4734,18 @@ pub mod contract {
         };
 
         declare(ValueType::Text).await;
-        reached("contract-holding.keeper").await.expect_err(
+        reached("keeper").await.expect_err(
             "a key declared to hold text is no relation, whatever its value looks like",
         );
 
         declare(ValueType::Reference).await;
-        let found = reached("contract-holding.keeper")
+        let found = reached("keeper")
             .await
             .expect("declared a reference, the key is a relation");
         let connected: Vec<&EntityId> = found[0].connected.iter().map(|o| &o.entity.id).collect();
         assert!(
             connected.contains(&&held),
-            "the reverse of the key reaches what points at this object: {connected:?}",
+            "the key walked inbound reaches what points at this object: {connected:?}",
         );
 
         // And the ordering the same declaration licenses, over a value that

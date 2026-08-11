@@ -210,8 +210,8 @@ pub enum Along {
     AnyEdge,
     /// One edge shape.
     Edge(EdgeShape),
-    /// **A declared relation, by name.** The name says which way it goes:
-    /// forward is the key itself, and reverse is `type.key`.
+    /// **A declared relation: the KEY some type declared to hold a reference.**
+    /// [`Follow::direction`] says which way to travel it.
     Relation(String),
 }
 
@@ -353,14 +353,6 @@ impl GraphQuery {
             }
         }
         if let Some(follow) = &self.follow {
-            if matches!(follow.along, Along::Relation(_)) && follow.direction.is_some() {
-                return Err(MemoryError::InvalidQuery(
-                    "a relation's name already says which way it goes — the key reaches what a \
-                     record points at, and `type.key` reaches the records pointing back. Drop the \
-                     direction, or follow an edge shape instead"
-                        .into(),
-                ));
-            }
             if follow.depth == 0 {
                 return Err(MemoryError::InvalidQuery(
                     "a walk of no hops follows nothing: give a depth of at least 1, or ask for no \
@@ -378,70 +370,39 @@ impl GraphQuery {
     }
 }
 
-/// **A relation, resolved against what has been declared.**
+/// **A relation is a KEY that some declaration says holds a reference.**
 ///
-/// The naming rule is derived rather than configured, which is why nobody
-/// declares an inverse: **forward is the key**, and **reverse is `type.key`**.
-/// The reverse is qualified by its type because it has to be — one type with
-/// two reference keys onto the same kind, a trip's `from` and its `to`, would
-/// collide under a bare type name, and a naming rule that breaks on the second
-/// real case is not a rule.
-enum Relation<'a> {
-    /// From a record, out to what its key points at.
-    Forward { key: &'a str },
-    /// From an entity, back to the records of one type pointing at it.
-    Reverse {
-        declared: &'a types::DeclaredType,
-        key: &'a str,
-    },
+/// The name is derived rather than configured: it is the key itself, and the
+/// direction says which way to travel it. Out of a record, the key reaches the
+/// handle it holds; in to an entity, the key reaches every record pointing at
+/// it.
+///
+/// **A declaration establishes the key IS a relation, and does nothing else
+/// here.** It used to also scope the reverse walk to one type, under the name
+/// `type.key`. That scope could never exclude anything: the walked key is by
+/// construction one of the type's keys, and a record answers a type when it
+/// holds ONE of them, so the record carrying the key always answered the type.
+/// The name promised a narrowing the code could not perform, so both are gone.
+///
+/// **Nothing is inferred.** A value that looks like a handle under a key nobody
+/// declared is a string that looks like a handle.
+fn relation_key<'a>(name: &str, declarations: &'a [types::DeclaredType]) -> Option<&'a str> {
+    let name = name.trim();
+    declarations
+        .iter()
+        .find_map(|d| d.field(name))
+        .filter(|f| f.holds == types::ValueType::Reference)
+        .map(|f| f.key.as_str())
 }
 
-impl<'a> Relation<'a> {
-    /// The relation this name names, or nothing when no declaration backs it.
-    ///
-    /// **Nothing is inferred.** A key is a relation because some declaration
-    /// says it holds a reference; two records that look related are not related
-    /// until a key says so.
-    fn named(name: &str, declarations: &'a [types::DeclaredType]) -> Option<Relation<'a>> {
-        let name = name.trim();
-        let reference = |declared: &types::DeclaredType, key: &str| {
-            declared
-                .field(key)
-                .is_some_and(|f| f.holds == types::ValueType::Reference)
-        };
-        if let Some((type_name, key)) = name.split_once('.') {
-            let declared = declarations
-                .iter()
-                .find(|d| d.name == type_name.trim() && reference(d, key))?;
-            let key = declared.field(key)?.key.as_str();
-            return Some(Relation::Reverse { declared, key });
-        }
-        let declared = declarations.iter().find(|d| reference(d, name))?;
-        Some(Relation::Forward {
-            key: declared.field(name)?.key.as_str(),
-        })
-    }
-
-    /// Which way following it goes. The name says it, so nothing else has to.
-    fn direction(&self) -> Direction {
-        match self {
-            Relation::Forward { .. } => Direction::Out,
-            Relation::Reverse { .. } => Direction::In,
-        }
-    }
-}
-
-/// **Every relation name these declarations make followable**, in name order —
-/// what a caller who named one that is not there gets offered instead.
+/// **Every relation these declarations make followable**, in name order — what
+/// a caller who named one that is not there gets offered instead.
 fn relation_names(declarations: &[types::DeclaredType]) -> Vec<String> {
     let mut found: Vec<String> = declarations
         .iter()
-        .flat_map(|d| {
-            d.fields
-                .iter()
-                .filter(|f| f.holds == types::ValueType::Reference)
-                .flat_map(move |f| [f.key.clone(), format!("{}.{}", d.name, f.key)])
-        })
+        .flat_map(|d| &d.fields)
+        .filter(|f| f.holds == types::ValueType::Reference)
+        .map(|f| f.key.clone())
         .collect();
     found.sort();
     found.dedup();
@@ -498,12 +459,13 @@ fn check_declared(
         }
     }
     if let Some(Along::Relation(name)) = query.follow.as_ref().map(|f| &f.along)
-        && Relation::named(name, declarations).is_none()
+        && relation_key(name, declarations).is_none()
     {
         let known = relation_names(declarations);
         return Err(MemoryError::InvalidQuery(format!(
-            "no declaration makes '{name}' a relation. A key declared to hold a reference is one, \
-             by its own name; the records pointing back are `type.key`. {}",
+            "no declaration makes '{name}' a relation. A relation is a KEY some type declared to \
+             hold a reference: walk it outbound to reach what a record points at, or inbound to \
+             reach the records pointing here. {}",
             if known.is_empty() {
                 "No type declares a reference key yet".to_string()
             } else {
@@ -818,7 +780,7 @@ impl<'a> Ctx<'a> {
         follow: &Follow,
     ) -> Vec<(Link, Direction, EntityId)> {
         let mut found: Vec<(Link, Direction, EntityId)> = match &follow.along {
-            Along::Relation(name) => self.along_relation(id, from, name),
+            Along::Relation(name) => self.along_relation(id, from, name, follow.direction()),
             along => {
                 let shape = match along {
                     Along::Edge(shape) => Some(*shape),
@@ -855,38 +817,51 @@ impl<'a> Ctx<'a> {
         found
     }
 
-    /// The entities a declared relation reaches from `id`.
+    /// The entities a declared relation reaches from `id`, in the direction
+    /// asked for.
     ///
-    /// **Forward** reads this object's own records: a key declared to hold a
-    /// reference holds a handle, and that handle is where the link goes.
-    /// **Reverse** reads everybody else's: the records answering that type and
-    /// pointing their key at this object, and the link goes to whoever they are
-    /// about.
+    /// **Out** reads this object's own records: the key holds a handle, and
+    /// that handle is where the link goes. **In** reads everybody else's: every
+    /// record pointing that key at this object, and the link goes to whoever
+    /// each record is about.
+    ///
+    /// **The inbound walk is scoped by the KEY and by nothing else.** It reaches
+    /// every record pointing here through that key, whatever else the record is
+    /// — which is what "everything pointing at me through `owner`" means, and is
+    /// not the same question as "my pets".
     fn along_relation(
         &self,
         id: &EntityId,
         from: &[&Fact],
         name: &str,
+        direction: Direction,
     ) -> Vec<(Link, Direction, EntityId)> {
-        let Some(relation) = Relation::named(name, self.declarations) else {
+        // ⚠️ **UNREACHABLE, AND DELIBERATELY KEPT.** No test reaches this
+        // branch, and the comment exists so the next reader knows the coverage
+        // is absent rather than assuming it: `check_declared` refuses a
+        // relation no declaration backs before any walk starts, so a name that
+        // gets this far has already resolved once.
+        //
+        // It stays because the refusal and the lookup are in different
+        // functions, and an empty walk is the right answer if they ever
+        // disagree. Nothing downstream depends on it.
+        let Some(key) = relation_key(name, self.declarations) else {
             return Vec::new();
         };
-        let link = || Link::Relation(name.trim().to_string());
-        let direction = relation.direction();
-        match relation {
-            Relation::Forward { key } => from
+        let link = || Link::Relation(key.to_string());
+        match direction {
+            Direction::Out => from
                 .iter()
                 .filter_map(|f| f.event.as_ref())
                 .filter_map(|e| e.metadata.get(key))
                 .map(|handle| (link(), direction, EntityId(handle.trim().to_string())))
                 .collect(),
-            Relation::Reverse { declared, key } => self
+            Direction::In => self
                 .all
                 .iter()
                 .filter(|f| {
                     f.event.as_ref().is_some_and(|e| {
                         e.metadata.get(key).is_some_and(|v| v.trim() == id.as_str())
-                            && declared.matched_by(&e.metadata).is_some()
                     })
                 })
                 .map(|f| (link(), direction, f.subject.clone()))
@@ -1738,30 +1713,47 @@ mod tests {
                     "4",
                 )],
             ),
-            // The negative every case below rests on: a thing carrying no pet
-            // record at all, so "the relation reached it" means something.
+            // A thing that is no pet and carries the same key anyway. It is
+            // what makes the inbound walk's scope legible: `owner` reaches it,
+            // because `owner` is what the walk was asked for.
             doc(
                 entity("thing:red-bike", "The Red Bike"),
                 "The bike's page.",
-                vec![fact("thing:red-bike", "f1", "needs new brake pads")],
+                vec![Fact {
+                    event: Some(Event {
+                        kind: "repair".into(),
+                        metadata: [
+                            ("fitted".to_string(), "2026-02-01".to_string()),
+                            ("owner".to_string(), "person:bart".to_string()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                        refs: Vec::new(),
+                    }),
+                    ..fact("thing:red-bike", "f1", "needs new brake pads")
+                }],
+            ),
+            // …and one carrying no record at all, so "the relation reached it"
+            // still means something.
+            doc(
+                entity("thing:floor-pump", "The Floor Pump"),
+                "The pump's page.",
+                vec![fact("thing:floor-pump", "f1", "reseated the hose")],
             ),
         ]
     }
 
     /// **A declared reference key IS a walkable link, both ways.**
     ///
-    /// Forward is the key: from the pet, `owner` reaches the person. Reverse is
-    /// `type.key`: from the person, `pet.owner` reaches every pet pointing back
-    /// — and that reverse IS the has-many, which nobody declared an inverse
-    /// for.
-    ///
-    /// Paired with the thing that carries no such record, so "it was reached"
-    /// is a fact about the relation and not about every object in the store.
+    /// One name and two directions: out of the pet, `owner` reaches the person;
+    /// in to the person, `owner` reaches the records naming them. Nobody
+    /// declares an inverse, because there is nothing to declare — the same key
+    /// walked the other way is the other question.
     #[test]
     fn a_declared_reference_key_is_a_walkable_link_both_ways() {
         let scanned = kennel();
         let declarations = vec![pet()];
-        let walk = |from: &str, relation: &str| {
+        let walk = |from: &str, relation: &str, direction: Direction| {
             resolve(
                 &scanned,
                 &declarations,
@@ -1776,6 +1768,7 @@ mod tests {
                     },
                     follow: Some(Follow {
                         along: Along::Relation(relation.into()),
+                        direction: Some(direction),
                         ..Follow::hop()
                     }),
                 },
@@ -1783,7 +1776,7 @@ mod tests {
             .expect("a declared relation is followable")
         };
 
-        let forward = walk("pet:santas-little-helper", "owner");
+        let forward = walk("pet:santas-little-helper", "owner", Direction::Out);
         assert_eq!(
             handles(&forward[0].connected),
             vec!["person:bart"],
@@ -1798,11 +1791,11 @@ mod tests {
             "and the reached object says it came along the relation, outbound",
         );
 
-        let reverse = walk("person:bart", "pet.owner");
+        let reverse = walk("person:bart", "owner", Direction::In);
         assert_eq!(
             handles(&reverse[0].connected),
-            vec!["pet:santas-little-helper", "pet:snowball"],
-            "and `type.key` reaches every record pointing back — the has-many: {reverse:?}",
+            vec!["pet:santas-little-helper", "pet:snowball", "thing:red-bike"],
+            "and the same key walked inbound reaches every record pointing here: {reverse:?}",
         );
         assert_eq!(
             reverse[0].connected[0].via.as_ref().map(|v| v.direction),
@@ -1851,10 +1844,9 @@ mod tests {
         resolve(&kennel(), &[pet()], &query).expect("declared as a reference, it is one");
     }
 
-    /// **A reverse name is qualified by its type because it has to be.** One
-    /// type with two reference keys onto the same kind — a trip's `from` and
-    /// its `to` — collides under a bare type name, and each qualified name
-    /// reaches its own end.
+    /// **Two reference keys of one type stay apart, because they are two
+    /// KEYS.** A trip's `from` and its `to` both point at places, and each name
+    /// reaches its own end — inbound as well as outbound.
     #[test]
     fn two_reference_keys_of_one_type_do_not_collide() {
         let trip = types::DeclaredType::new(
@@ -1883,7 +1875,7 @@ mod tests {
             doc(entity("place:shelbyville", "Shelbyville"), "", Vec::new()),
         ];
 
-        let reached = |from: &str, relation: &str| {
+        let reached = |from: &str, relation: &str, direction: Direction| {
             let found = resolve(
                 &scanned,
                 std::slice::from_ref(&trip),
@@ -1898,6 +1890,7 @@ mod tests {
                     },
                     follow: Some(Follow {
                         along: Along::Relation(relation.into()),
+                        direction: Some(direction),
                         ..Follow::hop()
                     }),
                 },
@@ -1909,41 +1902,179 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        assert_eq!(reached("person:bart", "from"), vec!["place:springfield"]);
-        assert_eq!(reached("person:bart", "to"), vec!["place:shelbyville"]);
         assert_eq!(
-            reached("place:springfield", "trip.from"),
+            reached("person:bart", "from", Direction::Out),
+            vec!["place:springfield"],
+        );
+        assert_eq!(
+            reached("person:bart", "to", Direction::Out),
+            vec!["place:shelbyville"],
+        );
+        assert_eq!(
+            reached("place:springfield", "from", Direction::In),
             vec!["person:bart"],
-            "the reverse of one key reaches the traveller",
+            "walked inbound, one key reaches the traveller",
         );
         assert!(
-            reached("place:springfield", "trip.to").is_empty(),
-            "and the reverse of the OTHER key does not — which is what the qualification buys",
+            reached("place:springfield", "to", Direction::In).is_empty(),
+            "and the OTHER key does not — the two keys are what keeps the ends apart",
         );
     }
 
-    /// **A relation's name says which way it goes**, so a direction beside one
-    /// is an argument this verb does not implement — refused, never dropped.
+    /// **A relation is scoped by its KEY, and the direction chooses the way.**
+    ///
+    /// The inbound walk reaches every record pointing here through that key,
+    /// whatever else each record is. The bike's repair record carries `owner`
+    /// and is reached — which is what the walk was asked for, and is why the
+    /// name no longer claims to be about pets.
+    ///
+    /// **This is the case the old code could not have failed.** The reverse
+    /// walk used to also require the record to answer the declared type, under
+    /// the name `pet.owner`. That could never exclude anything: the walked key
+    /// is one of the type's keys, and holding one key is what answering a type
+    /// means. So the check is gone, and so is the name that advertised it.
     #[test]
-    fn a_direction_beside_a_relation_is_refused() {
-        let query = |direction: Option<Direction>| GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("person:bart".into())),
-                ..Selection::default()
-            },
-            include: Include {
-                facts: false,
-                prose: false,
-            },
-            follow: Some(Follow {
-                along: Along::Relation("pet.owner".into()),
-                direction,
-                ..Follow::hop()
-            }),
+    fn a_relation_is_scoped_by_its_key_and_the_direction_chooses_the_way() {
+        let scanned = kennel();
+        let declarations = vec![pet()];
+        let walk = |from: &str, relation: &str, direction: Direction| {
+            resolve(
+                &scanned,
+                &declarations,
+                &GraphQuery {
+                    select: Selection {
+                        subject: Some(EntityId(from.into())),
+                        ..Selection::default()
+                    },
+                    include: Include {
+                        facts: false,
+                        prose: false,
+                    },
+                    follow: Some(Follow {
+                        along: Along::Relation(relation.into()),
+                        direction: Some(direction),
+                        ..Follow::hop()
+                    }),
+                },
+            )
         };
-        resolve(&kennel(), &[pet()], &query(Some(Direction::Out)))
-            .expect_err("a relation already says which way it goes");
-        resolve(&kennel(), &[pet()], &query(None)).expect("and without one it is served");
+
+        let pointing_here = walk("person:bart", "owner", Direction::In)
+            .expect("a declared key is followable inbound");
+        assert_eq!(
+            handles(&pointing_here[0].connected),
+            vec!["pet:santas-little-helper", "pet:snowball", "thing:red-bike"],
+            "everything pointing here through `owner`, and the bike is no pet: {pointing_here:?}",
+        );
+        assert_eq!(
+            pointing_here[0].connected[2].via,
+            Some(Via {
+                link: Link::Relation("owner".into()),
+                direction: Direction::In,
+            }),
+            "and it says it arrived along the key, inbound",
+        );
+
+        // The same key the other way, off the record that is not a pet: one
+        // name, and the direction is what picks the question.
+        let points_at = walk("thing:red-bike", "owner", Direction::Out)
+            .expect("a declared key is followable outbound");
+        assert_eq!(handles(&points_at[0].connected), vec!["person:bart"]);
+
+        // …and the object with no record at all is reached by neither, so the
+        // hits above are about the key rather than about every object.
+        assert!(
+            walk("thing:floor-pump", "owner", Direction::Out).expect("served")[0]
+                .connected
+                .is_empty(),
+        );
+
+        // The qualified name is gone, and the refusal offers the key instead.
+        let refused = walk("person:bart", "pet.owner", Direction::In)
+            .expect_err("`type.key` is no longer a relation name");
+        match refused {
+            MemoryError::InvalidQuery(why) => assert!(
+                why.contains("owner"),
+                "the refusal names the relation that does exist: {why}",
+            ),
+            other => panic!("a name no declaration backs is a malformed query: {other:?}"),
+        }
+    }
+
+    /// **A key may be spelled like an edge shape, and the two do not cross.**
+    ///
+    /// Bare key names make this reachable: nothing stops a type declaring a key
+    /// called `location`, and there is an edge shape of that name. They are
+    /// different vocabularies and `follow` says which one it means by which
+    /// argument it carries, so the same word reaches two different places.
+    ///
+    /// Both halves in one case, because either alone passes on a build that
+    /// collapses the two into one lookup.
+    #[test]
+    fn a_key_named_like_an_edge_shape_is_still_a_key() {
+        let declared = types::DeclaredType::new(
+            "posting",
+            vec![types::Field::new("location", types::ValueType::Reference)],
+        );
+        let by_key = Fact {
+            event: Some(Event {
+                kind: "posting".into(),
+                metadata: [("location".to_string(), "place:shelbyville".to_string())]
+                    .into_iter()
+                    .collect(),
+                refs: Vec::new(),
+            }),
+            ..fact("person:bart", "f1", "posted from over there")
+        };
+        let by_edge = edged(
+            "person:bart",
+            "f2",
+            "actually lives here",
+            EdgeShape::Location,
+            "place:springfield",
+        );
+        let scanned = vec![
+            doc(entity("person:bart", "Bart"), "", vec![by_key, by_edge]),
+            doc(entity("place:springfield", "Springfield"), "", Vec::new()),
+            doc(entity("place:shelbyville", "Shelbyville"), "", Vec::new()),
+        ];
+
+        let along = |along: Along| {
+            let found = resolve(
+                &scanned,
+                std::slice::from_ref(&declared),
+                &GraphQuery {
+                    select: Selection {
+                        subject: Some(EntityId("person:bart".into())),
+                        ..Selection::default()
+                    },
+                    include: Include {
+                        facts: false,
+                        prose: false,
+                    },
+                    follow: Some(Follow {
+                        along,
+                        ..Follow::hop()
+                    }),
+                },
+            )
+            .expect("both vocabularies are followable");
+            handles(&found[0].connected)
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            along(Along::Relation("location".into())),
+            vec!["place:shelbyville"],
+            "the KEY reaches what the record's value names",
+        );
+        assert_eq!(
+            along(Along::Edge(EdgeShape::Location)),
+            vec!["place:springfield"],
+            "and the SHAPE reaches what the edge points at — same word, two vocabularies",
+        );
     }
 
     /// **The declared value type licenses the operator.** A key declared to
@@ -2053,7 +2184,8 @@ mod tests {
                     },
                     include: Include::default(),
                     follow: Some(Follow {
-                        along: Along::Relation("pet.owner".into()),
+                        along: Along::Relation("owner".into()),
+                        direction: Some(Direction::In),
                         keeping,
                         ..Follow::hop()
                     }),
@@ -2065,8 +2197,8 @@ mod tests {
         let all = from_bart(Vec::new());
         assert_eq!(
             handles(&all[0].connected),
-            vec!["pet:santas-little-helper", "pet:snowball"],
-            "unfiltered, the walk reaches both pets: {all:?}",
+            vec!["pet:santas-little-helper", "pet:snowball", "thing:red-bike"],
+            "unfiltered, the walk reaches everything pointing here through the key: {all:?}",
         );
 
         let older = from_bart(vec![FieldFilter::comparing(

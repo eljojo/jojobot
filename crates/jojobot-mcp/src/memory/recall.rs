@@ -38,16 +38,24 @@ pub struct FollowArgs {
     /// · `connection`). Omit for **any** edge — "whatever it is connected to".
     #[serde(default)]
     pub shape: Option<String>,
-    /// **A declared relation to walk instead of an edge.** A key some type
-    /// declared to hold a `reference` is a link, because the declaration says
-    /// the value is another entity rather than a string that looks like one.
+    /// **A declared relation to walk instead of an edge.** A relation is a KEY
+    /// that some type declared to hold a `reference`: the declaration says the
+    /// value is another entity rather than a string that looks like one, and
+    /// that is what makes it walkable.
     ///
-    /// **The name says which way it goes**, so do not pass a direction beside
-    /// it. Forward is the key itself — from a record, `owner` reaches the
-    /// person it points at. Reverse is `type.key` — from that person,
-    /// `pet.owner` reaches every pet pointing back, which is the has-many and
-    /// which nobody declares an inverse for. The reverse carries its type
-    /// because one type may declare two reference keys onto the same kind.
+    /// **Name the key, and use `direction` to say which way.** `out` follows
+    /// the key off this object's own records — from a pet, `owner` reaches the
+    /// person. `in` reaches every record pointing here through that key — from
+    /// that person, `owner` reaches the pets.
+    ///
+    /// ⚠️ **Inbound is scoped by the KEY and by nothing else.** It reaches
+    /// every record using that key, whatever the record otherwise is: a repair
+    /// record carrying `owner` comes back beside the pets. If you want one kind
+    /// of thing, select it — `kind` plus a `fields` filter on the key — rather
+    /// than walking.
+    ///
+    /// A key may be spelled like an edge shape. Pass one or the other, never
+    /// both.
     #[serde(default)]
     pub relation: Option<String>,
     /// **Which end of the edge to leave by**, and it is two different
@@ -203,12 +211,15 @@ impl Jojobot {
                        edges this object's records draw, `in` follows the edges drawn AT it, so \
                        from a party `in` reaches its guests and from a guest `out` reaches the \
                        party. A RELATION is the other kind of link, and a DECLARATION is what \
-                       makes one: a key some type declared to hold a `reference` points at \
-                       another entity, so it is walkable. Its NAME says which way it goes and you \
-                       pass no direction beside it — forward is the key ('owner' reaches the \
-                       person a record points at), reverse is `type.key` ('pet.owner' reaches \
-                       every pet pointing back, which is the has-many, and nobody declares an \
-                       inverse). `keeping` narrows what the walk reaches, taking the same key \
+                       makes one: a KEY some type declared to hold a `reference` points at \
+                       another entity, so it is walkable. Name the key and use `direction` — \
+                       `out` reaches what a record points at ('owner' from a pet reaches the \
+                       person), `in` reaches every record pointing here through that key ('owner' \
+                       from that person reaches the pets). Inbound is scoped by the KEY ALONE: it \
+                       returns every record using that key, so a repair record carrying `owner` \
+                       arrives beside the pets. For one kind of thing, SELECT it — `kind` plus a \
+                       `fields` filter on the key — rather than walking. `keeping` narrows what \
+                       the walk reaches, taking the same key \
                        filters, so 'this person's pets' becomes 'this person's pets born before a \
                        date'. A key's DECLARED value type also licenses how you compare it: \
                        `before` and `after` on a declared date, `less` and `greater` on a \
@@ -675,7 +686,8 @@ mod tests {
                     subject: Some("person:bart".into()),
                     facts: Some(false),
                     follow: Some(FollowArgs {
-                        relation: Some("pet.owner".into()),
+                        relation: Some("owner".into()),
+                        direction: Some("in".into()),
                         ..no_follow()
                     }),
                     ..of_nothing()
@@ -695,7 +707,7 @@ mod tests {
             "the reverse of a declared reference key is the has-many: {has_many}"
         );
         assert_eq!(
-            has_many["objects"][0]["connected"][0]["via"]["relation"], "pet.owner",
+            has_many["objects"][0]["connected"][0]["via"]["relation"], "owner",
             "and a reached object says which relation carried it: {has_many}"
         );
 
@@ -705,7 +717,8 @@ mod tests {
                     subject: Some("person:bart".into()),
                     facts: Some(false),
                     follow: Some(FollowArgs {
-                        relation: Some("pet.owner".into()),
+                        relation: Some("owner".into()),
+                        direction: Some("in".into()),
                         keeping: Some(vec![KeyFilterArgs {
                             key: "born".into(),
                             value: Some("2020-01-01".into()),
@@ -731,11 +744,12 @@ mod tests {
         );
     }
 
-    /// **An ordering no declaration licenses is refused**, and so is a
-    /// direction beside a relation. Both come back blocked with a way forward,
-    /// rather than as an equality answer wearing an ordering's name.
+    /// **An ordering no declaration licenses is refused**, and so is a name no
+    /// declaration backs, and so is a call naming both link vocabularies at
+    /// once. Each comes back blocked with a way forward, rather than as an
+    /// answer to a question nobody asked.
     #[tokio::test]
-    async fn an_unlicensed_ordering_and_a_directed_relation_are_blocked() {
+    async fn an_unlicensed_ordering_and_an_unbacked_relation_are_blocked() {
         let jojobot = handler();
         jojobot
             .add_entity(Parameters(add_args("person", "bart", "Bart")))
@@ -757,24 +771,49 @@ mod tests {
         );
         assert_eq!(unlicensed["wrote"], false, "{unlicensed}");
 
-        let directed = blocked(
+        // A name no declaration backs. `pet.owner` was a relation name once
+        // and is not one now, so this is also the case that pins the rename.
+        let unbacked = blocked(
             &jojobot
                 .recall(Parameters(RecallArgs {
                     subject: Some("person:bart".into()),
                     follow: Some(FollowArgs {
                         relation: Some("pet.owner".into()),
-                        direction: Some("in".into()),
                         ..no_follow()
                     }),
                     ..of_nothing()
                 }))
                 .await
-                .expect("a direction beside a relation is an answer, not a protocol failure"),
+                .expect("a name no declaration backs is an answer, not a protocol failure"),
         );
-        assert_eq!(directed["wrote"], false, "{directed}");
+        assert_eq!(unbacked["wrote"], false, "{unbacked}");
 
-        // The positive both refusals rest on: the same shape of call, with a
-        // shape rather than a relation, is served.
+        // **Both vocabularies at once, under ONE word.** A key may be spelled
+        // like an edge shape, so the refusal has to be legible when the two
+        // names are identical rather than merely adjacent.
+        let both = blocked(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("person:bart".into()),
+                    follow: Some(FollowArgs {
+                        shape: Some("location".into()),
+                        relation: Some("location".into()),
+                        ..no_follow()
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("naming both vocabularies is an answer, not a protocol failure"),
+        );
+        assert_eq!(both["wrote"], false, "{both}");
+        let why = both.to_string();
+        assert!(
+            why.contains("shape") && why.contains("relation"),
+            "the refusal says which vocabulary is which, or one word names two things: {both}"
+        );
+
+        // The positive the refusals rest on: the same shape of call, naming one
+        // vocabulary, is served.
         jojobot
             .recall(Parameters(RecallArgs {
                 subject: Some("person:bart".into()),
