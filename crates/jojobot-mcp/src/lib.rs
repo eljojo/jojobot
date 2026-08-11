@@ -164,6 +164,57 @@ impl Jojobot {
 
 // --- mailboxes on the wire ---------------------------------------------------
 
+/// **What a client is told the moment it connects** — the two worlds, in
+/// miniature. Named rather than written inline so a test can read it: it
+/// enumerates the entity kinds, and prose that lists a closed set goes stale
+/// silently.
+pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. Two worlds live here.\
+                 \n\n**MEMORY.** What jojobot knows is **entities** — a person, project, place, \
+                 event, work, thing, org, topic, bot or pet, each with a permanent typed handle, \
+                 `kind:slug` — and **facts** about them: single dated claims, each carrying an \
+                 **address** (`kind:slug#local-id`) it can be edited through and a \
+                 **provenance** — `testimony` (the user said or confirmed it) or `inference` \
+                 (you derived it). **Inference is the default and reads back as a hypothesis, \
+                 never as truth**; only the user's explicit confirmation promotes a claim. A \
+                 fact may also draw one typed **edge** at another entity — `location` · \
+                 `membership` · `attendance` · `about` · `connection` (a link is there and how \
+                 it relates was not recorded) — and edges are what make cross-entity \
+                 questions (\"which people are in X\") answerable without reading everything. \
+                 **Start with `search`**: one ranked list over entities, facts and free prose, \
+                 every hit arriving with its surroundings — and over mailbox messages too when \
+                 you pass `include_mail: true`.\
+                 \n\n**MAILBOXES.** A place to leave a message for someone who is not in this \
+                 conversation. A mailbox is a named box (`[a-z0-9-]+`); a message in one is \
+                 `new` → `read` → `processed`. **Read is not processed, and processed is not \
+                 deleted**: reading takes delivery, processing means you acted, and `processed` \
+                 is a terminal archive. **Messages are searchable, on request**: `search` with \
+                 `include_mail: true` returns them beside \
+                 the memory hits, in every state including the processed archive, each hit \
+                 carrying its box, its state, its sender and the id `read_message` takes — so a \
+                 message left for one session is findable by any of them. `read_message` takes \
+                 delivery of that one message; `read_mailbox` takes the whole box, and everything \
+                 in it becomes yours to finish.\
+                 \n\n**Three rules of engagement.** 1. **Everything a write NAMES must already \
+                 exist.** jojobot never brings an entity or a box into being as a side effect — \
+                 not a capture's subject, not an edge's object, not the box you post into. \
+                 Something genuinely new is two deliberate steps: create it, then write. \
+                 2. **Confirm, don't guess.** A creation, or a change to what something is \
+                 CALLED, that resembles something jojobot already knows comes back as a \
+                 SUCCESSFUL result whose body says `status: blocked`, `wrote: false`, with \
+                 `candidates` and `how_to_proceed` — nothing was written; use the candidate you \
+                 meant, or re-call with the `override_token` that refusal carries if it truly is \
+                 a different thing sharing a name — the token lifts the one refusal that minted \
+                 it and no other. **Naming something that does not exist is blocked too**, with \
+                 whatever is nearby — never a plain error, so branch on `status`, not on whether \
+                 the call errored. A plain error is a malformed call, or the store failing. \
+                 Nothing on this surface deletes anything. 3. **Mark a message processed only \
+                 AFTER acting on it**: \
+                 mark first and then fail, and it is gone from every future delivery with \
+                 nobody the wiser; act first and crash, and the next read hands it back, \
+                 flagged `seen_before` — recoverable.\
+                 \n\nResponses name types the schema.org way (`Person`, `CreativeWork`, \
+                 `memberOf`); input stays lowercase (`person`, `membership`, `kind:slug`).";
+
 #[tool_handler]
 impl ServerHandler for Jojobot {
     /// **Every call passes the argument gate before anything runs.**
@@ -214,55 +265,7 @@ impl ServerHandler for Jojobot {
         )
         .with_server_info(Implementation::from_build_env())
         .with_protocol_version(ProtocolVersion::V_2024_11_05)
-        .with_instructions(
-            "jojobot — a personal-assistant server. Two worlds live here.\
-                 \n\n**MEMORY.** What jojobot knows is **entities** — a person, project, place, \
-                 event, work, thing, org or topic, each with a permanent typed handle, \
-                 `kind:slug` — and **facts** about them: single dated claims, each carrying an \
-                 **address** (`kind:slug#local-id`) it can be edited through and a \
-                 **provenance** — `testimony` (the user said or confirmed it) or `inference` \
-                 (you derived it). **Inference is the default and reads back as a hypothesis, \
-                 never as truth**; only the user's explicit confirmation promotes a claim. A \
-                 fact may also draw one typed **edge** at another entity — `location` · \
-                 `membership` · `attendance` · `about` · `connection` (a link is there and how \
-                 it relates was not recorded) — and edges are what make cross-entity \
-                 questions (\"which people are in X\") answerable without reading everything. \
-                 **Start with `search`**: one ranked list over entities, facts and free prose, \
-                 every hit arriving with its surroundings — and over mailbox messages too when \
-                 you pass `include_mail: true`.\
-                 \n\n**MAILBOXES.** A place to leave a message for someone who is not in this \
-                 conversation. A mailbox is a named box (`[a-z0-9-]+`); a message in one is \
-                 `new` → `read` → `processed`. **Read is not processed, and processed is not \
-                 deleted**: reading takes delivery, processing means you acted, and `processed` \
-                 is a terminal archive. **Messages are searchable, on request**: `search` with \
-                 `include_mail: true` returns them beside \
-                 the memory hits, in every state including the processed archive, each hit \
-                 carrying its box, its state, its sender and the id `read_message` takes — so a \
-                 message left for one session is findable by any of them. `read_message` takes \
-                 delivery of that one message; `read_mailbox` takes the whole box, and everything \
-                 in it becomes yours to finish.\
-                 \n\n**Three rules of engagement.** 1. **Everything a write NAMES must already \
-                 exist.** jojobot never brings an entity or a box into being as a side effect — \
-                 not a capture's subject, not an edge's object, not the box you post into. \
-                 Something genuinely new is two deliberate steps: create it, then write. \
-                 2. **Confirm, don't guess.** A creation, or a change to what something is \
-                 CALLED, that resembles something jojobot already knows comes back as a \
-                 SUCCESSFUL result whose body says `status: blocked`, `wrote: false`, with \
-                 `candidates` and `how_to_proceed` — nothing was written; use the candidate you \
-                 meant, or re-call with the `override_token` that refusal carries if it truly is \
-                 a different thing sharing a name — the token lifts the one refusal that minted \
-                 it and no other. **Naming something that does not exist is blocked too**, with \
-                 whatever is nearby — never a plain error, so branch on `status`, not on whether \
-                 the call errored. A plain error is a malformed call, or the store failing. \
-                 Nothing on this surface deletes anything. 3. **Mark a message processed only \
-                 AFTER acting on it**: \
-                 mark first and then fail, and it is gone from every future delivery with \
-                 nobody the wiser; act first and crash, and the next read hands it back, \
-                 flagged `seen_before` — recoverable.\
-                 \n\nResponses name types the schema.org way (`Person`, `CreativeWork`, \
-                 `memberOf`); input stays lowercase (`person`, `membership`, `kind:slug`)."
-                .to_string(),
-        )
+        .with_instructions(INSTRUCTIONS.to_string())
     }
 
     /// **Tell a client, the moment it connects, that the list it is about to

@@ -13,7 +13,7 @@ jojobot is a personal-assistant server: the durable memory and message rail behi
 
 ## The two worlds
 
-**MEMORY** is a typed graph of the operator's life. An **entity** is a noun — person · project · place · event · work · thing · org · topic — with a permanent handle like `person:milhouse`. A **fact** is one dated claim about an entity, addressed `person:milhouse#3`, carrying a **provenance**: `testimony` (the operator said or confirmed it) or `inference` (an AI derived it). Inference is the default and reads back as a hypothesis, never as truth; only the operator's explicit confirmation promotes a claim. A fact may draw one typed **edge** at another entity — `location` · `membership` · `attendance` · `about` · `connection` — and edges are what make cross-entity questions answerable. `connection` is the one to reach for when a link is there and how it relates was not recorded: filing that as `about` would state something nobody said. **`search` is the front door** to all of it — and to the messages in mailboxes too, when you ask for them with `include_mail: true`: one ranked list, one call.
+**MEMORY** is a typed graph of the operator's life. An **entity** is a noun — person · project · place · event · work · thing · org · topic · bot · pet — with a permanent handle like `person:milhouse`. A **fact** is one dated claim about an entity, addressed `person:milhouse#3`, carrying a **provenance**: `testimony` (the operator said or confirmed it) or `inference` (an AI derived it). Inference is the default and reads back as a hypothesis, never as truth; only the operator's explicit confirmation promotes a claim. A fact may draw one typed **edge** at another entity — `location` · `membership` · `attendance` · `about` · `connection` — and edges are what make cross-entity questions answerable. `connection` is the one to reach for when a link is there and how it relates was not recorded: filing that as `about` would state something nobody said. **`search` is the front door** to all of it — and to the messages in mailboxes too, when you ask for them with `include_mail: true`: one ranked list, one call.
 
 **MAILBOXES** are the async rail between sessions: named boxes where one session leaves a message another will find. A message is `new` → `read` → `processed`. Reading IS taking delivery (no peek); anything read but not yet processed comes back on the next read, flagged — so crashed work resurfaces on its own. `processed` means acted-on, and it is a terminal archive: nothing here is ever deleted. **A box belongs to exactly one bot**, is named for it, and comes into being with it: a box states its owner, so whose it is is a fact you can read rather than an arrangement you have to be told. That is why there is no verb that opens one — a new box would mean a new identity, and standing somebody up to file a note is not a move you make on your own. **Yours is yours by construction**: booting as your identity is what tells you which box you drain. **Messages are searchable, on request**: `search` with `include_mail: true` finds them beside the memory hits, in every state, `processed` archives included — it is opt-in because a hit carries somebody's box, sender and a snippet, and `search` is the verb you reach for first — so a finding somebody filed for another session is reachable by anyone who asks the right question, without knowing where to look. A hit says which box and which state. `read_message` takes that one message without making the rest of the box yours — **from your own box**, because taking delivery of somebody else's mail moves it out of `new` and it never looks fresh to them again. A `processed` hit is the exception and is readable from any box: that one is history, and reading it moves nothing.
 
@@ -73,3 +73,54 @@ The resume note is **the one sanctioned exception to journal leanness**. Everywh
 
 This door's snapshot names every identity on the server, each with its mail beside it: that is a fact about the board and **not an invitation**. Only your own comes back with counts — somebody else's queue is not yours to weigh. If you need something from a colleague, ask them — and know that `post_message` is not a pure write: it also takes delivery of YOUR box. Whatever was waiting rides back with the receipt under your_mail, out of `new` and yours to finish, exactly as `read_mailbox` would have handed it over — because posting is the moment a reply is most likely to be sitting there, and two agents each holding an unread reply is the failure nothing else notices. Posting into your own box delivers nothing. So a message you meet flagged `seen_before` after a post of your own is one THAT POST took, not work you had already taken on.
 "#;
+
+#[cfg(test)]
+mod tests {
+    use jojobot_domain::memory::EntityKind;
+
+    /// **Every kind the store accepts is named in the prose that teaches the
+    /// store**, and there is more than one such place.
+    ///
+    /// This is the closed-set discipline the enum already has, applied to the
+    /// text. The enum's own test makes a new kind impossible to add without
+    /// deciding its token and its wire name; nothing made anybody tell a
+    /// SESSION about it. So the orientation essay taught eight kinds after
+    /// `bot` shipped and after `pet` shipped, and the front door a fresh agent
+    /// reads was the last place to learn what the store holds.
+    ///
+    /// **What it proves and what it does not.** It catches the real failure —
+    /// a kind arriving in the enum and nowhere in the prose, which is how both
+    /// of these happened. It cannot tell a kind named in a LIST from one
+    /// mentioned in a passing sentence, so it is a floor rather than a
+    /// guarantee, and a reader adding the eleventh kind still has to put it in
+    /// the list a caller reads.
+    #[test]
+    fn every_kind_is_named_in_the_prose_a_session_reads() {
+        let taught: [(&str, &str); 2] = [
+            ("the orientation essay", super::ORIENTATION),
+            ("the server instructions", crate::INSTRUCTIONS),
+        ];
+        for (what, text) in taught {
+            for kind in EntityKind::ALL {
+                let token = kind.as_token();
+                assert!(
+                    names(text, token),
+                    "{what} does not name the `{token}` kind, which the store accepts — \
+                     a session that reads it learns a kind set the store does not have"
+                );
+            }
+        }
+    }
+
+    /// Whether the text names this token as a word of its own, rather than
+    /// inside a longer one: `pet` must not be satisfied by `appetite`, and
+    /// `org` must not be satisfied by `organising`.
+    fn names(text: &str, token: &str) -> bool {
+        text.match_indices(token).any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            let after = text[at + token.len()..].chars().next();
+            let edge = |c: Option<char>| c.is_none_or(|c| !c.is_alphanumeric());
+            edge(before) && edge(after)
+        })
+    }
+}

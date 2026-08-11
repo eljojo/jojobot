@@ -1415,7 +1415,7 @@ pub enum MemoryError {
     /// Treated as adversarial: it never reaches the store.
     #[error(
         "invalid entity id '{0}': ids are kind:slug — kind one of \
-         person|project|place|event|work|thing|org|topic|bot, slug [a-z0-9-]+"
+         person|project|place|event|work|thing|org|topic|bot|pet, slug [a-z0-9-]+"
     )]
     InvalidSubject(String),
     /// A fact address didn't parse (see [`FactAddress::parse`]).
@@ -1799,6 +1799,28 @@ mod tests {
                 EntityKind::from_token(unknown),
                 None,
                 "{unknown:?} is not a kind"
+            );
+        }
+    }
+
+    /// **The refusal for a bad handle names every kind the store accepts.**
+    ///
+    /// It is the only place a caller who got the grammar wrong is told what the
+    /// grammar is, so a kind missing from it is a caller sent back to guess.
+    /// The same closed-set discipline the enum has, applied to the sentence
+    /// that teaches it — `bot` and `pet` both reached the enum before they
+    /// reached prose like this.
+    #[test]
+    fn the_refusal_for_a_bad_handle_names_every_kind() {
+        let refused = validate_subject(&EntityId("not a handle".into()))
+            .expect_err("a handle that is no handle is refused");
+        let said = refused.to_string();
+        for kind in EntityKind::ALL {
+            assert!(
+                said.contains(kind.as_token()),
+                "the refusal does not name `{}`, so a caller reaching for it is told it is not a \
+                 kind: {said}",
+                kind.as_token(),
             );
         }
     }
