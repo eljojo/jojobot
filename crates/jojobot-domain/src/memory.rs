@@ -6,12 +6,12 @@
 //! it treats the two — the compiler lists the sites.
 //!
 //! This module carries the [`Memory`] port and the records it moves — the
-//! [`Entity`] (a noun, one of nine [`EntityKind`]s) and the [`Fact`] (an
+//! [`Entity`] (a noun, one of ten [`EntityKind`]s) and the [`Fact`] (an
 //! assertion about one). Six verbs, bound by one invariant: a write succeeds
 //! only if the read path returns it. There is no privileged owner entity — the
 //! user is a person like any other. The port is pure (no rmcp, no reqwest);
-//! adapters behind it (the in-memory fake, the real Outline store) live outside
-//! this crate, and the write guard ([`guard`]) sits on their write paths.
+//! adapters behind it (the in-memory fake, the real store) live outside this
+//! crate, and the write guard ([`guard`]) sits on their write paths.
 //!
 //! **This is user-agnostic software: no user PII, fixtures included.** Records
 //! name roles and synthetic placeholders; every real specific is data, read from
