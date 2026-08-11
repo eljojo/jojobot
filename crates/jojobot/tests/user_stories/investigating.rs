@@ -99,11 +99,46 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         )
         .await;
 
-    // GAP — the fields are stored and nothing reads them AS fields. There is
-    // no query over a metadata value, so "which outages lasted over thirty
-    // seconds" reads every event and parses the numbers again.
-    //   s.events_where("down_seconds", greater_than: 30).await;
-    s.has_no_verb("events_where", &["search", "recall"]).await;
+    // A second host went too, and it came back in four seconds. That is the
+    // difference between an outage and a blink, and it is the whole reason
+    // anybody asks the question below.
+    s.event_with(
+        "thing:phi",
+        "stopped responding",
+        "outage",
+        json!({"occurred_at": "2026-08-04T02:41:00Z", "down_seconds": "4"}),
+        &[],
+    )
+    .await;
+
+    // `down_seconds` has held a number all along and nothing could order by
+    // it: an undeclared key has equality and no more. Declaring `outage` is
+    // the whole of what changes — no record is rewritten, and the two events
+    // above were written before this call.
+    s.call(
+        "declare_type",
+        json!({
+            "name": "outage",
+            "fields": [{ "key": "down_seconds", "holds": "number" }],
+        }),
+    )
+    .await
+    .says("\"name\":\"outage\"");
+
+    // "Which of them were down long enough to matter" — one read, comparing
+    // the numbers where they are stored.
+    let long = s
+        .shape(
+            "the outages that lasted over thirty seconds",
+            json!({ "fields": [{ "key": "down_seconds", "compare": "greater", "value": "30" }] }),
+        )
+        .await;
+    long.says("thing:tau");
+    // Both negatives, because either alone would be satisfied by an empty
+    // answer: the host whose outage is on the record and too short, and the
+    // host whose outage carries no such key at all.
+    long.never_says("thing:phi");
+    long.never_says("thing:sigma");
 
     // The diagnosis was the bits, so a paraphrase is not re-checkable: the
     // literal status word and the command that produced it are typed fields on

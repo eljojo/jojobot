@@ -38,20 +38,38 @@ async fn keeping_track_of_bikes() {
     s.has_no_verb("record_occurrence", &["capture", "recall"])
         .await;
 
-    // GAP — and the warranty's end is purchase plus five years, arithmetic on
-    // a date the system cannot see as a date. "What is still under warranty"
-    // is a query across every possession by a date property, and there is no
-    // property to query.
-    //   s.fact_with("thing:gravel-bike", "frame warranty", "expires", "2029-04-11").await;
+    // Purchase plus five years is arithmetic, and the arithmetic is the
+    // session's — but its ANSWER goes in as a value under a key rather than as
+    // another sentence, so the date the question turns on is somewhere a
+    // question can reach it.
+    s.event_with(
+        "thing:gravel-bike",
+        "frame warranty",
+        "warranty",
+        json!({"expires": "2029-04-11"}),
+        &[],
+    )
+    .await;
     s.recall("thing:gravel-bike")
         .await
         .says("frame warranty runs five years from purchase")
-        .never_says("2029-04-11");
+        .says("2029-04-11");
 
     s.add("thing:road-bike", "Road Bike").await;
     s.fact(
         "thing:road-bike",
         "hanging in the basement, unridden for two years",
+    )
+    .await;
+    // The other side of the question below: a bike whose cover has already run
+    // out. Without one, "what is still under warranty" would come back with
+    // everything and look like an answer.
+    s.event_with(
+        "thing:road-bike",
+        "frame warranty",
+        "warranty",
+        json!({"expires": "2025-06-30"}),
+        &[],
     )
     .await;
     // The claim stays one crisp line, and the nuance that would ruin it as a
@@ -188,8 +206,37 @@ async fn keeping_track_of_bikes() {
     // ── session 4 · months later, the questions actually asked ──────────────
     let s = story.session().await;
 
-    s.find("warranty").await.says("thing:gravel-bike");
+    s.find("warranty")
+        .await
+        .says("thing:gravel-bike")
+        .says("thing:road-bike");
     s.find("cassette").await.says("thing:gravel-bike");
+
+    // The title question — and the search above is not it. The word is on both
+    // bikes and it cannot say which cover has run out.
+    //
+    // Declaring `warranty` is what makes the stored date orderable, and it is
+    // retroactive — the two records were written three sessions ago by a
+    // client that had never heard of the type.
+    s.call(
+        "declare_type",
+        json!({
+            "name": "warranty",
+            "fields": [{ "key": "expires", "holds": "date" }],
+        }),
+    )
+    .await
+    .says("\"name\":\"warranty\"");
+
+    let covered = s
+        .shape(
+            "what is still under warranty",
+            json!({ "fields": [{ "key": "expires", "compare": "after", "value": "2026-08-01" }] }),
+        )
+        .await;
+    covered.says("thing:gravel-bike");
+    covered.never_says("thing:road-bike");
+
     s.recall("thing:road-bike").await.says("basement");
     s.list("thing").await.says("thing:gravel-bike");
 
@@ -207,17 +254,64 @@ async fn keeping_track_of_bikes() {
     s.find("loaned").await.says("thing:floor-pump");
     s.recall("thing:floor-pump").await.says("person:milhouse");
 
-    // GAP — the shape is `connection`, which says a link is there and that how
-    // it relates was not recorded. That is the honest shape for a loan and it
-    // is not a name for one: the walk below returns everything pointed at this
-    // person by any claim, lending or otherwise, so "what have I lent out, and
-    // to whom" cannot be asked — only searched for in whatever words the note
-    // happened to use.
-    //   s.fact_about("thing:floor-pump", "…", "loaned-to", "person:milhouse").await;
-    s.through("connection", "person:milhouse", "thing")
-        .await
-        .says("thing:floor-pump");
-    //   s.fact_keyed("thing:floor-pump", "loaned-to", "person:milhouse").await;
+    // The shape is `connection`, which says a link is there and that how it
+    // relates was not recorded. That is the honest shape for a loan and it is
+    // no name for one — and the traffic goes both ways, which is what makes
+    // the difference bite: his torque wrench is here, pointed at him by the
+    // very same shape, and it is the opposite arrangement.
+    s.add("thing:torque-wrench", "Torque Wrench").await;
+    s.fact_about(
+        "thing:torque-wrench",
+        "his, borrowed for the bottom bracket and not given back yet",
+        "connection",
+        "person:milhouse",
+    )
+    .await;
+    let linked = s.through("connection", "person:milhouse", "thing").await;
+    linked.says("thing:floor-pump");
+    linked.says("thing:torque-wrench");
+
+    // So "what have I lent out, and to whom" needs the link NAMED, and a key
+    // is where a name goes: `loaned_to` holds his handle, and declaring it to
+    // hold a reference is what turns the key into a relation the query can
+    // travel.
+    //
+    // It rides on an event because an event is where keys live — a plain fact
+    // carries none — so the lending goes down as chronology and the claim
+    // above stays the current truth beside it.
+    s.event_with(
+        "thing:floor-pump",
+        "lent out at the spring service",
+        "loan",
+        json!({"loaned_to": "person:milhouse"}),
+        &[],
+    )
+    .await;
+    s.call(
+        "declare_type",
+        json!({
+            "name": "loan",
+            "fields": [{ "key": "loaned_to", "holds": "reference" }],
+        }),
+    )
+    .await
+    .says("\"name\":\"loan\"");
+
+    // Walked inbound from him: what he has of mine, which is not what I have
+    // of his. The wrench is in the untyped walk above and out of this one, and
+    // that pair is the whole difference between a link and a named link.
+    let lent = s
+        .shape(
+            "what he has of mine",
+            json!({
+                "subject": "person:milhouse",
+                "facts": false,
+                "follow": { "relation": "loaned_to", "direction": "in" },
+            }),
+        )
+        .await;
+    lent.says("thing:floor-pump");
+    lent.never_says("thing:torque-wrench");
 
     s.wrap("still riding").await;
 

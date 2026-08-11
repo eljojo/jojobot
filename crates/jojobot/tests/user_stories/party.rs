@@ -108,9 +108,11 @@ async fn throwing_a_birthday_party() {
         .await
         .says("person:ned-flanders");
 
-    // GAP — and the link says only that one exists. No shape names a relation
-    // between two people, so partner, colleague and "does not get along with"
-    // are the same edge, and telling them apart means reading each claim.
+    // GAP — and the SHAPE says only that a link exists. The five are a closed
+    // vocabulary, `relation` is not one of them, and every person-to-person
+    // edge is therefore `connection`: partner, colleague and "does not get
+    // along with" all draw the same one, so a walk by shape returns them
+    // together.
     //   s.fact_about("person:ned-flanders", "their partner", "relation", "person:maude").await;
     s.refused(
         "capture",
@@ -122,6 +124,14 @@ async fn throwing_a_birthday_party() {
     )
     .await
     .says("relation");
+    // What is no longer missing is telling them apart AT ALL. A key does that:
+    // a declared `partner: reference` holding Maude's handle is a relation the
+    // query walks in both directions, the same mechanism the pets story walks
+    // `owner` by, and a person is as good a thing to point at as any other. So
+    // the residual gap is the narrow one — the name lives on a KEY of the
+    // record and never on the edge, and the two are separate instruments.
+    // `connection` goes on meaning "how these two relate was not recorded",
+    // whatever keys the record carrying it also holds.
 
     s.wrap("invitations out").await;
 
