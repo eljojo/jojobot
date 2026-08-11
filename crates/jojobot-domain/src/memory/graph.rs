@@ -386,12 +386,20 @@ impl GraphQuery {
 ///
 /// **Nothing is inferred.** A value that looks like a handle under a key nobody
 /// declared is a string that looks like a handle.
+///
+/// **The search asks each declaration the WHOLE question**, because two types
+/// may name one key and mean their own thing by it. Stopping at the first
+/// declaration owning the name and judging only that one would let a type
+/// calling the key text bury another type's reference — and which came first is
+/// the store's alphabetical ordering, not anything the caller said.
 fn relation_key<'a>(name: &str, declarations: &'a [types::DeclaredType]) -> Option<&'a str> {
     let name = name.trim();
     declarations
         .iter()
-        .find_map(|d| d.field(name))
-        .filter(|f| f.holds == types::ValueType::Reference)
+        .find_map(|d| {
+            d.field(name)
+                .filter(|f| f.holds == types::ValueType::Reference)
+        })
         .map(|f| f.key.as_str())
 }
 
@@ -1842,6 +1850,55 @@ mod tests {
         // …and the positive in the same case, so the two refusals are about the
         // declaration and not about relations.
         resolve(&kennel(), &[pet()], &query).expect("declared as a reference, it is one");
+    }
+
+    /// **One key name, two types, and the text one does not bury the
+    /// reference.** Two types may name one key and mean their own thing by it,
+    /// so a type calling `owner` text says nothing about the type calling it a
+    /// reference — the relation stays walkable either way.
+    ///
+    /// **Both declaration orders, because the store hands them over sorted by
+    /// type name.** A lookup that stopped at the first declaration owning the
+    /// name would make walkability depend on alphabetical spelling, and a test
+    /// fixing one order would pass on it half the time.
+    #[test]
+    fn a_text_key_of_another_type_does_not_hide_a_declared_relation() {
+        let shelf = types::DeclaredType::new(
+            "book",
+            vec![types::Field::new("owner", types::ValueType::Text)],
+        );
+        let walk = |declarations: &[types::DeclaredType]| {
+            resolve(
+                &kennel(),
+                declarations,
+                &GraphQuery {
+                    select: Selection {
+                        subject: Some(EntityId("pet:santas-little-helper".into())),
+                        ..Selection::default()
+                    },
+                    include: Include {
+                        facts: false,
+                        prose: false,
+                    },
+                    follow: Some(Follow {
+                        along: Along::Relation("owner".into()),
+                        direction: Some(Direction::Out),
+                        ..Follow::hop()
+                    }),
+                },
+            )
+            .expect("some type declares 'owner' a reference, so it is one")
+        };
+
+        for declarations in [vec![shelf.clone(), pet()], vec![pet(), shelf.clone()]] {
+            let found = walk(&declarations);
+            assert_eq!(
+                handles(&found[0].connected),
+                vec!["person:bart"],
+                "the reference declaration is the one that counts, whichever came first: \
+                 {found:?}",
+            );
+        }
     }
 
     /// **Two reference keys of one type stay apart, because they are two
