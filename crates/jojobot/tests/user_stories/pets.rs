@@ -6,9 +6,14 @@
 //! **The link is the point.** Every pet record already carried the owner's
 //! handle, and it was a string that looked like a handle: nothing walked it,
 //! because nothing had said it was anything. Declaring `owner` to hold a
-//! reference is what turns it into a relation — and the reverse of that
-//! relation, `pet.owner`, is the has-many nobody wrote down. It is not a sixth
-//! edge shape and nobody declared an inverse.
+//! reference is what turns it into a relation — one relation, `owner`, walked
+//! outbound to what a record points at and inbound to the records pointing
+//! back. It is not a sixth edge shape and nobody declared an inverse.
+//!
+//! **What the inbound walk computes is key-scoped, not type-scoped.** It
+//! reaches everything naming Bart through `owner`, the bicycle included. The
+//! gap block below says why that is right rather than loose, and shows the
+//! selection that answers "his pets" today.
 //!
 //! **The ordering is the second half.** `born` holds a date, and saying so is
 //! what makes "before" a question this store can be asked. A key with no
@@ -93,8 +98,8 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
 
     // ── forward · from the pet, out to whoever owns it ──────────────────────
     //
-    // The key's own name is the relation, and no direction is passed: the name
-    // is what says which way it goes.
+    // The key IS the relation's name. No direction is passed because outbound
+    // is the default: the key off this record, to what it points at.
     let owner = s
         .shape(
             "who the greyhound belongs to",
@@ -108,41 +113,75 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
     owner.says("person:bart");
     owner.says("\"relation\":\"owner\"");
 
-    // ── reverse · from the person, back to every pet — the has-many ─────────
+    // ── inbound · everything pointing at the person through that key ────────
     //
-    // Nobody declared this direction. `pet.owner` is derived from the type and
-    // the key, and it is qualified by the type because one type may declare two
-    // reference keys onto the same kind.
-    let pets = s
+    // The same name, walked the other way. Nobody declared an inverse: there is
+    // one relation, `owner`, and the direction picks the question.
+    let pointing_at_bart = s
         .shape(
-            "everything of Bart's that is a pet",
+            "everything that names Bart as its owner",
             json!({
                 "subject": "person:bart",
                 "facts": false,
-                "follow": { "relation": "pet.owner" },
+                "follow": { "relation": "owner", "direction": "in" },
             }),
         )
         .await;
-    pets.says("pet:santas-little-helper");
-    pets.says("pet:snowball");
-    // The pump's record shares no key with `pet`, so it answers the type not at
-    // all and the walk does not reach it. That is what makes the two hits above
-    // mean something.
-    pets.never_says("thing:floor-pump");
+    pointing_at_bart.says("pet:santas-little-helper");
+    pointing_at_bart.says("pet:snowball");
+    // The pump's record carries no `owner` at all, so nothing reaches it. That
+    // is what makes the hits above mean something.
+    pointing_at_bart.never_says("thing:floor-pump");
 
-    // GAP — the bike comes back, and it is not a pet.
+    // …and the bike, whose repair record names the same key. **This is
+    // correct.** The walk was asked for everything pointing here through
+    // `owner`, and the bike does.
+    pointing_at_bart.says("thing:red-bike");
+
+    // GAP — there is no type-scoped has-many. "Bart's PETS" is not a walk.
     //
-    // Its repair record carries `owner` and nothing else of `pet`, and a record
-    // holding ONE of a type's keys answers that type: `search` with
-    // `answers_type: pet` returns this same record today. So the reverse
-    // relation agrees with the rest of the store rather than disagreeing with
-    // it, and the price is that a key shared between two types puts foreign
-    // records in the has-many.
+    // What a walk computes is key-scoped: everything pointing here through
+    // `owner`. It cannot be narrowed to one type on the way, because a record
+    // answers a type by holding ONE of its keys — and the key being walked is
+    // one of them, so every record the walk finds answers the type by
+    // construction. A type filter on this walk could never exclude anything.
     //
-    // Narrowing it is a decision about what `type.key` means, not a defect to
-    // patch here: a stricter rule would make one verb say a record answers a
-    // type while another says it does not, about the same record.
-    pets.says("thing:red-bike");
+    //   s.shape("Bart's pets", json!({"subject": "person:bart",
+    //                                 "follow": {"relation": "pet.owner"}})).await;
+    //
+    // The name `pet.owner` is therefore gone rather than kept as decoration: it
+    // promised a narrowing that cannot fire, and a name that claims a filter is
+    // worse than no filter.
+    s.refused(
+        "recall",
+        json!({
+            "subject": "person:bart",
+            "follow": { "relation": "pet.owner" },
+        }),
+    )
+    .await
+    .says("owner");
+
+    // ── and the question that DOES work today ───────────────────────────────
+    //
+    // Not a walk: a selection. Entities of kind `pet` whose record names Bart —
+    // a kind and a key filter, both of which already existed. It answers "his
+    // pets" exactly, and it is the shape to reach for until the walk can.
+    let his_pets = s
+        .shape(
+            "Bart's pets, by kind and key",
+            json!({
+                "kind": "pet",
+                "fields": [{ "key": "owner", "value": "person:bart" }],
+            }),
+        )
+        .await;
+    his_pets.says("pet:santas-little-helper");
+    his_pets.says("pet:snowball");
+    // The pair the gap turns on, asserted both ways rather than as one absence:
+    // the bike is IN the key-scoped walk above and OUT of this kind-scoped
+    // selection. A negative on its own would pass on an empty answer.
+    his_pets.never_says("thing:red-bike");
 
     // ── the filtered walk · the acceptance case, in one call ────────────────
     //
@@ -154,7 +193,8 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
             json!({
                 "subject": "person:bart",
                 "follow": {
-                    "relation": "pet.owner",
+                    "relation": "owner",
+                    "direction": "in",
                     "keeping": [{ "key": "born", "compare": "before", "value": "2020-01-01" }],
                 },
             }),
@@ -207,7 +247,7 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
         }),
     )
     .await
-    .says("pet.owner");
+    .says("owner");
 
     s.wrap("named the link the pet records already had, and walked it both ways")
         .await;
