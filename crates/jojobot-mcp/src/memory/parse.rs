@@ -109,6 +109,23 @@ pub(crate) fn parse_direction(raw: Option<&str>) -> Result<Direction, McpError> 
     }
 }
 
+/// The comparison a filter uses. Absent is equality, which is what a key with
+/// no declaration behind it has.
+pub(crate) fn parse_compare(
+    raw: Option<&str>,
+) -> Result<jojobot_domain::memory::types::Compare, McpError> {
+    use jojobot_domain::memory::types::Compare;
+    match raw.map(str::trim).filter(|c| !c.is_empty()) {
+        None => Ok(Compare::Equals),
+        Some(token) => Compare::of_token(token).ok_or_else(|| {
+            McpError::invalid_params(
+                format!("compare must be equals, before, after, less or greater, got '{token}'"),
+                None,
+            )
+        }),
+    }
+}
+
 pub(crate) fn parse_edge(shape: Option<&str>, object: Option<&str>) -> ParsedEdge {
     match (
         shape.map(str::trim).filter(|s| !s.is_empty()),

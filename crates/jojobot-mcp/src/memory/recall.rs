@@ -21,6 +21,14 @@ pub struct KeyFilterArgs {
     /// records a thing rather than everything that records it one way.
     #[serde(default)]
     pub value: Option<String>,
+    /// **How the value is compared**, and what a key was DECLARED to hold is
+    /// what licenses it. `equals` is the default and needs no declaration.
+    /// `before` and `after` need a type declaring the key a `date`; `less` and
+    /// `greater` need one declaring it a `number`. Asking for an ordering a
+    /// declaration does not license comes back blocked, rather than quietly
+    /// answering the equality question instead.
+    #[serde(default)]
+    pub compare: Option<String>,
 }
 
 /// The `follow` argument of a `recall` — which edges to walk, and how far.
@@ -30,6 +38,18 @@ pub struct FollowArgs {
     /// · `connection`). Omit for **any** edge — "whatever it is connected to".
     #[serde(default)]
     pub shape: Option<String>,
+    /// **A declared relation to walk instead of an edge.** A key some type
+    /// declared to hold a `reference` is a link, because the declaration says
+    /// the value is another entity rather than a string that looks like one.
+    ///
+    /// **The name says which way it goes**, so do not pass a direction beside
+    /// it. Forward is the key itself — from a record, `owner` reaches the
+    /// person it points at. Reverse is `type.key` — from that person,
+    /// `pet.owner` reaches every pet pointing back, which is the has-many and
+    /// which nobody declares an inverse for. The reverse carries its type
+    /// because one type may declare two reference keys onto the same kind.
+    #[serde(default)]
+    pub relation: Option<String>,
     /// **Which end of the edge to leave by**, and it is two different
     /// questions. `out` (the default) follows the edges this object's own
     /// records draw — from a guest, the party they are attending. `in` follows
@@ -40,6 +60,14 @@ pub struct FollowArgs {
     /// Defaults to 1.
     #[serde(default)]
     pub depth: Option<u32>,
+    /// **What the walk keeps of what it reaches.** The same key filters the
+    /// selection takes, applied at every hop rather than to the roots — so
+    /// "this person's pets" narrows to "this person's pets born before a date".
+    /// Omit to keep everything. An object kept this way arrives carrying the
+    /// records that answered, and one that was reached and not kept leaves the
+    /// object that points at it marked as having edges nobody followed.
+    #[serde(default)]
+    pub keeping: Option<Vec<KeyFilterArgs>>,
 }
 
 /// Arguments to `recall`.
@@ -86,6 +114,20 @@ pub struct RecallArgs {
     pub sid: Option<String>,
 }
 
+/// The key filters of a call, wherever they sit: a selection describes the
+/// roots and a walk's describe what it reaches, and they are the same filter.
+fn key_filters(args: &[KeyFilterArgs]) -> Result<Vec<graph::FieldFilter>, McpError> {
+    args.iter()
+        .map(|f| {
+            Ok(graph::FieldFilter {
+                key: f.key.trim().to_string(),
+                value: f.value.as_ref().map(|v| v.trim().to_string()),
+                compare: parse_compare(f.compare.as_deref())?,
+            })
+        })
+        .collect()
+}
+
 /// One object on the wire, and everything it reached.
 ///
 /// **Absence means "not asked for"** on both halves that can be turned off:
@@ -104,14 +146,20 @@ fn object_json(object: &graph::Object, include: graph::Include) -> serde_json::V
         fields.insert("prose".into(), prose.as_str().into());
     }
     // How the walk got here. Absent on a root, which nothing reached.
+    //
+    // An edge names its shape and a relation names itself, under different
+    // keys: they are different things, and one key holding either would leave
+    // a reader to work out which by looking at the value.
     if let Some(via) = object.via.as_ref() {
-        fields.insert(
-            "via".into(),
-            serde_json::json!({
-                "type": via.shape.as_name(),
-                "direction": via.direction.as_token(),
-            }),
-        );
+        let link = match &via.link {
+            graph::Link::Edge(shape) => serde_json::json!({ "type": shape.as_name() }),
+            graph::Link::Relation(name) => serde_json::json!({ "relation": name }),
+        };
+        let mut link = link;
+        if let Some(fields) = link.as_object_mut() {
+            fields.insert("direction".into(), via.direction.as_token().into());
+        }
+        fields.insert("via".into(), link);
     }
     fields.insert(
         "connected".into(),
@@ -154,7 +202,19 @@ impl Jojobot {
                        carrying its own. Direction is two different questions: `out` follows the \
                        edges this object's records draw, `in` follows the edges drawn AT it, so \
                        from a party `in` reaches its guests and from a guest `out` reaches the \
-                       party. That nesting is what a flat list cannot express: one call answers \
+                       party. A RELATION is the other kind of link, and a DECLARATION is what \
+                       makes one: a key some type declared to hold a `reference` points at \
+                       another entity, so it is walkable. Its NAME says which way it goes and you \
+                       pass no direction beside it — forward is the key ('owner' reaches the \
+                       person a record points at), reverse is `type.key` ('pet.owner' reaches \
+                       every pet pointing back, which is the has-many, and nobody declares an \
+                       inverse). `keeping` narrows what the walk reaches, taking the same key \
+                       filters, so 'this person's pets' becomes 'this person's pets born before a \
+                       date'. A key's DECLARED value type also licenses how you compare it: \
+                       `before` and `after` on a declared date, `less` and `greater` on a \
+                       declared number, `equals` always and on anything. That is what declaring a \
+                       type buys you — reach — and nothing is gated by it: an undeclared record \
+                       is still found by the keys it carries. That nesting is what a flat list cannot express: one call answers \
                        'these objects, and what each of them is connected to' instead of one call \
                        per object. Unlike search this returns claims of EVERY status, superseded \
                        included. A named subject always comes back, even when the filters keep \
@@ -187,14 +247,45 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             },
         };
+        // **Two link vocabularies, and a call names one of them.** An edge
+        // shape and a relation describe different things — a link nobody typed,
+        // and a link a declaration made — so a call carrying both is refused
+        // rather than one of them being picked.
+        if let Some(f) = args.follow.as_ref()
+            && f.shape.is_some()
+            && f.relation.is_some()
+        {
+            return memory_declined(
+                "recall",
+                MemoryError::InvalidQuery(
+                    "follow a shape or a relation, not both: a shape is one of the five names for \
+                     a link nobody typed, and a relation is a key some type declared to hold a \
+                     reference"
+                        .into(),
+                ),
+            );
+        }
         let follow = args
             .follow
             .as_ref()
             .map(|f| -> Result<graph::Follow, McpError> {
                 Ok(graph::Follow {
-                    shape: f.shape.as_deref().map(parse_shape).transpose()?,
-                    direction: parse_direction(f.direction.as_deref())?,
+                    along: match (&f.relation, &f.shape) {
+                        (Some(relation), _) => graph::Along::Relation(relation.trim().to_string()),
+                        (None, Some(shape)) => graph::Along::Edge(parse_shape(shape)?),
+                        (None, None) => graph::Along::AnyEdge,
+                    },
+                    // Kept as an Option all the way down, because a relation
+                    // already says which way it goes and the domain refuses the
+                    // pair — which it can only do if "unset" and "out" are
+                    // still telling apart by the time it looks.
+                    direction: f
+                        .direction
+                        .as_deref()
+                        .map(|d| parse_direction(Some(d)))
+                        .transpose()?,
                     depth: f.depth.map_or(1, |d| d as usize),
+                    keeping: key_filters(f.keeping.as_deref().unwrap_or_default())?,
                 })
             })
             .transpose()?;
@@ -207,15 +298,7 @@ impl Jojobot {
                 subject: args.subject.as_deref().map(EntityId::person),
                 kind: args.kind.as_deref().map(parse_kind).transpose()?,
                 answers_type,
-                fields: args
-                    .fields
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|f| graph::FieldFilter {
-                        key: f.key.trim().to_string(),
-                        value: f.value.map(|v| v.trim().to_string()),
-                    })
-                    .collect(),
+                fields: key_filters(args.fields.as_deref().unwrap_or_default())?,
             },
             include,
             follow,
@@ -463,6 +546,7 @@ mod tests {
                     fields: Some(vec![KeyFilterArgs {
                         key: "answer".into(),
                         value: Some("yes".into()),
+                        compare: None,
                     }]),
                     ..of_nothing()
                 }))
@@ -482,8 +566,10 @@ mod tests {
                     subject: Some("event:birthday-party".into()),
                     follow: Some(FollowArgs {
                         shape: Some("attendance".into()),
+                        relation: None,
                         direction: Some("in".into()),
                         depth: None,
+                        keeping: None,
                     }),
                     ..of_nothing()
                 }))
@@ -524,6 +610,194 @@ mod tests {
             }))
             .await
             .expect("one filter is enough");
+    }
+
+    /// **A declared reference key is walkable through the wire**, both ways,
+    /// and the ordering a declaration licenses narrows what the walk reaches.
+    ///
+    /// The whole slice through the surface a caller holds: nothing here calls
+    /// the resolver, so it fails on a build where the arguments never reach it.
+    #[tokio::test]
+    async fn a_relation_is_walkable_and_a_walk_can_filter_what_it_reaches() {
+        let jojobot = handler();
+        for (kind, slug, name) in [
+            ("person", "bart", "Bart"),
+            ("thing", "santas-little-helper", "Santa's Little Helper"),
+            ("thing", "snowball", "Snowball"),
+        ] {
+            jojobot
+                .add_entity(Parameters(add_args(kind, slug, name)))
+                .await
+                .expect("add_entity ok");
+        }
+        jojobot
+            .declare_type(Parameters(DeclareTypeArgs {
+                name: "pet".into(),
+                fields: vec![
+                    FieldArgs {
+                        key: "born".into(),
+                        holds: Some("date".into()),
+                    },
+                    FieldArgs {
+                        key: "owner".into(),
+                        holds: Some("reference".into()),
+                    },
+                ],
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("declare_type ok");
+        for (slug, born) in [
+            ("santas-little-helper", "2019-04-15"),
+            ("snowball", "2024-11-02"),
+        ] {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    event_type: Some("pet".into()),
+                    metadata: Some(
+                        [
+                            ("born".to_string(), born.to_string()),
+                            ("owner".to_string(), "person:bart".to_string()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..capture_args(&format!("thing:{slug}"), "one of the pets")
+                },
+            )
+            .await;
+        }
+
+        let has_many = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("person:bart".into()),
+                    facts: Some(false),
+                    follow: Some(FollowArgs {
+                        relation: Some("pet.owner".into()),
+                        ..no_follow()
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let reached: Vec<&str> = has_many["objects"][0]["connected"]
+            .as_array()
+            .expect("the pets hang off the owner")
+            .iter()
+            .filter_map(|o| o["id"].as_str())
+            .collect();
+        assert_eq!(
+            reached,
+            vec!["thing:santas-little-helper", "thing:snowball"],
+            "the reverse of a declared reference key is the has-many: {has_many}"
+        );
+        assert_eq!(
+            has_many["objects"][0]["connected"][0]["via"]["relation"], "pet.owner",
+            "and a reached object says which relation carried it: {has_many}"
+        );
+
+        let older = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("person:bart".into()),
+                    facts: Some(false),
+                    follow: Some(FollowArgs {
+                        relation: Some("pet.owner".into()),
+                        keeping: Some(vec![KeyFilterArgs {
+                            key: "born".into(),
+                            value: Some("2020-01-01".into()),
+                            compare: Some("before".into()),
+                        }]),
+                        ..no_follow()
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let kept: Vec<&str> = older["objects"][0]["connected"]
+            .as_array()
+            .expect("a filtered walk still answers with a list")
+            .iter()
+            .filter_map(|o| o["id"].as_str())
+            .collect();
+        assert_eq!(
+            kept,
+            vec!["thing:santas-little-helper"],
+            "the ordering the declaration licenses narrows what the walk reaches: {older}"
+        );
+    }
+
+    /// **An ordering no declaration licenses is refused**, and so is a
+    /// direction beside a relation. Both come back blocked with a way forward,
+    /// rather than as an equality answer wearing an ordering's name.
+    #[tokio::test]
+    async fn an_unlicensed_ordering_and_a_directed_relation_are_blocked() {
+        let jojobot = handler();
+        jojobot
+            .add_entity(Parameters(add_args("person", "bart", "Bart")))
+            .await
+            .expect("add_entity ok");
+
+        let unlicensed = blocked(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    fields: Some(vec![KeyFilterArgs {
+                        key: "born".into(),
+                        value: Some("2020-01-01".into()),
+                        compare: Some("before".into()),
+                    }]),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("an unlicensed ordering is an answer, not a protocol failure"),
+        );
+        assert_eq!(unlicensed["wrote"], false, "{unlicensed}");
+
+        let directed = blocked(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("person:bart".into()),
+                    follow: Some(FollowArgs {
+                        relation: Some("pet.owner".into()),
+                        direction: Some("in".into()),
+                        ..no_follow()
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("a direction beside a relation is an answer, not a protocol failure"),
+        );
+        assert_eq!(directed["wrote"], false, "{directed}");
+
+        // The positive both refusals rest on: the same shape of call, with a
+        // shape rather than a relation, is served.
+        jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some("person:bart".into()),
+                follow: Some(FollowArgs {
+                    shape: Some("connection".into()),
+                    direction: Some("in".into()),
+                    ..no_follow()
+                }),
+                ..of_nothing()
+            }))
+            .await
+            .expect("an edge shape takes a direction");
+    }
+
+    /// A `follow` naming nothing — the base the walk cases vary.
+    fn no_follow() -> FollowArgs {
+        FollowArgs {
+            shape: None,
+            relation: None,
+            direction: None,
+            depth: None,
+            keeping: None,
+        }
     }
 
     /// A call naming nothing at all — the base every case above varies.

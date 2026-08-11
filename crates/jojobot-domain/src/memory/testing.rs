@@ -4627,9 +4627,10 @@ pub mod contract {
                 },
                 include: graph::Include::default(),
                 follow: Some(graph::Follow {
-                    shape: Some(EdgeShape::Attendance),
-                    direction: graph::Direction::In,
+                    along: graph::Along::Edge(EdgeShape::Attendance),
+                    direction: Some(graph::Direction::In),
                     depth: 1,
+                    keeping: Vec::new(),
                 }),
             },
         )
@@ -4652,10 +4653,121 @@ pub mod contract {
         assert_eq!(
             brought.via,
             Some(graph::Via {
-                shape: EdgeShape::Attendance,
+                link: graph::Link::Edge(EdgeShape::Attendance),
                 direction: graph::Direction::In,
             }),
             "which says how the walk got to it",
+        );
+    }
+
+    /// **A declared reference key is walkable against the store**, and the
+    /// declaration it rests on comes out of that same store.
+    ///
+    /// The claim about storage is the one the pure resolver cannot make: the
+    /// walk asks the store what has been declared, so a store that keeps a
+    /// declaration but does not hand it back leaves every relation unfollowable
+    /// while every unit test over the resolver stays green.
+    ///
+    /// The negative is the same walk with the type declared as TEXT rather than
+    /// a reference — same records, same values, and no link — so a build that
+    /// walked any key holding a handle fails here.
+    pub async fn a_declared_reference_key_is_walkable_against_the_store<M: Memory>(store: &M) {
+        let owner = EntityId::person("contract-relation-owner");
+        let held = EntityId::new(EntityKind::Thing, "contract-relation-held");
+        ensure(store, &owner).await;
+        ensure(store, &held).await;
+
+        capture(
+            store,
+            NewFact {
+                event: Some(Event {
+                    kind: "contract-holding".into(),
+                    metadata: [
+                        ("keeper".to_string(), owner.to_string()),
+                        ("since".to_string(), "2019-04-15".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    refs: Vec::new(),
+                }),
+                ..NewFact::about(held.clone(), "the one that is held", date(2026, 8, 10))
+            },
+        )
+        .await;
+
+        let declare = |holds: ValueType| async move {
+            store
+                .declare_type(DeclaredType::new(
+                    "contract-holding",
+                    vec![
+                        Field::new("keeper", holds),
+                        Field::new("since", ValueType::Date),
+                    ],
+                ))
+                .await
+                .expect("a declaration the store keeps");
+        };
+        let reached = |relation: &str| {
+            let relation = relation.to_string();
+            let subject = owner.clone();
+            async move {
+                graph::walk(
+                    store,
+                    &graph::GraphQuery {
+                        select: graph::Selection {
+                            subject: Some(subject),
+                            ..graph::Selection::default()
+                        },
+                        include: graph::Include {
+                            facts: false,
+                            prose: false,
+                        },
+                        follow: Some(graph::Follow {
+                            along: graph::Along::Relation(relation),
+                            ..graph::Follow::hop()
+                        }),
+                    },
+                )
+                .await
+            }
+        };
+
+        declare(ValueType::Text).await;
+        reached("contract-holding.keeper").await.expect_err(
+            "a key declared to hold text is no relation, whatever its value looks like",
+        );
+
+        declare(ValueType::Reference).await;
+        let found = reached("contract-holding.keeper")
+            .await
+            .expect("declared a reference, the key is a relation");
+        let connected: Vec<&EntityId> = found[0].connected.iter().map(|o| &o.entity.id).collect();
+        assert!(
+            connected.contains(&&held),
+            "the reverse of the key reaches what points at this object: {connected:?}",
+        );
+
+        // And the ordering the same declaration licenses, over a value that
+        // survived storage rather than one this test still holds.
+        let older = graph::walk(
+            store,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    fields: vec![graph::FieldFilter::comparing(
+                        "since",
+                        crate::memory::types::Compare::Before,
+                        "2020-01-01",
+                    )],
+                    ..graph::Selection::default()
+                },
+                ..graph::GraphQuery::default()
+            },
+        )
+        .await
+        .expect("a declared date licenses an ordering");
+        assert!(
+            older.iter().any(|o| o.entity.id == held),
+            "the record stored before that date is selected by the ordering: {older:?}",
         );
     }
 
@@ -4741,5 +4853,6 @@ pub mod contract {
 
         a_graph_query_selects_a_kind_and_returns_its_prose(store).await;
         a_graph_query_filters_on_a_stored_value_and_walks_an_edge(store).await;
+        a_declared_reference_key_is_walkable_against_the_store(store).await;
     }
 }

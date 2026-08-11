@@ -45,6 +45,108 @@ pub enum ValueType {
     Reference,
 }
 
+/// **How a filter compares a record's value with the one it is looking for.**
+///
+/// Not an expression language and not an operator set a caller composes: each
+/// of these is licensed by what a key was DECLARED to hold, and a key with no
+/// declaration behind it has equality and nothing else. That is the whole
+/// mechanism keeping this from growing into a predicate builder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Compare {
+    /// The value is that value. Whole and trimmed, never a substring.
+    #[default]
+    Equals,
+    /// Earlier than that date.
+    Before,
+    /// Later than that date.
+    After,
+    /// Smaller than that number.
+    Less,
+    /// Larger than that number.
+    Greater,
+}
+
+impl Compare {
+    /// The token this reads and writes as.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            Compare::Equals => "equals",
+            Compare::Before => "before",
+            Compare::After => "after",
+            Compare::Less => "less",
+            Compare::Greater => "greater",
+        }
+    }
+
+    /// The comparison a token names, or nothing when it names none.
+    pub fn of_token(token: &str) -> Option<Compare> {
+        match token.trim() {
+            "equals" => Some(Compare::Equals),
+            "before" => Some(Compare::Before),
+            "after" => Some(Compare::After),
+            "less" => Some(Compare::Less),
+            "greater" => Some(Compare::Greater),
+            _ => None,
+        }
+    }
+
+    /// **What a key must be declared to hold for this comparison to be
+    /// licensed**, or nothing for the one that needs no declaration.
+    pub fn licensed_by(self) -> Option<ValueType> {
+        match self {
+            Compare::Equals => None,
+            Compare::Before | Compare::After => Some(ValueType::Date),
+            Compare::Less | Compare::Greater => Some(ValueType::Number),
+        }
+    }
+
+    /// **Does the value a record carries stand in this relation to the value
+    /// asked for.**
+    ///
+    /// A record value that does not parse as what the comparison needs does not
+    /// match. It is not an error: the record is messy, which the typed path
+    /// reports elsewhere and never refuses over.
+    pub fn holds_between(self, held: &str, wanted: &str) -> bool {
+        let (held, wanted) = (held.trim(), wanted.trim());
+        match self {
+            Compare::Equals => held == wanted,
+            Compare::Before | Compare::After => {
+                let (Ok(held), Ok(wanted)) = (
+                    held.parse::<jiff::civil::Date>(),
+                    wanted.parse::<jiff::civil::Date>(),
+                ) else {
+                    return false;
+                };
+                if self == Compare::Before {
+                    held < wanted
+                } else {
+                    held > wanted
+                }
+            }
+            Compare::Less | Compare::Greater => {
+                let (Ok(held), Ok(wanted)) = (held.parse::<f64>(), wanted.parse::<f64>()) else {
+                    return false;
+                };
+                if self == Compare::Less {
+                    held < wanted
+                } else {
+                    held > wanted
+                }
+            }
+        }
+    }
+
+    /// **Is this a value the comparison can be asked about at all.** The
+    /// caller's own half: a date comparison against something that is no date
+    /// is a malformed question rather than one with no answers.
+    pub fn can_ask_for(self, wanted: &str) -> bool {
+        match self.licensed_by() {
+            None => true,
+            Some(holds) => holds.holds(wanted),
+        }
+    }
+}
+
 impl ValueType {
     /// The token this reads and writes as.
     pub fn as_token(self) -> &'static str {
@@ -150,6 +252,12 @@ impl Match {
 }
 
 impl DeclaredType {
+    /// The field this type declares under `key`, if it declares one.
+    pub fn field(&self, key: &str) -> Option<&Field> {
+        let key = key.trim();
+        self.fields.iter().find(|f| f.key == key)
+    }
+
     pub fn new(name: &str, fields: Vec<Field>) -> DeclaredType {
         DeclaredType {
             name: name.trim().to_string(),
