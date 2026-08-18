@@ -8,8 +8,8 @@ use super::*;
 /// Arguments to `update_entity`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct UpdateEntityArgs {
-    /// The entity's handle. Not editable — renaming a handle is a separate
-    /// operation.
+    /// The entity's handle. It says which entity to edit; this verb does not
+    /// edit it.
     pub handle: String,
     /// New display name.
     #[serde(default)]
@@ -46,7 +46,7 @@ pub struct UpdateEntityArgs {
 impl Jojobot {
     #[tool(
         description = "Edit what an entity is called and where it came from (name/aliases/source/\
-                       crm), in place. The handle never changes — there is no rename. THIS VERB \
+                       crm), in place. This verb does not edit the handle. THIS VERB \
                        DOES NOT TOUCH MAILBOXES: a box is not a property of an entity that can \
                        be edited or reassigned — it belongs to the bot it is named for and opens \
                        with it, in add_entity, so there is nothing here to point at a different \

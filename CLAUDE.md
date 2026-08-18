@@ -123,17 +123,20 @@ Shipped and live:
   reads the store directly rather than the search index, which is what makes it
   the way past an index that cannot scan.
 - **Edit-in-place is the surface; append-only is the substrate.** A write to a
-  key appends rather than overwriting, and a read projects the newest write of
-  each key — so a caller edits a claim and reads it back changed, exactly as
-  before. **The same rows answer both questions:** what a key holds now, and
-  every time it was written. That is why a count of how many times something
+  key appends rather than overwriting, and a read projects those writes down to
+  one value — by default the newest, so a caller edits a claim and reads it back
+  changed, exactly as before. **The same rows answer both questions:** what a
+  key holds now, and every time it was written. That is why a count of how many times something
   happened and a list of the occasions are one body of data rather than two,
   and it is what the next several capabilities stand on.
 - **Fields, and what declaring a type buys** — **a record carries fields**: a
-  flat bag of key/value pairs beside the claim, which nothing interprets today,
-  where a key the caller invents is kept as written. **A thing's fields are
-  every write on it, folded together — the newest write of each key wins**, so a
-  thing gains fields a piece at a time and an edit to any record reaches it. **Conformance is asked of the THING, across all its records,
+  flat bag of key/value pairs beside the claim, where a key the caller invents is
+  kept as written and a key some type declared is held to what that type says.
+  **A thing's fields are every write on it, folded together, and HOW they fold
+  is the key's own declaration** — the newest write wins by default, while a key
+  declared a counter comes back as the total of its writes, which is what makes
+  a running total a read rather than the caller's arithmetic. So a thing gains
+  fields a piece at a time and an edit to any record reaches it. **Conformance is asked of the THING, across all its records,
   never of one record alone** — `answers_type` selects things carrying *some* of
   a type's keys and says which each one lacks, and `fits_type` keeps only the
   things with no gaps. **Which of the two you want is the reader's question**,
@@ -149,8 +152,16 @@ Shipped and live:
   a caller can tell the two apart before it collides with one. A walk carries its own
   filters, and a key's declared value type licenses comparison on it —
   before/after on a date, less/greater on a number, equals on anything.
-  Declaring buys write-time help, ordering and traversal on the keys it names,
-  and that floor.
+  **A key filter asks about the THING by default** — its folded value, the same
+  map the type question is asked of — and asks about one record only when a
+  caller says so. The two are different questions: *which friends have eaten
+  three donuts* is the thing's, and *which visits cost more than fifty* is the
+  record's.
+  **A declared reference names the kind it points at**, so a handle of another
+  kind is a mistake the declaration can see — and on a thing already at the
+  floor it is refused rather than reported, because holding a key badly is not
+  holding it. Declaring buys write-time help, ordering and traversal on the keys
+  it names, and that floor.
 
 > **One front door, over both worlds.** Mail is in the same `search` — no
 > second verb, one ranked list — and **opt-in**: `include_mail: true` reaches

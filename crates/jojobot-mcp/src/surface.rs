@@ -955,6 +955,135 @@ fn no_agent_facing_text_folds_the_records() {
     );
 }
 
+/// **A handle is described, never promised.**
+///
+/// The operator settled it: a thing is referenced by an opaque id underneath,
+/// so the handle can move without breaking a link (rule 205), and that id
+/// stays internal — the handle remains the only name a caller sees or sends
+/// (rule 209). **Neither half is built.** What ships now is the surface
+/// giving up the opposite claim (rule 155): three served texts told a caller
+/// a handle is permanent, and one of them was advice rather than description
+/// — "choose one that will still be right in a year" tells a caller to act on
+/// the promise.
+///
+/// **The act it produces is the damage.** A caller that reads a handle as
+/// safe forever writes it into places nothing can repair — a message body, a
+/// journal beat, a chronology entry — every one of them append-only by
+/// design. Each day the promise stands, more unrepairable copies of a handle
+/// are made and the rename that is coming gets bigger.
+///
+/// **The reversal is asserted too, and the two are not symmetric.** No text
+/// may say a handle CAN be renamed: no rename exists, and text that runs
+/// ahead of the code is the failure this build has already paid for. So the
+/// sweep forbids the promise AND its reversal, and then requires the
+/// description that replaces them — a caller who comes away thinking a handle
+/// is disposable has been told a third wrong thing.
+#[test]
+fn no_agent_facing_text_promises_a_permanent_handle() {
+    // What a sentence about a handle says when it promises rather than
+    // describes, and what an agent does with it.
+    const FOREVER: &[(&str, &str)] = &[
+        (
+            "permanent",
+            "a handle is what a thing is called, and nothing holds it still",
+        ),
+        (
+            "permanently",
+            "a handle is what a thing is called, and nothing holds it still",
+        ),
+        (
+            "never change",
+            "nothing about a handle is guaranteed to outlive the record it names",
+        ),
+        (
+            "cannot change",
+            "nothing about a handle is guaranteed to outlive the record it names",
+        ),
+        (
+            "forever",
+            "a caller told this writes handles into append-only text that nothing can repair",
+        ),
+        (
+            "in a year",
+            "advice to pick a handle that outlasts the year is the promise as an instruction, \
+             and a caller acts on an instruction",
+        ),
+    ];
+    // The reversal, checked as phrases rather than as the word "rename".
+    // **Renaming is real on this surface** — `update_entity` edits what an
+    // entity is CALLED, and the resemblance gate describes exactly that — so
+    // forbidding the word would forbid true sentences. What is forbidden is
+    // pairing the verb with the handle, which is the capability nothing
+    // implements.
+    const RENAMEABLE: &[&str] = &[
+        "rename a handle",
+        "rename the handle",
+        "renaming a handle",
+        "renaming the handle",
+        "handle can be renamed",
+        "handle can change",
+        "renameable",
+    ];
+    // Where a session learns what a handle IS: the essay a fresh one reads,
+    // the instructions a client gets on connect, and the argument that asks a
+    // caller to choose one.
+    const TAUGHT_BY: &[&str] = &[
+        "the orientation essay",
+        "the server instructions",
+        "add_entity's argument schema",
+    ];
+
+    let served = agent_facing_text();
+    assert!(
+        !served.is_empty(),
+        "nothing was gathered, so the sweep below reads no text at all and passes on an empty \
+         corpus"
+    );
+
+    let mut promising: Vec<String> = Vec::new();
+    let mut taught: Vec<&str> = Vec::new();
+    for (what, text) in &served {
+        for sentence in sentences(text) {
+            if !mentions(&sentence, "handle") {
+                continue;
+            }
+            for (marker, why) in FOREVER {
+                if says(&sentence, marker) {
+                    promising.push(format!("{what} says {marker:?} of a handle — {why}"));
+                }
+            }
+            for marker in RENAMEABLE {
+                if says(&sentence, marker) {
+                    promising.push(format!(
+                        "{what} says {marker:?} — no rename exists, and text that ships a \
+                         capability before the code does sends a caller to call for it"
+                    ));
+                }
+            }
+            // The description that replaces the promise: a handle is what the
+            // thing is addressed by.
+            if says(&sentence, "addressed") {
+                taught.push(what);
+            }
+        }
+    }
+    // **Every offender at once**, because this is a class and stopping at the
+    // first turns one fix into a round of finding the next.
+    assert!(
+        promising.is_empty(),
+        "agent-facing text promises something about a handle that jojobot does not implement:\n  \
+         {}",
+        promising.join("\n  ")
+    );
+    let missing: Vec<&&str> = TAUGHT_BY.iter().filter(|w| !taught.contains(w)).collect();
+    assert!(
+        missing.is_empty(),
+        "the promise is gone and nothing says what a handle IS in its place — these teach a \
+         session the model, so each must say the handle is what an entity is addressed by: \
+         {missing:?}"
+    );
+}
+
 /// **A type is matched against a THING, and `declare_type`'s text says so.**
 ///
 /// A separate claim from the fold above, and it needed its own assertion: that

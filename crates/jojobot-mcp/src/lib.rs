@@ -169,8 +169,8 @@ impl Jojobot {
 /// silently.
 pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. Two worlds live here.\
                  \n\n**MEMORY.** What jojobot knows is **entities** — a person, project, place, \
-                 event, work, thing, org, topic, bot or pet, each with a permanent typed handle, \
-                 `kind:slug` — and **facts** about them: single dated claims, each carrying an \
+                 event, work, thing, org, topic, bot or pet, each with a typed handle, `kind:slug` \
+                 — the name it is addressed by, and the only name a caller ever sends — and **facts** about them: single dated claims, each carrying an \
                  **address** (`kind:slug#local-id`) it can be edited through and a \
                  **provenance** — `testimony` (the user said or confirmed it) or `inference` \
                  (you derived it). **Inference is the default and reads back as a hypothesis, \

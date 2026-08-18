@@ -20,8 +20,10 @@ pub struct AddEntityArgs {
     /// mailbox it owns opens in the same act.
     pub kind: String,
     /// The slug half of the handle (`[a-z0-9-]+`), or a full `kind:slug` id
-    /// whose kind must match `kind`. The handle is permanent — choose one that
-    /// will still be right in a year.
+    /// whose kind must match `kind`. The handle is the name this entity is
+    /// addressed by, and the only name a caller ever sends: every fact, message
+    /// and journal beat that refers to it carries this string. Choose it with
+    /// care.
     pub handle: String,
     /// Display name, as a human would write it.
     pub name: String,

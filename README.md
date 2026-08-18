@@ -88,15 +88,15 @@ slice lives there. It is a ladder of **capabilities**: each release is named
 Shipped so far: memory, search and edges, mailboxes, bots (AI identities with a
 handle, charter, rules, memory and an owned mailbox), every session on the
 record, the redesigned surface, records that carry fields and things that answer
-a declared type over them, and the skills that ship the method in the binary. A fresh instance arrives holding one
-identity, `assistant`, with its mailbox — which is what lets the next rule have
+a declared type over them, the enforcement half of that type system — a key
+declares what it holds and how its writes fold, a reference names the kind it
+points at, and a write that would break a fit a thing already has is refused —
+and the skills that ship the method in the binary. A fresh instance arrives
+holding one identity, `assistant`, with its mailbox — which is what lets the next rule have
 no hole in it: every memory write names the session behind it, with no exemption
 for any kind.
 
-Next: the enforcement half of the type system — a declared reference naming the
-kind it points at, a wrong value refused rather than reported, and a filter that
-reads what a thing currently holds. Then trace, portraits, attention, and
-sessions booting from jojobot.
+Next: trace, portraits, attention, and sessions booting from jojobot.
 
 Two layers hold it together: the **engine** (this repo — user-agnostic, golden
 tests) and **bots** (data in the user's own store). The design docs live with
@@ -152,7 +152,7 @@ Two consequences worth stating outright, because they surprise people:
 | tool | what a caller is doing |
 |---|---|
 | `capture` | Remembering a fact about something, with its provenance and optionally one typed edge to another entity. |
-| `recall` | Asking the graph a precise question and getting that shape back. Select the objects — a handle, a kind, a declared type, a key and the value it holds — and walk to a depth, in either direction, filtering what the walk reaches. **Every object answers with its fields — every write on it folded into one, which is what the thing IS.** Its prose, its records, and one key's history come back when the call asks for them, and an answer that left the records out says how many there were. **A read is current truth — one value per key, the newest write.** A key's history is every write of that key on the object, oldest first, and the count of them is the answer to *how many times*. Two kinds of link: an **edge**, by one of the five shapes, and a **relation**, a key some type declared to hold a reference, by that key's own name. A relation reaches everything using that key, so narrowing to a kind is a selection rather than a walk. A key's declared value type licenses comparison on it — before/after on a date, less/greater on a number — while a thing with no declaration is still found by the keys its records carry. The answer nests, and it is always objects, so a caller never branches on which question it asked. Reads the store directly rather than the search index. |
+| `recall` | Asking the graph a precise question and getting that shape back. Select the objects — a handle, a kind, a declared type, a key and the value it holds — and walk to a depth, in either direction, filtering what the walk reaches. **Every object answers with its fields — every write on it folded into one, which is what the thing IS.** Its prose, its records, and one key's history come back when the call asks for them, and an answer that left the records out says how many there were. **A read is current truth — one value per key, folded the way that key declares: the newest write by default, or the total where the key is a counter.** A key's history is every write of that key on the object, oldest first, and the count of them is the answer to *how many times*. Two kinds of link: an **edge**, by one of the five shapes, and a **relation**, a key some type declared to hold a reference, by that key's own name. A relation reaches everything using that key, so narrowing to a kind is a selection rather than a walk. A key's declared value type licenses comparison on it — before/after on a date, less/greater on a number — while a thing with no declaration is still found by the keys its records carry. The answer nests, and it is always objects, so a caller never branches on which question it asked. Reads the store directly rather than the search index. |
 | `search` | Finding something across everything held — entities, facts, prose, messages and the bot's own past runs in one ranked list, each hit arriving with its surroundings. **The breadth, where `recall` is the precision:** reach for this when you do not know where to look. Narrows by kind, by the properties only a claim has, and by either type question — *which of these are described like a service*, which keeps the partial ones and names what each lacks, or *which of these ARE services*, which keeps only the complete. |
 | `add_entity` | Bringing a new thing into memory. Screened against near-misses first, so a typo never mints a duplicate. |
 | `update_entity` | Maintaining what a thing is called, and its other metadata. |
@@ -192,10 +192,6 @@ discovered one at a time.
 |---|---|
 | **Compose a walk across several hops** | A single typed edge is filtered on and traversed today, which answers "which people are in X" in one call. What is not served is several edge filters combined, a walk of more than one hop, or a named query kept and re-run. |
 | **Read what a claim itself used to say** | A *key's* writes are kept and readable, so how many times a thing changed, and to what, is one read. A claim's own columns — its wording, how settled it is, whether it still stands — are not keys and keep no writes, so a claim is still rewritten in place and what it said before is gone. |
-| **Rely on a declared VALUE being enforced** | A key's declared value type is checked, and a mismatch is reported on the answer rather than refused. A declaration does govern presence. Once a thing holds every key a type names, jojobot refuses a write that would take one away, naming the type and the key. |
-| **Point a key at one kind of thing** | A key declared to hold a reference is satisfied by any known kind, and nothing checks that the target exists. An edge's object is checked; a reference-typed field is not. |
-| **Ask for a running total** | Every key keeps its newest write. Counting how many times a key was written is one read; adding those writes together is the caller's arithmetic rather than jojobot's. |
-| **Filter on what a thing currently holds** | A filter on a key's value reads one record's own write rather than the thing's folded value. Narrowing by type reads the fold; narrowing by value does not. |
 | **Get a synthesised portrait of a subject** | A projection over the graph rather than a read of one record. Waits on graph traversal. |
 | **Surface what has gone quiet, or is decaying** | Rules and rhythms are stored as ordinary facts and nothing fires on them. This is the largest single gap. |
 | **Verify a write by reading it back** | Every write already does this internally; no caller can ask for it as its own step. |
