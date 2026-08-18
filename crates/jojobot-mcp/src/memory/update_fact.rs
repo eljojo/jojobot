@@ -428,6 +428,21 @@ mod tests {
             updated["address"], "person:alpha#f1",
             "the row keeps its address"
         );
+        // **The edit is proven where it landed, and the receipt cannot prove
+        // it.** The answer says the write happened; only a read says what the
+        // record now holds — and a case named for a content edit that asserts
+        // nothing about the content passes on a build where the edit is
+        // dropped.
+        let read = json_of(
+            &jojobot
+                .recall(Parameters(recall_args("person:alpha")))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            read["objects"][0]["facts"][0]["content"], "NOT a close contact — do not re-infer",
+            "the refutation is what the record says now: {read}"
+        );
     }
 
     /// Promotion to testimony needs the explicit confirmation flag.

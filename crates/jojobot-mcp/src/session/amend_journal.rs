@@ -70,6 +70,72 @@ mod tests {
     use crate::harness::*;
     use crate::session::testing::*;
 
+    /// **The amendment is receipted, and the receipt is what says it landed.**
+    ///
+    /// `journal` got this case and the verb beside it did not, so the answer
+    /// this one returns had no assertion on its own fields at all: it could
+    /// have shipped the text back, or dropped the id, and nothing here would
+    /// have noticed.
+    ///
+    /// **Both halves.** The text goes, because its author wrote it in the call
+    /// it is reading the answer to; the id, the moment and the run stay,
+    /// because none of them is something the caller could know — and the id is
+    /// the same one the entry already had, which is what makes this an
+    /// amendment rather than an append.
+    #[tokio::test]
+    async fn an_amendment_is_receipted_without_shipping_the_entry_back() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        let first = json_of(
+            &jojobot
+                .journal(Parameters(crate::session::journal::JournalArgs {
+                    entry: "set out to read the box".into(),
+                    focus: None,
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("journal ok"),
+        );
+
+        let amended_text = "read the hand-off and scoped the slice properly";
+        let body = json_of(
+            &jojobot
+                .amend_journal(Parameters(AmendJournalArgs {
+                    entry: amended_text.into(),
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("amend ok"),
+        );
+
+        assert_eq!(
+            body["entry"]["text"],
+            serde_json::Value::Null,
+            "the author of the amendment is the one reader it teaches nothing: {body}"
+        );
+        assert_eq!(body["entry"]["text_elided"], true, "{body}");
+        assert_eq!(body["entry"]["text_bytes"], amended_text.len(), "{body}");
+        assert!(
+            body["entry"]["text_head"]
+                .as_str()
+                .is_some_and(|head| amended_text.starts_with(&head[..20])),
+            "…and enough of the opening to tell one amendment from another: {body}"
+        );
+        assert_eq!(
+            body["entry"]["id"], first["entry"]["id"],
+            "the entry keeps its id, which is what makes this an amendment: {body}"
+        );
+        assert!(
+            body["entry"]["at"].is_string(),
+            "…and when it stands: {body}"
+        );
+        assert!(
+            body["session"].is_string(),
+            "…and the run it belongs to: {body}"
+        );
+    }
+
     /// **Amending a session that has not begun is refused, not turned into a
     /// first entry.** A correction that silently became an append leaves a
     /// chronology saying something nobody meant.
