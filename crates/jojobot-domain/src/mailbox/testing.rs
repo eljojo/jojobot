@@ -208,7 +208,8 @@ impl Mailboxes for InMemoryMailboxes {
                 // what a typo probably meant; a fake that always came back with
                 // an empty list would agree with every test and disagree with
                 // the store, which is how a polite fake ships a broken adapter.
-                let index: Vec<crate::memory::Entity> = known.iter().map(stand_in).collect();
+                let index: Vec<crate::memory::Entity> =
+                    known.iter().map(stand_in).collect::<Result<_, _>>()?;
                 return Ok(Guarded::UnknownOwner {
                     attempted: owner.clone(),
                     candidates: memory_guard::screen(owner, &[], &index),
@@ -450,9 +451,16 @@ impl Mailboxes for InMemoryMailboxes {
 /// The fake holds handles rather than entities, and the screen compares handles
 /// and labels — so the name is the slug, which is what a screen over the real
 /// index would be comparing against anyway for a bot named for its handle.
-fn stand_in(owner: &EntityId) -> crate::memory::Entity {
-    crate::memory::Entity {
-        kind: owner.kind().unwrap_or(crate::memory::EntityKind::BOT),
+///
+/// **A handle this process cannot read is a failure here, because it is one in
+/// the store.** The real owner index reads entity rows, and a row whose kind
+/// cannot be read fails that read and the lookup with it. Naming a kind for it
+/// instead would let the fake screen a record the store refuses to serve, which
+/// is how a polite double passes a test production fails.
+fn stand_in(owner: &EntityId) -> Result<crate::memory::Entity, MailboxError> {
+    crate::memory::validate_subject(owner).map_err(|e| MailboxError::Store(e.to_string()))?;
+    Ok(crate::memory::Entity {
+        kind: owner.kind().expect("a validated handle names a kind"),
         name: owner.slug().to_string(),
         id: owner.clone(),
         aliases: Vec::new(),
@@ -460,7 +468,7 @@ fn stand_in(owner: &EntityId) -> crate::memory::Entity {
         crm: None,
         parent: None,
         boot: Default::default(),
-    }
+    })
 }
 
 /// The shared behavioural spec — every adapter must satisfy all of it.

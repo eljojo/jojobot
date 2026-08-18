@@ -747,6 +747,54 @@ mod tests {
         contract::run_all(|| async { InMemoryMailboxes::new() }).await;
     }
 
+    /// **The double refuses an owner it cannot read**, exactly as the store
+    /// does.
+    ///
+    /// The real owner index answers from the entity rows, so a row whose kind
+    /// this process cannot read fails the read and the whole lookup fails with
+    /// it. The fake holds handles rather than rows and built its screening
+    /// candidates from them — inventing a kind for any handle it could not
+    /// read, which made a record the store refuses to serve into an ordinary
+    /// bot. **A fake that answers where the store refuses passes a test
+    /// production fails.**
+    #[tokio::test]
+    async fn the_fake_refuses_an_owner_it_cannot_read_rather_than_naming_a_kind_for_it() {
+        crate::memory::kinds::load_shipped();
+        let asking = |boxes: InMemoryMailboxes| async move {
+            boxes
+                .create_mailbox(
+                    &MailboxName("epsilon".into()),
+                    &EntityId("bot:epsilon".into()),
+                    None,
+                )
+                .await
+        };
+
+        // **The control**: the same call against a roster it CAN read is an
+        // ordinary unknown-owner answer, not a failure. Without this half, an
+        // assertion that the call fails passes on a fake that fails at
+        // everything.
+        let known = asking(InMemoryMailboxes::new())
+            .await
+            .expect("an owner nobody knows is an answer, not a failure");
+        assert!(
+            matches!(known, Guarded::UnknownOwner { .. }),
+            "the fake stopped screening unknown owners: {known:?}",
+        );
+
+        let holding_an_unreadable_row = InMemoryMailboxes::new();
+        // A handle whose kind nobody declared — what a hand-edited row, or a
+        // kind that has since gone from the store, leaves behind.
+        holding_an_unreadable_row.know_owner(&EntityId("sofa:gamma".into()));
+        let refused = asking(holding_an_unreadable_row)
+            .await
+            .expect_err("a candidate this process cannot read is a failure, as it is in the store");
+        assert!(
+            refused.to_string().contains("sofa:gamma"),
+            "the failure does not name the record it could not read: {refused}",
+        );
+    }
+
     #[test]
     fn a_mailbox_name_has_exactly_one_spelling() {
         for good in ["inbox", "errands", "box-2", "a"] {
