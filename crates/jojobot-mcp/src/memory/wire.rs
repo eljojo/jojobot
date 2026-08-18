@@ -47,6 +47,37 @@ pub(crate) fn fact_json(fact: &Fact) -> serde_json::Value {
     })
 }
 
+/// **The receipt for a record somebody just wrote**: the same record with the
+/// prose and the keys they sent replaced by what they do not have.
+///
+/// **What the read-back proved is untouched.** The store is still read before
+/// a write is called a success, so a claim that did not survive storage is an
+/// error rather than a success with mangled bytes. The proof happens
+/// server-side; shipping the evidence to the author of the claim is what stops
+/// here.
+///
+/// **Everything jojobot decided stays.** The address, without which the record
+/// cannot be edited. The subject as it was qualified. The date, the provenance
+/// and the standing — a caller that named none of those learns here what was
+/// recorded, which is not an echo but the only way it finds out.
+pub(crate) fn fact_receipt_json(fact: &Fact) -> serde_json::Value {
+    const HOW: &str = "you wrote this claim. recall the subject to read it back, with its \
+                       records and their addresses.";
+    let mut body = fact_json(fact);
+    elide_prose(&mut body, "content", &fact.content, HOW);
+    if let Some(details) = &fact.details {
+        elide_prose(&mut body, "details", details, HOW);
+    }
+    if let Some(fields) = body.as_object_mut() {
+        // **A count rather than the keys.** The keys and their values are what
+        // the caller sent; how many landed is what says the write took them.
+        fields.insert("fields".into(), serde_json::Value::Null);
+        fields.insert("fields_elided".into(), true.into());
+        fields.insert("fields_count".into(), fact.fields.len().into());
+    }
+    body
+}
+
 /// A handle the reader can act on **and** understand: the id, the kind, and the
 /// display name when the store knows one.
 ///

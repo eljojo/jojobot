@@ -93,6 +93,25 @@ pub(crate) fn entry_json(entry: &JournalEntry) -> serde_json::Value {
     })
 }
 
+/// **The receipt for a beat somebody just wrote**: the same entry with its
+/// text replaced by what the caller does not have.
+///
+/// A chronology READ carries the text, because its reader was not there when
+/// it was written. The answer to the write is read by its own author, in the
+/// call that carried it, so the text is the one thing in it that teaches
+/// nothing — and an entry is prose, once per beat, all run long.
+pub(crate) fn entry_receipt_json(entry: &JournalEntry) -> serde_json::Value {
+    let mut body = entry_json(entry);
+    crate::answer::elide_prose(
+        &mut body,
+        "text",
+        &entry.text,
+        "you wrote this entry. The whole chronology comes back from start_here when you resume \
+         this session, and from wrap_session when you close it.",
+    );
+    body
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

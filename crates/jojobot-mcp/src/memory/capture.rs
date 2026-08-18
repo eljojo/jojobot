@@ -114,7 +114,13 @@ impl Jojobot {
                        invent is kept as you wrote it, and a type is something the keys answer \
                        rather than something you announce. derived_from names the claim this one \
                        was worked out from, as its address — use it when the source is another \
-                       claim, not an entity."
+                       claim, not an entity. IT ANSWERS WITH A RECEIPT, NOT THE RECORD: the \
+                       address that edits it, the subject as it was qualified, the date, the \
+                       provenance and the standing it was given — which is how a caller that \
+                       named none of those learns what was recorded — and how many keys landed, \
+                       with your claim elided and said to be. The write is still verified \
+                       against the store before it is called a success; what stops is shipping \
+                       you the words you just sent. recall the subject to read it back."
     )]
     pub(crate) async fn capture(
         &self,
@@ -169,7 +175,7 @@ impl Jojobot {
             Guarded::Written(fact) => {
                 self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
                     .await;
-                json_result(&fact_json(&fact))
+                json_result(&fact_receipt_json(&fact))
             }
             Guarded::Blocked {
                 attempted,
@@ -196,6 +202,82 @@ mod tests {
     /// it. While it was gated, "the fields of a thing" meant "the fields
     /// somebody opted in", which is a biased sample — and every read that
     /// groups a thing's records computes over that sample.
+    /// **A capture is answered with a receipt, not with the record.**
+    ///
+    /// The content, the details and the fields are what the caller sent in
+    /// this call. **What the read-back proved is untouched**: the store is
+    /// still read before the write is called a success, so a claim that did
+    /// not survive storage is still an error rather than a success with
+    /// mangled bytes. The proof does not require shipping the proof.
+    ///
+    /// **What must survive is everything the caller could not know**, and the
+    /// defaulted values are the sharp part: a caller that omitted `provenance`,
+    /// `standing` or `date` learns here what was recorded, and there is a case
+    /// in this file because `standing` once vanished silently. The address is
+    /// the other half — without it the record cannot be edited, and a receipt
+    /// that costs a caller the address has broken the verb.
+    #[tokio::test]
+    async fn a_capture_is_receipted_without_reading_the_record_back() {
+        let jojobot = handler();
+        ensure(&jojobot, "alpha").await;
+        let content = "said the kiln was finally lit, after three weeks of not being lit";
+
+        let body = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    details: Some("and that the flue was the problem".into()),
+                    fields: Some(
+                        [("mood".to_string(), "delighted".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args("person:alpha", content)
+                }))
+                .await
+                .expect("capture ok"),
+        );
+
+        assert_eq!(
+            body["content"],
+            serde_json::Value::Null,
+            "the claim comes back to nobody who just wrote it: {body}"
+        );
+        assert_eq!(body["content_elided"], true, "{body}");
+        assert_eq!(body["content_bytes"], content.len(), "{body}");
+        assert_eq!(
+            body["details"],
+            serde_json::Value::Null,
+            "…and the nuance beside it: {body}"
+        );
+        assert_eq!(
+            body["fields_count"], 1,
+            "how many keys landed, not which: {body}"
+        );
+
+        // The half a receipt may never cost: the address, and everything
+        // jojobot decided for a caller that named none of it.
+        assert_eq!(body["address"], "person:alpha#f1", "{body}");
+        assert_eq!(body["subject"], "person:alpha", "{body}");
+        assert_eq!(
+            body["provenance"], "inference",
+            "a caller that named no provenance learns what was recorded: {body}"
+        );
+        assert!(
+            body["standing"].is_string() && body["status"].is_string(),
+            "…and the standing this claim was given: {body}"
+        );
+        assert!(
+            body["date"].is_string(),
+            "…and the date it was stamped: {body}"
+        );
+        assert!(
+            body["how_to_read"]
+                .as_str()
+                .is_some_and(|how| how.contains("recall")),
+            "eliding is never silent — the answer names the call that returns it: {body}"
+        );
+    }
+
     #[tokio::test]
     async fn a_capture_carries_fields_with_no_label_and_reads_its_keys_back() {
         let jojobot = handler();
@@ -220,8 +302,7 @@ mod tests {
                 .expect("capture ok"),
         );
         assert_ne!(body["status"], "blocked", "no label is asked for: {body}");
-        assert_eq!(body["fields"]["mood"], "delighted");
-        assert_eq!(body["fields"]["weather"], "clear");
+        assert_eq!(body["fields_count"], 2, "both keys landed: {body}");
         assert_eq!(body["refs"], serde_json::json!(["person:milhouse"]));
 
         // …and they are on the record a later reader takes, not only in the
@@ -251,7 +332,11 @@ mod tests {
     async fn a_capture_with_no_fields_answers_with_an_empty_bag() {
         let jojobot = handler();
         let body = capture_ok(&jojobot, capture_args("person:alpha", "plays go")).await;
-        assert_eq!(body["fields"], serde_json::json!({}), "{body}");
+        assert_eq!(
+            body["fields_count"], 0,
+            "a reader learns there were none from the count, not by branching on a missing \
+             key: {body}"
+        );
         assert_eq!(body["refs"], serde_json::json!([]), "{body}");
     }
 

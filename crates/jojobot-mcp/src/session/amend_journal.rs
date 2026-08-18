@@ -29,7 +29,9 @@ impl Jojobot {
                        too. Pass your `sid` on every call — it is the address, and it survives \
                        the fresh connection most clients open per tool call. This verb never \
                        STARTS a session: there is nothing to amend in one that does not exist \
-                       yet."
+                       yet. IT ANSWERS WITH A RECEIPT, NOT THE ENTRY: the id, the moment it \
+                       was stamped, the byte count of what was stored and the opening line. You \
+                       wrote the text; start_here returns the chronology when you resume."
     )]
     pub(crate) async fn amend_journal(
         &self,
@@ -55,7 +57,7 @@ impl Jojobot {
         match self.sessions.amend_last(&session, &args.entry).await {
             Ok(entry) => json_result(&serde_json::json!({
                 "session": session.as_str(),
-                "entry": entry_json(&entry),
+                "entry": entry_receipt_json(&entry),
             })),
             Err(e) => session_declined(e),
         }

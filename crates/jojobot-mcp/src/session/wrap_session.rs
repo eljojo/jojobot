@@ -36,7 +36,9 @@ impl Jojobot {
                        its story was never told, and that is the difference between the two \
                        endings. Pass your `sid` on every call. When the work continues but this \
                        run has gotten long, wrapping is also how you ROTATE: wrap the story, then \
-                       boot again for a fresh sid. THE CHRONOLOGY THIS HANDS BACK IS THE NEWEST \
+                       boot again for a fresh sid. THE CLOSING ENTRY COMES BACK AS A RECEIPT \
+                       and the story is not read back to you — it is in the chronology below it, \
+                       where you can see what jojobot folded into it. THE CHRONOLOGY THIS HANDS BACK IS THE NEWEST \
                        OF THE RECORD, not all of it: a long run's answer would be one no client \
                        can read. `entry_count` is the whole length, and `chronology_elided` with \
                        `entries_omitted` says how much is not here. Nothing was dropped from the \
@@ -144,7 +146,7 @@ impl Jojobot {
         // which is the rotation the description names.
         json_result(&serde_json::json!({
             "session": session_json(&wrapped),
-            "entry": entry_json(&entry),
+            "entry": entry_receipt_json(&entry),
         }))
     }
 }
@@ -309,7 +311,22 @@ mod tests {
                 .await
                 .expect("wrap ok"),
         );
-        assert_eq!(wrapped["entry"]["text"], "booted, found nothing to do");
+        // **Read off the chronology, which is the half the caller does not
+        // hold.** The receipt says the entry landed; the record says what it
+        // says, and with no focus to fold in it is the story alone.
+        assert_eq!(
+            wrapped["entry"]["text"],
+            serde_json::Value::Null,
+            "the story is not read back to the session that just told it: {wrapped}"
+        );
+        let chronology = wrapped["session"]["chronology"]
+            .as_array()
+            .expect("the record's own chronology");
+        assert_eq!(
+            chronology.last().expect("the closing entry")["text"],
+            "booted, found nothing to do",
+            "with nothing open to fold in, the closing entry is the story alone: {wrapped}"
+        );
     }
 
     /// **A wrapped `sid` stays closed, and the bot behind it boots its next

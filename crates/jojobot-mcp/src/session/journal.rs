@@ -42,7 +42,10 @@ impl Jojobot {
                        without being wrapped up is offered back at your next boot, and resuming \
                        it continues this same record, while a wrapped one is the last word — its \
                        story is told and nothing appends to it, so carrying on means a fresh \
-                       session."
+                       session. IT ANSWERS WITH A RECEIPT, NOT YOUR BEAT: the id the entry was \
+                       given, when it was stamped, the run it landed in, the byte count of what \
+                       was stored and the opening line. You wrote the entry; start_here returns \
+                       the whole chronology when you resume."
     )]
     pub(crate) async fn journal(
         &self,
@@ -165,7 +168,7 @@ impl Jojobot {
                         "recorded": "entry",
                         "not_recorded": "focus",
                         "session": session.as_str(),
-                        "entry": entry_json(&entry),
+                        "entry": entry_receipt_json(&entry),
                         "why": "jojobot's own storage failed",
                         "how_to_proceed": "The entry IS recorded — do not send this call again, \
                                            or the entry lands twice. Only the focus did not move. \
@@ -179,7 +182,7 @@ impl Jojobot {
         };
         json_result(&serde_json::json!({
             "session": session.as_str(),
-            "entry": entry_json(&entry),
+            "entry": entry_receipt_json(&entry),
             "focus": moved.map(|s| s.focus),
         }))
     }
@@ -254,6 +257,74 @@ mod tests {
     ///
     /// Both halves are asserted, because the obvious one passes on its own:
     /// the caller learns the entry landed AND is told not to repeat the call.
+    /// **A beat is answered with a receipt, not with the beat.**
+    ///
+    /// The caller wrote the entry in the call it is reading the answer to, so
+    /// the text is the one thing in that answer it already holds — and a
+    /// journal entry is prose at the length prose reaches, which makes this the
+    /// most expensive echo a session pays for, once per beat, all run long.
+    ///
+    /// **Both halves.** What must go is the text; what must stay is everything
+    /// the caller could not know — the id the entry was given, the moment
+    /// jojobot stamped it, the session it landed in — plus the byte count and
+    /// the opening, which is how a caller tells two beats apart without the
+    /// bodies. A test for the absence alone passes on an empty answer.
+    #[tokio::test]
+    async fn a_beat_is_receipted_without_shipping_the_entry_back() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        let entry = "read the hand-off, scoped the slice, and found the guard already covered it";
+
+        let body = json_of(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: entry.into(),
+                    focus: None,
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("journal ok"),
+        );
+
+        assert_eq!(
+            body["entry"]["text"],
+            serde_json::Value::Null,
+            "the author of the entry is the one reader it teaches nothing: {body}"
+        );
+        assert_eq!(body["entry"]["text_elided"], true, "{body}");
+        assert_eq!(
+            body["entry"]["text_bytes"],
+            entry.len(),
+            "the count is of what was stored, so a caller learns a trim happened: {body}"
+        );
+        assert!(
+            body["entry"]["text_head"]
+                .as_str()
+                .is_some_and(|head| entry.starts_with(&head[..20])),
+            "…and enough of the opening to tell two beats apart: {body}"
+        );
+        assert!(
+            body["entry"]["id"].is_string(),
+            "the id the entry was given is what a caller cannot know: {body}"
+        );
+        assert!(
+            body["entry"]["at"].is_string(),
+            "…and when it landed: {body}"
+        );
+        assert!(
+            body["session"].is_string(),
+            "the run the beat landed in is named: {body}"
+        );
+
+        // The whole thing is still reachable, and the answer says by which call.
+        let how = body["entry"]["how_to_read"].as_str().expect("a way to it");
+        assert!(
+            how.contains("start_here"),
+            "eliding is never silent — it names the call that returns it: {how}"
+        );
+    }
+
     #[tokio::test]
     async fn a_journal_whose_focus_fails_says_the_entry_landed() {
         let store = Arc::new(RefusingFocus(InMemorySessions::new()));
@@ -285,9 +356,15 @@ mod tests {
         );
         assert_eq!(body["recorded"], "entry");
         assert_eq!(body["not_recorded"], "focus");
+        assert_eq!(
+            body["entry"]["text"],
+            serde_json::Value::Null,
+            "the entry that landed is receipted rather than read back: {body}"
+        );
         assert!(
-            body["entry"]["text"] == "set out to read the box",
-            "the entry that landed comes back, so the caller can see it: {body}"
+            body["entry"]["id"].is_string() && body["entry"]["text_elided"] == true,
+            "…and the receipt is what says it landed, which is the whole point of this \
+             half-success: {body}"
         );
 
         let how = body["how_to_proceed"].as_str().expect("advice");

@@ -103,7 +103,9 @@ Shipped and live:
 - **M1** — Memory: typed entities (`kind:slug` handles) + dated facts with
   provenance (testimony vs inference); the write guard (nothing is created as
   a side effect; near-misses come back blocked-with-candidates); read-back on
-  every write.
+  every write, taken server-side — a write that did not survive storage is an
+  error rather than a success with mangled bytes, and the caller gets the
+  receipt rather than the evidence.
 - **M2/M2.5/M2.8** — `search` across facts, entities and prose; structured
   edges (location · membership · attendance · about · connection); aliases;
   orienteering retrieval (every hit arrives with its surroundings).
@@ -206,9 +208,15 @@ Shipped and live:
 
 > **Delivery-awareness: serve the difference.** `seen_before` was the first
 > instance; the rule now runs across the surface. What a caller demonstrably
-> already has is not shipped back to them — `post_message` and `mark_processed`
-> answer with a receipt (id, state, notes, `body_bytes`, the opening line)
-> rather than echoing a body its own author wrote. **`post_message` also takes
+> already has is not shipped back to them. **A write verb answers with a
+> receipt, and the prose its author just sent is the one thing it leaves
+> out** — `capture`, `update_fact`, `journal`, `amend_journal`,
+> `wrap_session`, `set_charter`, `post_message` and `mark_processed` all
+> answer with the id, the state and what jojobot changed on the way in
+> (a qualified subject, a defaulted provenance, a trimmed value), plus the
+> byte count of what was STORED and enough of the opening to tell one write
+> from another. Eliding is never silent: each answer names the call that
+> returns the whole thing. **`post_message` also takes
 > delivery of the caller's own box in the same call**, and the answer says how
 > that delivery was taken: writing is a moment a bot is demonstrably present, so
 > reading and posting are one round trip rather than two, and a bot that posts at

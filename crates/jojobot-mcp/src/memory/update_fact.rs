@@ -88,7 +88,12 @@ impl Jojobot {
                        because setting a key to an empty value and removing the key are \
                        different edits and a caller means one of them. An address that \
                        names no fact comes back status: blocked with the addresses that do \
-                       exist — it never creates.")]
+                       exist — it never creates. IT ANSWERS WITH A RECEIPT, NOT THE RECORD: the \
+                       address, the date, the provenance, the standing, the status and how many \
+                       keys the record now carries, with the claim itself elided and said to be. \
+                       The write is still verified against the store before it is called a \
+                       success; what stops is shipping you the words you just sent. recall the \
+                       subject to read the record back.")]
     pub(crate) async fn update_fact(
         &self,
         Parameters(args): Parameters<UpdateFactArgs>,
@@ -129,7 +134,7 @@ impl Jojobot {
                     args.sid.as_deref(),
                 )
                 .await;
-                json_result(&fact_json(&fact))
+                json_result(&fact_receipt_json(&fact))
             }
             Guarded::Blocked {
                 attempted,
@@ -245,12 +250,9 @@ mod tests {
             edited["status"], "blocked",
             "a thing that fits nothing has nothing to protect: {edited}"
         );
-        assert!(
-            !edited["fields"]
-                .as_object()
-                .expect("a record renders its fields")
-                .contains_key("cost"),
-            "…so the key comes off: {edited}"
+        assert_eq!(
+            edited["fields_count"], 0,
+            "…so the key comes off, and the count is what says so: {edited}"
         );
     }
 
@@ -287,11 +289,11 @@ mod tests {
                 .await
                 .expect("update ok"),
         );
-        assert_eq!(set["fields"]["cost"], "45", "the key named is rewritten");
-        assert_eq!(
-            set["fields"]["done_on"], "2026-04-18",
-            "…and a key the patch did not name is left alone: {set}"
-        );
+        // **The receipt counts the keys rather than reading them back.** Two
+        // is the answer to both halves at once: the key named was rewritten
+        // rather than added, and the key the patch did not name is still
+        // there. What each one HOLDS is read below, off the record.
+        assert_eq!(set["fields_count"], 2, "{set}");
 
         let cleared = json_of(
             &jojobot
@@ -302,19 +304,9 @@ mod tests {
                 .await
                 .expect("update ok"),
         );
-        assert!(
-            cleared["fields"]
-                .as_object()
-                .expect("a bag")
-                .contains_key("cost"),
-            "{cleared}"
-        );
-        assert!(
-            !cleared["fields"]
-                .as_object()
-                .expect("a bag")
-                .contains_key("done_on"),
-            "the key named is gone: {cleared}"
+        assert_eq!(
+            cleared["fields_count"], 1,
+            "the key named is gone and the other is not: {cleared}"
         );
 
         // …and both moves are on the record a later read takes, which is what
@@ -428,7 +420,10 @@ mod tests {
             updated["status"], "active",
             "the negative truth is the truth"
         );
-        assert_eq!(updated["content"], "NOT a close contact — do not re-infer");
+        assert_eq!(
+            updated["content_elided"], true,
+            "the refutation is not read back to whoever just wrote it: {updated}"
+        );
         assert_eq!(
             updated["address"], "person:alpha#f1",
             "the row keeps its address"

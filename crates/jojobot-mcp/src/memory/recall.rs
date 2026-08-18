@@ -874,9 +874,20 @@ mod tests {
                 .await
                 .expect("update ok"),
         );
-        assert_eq!(updated["content"], "works at the new place");
-        assert_eq!(updated["details"], "changed jobs in July");
+        // **The address recall handed over is the address the edit landed on**,
+        // which is the whole claim of this case. The claim itself is read back
+        // through the verb that reads, since the edit answers with a receipt.
         assert_eq!(updated["address"], "person:alpha#f1");
+        assert_eq!(updated["content_elided"], true, "{updated}");
+        let read = json_of(
+            &jojobot
+                .recall(Parameters(recall_args("person:alpha")))
+                .await
+                .expect("recall ok"),
+        );
+        let claim = &read["objects"][0]["facts"][0];
+        assert_eq!(claim["content"], "works at the new place", "{read}");
+        assert_eq!(claim["details"], "changed jobs in July", "{read}");
     }
 
     /// **An unknown handle is a miss at the wire too.** The production smoke
