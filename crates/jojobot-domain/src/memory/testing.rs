@@ -878,9 +878,29 @@ pub mod contract {
         if known.iter().any(|e| &e.id == id) {
             return;
         }
+        // A rhythm is refused without a parent, so provisioning one provisions
+        // the thing it is a loop on. The owner is a plain entity of the
+        // fixture's own, which keeps the rule the store enforces out of the way
+        // of cases that are about something else.
+        let parent = if id.kind() == Some(EntityKind::RHYTHM) {
+            let owner = EntityId::new(EntityKind::THING, format!("{}-owner", id.slug()));
+            if !known.iter().any(|e| e.id == owner) {
+                add(
+                    store,
+                    NewEntity::new(owner.clone(), owner.slug(), "contract-fixture"),
+                )
+                .await;
+            }
+            Some(owner)
+        } else {
+            None
+        };
         add(
             store,
-            NewEntity::new(id.clone(), id.slug(), "contract-fixture"),
+            NewEntity {
+                parent,
+                ..NewEntity::new(id.clone(), id.slug(), "contract-fixture")
+            },
         )
         .await;
     }
@@ -7160,6 +7180,62 @@ pub mod contract {
         );
     }
 
+    /// **A rhythm is a noun of its own, and it is refused without a parent.**
+    ///
+    /// The parent answers whose job the loop is: a maintenance loop sits under
+    /// the thing maintained, a review loop under the bot that carries it. A
+    /// rhythm nobody owns is a modelling failure rather than a valid shape, so
+    /// the store never holds one.
+    ///
+    /// Both halves, because either alone passes on the wrong build. Without the
+    /// refusal, nothing enforces the rule; without the write that succeeds, the
+    /// case passes identically on a build that refuses every rhythm there is.
+    pub async fn a_rhythm_is_refused_without_a_parent<M: Memory>(store: &M) {
+        let owner = EntityId::new(EntityKind::THING, "contract-kettle");
+        let orphan = EntityId::new(EntityKind::RHYTHM, "contract-descale");
+        add(
+            store,
+            NewEntity::new(owner.clone(), "Contract Kettle", "contract-fixture"),
+        )
+        .await;
+
+        let refused = store
+            .add_entity(NewEntity::new(
+                orphan.clone(),
+                "Descale The Kettle",
+                "contract-fixture",
+            ))
+            .await
+            .expect_err("a rhythm under nothing is refused");
+        assert!(
+            matches!(refused, MemoryError::InvalidEntity(_)),
+            "the shape is wrong, so it is the entity that is invalid: {refused:?}",
+        );
+        assert!(
+            !store
+                .list_entities(Some(EntityKind::RHYTHM))
+                .await
+                .expect("a listing of rhythms")
+                .iter()
+                .any(|e| e.id == orphan),
+            "a refused rhythm is not in the store",
+        );
+
+        // The positive the verdict rests on: the same write with a parent
+        // lands, so the refusal above is about the parent and not about the
+        // kind being unwritable.
+        let held = add(
+            store,
+            NewEntity {
+                parent: Some(owner.clone()),
+                ..NewEntity::new(orphan.clone(), "Descale The Kettle", "contract-fixture")
+            },
+        )
+        .await;
+        assert_eq!(held.parent.as_ref(), Some(&owner));
+        assert_eq!(held.kind, EntityKind::RHYTHM);
+    }
+
     pub async fn run_all<M: Memory>(store: &M) {
         capture_reads_back(store).await;
         preserves_all_fields(store).await;
@@ -7256,6 +7332,7 @@ pub mod contract {
         a_trip_records_who_came_and_answers_from_either_end(store).await;
         the_kinds_are_rows_and_a_shipped_one_is_closed(store).await;
         a_pet_is_its_own_kind_in_the_store(store).await;
+        a_rhythm_is_refused_without_a_parent(store).await;
         a_thing_reads_back_as_its_fields_folded(store).await;
         the_newest_write_wins_however_old_the_record_it_landed_in(store).await;
         a_cleared_key_is_not_resurrected_by_an_older_record(store).await;

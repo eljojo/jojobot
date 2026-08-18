@@ -79,11 +79,23 @@ impl EntityKind {
     /// a part of that life this size gets a noun of its own instead of the
     /// nearest one already here.
     pub const PET: EntityKind = EntityKind("pet");
+    /// A cyclical thing: a loop that comes round on a cadence, and the
+    /// question it answers is which ones have gone quiet.
+    ///
+    /// **A kind rather than a key on the thing the loop is about**, because two
+    /// loops on one object have to be told apart and as entities they are two
+    /// handles. A text label naming them would be identity one layer below
+    /// where the near-miss guard can see it.
+    ///
+    /// **It is the one kind that requires a parent** ([`validate_entity`]): the
+    /// parent says whose job the loop is, and a rhythm nobody owns is a
+    /// modelling failure rather than a valid shape.
+    pub const RHYTHM: EntityKind = EntityKind("rhythm");
 
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 10] = [
+    pub const ALL: [EntityKind; 11] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -94,6 +106,7 @@ impl EntityKind {
         EntityKind::TOPIC,
         EntityKind::BOT,
         EntityKind::PET,
+        EntityKind::RHYTHM,
     ];
 
     /// A kind from a token this crate already holds for the life of the
@@ -1044,6 +1057,19 @@ pub fn validate_entity(
     }
     if let Some(parent) = parent {
         validate_subject(parent)?;
+    }
+    // **A rhythm names whose job it is, or it is not written.** The parent is
+    // the answer: a maintenance loop sits under the thing maintained, a review
+    // loop under the bot that has to carry it through. A rhythm under nothing
+    // would surface at a boot with no way to say what it is a loop ON, so the
+    // absent parent is a modelling failure rather than a shape to store and
+    // repair later.
+    if id.kind() == Some(EntityKind::RHYTHM) && parent.is_none() {
+        return Err(MemoryError::InvalidEntity(format!(
+            "'{id}' is a rhythm and names no parent. A rhythm is a loop ON something, and the \
+             parent says whose job it is — the thing maintained, or the bot that carries the \
+             review. Send this again with parent set to the handle it is a loop on"
+        )));
     }
     Ok(())
 }
@@ -2705,10 +2731,10 @@ mod tests {
         }
     }
 
-    /// All ten kinds round-trip through their wire token, and nothing else
-    /// parses — the enum is closed, so an unknown kind can never enter the store.
+    /// Every shipped kind round-trips through its wire token, and nothing else
+    /// parses — a token nobody declared can never enter the store.
     #[test]
-    fn the_ten_kinds_round_trip_and_the_set_is_closed() {
+    fn the_shipped_kinds_round_trip_and_the_set_is_closed() {
         crate::memory::kinds::load_shipped();
         let all = [
             (EntityKind::PERSON, "person"),
@@ -2721,12 +2747,17 @@ mod tests {
             (EntityKind::TOPIC, "topic"),
             (EntityKind::BOT, "bot"),
             (EntityKind::PET, "pet"),
+            (EntityKind::RHYTHM, "rhythm"),
         ];
         for (kind, token) in all {
             assert_eq!(kind.as_token(), token);
             assert_eq!(EntityKind::from_token(token), Some(kind));
         }
-        assert_eq!(EntityKind::ALL.len(), 10, "ten kinds, no more");
+        assert_eq!(
+            EntityKind::ALL.len(),
+            all.len(),
+            "every shipped kind is named above, and no other",
+        );
         for unknown in ["receipt", "self", "Person", "", "peson"] {
             assert_eq!(
                 EntityKind::from_token(unknown),

@@ -25,11 +25,11 @@ use super::EntityKind;
 /// **The kinds the software ships**, in the order they are seeded and listed.
 ///
 /// They are here as tokens rather than as a type, because the point of the
-/// change is that the set is data. What makes these ten different from any
+/// change is that the set is data. What makes the shipped ones different from any
 /// other kind is not the compiler: it is that a seed writes them at every
 /// startup and a caller cannot redeclare one.
-pub const SHIPPED: [&str; 10] = [
-    "person", "project", "place", "event", "work", "thing", "org", "topic", "bot", "pet",
+pub const SHIPPED: [&str; 11] = [
+    "person", "project", "place", "event", "work", "thing", "org", "topic", "bot", "pet", "rhythm",
 ];
 
 /// The set this process parses against. Empty until something loads it.
