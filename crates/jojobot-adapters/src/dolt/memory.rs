@@ -33,7 +33,9 @@ use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
     FactPatch, FactStatus, FieldWrite, Guarded, KeyWrite, Memory, MemoryError, NewEntity, NewFact,
     Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch, folded_fields, guard,
-    guard_fit, normalize_content, normalize_details, normalize_prose, referenced_by, retraction_of,
+    guard_fit,
+    kinds::{self, NotAKind},
+    normalize_content, normalize_details, normalize_prose, referenced_by, retraction_of,
     screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
     types::{DeclaredType, Field, Fold, Origin, ValueType, guard_replacement, validate_type},
     validate_content, validate_details, validate_edge, validate_entity, validate_fields,
@@ -450,9 +452,19 @@ fn read_origin(token: &str) -> Origin {
 
 fn entity_from(row: &sqlx::mysql::MySqlRow, aliases: Vec<String>) -> Result<Entity, MemoryError> {
     let id = EntityId(row.try_get::<String, _>("id").map_err(store)?);
-    let kind = id
-        .kind()
-        .ok_or_else(|| unreadable("its handle names no kind"))?;
+    // **The two ways a stored handle fails to name a kind are not one failure**
+    // (rule 68). A process that loaded no set cannot read the most ordinary
+    // handle in the store, and reporting that as a damaged record sends a
+    // reader after damage that is not there — and names a repair only a person
+    // can perform, while the repair is a boot. So the never-loaded answer is
+    // the same refusal the write half of this rail gives, in the same words.
+    let kind = kinds::resolve(id.kind_token()).map_err(|why| match why {
+        NotAKind::SetNeverLoaded => MemoryError::InvalidSubject(format!("'{id}': {why}")),
+        // A row whose kind nobody declares really is a record this process
+        // cannot read, and it stays that. The sentence names no kinds: the set
+        // is data (rule 213).
+        NotAKind::NotDeclared { .. } => unreadable("its handle names no kind"),
+    })?;
     Ok(Entity {
         kind,
         id,
