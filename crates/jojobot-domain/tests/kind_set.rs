@@ -208,3 +208,34 @@ fn a_refusal_says_which_thing_is_wrong_and_recites_no_written_list() {
         );
     }
 }
+
+/// **An unloaded set makes a value type give a WRONG ANSWER, not an error.**
+///
+/// `ValueType::Reference` decides whether a value is a handle by asking it for
+/// its kind, and an unloaded set answers "no kind" — so the type reports that a
+/// perfectly well-formed handle is not a reference. Nothing panics and nothing
+/// refuses: the check just returns the wrong thing, and a reader hitting it
+/// concludes the value type is broken.
+///
+/// **That is worse than the failures beside it and it is why this is pinned
+/// separately from the seeding.** A crash says where to look; a wrong answer
+/// about the logic under test sends the reader to the wrong file.
+#[test]
+fn a_value_type_answers_about_a_handle_only_when_the_set_is_loaded() {
+    let _turn = in_turn();
+    use jojobot_domain::memory::types::ValueType;
+
+    kinds::load_shipped();
+    assert!(
+        ValueType::Reference.holds("place:moes"),
+        "on a loaded process a handle IS a reference",
+    );
+
+    kinds::load::<[&str; 0], &str>([]);
+    assert!(
+        !ValueType::Reference.holds("place:moes"),
+        "on an unloaded one the same handle reads as no reference at all — the answer is \
+         wrong rather than absent, which is what this case exists to record",
+    );
+    kinds::load_shipped();
+}

@@ -640,6 +640,7 @@ mod tests {
     /// "which people are in Shelbyville" carry no keyword.
     #[test]
     fn a_structural_filter_alone_is_a_valid_query() {
+        crate::memory::kinds::load_shipped();
         let superseded = SearchQuery {
             status: Some(FactStatus::Superseded),
             ..Default::default()
@@ -728,6 +729,7 @@ mod tests {
     /// filter has to come back as their mistake.
     #[test]
     fn an_edge_filter_whose_object_is_wrong_for_its_shape_is_refused() {
+        crate::memory::kinds::load_shipped();
         let impossible = SearchQuery {
             edge: Some(EdgeFilter {
                 shape: Some(EdgeShape::Location),
@@ -768,6 +770,7 @@ mod tests {
         use crate::memory::{Boot, FactId};
         use jiff::civil::date;
 
+        crate::memory::kinds::load_shipped();
         let entity = |id: &str| Entity {
             id: EntityId(id.into()),
             kind: EntityId(id.into())
@@ -835,6 +838,7 @@ mod tests {
     /// *nothing*) had nothing to say about it.
     #[test]
     fn a_subject_naming_another_existing_entity_is_counted_apart_from_an_orphan() {
+        crate::memory::kinds::load_shipped();
         use crate::memory::{Boot, FactId};
         use jiff::civil::date;
 

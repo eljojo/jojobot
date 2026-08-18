@@ -95,7 +95,8 @@ impl std::fmt::Display for NotAKind {
         match self {
             NotAKind::SetNeverLoaded => f.write_str(
                 "the kind set was never loaded, so no handle can be read: this process has \
-                 seeded nothing",
+                 seeded nothing. The repair is a boot that reaches the store, not a different \
+                 handle — nothing about the one you sent is wrong",
             ),
             NotAKind::NotDeclared { token, known } => {
                 write!(

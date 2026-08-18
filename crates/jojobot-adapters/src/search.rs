@@ -2346,6 +2346,11 @@ mod tests {
     }
 
     fn entity(id: &str, name: &str) -> Entity {
+        // **The fixture seeds the set it needs.** Reading a handle asks the
+        // kinds this process loaded, and a unit test loads nothing — so a case
+        // building an entity says so itself rather than passing because a case
+        // beside it ran first.
+        jojobot_domain::memory::kinds::load_shipped();
         let id = EntityId(id.into());
         assert!(validate_subject(&id).is_ok(), "test ids are well-formed");
         Entity {
@@ -5182,6 +5187,9 @@ mod tests {
         body: &str,
         state: MessageState,
     ) -> Message {
+        // A message carries its sender's handle, and reading one asks the
+        // kinds this process loaded — so this fixture seeds them too.
+        jojobot_domain::memory::kinds::load_shipped();
         Message {
             id: MessageId(id.into()),
             mailbox: MailboxName(mailbox.into()),

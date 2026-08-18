@@ -57,6 +57,11 @@ impl InMemoryMailboxes {
     /// The refusal has its own case, and it names an owner deliberately outside
     /// this set. [`know_owner`](Self::know_owner) adds others.
     pub fn new() -> Self {
+        // **A double for a booted rail takes the boot's step too.** A box names
+        // its owner by handle, and reading a handle asks the kinds this process
+        // loaded — so a fake standing in for a running server stands in for the
+        // seed that made one readable.
+        crate::memory::kinds::load_shipped();
         let store = Self::default();
         for owner in contract::OWNERS {
             store.know_owner(&EntityId((*owner).to_string()));

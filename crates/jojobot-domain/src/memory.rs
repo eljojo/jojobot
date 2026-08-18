@@ -2685,6 +2685,7 @@ mod tests {
 
     #[test]
     fn validate_subject_accepts_ids_and_rejects_adversarial_ones() {
+        crate::memory::kinds::load_shipped();
         assert!(validate_subject(&EntityId::person("alpha")).is_ok());
         assert!(validate_subject(&EntityId("project:jojobot-server".into())).is_ok());
         // Injection vectors: newline, pipe, header, fence, space, uppercase, empty.
@@ -2708,6 +2709,7 @@ mod tests {
     /// parses — the enum is closed, so an unknown kind can never enter the store.
     #[test]
     fn the_ten_kinds_round_trip_and_the_set_is_closed() {
+        crate::memory::kinds::load_shipped();
         let all = [
             (EntityKind::PERSON, "person"),
             (EntityKind::PROJECT, "project"),
@@ -2739,6 +2741,7 @@ mod tests {
     /// need no per-kind branch to carry it.
     #[test]
     fn a_bot_handle_is_an_ordinary_entity_id() {
+        crate::memory::kinds::load_shipped();
         let id = EntityId::new(EntityKind::BOT, "otto");
         assert_eq!(id.as_str(), "bot:otto");
         assert_eq!(id.kind(), Some(EntityKind::BOT));
@@ -2751,6 +2754,7 @@ mod tests {
     /// what lets the guard compare slugs and the codec stamp a kind.
     #[test]
     fn an_id_splits_into_its_kind_and_slug() {
+        crate::memory::kinds::load_shipped();
         let id = EntityId::new(EntityKind::PROJECT, "jojobot-server");
         assert_eq!(id.as_str(), "project:jojobot-server");
         assert_eq!(id.kind(), Some(EntityKind::PROJECT));
@@ -2763,6 +2767,7 @@ mod tests {
     /// missing kind, an underscore, or a second colon is not an entity id.
     #[test]
     fn validate_subject_enforces_the_kind_slug_grammar() {
+        crate::memory::kinds::load_shipped();
         for good in [
             "person:alpha",
             "topic:widgets",
@@ -2793,6 +2798,7 @@ mod tests {
     /// `update_fact` targets — round-trips, and a malformed one is rejected.
     #[test]
     fn a_fact_address_round_trips_through_its_wire_form() {
+        crate::memory::kinds::load_shipped();
         let addr = FactAddress::new(EntityId::person("alpha"), FactId("f3".into()));
         assert_eq!(addr.to_string(), "person:alpha#f3");
         assert_eq!(FactAddress::parse("person:alpha#f3").unwrap(), addr);
@@ -2879,6 +2885,7 @@ mod tests {
     /// `an_untyped_edge_is_walkable_like_any_other` holds it to.
     #[test]
     fn the_untyped_shape_is_its_own_shape_and_never_about() {
+        crate::memory::kinds::load_shipped();
         assert_eq!(EdgeShape::Connection.as_token(), "connection");
         assert_eq!(
             EdgeShape::from_token("connection"),
@@ -2915,6 +2922,7 @@ mod tests {
     /// is refused before anything is written.
     #[test]
     fn an_edge_object_must_be_the_kind_its_shape_requires() {
+        crate::memory::kinds::load_shipped();
         let ok = [
             (EdgeShape::Location, "place:north-trail"),
             (EdgeShape::Membership, "org:north-trail-club"),
