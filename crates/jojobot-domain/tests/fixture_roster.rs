@@ -271,6 +271,145 @@ fn handles_in(text: &str) -> Vec<String> {
     found
 }
 
+/// **The gendered pronouns of English.** A closed set of words rather than a
+/// list of sentences somebody wrote: the words are the language's and cannot
+/// go stale, where a catalogue of forbidden phrasings re-embeds what it
+/// filters and misses the next author's wording (rule 106).
+const PRONOUNS: &[&str] = &[
+    "he", "him", "his", "she", "her", "hers", "himself", "herself",
+];
+
+/// **Every name that can stand behind a pronoun**, derived from the roster
+/// rather than written out again.
+///
+/// Two spellings, because prose names a character both ways: the handle
+/// (`pet:snowball`), and the name in words, which English capitalizes. **The
+/// capital is the discriminator and it is doing real work**: several roster
+/// slugs are ordinary words — a bot called nobody, a person called ghost — and
+/// lower-case "nobody" in a sentence names no one at all. Parts shorter than
+/// four characters are left out for the same reason; `person:alpha-one` would
+/// otherwise make the word "One" a character, and "One reader" is not a
+/// person.
+fn character_names() -> Vec<String> {
+    let mut names = Vec::new();
+    for entry in ROSTER {
+        let Some((kind, slug)) = entry.split_once(':') else {
+            continue;
+        };
+        if !matches!(kind, "person" | "pet" | "bot") {
+            continue;
+        }
+        for part in slug.split('-').filter(|p| p.len() >= 4) {
+            let mut capitalized = part.to_string();
+            capitalized[..1].make_ascii_uppercase();
+            names.push(capitalized);
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Whether `text` uses `word` as a word rather than as a run of letters inside
+/// a longer one — an apostrophe closes nothing, so a possessive form is a word
+/// of its own, and a contraction is not the pronoun inside it.
+fn says_word(text: &str, word: &str, exact_case: bool) -> bool {
+    let (haystack, needle) = if exact_case {
+        (text.to_string(), word.to_string())
+    } else {
+        (text.to_lowercase(), word.to_lowercase())
+    };
+    haystack.match_indices(&needle).any(|(at, _)| {
+        let opens = haystack[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric() && c != '\'');
+        let closes = haystack[at + needle.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric() && c != '\'');
+        opens && closes
+    })
+}
+
+/// **The prose of a file**: a comment in Rust, every line in markdown.
+///
+/// **Scoped to prose deliberately, and the reason is not tidiness.** Prose is
+/// where this repository talks about a person; a string literal is data a test
+/// compares against, and the gate below has to be able to write down the
+/// sentence it forbids in order to test itself. That is the same problem
+/// [`unlisted_handle`] solves by assembling a handle rather than spelling it,
+/// answered here by saying which half of a file is prose.
+fn prose_lines(path: &Path, text: &str) -> Vec<(usize, String)> {
+    let markdown = path.extension().is_some_and(|e| e == "md");
+    text.lines()
+        .enumerate()
+        .map(|(n, line)| {
+            let trimmed = line.trim_start();
+            let prose = markdown || trimmed.starts_with("//");
+            (
+                n + 1,
+                if prose {
+                    line.to_string()
+                } else {
+                    String::new()
+                },
+            )
+        })
+        .collect()
+}
+
+/// **Every pronoun in the prose with nobody to stand for**, as
+/// `path:line: the line`.
+///
+/// **The rule this reads: a pronoun is licensed by a character somebody
+/// named.** A comment about Milhouse may say his wrench, because Milhouse is
+/// named right there; a comment about the operator may not say his anything,
+/// because the operator is a ROLE and this repository never names the person
+/// behind it. So the question the gate asks is not "is this pronoun about the
+/// operator" — nothing can read that off a sentence — but "is there anybody
+/// here for it to mean".
+///
+/// **The block is the unit, and it includes the code.** A story names its
+/// characters in the calls it makes and talks about them in the comment above,
+/// so a license that only read the comment would report correct English every
+/// time the name sat one line below it.
+fn pronouns_for_nobody(files: &[PathBuf]) -> Vec<String> {
+    let names = character_names();
+    let mut unattached = Vec::new();
+    for file in files {
+        let text = fs::read_to_string(file).expect("readable source file");
+        let prose = prose_lines(file, &text);
+        let lines: Vec<&str> = text.lines().collect();
+        let mut at = 0;
+        while at < lines.len() {
+            if lines[at].trim().is_empty() {
+                at += 1;
+                continue;
+            }
+            let start = at;
+            while at < lines.len() && !lines[at].trim().is_empty() {
+                at += 1;
+            }
+            let block = lines[start..at].join(" ");
+            let named = block.contains("person:")
+                || block.contains("pet:")
+                || block.contains("bot:")
+                || names.iter().any(|name| says_word(&block, name, true));
+            if named {
+                continue;
+            }
+            for (line, text) in &prose[start..at] {
+                if PRONOUNS.iter().any(|word| says_word(text, word, false)) {
+                    unattached.push(format!("{}:{line}: {}", file.display(), text.trim()));
+                }
+            }
+        }
+    }
+    unattached.sort();
+    unattached
+}
+
 /// A workspace of this test's own, removed when it is done — so a case about
 /// what the gate scans can put a file where it wants one without writing into
 /// the repository the real gate is reading in the same run.
@@ -442,5 +581,69 @@ fn every_handle_in_the_workspace_is_on_the_fictional_roster() {
          add it to ROSTER in a conscious diff; if it names anything real from the \
          operator's life, it must not enter this repo at all:\n{}",
         violations.join("\n")
+    );
+}
+
+/// **A pronoun in this repository stands for a character somebody named, or it
+/// stands for the operator.**
+///
+/// The bright line says this repository names ROLES — the operator, a caller,
+/// a reader — and never the person behind one. A pronoun breaks it quietly:
+/// nothing is misspelled, no handle is off the roster, and the sentence reads
+/// perfectly, which is why several review rounds passed over thirteen of them.
+///
+/// **What makes it checkable is that the operator is never named.** A
+/// character has a name in the block — `pet:snowball`, or Milhouse in words —
+/// and the operator has none, by rule. So a pronoun with nobody in its block
+/// is a pronoun for the operator, and the gate needs no opinion about the
+/// sentence.
+///
+/// It is not a denylist (rule 106): the pronouns are English's closed set and
+/// the names come off the roster the gate already keeps.
+#[test]
+fn no_pronoun_in_the_workspace_stands_for_the_operator() {
+    let files = scanned_files(&workspace_root());
+    assert!(files.len() > 10, "the scan must actually see the workspace");
+
+    let unattached = pronouns_for_nobody(&files);
+    assert!(
+        unattached.is_empty(),
+        "these read as the operator's pronouns — this repository names the role rather than \
+         the person, so write the operator, a reader or a caller. If the line really is about \
+         a fictional character, name them in it:\n{}",
+        unattached.join("\n")
+    );
+}
+
+/// **Both halves, or the gate above proves nothing.**
+///
+/// A scan that reads nothing satisfies every negative on its own, and a gate
+/// that flagged all prose would be deleted by the first author who hit it. So
+/// one file says a character's name and keeps its pronoun, and one says only
+/// a role and loses it.
+#[test]
+fn the_gate_reads_a_named_character_and_an_unnamed_role_apart() {
+    let scratch = Scratch::new("pronouns");
+    scratch.write(
+        "crates/named.rs",
+        "// Milhouse lent the wrench and never got it back.\n\
+         // The walk finds his tools.\nfn a() {}\n",
+    );
+    scratch.write(
+        "crates/role.rs",
+        "// The page the operator opens is the one this test reads.\n\
+         // It is the surface he reads himself.\nfn b() {}\n",
+    );
+
+    let unattached = pronouns_for_nobody(&scanned_files(&scratch.0));
+
+    assert!(
+        unattached.iter().any(|line| line.contains("role.rs")),
+        "a pronoun with only a role to stand for has to be reported: {unattached:?}"
+    );
+    assert!(
+        !unattached.iter().any(|line| line.contains("named.rs")),
+        "…and a pronoun for a character the line names must pass, or the report above is the \
+         gate flagging everything rather than working: {unattached:?}"
     );
 }

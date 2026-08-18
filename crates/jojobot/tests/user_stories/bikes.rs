@@ -352,7 +352,7 @@ async fn keeping_track_of_bikes() {
 
     // **The two questions one key answers, and the operator asks both.** How
     // far has this bike been ridden — one value, the newest write, folded from
-    // every record about the bike. It is on the page he opens himself, where
+    // every record about the bike. It is on the page the operator opens, where
     // the year each tally was written for sits beside it.
     let page = story.page("thing:gravel-bike").await;
     let fields = page.section("fields");
@@ -361,14 +361,14 @@ async fn keeping_track_of_bikes() {
     // fold says so by leaving them out.
     fields.never_says("2600").never_says("3800");
 
-    // **And the key itself is the way to the other question.** He does not
-    // know a query string and should not have to: what the fold shows is a
-    // link, so the page he is on carries the way to the page behind it. The
+    // **And the key itself is the way to the other question.** The operator
+    // knows no query string and should not have to: what the fold shows is a
+    // link, so the page carries the way to the page behind it. The
     // address is read off that link rather than assembled here, which is the
     // difference between following the page and rehearsing it.
     let opened = story.follow(&fields.link_to("km")).await;
 
-    // Every tally he ever wrote, oldest first, each with the record that
+    // Every tally ever written, oldest first, each with the record that
     // carried it. **Read out of the writes table alone** — the current value
     // is on the same page in the fold above, so a search of the whole page
     // finds 4,100 there and calls it a history.

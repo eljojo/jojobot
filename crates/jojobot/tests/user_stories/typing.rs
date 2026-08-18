@@ -227,7 +227,7 @@ async fn a_type_declared_today_finds_records_written_before_it() {
 
     // ── and the operator opens the page, which speaks no MCP ────────────────
     //
-    // **The one surface he reads himself.** Everything above went through the
+    // **The one surface the operator reads directly.** Everything above went through the
     // verbs a session calls; this is the window, and what a thing IS has to be
     // legible in it or the model is invisible to the person it is for.
     let page = story.page("thing:gravel-bike").await;
@@ -240,8 +240,8 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     fields.says("serviced").says("2026-03-14");
     fields.says("distance").says("80");
     // What the fields add up to, in the type's own words. It is the one thing
-    // on the page he could not work out for himself without holding every
-    // declaration in his head.
+    // on the page a reader could not work out unaided without holding every
+    // declaration in mind.
     //
     // **Pinned to the row's own cells, because the type is named `service` and
     // the key it asks for is `serviced`.** The keys the thing holds are a

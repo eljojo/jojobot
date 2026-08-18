@@ -541,7 +541,7 @@ async fn history_section(state: &AppState, entity: &EntityId, key: Option<&str>)
 /// keys it holds and the keys it lacks.
 ///
 /// This is the payoff of the fold and the one thing on the page a reader cannot
-/// work out for himself — he would have to hold every declaration in his head.
+/// work out unaided — it would mean holding every declaration in mind.
 ///
 /// **One extra read, and no walk.** The declarations are a table of their own
 /// and the thing's fields are already in hand, so this costs one query on a

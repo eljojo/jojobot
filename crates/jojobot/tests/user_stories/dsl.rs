@@ -31,7 +31,7 @@ pub struct Story {
 }
 
 /// The subject the operator's browser logs in as. One reader, because the
-/// listing is his own window and nobody else's.
+/// listing is the operator's own window and nobody else's.
 const READER: &str = "sub-the-operator";
 
 /// The client id the listing registers with its issuer.
@@ -344,11 +344,12 @@ impl Story {
         .unwrap()
     }
 
-    /// **Open the operator's own page for a handle, as his browser does.**
+    /// **Open the operator's own page for a handle, the way a browser does.**
     ///
     /// The whole login runs — the gate turns the browser away, the issuer
-    /// vouches for him, the callback opens a session — because a page reached
-    /// any other way is not the page he reads. It takes no `sid` and starts no
+    /// vouches for the reader, the callback opens a session — because a page
+    /// reached any other way is not the page the operator reads. It takes no
+    /// `sid` and starts no
     /// run: looking through the window is not a session, and nothing on this
     /// path may change what a bot sees.
     pub async fn page(&self, handle: &str) -> Answer {

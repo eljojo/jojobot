@@ -109,7 +109,7 @@ fn now() -> u64 {
 //
 // It lives here rather than in one suite because two of them need it — the
 // listing's own tests, and the stories, which read the operator's page the way
-// he reads it.
+// a browser does.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};

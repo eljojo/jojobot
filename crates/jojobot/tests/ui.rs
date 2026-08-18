@@ -775,7 +775,7 @@ async fn a_node_page_shows_the_facts_held_there_and_who_backs_them() {
 /// A thing's fields are what it conforms to and what that unlocks, and they
 /// arrive one record at a time. The page rendered seven columns of a record's
 /// qualifiers and never the fields themselves, so the one surface the operator
-/// reads directly could not show him the thing the model is about.
+/// reads directly could not show the thing the model is about.
 #[tokio::test]
 async fn a_node_page_shows_the_things_folded_fields_and_what_they_conform_to() {
     let idp = support::TestIdp::new();
@@ -801,7 +801,7 @@ async fn a_node_page_shows_the_things_folded_fields_and_what_they_conform_to() {
         "…and so is the key the OTHER record carries, which is the fold: {body}"
     );
     // What the thing is, said in the type's own words — the payoff of the fold
-    // and the thing a reader of this page cannot work out for himself.
+    // and the thing a reader of this page cannot work out unaided.
     assert!(
         body.contains("stall"),
         "the type the thing answers is named: {body}"
