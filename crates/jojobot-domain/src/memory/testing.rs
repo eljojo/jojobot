@@ -5733,6 +5733,169 @@ pub mod contract {
     /// The negative is the same walk with the type declared as TEXT rather than
     /// a reference — same records, same values, and no link — so a build that
     /// walked any key holding a handle fails here.
+    /// **A trip records who came, and the record answers from either end.**
+    ///
+    /// The trip keys say where and when, and nothing on them says who — so a
+    /// companion is a link rather than a key. It is drawn as `attendance` from
+    /// the person at the trip, which is the shape that already means "was at":
+    /// a link drawn the other way could only be `about`, which asserts a claim
+    /// nobody made, or `connection`, which says the nature of the link was not
+    /// recorded.
+    ///
+    /// **Both questions come out of that one edge**, and both are asserted
+    /// here, because the walk carries its own direction: *who came on this
+    /// trip* is the edge walked inbound, and *which trips was this person on*
+    /// is the same edge walked outbound from the person. The second is the one
+    /// a change would break silently, since nothing else in the suite asks it
+    /// of a trip.
+    ///
+    /// **More than two companions on one trip**, which is what a key could not
+    /// hold: a thing's fields fold to the newest write of each key, so a key
+    /// would keep the last companion and drop the rest. Three would pass an
+    /// implementation that keeps only a pair.
+    pub async fn a_trip_records_who_came_and_answers_from_either_end<M: Memory>(store: &M) {
+        let away = EntityId::new(EntityKind::Event, "contract-long-weekend");
+        let home = EntityId::new(EntityKind::Place, "contract-harbour-end");
+        let there = EntityId::new(EntityKind::Place, "contract-fjord-town");
+        for id in [&away, &home, &there] {
+            ensure(store, id).await;
+        }
+        let companions = [
+            EntityId::person("contract-omicron"),
+            EntityId::person("contract-sigma"),
+            EntityId::person("contract-tau"),
+            EntityId::person("contract-upsilon"),
+        ];
+
+        // The trip itself: the keys the shipped type names, so this is a trip
+        // rather than any event that happens to have guests.
+        capture(
+            store,
+            NewFact {
+                fields: [
+                    ("departs_from".to_string(), home.to_string()),
+                    ("arrives_at".to_string(), there.to_string()),
+                    ("leaves_on".to_string(), "2026-05-01".to_string()),
+                    ("returns_on".to_string(), "2026-05-04".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                refs: Vec::new(),
+                ..NewFact::about(away.clone(), "four days away", date(2026, 4, 1))
+            },
+        )
+        .await;
+
+        for who in &companions {
+            ensure(store, who).await;
+            capture(
+                store,
+                NewFact {
+                    edge: Some(Edge::new(EdgeShape::Attendance, away.clone())),
+                    ..NewFact::about(who.clone(), "came along", date(2026, 5, 1))
+                },
+            )
+            .await;
+        }
+
+        // **Who came on this trip** — inbound, and the companions are reached
+        // rather than named.
+        let came = walked_from(store, &away, graph::Direction::In).await;
+        for who in &companions {
+            assert!(
+                came.contains(who),
+                "every companion hangs off the trip, and {who} does not: {came:?}",
+            );
+        }
+
+        // **Which trips was this person on** — the same edge, outbound from the
+        // person's end, which is the half nothing else asks.
+        let went = walked_from(store, &companions[0], graph::Direction::Out).await;
+        assert!(
+            went.contains(&away),
+            "the trip is reached from the companion it carried: {went:?}",
+        );
+
+        // **A trip nobody came on still reads back**, so recording companions
+        // is something a trip may do rather than something it must.
+        let alone = EntityId::new(EntityKind::Event, "contract-lone-crossing");
+        ensure(store, &alone).await;
+        capture(
+            store,
+            NewFact {
+                fields: [
+                    ("departs_from".to_string(), home.to_string()),
+                    ("arrives_at".to_string(), there.to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                refs: Vec::new(),
+                ..NewFact::about(alone.clone(), "went by myself", date(2026, 6, 1))
+            },
+        )
+        .await;
+        let read = graph::walk(
+            store,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(alone.clone()),
+                    ..graph::Selection::default()
+                },
+                ..graph::GraphQuery::default()
+            },
+        )
+        .await
+        .expect("a handle is a selection");
+        assert_eq!(
+            read.first().map(|o| &o.entity.id),
+            Some(&alone),
+            "a trip with no companions comes back as itself: {read:?}",
+        );
+        assert!(
+            walked_from(store, &alone, graph::Direction::In)
+                .await
+                .is_empty(),
+            "…and nobody is reached from it",
+        );
+    }
+
+    /// The entities one attendance hop reaches from this one, in the direction
+    /// asked. The two directions are two questions, which is why the direction
+    /// is the argument.
+    async fn walked_from<M: Memory>(
+        store: &M,
+        from: &EntityId,
+        direction: graph::Direction,
+    ) -> Vec<EntityId> {
+        let walked = graph::walk(
+            store,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(from.clone()),
+                    ..graph::Selection::default()
+                },
+                include: graph::Include {
+                    facts: false,
+                    prose: false,
+                },
+                follow: Some(graph::Follow {
+                    along: graph::Along::Edge(EdgeShape::Attendance),
+                    direction: Some(direction),
+                    depth: 1,
+                    keeping: Vec::new(),
+                    fits_type: None,
+                }),
+                history: None,
+            },
+        )
+        .await
+        .expect("a subject with a walk");
+        walked
+            .first()
+            .map(|o| o.connected.iter().map(|c| c.entity.id.clone()).collect())
+            .unwrap_or_default()
+    }
+
     pub async fn a_declared_reference_key_is_walkable_against_the_store<M: Memory>(store: &M) {
         let owner = EntityId::person("contract-relation-owner");
         let held = EntityId::new(EntityKind::Thing, "contract-relation-held");
@@ -6944,6 +7107,7 @@ pub mod contract {
         a_graph_query_selects_a_kind_and_returns_its_prose(store).await;
         a_graph_query_filters_on_a_stored_value_and_walks_an_edge(store).await;
         a_declared_reference_key_is_walkable_against_the_store(store).await;
+        a_trip_records_who_came_and_answers_from_either_end(store).await;
         a_pet_is_its_own_kind_in_the_store(store).await;
         a_thing_reads_back_as_its_fields_folded(store).await;
         the_newest_write_wins_however_old_the_record_it_landed_in(store).await;

@@ -201,6 +201,12 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. 
                  carries whether or not anybody declared the type. `answers_type` selects things \
                  carrying SOME of a type's keys and says which each lacks; `fits_type` keeps \
                  only the ones with no gaps.\
+                 \n\n**A key holds one value, so WHO was there is an edge rather than a key.** \
+                 A trip records where and when as keys, and each person who came is a record on \
+                 THAT PERSON carrying an `attendance` edge at the trip — many people per trip, \
+                 where a key would keep only the last one. One edge answers both questions, \
+                 because a walk carries its own direction: who came on this trip, and which \
+                 trips this person was on.\
                  \n\n**jojobot hands back the small answer and keeps the large one reachable.** \
                  A write returns a receipt, not the thing you wrote; a body is not echoed to its \
                  author; a delivery leaves out what it handed you once; prose is off by default \
