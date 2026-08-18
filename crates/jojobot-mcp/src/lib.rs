@@ -176,6 +176,25 @@ impl Jojobot {
 /// miniature. Named rather than written inline so a test can read it: it
 /// enumerates the entity kinds, and prose that lists a closed set goes stale
 /// silently.
+/// **Who is answering, and which build of it** — read where jojobot is
+/// compiled rather than where the library is.
+///
+/// The SDK ships `Implementation::from_build_env`, and it does what it says in
+/// the crate it was compiled in: it is a function inside the library, so its
+/// `env!` reads the LIBRARY's crate name and version. A server built with it
+/// introduces itself to every client as the library — the first thing a client
+/// learns about jojobot, and true of the machinery rather than of jojobot
+/// (rule 53).
+///
+/// **One pair of constants because two doors answer this question.** The
+/// handshake says who is answering and `ping` says which build answered, and a
+/// server with two answers about its own identity is worse than one wrong
+/// answer: whichever a person quotes in an incident is the one they act on.
+pub(crate) const SERVER_NAME: &str = env!("CARGO_PKG_NAME");
+
+/// The build's version, beside [`SERVER_NAME`] and read from the same place.
+pub(crate) const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. Two worlds live here.\
                  \n\n**MEMORY.** What jojobot knows is **entities** — a person, project, place, \
                  event, work, thing, org, topic, bot or pet, each with a typed handle, `kind:slug` \
@@ -292,7 +311,17 @@ impl ServerHandler for Jojobot {
                 .enable_tool_list_changed()
                 .build(),
         )
-        .with_server_info(Implementation::from_build_env())
+        .with_server_info({
+            // **Built from the library's own value and then corrected**, since
+            // the struct is non-exhaustive: the fields jojobot has an opinion
+            // about are the two it answers with, and anything the library adds
+            // later arrives with the library's default rather than a stale copy
+            // of one.
+            let mut me = Implementation::from_build_env();
+            me.name = SERVER_NAME.to_string();
+            me.version = SERVER_VERSION.to_string();
+            me
+        })
         .with_protocol_version(ProtocolVersion::V_2024_11_05)
         .with_instructions(INSTRUCTIONS.to_string())
     }

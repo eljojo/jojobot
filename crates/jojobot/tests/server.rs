@@ -796,6 +796,83 @@ async fn a_revision_jojobot_cannot_serve_is_refused_with_the_ones_it_can() {
     ct.cancel();
 }
 
+/// **jojobot introduces itself, and the library does not introduce it.**
+///
+/// `serverInfo` is the FIRST thing a client learns about this server: what it
+/// displays, what it logs, and what somebody reads out when they are asked
+/// what they are connected to. It named the MCP library and the library's
+/// version.
+///
+/// **The handler always set the right thing.** `get_info` builds its identity
+/// with the SDK's own `Implementation::from_build_env`, and that constructor is
+/// a function compiled INSIDE the library, so its `env!` reads the library's
+/// crate name and version rather than the caller's. Nothing was lost between
+/// the handler and the wire: the value was the library's from the moment it was
+/// made.
+///
+/// **Rule 53 is what it breaks.** An agent may know how jojobot is arranged and
+/// never what is true only of the machinery underneath it — and this is that
+/// leak arriving at the one door nobody swept.
+///
+/// **The two doors must also agree.** `ping` exists so a caller can ask which
+/// build answered, and a server with two answers about its own identity is the
+/// real defect: the version that shows in a client's window is the one somebody
+/// quotes in an incident.
+///
+/// Read off raw HTTP because the typed client deserializes into the library's
+/// own structs, and a field it does not know is one no assertion could see.
+#[tokio::test]
+async fn the_handshake_names_jojobot_and_agrees_with_what_ping_reports() {
+    let (addr, ct) = spawn_server(no_auth_state).await;
+    let url = format!("http://{addr}/mcp");
+    let http = reqwest::Client::new();
+
+    let (session, opened) = open_with(&http, &url, "2025-06-18").await;
+    let served = event_stream_result(&opened);
+    let name = served["serverInfo"]["name"]
+        .as_str()
+        .expect("the handshake says who is answering");
+    let version = served["serverInfo"]["version"]
+        .as_str()
+        .expect("…and which build of it");
+    assert!(
+        name.starts_with("jojobot"),
+        "the handshake introduces this server as {name:?}, which is the library rather than \
+         jojobot"
+    );
+
+    // **The other door, over the same connection.** Either half could be right
+    // while the other is wrong, so both are read and compared.
+    let mut asking = http
+        .post(&url)
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-protocol-version", "2025-06-18")
+        .body(
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ping","arguments":{}}}"#,
+        );
+    if let Some(session) = &session {
+        asking = asking.header("mcp-session-id", session.clone());
+    }
+    let pinged = asking.send().await.expect("ping reaches jojobot");
+    let text = event_stream_result(&pinged.text().await.expect("a body"))["content"][0]["text"]
+        .as_str()
+        .expect("ping answers with a body")
+        .to_string();
+    let ping: serde_json::Value = serde_json::from_str(&text).expect("ping answers json");
+
+    assert_eq!(
+        ping["server"], name,
+        "the two doors must not disagree about who this server is: {ping}"
+    );
+    assert_eq!(
+        ping["version"], version,
+        "…nor about which build of it answered: {ping}"
+    );
+
+    ct.cancel();
+}
+
 /// **The same refusal at the other door.**
 ///
 /// A revision from 2026-07-28 carries its own version on the request, so a

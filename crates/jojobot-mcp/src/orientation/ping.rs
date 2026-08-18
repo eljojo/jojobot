@@ -38,8 +38,10 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         let now = jiff::Timestamp::now();
         let body = serde_json::json!({
-            "server": env!("CARGO_PKG_NAME"),
-            "version": env!("CARGO_PKG_VERSION"),
+            // The same pair the handshake introduces this server with, so the
+            // two doors cannot come to disagree about who is answering.
+            "server": crate::SERVER_NAME,
+            "version": crate::SERVER_VERSION,
             // **Which BUILD is running**, which `version` cannot say: it is a
             // crate version nobody bumps, so it cannot separate a current
             // deployment from one months old. A session whose tool list looked
