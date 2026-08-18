@@ -66,24 +66,31 @@ async fn an_unseeded_surface_says_so_and_recites_no_kinds() {
             .unwrap();
     });
 
-    let said = call_a_verb_naming_a_kind(addr).await;
-    assert!(
-        said.contains("never loaded"),
-        "the surface names the failure a caller can act on — nothing seeded this process: {said}",
-    );
-    // **Every shipped kind except the one the caller sent.** `person` is in the
-    // answer because the caller wrote it, and a check that counted that would
-    // be measuring the call rather than the sentence.
-    for shipped in jojobot_domain::memory::kinds::SHIPPED
-        .into_iter()
-        .filter(|kind| *kind != "person")
-    {
+    let (listed, declared) = verbs_that_name_a_kind(addr).await;
+    // **Both verbs, because they are two resolutions.** One takes the kind as
+    // its own argument; the other takes a token with a kind inside it, and
+    // that one used to fail as though the caller's value type were wrong.
+    for said in [&listed, &declared] {
         assert!(
-            !said
-                .split(|c: char| !c.is_ascii_alphanumeric())
-                .any(|word| word == shipped),
-            "the refusal recites '{shipped}' as though the kinds were a closed list: {said}",
+            said.contains("never loaded"),
+            "the surface names the failure a caller can act on — nothing seeded this \
+             process: {said}",
         );
+        // **Every shipped kind except the one the caller sent.** `person` and
+        // `place` are in these answers because the caller wrote them, and a
+        // check that counted that would be measuring the call rather than the
+        // sentence.
+        for shipped in jojobot_domain::memory::kinds::SHIPPED
+            .into_iter()
+            .filter(|kind| *kind != "person" && *kind != "place")
+        {
+            assert!(
+                !said
+                    .split(|c: char| !c.is_ascii_alphanumeric())
+                    .any(|word| word == shipped),
+                "the refusal recites '{shipped}' as though the kinds were a closed list: {said}",
+            );
+        }
     }
 
     ct.cancel();
@@ -115,14 +122,19 @@ async fn ask(http: &reqwest::Client, url: &str, session: &Option<String>, body: 
         .to_string()
 }
 
-/// The text a caller gets back from a verb that names a KIND, on a process
-/// whose store is fine and whose kind set was never loaded.
+/// The text a caller gets back from the two verbs that name a KIND, on a
+/// process whose store is fine and whose kind set was never loaded.
+///
+/// **Two, because a kind arrives two ways.** `list_entities` takes one as its
+/// own argument. `declare_type` takes a key that holds a reference, and the
+/// kind it points at rides inside that token — a different parse, which is why
+/// one of them can be right while the other blames the caller's value type.
 ///
 /// **The door rather than a write**, because it is the first call every session
 /// makes and it needs no session of its own: a write is refused for having no
 /// `sid` before it ever reaches a kind, so the door is where an unseeded
 /// process actually meets a caller.
-async fn call_a_verb_naming_a_kind(addr: SocketAddr) -> String {
+async fn verbs_that_name_a_kind(addr: SocketAddr) -> (String, String) {
     let http = reqwest::Client::new();
     let url = format!("http://{addr}/mcp");
     let opened = http
@@ -157,28 +169,23 @@ async fn call_a_verb_naming_a_kind(addr: SocketAddr) -> String {
         .unwrap_or_else(|| panic!("the door hands back a sid: {booted}"))
         .to_string();
 
-    let mut asking = http
-        .post(&url)
-        .header("content-type", "application/json")
-        .header("accept", "application/json, text/event-stream")
-        .body(format!(
+    let listed = ask(
+        &http,
+        &url,
+        &session,
+        &format!(
             r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"list_entities","arguments":{{"kind":"person","sid":"{sid}"}}}}}}"#
-        ));
-    if let Some(session) = &session {
-        asking = asking.header("mcp-session-id", session.clone());
-    }
-    let body = asking
-        .send()
-        .await
-        .expect("the verb answers")
-        .text()
-        .await
-        .expect("a body");
-    // The transport answers on an event stream whose first event carries no
-    // data, so the answer is the first `data:` line that is JSON.
-    body.lines()
-        .filter_map(|line| line.strip_prefix("data: "))
-        .find(|json| serde_json::from_str::<serde_json::Value>(json).is_ok())
-        .unwrap_or_else(|| panic!("one JSON-RPC message: {body}"))
-        .to_string()
+        ),
+    )
+    .await;
+    let declared = ask(
+        &http,
+        &url,
+        &session,
+        &format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{{"name":"declare_type","arguments":{{"name":"gig","fields":[{{"key":"venue","holds":"reference:place"}}],"sid":"{sid}"}}}}}}"#
+        ),
+    )
+    .await;
+    (listed, declared)
 }

@@ -884,6 +884,12 @@ pub fn validate_subject(subject: &EntityId) -> Result<(), MemoryError> {
     // this kind.
     match kinds::resolve(subject.kind_token()) {
         Ok(_) => Ok(()),
+        // **The two failures have two repairs, so they are two errors.** A
+        // caller can spell a kind differently; nobody can spell their way out
+        // of a process that loaded nothing.
+        Err(kinds::NotAKind::SetNeverLoaded) => Err(MemoryError::KindsNeverLoaded {
+            attempted: Some(s.to_string()),
+        }),
         Err(why) => Err(MemoryError::InvalidSubject(format!("'{s}': {why}"))),
     }
 }
@@ -2091,6 +2097,24 @@ pub enum MemoryError {
     /// that goes stale the first time an instance declares an eleventh.
     #[error("invalid entity id {0}")]
     InvalidSubject(String),
+    /// **Nothing loaded the kind set, so no handle can be read** — including
+    /// the most ordinary handle in the store.
+    ///
+    /// Apart from [`InvalidSubject`](Self::InvalidSubject) because the repair
+    /// is a different act by a different person (rule 68). That one says the
+    /// call carries something wrong and the caller fixes it. This one says the
+    /// call is fine: the set is loaded at startup, no verb re-reads it, and
+    /// what repairs it is a person restarting the server. Telling a caller to
+    /// send the same call again here is advice that cannot succeed.
+    ///
+    /// `attempted` carries the handle that could not be read, when one was
+    /// named. A read that failed on stored rows has no single handle to blame,
+    /// and blaming one would be a guess.
+    #[error("{}{}", attempted_handle(attempted), kinds::NotAKind::SetNeverLoaded)]
+    KindsNeverLoaded {
+        /// The handle that could not be read, if the call named one.
+        attempted: Option<String>,
+    },
     /// A fact address didn't parse (see [`FactAddress::parse`]).
     #[error("invalid fact address '{0}': expected kind:slug#local-id, e.g. person:alpha#f3")]
     InvalidAddress(String),
@@ -2246,6 +2270,15 @@ fn live_addresses(nearest: &[String]) -> String {
         return "; that entity has no facts yet".to_string();
     }
     format!("; addresses here: {}", nearest.join(", "))
+}
+
+/// Name the handle a never-loaded refusal was reached through, when there is
+/// one to name.
+fn attempted_handle(attempted: &Option<String>) -> String {
+    match attempted {
+        Some(handle) => format!("'{handle}': "),
+        None => String::new(),
+    }
 }
 
 /// Render the guard's nearby candidates for an error message.

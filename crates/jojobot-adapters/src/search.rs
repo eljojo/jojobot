@@ -43,6 +43,7 @@ use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
     FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction,
     guard::{self, MatchReason},
+    kinds,
     search::{self, Behind, Coverage, DocScan, EntityRef, Hit, Search, SearchQuery},
     types::DeclaredType,
 };
@@ -1192,8 +1193,18 @@ impl FullTextIndex {
                 .get_first(self.fields.payload)
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| MemoryError::Store("indexed document lost its payload".into()))?;
-            let payload: Payload = serde_json::from_str(raw)
-                .map_err(|e| MemoryError::Store(format!("indexed payload: {e}")))?;
+            let payload: Payload = serde_json::from_str(raw).map_err(|e| {
+                // **A parse that failed because this process loaded no kinds
+                // is not a damaged index** (rule 68). Every stored record
+                // carries a handle, so an empty set fails all of them at once,
+                // and reporting that as the store breaking sends a caller to a
+                // person for a fault a boot repairs.
+                if kinds::all().is_empty() {
+                    MemoryError::KindsNeverLoaded { attempted: None }
+                } else {
+                    MemoryError::Store(format!("indexed payload: {e}"))
+                }
+            })?;
             out.push((score, payload));
         }
         Ok(out)

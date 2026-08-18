@@ -20,6 +20,7 @@
 //! matched — it is a gate on writing over a declaration the software owns.
 
 use super::*;
+use jojobot_domain::memory::kinds;
 
 /// One key of a type, and what it holds.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -139,16 +140,9 @@ impl Jojobot {
                 // caller who names another gets the refusal that says so.
                 None | Some("") if folds == Fold::Sum => Field::new(&field.key, ValueType::Number),
                 None | Some("") => Field::new(&field.key, ValueType::Text),
-                Some(token) => Field::of_token(&field.key, token).ok_or_else(|| {
-                    McpError::invalid_params(
-                        format!(
-                            "'{token}' is no value type: use text, number, date, boolean or \
-                             reference — and a reference may name the kind it points at, as \
-                             'reference:place', using one of the kinds add_entity takes"
-                        ),
-                        None,
-                    )
-                })?,
+                Some(token) => {
+                    Field::of_token(&field.key, token).ok_or_else(|| why_no_field(token))?
+                }
             };
             fields.push(Field { folds, ..declared });
         }
@@ -179,6 +173,31 @@ impl Jojobot {
         });
         json_result(&body)
     }
+}
+
+/// **Why a `holds` token is no field**, in the token's own terms.
+///
+/// A reference may name the kind it points at, so half of these tokens carry a
+/// kind — and a kind fails for reasons of its own. **A process that loaded no
+/// kinds fails every one of them**, and the sentence about value types would
+/// then send a caller to edit a declaration that is correct (rule 68). The
+/// kind's own answer is used where there is one, and it recites nothing this
+/// process does not hold (rule 213).
+fn why_no_field(token: &str) -> McpError {
+    if let Some((holds, kind)) = token.trim().split_once(':')
+        && holds.trim() == ValueType::Reference.as_token()
+        && let Err(why) = kinds::resolve(kind.trim())
+    {
+        return McpError::invalid_params(format!("'{token}': {why}"), None);
+    }
+    McpError::invalid_params(
+        format!(
+            "'{token}' is no value type: use text, number, date, boolean or reference — and a \
+             reference may name the kind it points at, as 'reference:place', using one of the \
+             kinds add_entity takes"
+        ),
+        None,
+    )
 }
 
 #[cfg(test)]

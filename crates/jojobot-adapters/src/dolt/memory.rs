@@ -459,7 +459,9 @@ fn entity_from(row: &sqlx::mysql::MySqlRow, aliases: Vec<String>) -> Result<Enti
     // can perform, while the repair is a boot. So the never-loaded answer is
     // the same refusal the write half of this rail gives, in the same words.
     let kind = kinds::resolve(id.kind_token()).map_err(|why| match why {
-        NotAKind::SetNeverLoaded => MemoryError::InvalidSubject(format!("'{id}': {why}")),
+        NotAKind::SetNeverLoaded => MemoryError::KindsNeverLoaded {
+            attempted: Some(id.to_string()),
+        },
         // A row whose kind nobody declares really is a record this process
         // cannot read, and it stays that. The sentence names no kinds: the set
         // is data (rule 213).

@@ -187,6 +187,18 @@ pub(crate) fn memory_declined(
         // rather than restating it. Each of these faults has several causes
         // and the validators gain more; naming them here would be a catalogue
         // that goes stale on the day it is added to (rule 106).
+        // **A refusal nothing in the call can reach** (rule 68). The set of
+        // kinds is loaded at startup and no verb re-reads it, so the advice
+        // every other malformed call gets — send it again with that fixed —
+        // is advice that cannot succeed here, and a model follows it round a
+        // loop with no end. This says who repairs it instead.
+        MemoryError::KindsNeverLoaded { .. } => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. The call is not what is wrong, and sending it                  again will not help: jojobot loaded no kinds when it started, and nothing                  a caller does re-reads them. This one needs the operator."
+            ),
+        )),
         MemoryError::InvalidFact(_)
         | MemoryError::InvalidSubject(_)
         | MemoryError::InvalidAddress(_)
@@ -286,6 +298,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         // client errors rather than 500s for that case.
         MemoryError::InvalidFact(_)
         | MemoryError::InvalidSubject(_)
+        | MemoryError::KindsNeverLoaded { .. }
         | MemoryError::InvalidAddress(_)
         | MemoryError::InvalidEntity(_)
         | MemoryError::InvalidEdge(_)
