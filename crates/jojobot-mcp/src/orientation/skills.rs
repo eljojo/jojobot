@@ -116,10 +116,7 @@ A rhythm is an entity of kind `rhythm`. Its parent says whose job the loop is.
 A maintenance loop sits under the thing maintained. A review loop sits under
 the bot that carries it. Two loops on one object are two rhythms.
 
-There are two kinds. A timed rhythm is due on a cadence. A weave has no
-cadence and starts when its trigger occurs.
-
-## What a timed rhythm holds
+## What a rhythm holds
 
 `cadence_days` is how long one cycle lasts. A cadence is always time. What the
 check measures — a reading, a distance, a count — belongs on the check-in and
@@ -174,11 +171,10 @@ compute them and do not send them. Put what the check measured in `fields`.
 
 ## How to run a rhythm
 
-Read what is due. Offer each timed rhythm that is due, in one line. Record a
-check-in when the operator runs it, and when the operator turns it down. Test
-each weave's trigger and start the ones that match.
+Read what is due. Offer each rhythm that is due, in one line. Record a
+check-in when the operator runs it, and when the operator turns it down.
 
-## The two timed shapes
+## The two shapes
 
 A forward rhythm gives a short summary of the period ahead. State what is
 fixed, what conflicts, and the one or two decisions the operator must make.
