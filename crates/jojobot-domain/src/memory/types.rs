@@ -835,7 +835,7 @@ mod tests {
     /// kind nobody asked for.
     #[test]
     fn a_reference_declared_for_one_kind_refuses_a_handle_of_another() {
-        let venue = Field::pointing_at("venue", EntityKind::Place);
+        let venue = Field::pointing_at("venue", EntityKind::PLACE);
         assert!(
             venue.accepts("place:moes"),
             "the kind it was declared for is what it holds",
@@ -863,7 +863,7 @@ mod tests {
         let stay = DeclaredType::new(
             "stay",
             vec![
-                Field::pointing_at("venue", EntityKind::Place),
+                Field::pointing_at("venue", EntityKind::PLACE),
                 Field::new("starts", ValueType::Date),
             ],
         );
@@ -878,7 +878,7 @@ mod tests {
         assert_eq!(found.mistyped[0].key, "venue");
         assert_eq!(
             found.mistyped[0].points_at,
-            Some(EntityKind::Place),
+            Some(EntityKind::PLACE),
             "the reader is told which kind the key wanted, which `reference` \
              alone cannot say: {found:?}",
         );
@@ -898,7 +898,7 @@ mod tests {
         for field in [
             Field::new("starts", ValueType::Date),
             Field::new("venue", ValueType::Reference),
-            Field::pointing_at("venue", EntityKind::Place),
+            Field::pointing_at("venue", EntityKind::PLACE),
         ] {
             assert_eq!(
                 Field::of_token(&field.key, &field.holds_token()).as_ref(),
@@ -908,7 +908,7 @@ mod tests {
             );
         }
         assert_eq!(
-            Field::pointing_at("venue", EntityKind::Place).holds_token(),
+            Field::pointing_at("venue", EntityKind::PLACE).holds_token(),
             "reference:place",
             "the spelling itself, since it is what a caller writes and a column keeps",
         );
@@ -968,7 +968,7 @@ mod tests {
             "snacking",
             vec![Field {
                 folds: Fold::Sum,
-                ..Field::pointing_at("donuts", EntityKind::Place)
+                ..Field::pointing_at("donuts", EntityKind::PLACE)
             }],
         ))
         .expect_err("a total of handles is not a total");
@@ -982,7 +982,7 @@ mod tests {
         // The two halves apart, each of which this refusal must not reach.
         validate_type(&DeclaredType::new(
             "stay",
-            vec![Field::pointing_at("venue", EntityKind::Place)],
+            vec![Field::pointing_at("venue", EntityKind::PLACE)],
         ))
         .expect("a narrowed reference that folds newest is an ordinary key");
         validate_type(&DeclaredType::new(

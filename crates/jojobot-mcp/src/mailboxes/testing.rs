@@ -128,7 +128,7 @@ pub(crate) async fn a_second_box(jojobot: &Jojobot, bot: &str, name: &str) {
         .mailboxes
         .create_mailbox(
             &MailboxName(name.into()),
-            &EntityId::new(EntityKind::Bot, bot),
+            &EntityId::new(EntityKind::BOT, bot),
             None,
         )
         .await
@@ -198,7 +198,7 @@ pub(crate) async fn broken_bot(jojobot: &Jojobot, slug: &str) {
     jojobot
         .memory
         .add_entity(NewEntity {
-            id: EntityId::new(EntityKind::Bot, slug),
+            id: EntityId::new(EntityKind::BOT, slug),
             name: slug.into(),
             aliases: Vec::new(),
             source: "user-named".into(),

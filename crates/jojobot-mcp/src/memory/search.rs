@@ -308,7 +308,7 @@ impl MailExcluded {
                 ..asking_for_mail()
             },
             MailExcluded::KindFiltered => SearchQuery {
-                kind: Some(EntityKind::Person),
+                kind: Some(EntityKind::PERSON),
                 ..asking_for_mail()
             },
         }
@@ -753,7 +753,7 @@ mod tests {
             !query.include_mail,
             "the caller's exclusion must reach the port"
         );
-        assert_eq!(query.kind, Some(EntityKind::Person));
+        assert_eq!(query.kind, Some(EntityKind::PERSON));
         assert_eq!(query.status, Some(FactStatus::Superseded));
         assert_eq!(query.provenance, Some(Provenance::Testimony));
         assert_eq!(
@@ -1127,7 +1127,7 @@ mod tests {
             vec![Hit::Entity {
                 entity: Entity {
                     id: EntityId("person:alpha".into()),
-                    kind: EntityKind::Person,
+                    kind: EntityKind::PERSON,
                     name: "Alpha".into(),
                     aliases: Vec::new(),
                     source: "user-named".into(),
@@ -1491,7 +1491,7 @@ mod tests {
             (
                 "kind",
                 SearchQuery {
-                    kind: Some(EntityKind::Person),
+                    kind: Some(EntityKind::PERSON),
                     ..SearchQuery::default()
                 },
             ),
@@ -1512,7 +1512,7 @@ mod tests {
             (
                 "subject",
                 SearchQuery {
-                    subject: Some(EntityId::new(EntityKind::Person, "alpha")),
+                    subject: Some(EntityId::new(EntityKind::PERSON, "alpha")),
                     ..SearchQuery::default()
                 },
             ),
@@ -1521,7 +1521,7 @@ mod tests {
                 SearchQuery {
                     edge: Some(EdgeFilter {
                         shape: Some(EdgeShape::Location),
-                        object: EntityId::new(EntityKind::Place, "shelbyville"),
+                        object: EntityId::new(EntityKind::PLACE, "shelbyville"),
                     }),
                     ..SearchQuery::default()
                 },
@@ -1631,8 +1631,8 @@ mod tests {
     #[tokio::test]
     async fn search_renders_a_mixed_list_of_typed_hits() {
         let entity = Entity {
-            id: EntityId::new(EntityKind::Work, "first-mix"),
-            kind: EntityKind::Work,
+            id: EntityId::new(EntityKind::WORK, "first-mix"),
+            kind: EntityKind::WORK,
             name: "First Mix".into(),
             aliases: vec!["The First One".into()],
             source: "user-named".into(),
@@ -1660,7 +1660,7 @@ mod tests {
         };
         let alpha = Entity {
             id: EntityId::person("alpha"),
-            kind: EntityKind::Person,
+            kind: EntityKind::PERSON,
             name: "Alpha".into(),
             aliases: vec!["Al".into()],
             source: "user-named".into(),

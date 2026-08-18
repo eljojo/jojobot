@@ -24,90 +24,118 @@ use serde::{Deserialize, Serialize};
 
 pub mod graph;
 pub mod guard;
+pub mod kinds;
 pub mod search;
 pub mod types;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
-/// The ten kinds of noun jojobot knows about — a **closed** set, each earned
-/// by an inventory of real data. Closed is the point: an id whose kind isn't one
-/// of these is not an entity id, so no unknown kind can enter the store, and
-/// every consumer that matches on a kind is exhaustive by construction.
+/// **A kind: the namespace in a handle, and the schema of what it names**
+/// (rule 213).
+///
+/// It carries its token rather than being a variant, because **the set of
+/// kinds is data** — a declaration in the store, seeded at startup and held in
+/// [`kinds`]. A closed enum made the nouns one person's life contains a fact
+/// about the software, which is the thing nothing else in this repository does.
+///
+/// The token is `&'static str` so a kind stays `Copy` and free to pass around:
+/// [`kinds::intern`] gives a loaded token that lifetime. The set is small and
+/// loaded at startup, so what it costs is bounded by the number of kinds that
+/// have ever been declared to one process.
 ///
 /// `project` is jojobot's own personal-goal sense (trips, big rocks, builds),
 /// deliberately not schema.org's Organization-subtype meaning.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum EntityKind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct EntityKind(&'static str);
+
+impl EntityKind {
     /// People in the user's life and public figures alike (artists included).
-    Person,
+    pub const PERSON: EntityKind = EntityKind("person");
     /// An activity with a status funnel: big rocks, builds, processes, trips.
-    Project,
+    pub const PROJECT: EntityKind = EntityKind("project");
     /// Venues, destinations, trails, informal spots.
-    Place,
+    pub const PLACE: EntityKind = EntityKind("place");
     /// A dated occurrence: shows, stays, outings, festivals.
-    Event,
+    pub const EVENT: EntityKind = EntityKind("event");
     /// A creative/media artifact with its own identity: sets, albums, posts.
-    Work,
+    pub const WORK: EntityKind = EntityKind("work");
     /// A named possession or device with a history: bikes, plants, machines.
-    Thing,
+    pub const THING: EntityKind = EntityKind("thing");
     /// Clubs, venues-as-institutions, labels, schools, vendors.
-    Org,
+    pub const ORG: EntityKind = EntityKind("org");
     /// The glue noun: interest areas, and the anchor for world-facts that
     /// attach to no person, place, or project.
-    Topic,
+    pub const TOPIC: EntityKind = EntityKind("topic");
     /// An AI identity: a handle, the charter its doc's prose carries, the rules
     /// and memory its facts carry, and the mailbox it owns. A noun like any
     /// other — **nothing about a bot is compiled in**; a bot is data in the
     /// operator's own store, and this kind is only what lets it be one.
-    Bot,
+    pub const BOT: EntityKind = EntityKind("bot");
     /// A companion animal: a dog, a cat, a horse.
     ///
     /// **Not a `thing`.** `thing` is a named possession, and a pet is not one.
     /// The kind set follows the life it models rather than its own tidiness, so
     /// a part of that life this size gets a noun of its own instead of the
     /// nearest one already here.
-    Pet,
-}
+    pub const PET: EntityKind = EntityKind("pet");
 
-impl EntityKind {
-    /// Every kind, in declaration order — the enumeration `list_entities`
-    /// filters over and the guard scans.
+    /// **The kinds the software ships**, in the order they are seeded and
+    /// listed. Not "every kind there is": that is [`kinds::all`], which answers
+    /// from what this process loaded.
     pub const ALL: [EntityKind; 10] = [
-        EntityKind::Person,
-        EntityKind::Project,
-        EntityKind::Place,
-        EntityKind::Event,
-        EntityKind::Work,
-        EntityKind::Thing,
-        EntityKind::Org,
-        EntityKind::Topic,
-        EntityKind::Bot,
-        EntityKind::Pet,
+        EntityKind::PERSON,
+        EntityKind::PROJECT,
+        EntityKind::PLACE,
+        EntityKind::EVENT,
+        EntityKind::WORK,
+        EntityKind::THING,
+        EntityKind::ORG,
+        EntityKind::TOPIC,
+        EntityKind::BOT,
+        EntityKind::PET,
     ];
+
+    /// A kind from a token this crate already holds for the life of the
+    /// process — the constructor [`kinds::resolve`] uses once it has decided a
+    /// token really is a kind.
+    pub(crate) fn of(token: &'static str) -> Self {
+        EntityKind(token)
+    }
 
     /// The wire token — the `kind:` prefix of an id and the frontmatter value.
     pub fn as_token(self) -> &'static str {
-        match self {
-            EntityKind::Person => "person",
-            EntityKind::Project => "project",
-            EntityKind::Place => "place",
-            EntityKind::Event => "event",
-            EntityKind::Work => "work",
-            EntityKind::Thing => "thing",
-            EntityKind::Org => "org",
-            EntityKind::Topic => "topic",
-            EntityKind::Bot => "bot",
-            EntityKind::Pet => "pet",
-        }
+        self.0
     }
 
-    /// Parse a kind token. Strict — unlike the tolerant `status`/`provenance`
-    /// cells, an unknown kind has no safe fallback: guessing one would file a
-    /// record under a noun the user never chose.
+    /// **A kind from a token this process has loaded.** Strict — unlike the
+    /// tolerant `status`/`provenance` cells, an unknown kind has no safe
+    /// fallback: guessing one would file a record under a noun the user never
+    /// chose.
+    ///
+    /// It answers from the loaded set rather than from any list here, which is
+    /// what makes the set data. A token nobody declared is not a kind, and
+    /// [`kinds::resolve`] says which kind of nothing it found.
     pub fn from_token(token: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|k| k.as_token() == token)
+        kinds::resolve(token).ok()
+    }
+}
+
+/// **A kind crosses the wire as its token**, exactly as it did when the set
+/// was an enum: one lowercase word, in the `kind:` prefix and the frontmatter
+/// cell. Written by hand rather than derived because the type carries a
+/// borrowed token, and read back through the loaded set, so a stored kind
+/// nobody declares any more is refused on the way in rather than resurrected.
+impl Serialize for EntityKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for EntityKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let token = String::deserialize(deserializer)?;
+        kinds::resolve(&token).map_err(serde::de::Error::custom)
     }
 }
 
@@ -578,11 +606,11 @@ pub fn standing_of(new: &NewFact) -> Standing {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EdgeShape {
-    /// The subject is somewhere. Object is a [`EntityKind::Place`].
+    /// The subject is somewhere. Object is a [`EntityKind::PLACE`].
     Location,
-    /// The subject belongs to something. Object is an [`EntityKind::Org`].
+    /// The subject belongs to something. Object is an [`EntityKind::ORG`].
     Membership,
-    /// The subject was at something. Object is an [`EntityKind::Event`].
+    /// The subject was at something. Object is an [`EntityKind::EVENT`].
     Attendance,
     /// The subject is about something — the open shape: any kind of object.
     About,
@@ -648,9 +676,9 @@ impl EdgeShape {
     /// A `location` pointing at a person is a mis-drawn edge, not a nuance.
     pub fn object_kind(self) -> Option<EntityKind> {
         match self {
-            EdgeShape::Location => Some(EntityKind::Place),
-            EdgeShape::Membership => Some(EntityKind::Org),
-            EdgeShape::Attendance => Some(EntityKind::Event),
+            EdgeShape::Location => Some(EntityKind::PLACE),
+            EdgeShape::Membership => Some(EntityKind::ORG),
+            EdgeShape::Attendance => Some(EntityKind::EVENT),
             EdgeShape::About => None,
             // Any kind, for the same reason `about` takes any kind — and a
             // stronger one: refusing a kind here would be jojobot deciding what
@@ -2629,16 +2657,16 @@ mod tests {
     #[test]
     fn the_ten_kinds_round_trip_and_the_set_is_closed() {
         let all = [
-            (EntityKind::Person, "person"),
-            (EntityKind::Project, "project"),
-            (EntityKind::Place, "place"),
-            (EntityKind::Event, "event"),
-            (EntityKind::Work, "work"),
-            (EntityKind::Thing, "thing"),
-            (EntityKind::Org, "org"),
-            (EntityKind::Topic, "topic"),
-            (EntityKind::Bot, "bot"),
-            (EntityKind::Pet, "pet"),
+            (EntityKind::PERSON, "person"),
+            (EntityKind::PROJECT, "project"),
+            (EntityKind::PLACE, "place"),
+            (EntityKind::EVENT, "event"),
+            (EntityKind::WORK, "work"),
+            (EntityKind::THING, "thing"),
+            (EntityKind::ORG, "org"),
+            (EntityKind::TOPIC, "topic"),
+            (EntityKind::BOT, "bot"),
+            (EntityKind::PET, "pet"),
         ];
         for (kind, token) in all {
             assert_eq!(kind.as_token(), token);
@@ -2681,9 +2709,9 @@ mod tests {
     /// need no per-kind branch to carry it.
     #[test]
     fn a_bot_handle_is_an_ordinary_entity_id() {
-        let id = EntityId::new(EntityKind::Bot, "otto");
+        let id = EntityId::new(EntityKind::BOT, "otto");
         assert_eq!(id.as_str(), "bot:otto");
-        assert_eq!(id.kind(), Some(EntityKind::Bot));
+        assert_eq!(id.kind(), Some(EntityKind::BOT));
         assert!(validate_subject(&id).is_ok());
         // And it is spelled out on a bare handle, exactly as every non-person is.
         assert_eq!(EntityId::person("bot:otto").as_str(), "bot:otto");
@@ -2693,9 +2721,9 @@ mod tests {
     /// what lets the guard compare slugs and the codec stamp a kind.
     #[test]
     fn an_id_splits_into_its_kind_and_slug() {
-        let id = EntityId::new(EntityKind::Project, "jojobot-server");
+        let id = EntityId::new(EntityKind::PROJECT, "jojobot-server");
         assert_eq!(id.as_str(), "project:jojobot-server");
-        assert_eq!(id.kind(), Some(EntityKind::Project));
+        assert_eq!(id.kind(), Some(EntityKind::PROJECT));
         assert_eq!(id.slug(), "jojobot-server");
         // A malformed id yields no kind rather than panicking — reads never hard-fail.
         assert_eq!(EntityId("nonsense".into()).kind(), None);
@@ -2941,7 +2969,7 @@ mod tests {
     fn an_alias_set_is_replaced_whole_or_left_alone() {
         let mut entity = Entity {
             id: EntityId::person("alpha"),
-            kind: EntityKind::Person,
+            kind: EntityKind::PERSON,
             name: "Alpha".into(),
             aliases: vec!["Al".into()],
             source: "user-named".into(),
@@ -3011,7 +3039,7 @@ mod tests {
     fn an_entitys_labels_are_its_name_and_its_aliases() {
         let entity = |name: &str, aliases: Vec<String>| Entity {
             id: EntityId::person("alpha"),
-            kind: EntityKind::Person,
+            kind: EntityKind::PERSON,
             name: name.into(),
             aliases,
             source: "user-named".into(),

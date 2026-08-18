@@ -364,7 +364,7 @@ mod tests {
         let held = stored(&jojobot, "stay").await;
         assert_eq!(
             held.fields[0].points_at,
-            Some(EntityKind::Place),
+            Some(EntityKind::PLACE),
             "the store kept the kind, so a later reader sees it too: {held:?}",
         );
         assert_eq!(held.fields[1].points_at, None, "{held:?}");

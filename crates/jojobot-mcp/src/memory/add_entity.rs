@@ -76,7 +76,7 @@ impl Jojobot {
     ///
     /// [`Rule 18`]: creation is an intentional act.
     async fn open_box_with(&self, entity: &Entity) -> Vec<(&'static str, serde_json::Value)> {
-        if entity.id.kind() != Some(EntityKind::Bot) {
+        if entity.id.kind() != Some(EntityKind::BOT) {
             return Vec::new();
         }
         let name = MailboxName(entity.id.slug().to_string());
@@ -372,7 +372,7 @@ mod tests {
             .unwrap_or_else(|| panic!("the bot's box was never opened: {boxes:?}"));
         assert_eq!(
             opened.owner,
-            EntityId::new(EntityKind::Bot, "gamma"),
+            EntityId::new(EntityKind::BOT, "gamma"),
             "…and it is the bot's own, by construction"
         );
     }

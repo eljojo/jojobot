@@ -844,10 +844,11 @@ mod tests {
             ("place:leftorium", "Leftorium", "place:moes", "Moe's", false),
         ];
 
+        crate::memory::kinds::load_shipped();
         for (existing_handle, existing_name, incoming_handle, incoming_name, want_block) in CASES {
             let existing = Entity {
                 id: EntityId((*existing_handle).into()),
-                kind: EntityKind::Place,
+                kind: EntityKind::PLACE,
                 name: (*existing_name).into(),
                 aliases: vec![],
                 source: "fixture".into(),

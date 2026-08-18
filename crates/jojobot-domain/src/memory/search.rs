@@ -646,7 +646,7 @@ mod tests {
         };
         assert!(superseded.validate().is_ok());
         let edged = SearchQuery {
-            kind: Some(EntityKind::Person),
+            kind: Some(EntityKind::PERSON),
             edge: Some(EdgeFilter {
                 shape: Some(EdgeShape::Location),
                 object: EntityId("place:far-country".into()),
@@ -662,7 +662,7 @@ mod tests {
         assert!(!SearchQuery::text("shelbyville").is_fact_scoped());
         assert!(
             !SearchQuery {
-                kind: Some(EntityKind::Person),
+                kind: Some(EntityKind::PERSON),
                 ..Default::default()
             }
             .is_fact_scoped(),

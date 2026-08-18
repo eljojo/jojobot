@@ -214,7 +214,7 @@ pub async fn node(
 
     // The records that are not entities hang off the one entity that owns
     // them, so they are reached by walking from a handle like everything else.
-    if entity.kind == EntityKind::Bot {
+    if entity.kind == EntityKind::BOT {
         body.push_str(&mailbox_section(&state, &entity.id).await);
         body.push_str(&sessions_section(&state, &entity.id).await);
     }

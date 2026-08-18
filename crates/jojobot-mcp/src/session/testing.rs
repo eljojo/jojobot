@@ -47,7 +47,7 @@ pub(crate) async fn resumed(jojobot: &Jojobot, name: &str) -> String {
 pub(crate) fn as_run(jojobot: &Jojobot, bot: &str, card: &SessionId) -> String {
     jojobot
         .registry
-        .mint(&EntityId::new(EntityKind::Bot, bot), Some(card.clone()))
+        .mint(&EntityId::new(EntityKind::BOT, bot), Some(card.clone()))
         .expect("a free handle")
         .as_str()
         .to_string()

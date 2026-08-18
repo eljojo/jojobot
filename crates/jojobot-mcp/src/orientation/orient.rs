@@ -50,7 +50,7 @@ impl Jojobot {
                 // handles, so one record has one shape wherever it appears.
                 let mut bots: Vec<&str> = entities
                     .iter()
-                    .filter(|e| e.kind == EntityKind::Bot)
+                    .filter(|e| e.kind == EntityKind::BOT)
                     .map(|e| e.id.as_str())
                     .collect();
                 bots.sort_unstable();
@@ -495,7 +495,7 @@ mod tests {
             .await
             .expect("list ok")
             .into_iter()
-            .filter(|b| b.owner == EntityId::new(EntityKind::Bot, "gamma"))
+            .filter(|b| b.owner == EntityId::new(EntityKind::BOT, "gamma"))
             .collect();
         assert_eq!(held.len(), 2, "the fixture holds two boxes for one bot");
         assert_eq!(

@@ -32,7 +32,7 @@ pub(crate) const TEST_SID: &str = "test";
 pub(crate) fn seeded_registry() -> Arc<sid::SessionRegistry> {
     let registry = Arc::new(sid::SessionRegistry::new());
     registry
-        .mint_with(&EntityId::new(EntityKind::Bot, "otto"), None, || {
+        .mint_with(&EntityId::new(EntityKind::BOT, "otto"), None, || {
             TEST_SID.to_string()
         })
         .expect("a free handle in a fresh registry");
@@ -50,7 +50,7 @@ pub(crate) fn writing_as(jojobot: &Jojobot) -> String {
     if jojobot.registry.lookup(TEST_SID).is_none() {
         let _ = jojobot
             .registry
-            .mint_with(&EntityId::new(EntityKind::Bot, "otto"), None, || {
+            .mint_with(&EntityId::new(EntityKind::BOT, "otto"), None, || {
                 TEST_SID.to_string()
             });
     }
@@ -129,7 +129,7 @@ pub(crate) fn blocked(result: &CallToolResult) -> serde_json::Value {
 pub(crate) fn as_bot(jojobot: &Jojobot, bot: &str) -> String {
     jojobot
         .registry
-        .mint(&EntityId::new(EntityKind::Bot, bot), None)
+        .mint(&EntityId::new(EntityKind::BOT, bot), None)
         .expect("a free handle")
         .as_str()
         .to_string()
@@ -188,7 +188,7 @@ pub(crate) async fn make_bot(jojobot: &Jojobot, slug: &str) {
 pub(crate) async fn seed_bot(memory: &Arc<InMemoryMemory>, slug: &str) {
     memory
         .add_entity(jojobot_domain::memory::NewEntity::new(
-            EntityId::new(EntityKind::Bot, slug),
+            EntityId::new(EntityKind::BOT, slug),
             slug,
             "test-fixture",
         ))

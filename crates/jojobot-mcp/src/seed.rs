@@ -137,9 +137,9 @@ pub async fn ensure_default_identity(
     memory: &Arc<dyn Memory>,
     mailboxes: &Arc<dyn Mailboxes>,
 ) -> Seeded {
-    let id = EntityId::new(EntityKind::Bot, DEFAULT_BOT);
+    let id = EntityId::new(EntityKind::BOT, DEFAULT_BOT);
 
-    match memory.list_entities(Some(EntityKind::Bot)).await {
+    match memory.list_entities(Some(EntityKind::BOT)).await {
         Ok(bots) if bots.iter().any(|b| b.id == id) => return Seeded::AlreadyThere,
         Ok(_) => {}
         Err(e) => return Seeded::Unreachable(e.to_string()),
@@ -292,7 +292,7 @@ mod tests {
         );
 
         let bots = memory
-            .list_entities(Some(EntityKind::Bot))
+            .list_entities(Some(EntityKind::BOT))
             .await
             .expect("list ok");
         assert_eq!(
@@ -321,7 +321,7 @@ mod tests {
     #[tokio::test]
     async fn a_near_miss_on_the_board_does_not_deny_the_default_identity_its_box() {
         let (memory, mailboxes) = ports();
-        let other = EntityId::new(EntityKind::Bot, "gamma");
+        let other = EntityId::new(EntityKind::BOT, "gamma");
         // One letter off `assistant` — a near miss by the mailbox guard's own
         // budget.
         mailboxes
@@ -367,7 +367,7 @@ mod tests {
 
         // Somebody's real instance: the identity has been renamed and carries
         // a rule. Both must survive.
-        let id = EntityId::new(EntityKind::Bot, DEFAULT_BOT);
+        let id = EntityId::new(EntityKind::BOT, DEFAULT_BOT);
         memory
             .capture(jojobot_domain::memory::NewFact::about(
                 id.clone(),
@@ -393,7 +393,7 @@ mod tests {
         assert!(facts[0].content.contains("answers in one line"));
         assert_eq!(
             memory
-                .list_entities(Some(EntityKind::Bot))
+                .list_entities(Some(EntityKind::BOT))
                 .await
                 .expect("list ok")
                 .len(),

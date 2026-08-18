@@ -2736,7 +2736,7 @@ mod tests {
             .expect("the orphaned row is indexed, not dropped");
         assert_eq!(
             ghost.0.kind,
-            Some(EntityKind::Person),
+            Some(EntityKind::PERSON),
             "the handle still declares a kind"
         );
         assert_eq!(
@@ -5373,7 +5373,7 @@ mod tests {
 
         let by_kind = index
             .search(&SearchQuery {
-                kind: Some(EntityKind::Person),
+                kind: Some(EntityKind::PERSON),
                 ..SearchQuery::text("shipment")
             })
             .expect("search ok");

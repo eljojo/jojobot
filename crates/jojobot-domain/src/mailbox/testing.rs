@@ -447,7 +447,7 @@ impl Mailboxes for InMemoryMailboxes {
 /// index would be comparing against anyway for a bot named for its handle.
 fn stand_in(owner: &EntityId) -> crate::memory::Entity {
     crate::memory::Entity {
-        kind: owner.kind().unwrap_or(crate::memory::EntityKind::Bot),
+        kind: owner.kind().unwrap_or(crate::memory::EntityKind::BOT),
         name: owner.slug().to_string(),
         id: owner.clone(),
         aliases: Vec::new(),

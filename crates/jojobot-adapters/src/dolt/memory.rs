@@ -57,6 +57,10 @@ impl DoltMemory {
     /// **The schema is not this adapter's to create.** It arrives through the
     /// migrations the server applies on start — see [`crate::dolt::migrate`].
     pub fn open(pool: MySqlPool) -> Self {
+        // **The kinds this process parses against come from a store**, and
+        // this is one. Until a kind is a row, the shipped ten are what every
+        // store holds, so opening one loads them.
+        jojobot_domain::memory::kinds::load(jojobot_domain::memory::kinds::SHIPPED);
         DoltMemory { pool }
     }
 

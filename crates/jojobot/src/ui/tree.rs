@@ -71,6 +71,7 @@ mod tests {
     use jojobot_domain::memory::{Boot, EntityKind};
 
     fn entity(id: &str, parent: Option<&str>) -> Entity {
+        jojobot_domain::memory::kinds::load_shipped();
         let id = EntityId(id.to_string());
         Entity {
             kind: id.kind().expect("a fixture handle names its kind"),
@@ -132,7 +133,7 @@ mod tests {
     /// rather than written, so these indices are not handles in this source for
     /// the roster gate to read as names.
     fn step(n: usize) -> EntityId {
-        EntityId::new(EntityKind::Topic, format!("step-{n:03}"))
+        EntityId::new(EntityKind::TOPIC, format!("step-{n:03}"))
     }
 
     /// `count` entities in one line, oldest first. `wrap` points the oldest at

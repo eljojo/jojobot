@@ -70,8 +70,8 @@ pub(crate) fn named_bot(name: Option<&str>) -> Result<Option<EntityId>, McpError
 pub(crate) fn bot_id(name: &str) -> Result<EntityId, McpError> {
     let name = name.trim();
     match name.split_once(':') {
-        None => Ok(EntityId::new(EntityKind::Bot, name)),
-        Some(("bot", slug)) => Ok(EntityId::new(EntityKind::Bot, slug)),
+        None => Ok(EntityId::new(EntityKind::BOT, name)),
+        Some(("bot", slug)) => Ok(EntityId::new(EntityKind::BOT, slug)),
         Some((kind, _)) => Err(McpError::invalid_params(
             format!(
                 "'{name}' is a {kind}, and this verb takes a bot — pass a bare name, or a handle \

@@ -73,7 +73,7 @@ impl Jojobot {
         // send a report somewhere nobody reads, and the candidates are names
         // the caller already knows: the same screen a creation is held to,
         // asked the other way round.
-        let nearby = match self.memory.list_entities(Some(EntityKind::Bot)).await {
+        let nearby = match self.memory.list_entities(Some(EntityKind::BOT)).await {
             Ok(bots) => guard::screen(addressee, &[addressee.slug()], &bots),
             Err(_) => Vec::new(),
         };

@@ -988,7 +988,7 @@ mod tests {
         let jojobot = handler_with(Arc::new(SpySearch::answering(vec![Hit::Entity {
             entity: Entity {
                 id: EntityId("person:alpha".into()),
-                kind: EntityKind::Person,
+                kind: EntityKind::PERSON,
                 name: "Alpha".into(),
                 aliases: Vec::new(),
                 source: "test-fixture".into(),

@@ -1315,6 +1315,7 @@ mod tests {
     use crate::memory::{Boot, FactId, FactStatus, Provenance, Standing};
 
     fn entity(handle: &str, name: &str) -> Entity {
+        crate::memory::kinds::load_shipped();
         let id = EntityId(handle.to_string());
         Entity {
             kind: id.kind().expect("the fixture uses well-formed handles"),
@@ -1397,6 +1398,7 @@ mod tests {
     /// the party is at the tavern, and the party points back at Patana — so an
     /// outbound walk has somewhere to go twice, and somewhere to loop.
     fn store() -> Vec<DocScan> {
+        crate::memory::kinds::load_shipped();
         let attending = |home: &str, id: &str, content: &str, rsvp: &str| Fact {
             fields: [("rsvp".to_string(), rsvp.to_string())]
                 .into_iter()
@@ -1481,7 +1483,7 @@ mod tests {
         let scanned = store();
         let query = GraphQuery {
             select: Selection {
-                kind: Some(EntityKind::Person),
+                kind: Some(EntityKind::PERSON),
                 ..Selection::default()
             },
             include: Include {
@@ -1621,11 +1623,11 @@ mod tests {
             ..GraphQuery::default()
         };
         assert_eq!(
-            handles(&resolve(&scanned, &[], &query(EntityKind::Person)).expect("both filters")),
+            handles(&resolve(&scanned, &[], &query(EntityKind::PERSON)).expect("both filters")),
             vec!["person:barney-gumble", "person:patana"],
         );
         assert!(
-            resolve(&scanned, &[], &query(EntityKind::Place))
+            resolve(&scanned, &[], &query(EntityKind::PLACE))
                 .expect("both filters")
                 .is_empty(),
             "the kind narrows the same set the key does, so a kind holding no such record is empty",
@@ -2206,7 +2208,7 @@ mod tests {
         refused(GraphQuery::default());
         refused(GraphQuery {
             select: Selection {
-                kind: Some(EntityKind::Person),
+                kind: Some(EntityKind::PERSON),
                 ..Selection::default()
             },
             follow: Some(Follow {
@@ -2217,7 +2219,7 @@ mod tests {
         });
         refused(GraphQuery {
             select: Selection {
-                kind: Some(EntityKind::Person),
+                kind: Some(EntityKind::PERSON),
                 ..Selection::default()
             },
             follow: Some(Follow {
@@ -2235,7 +2237,7 @@ mod tests {
             &[],
             &GraphQuery {
                 select: Selection {
-                    kind: Some(EntityKind::Person),
+                    kind: Some(EntityKind::PERSON),
                     ..Selection::default()
                 },
                 follow: Some(Follow {

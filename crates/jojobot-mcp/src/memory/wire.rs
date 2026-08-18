@@ -179,23 +179,47 @@ pub(crate) fn candidate_json(candidate: &EntityMatch) -> serde_json::Value {
 /// `Project` is jojobot's own personal-goal sense (trips, big rocks, builds),
 /// deliberately NOT schema.org's Organization-subtype meaning.
 pub(crate) fn type_name(kind: EntityKind) -> &'static str {
-    match kind {
-        EntityKind::Person => "Person",
-        EntityKind::Place => "Place",
-        EntityKind::Event => "Event",
-        EntityKind::Work => "CreativeWork",
-        EntityKind::Thing => "Product",
-        EntityKind::Org => "Organization",
-        EntityKind::Topic => "Topic",
-        EntityKind::Project => "Project",
+    match kind.as_token() {
+        "person" => "Person",
+        "place" => "Place",
+        "event" => "Event",
+        "work" => "CreativeWork",
+        "thing" => "Product",
+        "org" => "Organization",
+        "topic" => "Topic",
+        "project" => "Project",
         // schema.org has no bot; `SoftwareApplication` is its nearest word for
         // a non-human actor, and it is the one a model already knows.
-        EntityKind::Bot => "SoftwareApplication",
+        "bot" => "SoftwareApplication",
         // schema.org has no animal either, and its nearest available word is
         // `Product` — which states the one thing this kind exists to deny. So
         // the word here is the plain one every model already knows.
-        EntityKind::Pet => "Pet",
+        "pet" => "Pet",
+        // **A kind the software never heard of has no word waiting for it.**
+        // The set of kinds is data, so a store may hold one this build has no
+        // opinion about, and the honest answer is the caller's own token
+        // rather than a schema.org word picked for being valid: the comments
+        // above already choose the plain word twice over a nearest-fit that
+        // would state something false, and this is the same choice for a case
+        // that could not arise before.
+        //
+        // Title case because every word in this map is title case, and a
+        // lowercase token beside `Person` reads as an accident rather than as
+        // a name. Only the first letter is touched — a rule for every shape a
+        // token might take would be a guess about tokens nobody has written.
+        other => title_cased(other),
     }
+}
+
+/// The token with its first character upper-cased, held for the life of the
+/// process beside the kind it names.
+fn title_cased(token: &str) -> &'static str {
+    let mut characters = token.chars();
+    let titled = match characters.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + characters.as_str(),
+        None => String::new(),
+    };
+    jojobot_domain::memory::kinds::intern(&titled)
 }
 
 #[cfg(test)]
@@ -211,16 +235,16 @@ mod tests {
     #[test]
     fn every_kind_renders_its_schema_org_name_and_none_is_an_input_token() {
         let table = [
-            (EntityKind::Person, "person", "Person"),
-            (EntityKind::Place, "place", "Place"),
-            (EntityKind::Event, "event", "Event"),
-            (EntityKind::Work, "work", "CreativeWork"),
-            (EntityKind::Thing, "thing", "Product"),
-            (EntityKind::Org, "org", "Organization"),
-            (EntityKind::Topic, "topic", "Topic"),
-            (EntityKind::Project, "project", "Project"),
-            (EntityKind::Bot, "bot", "SoftwareApplication"),
-            (EntityKind::Pet, "pet", "Pet"),
+            (EntityKind::PERSON, "person", "Person"),
+            (EntityKind::PLACE, "place", "Place"),
+            (EntityKind::EVENT, "event", "Event"),
+            (EntityKind::WORK, "work", "CreativeWork"),
+            (EntityKind::THING, "thing", "Product"),
+            (EntityKind::ORG, "org", "Organization"),
+            (EntityKind::TOPIC, "topic", "Topic"),
+            (EntityKind::PROJECT, "project", "Project"),
+            (EntityKind::BOT, "bot", "SoftwareApplication"),
+            (EntityKind::PET, "pet", "Pet"),
         ];
         assert_eq!(
             table.len(),
