@@ -16,6 +16,11 @@
 //! has a date somebody typed in words. Both come back — a query that returned
 //! only the tidy ones would hide the things worth finding, and a caller
 //! looking for work to do is looking for precisely the untidy ones.
+//!
+//! **And the title is the other question.** "The ones with a cost on them"
+//! keeps only the things carrying every key, so the story asks both: the
+//! tolerant question for what is worth looking at, and the strict one for what
+//! actually is a service.
 
 use serde_json::json;
 
@@ -131,6 +136,36 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     // …and the negative, in the same answer that just proved it is not empty:
     // a thing sharing no key with the type is not a weak match.
     found.never_says("thing:torque-wrench");
+
+    // ── the same type, asked strictly ───────────────────────────────────────
+    //
+    // **The question in the title, and the answer above is not it.** "The ones
+    // with a cost on them" keeps only the things with no gaps, and the tolerant
+    // read hands back the brake bleed as well. Which of the two questions is
+    // being asked is the caller's to choose, and both are one call.
+    let whole = s
+        .call("search", json!({ "fits_type": "service", "limit": 50 }))
+        .await;
+    whole.says("thing:gravel-bike");
+    // The messy one fits. A key holding a value the type did not describe is
+    // still a key the thing carries, and this question is about gaps — so the
+    // strict answer reports the bad value rather than dropping the thing.
+    whole.says("thing:floor-pump");
+    whole.says("\"value\":\"some time in may\"");
+    // **The pair this turns on, asserted both ways.** The brake bleed IS in the
+    // tolerant answer above and OUT of this one; a negative on its own would
+    // pass on an empty answer.
+    whole.never_says("thing:road-bike");
+    whole.never_says("thing:torque-wrench");
+
+    // Asked both ways in one call, nothing picks for the caller: the two keep
+    // different things, so the answer says so and runs neither.
+    s.refused(
+        "search",
+        json!({ "answers_type": "service", "fits_type": "service" }),
+    )
+    .await
+    .says("fits_type");
 
     // ── the same type, asked as a question about THINGS ─────────────────────
     //

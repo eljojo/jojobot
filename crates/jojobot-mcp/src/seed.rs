@@ -1,4 +1,5 @@
-//! **The identity a jojobot arrives with.**
+//! **What a jojobot arrives with** — the identity, and the types the software
+//! ships.
 //!
 //! There is never a jojobot with no bot. `assistant` is the default identity
 //! and it exists on a fresh instance — not assumed to exist, actually there.
@@ -10,20 +11,107 @@
 //! exist. This runs once as the software starts — no request produces it and
 //! no verb triggers it.
 //!
+//! The types come with it for the same reason the method does (rules 82 and
+//! 94): a vocabulary a caller has to declare before it works is one every
+//! instance re-invents differently, and a type ships complete with its fields.
+//!
 //! # What it deliberately does NOT do
 //!
 //! It does not write a charter. What this identity is TOLD to be is a separate
 //! question with the operator's name on it, and a shipped charter would put a
 //! voice they have not approved into every future instance. The bot exists, it
 //! can be booted as, and it can write. That is all.
+//!
+//! It writes no record of either type, and nothing here computes anything from
+//! one. A vocabulary is what a writer fills in; what to do about a rhythm that
+//! has gone quiet is a separate capability.
 
 use std::sync::Arc;
 
 use jojobot_domain::mailbox::{MailboxName, Mailboxes};
-use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity};
+use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+use jojobot_domain::memory::{EntityId, EntityKind, Memory, MemoryError, NewEntity};
 
 /// The identity every instance has.
 pub const DEFAULT_BOT: &str = "assistant";
+
+/// **The types this build ships**, complete with their keys.
+///
+/// Two things make the list safe to write on every boot. A caller cannot
+/// declare over a shipped name, so nothing under one of these names is ever a
+/// caller's work; and a declaration is replaced whole, so what a later build
+/// adds to one of these types reaches an existing instance without anybody
+/// running anything.
+///
+/// The keys are the vocabulary and their spelling is the schema: renaming one
+/// is a new type that reaches no record already written under the old spelling.
+pub fn shipped_types() -> Vec<DeclaredType> {
+    vec![
+        // **A cyclical thing, and the question it answers is what has gone
+        // quiet.** A cadence is always TIME: the time prompts the check, and
+        // what the check measures is a field on the check-in rather than a
+        // unit of the schedule. So there is no distance and no unit key.
+        DeclaredType::shipped(
+            "rhythm",
+            vec![
+                Field::new("cadence_days", ValueType::Number),
+                // Whether the next one is counted from the date it fell due or
+                // from the date it happened. **It has no default**, against the
+                // convention that everything works unconfigured (rule 9): the
+                // two answers are different enough that guessing one is worse
+                // than a rhythm that does not fit until somebody says.
+                Field::new("advances_from", ValueType::Text),
+                // **What "when did this last happen" reads**, and the reason it
+                // is a key is the projection. A thing's fields are the newest
+                // write of each key by WRITE ORDER rather than by date, so the
+                // one dense row cannot answer this from the dates its records
+                // carry: getting it that way means reading the whole history
+                // and taking a maximum, which is the scan the projection
+                // exists to replace.
+                //
+                // A record may still be backdated, and a late check-in carries
+                // the day it happened in both places doing two different jobs:
+                // this key feeds the fold, the record's date feeds chronology.
+                // They agree because they are one value, and what keeps them
+                // from drifting is that this key is what gets read.
+                Field::new("last_check_in", ValueType::Date),
+                Field::new("outcome", ValueType::Text),
+            ],
+        ),
+        // **When am I next away, and when was I last there.** The two places
+        // are references rather than text, which is what makes a trip walkable
+        // from either end.
+        DeclaredType::shipped(
+            "trip",
+            vec![
+                Field::new("departs_from", ValueType::Reference),
+                Field::new("arrives_at", ValueType::Reference),
+                Field::new("leaves_on", ValueType::Date),
+                Field::new("returns_on", ValueType::Date),
+            ],
+        ),
+    ]
+}
+
+/// Declare the types this build ships. **Every boot, unconditionally.**
+///
+/// There is no version stamp and no seed-once flag, and each of those would
+/// buy the opposite bug: a build that adds a key to a shipped type has to
+/// reach the instances already running, and an instance that skipped the write
+/// because it had been seeded once would serve a vocabulary the software no
+/// longer has. Overwriting is safe because a shipped name is closed to
+/// callers, so the only declaration this can replace is a previous build's.
+///
+/// Returns how many types are now declared, or why the store could not take
+/// them. A store that cannot be reached at startup is reported, never fatal:
+/// the rest of the boot says the same thing about the same store.
+pub async fn ensure_shipped_types(memory: &Arc<dyn Memory>) -> Result<usize, MemoryError> {
+    let types = shipped_types();
+    for declared in &types {
+        memory.declare_type(declared.clone()).await?;
+    }
+    Ok(types.len())
+}
 
 /// What a seeding attempt did, for the caller to log. Nothing here is an error
 /// a caller should act on: a store that cannot be reached at startup is a
@@ -83,12 +171,115 @@ mod tests {
     use super::*;
     use jojobot_domain::mailbox::testing::InMemoryMailboxes;
     use jojobot_domain::memory::testing::InMemoryMemory;
+    use jojobot_domain::memory::types::Origin;
 
     fn ports() -> (Arc<dyn Memory>, Arc<dyn Mailboxes>) {
         (
             Arc::new(InMemoryMemory::new()),
             Arc::new(InMemoryMailboxes::knowing_any_owner()),
         )
+    }
+
+    /// One type out of the store, by name.
+    async fn stored(memory: &Arc<dyn Memory>, name: &str) -> DeclaredType {
+        memory
+            .declared_types()
+            .await
+            .expect("the roster reads")
+            .into_iter()
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("the store must hold '{name}'"))
+    }
+
+    /// The keys of a type, in the order it declares them, each with what it
+    /// holds — which is the whole of what a type is.
+    fn keys(declared: &DeclaredType) -> Vec<(&str, &str)> {
+        declared
+            .fields
+            .iter()
+            .map(|f| (f.key.as_str(), f.holds.as_token()))
+            .collect()
+    }
+
+    /// **A fresh instance arrives holding the types the software ships**, whole
+    /// — every key, in order, holding what it was declared to hold.
+    ///
+    /// Before this, the constructor that mints a shipped type was reached from
+    /// tests alone: the protection over shipped names guarded nothing, and no
+    /// caller could see an origin that was not its own.
+    #[tokio::test]
+    async fn a_fresh_instance_arrives_with_the_types_the_software_ships() {
+        let (memory, _) = ports();
+        assert_eq!(
+            ensure_shipped_types(&memory)
+                .await
+                .expect("the store takes"),
+            2
+        );
+
+        // **A cadence is time, never usage.** No unit key and no distance: what
+        // a check-in measures is a field on the check-in.
+        let rhythm = stored(&memory, "rhythm").await;
+        assert_eq!(
+            keys(&rhythm),
+            vec![
+                ("cadence_days", "number"),
+                ("advances_from", "text"),
+                ("last_check_in", "date"),
+                ("outcome", "text"),
+            ],
+        );
+        assert_eq!(rhythm.origin, Origin::Shipped);
+
+        // The two places are references, which is what makes a trip walkable
+        // from either end rather than a pair of strings.
+        let trip = stored(&memory, "trip").await;
+        assert_eq!(
+            keys(&trip),
+            vec![
+                ("departs_from", "reference"),
+                ("arrives_at", "reference"),
+                ("leaves_on", "date"),
+                ("returns_on", "date"),
+            ],
+        );
+        assert_eq!(trip.origin, Origin::Shipped);
+    }
+
+    /// **The seed is unconditional, and what that buys is the key a later build
+    /// adds.**
+    ///
+    /// The second boot writes the same declaration again rather than finding
+    /// one under the name and leaving it. This is the case a "seed once" flag
+    /// would break: an instance that had booted an older build would keep that
+    /// build's keys for ever, and the software would serve a vocabulary it no
+    /// longer has.
+    #[tokio::test]
+    async fn a_later_build_moves_a_shipped_type_on_an_instance_already_running() {
+        let (memory, _) = ports();
+        // What an older build shipped: the same name, one key short.
+        memory
+            .declare_type(DeclaredType::shipped(
+                "rhythm",
+                vec![Field::new("cadence_days", ValueType::Number)],
+            ))
+            .await
+            .expect("the software declares its own types");
+
+        ensure_shipped_types(&memory)
+            .await
+            .expect("the store takes");
+
+        assert_eq!(
+            keys(&stored(&memory, "rhythm").await),
+            vec![
+                ("cadence_days", "number"),
+                ("advances_from", "text"),
+                ("last_check_in", "date"),
+                ("outcome", "text"),
+            ],
+            "this build's keys reached an instance that was already running",
+        );
     }
 
     /// **A fresh instance has an identity**, and it can be written to.

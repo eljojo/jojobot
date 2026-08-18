@@ -59,3 +59,5 @@ mod unprompted;
 mod unsourced;
 #[path = "user_stories/unsure.rs"]
 mod unsure;
+#[path = "user_stories/vocabulary.rs"]
+mod vocabulary;

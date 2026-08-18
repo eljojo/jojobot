@@ -256,6 +256,20 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
 
+    // **The vocabulary the software ships, declared on every boot.** Written
+    // unconditionally: a shipped name is closed to callers, so the only
+    // declaration this replaces is a previous build's, and that is how a key
+    // this build added reaches an instance that is already running.
+    match jojobot_mcp::seed::ensure_shipped_types(&seed_memory).await {
+        Ok(types) => tracing::info!(types, "declared the types this build ships"),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "SHIPPED TYPES NOT DECLARED — the store could not be reached at startup, so a caller \
+             asking for one of them is told the name is not declared. Nothing was written and \
+             nothing was lost; a restart once the store is reachable puts it right."
+        ),
+    }
+
     let metadata_url = format!(
         "{}/.well-known/oauth-protected-resource",
         origin_of(&config.resource)

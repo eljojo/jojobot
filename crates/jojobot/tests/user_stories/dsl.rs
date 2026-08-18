@@ -272,6 +272,10 @@ impl Story {
         // against a server that has one, because every real server does.
         let seed_memory: Arc<dyn jojobot_domain::memory::Memory> = indexed_for_seed;
         jojobot_mcp::seed::ensure_default_identity(&seed_memory, &boxes_for_seed).await;
+        // **…and with the types it ships**, declared before anything connects.
+        // A story that declared them itself would prove a caller can write
+        // them, which is the opposite of what a shipped type is.
+        let _ = jojobot_mcp::seed::ensure_shipped_types(&seed_memory).await;
 
         let story = Self {
             addr,

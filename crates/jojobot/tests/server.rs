@@ -64,6 +64,9 @@ async fn spawn_server(
     // write needs an identity now, so a server without one could not be
     // written to at all, and no real deployment is in that state.
     jojobot_mcp::seed::ensure_default_identity(&state.memory, &state.mailboxes).await;
+    // …and with the vocabulary it ships, for the same reason: a caller asking
+    // for a shipped type on a real instance finds one there.
+    let _ = jojobot_mcp::seed::ensure_shipped_types(&state.memory).await;
     let ct = CancellationToken::new();
     let app = build_app(state, ct.child_token());
     let shutdown = ct.clone();
