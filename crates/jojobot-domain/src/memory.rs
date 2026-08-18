@@ -1452,10 +1452,19 @@ pub fn referenced_by(
 /// fits nothing has nothing to protect**, so nothing is refused and it stays
 /// repairable.
 ///
-/// **Derived, never configured** (rule 9). Nothing is stored to say a thing is
-/// strict, nothing is declared and nothing is switched on: what a thing fits is
-/// a fact about the keys it carries, and this reads that fact at the moment of
-/// the write.
+/// **The thing's own KIND governs, and nothing else does.** The guard is asked
+/// about one declaration — the one named by the token in front of the thing's
+/// handle — so what may be taken off a `pet:` is what the kind `pet` names.
+/// **A declared type governs no write.** A type is the vocabulary a caller asks
+/// WITH: it says which things answer a shape, and answering a shape is not the
+/// same act as being held to one. Governing by resemblance instead made any
+/// thing that structurally completed any declaration in the store subject to
+/// it, with nothing offered and nothing confirmed — a thing on which somebody
+/// wrote a kind's five keys was governed by a kind it is not.
+///
+/// **A kind that names no keys governs nothing**, which is every shipped kind
+/// today, so today this refuses nothing. That is the floor being empty rather
+/// than absent: it fills when a kind carries keys.
 ///
 /// **A key is lost two ways, and both are refused.** Taking the key off is one.
 /// Putting a value in it that the key does not hold is the other, because
@@ -1470,11 +1479,15 @@ pub fn referenced_by(
 /// and what was sent, since a caller looking at a well-formed handle cannot
 /// otherwise see what is wrong with it.
 pub fn guard_fit(
+    kind: &str,
     before: &BTreeMap<String, String>,
     after: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
 ) -> Result<(), MemoryError> {
-    for declaration in declared {
+    // **The prefix as written, never the parsed kind.** A handle whose kind the
+    // set never loaded still names one, and a guard that went quiet on an
+    // unseeded process would stop refusing rather than say it could not tell.
+    for declaration in declared.iter().filter(|d| d.name == kind) {
         // Fitting means holding every key the type names, and holding it as
         // declared. A thing that did not fit before has nothing this protects.
         if !declaration.matched_by(before).is_some_and(|m| m.complete()) {

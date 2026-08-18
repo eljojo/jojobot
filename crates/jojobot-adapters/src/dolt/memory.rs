@@ -738,6 +738,7 @@ impl Memory for DoltMemory {
         let held = Self::writes_on(&mut tx, &stored.home).await?;
         let declared = Self::types_in(&mut tx).await?;
         guard_fit(
+            stored.home.kind_token(),
             &folded_fields(&held, &declared),
             &stood_after_capture(&held, &stored, &declared),
             &declared,
@@ -895,6 +896,7 @@ impl Memory for DoltMemory {
         let held = Self::writes_on(&mut tx, &fact.home).await?;
         let declared = Self::types_in(&mut tx).await?;
         guard_fit(
+            fact.home.kind_token(),
             &folded_fields(&held, &declared),
             &stood_after(&held, &fact, &patch, &carried, &declared),
             &declared,

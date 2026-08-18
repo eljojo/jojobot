@@ -1,29 +1,29 @@
-//! "I said the venue is a place. Why has jojobot just turned my write down?"
+//! "I said the venue is a place. Why has jojobot taken a pet?"
 //!
-//! **Because on this thing the declaration had stopped describing and started
-//! holding.** A type says what its keys hold; once a thing carries every one of
-//! them, the type is a floor under what it holds, and a write that would leave
-//! it otherwise is refused rather than stored and reported.
+//! **Because a declared type describes and never holds.** A type is the
+//! vocabulary a caller asks WITH: it says which keys a thing of that shape
+//! carries, so `search` can ask which things answer it and say what each one
+//! lacks. Answering a shape is not the same act as being held to one, and
+//! nothing a caller declares gates a write.
 //!
-//! **The narrowing is the new half.** A reference used to mean "a handle of
-//! some kind jojobot knows", so a key meant for a venue was satisfied by a pet.
-//! Saying `reference:place` is what lets the declaration say which kind is on
-//! the other end — and the refusal quotes that same spelling back, so what the
-//! caller is told is what the caller would write.
+//! **The narrowing is what the declaration is FOR.** A reference used to mean
+//! "a handle of some kind jojobot knows", so a key meant for a venue was
+//! satisfied by a pet. Saying `reference:place` is what lets the declaration
+//! say which kind belongs on the other end — and the answer reports the value
+//! that does not, rather than turning the write away.
 //!
-//! **And the boundary is the whole story, not a footnote.** The identical write
-//! that is refused on the finished booking lands on the half-written one. A
-//! thing that fits nothing has nothing to protect, so it stays messy and stays
-//! repairable; a thing that fits is held to what it fits. Both are here because
-//! either alone reads as a rule this is not — the first as a gate over every
-//! write, the second as no rule at all.
+//! **What IS refused is here too, and it is a different rule.** A reference
+//! naming no entity at all is blocked, because a walkable link into something
+//! nobody recorded is a hole. Both are in this story because either alone reads
+//! as a rule this is not — the first as a type gating every write, the second
+//! as nothing being checked anywhere.
 
 use serde_json::json;
 
 use super::dsl::Story;
 
 #[tokio::test]
-async fn a_declared_key_is_held_to_on_the_thing_that_answers_it() {
+async fn a_declared_type_describes_a_thing_and_holds_it_to_nothing() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
 
@@ -66,43 +66,52 @@ async fn a_declared_key_is_held_to_on_the_thing_that_answers_it() {
     )
     .await;
 
-    // ── ① the wrong kind, on the thing that fits ────────────────────────────
+    // ── ① the wrong kind, on the thing that answers the type ────────────────
     //
-    // A pet is a perfectly good handle, which is exactly why the value type
-    // alone could never have caught this: what is wrong with it is the kind.
-    let refused = s
-        .refused(
-            "capture",
-            json!({
-                "subject": "event:the-booking",
-                "content": "moved it to the dog, apparently",
-                "provenance": "testimony",
-                "fields": { "venue": "pet:santas-little-helper" },
-            }),
-        )
-        .await;
-    // The refusal names the key, what the key wanted, and the type it would
-    // stop fitting — the three things a caller needs to write the call again.
-    refused.says("venue");
-    refused.says("reference:place");
-    refused.says("booking");
-
-    // …and the record is untouched: a refusal writes nothing.
+    // A pet is a perfectly good handle, and the declaration says this key wants
+    // a place. **The write lands anyway**: a type nobody was offered and nobody
+    // confirmed is a vocabulary, and a vocabulary describes rather than holds.
+    // What may be taken off a thing is its own KIND's question, and `event`
+    // names no keys.
+    s.event_with(
+        "event:the-booking",
+        "moved it to the dog, apparently",
+        json!({ "venue": "pet:santas-little-helper" }),
+        &[],
+    )
+    .await;
     let after = s
         .shape(
             "the booking as it stands",
             json!({ "subject": "event:the-booking" }),
         )
         .await;
-    after.says("place:moes");
-    after.never_says("pet:santas-little-helper");
+    after.says("pet:santas-little-helper");
 
-    // ── ② the identical write, on the thing that fits nothing ───────────────
+    // …and the caller puts back what it meant, which is the whole repair: the
+    // declaration told it what the key wants and nothing stood in the way of
+    // either write.
+    s.event_with(
+        "event:the-booking",
+        "no, the back room after all",
+        json!({ "venue": "place:moes" }),
+        &[],
+    )
+    .await;
+    let repaired = s
+        .shape(
+            "the booking with its venue put back",
+            json!({ "subject": "event:the-booking" }),
+        )
+        .await;
+    repaired.says("place:moes");
+
+    // ── ② the same write, on a thing that answers the type not at all ───────
     //
-    // **The pair the boundary turns on.** The jotting carries no key of the
-    // type yet, so there is no fit to protect and the very value refused above
-    // lands here. Without this beat the refusal above reads as a gate over
-    // every reference on the surface.
+    // The jotting carries no key of the type yet, and it makes no difference:
+    // how much of a vocabulary a thing answers changes nothing about what may
+    // be written on it. Without this beat, beat ① reads as "a half-described
+    // thing is the special case" rather than as the rule.
     s.event_with(
         "event:the-jotting",
         "at the dog's place, apparently",

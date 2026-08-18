@@ -502,6 +502,7 @@ impl Memory for InMemoryMemory {
         let writes = self.writes_on(&stored.home, &facts);
         let declared = self.types.lock().expect("fake mutex poisoned").clone();
         super::guard_fit(
+            stored.home.kind_token(),
             &super::folded_fields(&writes, &declared),
             &super::stood_after_capture(&writes, &stored, &declared),
             &declared,
@@ -677,7 +678,7 @@ impl Memory for InMemoryMemory {
         let declared = self.declarations();
         let before = super::folded_fields(&writes, &declared);
         let after = super::stood_after(&writes, &edited, &patch, &carried, &declared);
-        super::guard_fit(&before, &after, &declared)?;
+        super::guard_fit(home.kind_token(), &before, &after, &declared)?;
         let id = fact.id.clone();
         for held in facts.iter_mut() {
             if held.home == home && held.id == id {
@@ -6282,16 +6283,22 @@ pub mod contract {
     /// A contract case because only a store can say whether the write was
     /// refused AND the record kept.
     pub async fn a_write_cannot_put_a_value_the_type_refuses<M: Memory>(store: &M) {
+        // **A KIND, not a declared type.** What a write may take off a thing is
+        // its kind's question: a declared type describes and holds nothing.
         store
-            .declare_type(DeclaredType::new(
-                "contract-stay-guarded",
+            .declare_kind(
+                "work",
+                Origin::Shipped,
                 vec![
                     Field::pointing_at("stay_venue", EntityKind::PLACE),
                     Field::new("stay_nights", ValueType::Number),
                 ],
-            ))
+            )
             .await
-            .expect("declaring a type of my own is accepted");
+            .expect("a kind may name the keys its things keep");
+        // a shipped kind is used rather than a new one:
+        // declaring a new kind fills the set this process parses against, and any
+        // case beside this one that stands a store up empties it again.
 
         let moes = EntityId::new(EntityKind::PLACE, "contract-moes");
         let helper = EntityId::new(EntityKind::PET, "contract-santas-little-helper");
@@ -6299,7 +6306,7 @@ pub mod contract {
         ensure(store, &helper).await;
 
         // A thing that fits: the venue is a place and the nights are a number.
-        let stay = EntityId::new(EntityKind::EVENT, "contract-the-stay");
+        let stay = EntityId::new(EntityKind::WORK, "contract-the-stay");
         let booked = capture(
             store,
             NewFact {
@@ -6336,7 +6343,7 @@ pub mod contract {
         else {
             panic!("a handle of the wrong kind must be refused, got {refused:?}");
         };
-        assert_eq!(name, "contract-stay-guarded", "the refusal names the type");
+        assert_eq!(name, "work", "the refusal names the kind");
         assert_eq!(key, "stay_venue", "…and the key");
         assert_eq!(
             wanted, "reference:place",
@@ -6567,20 +6574,25 @@ pub mod contract {
     /// STORE refuses the write and keeps the record, which only a store can
     /// answer for.
     pub async fn a_write_cannot_break_a_fit_that_already_exists<M: Memory>(store: &M) {
+        // **A KIND, not a declared type.** What a write may take off a thing is
+        // its kind's question: a thing is held to what its own kind names, and to nothing else.
         store
-            .declare_type(DeclaredType::new(
-                "contract-service",
+            .declare_kind(
+                "org",
+                Origin::Shipped,
                 vec![
                     Field::new("cost", ValueType::Number),
                     Field::new("done_on", ValueType::Date),
                 ],
-            ))
+            )
             .await
-            .expect("declaring a type of my own is accepted");
+            .expect("a kind may name the keys its things keep");
+        // a shipped kind is used rather than a new one, and `thing`
+        // is left keyless for the case below that asks the other half.
 
         // A thing that fits: both keys, over two sittings, because that is how
         // things get written down.
-        let whole = EntityId::new(EntityKind::THING, "contract-fitting-thing");
+        let whole = EntityId::new(EntityKind::ORG, "contract-fitting-thing");
         let costed = capture(
             store,
             NewFact {
@@ -6614,7 +6626,7 @@ pub mod contract {
         let Err(MemoryError::BreaksFit { name, keys }) = &refused else {
             panic!("taking a key off a thing that fits must be refused, got {refused:?}");
         };
-        assert_eq!(name, "contract-service", "the refusal names the type");
+        assert_eq!(name, "org", "the refusal names the kind");
         assert!(
             keys.contains(&"cost".to_string()),
             "…and the key that would go: {keys:?}"
@@ -6634,7 +6646,7 @@ pub mod contract {
         // nothing here to protect — and a rule that read the CHANGE rather
         // than the result would refuse this one too and leave the record
         // unrepairable.
-        let partial = EntityId::new(EntityKind::THING, "contract-loose-record");
+        let partial = EntityId::new(EntityKind::ORG, "contract-loose-record");
         let half = capture(
             store,
             NewFact {
@@ -6708,18 +6720,23 @@ pub mod contract {
     pub async fn a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not<M: Memory>(
         store: &M,
     ) {
+        // **A KIND, not a declared type.** A supersede costs the thing a key,
+        // and what a thing may not lose is what its own kind names.
         store
-            .declare_type(DeclaredType::new(
-                "contract-tenancy-run",
+            .declare_kind(
+                "topic",
+                Origin::Shipped,
                 vec![
                     Field::new("season", ValueType::Text),
                     Field::new("pitch_fee", ValueType::Number),
                 ],
-            ))
+            )
             .await
-            .expect("declaring a type of my own is accepted");
+            .expect("a kind may name the keys its things keep");
+        // a shipped kind is used rather than a new one, for the reason
+        // the case above gives.
 
-        let held = EntityId::new(EntityKind::THING, "contract-run-of-stalls");
+        let held = EntityId::new(EntityKind::TOPIC, "contract-run-of-stalls");
         let seasonal = capture(
             store,
             NewFact {
@@ -6755,7 +6772,7 @@ pub mod contract {
         let Err(MemoryError::BreaksFit { name, keys }) = &refused else {
             panic!("moving a record past must cost what a clear costs, got {refused:?}");
         };
-        assert_eq!(name, "contract-tenancy-run");
+        assert_eq!(name, "topic");
         assert!(keys.contains(&"season".to_string()), "{keys:?}");
         assert_eq!(
             read_back(store, &held, &seasonal.id).await.status,
@@ -6779,6 +6796,72 @@ pub mod contract {
             read_back(store, &held, &seasonal.id).await.status,
             FactStatus::Retracted,
             "…and the store kept it"
+        );
+    }
+
+    /// **A declared type governs no write at all.**
+    ///
+    /// A type is the QUERY vocabulary — how a caller asks which things answer a
+    /// shape. What may be taken off a thing is its KIND's question, and the two
+    /// were one function until this case existed: a thing that structurally
+    /// completed any declaration anybody had made became governed by it, with
+    /// nothing offered and nothing switched on.
+    ///
+    /// **On its own this case proves nothing**, and it must be read beside
+    /// [`a_write_cannot_break_a_fit_that_already_exists`], which holds the
+    /// other half. Delete the fit guard outright and this one still passes —
+    /// "no write is refused" is exactly what a build with no guard does. Only
+    /// the kind half can tell the two apart.
+    ///
+    /// A contract case rather than a domain one: what is under test is that a
+    /// STORE takes the write and the key is gone afterwards, which only a store
+    /// can answer for.
+    pub async fn a_declared_type_governs_no_write<M: Memory>(store: &M) {
+        store
+            .declare_type(DeclaredType::new(
+                "contract-vocabulary",
+                vec![
+                    Field::new("cost", ValueType::Number),
+                    Field::new("done_on", ValueType::Date),
+                ],
+            ))
+            .await
+            .expect("declaring a type of my own is accepted");
+
+        // A THING carrying every key that type names. Its kind is `thing`, and
+        // `thing` names no keys, so nothing here is governed however completely
+        // it answers the vocabulary.
+        let answers = EntityId::new(EntityKind::THING, "contract-vocabulary-answerer");
+        let costed = capture(
+            store,
+            NewFact {
+                fields: [
+                    ("cost".to_string(), "40".to_string()),
+                    ("done_on".to_string(), "2026-04-18".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(answers.clone(), "the annual service", date(2026, 4, 18))
+            },
+        )
+        .await;
+
+        edit(
+            store,
+            &costed.address(),
+            FactPatch {
+                clear_fields: vec!["cost".to_string()],
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(
+            !read_back(store, &answers, &costed.id)
+                .await
+                .fields
+                .contains_key("cost"),
+            "a declared type is a vocabulary to ask with, so it takes nothing away from a \
+             caller: the key goes",
         );
     }
 
@@ -7389,6 +7472,7 @@ pub mod contract {
         a_reference_must_name_an_entity_that_exists(store).await;
         a_write_cannot_break_a_fit_that_already_exists(store).await;
         a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not(store).await;
+        a_declared_type_governs_no_write(store).await;
         a_long_history_is_cut_to_its_newest_and_says_how_many(store).await;
     }
 }

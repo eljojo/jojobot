@@ -697,23 +697,24 @@ fn the_orientation_teaches_the_two_endings_and_the_own_box_norm() {
     );
 }
 
-/// **Declaring a type refuses one move, and the essay is where a session
-/// learns it.**
+/// **A KIND holds a thing to its keys and a declared TYPE holds it to nothing,
+/// and the essay is where a session learns which.**
 ///
-/// The essay taught that declaring "refuses nothing", which was true until the
-/// floor rule shipped: a write that would drop a thing below a type it already
-/// fits comes back blocked. Every session reads this text at boot and plans
-/// against it, so a session holding that sentence meets a refusal it was told
-/// could not happen — and the way out (put the key back, or write the value
-/// where the type can still see it) is not something it can derive from a rule
-/// it does not know exists.
+/// The essay taught that a write below a type a thing already fits is blocked.
+/// That was the guard governing by resemblance: any thing that structurally
+/// completed any declaration anybody had made became subject to it, with
+/// nothing offered and nothing switched on. What governs is the thing's own
+/// kind. Every session reads this text at boot and plans against it, so a
+/// session holding the old sentence expects a refusal that no longer comes and
+/// avoids a write nothing would have stopped.
 ///
-/// **Both halves, or either is worthless**: the rule is exercised through the
-/// guard every adapter runs, and the essay is read for what it says about it.
-/// Prose pinned against no mechanism goes stale the same way this sentence
-/// did.
+/// **Both halves, or either is worthless**: the mechanism is exercised through
+/// the guard every adapter runs, and the essay is read for what it says about
+/// it. Prose pinned against no mechanism goes stale the same way this sentence
+/// did — and a mechanism half that only asserted a refusal would pass on a
+/// build where a type still governs.
 #[test]
-fn the_orientation_states_the_one_move_declaring_a_type_refuses() {
+fn the_orientation_says_a_kind_holds_a_thing_and_a_type_does_not() {
     use jojobot_domain::memory::guard_fit;
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
     use std::collections::BTreeMap;
@@ -722,14 +723,30 @@ fn the_orientation_states_the_one_move_declaring_a_type_refuses() {
     let fitting: BTreeMap<String, String> = [("species".to_string(), "cat".to_string())]
         .into_iter()
         .collect();
-    let refused = guard_fit(&fitting, &BTreeMap::new(), std::slice::from_ref(&pet))
-        .expect_err("taking a type's key off a thing that fits it is the move that is refused");
+    let refused = guard_fit(
+        "pet",
+        &fitting,
+        &BTreeMap::new(),
+        std::slice::from_ref(&pet),
+    )
+    .expect_err("a kind's key has to survive a write to a thing of that kind");
     assert!(
         refused.to_string().contains("species"),
         "…and the refusal names the key it would lose: {refused}"
     );
-    guard_fit(&BTreeMap::new(), &BTreeMap::new(), &[pet])
-        .expect("a thing that fits nothing has nothing to protect, so nothing else is refused");
+    // **The half that says the guard reads the KIND rather than the shape.**
+    // The same keys and the same declaration, asked about a thing of another
+    // kind: `pet` is a vocabulary this thing answers, and answering is not
+    // being held.
+    guard_fit(
+        "thing",
+        &fitting,
+        &BTreeMap::new(),
+        std::slice::from_ref(&pet),
+    )
+    .expect("a declaration that is not this thing's kind governs nothing");
+    guard_fit("pet", &BTreeMap::new(), &BTreeMap::new(), &[pet])
+        .expect("a thing below its kind's floor has nothing to protect, so nothing is refused");
 
     // Scoped to the paragraph that teaches declaring: "refus" is a word the
     // essay spends elsewhere, on the gates, and a needle over the whole text
@@ -739,19 +756,14 @@ fn the_orientation_states_the_one_move_declaring_a_type_refuses() {
         .find(|line| line.contains("Declare a type"))
         .expect("the essay teaches declaring a type");
     assert!(
-        !taught.contains("refuses nothing"),
-        "the essay still says declaring refuses nothing, and a write below the floor is \
-         refused: {taught}"
+        taught.contains("refuses nothing"),
+        "declaring a type gates no write, and a session planning around a refusal that never \
+         comes avoids writes nothing would stop: {taught}"
     );
     assert!(
-        taught.contains("refus"),
-        "…and it has to say so where declaring is taught, since silence reads as the old \
-         claim: {taught}"
-    );
-    assert!(
-        taught.contains("already fits"),
-        "…naming the one move, which is what tells a session its own edit apart from an \
-         ordinary write: {taught}"
+        taught.contains("KIND"),
+        "…and it has to say what DOES hold a thing to its keys, since a session told only \
+         that a type does not will conclude nothing does: {taught}"
     );
 }
 

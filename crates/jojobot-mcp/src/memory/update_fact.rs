@@ -153,7 +153,7 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
-    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+    use jojobot_domain::memory::types::{Field, ValueType};
 
     /// **A field is set and cleared in place, and a plain recall shows it.**
     ///
@@ -177,17 +177,24 @@ mod tests {
     async fn a_clear_that_would_break_a_fit_is_blocked_and_says_what_it_would_cost() {
         let jojobot = handler();
         writing_as(&jojobot);
+        // **A KIND, not a declared type.** What a write may take off a thing is
+        // its own kind's question; a declared type is the vocabulary a caller
+        // asks with and gates nothing.
         jojobot
             .memory
-            .declare_type(DeclaredType::new(
-                "service",
+            .declare_kind(
+                "thing",
+                jojobot_domain::memory::types::Origin::Shipped,
                 vec![
                     Field::new("cost", ValueType::Number),
                     Field::new("done_on", ValueType::Date),
                 ],
-            ))
+            )
             .await
-            .expect("declaring a type is accepted");
+            .expect("a kind may name the keys its things keep");
+        // A shipped kind rather than a new one: declaring a new kind fills the
+        // set this process parses against, and every case beside this one that
+        // stands a store up empties it again.
 
         let whole = capture_ok(
             &jojobot,
@@ -217,8 +224,8 @@ mod tests {
             .as_str()
             .unwrap_or_else(|| panic!("a refusal carries its way forward: {refused}"));
         assert!(
-            advice.contains("service") && advice.contains("cost"),
-            "the refusal names the type and the key it would cost: {advice}"
+            advice.contains("thing") && advice.contains("cost"),
+            "the refusal names the kind and the key it would cost: {advice}"
         );
         assert_eq!(refused["wrote"], false, "{refused}");
 
