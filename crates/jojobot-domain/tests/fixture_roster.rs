@@ -323,8 +323,13 @@ fn character_names() -> Vec<String> {
 }
 
 /// Whether `text` uses `word` as a word rather than as a run of letters inside
-/// a longer one — an apostrophe closes nothing, so a possessive form is a word
-/// of its own, and a contraction is not the pronoun inside it.
+/// a longer one.
+///
+/// **An apostrophe closes a word and does not open one.** Both halves were
+/// wrong here once, and only one of them mattered: reading an apostrophe as
+/// part of the word that precedes it let a contraction carry a pronoun past
+/// this gate whole. It still does not OPEN one, so a quoted word — the way
+/// this file has to write about the words it forbids — is not a use of it.
 fn says_word(text: &str, word: &str, exact_case: bool) -> bool {
     let (haystack, needle) = if exact_case {
         (text.to_string(), word.to_string())
@@ -336,10 +341,14 @@ fn says_word(text: &str, word: &str, exact_case: bool) -> bool {
             .chars()
             .next_back()
             .is_none_or(|c| !c.is_alphanumeric() && c != '\'');
+        // **An apostrophe CLOSES a word, and reading it as part of one is how a
+        // contraction hid a pronoun from this gate.** A shortened form still
+        // opens with the pronoun: the shortening changes what follows it and
+        // not what it stands for.
         let closes = haystack[at + needle.len()..]
             .chars()
             .next()
-            .is_none_or(|c| !c.is_alphanumeric() && c != '\'');
+            .is_none_or(|c| !c.is_alphanumeric());
         opens && closes
     })
 }
@@ -646,12 +655,24 @@ fn the_gate_reads_a_named_character_and_an_unnamed_role_apart() {
         "// The page the operator opens is the one this test reads.\n\
          // It is the surface he reads himself.\nfn b() {}\n",
     );
+    // **A contraction hides the pronoun from a boundary rule that lets an
+    // apostrophe close a word**, and this file's own doc comment used to say
+    // that was intended. It is the same breach with two characters after it.
+    scratch.write(
+        "crates/shortened.rs",
+        "// The listing is the one page nobody else opens.\n\
+         // He's the one who reads it.\nfn c() {}\n",
+    );
 
     let unattached = pronouns_for_nobody(&scanned_files(&scratch.0));
 
     assert!(
         unattached.iter().any(|line| line.contains("role.rs")),
         "a pronoun with only a role to stand for has to be reported: {unattached:?}"
+    );
+    assert!(
+        unattached.iter().any(|line| line.contains("shortened.rs")),
+        "…and shortening it to a contraction does not hide it: {unattached:?}"
     );
     assert!(
         !unattached.iter().any(|line| line.contains("named.rs")),
