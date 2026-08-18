@@ -15,6 +15,10 @@ jojobot is a personal-assistant server: the durable memory and message rail behi
 
 **MEMORY** is a typed graph of the operator's life. An **entity** is a noun — person · project · place · event · work · thing · org · topic · bot · pet — with a permanent handle like `person:milhouse`. A **fact** is one dated claim about an entity, addressed `person:milhouse#3`, carrying a **provenance**: `testimony` (the operator said or confirmed it) or `inference` (an AI derived it). Inference is the default and reads back as a hypothesis, never as truth; only the operator's explicit confirmation promotes a claim. A fact may draw one typed **edge** at another entity — `location` · `membership` · `attendance` · `about` · `connection` — and edges are what make cross-entity questions answerable. `connection` is the one to reach for when a link is there and how it relates was not recorded: filing that as `about` would state something nobody said. **`search` is the front door** to all of it — and to the messages in mailboxes too, when you ask for them with `include_mail: true`: one ranked list, one call.
 
+**A record carries FIELDS**, always: a flat bag of key/value pairs beside the claim, which jojobot stores and never interprets. Nothing has to be declared before you write one, and a key you invent is kept exactly as you wrote it. **A thing's fields are the fields of every record about it, folded together** — what jojobot knows about `person:milhouse` is the claims plus the keys those records carry, written down a piece at a time. **Carrying keys is what makes a thing a type.** Declare a type to say which keys it names; a thing holding all of them FITS it. Declaring admits nothing and refuses nothing — a thing is found by the keys it carries whether or not anybody declared the type — and what it buys is write-time help, plus ordering and traversal on the keys it names. Two questions, and the difference is the point: `answers_type` selects things carrying SOME of a type's keys and says which each one lacks, for finding what is worth looking at; `fits_type` keeps only the things with no gaps. Ask `answers_type` for *which of these are described like a pet, and what is missing*, and `fits_type` for *which of these ARE pets*.
+
+**jojobot hands back the small answer and keeps the large one reachable.** A write returns a receipt rather than the thing you just wrote; a message body is not echoed to the author who sent it; a delivery leaves out what it already handed you once; prose is off by default on a read, because a page is bigger than a claim. The reason is the same every time and it is about you: context is the scarce thing in this conversation, and an answer that ships everything spends it on what you already have. **Eliding is never silent** — whenever less comes back, the answer says what was left out and which call returns it. So ask for the larger thing when you need it, and expect the smaller one when you have not.
+
 **MAILBOXES** are the async rail between sessions: named boxes where one session leaves a message another will find. A message is `new` → `read` → `processed`. Reading IS taking delivery (no peek); anything read but not yet processed comes back on the next read, flagged — so crashed work resurfaces on its own. `processed` means acted-on, and it is a terminal archive: nothing here is ever deleted. **A box belongs to exactly one bot**, is named for it, and comes into being with it: a box states its owner, so whose it is is a fact you can read rather than an arrangement you have to be told. That is why there is no verb that opens one — a new box would mean a new identity, and standing somebody up to file a note is not a move you make on your own. **Yours is yours by construction**: booting as your identity is what tells you which box you drain. **Messages are searchable, on request**: `search` with `include_mail: true` finds them beside the memory hits, in every state, `processed` archives included — it is opt-in because a hit carries somebody's box, sender and a snippet, and `search` is the verb you reach for first — so a finding somebody filed for another session is reachable by anyone who asks the right question, without knowing where to look. A hit says which box and which state. `read_message` takes that one message without making the rest of the box yours — **from your own box**, because taking delivery of somebody else's mail moves it out of `new` and it never looks fresh to them again. A `processed` hit is the exception and is readable from any box: that one is history, and reading it moves nothing.
 
 ## Working here, by example
@@ -110,6 +114,76 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// **Every type filter the surface publishes is taught by the prose a
+    /// session reads, and no filter it does not publish is.**
+    ///
+    /// The same discipline as the kind test above, applied to the argument
+    /// names instead of the enum: the set is READ OFF THE SERVED SCHEMA rather
+    /// than written down here, so it cannot drift from the structs and a third
+    /// filter is covered the day it ships.
+    ///
+    /// **Both directions, because each catches a different rot.** A filter the
+    /// surface gained and the prose never learned is a capability no session
+    /// finds — the door taught eight kinds after ten shipped for exactly that
+    /// reason. A filter the prose still teaches after the surface dropped it is
+    /// worse: a session follows the instruction and the same binary refuses it.
+    ///
+    /// It is narrowed to the `_type` arguments deliberately. They are the
+    /// vocabulary of the model this door exists to teach, and the narrowing is
+    /// what keeps the negative direction free of false alarms — every `_type`
+    /// token in this prose is a filter, where a bare word could be anything.
+    #[test]
+    fn every_type_filter_the_surface_publishes_is_taught_by_the_prose() {
+        let published: Vec<String> = crate::arguments::published_argument_names()
+            .into_iter()
+            .filter(|name| name.ends_with("_type"))
+            .collect();
+        assert!(
+            published.len() >= 2,
+            "the surface publishes {published:?} — this case is reading the wrong thing if the \
+             type filters are not among them",
+        );
+
+        let taught: [(&str, &str); 2] = [
+            ("the orientation essay", super::ORIENTATION),
+            ("the server instructions", crate::INSTRUCTIONS),
+        ];
+        for (what, text) in taught {
+            for filter in &published {
+                assert!(
+                    names(text, filter),
+                    "{what} does not name `{filter}`, which the surface publishes — a session \
+                     that reads it cannot ask the question that argument answers",
+                );
+            }
+            // The other direction: a filter this prose teaches must be one a
+            // caller can actually send.
+            for token in type_tokens(text) {
+                assert!(
+                    published.contains(&token),
+                    "{what} teaches `{token}`, which no verb publishes — a session that follows \
+                     it is refused by the same build that told it to",
+                );
+            }
+        }
+    }
+
+    /// Every `snake_case_type` token this text presents in backticks, which is
+    /// how it writes an argument a caller sends.
+    fn type_tokens(text: &str) -> Vec<String> {
+        text.split('`')
+            .skip(1)
+            .step_by(2)
+            .flat_map(|quoted| {
+                quoted
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|token| token.ends_with("_type"))
+            .collect()
     }
 
     /// Whether the text names this token as a word of its own, rather than

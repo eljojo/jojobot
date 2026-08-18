@@ -202,6 +202,25 @@ pub(crate) fn memory_declined(
                  same {verb} call again with that fixed."
             ),
         )),
+        // **A well-formed call against a name that is not the caller's.** Not
+        // a malformed declaration and not a missing one: the type is there and
+        // the software owns it.
+        //
+        // So the way forward cannot be "send it again with that fixed" —
+        // nothing the caller can put in this call reaches a shipped type, and
+        // advice that implies otherwise sends a model round a loop with no
+        // end. What it can do is declare under a name of its own, and the
+        // sentence says so and names the verb to do it with (rule 68).
+        MemoryError::ShippedType { ref name } => Ok(blocked_body(
+            &EntityId(name.clone()),
+            &[],
+            format!(
+                "Nothing was written: {e}. A shipped type cannot be extended, shrunk or replaced \
+                 from here, so sending this call again will not change the answer — changing one \
+                 is a change to the software. Declare a type of your own instead: call {verb} with \
+                 a different name, and that type is yours to declare and redeclare as you like."
+            ),
+        )),
         // **A different refusal, so a different way forward.** These two are
         // not malformed calls: the arguments are well-formed and jojobot is
         // declining to bless a claim the operator has not blessed. Telling a
@@ -236,6 +255,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::InvalidEdge(_)
         | MemoryError::InvalidQuery(_)
         | MemoryError::InvalidType(_)
+        | MemoryError::ShippedType { .. }
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NotRetractable { .. }

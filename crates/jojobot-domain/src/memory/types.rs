@@ -20,6 +20,13 @@
 //! **No key is registered anywhere.** Keys are scoped by the type that names
 //! them, so there is no global list of legal keys and nothing to maintain. Two
 //! types may use one key name and mean their own thing by it.
+//!
+//! **A type knows where it came from, and that is the one thing a caller
+//! cannot write over.** The software ships some types and callers declare the
+//! rest. A shipped type is closed: a caller can neither extend it, shrink it
+//! nor replace it, and changing one is a change to the software. A caller's
+//! own types stay entirely theirs. That is the whole of what [`Origin`] buys,
+//! and the protection reads it rather than a list of names.
 
 use std::collections::BTreeMap;
 
@@ -189,6 +196,44 @@ impl ValueType {
     }
 }
 
+/// **Where a type came from.**
+///
+/// Two values, because there are two writers: the software ships a type, or a
+/// caller declares one. It is a property of the type and never something a
+/// caller states — it is read off how the declaration arrived (rule 9).
+///
+/// It is what the protection reads. A list of protected names would be an
+/// enumeration somebody has to maintain, and it would go stale on the day a
+/// type is added to it (rule 106).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Origin {
+    /// The software declared it. **Closed**: a caller cannot replace it, and
+    /// changing it is a code change.
+    Shipped,
+    /// A caller declared it. Theirs to redeclare, replace and reshape.
+    #[default]
+    Declared,
+}
+
+impl Origin {
+    /// The token this reads and writes as.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            Origin::Shipped => "shipped",
+            Origin::Declared => "declared",
+        }
+    }
+
+    /// The origin a token names, or nothing when it names none.
+    pub fn of_token(token: &str) -> Option<Origin> {
+        match token.trim() {
+            "shipped" => Some(Origin::Shipped),
+            "declared" => Some(Origin::Declared),
+            _ => None,
+        }
+    }
+}
+
 /// One key of a type, and what it holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
@@ -212,6 +257,9 @@ impl Field {
 pub struct DeclaredType {
     pub name: String,
     pub fields: Vec<Field>,
+    /// Where this declaration came from. Set by the writer that made it, never
+    /// by the caller — see [`Origin`].
+    pub origin: Origin,
 }
 
 /// A key whose value does not hold what the type said it would.
@@ -263,10 +311,26 @@ impl DeclaredType {
         self.fields.iter().find(|f| f.key == key)
     }
 
+    /// A type a caller declared. The ordinary constructor, because a caller is
+    /// who declares nearly all of them.
     pub fn new(name: &str, fields: Vec<Field>) -> DeclaredType {
         DeclaredType {
             name: name.trim().to_string(),
             fields,
+            origin: Origin::Declared,
+        }
+    }
+
+    /// **A type the software ships**, which a caller cannot replace.
+    ///
+    /// The only way one is made. Nothing on the served surface reaches this:
+    /// the verb builds its declarations with [`DeclaredType::new`], so the
+    /// origin follows how the declaration arrived rather than what anybody
+    /// asked for.
+    pub fn shipped(name: &str, fields: Vec<Field>) -> DeclaredType {
+        DeclaredType {
+            origin: Origin::Shipped,
+            ..DeclaredType::new(name, fields)
         }
     }
 
@@ -278,13 +342,16 @@ impl DeclaredType {
     /// be one record by the time either is stored, or a key reads back with a
     /// space on it and matches nothing.
     pub fn normalized(&self) -> DeclaredType {
-        DeclaredType::new(
-            &self.name,
-            self.fields
-                .iter()
-                .map(|f| Field::new(&f.key, f.holds))
-                .collect(),
-        )
+        DeclaredType {
+            origin: self.origin,
+            ..DeclaredType::new(
+                &self.name,
+                self.fields
+                    .iter()
+                    .map(|f| Field::new(&f.key, f.holds))
+                    .collect(),
+            )
+        }
     }
 
     /// **Does this record answer to this type, and how well.**
@@ -352,6 +419,30 @@ pub fn validate_type(declared: &DeclaredType) -> Result<(), MemoryError> {
             )));
         }
         seen.push(&field.key);
+    }
+    Ok(())
+}
+
+/// **May this declaration be written over what the store already holds under
+/// that name.**
+///
+/// A declaration replaces the one it lands on, whole — that is what a type is.
+/// The one thing it may not land on is a type the software ships: those are
+/// closed, and a caller can neither extend one, shrink one nor replace one.
+/// Changing a shipped type is a code change.
+///
+/// **It reads the origin rather than a list of names** (rule 106), and it is
+/// one function both stores call: a rule each of them re-implemented would be
+/// a rule they eventually disagree about, and the disagreement would show up
+/// as the real store losing a shipped type the fake kept.
+///
+/// `held` is what the store has under this name now, or nothing when the name
+/// is free.
+pub fn guard_replacement(incoming: &DeclaredType, held: Option<Origin>) -> Result<(), MemoryError> {
+    if incoming.origin == Origin::Declared && held == Some(Origin::Shipped) {
+        return Err(MemoryError::ShippedType {
+            name: incoming.name.trim().to_string(),
+        });
     }
     Ok(())
 }

@@ -87,8 +87,8 @@ slice lives there. It is a ladder of **capabilities**: each release is named
 
 Shipped so far: memory, search and edges, mailboxes, bots (AI identities with a
 handle, charter, rules, memory and an owned mailbox), every session on the
-record, the redesigned surface, events as a first-class flavour of fact, and the
-skills that ship the method in the binary. A fresh instance arrives holding one
+record, the redesigned surface, records that carry fields and things that answer
+a declared type over them, and the skills that ship the method in the binary. A fresh instance arrives holding one
 identity, `assistant`, with its mailbox — which is what lets the next rule have
 no hole in it: every memory write names the session behind it, with no exemption
 for any kind.
@@ -188,7 +188,7 @@ discovered one at a time.
 | the action | why there is no verb yet |
 |---|---|
 | **Compose a walk across several hops** | A single typed edge is filtered on and traversed today, which answers "which people are in X" in one call. What is not served is several edge filters combined, a walk of more than one hop, or a named query kept and re-run. |
-| **Read a thing's history as distinct from its current truth** | The two flavours of record are being separated; until then, chronology and truth read alike. |
+| **Read a thing's history as distinct from its current truth** | A record is rewritten in place, so nothing sits behind the current value to read. History is a second *view* over the same data rather than a second kind of record, so it waits on a substrate that keeps every write. |
 | **Get a synthesised portrait of a subject** | A projection over the graph rather than a read of one record. Waits on graph traversal. |
 | **Surface what has gone quiet, or is decaying** | Rules and rhythms are stored as ordinary facts and nothing fires on them. This is the largest single gap. |
 | **Verify a write by reading it back** | Every write already does this internally; no caller can ask for it as its own step. |

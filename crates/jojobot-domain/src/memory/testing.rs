@@ -463,6 +463,12 @@ impl Memory for InMemoryMemory {
         super::types::validate_type(&declared)?;
         let declared = declared.normalized();
         let mut held = self.types.lock().unwrap();
+        super::types::guard_replacement(
+            &declared,
+            held.iter()
+                .find(|t| t.name == declared.name)
+                .map(|t| t.origin),
+        )?;
         // Replaced whole, the way the real store replaces the rows sharing the
         // name: a type is the keys it names now.
         held.retain(|t| t.name != declared.name);
@@ -489,7 +495,7 @@ pub mod contract {
     use super::*;
     use crate::memory::graph;
     use crate::memory::search::{EdgeFilter, Hit, Search, SearchQuery};
-    use crate::memory::types::{DeclaredType, Field, ValueType};
+    use crate::memory::types::{DeclaredType, Field, Origin, ValueType};
     use crate::memory::{Boot, Edge, EdgeShape, FACTS_HEADER, FactStatus, Provenance};
     use jiff::civil::{Date, date};
 
@@ -4159,6 +4165,72 @@ pub mod contract {
         assert_eq!(read_type(store, "contract-not-empty").await.fields.len(), 1);
     }
 
+    /// **A type that ships with the software is closed to callers, and the
+    /// store is what closes it.**
+    ///
+    /// Three claims in one case, because each is worthless without the others.
+    /// The origin survives being written and read back — a store that dropped
+    /// it would leave every shipped type looking like a caller's. A caller's
+    /// declaration over that name is refused and changes nothing. And the same
+    /// caller's own type still replaces on redeclare, so what was refused is
+    /// the origin and not the act of redeclaring.
+    pub async fn a_shipped_type_refuses_a_callers_redeclaration<M: Memory>(store: &M) {
+        let shipped = DeclaredType::shipped(
+            "contract-rota",
+            vec![
+                Field::new("starts", ValueType::Date),
+                Field::new("cover", ValueType::Reference),
+            ],
+        );
+        declare(store, shipped.clone()).await;
+        assert_eq!(
+            read_type(store, "contract-rota").await.origin,
+            Origin::Shipped,
+            "where the type came from survives the store",
+        );
+
+        let refused = store
+            .declare_type(DeclaredType::new(
+                "contract-rota",
+                vec![Field::new("starts", ValueType::Date)],
+            ))
+            .await;
+        assert!(
+            matches!(refused, Err(MemoryError::ShippedType { .. })),
+            "a caller cannot declare over a type the software ships: {refused:?}",
+        );
+        assert_eq!(
+            read_type(store, "contract-rota").await,
+            shipped,
+            "…and the refused declaration left the shipped type exactly as it was",
+        );
+
+        // The positive the refusal rests on: redeclaring is not what was
+        // refused. Without this the case above passes on a store that refuses
+        // every second declaration of any name at all.
+        declare(
+            store,
+            DeclaredType::new(
+                "contract-shift",
+                vec![Field::new("starts", ValueType::Date)],
+            ),
+        )
+        .await;
+        let replaced =
+            DeclaredType::new("contract-shift", vec![Field::new("cover", ValueType::Text)]);
+        declare(store, replaced.clone()).await;
+        assert_eq!(
+            read_type(store, "contract-shift").await,
+            replaced,
+            "a caller's own type replaces on redeclare, origin and all",
+        );
+        assert_eq!(
+            read_type(store, "contract-shift").await.origin,
+            Origin::Declared,
+            "and a caller's type reads back as a caller's",
+        );
+    }
+
     /// **Two types may name one key and mean their own thing by it — through
     /// the store.**
     ///
@@ -4863,6 +4935,7 @@ pub mod contract {
         a_declared_type_reads_back(store).await;
         declaring_a_type_again_replaces_its_keys(store).await;
         a_type_with_no_keys_is_refused_and_writes_nothing(store).await;
+        a_shipped_type_refuses_a_callers_redeclaration(store).await;
         two_stored_types_may_name_one_key(store).await;
         a_stored_type_matches_a_record_that_never_declared_it(store).await;
 

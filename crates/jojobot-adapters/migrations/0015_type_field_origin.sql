@@ -1,0 +1,16 @@
+-- Where a declared type came from: the software shipped it, or a caller
+-- declared it.
+--
+-- **A caller cannot write over a type the software ships.** The refusal reads
+-- this column, so there is no list of protected names anywhere and nothing to
+-- keep in step with the code that ships them.
+--
+-- It sits on the key rows because a type IS the set of rows sharing its name,
+-- and there is no table of names beside this one. Every row of one type
+-- carries the same value: the writer replaces a type whole, so the rows cannot
+-- come apart.
+--
+-- `declared` is the default because it is what every row written before this
+-- column is: no type shipped with the software until it existed, so a row with
+-- nothing to say about its origin came from a caller.
+ALTER TABLE type_field ADD COLUMN origin VARCHAR(16) NOT NULL DEFAULT 'declared';

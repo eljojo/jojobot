@@ -182,6 +182,20 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. 
                  **Start with `search`**: one ranked list over entities, facts and free prose, \
                  every hit arriving with its surroundings — and over mailbox messages too when \
                  you pass `include_mail: true`.\
+                 \n\n**A record carries FIELDS** — a flat bag of key/value pairs beside the \
+                 claim, stored and never interpreted. Nothing has to be declared first, and a \
+                 key you invent is kept as you wrote it. **A thing's fields are the fields of \
+                 every record about it, folded together**, and **carrying keys is what makes a \
+                 thing a type**: declare a type to say which keys it names, and a thing holding \
+                 all of them fits it. Declaring admits nothing — a thing is found by the keys it \
+                 carries whether or not anybody declared the type. `answers_type` selects things \
+                 carrying SOME of a type's keys and says which each lacks; `fits_type` keeps \
+                 only the ones with no gaps.\
+                 \n\n**jojobot hands back the small answer and keeps the large one reachable.** \
+                 A write returns a receipt, not the thing you wrote; a body is not echoed to its \
+                 author; a delivery leaves out what it handed you once; prose is off by default \
+                 on a read. Context is the scarce thing, and **eliding is never silent** — the \
+                 answer says what was left out and which call returns it.\
                  \n\n**MAILBOXES.** A place to leave a message for someone who is not in this \
                  conversation. A mailbox is a named box (`[a-z0-9-]+`); a message in one is \
                  `new` → `read` → `processed`. **Read is not processed, and processed is not \

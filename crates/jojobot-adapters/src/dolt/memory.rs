@@ -34,7 +34,7 @@ use jojobot_domain::memory::{
     FactPatch, FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance,
     Retraction, Standing, apply_entity_patch, apply_fact_patch, guard, normalize_content,
     normalize_details, normalize_prose, retraction_of, screen_entity_patch, search, standing_of,
-    types::{DeclaredType, Field, ValueType, validate_type},
+    types::{DeclaredType, Field, Origin, ValueType, guard_replacement, validate_type},
     validate_content, validate_details, validate_edge, validate_entity, validate_fields,
     validate_prose, validate_subject,
 };
@@ -301,6 +301,19 @@ fn store(e: sqlx::Error) -> MemoryError {
 /// nobody wrote.
 fn unreadable(what: &str) -> MemoryError {
     MemoryError::Store(format!("a stored record could not be read: {what}"))
+}
+
+/// Where a stored type came from.
+///
+/// **A token nothing can read is treated as shipped**, which is the safe
+/// branch here (rule 62). The two mistakes are not equal: reading a shipped
+/// type as a caller's lets the next declaration overwrite it and nobody sees
+/// it happen, while reading a caller's type as shipped refuses one write and
+/// tells the caller exactly what to do instead. This is the one place `holds`
+/// takes the other branch, and for the same reason — there, the permissive
+/// answer is the one that loses nothing.
+fn read_origin(token: &str) -> Origin {
+    Origin::of_token(token).unwrap_or(Origin::Shipped)
 }
 
 fn entity_from(row: &sqlx::mysql::MySqlRow, aliases: Vec<String>) -> Result<Entity, MemoryError> {
@@ -732,10 +745,21 @@ impl Memory for DoltMemory {
     /// **A type is the set of rows sharing its name**, so declaring one is
     /// deleting those rows and writing the new set. One transaction, because a
     /// type that was half replaced would describe a record nobody declared.
+    ///
+    /// The origin of what is already there is read inside that transaction and
+    /// decides whether the replacement may happen at all: a caller cannot write
+    /// over a type the software ships.
     async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
         validate_type(&declared)?;
         let declared = declared.normalized();
         let mut tx = self.pool.begin().await.map_err(store)?;
+        let held: Option<String> =
+            sqlx::query_scalar("SELECT origin FROM type_field WHERE type_name = ? LIMIT 1")
+                .bind(&declared.name)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(store)?;
+        guard_replacement(&declared, held.as_deref().map(read_origin))?;
         sqlx::query("DELETE FROM type_field WHERE type_name = ?")
             .bind(&declared.name)
             .execute(&mut *tx)
@@ -743,13 +767,14 @@ impl Memory for DoltMemory {
             .map_err(store)?;
         for (ordinal, field) in declared.fields.iter().enumerate() {
             sqlx::query(
-                "INSERT INTO type_field (type_name, key_name, ordinal, holds)
-                 VALUES (?, ?, ?, ?)",
+                "INSERT INTO type_field (type_name, key_name, ordinal, holds, origin)
+                 VALUES (?, ?, ?, ?, ?)",
             )
             .bind(&declared.name)
             .bind(&field.key)
             .bind(ordinal as i64 + 1)
             .bind(field.holds.as_token())
+            .bind(declared.origin.as_token())
             .execute(&mut *tx)
             .await
             .map_err(store)?;
@@ -766,7 +791,7 @@ impl Memory for DoltMemory {
     /// quietly shrink a type and report the key as one no record carries.
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT type_name, key_name, holds FROM type_field
+            "SELECT type_name, key_name, holds, origin FROM type_field
              ORDER BY type_name, ordinal",
         )
         .fetch_all(&self.pool)
@@ -782,7 +807,10 @@ impl Memory for DoltMemory {
             );
             match types.last_mut() {
                 Some(last) if last.name == name => last.fields.push(field),
-                _ => types.push(DeclaredType::new(&name, vec![field])),
+                _ => types.push(DeclaredType {
+                    origin: read_origin(&row.get::<String, _>("origin")),
+                    ..DeclaredType::new(&name, vec![field])
+                }),
             }
         }
         Ok(types)

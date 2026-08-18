@@ -289,10 +289,7 @@ impl MailExcluded {
                 ..asking_for_mail()
             },
             MailExcluded::TypeFiltered => SearchQuery {
-                answers_type: Some(DeclaredType {
-                    name: "kiln-firing".into(),
-                    fields: Vec::new(),
-                }),
+                answers_type: Some(DeclaredType::new("kiln-firing", Vec::new())),
                 ..asking_for_mail()
             },
             MailExcluded::KindFiltered => SearchQuery {
@@ -645,10 +642,7 @@ mod tests {
         );
 
         let by_type = SearchQuery {
-            answers_type: Some(DeclaredType {
-                name: "kiln-firing".into(),
-                fields: Vec::new(),
-            }),
+            answers_type: Some(DeclaredType::new("kiln-firing", Vec::new())),
             ..asking_for_mail()
         };
         assert_eq!(

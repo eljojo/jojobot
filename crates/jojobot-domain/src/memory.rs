@@ -1572,6 +1572,24 @@ pub enum MemoryError {
     /// wrong** — nothing on this path checks a record against a declaration.
     #[error("invalid type: {0}")]
     InvalidType(String),
+    /// **The name belongs to a type the software ships, and a caller cannot
+    /// write over one.**
+    ///
+    /// Not a malformed call: the declaration is well formed and the name is
+    /// real. A shipped type is closed — a caller can neither extend it, shrink
+    /// it nor replace it — so the way forward is a name of the caller's own,
+    /// never the same call sent again.
+    ///
+    /// Apart from [`InvalidType`](Self::InvalidType) because the fix is
+    /// different: that one says fix the declaration, this one says the
+    /// declaration is fine and the name is not yours.
+    #[error(
+        "'{name}' is a type that ships with the software, and a shipped type is closed to callers"
+    )]
+    ShippedType {
+        /// The type name that was declared.
+        name: String,
+    },
     /// The addressed fact doesn't exist, in an entity that does. Never
     /// auto-created, never guessed at — the live addresses come back so the
     /// caller can retarget. An address that misses on its *handle* is
@@ -1842,6 +1860,12 @@ pub trait Memory: Send + Sync {
     /// ever named would describe no record. Returns what was stored, which a
     /// subsequent [`declared_types`](Memory::declared_types) must return
     /// unchanged.
+    ///
+    /// **A type the software ships is the one thing a caller cannot replace**,
+    /// and the store is what holds that: it reads the origin of what it already
+    /// has under the name and answers [`MemoryError::ShippedType`]. A shipped
+    /// declaration may still be written, which is how the software moves its
+    /// own type — see [`guard_replacement`](types::guard_replacement).
     ///
     /// A malformed declaration is [`MemoryError::InvalidType`]. Nothing else
     /// is refused — there is no near-miss screen here, because a type name

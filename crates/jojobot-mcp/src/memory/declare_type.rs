@@ -6,8 +6,13 @@
 //! **This verb admits nothing.** A record carrying a type's keys is found by
 //! `search` whether or not this was ever called, so declaring is write-time
 //! help and never a precondition. That is why there is no verb to undeclare
-//! one and no gate anywhere below this: a declaration describes, and the only
-//! thing it can be wrong about is itself.
+//! one: a declaration describes, and the only thing it can be wrong about is
+//! itself.
+//!
+//! **One thing here is refused**, and it is about the name rather than about
+//! any record: a type the software ships is closed to callers. It is still not
+//! a gate on records — nothing about that type stops being matched — it is a
+//! gate on writing over a declaration the software owns.
 
 use super::*;
 
@@ -35,6 +40,9 @@ pub struct FieldArgs {
 pub struct DeclareTypeArgs {
     /// What the type is called. Declaring a name that already exists
     /// **replaces** its keys — a type is the set of keys it names now.
+    ///
+    /// **Unless the software ships that type**, which is refused: a shipped
+    /// type is closed and the answer says so. Pick a name of your own.
     pub name: String,
     /// The keys a record of this type carries. **At least one**: a type is the
     /// keys it names, and a name with nothing under it is one nobody can query
@@ -63,9 +71,12 @@ impl Jojobot {
                        one that accumulated every key it ever named would report keys the writer \
                        had already dropped as keys a record lacks. KEYS ARE SCOPED BY THE TYPE \
                        that names them and are registered nowhere: two types may use one key \
-                       name and mean their own thing by it. The answer names every type that \
-                       exists, by name only, so you can see what is there without asking a \
-                       second time."
+                       name and mean their own thing by it. SOME TYPES SHIP WITH THE SOFTWARE and \
+                       those are CLOSED: declaring over one comes back blocked, because a caller \
+                       cannot extend, shrink or replace a type the software owns — declare a name \
+                       of your own instead. Every type you declare is yours. The answer names \
+                       every type that exists, by name only, so you can see what is there without \
+                       asking a second time."
     )]
     pub(crate) async fn declare_type(
         &self,
@@ -113,5 +124,124 @@ impl Jojobot {
             "types": known.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
         });
         json_result(&body)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::harness::*;
+    use jojobot_domain::memory::types::Origin;
+
+    fn declare_args(name: &str, keys: &[&str]) -> DeclareTypeArgs {
+        DeclareTypeArgs {
+            name: name.to_string(),
+            fields: keys
+                .iter()
+                .map(|key| FieldArgs {
+                    key: (*key).to_string(),
+                    holds: None,
+                })
+                .collect(),
+            sid: Some(TEST_SID.to_string()),
+        }
+    }
+
+    /// One type out of the store, by name.
+    async fn stored(jojobot: &Jojobot, name: &str) -> DeclaredType {
+        jojobot
+            .memory
+            .declared_types()
+            .await
+            .expect("the roster reads")
+            .into_iter()
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("the store must hold '{name}'"))
+    }
+
+    /// **A caller cannot declare over a type the software ships, and the
+    /// refusal is an answer rather than a failure** (rule 68).
+    ///
+    /// The way forward is the feature: a shipped type is closed, so re-sending
+    /// the same call will never work and the caller has to be told to use a
+    /// name of its own. Advice that read "fix the call and send it again"
+    /// would send a model round a loop that cannot end.
+    #[tokio::test]
+    async fn declaring_over_a_shipped_type_is_refused_and_writes_nothing() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+        let shipped = DeclaredType::shipped(
+            "rota",
+            vec![
+                Field::new("starts", ValueType::Date),
+                Field::new("cover", ValueType::Reference),
+            ],
+        );
+        jojobot
+            .memory
+            .declare_type(shipped.clone())
+            .await
+            .expect("the software declares its own types");
+
+        let result = jojobot
+            .declare_type(Parameters(declare_args("rota", &["starts"])))
+            .await
+            .expect("a refusal is an answer, not a protocol failure");
+
+        let body = blocked(&result);
+        let advice = body["how_to_proceed"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a refusal carries its way forward: {body}"));
+        assert!(
+            advice.contains("rota"),
+            "the refusal names the type it is about: {advice}"
+        );
+        assert!(
+            advice.contains("declare_type"),
+            "…and names the verb to call with a name of your own: {advice}"
+        );
+
+        assert_eq!(
+            stored(&jojobot, "rota").await,
+            shipped,
+            "the shipped type is untouched — keys, order and origin",
+        );
+    }
+
+    /// **A caller's own type still replaces on redeclare, through the served
+    /// surface**, and what the verb writes is a caller's type.
+    ///
+    /// The positive the refusal above rests on. Without it that case passes on
+    /// a build where `declare_type` refuses every redeclaration, which would
+    /// take a capability away from every caller rather than closing the
+    /// shipped ones.
+    #[tokio::test]
+    async fn a_callers_own_type_still_replaces_and_reads_back_as_a_callers() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+
+        jojobot
+            .declare_type(Parameters(declare_args("kiln-firing", &["glaze"])))
+            .await
+            .expect("declare ok");
+        assert_eq!(
+            stored(&jojobot, "kiln-firing").await.origin,
+            Origin::Declared,
+            "the verb declares a caller's type, whatever anybody asked for",
+        );
+
+        jojobot
+            .declare_type(Parameters(declare_args("kiln-firing", &["cone", "peak"])))
+            .await
+            .expect("a caller's own type is theirs to redeclare");
+        let held = stored(&jojobot, "kiln-firing").await;
+        assert_eq!(
+            held.fields
+                .iter()
+                .map(|f| f.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cone", "peak"],
+            "the second declaration is what the type is now: {held:?}",
+        );
     }
 }

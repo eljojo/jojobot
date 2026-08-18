@@ -122,12 +122,19 @@ Shipped and live:
   a bare fact list, so a caller does not branch on which question it asked. It
   reads the store directly rather than the search index, which is what makes it
   the way past an index that cannot scan.
-- **What declaring a type buys** — a walk carries its own record filters, and a
-  key's declared value type licenses comparison on it: before/after on a date,
-  less/greater on a number, equals on anything. **Nothing is gated by
-  declaring** — an undeclared record is still found by the keys it carries, and
-  matching stays structural. Declaring is what buys ordering and traversal on
-  top of that, which is the first thing it is worth beyond write-time help.
+- **Fields, and what declaring a type buys** — **a record carries fields**: a
+  flat bag of key/value pairs beside the claim, stored and never interpreted,
+  where a key the caller invents is kept as written. **A thing's fields are the
+  fields of every record about it, folded together**, so a thing gains fields a
+  piece at a time. **Conformance is asked of the THING, across all its records,
+  never of one record alone** — `answers_type` selects things carrying *some* of
+  a type's keys and says which each one lacks, and `fits_type` keeps only the
+  things with no gaps. **Nothing is gated by declaring**: a thing is found by
+  the keys it carries whether or not anybody declared the type, and matching
+  stays structural. A walk carries its own filters, and a key's declared value
+  type licenses comparison on it — before/after on a date, less/greater on a
+  number, equals on anything. Declaring buys write-time help plus ordering and
+  traversal on the keys it names, which is the first thing it is worth.
 
 > **One front door, over both worlds.** Mail is in the same `search` — no
 > second verb, one ranked list — and **opt-in**: `include_mail: true` reaches

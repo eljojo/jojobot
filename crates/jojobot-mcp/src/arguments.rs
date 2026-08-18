@@ -240,6 +240,38 @@ impl Jojobot {
     }
 }
 
+/// **Every argument name the surface publishes, at every level.**
+///
+/// The same walk the gate makes, asked of the whole surface instead of one
+/// call — so anything derived from this cannot drift from the structs, exactly
+/// as the gate cannot.
+///
+/// It exists for the prose tests: the door teaches a caller which arguments to
+/// send, and the only way to check that against the surface rather than
+/// against somebody's memory is to read the surface.
+#[cfg(test)]
+pub(crate) fn published_argument_names() -> std::collections::BTreeSet<String> {
+    fn walk(
+        here: &serde_json::Map<String, serde_json::Value>,
+        root: &serde_json::Map<String, serde_json::Value>,
+        found: &mut std::collections::BTreeSet<String>,
+    ) {
+        for (name, node) in here {
+            found.insert(name.clone());
+            if let Some(deeper) = fields(node, root, 0) {
+                walk(deeper, root, found);
+            }
+        }
+    }
+    let mut found = std::collections::BTreeSet::new();
+    for tool in Jojobot::tool_router().list_all() {
+        if let Some(top) = published(&tool.input_schema) {
+            walk(top, &tool.input_schema, &mut found);
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
