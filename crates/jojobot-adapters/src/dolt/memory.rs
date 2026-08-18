@@ -31,10 +31,10 @@ use async_trait::async_trait;
 use jiff::civil::Date;
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
-    FactPatch, FactStatus, FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact,
+    FactPatch, FactStatus, FieldWrite, Guarded, KeyWrite, Memory, MemoryError, NewEntity, NewFact,
     Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch, folded_fields, guard,
     guard_fit, normalize_content, normalize_details, normalize_prose, retraction_of,
-    screen_entity_patch, search, standing_of,
+    screen_entity_patch, search, standing_of, stood_after,
     types::{DeclaredType, Field, Origin, ValueType, guard_replacement, validate_type},
     validate_content, validate_details, validate_edge, validate_entity, validate_fields,
     validate_prose, validate_subject, writes_of,
@@ -188,6 +188,55 @@ impl DoltMemory {
             };
         }
         Ok(fields)
+    }
+
+    /// **Every write on this thing, each with the standing of the record that
+    /// carried it.**
+    ///
+    /// The substrate under [`Self::held_by`], read whole because that is what a
+    /// write about to change a record's standing has to be weighed against. The
+    /// status is joined in rather than assumed: a write inside a record
+    /// somebody took back still happened and no longer counts.
+    async fn writes_on(
+        tx: &mut Transaction<'_, MySql>,
+        entity: &EntityId,
+    ) -> Result<Vec<KeyWrite>, MemoryError> {
+        let rows = sqlx::query(
+            "SELECT w.`key`, w.ordinal, w.value, w.fact_id, f.status FROM field_write w
+             JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
+             WHERE w.entity = ?",
+        )
+        .bind(entity.as_str())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let mut writes = Vec::with_capacity(rows.len());
+        for row in &rows {
+            writes.push(KeyWrite {
+                key: row.try_get("key").map_err(store)?,
+                ordinal: row.try_get::<i64, _>("ordinal").map_err(store)? as u64,
+                value: row.try_get("value").map_err(store)?,
+                fact: FactId(row.try_get::<String, _>("fact_id").map_err(store)?),
+                // Read as tolerantly as a record's own status is read, and for
+                // the same reason: a token this build does not know must not
+                // make a thing unreadable.
+                status: FactStatus::from_token(&row.try_get::<String, _>("status").map_err(store)?),
+            });
+        }
+        Ok(writes)
+    }
+
+    /// **A thing's fields, projected from every write on it.**
+    ///
+    /// The other read of this table: [`Self::fields_of`] asks what one record
+    /// says, this asks what the thing holds — one value per key, the newest
+    /// write of that key on this thing, wherever it landed. Which of them wins
+    /// is decided by [`folded_fields`], the one fold both stores run.
+    async fn held_by(
+        tx: &mut Transaction<'_, MySql>,
+        entity: &EntityId,
+    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        Ok(folded_fields(&Self::writes_on(tx, entity).await?))
     }
 
     /// **Append what a write said about a record's keys**, each row taking the
@@ -668,6 +717,26 @@ impl Memory for DoltMemory {
         Ok(facts)
     }
 
+    async fn fields(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let index = Self::index(&mut tx).await?;
+        // An unknown entity is a miss with its near candidates, exactly as a
+        // recall of one is: a thing nobody has written a key on and a handle
+        // nobody created are different answers with different repairs.
+        if !index.iter().any(|e| &e.id == entity) {
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        }
+        let held = Self::held_by(&mut tx, entity).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(held)
+    }
+
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let index = Self::index(&mut tx).await?;
@@ -754,31 +823,25 @@ impl Memory for DoltMemory {
                     .to_string(),
             });
         }
+        // What the ADDRESSED RECORD carries right now — read off before the
+        // patch rewrites it, because that is what decides which of the patch's
+        // clears is a write and which names a key this record never had.
+        let carried = fact.fields.clone();
         apply_fact_patch(&mut fact, &patch)?;
         // **The thing's fields as they will stand, against the thing's fields
         // as they stand now.** A write may not drop a thing below a type it
         // already fits; a thing that fits nothing has nothing to protect, so
         // its records stay repairable. One function, called from both stores.
-        let held = Self::facts_of(&mut tx, &fact.home).await?;
-        let after: Vec<Fact> = held
-            .iter()
-            .map(|f| {
-                if f.id == fact.id {
-                    fact.clone()
-                } else {
-                    f.clone()
-                }
-            })
-            .collect();
+        let held = Self::writes_on(&mut tx, &fact.home).await?;
         guard_fit(
             &folded_fields(&held),
-            &folded_fields(&after),
+            &stood_after(&held, &fact, &patch, &carried),
             &Self::types_in(&mut tx).await?,
         )?;
         Self::write_fact(&mut tx, &fact).await?;
         // **The edit appends.** The record reads back changed — that is the
         // surface — and the value it replaced stays where it was written.
-        Self::append_writes(&mut tx, &fact.home, &fact.id, writes_of(&patch)).await?;
+        Self::append_writes(&mut tx, &fact.home, &fact.id, writes_of(&patch, &carried)).await?;
         // Read back from the substrate rather than from what the patch
         // believed, so the answer is the projection a later read will give.
         let fields = Self::fields_of(&mut tx, &fact.home, &fact.id).await?;
@@ -882,6 +945,9 @@ impl Memory for DoltMemory {
                 title: entity.name.clone(),
                 prose,
                 facts: Self::facts_of(&mut tx, &entity.id).await?,
+                // What the thing IS travels with the doc: the records beside it
+                // cannot be folded back into it.
+                fields: Self::held_by(&mut tx, &entity.id).await?,
                 entity: Some(entity),
             });
         }

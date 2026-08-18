@@ -41,7 +41,7 @@ use std::collections::BTreeMap;
 
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
-    FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, folded_fields,
+    FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction,
     guard::{self, MatchReason},
     search::{self, Behind, Coverage, DocScan, EntityRef, Hit, Search, SearchQuery},
     types::DeclaredType,
@@ -889,22 +889,16 @@ impl FullTextIndex {
                     doc_id: scan.doc_id.clone(),
                 })?,
             );
-            // **Every key this THING carries, folded from its records**, so a
-            // type filter is a clause over things rather than a pass over a
-            // ranked page. A thing is described a piece at a time, so the keys
-            // that answer a type are spread across its rows and no one row's
-            // postings can stand in for them.
+            // **Every key this THING carries**, so a type filter is a clause
+            // over things rather than a pass over a ranked page. A thing is
+            // described a piece at a time, so the keys that answer a type are
+            // spread across its rows and no one row's postings can stand in for
+            // them.
             //
-            // Only the rows this doc's entity is the subject of: a row about
-            // somebody else, written on this page, describes them and not this
-            // thing.
-            let mine: Vec<Fact> = scan
-                .facts
-                .iter()
-                .filter(|f| f.subject == entity.id)
-                .cloned()
-                .collect();
-            for key in folded_fields(&mine).keys() {
+            // Taken from what the scan says the thing holds, never folded from
+            // the rows beside it: a key the store has taken off the thing must
+            // stop being a posting, and a row still carrying it does not say so.
+            for key in scan.fields.keys() {
                 document.add_text(f.meta_key, key.trim());
             }
             writer.add_document(document).map_err(store_err)?;
@@ -1404,15 +1398,35 @@ impl FullTextIndex {
         // the things with nothing lacking. Both say how the thing answered,
         // because a caller that asked the strict question still wants to see
         // what it got rather than a bare list.
-        if let Some((declared, strictly)) = query.typed() {
-            ranked.retain_mut(|(_, _, hit)| {
+        //
+        // **Applied to every hit, whichever half it arrived on.** A pin is
+        // selected by the text alone, so a type filter that only reached the
+        // ranked half was defeated by any caller who also typed a name — and
+        // handed back a thing that does not fit with no answer on it to say so.
+        let mut governed = |hit: &mut Hit| match query.typed() {
+            Some((declared, strictly)) => {
                 answer_with(declared, hit, &mirror) && (!strictly || whole(hit))
-            });
-        }
+            }
+            None => true,
+        };
 
+        // **Pinned first, and filtered like anything else.** An exact naming
+        // still leads the answer when it survives the question, and it carries
+        // the same answer a ranked hit would, because the same step writes it.
         let mut hits = self.pinned(query, &mirror);
+        hits.retain_mut(&mut governed);
+        ranked.retain_mut(|(_, _, hit)| governed(hit));
+
+        // **Deduped by identity, never by the whole hit.** The same thing can
+        // reach the answer twice, once pinned and once ranked, and what hangs
+        // off it — the type answer — is written after the pin was built. A
+        // comparison that included it called two copies of one thing two
+        // things.
+        let mut seen: Vec<(&'static str, String)> = hits.iter().map(identity).collect();
         for (_, _, hit) in ranked {
-            if !hits.contains(&hit) {
+            let id = identity(&hit);
+            if !seen.contains(&id) {
+                seen.push(id);
                 hits.push(hit);
             }
         }
@@ -1499,6 +1513,39 @@ fn tiebreak(hit: &Hit) -> String {
         Hit::Prose { doc_id, .. } => doc_id.clone(),
         Hit::Message { message, .. } => format!("{}/{}", message.mailbox, message.id),
         Hit::Session { session, bot, .. } => format!("{bot}/{}", session.0),
+    }
+}
+
+/// **Which thing a hit is about** — its class and what names it, and nothing
+/// that was computed for this answer.
+///
+/// What makes two hits the same hit is that they name the same thing, not that
+/// every field on them agrees: the type answer is written onto a hit after it
+/// was built, so two copies of one entity can differ in it while still being
+/// one entity. The class is in the key because the addresses are drawn from
+/// different spaces — a doc id and a handle are free to collide, and two hits
+/// of different classes are never the same hit.
+///
+/// **Deliberately not [`tiebreak`].** That is a sort key and only has to be
+/// stable; a run's id is enough to order its beats and nowhere near enough to
+/// tell them apart.
+fn identity(hit: &Hit) -> (&'static str, String) {
+    match hit {
+        Hit::Entity { entity, .. } => (CLASS_ENTITY, entity.id.to_string()),
+        Hit::Fact { fact, .. } => (CLASS_FACT, fact.address().to_string()),
+        Hit::Prose { doc_id, .. } => (CLASS_PROSE, doc_id.clone()),
+        Hit::Message { message, .. } => {
+            (CLASS_MESSAGE, format!("{}/{}", message.mailbox, message.id))
+        }
+        // **A beat has no address of its own** — the id on it names the run,
+        // and a run is many beats — so what tells two apart is what they say.
+        // Keying on the run alone made a whole chronology read as one line.
+        Hit::Session {
+            session,
+            bot,
+            snippet,
+            ..
+        } => (CLASS_SESSION, format!("{bot}/{}/{snippet}", session.0)),
     }
 }
 
@@ -1769,6 +1816,13 @@ impl Memory for IndexedMemory {
         self.inner.history(entity, key).await
     }
 
+    /// **Straight through, and it does not touch the index.** What a thing
+    /// holds is decided by the order its keys were written, which is the
+    /// store's record and not something a projection could re-derive.
+    async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
+        self.inner.fields(entity).await
+    }
+
     async fn update_fact(
         &self,
         address: &FactAddress,
@@ -1870,19 +1924,18 @@ fn whole(hit: &Hit) -> bool {
     }
 }
 
-/// **A thing's fields, folded from every record about it the mirror holds.**
+/// **What a thing holds, as the scan that mirrored its doc read it.**
 ///
-/// The mirror keeps each doc's whole scan, so this reads the same rows the
-/// store handed over — and a thing's rows can sit on more than one doc, which
-/// is why it walks all of them rather than the one the entity declares.
+/// The mirror keeps each doc's whole scan, so this is the store's own answer
+/// rather than one folded a second time here — which is the only way it can be
+/// had: the rows beside it have already projected away which write was newest
+/// on the thing and which key was taken off it.
 fn fields_of(mirror: &[DocMirror], id: &EntityId) -> BTreeMap<String, String> {
-    let mine: Vec<Fact> = mirror
+    mirror
         .iter()
-        .flat_map(|d| d.scanned.facts.iter())
-        .filter(|f| &f.subject == id)
-        .cloned()
-        .collect();
-    folded_fields(&mine)
+        .find(|d| d.scanned.entity.as_ref().is_some_and(|e| &e.id == id))
+        .map(|d| d.scanned.fields.clone())
+        .unwrap_or_default()
 }
 
 /// One half of the corpus behind `search`, able to bring itself level with the
@@ -2209,7 +2262,8 @@ mod tests {
     use jojobot_domain::memory::search::{DEFAULT_LIMIT, EdgeFilter, EntityRef};
     use jojobot_domain::memory::testing::{InMemoryMemory, contract};
     use jojobot_domain::memory::{
-        Boot, Edge, EdgeShape, FactStatus, Provenance, Standing, validate_subject,
+        Boot, Edge, EdgeShape, FactStatus, KeyWrite, NewEntity, NewFact, Provenance, Standing,
+        folded_fields, validate_subject,
     };
 
     use super::*;
@@ -2232,12 +2286,43 @@ mod tests {
     /// A doc built by hand, so the index's behaviour can be examined without a
     /// store underneath it.
     fn scan(doc_id: &str, entity: Option<Entity>, prose: &str, facts: Vec<Fact>) -> DocScan {
+        // **The store is what folds a thing's fields, so this stands in for
+        // it — by calling the one fold, never by restating what it does.**
+        // Which writes count and which keys never fold are the fold's to
+        // decide; a fixture with its own copy of those rules drifts from the
+        // store silently and teaches the index a system nobody runs.
+        //
+        // The writes are recovered from the records because a doc built here
+        // has no substrate under it: every doc writes each of its keys once, in
+        // the order its records are listed, which is the case where the records
+        // and the writes agree about what the thing holds. A fixture that needs
+        // them to disagree says so itself.
+        let mut ordinals: BTreeMap<String, u64> = BTreeMap::new();
+        let mut writes: Vec<KeyWrite> = Vec::new();
+        for fact in facts
+            .iter()
+            .filter(|f| entity.as_ref().is_some_and(|e| f.home == e.id))
+        {
+            for (key, value) in &fact.fields {
+                let ordinal = ordinals.entry(key.clone()).or_default();
+                *ordinal += 1;
+                writes.push(KeyWrite {
+                    key: key.clone(),
+                    ordinal: *ordinal,
+                    value: Some(value.clone()),
+                    fact: fact.id.clone(),
+                    status: fact.status,
+                });
+            }
+        }
+        let fields = folded_fields(&writes);
         DocScan {
             doc_id: doc_id.into(),
             title: entity.as_ref().map(|e| e.name.clone()).unwrap_or_default(),
             prose: prose.into(),
             entity,
             facts,
+            fields,
         }
     }
 
@@ -2291,6 +2376,58 @@ mod tests {
             .ingest_all(&scans, index.reading_begins())
             .expect("ingest");
         index
+    }
+
+    /// **The hand-built doc holds what the store would hold.**
+    ///
+    /// [`scan`] stands in for a store, so the day it stops folding the way the
+    /// store folds it is a fake telling the tests a story about a system that
+    /// does not exist. The records here are the awkward pair: one taken back,
+    /// and the account that took it back — which carries the marker key
+    /// jojobot writes itself and no thing holds.
+    #[tokio::test]
+    async fn a_hand_built_doc_holds_what_the_store_would_hold() {
+        let store = InMemoryMemory::new();
+        let who = EntityId::person("milhouse");
+        store
+            .add_entity(NewEntity::new(who.clone(), "Milhouse", "user-named"))
+            .await
+            .expect("the entity lands")
+            .written()
+            .expect("nothing to disambiguate");
+        let claim = store
+            .capture(NewFact {
+                fields: [("crates".to_string(), "4".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(who.clone(), "four crates arrived", date(2026, 4, 18))
+            })
+            .await
+            .expect("the claim lands")
+            .written()
+            .expect("nothing to disambiguate");
+        store
+            .retract(&claim.address(), Some("it was three"), date(2026, 4, 19))
+            .await
+            .expect("the retraction lands");
+
+        let held = store.scan().await.expect("scan ok");
+        let stored = held
+            .iter()
+            .find(|d| d.entity.as_ref().is_some_and(|e| e.id == who))
+            .expect("the thing has a doc");
+        let built = scan(
+            &stored.doc_id,
+            stored.entity.clone(),
+            &stored.prose,
+            stored.facts.clone(),
+        );
+        assert_eq!(
+            built.fields, stored.fields,
+            "a doc built here holds what the store holds, or the fixture is teaching \
+             the index a rule the store does not have: {:?}",
+            stored.facts
+        );
     }
 
     /// **The read-side leak, closed.** A detail that lives only in a doc's prose —
@@ -2931,6 +3068,118 @@ mod tests {
         }
     }
 
+    /// **A pinned hit is a hit, so the type filter governs it too.**
+    ///
+    /// An exact naming of an entity is prepended to the answer, and that path
+    /// consults the text alone. Left ungoverned it defeats the whole strict
+    /// question: a caller asking *which of these ARE deliveries* gets back a
+    /// thing that is not one, and gets it with no answer attached, so the gap
+    /// is not even reported.
+    ///
+    /// Three things all answer to the same name here and only one fits, so
+    /// every read below asserts both halves at once — the one that fits is
+    /// there, the ones that do not are gone. A bare absence would pass over an
+    /// empty answer.
+    #[tokio::test]
+    async fn a_type_filter_governs_the_pinned_hits_too() {
+        use jojobot_domain::memory::types::{Field as Key, ValueType};
+        let delivery = DeclaredType::new(
+            "delivery",
+            vec![
+                Key::new("arrives", ValueType::Date),
+                Key::new("crates", ValueType::Number),
+            ],
+        );
+
+        let carrying = |home: &str, keys: &[(&str, &str)]| Fact {
+            fields: keys
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            ..fact(
+                home,
+                "f1",
+                "an ordinary claim, with keys on it",
+                date(2026, 1, 1),
+            )
+        };
+        // Every one of them answers to "Beta", so every one of them pins.
+        let answers_to_beta = |id: &str, name: &str| Entity {
+            aliases: vec!["Beta".into()],
+            ..entity(id, name)
+        };
+        let index = index_of(vec![
+            scan(
+                "doc-milhouse",
+                Some(answers_to_beta("person:milhouse", "Milhouse")),
+                "",
+                vec![carrying(
+                    "person:milhouse",
+                    &[("arrives", "2026-08-10"), ("crates", "4")],
+                )],
+            ),
+            scan(
+                "doc-beta",
+                Some(entity("person:beta", "Beta")),
+                "",
+                vec![carrying("person:beta", &[("arrives", "2026-08-11")])],
+            ),
+            scan(
+                "doc-maude",
+                Some(answers_to_beta("person:maude", "Maude")),
+                "",
+                vec![fact(
+                    "person:maude",
+                    "f1",
+                    "an ordinary claim, with no keys on it",
+                    date(2026, 1, 1),
+                )],
+            ),
+        ]);
+
+        let things = |query: SearchQuery| -> Vec<(String, Option<Vec<String>>)> {
+            let mut found: Vec<(String, Option<Vec<String>>)> = index
+                .search(&query)
+                .expect("search ok")
+                .iter()
+                .filter_map(|hit| match hit {
+                    Hit::Entity {
+                        entity, answers, ..
+                    } => Some((
+                        entity.id.to_string(),
+                        answers.as_deref().map(|m| m.lacking.clone()),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            found.sort();
+            found
+        };
+
+        assert_eq!(
+            things(SearchQuery {
+                fits_type: Some(delivery.clone()),
+                ..SearchQuery::text("Beta")
+            }),
+            vec![("person:milhouse".to_string(), Some(Vec::new()))],
+            "the strict question keeps only the thing carrying every key, \
+             however it reached the answer",
+        );
+
+        assert_eq!(
+            things(SearchQuery {
+                answers_type: Some(delivery.clone()),
+                ..SearchQuery::text("Beta")
+            }),
+            vec![
+                ("person:beta".to_string(), Some(vec!["crates".to_string()])),
+                ("person:milhouse".to_string(), Some(Vec::new())),
+            ],
+            "the tolerant question keeps the partial thing ONCE, saying what it \
+             lacks, drops the thing carrying no key at all, and keeps the whole one",
+        );
+    }
+
     /// The limit is honoured, and defaults to twenty.
     #[tokio::test]
     async fn the_limit_caps_the_list_and_defaults_to_twenty() {
@@ -3292,6 +3541,7 @@ mod tests {
                     "keeps a ferret",
                     date(2026, 1, 1),
                 )],
+                fields: Default::default(),
             },
             DocScan {
                 doc_id: "outline-uuid-9b2c".into(),
@@ -3299,6 +3549,7 @@ mod tests {
                 prose: "Beta plays the sousaphone.".into(),
                 entity: Some(entity("person:beta", "Beta")),
                 facts: vec![fact("person:beta", "f1", "keeps a gecko", date(2026, 1, 1))],
+                fields: Default::default(),
             },
         ])
     }
@@ -3820,6 +4071,7 @@ mod tests {
                     prose: "the kiln was relined last spring".into(),
                     entity: Some(entity("person:alpha", "Alpha")),
                     facts: Vec::new(),
+                    fields: Default::default(),
                 }],
                 index.reading_begins(),
             )
@@ -4033,6 +4285,13 @@ mod tests {
                 refs: fact.refs,
                 derived_from: fact.derived_from,
             };
+            // A store that took a write says what the thing holds afterwards.
+            doc.fields.extend(
+                stored
+                    .fields
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone())),
+            );
             doc.facts.push(stored.clone());
             Ok(Guarded::Written(stored))
         }
@@ -4073,6 +4332,9 @@ mod tests {
         async fn history(&self, _: &EntityId, _: &str) -> Result<Vec<FieldWrite>, MemoryError> {
             unimplemented!("this double only scans")
         }
+        async fn fields(&self, _: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
+            unimplemented!("this double only scans")
+        }
         /// Replace the prose on the page that declares this entity. **No
         /// guard**, for the reason `capture` has none.
         async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
@@ -4111,6 +4373,7 @@ mod tests {
             prose: String::new(),
             entity: Some(entity("person:alpha", "Alpha")),
             facts: Vec::new(),
+            fields: Default::default(),
         }])
     }
 
@@ -4408,6 +4671,7 @@ mod tests {
                 prose: String::new(),
                 entity: Some(entity("person:alpha", "Alpha")),
                 facts: Vec::new(),
+                fields: Default::default(),
             },
             DocScan {
                 doc_id: "outline-uuid-b2c9".into(),
@@ -4420,6 +4684,7 @@ mod tests {
                     "restrings the harp",
                     date(2026, 1, 1),
                 )],
+                fields: Default::default(),
             },
         ]);
         inner.blinded();
@@ -4562,6 +4827,7 @@ mod tests {
                 "keeps a ferret",
                 date(2026, 1, 1),
             )],
+            fields: Default::default(),
         }]);
         let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
         store.rebuild().await.expect("rebuild");

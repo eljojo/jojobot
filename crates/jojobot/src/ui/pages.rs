@@ -1,7 +1,7 @@
 //! The pages themselves — HTML written by hand, because a directory listing is
 //! a heading and a table and nothing that needs a template engine.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use axum::{
     extract::{Path, State},
@@ -9,7 +9,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 
-use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact, folded_fields};
+use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact};
 use jojobot_domain::text;
 
 use crate::AppState;
@@ -164,6 +164,15 @@ pub async fn node(
         Err(err) => return unreadable(err),
     };
 
+    // **What the thing IS is a read of its own**, and it fails the page the way
+    // a failed read of its records does: the row is the headline of this page,
+    // and a page that quietly showed an empty one would be reporting that
+    // nothing is recorded here.
+    let held = match state.memory.fields(&entity.id).await {
+        Ok(held) => held,
+        Err(err) => return unreadable(err),
+    };
+
     // Prose is the human half of the record — a charter, a portrait. Its
     // absence is ordinary, and a store that cannot be asked for it costs the
     // prose rather than the page.
@@ -182,9 +191,9 @@ pub async fn node(
         trail(&handles)
     );
     body.push_str(&about(entity));
-    body.push_str(&fields_section(&facts, &canonical));
+    body.push_str(&fields_section(&held, &canonical));
     body.push_str(&history_section(&state, &entity.id, asked.history.as_deref()).await);
-    body.push_str(&conforms_section(&state, &facts).await);
+    body.push_str(&conforms_section(&state, &held).await);
 
     body.push_str("<h2>Below here</h2>\n");
     if children.is_empty() {
@@ -432,24 +441,28 @@ fn about(entity: &Entity) -> String {
     format!("<table>\n{rows}</table>\n")
 }
 
-/// **What the thing IS: its records' fields, folded into one map.**
+/// **What the thing IS: one value per key, the newest write.**
 ///
 /// A thing gets described a piece at a time, so this is the map every type
 /// question is asked of — not a per-record scattering the reader has to merge
-/// in their head. It is the fold the domain does, over the facts this page has
-/// already read, so it costs nothing beyond what the page was doing anyway.
+/// in their head.
+///
+/// **Asked of the store rather than folded from the records this page already
+/// read**, because those two answers differ: a record has projected away which
+/// of its writes was the newest on the thing and which key was taken off it, so
+/// a page folding them for itself would show a value the store does not hold
+/// and a key it has dropped.
 ///
 /// **The heading stands even when there is nothing under it.** A section that
 /// vanished would leave a reader unable to tell a thing with no fields from a
 /// page that does not show them, which is the very confusion this section
 /// exists to end.
-fn fields_section(facts: &[Fact], canonical: &str) -> String {
-    let folded = folded_fields(facts);
+fn fields_section(folded: &BTreeMap<String, String>, canonical: &str) -> String {
     if folded.is_empty() {
         return "<h2>Fields</h2>\n<p>Nothing is recorded on this.</p>\n".to_string();
     }
     let mut out = String::from("<h2>Fields</h2>\n<table id=\"fields\">\n");
-    for (key, value) in &folded {
+    for (key, value) in folded {
         // **The key is a link to its own writes.** What a key holds now is one
         // answer and how it got there is the other, and a page that showed
         // only the first is a page where the second cannot be asked for.
@@ -497,9 +510,13 @@ async fn history_section(state: &AppState, entity: &EntityId, key: Option<&str>)
             escape(key)
         );
     }
+    // **The last column is headed as the facts table heads the same axis.**
+    // It carries the record's status, and "Standing" is spent one section down
+    // on settled/open: one word over two axes on one page reads as either a
+    // write that can be settled or a standing that can be retracted.
     let mut out = format!(
         "<h2>Writes of {}</h2>\n<table id=\"history\">\n\
-         <tr><th>Value</th><th>When</th><th>Record</th><th>Standing</th></tr>\n",
+         <tr><th>Value</th><th>When</th><th>Record</th><th>State</th></tr>\n",
         escape(key)
     );
     for write in &writes {
@@ -527,14 +544,13 @@ async fn history_section(state: &AppState, entity: &EntityId, key: Option<&str>)
 /// work out for himself — he would have to hold every declaration in his head.
 ///
 /// **One extra read, and no walk.** The declarations are a table of their own
-/// and the fold is over facts already in hand, so this costs one query on a
+/// and the thing's fields are already in hand, so this costs one query on a
 /// small table rather than a pass over the corpus per thing.
 ///
 /// **Absent when the thing answers nothing.** A standing "conforms to nothing"
 /// on every page is a judgement nobody asked for, and a store with no
 /// declarations at all would carry it everywhere.
-async fn conforms_section(state: &AppState, facts: &[Fact]) -> String {
-    let folded = folded_fields(facts);
+async fn conforms_section(state: &AppState, folded: &BTreeMap<String, String>) -> String {
     if folded.is_empty() {
         return String::new();
     }
@@ -547,7 +563,7 @@ async fn conforms_section(state: &AppState, facts: &[Fact]) -> String {
     };
     let mut rows = String::new();
     for kind in &declared {
-        let Some(found) = kind.matched_by(&folded) else {
+        let Some(found) = kind.matched_by(folded) else {
             continue;
         };
         rows.push_str(&format!(

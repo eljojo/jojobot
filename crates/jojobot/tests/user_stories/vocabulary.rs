@@ -160,15 +160,21 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
     refused.says("rhythm");
     refused.says("declare_type");
 
-    // The write really was refused: the shipped keys are still what they were,
-    // read back through the surface rather than believed.
-    let after = s
-        .call(
-            "declare_type",
-            json!({ "name": "loan", "fields": [{ "key": "due_back" }] }),
-        )
+    // The write really was refused, and the vocabulary is read back rather than
+    // believed — through calls that WRITE NOTHING. A re-read that declared
+    // anything would be asking what the types are by changing one of them.
+    //
+    // The list first: asking a question of a type nobody declared comes back
+    // naming every type that does exist, which is how a session learns what the
+    // vocabulary is without declaring something to find out.
+    let listed = s
+        .refused("search", json!({ "answers_type": "warranty" }))
         .await;
-    after.says("\"name\":\"rhythm\",\"origin\":\"shipped\"");
+    listed.says("Types that do exist");
+    listed.says("rhythm");
+    // …and the keys under that name are the ones the software shipped: the
+    // wrench still lacks exactly the two it never wrote, and the key the
+    // refused call would have replaced them with is nowhere.
     let still = s
         .call("search", json!({ "answers_type": "rhythm", "limit": 50 }))
         .await;

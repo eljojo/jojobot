@@ -48,7 +48,7 @@ pub struct SearchArgs {
     /// thing carrying the type's keys comes back whether or not anybody
     /// declared it to be one, so this finds things nobody filed under it. It is
     /// asked of the thing rather than of one of its records — what a thing is
-    /// gets written down a piece at a time, and the pieces count together.
+    /// gets written down a piece at a time, and every write on it counts.
     ///
     /// A thing carrying only some of the keys comes back too, saying which it
     /// lacks — partial matches are the ones usually worth finding, so they are
@@ -65,7 +65,7 @@ pub struct SearchArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answers_type: Option<String>,
     /// **Only the things that FIT this type**, by name — the ones carrying
-    /// EVERY key it names, counted across everything recorded about each.
+    /// EVERY key it names, counted over every write on each.
     ///
     /// The strict half of the same question, and which one you are asking is
     /// yours to choose: `answers_type` asks *which of these are described like
@@ -479,9 +479,16 @@ impl Jojobot {
                        prose AND the messages in mailboxes at once. `query` is free text (ALL \
                        words must match) and is optional when a filter narrows it: kind · status \
                        (default active; superseded is excluded unless named) · provenance · \
-                       subject · edge {shape, object} · answers_type; a call with neither query \
-                       nor one of those filters is refused, and include_mail is not one of them \
-                       — it says what to search, not what to narrow to. kind + edge answers a cross-entity question in one \
+                       subject · edge {shape, object} · answers_type · fits_type; a call with \
+                       neither query nor one of those filters is refused, and include_mail is not \
+                       one of them \
+                       — it says what to search, not what to narrow to. The two type filters are \
+                       one question asked two ways, and a call names one of them, never both: \
+                       answers_type keeps the things carrying SOME of a type's keys and says \
+                       which each one lacks, fits_type keeps only the things with no gaps. Reach \
+                       for answers_type unless you have a reason not to — a thing that arrives \
+                       with its gaps named can be judged, and a thing fits_type leaves out looks \
+                       exactly like a thing that is not there. kind + edge answers a cross-entity question in one \
                        call (\"which people are in X\") by walking typed edges — prose that \
                        merely mentions X is not an answer. No hit comes back bare: a fact \
                        carries the whole claim, its address (feed that to update_fact), and who it \
@@ -1461,6 +1468,106 @@ mod tests {
             description.contains("kind") && description.contains("mail"),
             "the description tells a caller kind and mail interact: {description}"
         );
+    }
+
+    /// **The description states a refusal rule, so it owes the list that rule
+    /// runs on.**
+    ///
+    /// "A call with neither query nor one of those filters is refused" is a
+    /// promise about what the validator does, and it is true only while the
+    /// list beside it is the validator's own. A filter the validator accepts
+    /// alone and the list leaves out is a caller told its call will be refused
+    /// when it will not — so the caller invents a text query to get past a gate
+    /// that was never there, and narrows an answer it wanted whole.
+    ///
+    /// **Both halves per filter**, because either alone passes on nothing: the
+    /// validator really accepts that filter as a query's stand-in, and the
+    /// description really names it. Matching a name the validator refuses would
+    /// be pinning prose about a rule that does not exist.
+    #[test]
+    fn the_search_description_names_every_filter_that_stands_in_for_a_query() {
+        let a_type = || DeclaredType::new("kiln-firing", vec![Field::new("cone", ValueType::Text)]);
+        let alone = [
+            (
+                "kind",
+                SearchQuery {
+                    kind: Some(EntityKind::Person),
+                    ..SearchQuery::default()
+                },
+            ),
+            (
+                "status",
+                SearchQuery {
+                    status: Some(FactStatus::Superseded),
+                    ..SearchQuery::default()
+                },
+            ),
+            (
+                "provenance",
+                SearchQuery {
+                    provenance: Some(Provenance::Testimony),
+                    ..SearchQuery::default()
+                },
+            ),
+            (
+                "subject",
+                SearchQuery {
+                    subject: Some(EntityId::new(EntityKind::Person, "alpha")),
+                    ..SearchQuery::default()
+                },
+            ),
+            (
+                "edge",
+                SearchQuery {
+                    edge: Some(EdgeFilter {
+                        shape: Some(EdgeShape::Location),
+                        object: EntityId::new(EntityKind::Place, "shelbyville"),
+                    }),
+                    ..SearchQuery::default()
+                },
+            ),
+            (
+                "answers_type",
+                SearchQuery {
+                    answers_type: Some(a_type()),
+                    ..SearchQuery::default()
+                },
+            ),
+            (
+                "fits_type",
+                SearchQuery {
+                    fits_type: Some(a_type()),
+                    ..SearchQuery::default()
+                },
+            ),
+        ];
+
+        let tools = Jojobot::tool_router().list_all();
+        let description = tools
+            .iter()
+            .find(|t| t.name == "search")
+            .expect("search is a tool")
+            .description
+            .as_deref()
+            .unwrap_or_default()
+            .to_string();
+
+        for (name, query) in alone {
+            assert!(
+                query.text.is_none(),
+                "{name} has to stand in for the query, so this case carries no text"
+            );
+            query.validate().unwrap_or_else(|e| {
+                panic!(
+                    "{name} alone is accepted as a query's stand-in, but the validator said: {e}"
+                )
+            });
+            assert!(
+                description.contains(name),
+                "…and the description states the refusal without naming {name}, so a caller \
+                 passing it alone reads that its call will be refused: {description}"
+            );
+        }
     }
 
     /// `search`'s description must never claim mail is unreachable from

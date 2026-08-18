@@ -584,6 +584,64 @@ fn the_orientation_teaches_the_two_endings_and_the_own_box_norm() {
     );
 }
 
+/// **Declaring a type refuses one move, and the essay is where a session
+/// learns it.**
+///
+/// The essay taught that declaring "refuses nothing", which was true until the
+/// floor rule shipped: a write that would drop a thing below a type it already
+/// fits comes back blocked. Every session reads this text at boot and plans
+/// against it, so a session holding that sentence meets a refusal it was told
+/// could not happen — and the way out (put the key back, or write the value
+/// where the type can still see it) is not something it can derive from a rule
+/// it does not know exists.
+///
+/// **Both halves, or either is worthless**: the rule is exercised through the
+/// guard every adapter runs, and the essay is read for what it says about it.
+/// Prose pinned against no mechanism goes stale the same way this sentence
+/// did.
+#[test]
+fn the_orientation_states_the_one_move_declaring_a_type_refuses() {
+    use jojobot_domain::memory::guard_fit;
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+    use std::collections::BTreeMap;
+
+    let pet = DeclaredType::new("pet", vec![Field::new("species", ValueType::Text)]);
+    let fitting: BTreeMap<String, String> = [("species".to_string(), "cat".to_string())]
+        .into_iter()
+        .collect();
+    let refused = guard_fit(&fitting, &BTreeMap::new(), std::slice::from_ref(&pet))
+        .expect_err("taking a type's key off a thing that fits it is the move that is refused");
+    assert!(
+        refused.to_string().contains("species"),
+        "…and the refusal names the key it would lose: {refused}"
+    );
+    guard_fit(&BTreeMap::new(), &BTreeMap::new(), &[pet])
+        .expect("a thing that fits nothing has nothing to protect, so nothing else is refused");
+
+    // Scoped to the paragraph that teaches declaring: "refus" is a word the
+    // essay spends elsewhere, on the gates, and a needle over the whole text
+    // would find one of those and call it this rule.
+    let taught = ORIENTATION
+        .lines()
+        .find(|line| line.contains("Declare a type"))
+        .expect("the essay teaches declaring a type");
+    assert!(
+        !taught.contains("refuses nothing"),
+        "the essay still says declaring refuses nothing, and a write below the floor is \
+         refused: {taught}"
+    );
+    assert!(
+        taught.contains("refus"),
+        "…and it has to say so where declaring is taught, since silence reads as the old \
+         claim: {taught}"
+    );
+    assert!(
+        taught.contains("already fits"),
+        "…naming the one move, which is what tells a session its own edit apart from an \
+         ordinary write: {taught}"
+    );
+}
+
 /// **Every word an agent reads before a call, and `search`'s coverage notes**
 /// — tool descriptions, the argument-schema field docs, the orientation essay,
 /// the server instructions, and that one set of notes.
@@ -784,6 +842,116 @@ fn no_agent_facing_text_teaches_the_store() {
         unused.is_empty(),
         "these exceptions no longer match anything — delete them, or the allowlist stops being \
          a record of what is here and becomes a hole nobody reviewed: {unused:?}"
+    );
+}
+
+/// The sentences of one piece of served text, lowercased.
+///
+/// **A line break is not a sentence end here.** An argument doc reaches the
+/// schema wrapped where its doc comment was wrapped — as the two characters
+/// `\n`, since the schema arrives JSON-escaped — so a check that cut at those
+/// would read the halves of one claim as two unrelated sentences and see
+/// neither whole. Breaks become spaces; only the sentence marks divide.
+fn sentences(text: &str) -> Vec<String> {
+    text.replace("\\n", " ")
+        .replace('\n', " ")
+        .split(['.', '!', '?'])
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// Whether this sentence says `marker` — as a word, or verbatim when the marker
+/// is a phrase.
+fn says(sentence: &str, marker: &str) -> bool {
+    if marker.contains(' ') {
+        sentence.contains(marker)
+    } else {
+        mentions(sentence, marker)
+    }
+}
+
+/// **A thing's fields are its WRITES, and the served text says so.**
+///
+/// The fold is over every write on a thing, the newest write of each key
+/// winning, and a write that takes a key off takes it off the thing. The text
+/// used to say a thing's fields were the fields of every RECORD about it,
+/// folded together — the union of its records' keys — and that sentence
+/// describes a different store. An agent reading it concludes that clearing a
+/// key on one record leaves the key alive from another, and plans a write on
+/// that basis. The shipped contract says which system exists: two records
+/// projecting `{chain_wear: 9}` and `{}`, and the thing does not hold the key
+/// (`a_cleared_key_is_not_resurrected_by_an_older_record`).
+///
+/// `no_agent_facing_text_teaches_the_store` cannot reach this one. That guard
+/// sweeps for retired WORDS, and every word in the false sentence is current —
+/// what was retired here is the claim.
+#[test]
+fn no_agent_facing_text_folds_the_records() {
+    // A sentence that names a thing's records AND one of these is saying the
+    // fold is taken over the records.
+    const UNION: &[(&str, &str)] = &[
+        (
+            "folded",
+            "the fold is over the writes, not over the records",
+        ),
+        (
+            "together",
+            "records do not combine — the newest write of a key is the whole answer for it",
+        ),
+        (
+            "between them",
+            "a key one record dropped is not held up by another record that carries it",
+        ),
+    ];
+    // Where the model itself is taught, and where it therefore has to be right:
+    // the essay a fresh session reads, the instructions a client is handed on
+    // connect, and the contract of the verb that serves the fields.
+    const TAUGHT_BY: &[&str] = &[
+        "the orientation essay",
+        "the server instructions",
+        "recall's description",
+    ];
+
+    let served = agent_facing_text();
+    assert!(
+        !served.is_empty(),
+        "nothing was gathered, so the sweep below reads no text at all and passes on an empty \
+         corpus"
+    );
+
+    let mut folding: Vec<String> = Vec::new();
+    let mut taught: Vec<&str> = Vec::new();
+    for (what, text) in &served {
+        for sentence in sentences(text) {
+            if mentions(&sentence, "record") {
+                for (marker, why) in UNION {
+                    if says(&sentence, marker) {
+                        folding.push(format!("{what} says {marker:?} of its records — {why}"));
+                    }
+                }
+            }
+            // The true claim, in whatever words the site keeps: a fold, taken
+            // over writes, the newest one winning.
+            if (says(&sentence, "folded") || says(&sentence, "fold"))
+                && says(&sentence, "write")
+                && says(&sentence, "newest")
+            {
+                taught.push(what);
+            }
+        }
+    }
+    assert!(
+        folding.is_empty(),
+        "agent-facing text folds a thing's RECORDS. An agent reads this as the truth about what \
+         it is calling, and plans a clear that the store will not honour:\n  {}",
+        folding.join("\n  ")
+    );
+    let missing: Vec<&&str> = TAUGHT_BY.iter().filter(|w| !taught.contains(w)).collect();
+    assert!(
+        missing.is_empty(),
+        "the false sentence is gone and nothing put the true one in its place — these teach a \
+         session what a thing's fields are, so each must say the fold is over the writes with \
+         the newest of each key winning: {missing:?}"
     );
 }
 

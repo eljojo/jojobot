@@ -184,9 +184,13 @@ impl FactId {
     ///
     /// A local id is `f` and a number counted up from the rows already on the
     /// page, so the number is monotonic within one home and says which of two
-    /// rows was written later. That is the whole of the ordering
-    /// [`folded_fields`] needs, and it is read from the id rather than kept
-    /// beside it: an ordinal stored twice is an ordinal that can disagree.
+    /// rows was written later. It is read from the id rather than kept beside
+    /// it: an ordinal stored twice is an ordinal that can disagree.
+    ///
+    /// **It orders the records, and it does not order the writes.** Which value
+    /// a thing holds under a key is decided by [`KeyWrite::ordinal`] — an edit
+    /// to an old record is a new write on an old row, so ranking records here
+    /// would answer with the value that edit replaced.
     ///
     /// `None` for an id in any other shape, which nothing here mints.
     pub fn ordinal(&self) -> Option<u64> {
@@ -1039,8 +1043,33 @@ pub fn validate_fields(fields: &BTreeMap<String, String>) -> Result<(), MemoryEr
     if let Some(key) = fields.keys().find(|k| reserved_key(k)) {
         return Err(MemoryError::InvalidFact(format!(
             "a record's fields cannot use '{key}' as a key: jojobot writes that key itself, on \
-             the record it writes when something is taken back, and it names the row that was \
+             the record it writes when something is taken back, and it names the record that was \
              taken back. Rename the key — anything else is yours to choose."
+        )));
+    }
+    Ok(())
+}
+
+/// **Nor may an edit take that key back off.**
+///
+/// The set path is screened so the marker cannot be forged; the clear path is
+/// the same key on the same rail, and unscreened it defeats the same rule from
+/// the other side. Removing it makes [`Fact::is_retraction`] answer false, so
+/// the account becomes retractable — the reversal one-way exists to forbid —
+/// and the only machine-readable link from the marked row to the record saying
+/// why is gone.
+///
+/// **It refuses the one move, never the record.** A retraction account is an
+/// ordinary record in every other respect, and every key on it but this one is
+/// still the caller's to set and clear: a screen that locked the record would
+/// break the floor rule's promise that a record can always be repaired.
+pub fn validate_cleared_fields(cleared: &[String]) -> Result<(), MemoryError> {
+    if let Some(key) = cleared.iter().find(|k| reserved_key(k)) {
+        return Err(MemoryError::InvalidFact(format!(
+            "a record's fields cannot clear '{key}': jojobot writes that key itself, on the \
+             record it writes when something is taken back, and taking it off would leave a \
+             retraction that no longer reads as one. If the retraction was a mistake, capture \
+             what is so now as a new record — every other key on it is yours to clear."
         )));
     }
     Ok(())
@@ -1088,8 +1117,10 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
         validate_edge(edge)?;
     }
     // The same gate the write path has, on the other verb that can reach a
-    // record's fields — see [`reserved_key`].
+    // record's fields — see [`reserved_key`]. **Both of the patch's key lists**:
+    // the reserved key is as unwritable off a record as onto one.
     validate_fields(&patch.fields)?;
+    validate_cleared_fields(&patch.clear_fields)?;
 
     if let Some(content) = &patch.content {
         fact.content = normalize_content(content);
@@ -1137,11 +1168,25 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
 /// A patch that names no key makes no write. An edit to a claim's content is not
 /// a write of a key, and a history that gained an entry every time a sentence
 /// was fixed would count sentences.
-pub fn writes_of(patch: &FactPatch) -> Vec<(String, Option<String>)> {
+///
+/// **A clear is scoped to the record it addresses**, which is why `carried` —
+/// the addressed record's own fields as they read now — is here. Naming a key
+/// that record does not carry is a no-op, exactly as [`FactPatch::clear_fields`]
+/// says: the patch describes the record, and the record already does not carry
+/// it. Writing the clear anyway would take the key off the THING, because a
+/// clear is the newest write of its key — a loss no surface the caller sees
+/// would report, since the receipt is the addressed record's projection and the
+/// record that really holds the key still reads it back.
+pub fn writes_of(
+    patch: &FactPatch,
+    carried: &BTreeMap<String, String>,
+) -> Vec<(String, Option<String>)> {
     patch
         .clear_fields
         .iter()
-        .map(|key| (key.trim().to_string(), None))
+        .map(|key| key.trim().to_string())
+        .filter(|key| carried.contains_key(key))
+        .map(|key| (key, None))
         .chain(
             patch
                 .fields
@@ -1149,6 +1194,64 @@ pub fn writes_of(patch: &FactPatch) -> Vec<(String, Option<String>)> {
                 .map(|(key, value)| (key.trim().to_string(), Some(value.clone()))),
         )
         .collect()
+}
+
+/// **The thing's fields as they will stand once this edit lands** — what
+/// [`guard_fit`] weighs the write against.
+///
+/// Built over the substrate rather than over the records, because that is the
+/// only place the answer is: the patch's own writes take the newest ordinals of
+/// their keys, so a set replaces the thing's value whichever record held it —
+/// and a clear of a key the addressed record carries takes it off the thing,
+/// because that clear is then the newest write of the key. A clear the record
+/// does not need writes nothing, so it costs the thing nothing ([`writes_of`]).
+///
+/// **A status is a write's standing, so an edit that moves the record past
+/// re-weighs every key it wrote.** Only writes carried by an active record
+/// fold, and the key falls back to the newest write that still counts — which
+/// is why this restates the standing of this record's writes rather than only
+/// laying the new ones on top.
+///
+/// `edited` is the record as the patch leaves it: its id says which writes are
+/// its, and its status is the standing its writes — old and new — will have.
+/// `carried` is that same record as it reads BEFORE the patch, which is what
+/// decides whether each clear is a write at all.
+pub fn stood_after(
+    writes: &[KeyWrite],
+    edited: &Fact,
+    patch: &FactPatch,
+    carried: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut next: Vec<KeyWrite> = writes
+        .iter()
+        .map(|write| KeyWrite {
+            status: if write.fact == edited.id {
+                edited.status
+            } else {
+                write.status
+            },
+            ..write.clone()
+        })
+        .collect();
+    // In [`writes_of`]'s order and taking the ordinals an append would take, so
+    // the guard cannot judge a result the substrate would not produce.
+    for (key, value) in writes_of(patch, carried) {
+        let ordinal = next
+            .iter()
+            .filter(|w| w.key == key)
+            .map(|w| w.ordinal)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        next.push(KeyWrite {
+            key,
+            ordinal,
+            value,
+            fact: edited.id.clone(),
+            status: edited.status,
+        });
+    }
+    folded_fields(&next)
 }
 
 /// **A write may not drop a thing below a type it already fits.**
@@ -1441,7 +1544,30 @@ impl Fact {
     }
 }
 
-/// **A thing's fields: its records' fields, folded into one map.**
+/// **One write of one key on one thing, as the fold reads the substrate.**
+///
+/// [`FieldWrite`] is the same row served to a caller who asked for ONE key's
+/// history, so it carries the key implicitly and carries the record's address
+/// for a reader who wants to go and look. This one is thing-wide: it names its
+/// key, and it carries the two things the fold decides on — where the write
+/// sits in that key's order, and whether the record it arrived in still counts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyWrite {
+    /// The key this write was made under.
+    pub key: String,
+    /// Its place in the order of writes of THIS key on THIS thing, from one —
+    /// what makes one of them the newest.
+    pub ordinal: u64,
+    /// What the write put there; `None` says it took the key off.
+    pub value: Option<String>,
+    /// The record that carried it, local to the thing — what lets a write about
+    /// to change that record's standing be found ([`stood_after`]).
+    pub fact: FactId,
+    /// The status of the record that carried it.
+    pub status: FactStatus,
+}
+
+/// **A thing's fields: the newest write of each key on it.**
 ///
 /// What a thing IS gets written down a piece at a time — one sitting records
 /// what it weighs, another records when it arrives — so the question "does this
@@ -1449,27 +1575,49 @@ impl Fact {
 /// it of a record and a thing described over two sittings answers nothing,
 /// which is how most things get written down.
 ///
-/// **The newest write wins a repeated key.** Two records naming one key are not
-/// a conflict to report; they are the key being written twice, and what the
-/// thing holds now is what was written last. Later is read off
-/// [`FactId::ordinal`], so the answer does not depend on the order a store
-/// happened to hand the rows over in.
+/// **It folds the writes and not the records, because those two orders
+/// disagree.** A record projects its own fields from the newest write each of
+/// its keys made, which throws away both when that write happened relative to
+/// another record's and the fact that a key was ever taken off. So a key living
+/// on two records, whose OLDER record is edited afterwards, folds to the value
+/// the edit replaced — and a key cleared on the newest record comes back from
+/// an older one. The substrate resolves the same key by its own per-(thing,
+/// key) order; there is one right answer and this is where it is read.
 ///
-/// **Only [`FactStatus::Active`] rows fold.** A record that was taken back or
-/// moved past is not what the thing is now, and a thing that fitted a type on
-/// the strength of a retracted claim would be conforming because of something
-/// nobody stands behind.
-pub fn folded_fields(facts: &[Fact]) -> BTreeMap<String, String> {
-    let mut current: Vec<&Fact> = facts
+/// **A clear is a write.** `None` takes the key off the thing when it is the
+/// newest write of that key, and it stops doing so the moment somebody writes
+/// the key again.
+///
+/// **Only writes carried by [`FactStatus::Active`] records fold.** A record
+/// that was taken back or moved past is not what the thing is now, and a thing
+/// that fitted a type on the strength of a retracted claim would be conforming
+/// because of something nobody stands behind — so such a write is passed over
+/// entirely, and the newest write that still counts wins the key.
+///
+/// **A key jojobot writes itself never folds** ([`reserved_key`]). What a thing
+/// IS is what somebody said about it, and the marker is machinery: it says one
+/// record takes another back, which is a fact about the rail and not a property
+/// of the thing. Folded in, it would read out as the thing's one property — an
+/// agent told a thing IS a fact address, a page rendering it under what the
+/// thing is, an index posting for it. The record keeps it, which is where
+/// [`Fact::is_retraction`] reads it. **Excluded here rather than at the callers
+/// because this is the one fold**, so a second reserved key is out of the dense
+/// row the day it is named.
+pub fn folded_fields(writes: &[KeyWrite]) -> BTreeMap<String, String> {
+    let mut standing: Vec<&KeyWrite> = writes
         .iter()
-        .filter(|f| f.status == FactStatus::Active)
+        .filter(|w| w.status == FactStatus::Active && !reserved_key(&w.key))
         .collect();
-    current.sort_by_key(|f| f.id.ordinal().unwrap_or(0));
+    // Ordered here rather than trusted from the caller: the order is what the
+    // answer IS, and a store that handed its rows over in another one would be
+    // deciding the fold with its query plan.
+    standing.sort_by(|a, b| a.key.cmp(&b.key).then(a.ordinal.cmp(&b.ordinal)));
     let mut folded = BTreeMap::new();
-    for fact in current {
-        for (key, value) in &fact.fields {
-            folded.insert(key.clone(), value.clone());
-        }
+    for write in standing {
+        match &write.value {
+            Some(value) => folded.insert(write.key.clone(), value.clone()),
+            None => folded.remove(&write.key),
+        };
     }
     folded
 }
@@ -1928,6 +2076,23 @@ pub trait Memory: Send + Sync {
     /// is [`MemoryError::UnknownEntity`], exactly as [`recall`](Memory::recall)
     /// answers one.
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError>;
+
+    /// **What the thing IS: one value per key, the newest write winning.**
+    ///
+    /// The other read of the same substrate [`history`](Memory::history) reads:
+    /// that one answers with every write of one key, this one with the standing
+    /// value of every key. It is a read the store owes rather than a fold a
+    /// caller does for itself, because the order that decides it is the
+    /// substrate's own — see [`folded_fields`], which is what an adapter runs
+    /// over its rows so the two stores cannot come to disagree about what a
+    /// thing holds.
+    ///
+    /// A thing nobody has written a key on is an empty map, not a miss. An
+    /// entity that does not exist is [`MemoryError::UnknownEntity`], exactly as
+    /// [`recall`](Memory::recall) and [`history`](Memory::history) answer one:
+    /// "nothing is recorded here" and "there is no such thing" are different
+    /// answers with different repairs.
+    async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError>;
 
     /// **Take back an event** — one way, never reversed, and still a write.
     ///

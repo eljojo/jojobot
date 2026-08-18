@@ -184,9 +184,10 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. 
                  you pass `include_mail: true`.\
                  \n\n**A record carries FIELDS** — a flat bag of key/value pairs beside the \
                  claim, stored and never interpreted. Nothing has to be declared first, and a \
-                 key you invent is kept as you wrote it. **A thing's fields are the fields of \
-                 every record about it, folded together**, and **carrying keys is what makes a \
-                 thing a type**: declare a type to say which keys it names, and a thing holding \
+                 key you invent is kept as you wrote it. **A thing's fields are every write on \
+                 it, folded, the newest write of each key winning** — a write that takes a key \
+                 off takes it off the thing — and **carrying keys is what makes a thing a \
+                 type**: declare a type to say which keys it names, and a thing holding \
                  all of them fits it. Declaring admits nothing — a thing is found by the keys it \
                  carries whether or not anybody declared the type. `answers_type` selects things \
                  carrying SOME of a type's keys and says which each lacks; `fits_type` keeps \

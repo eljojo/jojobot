@@ -197,6 +197,12 @@ mod tests {
             ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
+            async fn fields(
+                &self,
+                _: &EntityId,
+            ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+                unimplemented!("the owner index only reads the index")
+            }
             async fn update_fact(
                 &self,
                 _: &FactAddress,

@@ -156,6 +156,14 @@ impl jojobot_domain::memory::Memory for Blindable {
         self.inner.history(entity, key).await
     }
 
+    async fn fields(
+        &self,
+        entity: &jojobot_domain::memory::EntityId,
+    ) -> Result<std::collections::BTreeMap<String, String>, jojobot_domain::memory::MemoryError>
+    {
+        self.inner.fields(entity).await
+    }
+
     async fn update_fact(
         &self,
         address: &jojobot_domain::memory::FactAddress,

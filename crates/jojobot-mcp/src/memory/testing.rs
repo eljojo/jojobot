@@ -320,6 +320,12 @@ impl Memory for DownMemory {
     ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, MemoryError> {
         self.1.history(entity, key).await
     }
+    async fn fields(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        self.1.fields(entity).await
+    }
     async fn update_fact(
         &self,
         address: &FactAddress,

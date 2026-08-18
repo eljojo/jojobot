@@ -131,9 +131,9 @@ Shipped and live:
   and it is what the next several capabilities stand on.
 - **Fields, and what declaring a type buys** — **a record carries fields**: a
   flat bag of key/value pairs beside the claim, stored and never interpreted,
-  where a key the caller invents is kept as written. **A thing's fields are the
-  fields of every record about it, folded together**, so a thing gains fields a
-  piece at a time. **Conformance is asked of the THING, across all its records,
+  where a key the caller invents is kept as written. **A thing's fields are
+  every write on it, folded together — the newest write of each key wins**, so a
+  thing gains fields a piece at a time and an edit to any record reaches it. **Conformance is asked of the THING, across all its records,
   never of one record alone** — `answers_type` selects things carrying *some* of
   a type's keys and says which each one lacks, and `fits_type` keeps only the
   things with no gaps. **Which of the two you want is the reader's question**,
@@ -143,7 +143,10 @@ Shipped and live:
   mentions is kept as written. **What a type asks for is a FLOOR:** once a
   thing carries every key a type names, a write that would take one away is
   refused, naming the type and the key. **Adding keys is never refused, and a
-  thing that answers no type is a first-class thing.** A walk carries its own
+  thing that answers no type is a first-class thing.** **The software ships its
+  own types — `rhythm` and `trip`, declared at every startup — and a shipped name
+  is closed to a caller's redeclaration**, so a type says where it came from and
+  a caller can tell the two apart before it collides with one. A walk carries its own
   filters, and a key's declared value type licenses comparison on it —
   before/after on a date, less/greater on a number, equals on anything.
   Declaring buys write-time help, ordering and traversal on the keys it names,

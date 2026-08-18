@@ -238,7 +238,14 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     // What the fields add up to, in the type's own words. It is the one thing
     // on the page he could not work out for himself without holding every
     // declaration in his head.
-    page.section("conforms").says("service").says("whole");
+    //
+    // **Pinned to the row's own cells, because the type is named `service` and
+    // the key it asks for is `serviced`.** The keys the thing holds are a
+    // column of this same table, so a needle for the type's name anywhere in
+    // the table is answered by the key — and a beat written that way says
+    // nothing about the Type column, on a page where that column is empty.
+    page.section("conforms")
+        .says("<tr><td>service</td><td>whole</td>");
 
     story.finish().await;
 }

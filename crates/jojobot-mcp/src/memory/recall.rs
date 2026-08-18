@@ -110,9 +110,9 @@ pub struct RecallArgs {
     pub kind: Option<String>,
     /// **Objects that answer this type**, by name. Matching is STRUCTURAL — an
     /// object carrying the type's keys answers it whether or not anybody
-    /// declared it one — and it is asked of the OBJECT: its records' fields
-    /// count together, so a thing described over two sittings answers a type
-    /// that neither sitting answers alone.
+    /// declared it one — and it is asked of the OBJECT: every write on it
+    /// counts, so a thing described over two sittings answers a type that
+    /// neither sitting answers alone.
     ///
     /// ⚠️ **Some of the keys is enough, and that is what separates this from
     /// `follow.fits_type`.** An object holding a few of them comes back saying
@@ -132,7 +132,7 @@ pub struct RecallArgs {
     #[serde(default)]
     pub fields: Option<Vec<KeyFilterArgs>>,
     /// Whether each object's records come back — the claims its fields were
-    /// folded from, each with its own wording, provenance and the address that
+    /// written in, each with its own wording, provenance and the address that
     /// edits it.
     ///
     /// **Off by default.** The fields are what a thing IS and they come back
@@ -256,10 +256,10 @@ fn object_json(object: &graph::Object, include: graph::Include) -> serde_json::V
     let Some(fields) = body.as_object_mut() else {
         return body;
     };
-    // **What the thing IS, in one row.** Always here: every record's fields
-    // folded together, one value per key. It is the answer to the question a
-    // caller usually has, and it is a fraction of the size of the records it
-    // was folded from.
+    // **What the thing IS, in one row.** Always here: every write on it folded,
+    // one value per key, the newest write of that key winning. It is the answer
+    // to the question a caller usually has, and it is a fraction of the size of
+    // the records those writes arrived in.
     fields.insert(
         "fields".into(),
         object
@@ -348,13 +348,14 @@ impl Jojobot {
                        and its value — and use search when you are looking for something and only \
                        have words for it. Three axes, and they COMBINE into one question rather \
                        than three. WHICH OBJECTS: subject (one handle), kind, answers_type \
-                       (structural — an OBJECT answers a type by the keys its records carry \
-                       between them, whether or not anybody declared it one, and carrying SOME of \
-                       them is enough: the answer says which it lacks), and fields (a key, and \
-                       the value it holds; omit the value to ask only that the key is there). \
-                       WHAT OF EACH: every object always comes back as its FIELDS — every \
-                       record about it folded together, one value per key, the newest write \
-                       winning. Those fields are what the thing IS, and they answer most \
+                       (structural — an OBJECT answers a type by the keys every write on it \
+                       leaves standing, whether or not anybody declared it one, and carrying \
+                       SOME of them is enough: the answer says which it lacks), and fields (a \
+                       key, and the value it holds; omit the value to ask only that the key is \
+                       there). WHAT OF EACH: every object always comes back as its FIELDS — \
+                       every write on it folded, one value per key, the newest write of that key \
+                       winning, and a write that takes a key off takes it off the thing. Those \
+                       fields are what the thing IS, and they answer most \
                        questions; the records behind them are bigger and say the same thing at \
                        length. Ask for facts when you need a claim's own wording, its \
                        provenance, or the address that edits it, and the answer says how many \

@@ -129,12 +129,9 @@ async fn keeping_track_of_bikes() {
     // read is not empty.
     selling.never_says("thing:gravel-bike");
 
-    // GAP — and nothing moves it. A record is current truth rewritten in place,
-    // so the day the bike sells the key is overwritten and what it said before
-    // is gone: "sold in March" and "for sale since March" read the same
-    // afterwards, and no read asks what a state used to be. What the key buys
-    // is the question, not the passage of the thing through it.
-    //   s.moved(&for_sale, "sold", on: "2027-03-02").await;
+    // The day the bike sells, the key is rewritten where it stands: what a
+    // thing IS is current truth, so the record reads back holding the new value
+    // and not the one it replaced.
     s.correct_fields(&for_sale, json!({"state": "sold"}), &[])
         .await;
     s.recall("thing:road-bike")
@@ -142,6 +139,41 @@ async fn keeping_track_of_bikes() {
         .claim(&for_sale)
         .says("sold")
         .never_says("for sale");
+
+    // **And the value it replaced is kept, so what the bike WAS is a question
+    // with an answer.** The rewrite is a write and not an erasure: the key's
+    // writes come back in order, which is the passage of the thing through the
+    // state rather than only where it ended up.
+    let passage = s
+        .shape(
+            "every write of the bike's state",
+            json!({ "subject": "thing:road-bike", "history": "state" }),
+        )
+        .await;
+    passage
+        .says("\"key\":\"state\"")
+        .says("\"count\":2")
+        .says("\"value\":\"for sale\"")
+        .says("\"value\":\"sold\"");
+    // **Read as an ORDER, not as two values present.** What the key holds now
+    // is on this same answer in the fold above the history, so a substring over
+    // the whole thing cannot tell the two apart — and no substring says which
+    // of the values came first, which is the difference between knowing the
+    // bike was for sale and knowing it was for sale BEFORE it sold.
+    let answered: serde_json::Value =
+        serde_json::from_str(passage.raw()).expect("the answer is json");
+    let each: Vec<&str> = answered["objects"][0]["history"]["writes"]
+        .as_array()
+        .expect("the writes behind the key")
+        .iter()
+        .map(|write| write["value"].as_str().expect("a write carries its value"))
+        .collect();
+    assert_eq!(
+        each,
+        ["for sale", "sold"],
+        "the writes come back oldest first: {}",
+        passage.raw()
+    );
 
     s.wrap("both bikes recorded").await;
 

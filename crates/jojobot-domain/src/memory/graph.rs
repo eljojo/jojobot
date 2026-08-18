@@ -104,8 +104,8 @@ pub struct Selection {
     /// **Objects that answer this type**, matched structurally over the keys
     /// their records carry — never over what anybody declared them to be.
     ///
-    /// Asked of the THING: its records' fields folded into one map, so an
-    /// object described over several records answers a type that no one of them
+    /// Asked of the THING: the newest write of each key on it, so an object
+    /// described over several records answers a type that no one of them
     /// answers alone. See [`super::folded_fields`].
     ///
     /// A partial answer is an answer. An object carrying some of the keys comes
@@ -531,13 +531,14 @@ pub struct Object {
     pub entity: Entity,
     /// How the walk got here; `None` on a root.
     pub via: Option<Via>,
-    /// **What this thing IS: every record's fields, folded into one map.**
+    /// **What this thing IS: the newest write of each key on it.**
     ///
-    /// One value per key, the newest write winning — the dense row a caller
-    /// wants when the question is what the thing is rather than what was said
-    /// about it. **Always here**, whatever else the query asked for, because it
-    /// is the answer rather than a part of it, and a caller that had to fold
-    /// the records itself would be doing jojobot's job.
+    /// One value per key — the dense row a caller wants when the question is
+    /// what the thing is rather than what was said about it. **Always here**,
+    /// whatever else the query asked for, because it is the answer rather than
+    /// a part of it, and a caller that had to fold the records itself would be
+    /// doing jojobot's job — and would get it wrong, since which write won is
+    /// something the records no longer say.
     ///
     /// **Folded over ALL of the thing's records, never the kept ones.** A
     /// filter says which objects the caller is after; it does not change what
@@ -678,6 +679,12 @@ struct Ctx<'a> {
     index: Vec<Entity>,
     /// Each entity's prose.
     prose: BTreeMap<&'a EntityId, &'a str>,
+    /// **What each thing IS**, as the store folded it from its writes. Read
+    /// rather than derived: the records below cannot be folded back into this,
+    /// because a record has already projected away which of its writes was the
+    /// newest on the thing and which key it took off. See
+    /// [`DocScan::fields`](super::search::DocScan::fields).
+    fields: BTreeMap<&'a EntityId, &'a BTreeMap<String, String>>,
     /// The facts belonging to each entity: those ABOUT it, and those homed in
     /// its document whatever their subject says. The same rule
     /// [`recall`](super::Memory::recall) answers by, so one record does not
@@ -698,6 +705,7 @@ impl<'a> Ctx<'a> {
     fn of(scanned: &'a [DocScan], declarations: &'a [types::DeclaredType]) -> Self {
         let mut entities = BTreeMap::new();
         let mut prose = BTreeMap::new();
+        let mut fields = BTreeMap::new();
         let mut facts: BTreeMap<&EntityId, Vec<&Fact>> = BTreeMap::new();
         let mut inbound: BTreeMap<EntityId, Vec<(EdgeShape, EntityId)>> = BTreeMap::new();
 
@@ -705,6 +713,7 @@ impl<'a> Ctx<'a> {
             if let Some(entity) = doc.entity.as_ref() {
                 entities.insert(&entity.id, entity);
                 prose.insert(&entity.id, doc.prose.as_str());
+                fields.insert(&entity.id, &doc.fields);
             }
             for fact in &doc.facts {
                 facts.entry(&fact.subject).or_default().push(fact);
@@ -743,6 +752,7 @@ impl<'a> Ctx<'a> {
             entities,
             index,
             prose,
+            fields,
             facts,
             inbound,
             all,
@@ -791,16 +801,13 @@ impl<'a> Ctx<'a> {
         declared.matched_by(&self.folded(id))
     }
 
-    /// This thing's fields: every record of it, folded into one map.
+    /// This thing's fields: the newest write of each key on it, as the store
+    /// read them.
     fn folded(&self, id: &EntityId) -> BTreeMap<String, String> {
-        let mine: Vec<Fact> = self
-            .facts
+        self.fields
             .get(id)
-            .into_iter()
-            .flatten()
             .map(|f| (*f).clone())
-            .collect();
-        super::folded_fields(&mine)
+            .unwrap_or_default()
     }
 
     /// This entity's facts that answer the record filters.
@@ -1117,11 +1124,21 @@ where
         } else {
             String::new()
         };
+        // **Asked of the store, never folded from the records above.** What a
+        // thing holds is decided in the order its keys were written, which the
+        // records have already projected away — so a walk that folded them for
+        // itself would answer with a value the store does not hold.
+        let fields = if read {
+            store.fields(&entity.id).await?
+        } else {
+            BTreeMap::new()
+        };
         scanned.push(DocScan {
             doc_id: entity.id.to_string(),
             title: entity.name.clone(),
             prose,
             facts,
+            fields,
             entity: Some(entity.clone()),
         });
     }
@@ -1219,13 +1236,37 @@ mod tests {
     }
 
     /// A doc holding one entity, its prose and its rows.
+    ///
+    /// **The store is what folds a thing's fields, so the fixture stands in for
+    /// it here.** Every doc below writes each of its keys once, which is the
+    /// case where the order of the records and the order of the writes agree; a
+    /// fixture that needs them to disagree says what the thing holds itself,
+    /// with [`doc_holding`].
     fn doc(entity: Entity, prose: &str, facts: Vec<Fact>) -> DocScan {
+        let fields = facts
+            .iter()
+            .filter(|f| f.status == FactStatus::Active)
+            .flat_map(|f| f.fields.iter())
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        doc_holding(entity, prose, facts, fields)
+    }
+
+    /// A doc whose thing holds what the store says it holds, records or no
+    /// records — the shape a key written more than once really arrives in.
+    fn doc_holding(
+        entity: Entity,
+        prose: &str,
+        facts: Vec<Fact>,
+        fields: BTreeMap<String, String>,
+    ) -> DocScan {
         DocScan {
             doc_id: entity.id.to_string(),
             title: entity.name.clone(),
             prose: prose.to_string(),
             entity: Some(entity),
             facts,
+            fields,
         }
     }
 
@@ -1595,16 +1636,22 @@ mod tests {
         );
     }
 
-    /// **The newest write wins a repeated key.** A thing's fields are folded
-    /// from records written at different times, so two records naming the same
-    /// key are not a conflict to report — they are the key being written twice,
-    /// and what a thing holds now is what was written last.
+    /// **The type question is asked of what the THING holds, never of the
+    /// records under it.**
+    ///
+    /// A key written twice is not a conflict to report — it is the key being
+    /// written twice, and which write won is the store's answer, not a walk's
+    /// to work out. So the fixture hands over a thing whose standing value is
+    /// the newer one while both records are still there, and the walk must read
+    /// the standing value: a walk that folded the records for itself would find
+    /// the other one.
     ///
     /// Read through the declared value type, because that is where a folded
-    /// VALUE surfaces: the newer value is not a number and is reported as
-    /// mistyped, where the older one would have passed silently.
+    /// VALUE surfaces: the value the thing holds is not a number and is
+    /// reported as mistyped, where the one it replaced would have passed
+    /// silently.
     #[test]
-    fn the_newest_record_wins_a_repeated_key() {
+    fn the_type_question_reads_what_the_thing_holds() {
         let declared = types::DeclaredType::new(
             "crate",
             vec![types::Field::new("weight", types::ValueType::Number)],
@@ -1615,15 +1662,21 @@ mod tests {
                 .collect(),
             ..fact("thing:bike-chain", id, "somebody weighed it")
         };
-        let scanned = vec![doc(
+        let scanned = vec![doc_holding(
             entity("thing:bike-chain", "The Chain"),
             "",
-            // Out of order on purpose: the answer must come from the ids, not
-            // from the order the store happened to hand them over in.
+            // Out of order on purpose: the records say nothing about which
+            // write won, and the walk must not read them as if they did.
             vec![
                 weighed("f2", "heavier than the last one"),
                 weighed("f1", "12"),
             ],
+            [(
+                "weight".to_string(),
+                "heavier than the last one".to_string(),
+            )]
+            .into_iter()
+            .collect(),
         )];
 
         let found = resolve(
@@ -1651,7 +1704,7 @@ mod tests {
                 .map(|m| m.value.as_str())
                 .collect::<Vec<_>>(),
             vec!["heavier than the last one"],
-            "the later write is the value the thing holds: {answered:?}"
+            "the type was asked of the value the thing holds: {answered:?}"
         );
     }
 

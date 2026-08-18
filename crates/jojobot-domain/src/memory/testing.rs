@@ -129,6 +129,42 @@ impl InMemoryMemory {
             ..fact.clone()
         }
     }
+
+    /// **What a thing holds: every write on it, handed to the one fold.**
+    ///
+    /// The status comes off the record that carried each write, so a write
+    /// inside a record somebody took back is still there and no longer counts —
+    /// the same join the real store does, done here so the two cannot come to
+    /// disagree about what a thing is.
+    fn held(&self, entity: &EntityId) -> std::collections::BTreeMap<String, String> {
+        let facts = self.facts.lock().expect("fake mutex poisoned");
+        super::folded_fields(&self.writes_on(entity, &facts))
+    }
+
+    /// **Every write on this thing, each with the standing of the record that
+    /// carried it** — the substrate the fold and the write guard both read.
+    ///
+    /// The records are passed in rather than locked here, because the write
+    /// path reads this while it is already holding them.
+    fn writes_on(&self, entity: &EntityId, facts: &[Fact]) -> Vec<super::KeyWrite> {
+        let writes = self.writes.lock().expect("fake mutex poisoned");
+        writes
+            .iter()
+            .filter(|w| &w.entity == entity)
+            .filter_map(|w| {
+                let carried = facts
+                    .iter()
+                    .find(|f| f.home == w.entity && f.id == w.fact)?;
+                Some(super::KeyWrite {
+                    key: w.key.clone(),
+                    ordinal: w.ordinal,
+                    value: w.value.clone(),
+                    fact: w.fact.clone(),
+                    status: carried.status,
+                })
+            })
+            .collect()
+    }
 }
 
 /// One row of the fake's field substrate — the shape the real store keeps in a
@@ -368,6 +404,20 @@ impl Memory for InMemoryMemory {
         Ok(mine.iter().map(|f| self.projected(f)).collect())
     }
 
+    async fn fields(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        let index = self.index();
+        if !index.iter().any(|e| &e.id == entity) {
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        }
+        Ok(self.held(entity))
+    }
+
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         let index = self.index();
         if !index.iter().any(|e| &e.id == entity) {
@@ -464,29 +514,18 @@ impl Memory for InMemoryMemory {
         // replaces a value is validated against the value it replaces — and the
         // claim goes back without fields, because the fields are the writes.
         let mut edited = self.projected(fact);
+        // What the ADDRESSED RECORD carries right now — kept before the patch
+        // rewrites it, because that is what decides which of the patch's clears
+        // is a write and which names a key this record never had.
+        let carried = edited.fields.clone();
         apply_fact_patch(&mut edited, &patch)?;
         // **The thing's fields as they will stand, against the thing's fields
         // as they stand now** — the same guard the real store runs, so the two
         // cannot come to disagree about what a write may cost.
         let home = fact.home.clone();
-        let mine: Vec<Fact> = facts
-            .iter()
-            .filter(|f| f.home == home)
-            .map(|f| self.projected(f))
-            .collect();
-        let before = super::folded_fields(&mine);
-        let after = super::folded_fields(
-            &mine
-                .iter()
-                .map(|f| {
-                    if f.id == edited.id {
-                        edited.clone()
-                    } else {
-                        f.clone()
-                    }
-                })
-                .collect::<Vec<_>>(),
-        );
+        let writes = self.writes_on(&home, &facts);
+        let before = super::folded_fields(&writes);
+        let after = super::stood_after(&writes, &edited, &patch, &carried);
         super::guard_fit(
             &before,
             &after,
@@ -502,7 +541,7 @@ impl Memory for InMemoryMemory {
             }
         }
         drop(facts);
-        self.append_writes(&home, &id, super::writes_of(&patch));
+        self.append_writes(&home, &id, super::writes_of(&patch, &carried));
         let facts = self.facts.lock().expect("fake mutex poisoned");
         let stored = facts
             .iter()
@@ -643,6 +682,9 @@ impl Memory for InMemoryMemory {
                         .filter(|f| f.home == entity.id)
                         .map(|f| self.projected(f))
                         .collect(),
+                    // The scan carries what the thing IS, because the records
+                    // it also carries cannot be folded back into it.
+                    fields: super::folded_fields(&self.writes_on(&entity.id, &facts)),
                     entity: Some(entity),
                 }
             }))
@@ -689,7 +731,7 @@ pub mod contract {
     use crate::memory::graph;
     use crate::memory::search::{EdgeFilter, Hit, Search, SearchQuery};
     use crate::memory::types::{DeclaredType, Field, Origin, ValueType};
-    use crate::memory::{Boot, Edge, EdgeShape, FACTS_HEADER, FactStatus, Provenance};
+    use crate::memory::{Boot, Edge, EdgeShape, FACTS_HEADER, FactStatus, Provenance, RETRACTS};
     use jiff::civil::{Date, date};
 
     /// Make sure `id` exists, so the write guard's **existence gate** is not
@@ -794,6 +836,36 @@ pub mod contract {
             .into_iter()
             .find(|f| &f.id == id)
             .unwrap_or_else(|| panic!("recall must return the captured fact (id {id})"))
+    }
+
+    /// **What the thing IS**, read the way the served answer reads it: one
+    /// dense row, folded, off the store rather than off records the caller
+    /// folded for itself.
+    async fn thing_fields<M: Memory>(
+        store: &M,
+        id: &EntityId,
+    ) -> std::collections::BTreeMap<String, String> {
+        graph::walk(
+            store,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(id.clone()),
+                    ..graph::Selection::default()
+                },
+                include: graph::Include {
+                    facts: false,
+                    prose: false,
+                },
+                follow: None,
+                history: None,
+            },
+        )
+        .await
+        .expect("a handle is a selection")
+        .first()
+        .unwrap_or_else(|| panic!("a walk from {id} must answer with the thing itself"))
+        .fields
+        .clone()
     }
 
     /// One entity out of the store's own listing — the read path for entities.
@@ -2840,9 +2912,11 @@ pub mod contract {
             .await;
         }
 
-        let facts = store.recall(&subject).await.expect("recall should succeed");
         assert_eq!(
-            crate::memory::folded_fields(&facts)
+            store
+                .fields(&subject)
+                .await
+                .expect("the fields of a thing should succeed")
                 .get(key)
                 .map(String::as_str),
             Some(written.to_string().as_str()),
@@ -3211,6 +3285,36 @@ pub mod contract {
              that says a record was taken back: {outcome:?}"
         );
 
+        // **The refusal is served to the caller verbatim, so it teaches
+        // whatever it says.** A record is a claim; whether this store keeps one
+        // as a line in a table is the store's business and a word that stops
+        // being true the day the product underneath is swapped. An agent taught
+        // it has to unlearn a model rather than read a new sentence.
+        let said = outcome.expect_err("refused above").to_string();
+        assert!(
+            said.contains("retracts"),
+            "the refusal names the key it stopped, or the caller cannot act on it: {said}"
+        );
+        let word = |needle: &str| {
+            said.split(|c: char| !c.is_alphanumeric())
+                .any(|w| w.eq_ignore_ascii_case(needle))
+        };
+        assert!(
+            !(word("row") || word("rows")),
+            "the refusal calls the thing taken back a row, which is this store's furniture \
+             rather than what a caller holds: {said}"
+        );
+        // **The noun on the thing taken back, not merely somewhere in the
+        // sentence.** The refusal opens by saying what a record's fields are,
+        // so a needle anywhere in the text is satisfied by that opening and
+        // stays green while the clause at issue says anything at all — the fix
+        // here is never deletion.
+        assert!(
+            said.contains("names the record"),
+            "…and what the key names is a record, said where it is named: dropping the noun \
+             costs the caller the only sentence that says what the key holds: {said}"
+        );
+
         // …and the ordinary keys beside it are untouched, `type` and `ref`
         // included: those were the previous grammar's words, not the record's.
         let landed = capture(
@@ -3399,6 +3503,178 @@ pub mod contract {
             read_back(store, &subject, &event.id).await.status,
             FactStatus::Retracted,
             "and none of the three moved it"
+        );
+    }
+
+    /// **The marker is machinery, and machinery is not one of the thing's
+    /// properties.**
+    ///
+    /// A retraction account is an active record, so its writes fold like any
+    /// other's — and the key it carries is the one no caller may write. Folded
+    /// into the dense row it reads as the thing's own property: an agent is
+    /// told that what this thing IS is a fact address, the operator's page
+    /// renders it under what the thing is, and the index takes a posting for
+    /// it.
+    ///
+    /// The record keeps it. That is where the marker means something, and
+    /// [`Fact::is_retraction`] is read off it.
+    pub async fn the_retraction_marker_is_not_one_of_the_things_fields<M: Memory>(store: &M) {
+        let subject = EntityId::new(EntityKind::Thing, "contract-marker-not-a-field");
+        let claim = capture(
+            store,
+            NewFact {
+                fields: [("cost".to_string(), "40".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(subject.clone(), "bought at the counter", date(2026, 4, 18))
+            },
+        )
+        .await;
+        assert_eq!(
+            thing_fields(store, &subject).await.get("cost"),
+            Some(&"40".to_string()),
+            "the setup has to have landed, or what is asserted below passes on nothing"
+        );
+
+        let taken_back = store
+            .retract(
+                &claim.address(),
+                Some("the receipt said otherwise"),
+                date(2026, 4, 19),
+            )
+            .await
+            .expect("retracting the claim should succeed");
+
+        let held = thing_fields(store, &subject).await;
+        assert!(
+            !held.contains_key(RETRACTS),
+            "the key jojobot writes to mark a record taken back is not a property of the \
+             thing: {held:?}"
+        );
+        assert!(
+            !held.contains_key("cost"),
+            "…and the retracted claim's own key went with it: {held:?}"
+        );
+
+        // The other half: it did not leave the record, which is the only place
+        // it ever meant anything.
+        let account = read_back(store, &subject, &taken_back.record.id).await;
+        assert_eq!(
+            account.retracts(),
+            Some(claim.address().to_string().as_str()),
+            "the account still names what it took back"
+        );
+        assert!(
+            account.is_retraction(),
+            "…and still reads as a retraction: {account:?}"
+        );
+    }
+
+    /// **Taking the marker off is refused the way writing it is.**
+    ///
+    /// The set path screens the reserved key so the marker cannot be forged.
+    /// The clear path is the same key on the same rail: an edit that removes it
+    /// makes [`Fact::is_retraction`] answer false, which lets the account be
+    /// retracted — the reversal the one-way rule exists to forbid — and takes
+    /// away the only machine-readable link from the marked row to its account.
+    ///
+    /// **The refusal is one move, not a lockout.** The account is an ordinary
+    /// record otherwise, and the repairs any record gets still reach it.
+    pub async fn clearing_the_retraction_marker_is_refused<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-clear-marker");
+        let event = capture(
+            store,
+            NewFact::about(subject.clone(), "it happened", date(2026, 7, 3)),
+        )
+        .await;
+        let taken_back = store
+            .retract(
+                &event.address(),
+                Some("it did not, in fact"),
+                date(2026, 7, 4),
+            )
+            .await
+            .expect("the retraction lands");
+        let account = taken_back.record.address();
+
+        let refused = store
+            .update_fact(
+                &account,
+                FactPatch {
+                    clear_fields: vec![RETRACTS.to_string()],
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(
+            matches!(refused, Err(MemoryError::InvalidFact(_))),
+            "clearing the reserved key must be refused as hard as writing it: {refused:?}"
+        );
+
+        // **The refusal is served verbatim, so it teaches whatever it says** —
+        // the same pin the set path carries, because both are text an agent
+        // reads and acts on. Read once and asserted on both halves at once: the
+        // key it stopped, which is what says this refusal and not some other
+        // error came back, and the way out, without which a caller holding a
+        // retraction it regrets has nowhere to go but a second attempt at the
+        // move that was just refused.
+        let said = refused.expect_err("refused above").to_string();
+        assert!(
+            said.contains(RETRACTS),
+            "the refusal names the key it stopped, or the caller cannot tell which \
+             refusal this is: {said}"
+        );
+        assert!(
+            said.contains("capture what is so now as a new record"),
+            "…and it hands back the move that IS allowed — a new record saying what is \
+             so — because the one it refused is the only one a caller would try next: {said}"
+        );
+
+        // And nothing moved: the account is still a retraction, so the row it
+        // took back is still linked to it and it is still not retractable.
+        let still = read_back(store, &subject, &taken_back.record.id).await;
+        assert_eq!(
+            still.retracts(),
+            Some(event.address().to_string().as_str()),
+            "the refused edit wrote nothing"
+        );
+        let reversal = store
+            .retract(&account, Some("undo"), date(2026, 7, 5))
+            .await;
+        assert!(
+            matches!(reversal, Err(MemoryError::NotRetractable { .. })),
+            "a retraction of a retraction stays refused: {reversal:?}"
+        );
+
+        // The floor rule's other half: the screen refuses the one move, not the
+        // record. An ordinary key on the account is set and cleared as usual.
+        edit(
+            store,
+            &account,
+            FactPatch {
+                fields: [("filed_by".to_string(), "the desk".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+        )
+        .await;
+        let repaired = edit(
+            store,
+            &account,
+            FactPatch {
+                clear_fields: vec!["filed_by".to_string()],
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(
+            !repaired.fields.contains_key("filed_by"),
+            "an ordinary key on a retraction account is still the caller's to clear: {repaired:?}"
+        );
+        assert!(
+            repaired.is_retraction(),
+            "…and the repair left the marker where it was: {repaired:?}"
         );
     }
 
@@ -5713,6 +5989,189 @@ pub mod contract {
         );
     }
 
+    /// **What a thing holds is the newest WRITE of a key, never the newest
+    /// RECORD carrying it.**
+    ///
+    /// The two orders agree until a key lives on more than one record and the
+    /// OLDER record is edited afterwards. Then the edit is the newest write of
+    /// that key on that thing while the record it landed in is still the older
+    /// one — and a fold that ranked records by their id answers with the value
+    /// the edit replaced. The agent edits a claim, is told it worked, reads it
+    /// back on the record and in the history, and every reader of "what the
+    /// thing IS" keeps serving the stale value.
+    pub async fn the_newest_write_wins_however_old_the_record_it_landed_in<M: Memory>(store: &M) {
+        let subject = EntityId::new(EntityKind::Thing, "contract-edited-older-record");
+        let older = capture(
+            store,
+            NewFact {
+                fields: [("ridden_km".to_string(), "10".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(subject.clone(), "the first sitting", date(2026, 4, 18))
+            },
+        )
+        .await;
+        capture(
+            store,
+            NewFact {
+                fields: [("ridden_km".to_string(), "20".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(subject.clone(), "the second sitting", date(2026, 4, 19))
+            },
+        )
+        .await;
+        let edited = edit(
+            store,
+            &older.address(),
+            FactPatch {
+                fields: [("ridden_km".to_string(), "30".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+        )
+        .await;
+        // The three surfaces that must agree, and the reason the third one
+        // disagreeing is not a footnote: the record says the edit landed, the
+        // history says it is the newest write, so a thing still holding the
+        // value it replaced is the same data read two ways and answering twice.
+        assert_eq!(
+            edited.fields.get("ridden_km").map(String::as_str),
+            Some("30"),
+            "the edited record reads back changed, which is the surface"
+        );
+        assert_eq!(
+            store
+                .history(&subject, "ridden_km")
+                .await
+                .expect("history should succeed")
+                .last()
+                .map(|w| w.value.as_deref()),
+            Some(Some("30")),
+            "…and the edit is the newest write in the substrate"
+        );
+        assert_eq!(
+            thing_fields(store, &subject)
+                .await
+                .get("ridden_km")
+                .map(String::as_str),
+            Some("30"),
+            "…so it is what the thing holds, though its record was written first"
+        );
+    }
+
+    /// **A cleared key stays cleared, and an older record does not put it
+    /// back.**
+    ///
+    /// A clear is a write like any other — the newest one — so it takes the key
+    /// off the THING and not merely off the record that carried it. A fold
+    /// ranking records would find the key gone from the newest record, fall
+    /// back to an older one, and resurrect a value nobody wrote back.
+    pub async fn a_cleared_key_is_not_resurrected_by_an_older_record<M: Memory>(store: &M) {
+        let subject = EntityId::new(EntityKind::Thing, "contract-cleared-key");
+        capture(
+            store,
+            NewFact {
+                fields: [("chain_wear".to_string(), "9".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(subject.clone(), "the first sitting", date(2026, 4, 18))
+            },
+        )
+        .await;
+        let newer = capture(
+            store,
+            NewFact {
+                fields: [("chain_wear".to_string(), "11".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(subject.clone(), "the second sitting", date(2026, 4, 19))
+            },
+        )
+        .await;
+        edit(
+            store,
+            &newer.address(),
+            FactPatch {
+                clear_fields: vec!["chain_wear".to_string()],
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let held = thing_fields(store, &subject).await;
+        assert!(
+            !held.contains_key("chain_wear"),
+            "the key was taken off the thing and stayed off: {held:?}"
+        );
+    }
+
+    /// **A clear names what the ADDRESSED RECORD must not carry.** Naming a key
+    /// that record never carried changes nothing — not the record, and not the
+    /// thing.
+    ///
+    /// The contract a caller reads says the patch describes the record, so an
+    /// agent tidying one record's keys has no reason to expect another
+    /// record's to move. A clear that reached past its address would take the
+    /// key off the THING while every surface the caller can see stayed
+    /// identical: the receipt is the edited record's own projection, which
+    /// never carried the key, and the record that did still reads it back on a
+    /// plain recall. Only the fold would know, and nothing told the caller to
+    /// look there.
+    pub async fn clearing_a_key_the_record_never_carried_changes_nothing<M: Memory>(store: &M) {
+        let subject = EntityId::new(EntityKind::Thing, "contract-clear-off-address");
+        capture(
+            store,
+            NewFact {
+                fields: [("shipping_weight".to_string(), "10".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(subject.clone(), "weighed at the bench", date(2026, 4, 18))
+            },
+        )
+        .await;
+        let bare = capture(
+            store,
+            NewFact::about(subject.clone(), "rode it home", date(2026, 4, 19)),
+        )
+        .await;
+
+        let receipt = edit(
+            store,
+            &bare.address(),
+            FactPatch {
+                clear_fields: vec!["shipping_weight".to_string()],
+                ..Default::default()
+            },
+        )
+        .await;
+
+        assert!(
+            !receipt.fields.contains_key("shipping_weight"),
+            "the addressed record did not carry the key and still does not: {:?}",
+            receipt.fields
+        );
+        assert_eq!(
+            thing_fields(store, &subject)
+                .await
+                .get("shipping_weight")
+                .map(String::as_str),
+            Some("10"),
+            "…and the record that DOES carry it keeps it on the thing"
+        );
+        assert_eq!(
+            store
+                .history(&subject, "shipping_weight")
+                .await
+                .expect("history should succeed")
+                .last()
+                .map(|w| w.value.as_deref()),
+            Some(Some("10")),
+            "…because a clear the record never needed wrote nothing at all"
+        );
+    }
+
     /// **A history longer than the window comes back cut, and says how much
     /// exists.**
     ///
@@ -5917,6 +6376,8 @@ pub mod contract {
         a_reserved_field_key_is_refused(store).await;
         retracting_a_record_marks_it_and_records_why(store).await;
         a_retraction_is_one_way(store).await;
+        the_retraction_marker_is_not_one_of_the_things_fields(store).await;
+        clearing_the_retraction_marker_is_refused(store).await;
         a_retraction_needs_no_reason(store).await;
         retracting_an_unknown_address_never_writes(store).await;
 
@@ -5955,6 +6416,9 @@ pub mod contract {
         a_declared_reference_key_is_walkable_against_the_store(store).await;
         a_pet_is_its_own_kind_in_the_store(store).await;
         a_thing_reads_back_as_its_fields_folded(store).await;
+        the_newest_write_wins_however_old_the_record_it_landed_in(store).await;
+        a_cleared_key_is_not_resurrected_by_an_older_record(store).await;
+        clearing_a_key_the_record_never_carried_changes_nothing(store).await;
         a_write_cannot_break_a_fit_that_already_exists(store).await;
         a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not(store).await;
         a_long_history_is_cut_to_its_newest_and_says_how_many(store).await;

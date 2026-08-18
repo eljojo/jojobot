@@ -872,6 +872,69 @@ async fn a_key_on_a_node_page_opens_to_the_writes_behind_it() {
     ct.cancel();
 }
 
+/// **One word, one axis — across both tables on the page.**
+///
+/// A record's status (active · superseded · retracted) and a claim's standing
+/// (settled · open) are two different questions, and the facts table asks both
+/// of them in columns of their own. The writes table carries the first and no
+/// second, so whichever word it heads that column with is read against the
+/// facts table one screen below: heading the status column "Standing" tells a
+/// reader either that a write can be settled or that a standing can be
+/// retracted.
+///
+/// Asserted on the page that serves both, because the collision is between
+/// them: either header read on its own is defensible.
+#[tokio::test]
+async fn the_two_tables_head_one_axis_with_one_word() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(
+        &client,
+        addr,
+        "/person:alpha/topic:widgets/?history=takings",
+        &cookie,
+    )
+    .await
+    .text()
+    .await
+    .unwrap();
+
+    let facts = page
+        .split_once("<h2>Facts</h2>")
+        .expect("the page carries the facts table")
+        .1;
+    assert!(
+        facts.contains("<th>Standing</th>") && facts.contains("<th>State</th>"),
+        "the facts table asks both questions, in columns of their own — which is what makes \
+         either word ambiguous when the other table reuses it: {facts}"
+    );
+
+    let writes = page
+        .split_once("id=\"history\"")
+        .expect("the page carries the writes table")
+        .1
+        .split_once("</table>")
+        .expect("…and it closes")
+        .0;
+    assert!(
+        writes.contains("active"),
+        "the writes table carries each write's status, which is the column at issue: {writes}"
+    );
+    assert!(
+        writes.contains("<th>State</th>"),
+        "…and heads it with the word the facts table gives that same axis: {writes}"
+    );
+    assert!(
+        !writes.contains("<th>Standing</th>"),
+        "…never with the word the facts table spends on the other one: {writes}"
+    );
+    ct.cancel();
+}
+
 /// **A thing nobody has recorded a field on says so**, rather than carrying an
 /// empty table. Most things have no fields, and a page that grew a blank
 /// scaffold on every one of them teaches a reader to skip the section that

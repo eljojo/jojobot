@@ -53,6 +53,19 @@ pub struct DocScan {
     pub entity: Option<Entity>,
     /// Every fact the doc's table holds.
     pub facts: Vec<Fact>,
+    /// **What the thing this doc IS holds now** — one value per key, folded
+    /// from its writes ([`super::folded_fields`]).
+    ///
+    /// **It travels with the scan because it cannot be worked out from
+    /// [`DocScan::facts`].** A record projects its own fields from its own
+    /// newest writes, so the records have already thrown away which of them was
+    /// written last and which key was taken off; a reader folding them for
+    /// itself gets a stale answer that no other read of the store agrees with.
+    /// The store is what holds the order, so the store is what says this.
+    ///
+    /// Empty on a doc that is no entity, and on a thing nobody has written a
+    /// key on.
+    pub fields: std::collections::BTreeMap<String, String>,
 }
 
 /// The subjects in `doc`'s table that name **no known entity** — the split-brain
@@ -157,10 +170,9 @@ pub struct SearchQuery {
     /// name that names no type can be answered as a name that names no type.
     ///
     /// **The question is asked of the thing, not of one row.** What a thing is
-    /// gets written down a piece at a time, so its fields are its records'
-    /// fields folded into one map ([`super::folded_fields`]) and a thing
-    /// described over two sittings answers a type that neither sitting answers
-    /// alone.
+    /// gets written down a piece at a time, so its fields are the newest write
+    /// of each key on it ([`super::folded_fields`]) and a thing described over
+    /// two sittings answers a type that neither sitting answers alone.
     ///
     /// **Nothing is ever asked what it was declared to be.** A thing carrying
     /// these keys comes back whether or not anybody declared anything, and one
@@ -795,6 +807,7 @@ mod tests {
                 row("f3", "person:alphaa"), // names nothing — the hand-edit tell
                 row("f4", "person:alphaa"), // …twice, reported once
             ],
+            fields: Default::default(),
         };
         let known: HashSet<EntityId> = [EntityId::person("alpha"), EntityId::person("beta")]
             .into_iter()
@@ -863,6 +876,7 @@ mod tests {
                 row("f3", "person:beta"),   // …twice, reported once
                 row("f4", "person:alphaa"), // names nothing: an orphan, not this
             ],
+            fields: Default::default(),
         };
         let known: HashSet<EntityId> = [EntityId::person("alpha"), EntityId::person("beta")]
             .into_iter()
