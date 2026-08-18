@@ -29,6 +29,7 @@
 use std::sync::Arc;
 
 use jojobot_domain::mailbox::{MailboxName, Mailboxes};
+use jojobot_domain::memory::kinds;
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, MemoryError, NewEntity};
 
@@ -105,6 +106,25 @@ pub fn shipped_types() -> Vec<DeclaredType> {
 /// Returns how many types are now declared, or why the store could not take
 /// them. A store that cannot be reached at startup is reported, never fatal:
 /// the rest of the boot says the same thing about the same store.
+/// **Write the shipped kinds, then load what the store holds.** Every boot,
+/// unconditionally, exactly as the shipped types are written.
+///
+/// **The order is the point, and it is write-then-read rather than read.** A
+/// seed that read first could not tell an instance whose kinds are missing
+/// from one that has them, and an instance that never had them would serve a
+/// set the software says exists and the store does not hold. Writing first
+/// makes the two the same instance.
+///
+/// **What is loaded is the store's answer, not the list above it.** So a kind
+/// a caller declared is parsed by this process, and a shipped kind the store
+/// somehow lost stops being parsed rather than being kept alive by the code
+/// that wrote it. The two refusals in [`kinds`] then mean what they say: an
+/// empty set is a store that answered with nothing, and an unknown token is a
+/// kind nobody declared.
+pub async fn ensure_kinds(memory: &Arc<dyn Memory>) -> Result<usize, MemoryError> {
+    kinds::seed(memory.as_ref()).await
+}
+
 pub async fn ensure_shipped_types(memory: &Arc<dyn Memory>) -> Result<usize, MemoryError> {
     let types = shipped_types();
     for declared in &types {

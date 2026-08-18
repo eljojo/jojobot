@@ -292,6 +292,20 @@ impl Memory for DownMemory {
     ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
         self.1.declare_type(declared).await
     }
+    async fn declare_kind(
+        &self,
+        token: &str,
+        origin: jojobot_domain::memory::types::Origin,
+    ) -> Result<(), MemoryError> {
+        self.1.declare_kind(token, origin).await
+    }
+
+    async fn declared_kinds(
+        &self,
+    ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
+        self.1.declared_kinds().await
+    }
+
     async fn declared_types(
         &self,
     ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {

@@ -120,6 +120,23 @@ impl jojobot_domain::memory::Memory for Blindable {
         self.inner.declared_types().await
     }
 
+    async fn declare_kind(
+        &self,
+        token: &str,
+        origin: jojobot_domain::memory::types::Origin,
+    ) -> Result<(), jojobot_domain::memory::MemoryError> {
+        self.inner.declare_kind(token, origin).await
+    }
+
+    async fn declared_kinds(
+        &self,
+    ) -> Result<
+        Vec<(String, jojobot_domain::memory::types::Origin)>,
+        jojobot_domain::memory::MemoryError,
+    > {
+        self.inner.declared_kinds().await
+    }
+
     async fn update_entity(
         &self,
         handle: &jojobot_domain::memory::EntityId,
@@ -284,6 +301,7 @@ impl Story {
         // A story that declared them itself would prove a caller can write
         // them, which is the opposite of what a shipped type is.
         let _ = jojobot_mcp::seed::ensure_shipped_types(&seed_memory).await;
+        let _ = jojobot_mcp::seed::ensure_kinds(&seed_memory).await;
 
         let story = Self {
             addr,

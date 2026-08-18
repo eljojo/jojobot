@@ -146,6 +146,32 @@ pub fn intern(token: &str) -> &'static str {
     held
 }
 
+/// **Write the kinds this build ships, then load what the store holds.**
+///
+/// **The order is the point, and it is write-then-read rather than read.** A
+/// seed that read first could not tell an instance whose kinds are missing
+/// from one that never had them, and would then serve a set the software
+/// believes in and the store does not hold. Writing first makes those the same
+/// instance.
+///
+/// **What is loaded is the store's answer**, not the list above it: a kind a
+/// caller declared is parsed by this process, and a shipped kind the store
+/// somehow lost stops being parsed rather than being kept alive by the code
+/// that just wrote it.
+///
+/// It lives here rather than beside the boot because the contract cases need
+/// the same two steps, and a second copy of them is where the two would drift.
+pub async fn seed<M: super::Memory + ?Sized>(store: &M) -> Result<usize, super::MemoryError> {
+    for token in SHIPPED {
+        store
+            .declare_kind(token, super::types::Origin::Shipped)
+            .await?;
+    }
+    let held = store.declared_kinds().await?;
+    load(held.iter().map(|(token, _)| token.clone()));
+    Ok(held.len())
+}
+
 /// **Load the shipped kinds, for a test that parses a handle without a store.**
 ///
 /// A store is what holds the declarations, so a case that opens one — real or

@@ -47,6 +47,9 @@ pub struct InMemoryMemory {
     /// the real store keeps them as rows and the order they were declared in
     /// is part of what each one says.
     types: Mutex<Vec<crate::memory::types::DeclaredType>>,
+    /// The kinds, one per token, with where each came from. Rows in the real
+    /// store, so a `Vec` here for the same reason the types are one.
+    kinds: Mutex<Vec<(String, crate::memory::types::Origin)>>,
 }
 
 impl InMemoryMemory {
@@ -58,8 +61,17 @@ impl InMemoryMemory {
     /// too — otherwise every handle in every test using this fake is refused
     /// for a reason that has nothing to do with the case.
     pub fn new() -> Self {
+        let fake = Self::default();
+        // **A store holds the kinds, and this stands in for a store.** The
+        // shipped ten arrive as rows exactly as a boot writes them, and the
+        // set this process parses against is loaded from those rows — so a
+        // case using the double meets the same two steps a real boot takes.
+        *fake.kinds.lock().unwrap() = crate::memory::kinds::SHIPPED
+            .iter()
+            .map(|token| (token.to_string(), crate::memory::types::Origin::Shipped))
+            .collect();
         crate::memory::kinds::load(crate::memory::kinds::SHIPPED);
-        Self::default()
+        fake
     }
 
     /// Put an entity in the store without the write guard seeing it — **the
@@ -762,6 +774,32 @@ impl Memory for InMemoryMemory {
 
     async fn declared_types(&self) -> Result<Vec<crate::memory::types::DeclaredType>, MemoryError> {
         Ok(self.types.lock().unwrap().clone())
+    }
+
+    async fn declare_kind(
+        &self,
+        token: &str,
+        origin: crate::memory::types::Origin,
+    ) -> Result<(), MemoryError> {
+        use crate::memory::types::Origin;
+        let mut kinds = self.kinds.lock().unwrap();
+        if let Some((held, held_origin)) = kinds.iter_mut().find(|(held, _)| held == token) {
+            if *held_origin == Origin::Shipped && origin == Origin::Declared {
+                return Err(MemoryError::InvalidEntity(format!(
+                    "'{held}' is a kind the software ships, and a caller cannot redeclare one"
+                )));
+            }
+            *held_origin = origin;
+            return Ok(());
+        }
+        kinds.push((token.to_string(), origin));
+        Ok(())
+    }
+
+    async fn declared_kinds(
+        &self,
+    ) -> Result<Vec<(String, crate::memory::types::Origin)>, MemoryError> {
+        Ok(self.kinds.lock().unwrap().clone())
     }
 }
 
@@ -5760,6 +5798,64 @@ pub mod contract {
     /// hold: a thing's fields fold to the newest write of each key, so a key
     /// would keep the last companion and drop the rest. Three would pass an
     /// implementation that keeps only a pair.
+    /// **The kinds are rows, and a shipped one is closed to a caller.**
+    ///
+    /// Only a store can answer this: the set a process parses against is
+    /// loaded from these rows, so a store that cannot keep them is a store
+    /// where no handle resolves. The double keeps whatever it is handed, which
+    /// is why this belongs to the contract rather than to a unit test.
+    pub async fn the_kinds_are_rows_and_a_shipped_one_is_closed<M: Memory>(store: &M) {
+        // The two steps a boot takes, in the order it takes them: write what
+        // this build ships, then parse against what the store answers with.
+        crate::memory::kinds::seed(store)
+            .await
+            .expect("the kinds are seeded");
+
+        let held = store.declared_kinds().await.expect("the kinds read back");
+        for shipped in crate::memory::kinds::SHIPPED {
+            assert!(
+                held.iter()
+                    .any(|(token, origin)| token == shipped && *origin == Origin::Shipped),
+                "the store holds '{shipped}' as a kind the software ships: {held:?}",
+            );
+        }
+
+        // **Re-seeding changes nothing**, which is what lets the boot write
+        // them unconditionally.
+        store
+            .declare_kind("person", Origin::Shipped)
+            .await
+            .expect("the seed runs again");
+        let after = store.declared_kinds().await.expect("the kinds read back");
+        assert_eq!(
+            held.len(),
+            after.len(),
+            "a second seed writes no second row: {after:?}",
+        );
+
+        // **A caller cannot take one over.** The refusal reads the row's own
+        // origin, so nothing anywhere keeps a list of protected names.
+        let refused = store
+            .declare_kind("person", Origin::Declared)
+            .await
+            .expect_err("a caller cannot redeclare a kind the software ships");
+        assert!(
+            matches!(refused, MemoryError::InvalidEntity(_)),
+            "the refusal says what is wrong rather than failing the store: {refused:?}",
+        );
+        assert_eq!(
+            store
+                .declared_kinds()
+                .await
+                .expect("the kinds read back")
+                .into_iter()
+                .find(|(token, _)| token == "person")
+                .map(|(_, origin)| origin),
+            Some(Origin::Shipped),
+            "…and the row it refused to take over is untouched",
+        );
+    }
+
     pub async fn a_trip_records_who_came_and_answers_from_either_end<M: Memory>(store: &M) {
         let away = EntityId::new(EntityKind::EVENT, "contract-long-weekend");
         let home = EntityId::new(EntityKind::PLACE, "contract-harbour-end");
@@ -7115,6 +7211,7 @@ pub mod contract {
         a_graph_query_filters_on_a_stored_value_and_walks_an_edge(store).await;
         a_declared_reference_key_is_walkable_against_the_store(store).await;
         a_trip_records_who_came_and_answers_from_either_end(store).await;
+        the_kinds_are_rows_and_a_shipped_one_is_closed(store).await;
         a_pet_is_its_own_kind_in_the_store(store).await;
         a_thing_reads_back_as_its_fields_folded(store).await;
         the_newest_write_wins_however_old_the_record_it_landed_in(store).await;

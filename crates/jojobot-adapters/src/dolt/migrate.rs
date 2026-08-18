@@ -261,6 +261,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0020_entity_crm_wider.sql"),
         leaves: Leaves::ColumnType("entity", "crm", "varchar(255)"),
     },
+    Migration {
+        version: "0021_kind",
+        sql: include_str!("../../migrations/0021_kind.sql"),
+        leaves: Leaves::Table("kind"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -648,6 +653,7 @@ mod tests {
         "0018_type_field_holds_wider",
         "0019_entity_source_wider",
         "0020_entity_crm_wider",
+        "0021_kind",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

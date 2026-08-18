@@ -1880,6 +1880,22 @@ impl Memory for IndexedMemory {
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
         self.inner.declared_types().await
     }
+
+    // The kinds are not in the index: a kind is what a handle carries, and the
+    // projection reads handles rather than declaring them.
+    async fn declare_kind(
+        &self,
+        token: &str,
+        origin: jojobot_domain::memory::types::Origin,
+    ) -> Result<(), MemoryError> {
+        self.inner.declare_kind(token, origin).await
+    }
+
+    async fn declared_kinds(
+        &self,
+    ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
+        self.inner.declared_kinds().await
+    }
 }
 
 /// **Does this THING answer the type, and if so, say how — on the hit.**
@@ -4307,6 +4323,20 @@ mod tests {
         async fn declare_type(&self, _: DeclaredType) -> Result<DeclaredType, MemoryError> {
             unimplemented!("this double only scans")
         }
+        async fn declare_kind(
+            &self,
+            _: &str,
+            _: jojobot_domain::memory::types::Origin,
+        ) -> Result<(), MemoryError> {
+            unimplemented!("this double only scans")
+        }
+
+        async fn declared_kinds(
+            &self,
+        ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
+            unimplemented!("this double only scans")
+        }
+
         async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
             unimplemented!("this double only scans")
         }

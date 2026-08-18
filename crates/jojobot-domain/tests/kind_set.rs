@@ -105,3 +105,39 @@ fn an_unloaded_set_and_an_undeclared_token_are_different_refusals() {
         other => panic!("a loaded set names what it does not hold: {other:?}"),
     }
 }
+
+/// **The seed writes before it reads, and that order is what leaves a process
+/// able to read a handle.**
+///
+/// A seed that read first would load whatever was there before it wrote —
+/// nothing, on an instance that never had the rows — so the rows would end up
+/// right and no handle would resolve until the next boot. The rows alone
+/// cannot show that: this empties the set first, so what the seed loads is the
+/// only thing answering.
+///
+/// It is here rather than in the shared contract for the reason this whole
+/// file exists: emptying the set reaches every test running beside it.
+/// It drives the future on a runtime of its own rather than being an async
+/// test, because the turn above is a plain lock and holding one across an await
+/// is the shape that deadlocks a runtime.
+#[test]
+fn the_seed_writes_before_it_reads() {
+    let _turn = in_turn();
+    let store = jojobot_domain::memory::testing::InMemoryMemory::default();
+    kinds::load::<[&str; 0], &str>([]);
+
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a runtime for this one case")
+        .block_on(kinds::seed(&store))
+        .expect("the kinds are seeded");
+
+    assert_eq!(
+        EntityId::person("kind-set-reader").kind(),
+        Some(EntityKind::PERSON),
+        "after the seed this process reads a handle, which it can only do if the seed \
+         loaded what it had just written",
+    );
+
+    kinds::load_shipped();
+}

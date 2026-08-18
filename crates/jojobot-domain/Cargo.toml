@@ -29,3 +29,6 @@ testing = []
 
 [dev-dependencies]
 tokio = { workspace = true }
+# This crate's own integration suites use its fake, which the feature above
+# keeps out of a production build.
+jojobot-domain = { path = ".", features = ["testing"] }

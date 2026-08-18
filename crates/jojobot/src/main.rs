@@ -256,6 +256,21 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
 
+    // **The kinds, before anything reads a handle.** Every kind this instance
+    // holds is written and then read back, and what comes back is the set this
+    // process parses handles against. A store that cannot be reached leaves
+    // that set empty, and an empty set refuses every handle in its own words
+    // rather than pretending the ten are there.
+    match jojobot_mcp::seed::ensure_kinds(&seed_memory).await {
+        Ok(kinds) => tracing::info!(kinds, "loaded the kinds this instance holds"),
+        Err(e) => tracing::error!(
+            error = %e,
+            "KINDS NOT LOADED — the store could not be reached at startup, so no handle can be \
+             read and every write is refused. Nothing was written and nothing was lost; a restart \
+             once the store is reachable puts it right."
+        ),
+    }
+
     // **The vocabulary the software ships, declared on every boot.** Written
     // unconditionally: a shipped name is closed to callers, so the only
     // declaration this replaces is a previous build's, and that is how a key

@@ -1058,6 +1058,44 @@ impl Memory for DoltMemory {
         .map_err(store)?;
         Ok(gather_types(&rows))
     }
+
+    async fn declare_kind(&self, token: &str, origin: Origin) -> Result<(), MemoryError> {
+        // **The shipped ten are closed to a caller**, read from the row rather
+        // than from a list here: what makes a kind the software's is the origin
+        // it was written with, so there is nothing to keep in step with code.
+        let held: Option<String> = sqlx::query_scalar("SELECT origin FROM kind WHERE token = ?")
+            .bind(token)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(store)?;
+        if held.as_deref() == Some(Origin::Shipped.as_token()) && origin == Origin::Declared {
+            return Err(MemoryError::InvalidEntity(format!(
+                "'{token}' is a kind the software ships, and a caller cannot redeclare one"
+            )));
+        }
+        sqlx::query("REPLACE INTO kind (token, origin) VALUES (?, ?)")
+            .bind(token)
+            .bind(origin.as_token())
+            .execute(&self.pool)
+            .await
+            .map_err(store)?;
+        Ok(())
+    }
+
+    async fn declared_kinds(&self) -> Result<Vec<(String, Origin)>, MemoryError> {
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT token, origin FROM kind ORDER BY token")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(store)?;
+        Ok(rows
+            .into_iter()
+            // A row whose origin names nothing this build knows reads as a
+            // caller's, which is the weaker claim: it says the software does
+            // not vouch for the kind rather than that it does.
+            .map(|(token, origin)| (token, Origin::of_token(&origin).unwrap_or(Origin::Declared)))
+            .collect())
+    }
 }
 
 /// Rows into the types they are — **one reader**, so the roster a write is

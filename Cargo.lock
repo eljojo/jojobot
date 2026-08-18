@@ -1446,6 +1446,7 @@ dependencies = [
  "async-trait",
  "getrandom 0.4.3",
  "jiff",
+ "jojobot-domain",
  "serde",
  "thiserror",
  "tokio",

@@ -177,6 +177,19 @@ mod tests {
             ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
+            async fn declare_kind(
+                &self,
+                _: &str,
+                _: jojobot_domain::memory::types::Origin,
+            ) -> Result<(), MemoryError> {
+                unimplemented!("the owner index only reads the index")
+            }
+            async fn declared_kinds(
+                &self,
+            ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError>
+            {
+                unimplemented!("the owner index only reads the index")
+            }
             async fn update_entity(
                 &self,
                 _: &EntityId,

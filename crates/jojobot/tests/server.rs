@@ -68,6 +68,7 @@ async fn spawn_server(
     // …and with the vocabulary it ships, for the same reason: a caller asking
     // for a shipped type on a real instance finds one there.
     let _ = jojobot_mcp::seed::ensure_shipped_types(&state.memory).await;
+    let _ = jojobot_mcp::seed::ensure_kinds(&state.memory).await;
     let ct = CancellationToken::new();
     let app = build_app(state, ct.child_token());
     let shutdown = ct.clone();

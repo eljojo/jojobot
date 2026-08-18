@@ -2445,6 +2445,29 @@ pub trait Memory: Send + Sync {
     /// **The declarations are not the records**, and a caller reading this is
     /// reading what a writer was told to fill, never what the store holds.
     async fn declared_types(&self) -> Result<Vec<types::DeclaredType>, MemoryError>;
+
+    /// **Declare a kind** — the namespace a handle carries and the schema of
+    /// what it names (rule 213).
+    ///
+    /// It is a declaration of its own rather than a type with no keys,
+    /// because a type with no keys is refused: a schema that names nothing is
+    /// not a schema, while a kind that names nothing yet is an ordinary kind.
+    /// What the two share is the [`types::Origin`] mechanism, and they share
+    /// it rather than each having one.
+    ///
+    /// **A shipped kind is closed to a caller.** Declaring one again with a
+    /// caller's origin is refused, exactly as a shipped type is, so the
+    /// software's own nouns cannot be reshaped from outside. Re-declaring a
+    /// shipped kind AS shipped is the seed running again and changes nothing.
+    async fn declare_kind(&self, token: &str, origin: types::Origin) -> Result<(), MemoryError>;
+
+    /// **Every kind the store holds**, with where each came from.
+    ///
+    /// This is what a process loads into [`kinds`] at startup. It is a read of
+    /// the store rather than of any list in this crate: a kind the store lost
+    /// is a kind this process must stop parsing, and a list here could not
+    /// say so.
+    async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError>;
 }
 
 #[cfg(test)]
