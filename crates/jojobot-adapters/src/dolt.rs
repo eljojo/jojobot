@@ -325,6 +325,27 @@ impl Dolt {
         data_dir: &Path,
         port: u16,
     ) -> Result<(Self, Vec<String>), migrate::MigrateError> {
+        Self::brought_up(data_dir, port, None).await
+    }
+
+    /// The same boot with its boundary marked somewhere else, **so a boot
+    /// whose mark cannot be written can be watched coming up anyway**. Every
+    /// boot marks now, so the mark sits on the steady-state path and a mark
+    /// that failed the boot would take the server down with it.
+    #[cfg(test)]
+    pub(crate) async fn ready_marking_over(
+        data_dir: &Path,
+        port: u16,
+        marks: MySqlPool,
+    ) -> Result<(Self, Vec<String>), migrate::MigrateError> {
+        Self::brought_up(data_dir, port, Some(marks)).await
+    }
+
+    async fn brought_up(
+        data_dir: &Path,
+        port: u16,
+        marks: Option<MySqlPool>,
+    ) -> Result<(Self, Vec<String>), migrate::MigrateError> {
         let store =
             Self::start(data_dir, port)
                 .await
@@ -333,6 +354,12 @@ impl Dolt {
                     why: e.to_string(),
                 })?;
         let applied = migrate::run(store.pool()).await?;
+        // **The boundary that bounds the night.** Anything that reached the
+        // store outside a session — a migration this call just applied, a
+        // repair somebody made by hand, whatever a crash left behind — would
+        // otherwise sit inside the next session's span and read as that
+        // session's doing.
+        snapshot(marks.as_ref().unwrap_or(store.pool()), "server boot").await;
         Ok((store, applied))
     }
 
@@ -365,6 +392,55 @@ impl Dolt {
     pub async fn stop(&mut self) {
         self.pool.close().await;
         let _ = self.child.kill().await;
+    }
+}
+
+/// **Mark a boundary in the store's own history, so a person can see what
+/// changed between two of them.**
+///
+/// Three moments take one: the server boots, a session opens, a session ends.
+/// It is for human forensics and for the break-glass case where somebody has
+/// to undo a sitting by hand, using the store's own tooling. **Nothing jojobot
+/// answers is derived from these**, no verb exposes them, and no caller is
+/// told they happen (rules 53 and 158).
+///
+/// **A boundary is not an author.** Runs overlap — a bot may have two at once —
+/// and a mark is global to the store, so one session's boundary takes in
+/// whatever another has written since the last one. What two marks honestly
+/// bound is *what changed between them*, never *what one session did*, which
+/// is why nothing here is named for the session's work.
+///
+/// **It cannot fail its caller.** Booting and opening a session are the acts
+/// that matter; this is a convenience beside them, so it returns nothing and
+/// every failure is a log line rather than a refusal. Silence would be the
+/// other failure — a store quietly not marking anything looks exactly like one
+/// that is.
+///
+/// **Nothing to mark is the ordinary case**, not an error: a boot that changed
+/// no schema and a run that only read leave no difference behind. The store
+/// refuses an empty mark, so the difference is checked first and the quiet case
+/// stays quiet.
+pub(crate) async fn snapshot(pool: &MySqlPool, boundary: &str) {
+    let changed: Result<i64, _> = sqlx::query_scalar("SELECT COUNT(*) FROM dolt_status")
+        .fetch_one(pool)
+        .await;
+    match changed {
+        Ok(0) => {
+            tracing::debug!(boundary, "store: nothing changed since the last mark");
+            return;
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!(boundary, error = %e, "store: could not read what has changed");
+            return;
+        }
+    }
+    if let Err(e) = sqlx::query("CALL DOLT_COMMIT('-A', '-m', ?)")
+        .bind(boundary)
+        .execute(pool)
+        .await
+    {
+        tracing::warn!(boundary, error = %e, "store: the boundary was not marked");
     }
 }
 
@@ -440,6 +516,16 @@ pub(crate) mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// **What the store's own history says**, newest first — the surface a
+    /// person looking for what a sitting did actually reads, and the only
+    /// evidence a boundary was marked at all.
+    pub(crate) async fn marks(pool: &MySqlPool) -> Vec<String> {
+        sqlx::query_scalar("SELECT message FROM dolt_log ORDER BY date DESC")
+            .fetch_all(pool)
+            .await
+            .expect("the store keeps its own history")
     }
 
     /// A port no other caller in this process will be given.
@@ -658,5 +744,93 @@ pub(crate) mod tests {
 
         ours.stop().await;
         first.stop().await;
+    }
+
+    /// **A boot whose boundary cannot be marked still serves.**
+    ///
+    /// Every boot marks now, so the mark is on the path a server takes on an
+    /// ordinary restart with nothing to apply. Booting is the act that matters
+    /// and the mark is a convenience beside it: a store that refuses the mark
+    /// must still come up, apply its schema and answer.
+    ///
+    /// The marks go to a pool aimed at a port nothing is listening on, so every
+    /// mark this boot tries to write fails while the store itself is untouched.
+    /// **Both halves**: the boot answers, and the history really is unmarked —
+    /// without the second this passes on a build where marking works.
+    #[tokio::test]
+    async fn a_boot_whose_boundary_cannot_be_marked_still_comes_up() {
+        let scratch = Scratch::new("boot-unmarkable");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let nowhere = MySqlPoolOptions::new()
+            .acquire_timeout(Duration::from_secs(2))
+            .connect_lazy("mysql://root@127.0.0.1:1/nothing-is-there")
+            .expect("a pool that will never answer");
+
+        let (mut store, applied) = Dolt::ready_marking_over(&path, free_port(), nowhere)
+            .await
+            .expect("the boot stands even when its boundary cannot be marked");
+        assert!(
+            !applied.is_empty(),
+            "the schema still applied, so the boot did its work"
+        );
+        // …and the store it handed back is serving, not merely constructed.
+        let served: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session")
+            .fetch_one(store.pool())
+            .await
+            .expect("the store answers a read of the schema it just applied");
+        assert_eq!(served, 0);
+
+        assert!(
+            marks(store.pool()).await.iter().all(|m| m != "server boot"),
+            "the mark really did fail, or this proves nothing"
+        );
+
+        store.stop().await;
+    }
+
+    /// **A boot marks a boundary, and a boot with nothing behind it marks
+    /// none.**
+    ///
+    /// The first start applies the schema, which is a change nobody has
+    /// bounded: without a mark here it would land inside the first session's
+    /// span and read as that session's doing. The second start applies nothing
+    /// and changes nothing, which is the ordinary case rather than a failure —
+    /// so it must add no mark and must not refuse the boot, and the store
+    /// itself refuses an empty mark.
+    #[tokio::test]
+    async fn a_boot_marks_a_boundary_and_a_boot_with_nothing_to_mark_does_not() {
+        let scratch = Scratch::new("boot-boundary");
+        let path = scratch.0.clone();
+        // Leaked deliberately: dropping it removes the data under a running
+        // server. The stores are stopped below and the directory goes with the
+        // process.
+        std::mem::forget(scratch);
+        let port = free_port();
+
+        let (mut first, applied) = Dolt::ready(&path, port).await.expect("the store comes up");
+        assert!(
+            !applied.is_empty(),
+            "a first boot applies the schema, which is the change this mark bounds"
+        );
+        let after_boot = marks(first.pool()).await;
+        assert!(
+            after_boot.iter().any(|m| m == "server boot"),
+            "the boot marks its own boundary: {after_boot:?}"
+        );
+        first.stop().await;
+
+        let (mut again, applied) = Dolt::ready(&path, port).await.expect("it comes up again");
+        assert!(
+            applied.is_empty(),
+            "the schema is current, so this boot changes nothing"
+        );
+        let after_second = marks(again.pool()).await;
+        assert_eq!(
+            after_second.len(),
+            after_boot.len(),
+            "a boundary with nothing behind it leaves no mark: {after_second:?}"
+        );
+        again.stop().await;
     }
 }

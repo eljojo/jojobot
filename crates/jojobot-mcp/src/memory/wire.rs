@@ -74,6 +74,12 @@ pub(crate) fn entity_ref_json(reference: &EntityRef) -> serde_json::Value {
 pub(crate) fn declared_type_json(declared: &DeclaredType) -> serde_json::Value {
     serde_json::json!({
         "name": declared.name,
+        // **Where it came from, on every type that is served.** A type the
+        // software ships is closed: a caller cannot replace it, and without
+        // this the only way to learn that is to declare over it and read the
+        // refusal — which makes a closed type something a caller trips over
+        // rather than something it can see.
+        "origin": declared.origin.as_token(),
         "fields": declared
             .fields
             .iter()

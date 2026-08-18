@@ -329,7 +329,29 @@ impl Story {
     /// run: looking through the window is not a session, and nothing on this
     /// path may change what a bot sees.
     pub async fn page(&self, handle: &str) -> Answer {
-        let path = format!("/{handle}/");
+        self.window(&format!("/{handle}/")).await
+    }
+
+    /// **Follow a link the page itself carried**, the way clicking one does.
+    ///
+    /// A story that built the address instead would assert against the URL the
+    /// page was supposed to have rather than the one it has: the way in is
+    /// part of what the page must get right, so the story reads the link off
+    /// the page — see [`Answer::link_to`] — and hands it back here.
+    ///
+    /// Relative, because that is what a page carries and what a browser
+    /// resolves against the page it is on.
+    pub async fn follow(&self, href: &str) -> Answer {
+        let path = if href.starts_with('/') {
+            href.to_string()
+        } else {
+            format!("/{href}")
+        };
+        self.window(&path).await
+    }
+
+    async fn window(&self, path: &str) -> Answer {
+        let path = path.to_string();
         let client = crate::support::browser();
         let cookie = crate::support::log_in(&client, self.addr, &path).await;
         let body = client
@@ -342,7 +364,7 @@ impl Story {
             .await
             .expect("the page is text");
         Answer {
-            what: format!("the page for {handle}"),
+            what: format!("the page at {path}"),
             body,
         }
     }
@@ -1054,6 +1076,33 @@ impl Answer {
             what: format!("{} section of the {}", id, self.what),
             body: body.to_string(),
         }
+    }
+
+    /// **Where the page's own link on this label goes.**
+    ///
+    /// A page is read by following what it offers, so a story that wants the
+    /// next page takes the address off the link rather than building one: an
+    /// address a story assembles is one the page never has to carry, and the
+    /// beat would pass on a build where the label is not a link at all.
+    ///
+    /// Scope this to the section the link lives in — the whole page carries
+    /// many.
+    pub fn link_to(&self, label: &str) -> String {
+        let anchor = format!(">{label}</a>");
+        let at = self.body.find(&anchor).unwrap_or_else(|| {
+            panic!(
+                "the {} offers no link on {label:?}: {}",
+                self.what, self.body
+            )
+        });
+        let opening = self.body[..at]
+            .rfind("href=\"")
+            .unwrap_or_else(|| panic!("the {label:?} link carries no address: {}", self.body));
+        let href = &self.body[opening + "href=\"".len()..];
+        let end = href
+            .find('"')
+            .unwrap_or_else(|| panic!("the {label:?} link's address does not end: {}", self.body));
+        href[..end].to_string()
     }
 
     /// **What ONE claim says, picked by its address.** `says` is a substring

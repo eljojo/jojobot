@@ -107,13 +107,30 @@ fn row(entity: &Entity, by_id: &HashMap<&EntityId, &Entity>) -> String {
     )
 }
 
+/// **What a reader asked this page for beyond the node itself.**
+///
+/// A query string rather than a second URL: the node is the page, and opening
+/// one of its keys is a way of looking at that page rather than a different
+/// thing to look at. It is also the whole of the state — there is none in the
+/// browser, and a reader who bookmarks the link gets the same page back.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct NodeQuery {
+    /// A key to open: the page renders every write behind it, oldest first.
+    #[serde(default)]
+    pub history: Option<String>,
+}
+
 /// `/{path}` — one node: what sits below it, and the facts held there.
 ///
 /// **The path is the entity's ancestry, so there is one URL per entity.** A
 /// handle reached by any other path is the same entity somewhere it does not
 /// live, and the browser is sent to where it does — a second URL serving the
 /// same node is how two readers come to disagree about where something is.
-pub async fn node(State(state): State<AppState>, Path(path): Path<String>) -> Response {
+pub async fn node(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+    axum::extract::Query(asked): axum::extract::Query<NodeQuery>,
+) -> Response {
     let Some(handles) = tree::segments(&path) else {
         return not_found();
     };
@@ -165,7 +182,8 @@ pub async fn node(State(state): State<AppState>, Path(path): Path<String>) -> Re
         trail(&handles)
     );
     body.push_str(&about(entity));
-    body.push_str(&fields_section(&facts));
+    body.push_str(&fields_section(&facts, &canonical));
+    body.push_str(&history_section(&state, &entity.id, asked.history.as_deref()).await);
     body.push_str(&conforms_section(&state, &facts).await);
 
     body.push_str("<h2>Below here</h2>\n");
@@ -425,17 +443,77 @@ fn about(entity: &Entity) -> String {
 /// vanished would leave a reader unable to tell a thing with no fields from a
 /// page that does not show them, which is the very confusion this section
 /// exists to end.
-fn fields_section(facts: &[Fact]) -> String {
+fn fields_section(facts: &[Fact], canonical: &str) -> String {
     let folded = folded_fields(facts);
     if folded.is_empty() {
         return "<h2>Fields</h2>\n<p>Nothing is recorded on this.</p>\n".to_string();
     }
     let mut out = String::from("<h2>Fields</h2>\n<table id=\"fields\">\n");
     for (key, value) in &folded {
+        // **The key is a link to its own writes.** What a key holds now is one
+        // answer and how it got there is the other, and a page that showed
+        // only the first is a page where the second cannot be asked for.
         out.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td></tr>\n",
+            "<tr><td><a href=\"{}?history={}\">{}</a></td><td>{}</td></tr>\n",
+            escape(canonical),
+            escape(key),
             escape(key),
             escape(value)
+        ));
+    }
+    out.push_str("</table>\n");
+    out
+}
+
+/// **The writes behind one key, oldest first** — what the fold above projects
+/// away.
+///
+/// **Absent unless a key was asked for.** Every page carrying an empty history
+/// block would be a section a reader learns to skip, and the fold is the answer
+/// nearly every time: this is the one-in-a-hundred read, and it is one click
+/// from the value it explains.
+///
+/// **Nothing here writes.** It is a read of the same substrate the fold comes
+/// from, so looking at the operator's own page cannot move a message, mark
+/// anything read, or start a session.
+async fn history_section(state: &AppState, entity: &EntityId, key: Option<&str>) -> String {
+    let key = match key.map(str::trim) {
+        None | Some("") => return String::new(),
+        Some(key) => key,
+    };
+    let writes = match state.memory.history(entity, key).await {
+        Ok(writes) => writes,
+        Err(err) => {
+            return blind(
+                &format!("Writes of {}", escape(key)),
+                "the writes behind a key",
+                &err.to_string(),
+            );
+        }
+    };
+    if writes.is_empty() {
+        return format!(
+            "<h2>Writes of {}</h2>\n<p>Nothing has been written under this key.</p>\n",
+            escape(key)
+        );
+    }
+    let mut out = format!(
+        "<h2>Writes of {}</h2>\n<table id=\"history\">\n\
+         <tr><th>Value</th><th>When</th><th>Record</th><th>Standing</th></tr>\n",
+        escape(key)
+    );
+    for write in &writes {
+        out.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            // **A clear is a write, and it says so rather than rendering
+            // blank.** An empty cell reads as a value somebody wrote.
+            match &write.value {
+                Some(value) => escape(value),
+                None => "<em>taken off</em>".to_string(),
+            },
+            escape(&write.date.to_string()),
+            escape(&write.fact.to_string()),
+            escape(write.status.as_token()),
         ));
     }
     out.push_str("</table>\n");

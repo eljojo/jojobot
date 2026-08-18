@@ -286,11 +286,45 @@ async fn keeping_track_of_bikes() {
     // far has this bike been ridden — one value, the newest write, folded from
     // every record about the bike. It is on the page he opens himself, where
     // the year each tally was written for sits beside it.
-    let fields = story.page("thing:gravel-bike").await.section("fields");
+    let page = story.page("thing:gravel-bike").await;
+    let fields = page.section("fields");
     fields.says("km").says("4100");
     // The two tallies before it are not the answer to that question, and the
     // fold says so by leaving them out.
     fields.never_says("2600").never_says("3800");
+
+    // **And the key itself is the way to the other question.** He does not
+    // know a query string and should not have to: what the fold shows is a
+    // link, so the page he is on carries the way to the page behind it. The
+    // address is read off that link rather than assembled here, which is the
+    // difference between following the page and rehearsing it.
+    let opened = story.follow(&fields.link_to("km")).await;
+
+    // Every tally he ever wrote, oldest first, each with the record that
+    // carried it. **Read out of the writes table alone** — the current value
+    // is on the same page in the fold above, so a search of the whole page
+    // finds 4,100 there and calls it a history.
+    let writes = opened.section("history");
+    writes
+        .says("2600")
+        .says("3800")
+        .says("4100")
+        .says(&tallies[0])
+        .says("active");
+    let each_year = writes.raw();
+    assert!(
+        each_year.find("2600") < each_year.find("3800")
+            && each_year.find("3800") < each_year.find("4100"),
+        "the writes are listed oldest first, or the page cannot say which way \
+         the numbers went: {each_year}"
+    );
+
+    // …and the fold on that same page still answers the first question. Both
+    // halves in one read: the history is there AND it has not replaced what
+    // the key holds now.
+    let still = opened.section("fields");
+    still.says("4100");
+    still.never_says("2600").never_says("3800");
 
     // …and how much each year, which is the SAME key asked as every time it
     // was written: oldest first, each write carrying the record it arrived in

@@ -159,6 +159,23 @@ async fn seed(store: &dyn Memory) {
         piece.fields = [(key.to_string(), value.to_string())].into_iter().collect();
         store.capture(piece).await.expect("the field is written");
     }
+    // **One key written twice, on two different days.** The fold shows what it
+    // holds now; the writes behind it are what the history half of the page is
+    // for, and a key written once cannot tell the two apart.
+    for (value, said, day) in [
+        ("40", "the stall took forty on the first day", 7),
+        ("45", "and forty-five on the second", 8),
+    ] {
+        let mut takings = NewFact::about(
+            EntityId::new(EntityKind::Topic, "widgets"),
+            said,
+            Date::constant(2026, 3, day),
+        );
+        takings.fields = [("takings".to_string(), value.to_string())]
+            .into_iter()
+            .collect();
+        store.capture(takings).await.expect("the field is written");
+    }
     // A type the fold makes the stall answer whole, which no one of its records
     // answers alone.
     store
@@ -788,6 +805,69 @@ async fn a_node_page_shows_the_things_folded_fields_and_what_they_conform_to() {
     assert!(
         body.contains("stall"),
         "the type the thing answers is named: {body}"
+    );
+    ct.cancel();
+}
+
+/// **A key on the page opens to the writes behind it.**
+///
+/// The fold says what the thing holds NOW, which is one value and the answer
+/// most of the time. The writes behind that value are the other question the
+/// same data answers — every time the key was written, and when — and the page
+/// showed no way to ask it.
+///
+/// Both halves in one case: a plain page carries no history at all, and the
+/// page for one key carries that key's writes, oldest first.
+#[tokio::test]
+async fn a_key_on_a_node_page_opens_to_the_writes_behind_it() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let plain = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        plain.contains("?history=takings"),
+        "the key is a link to its own writes — a page nobody can ask is a \
+         capability nobody finds: {plain}"
+    );
+    assert!(
+        !plain.contains("id=\"history\""),
+        "…and a page nobody asked carries no history: {plain}"
+    );
+
+    let opened = read(
+        &client,
+        addr,
+        "/person:alpha/topic:widgets/?history=takings",
+        &cookie,
+    )
+    .await
+    .text()
+    .await
+    .unwrap();
+    let table = opened
+        .split_once("id=\"history\"")
+        .expect("the opened page carries the history table")
+        .1;
+    let table = table.split_once("</table>").expect("…and it closes").0;
+    // **Scoped to the table**, because the current value appears in the fold
+    // above it: a substring over the whole page would find "45" there and call
+    // it a history.
+    let first = table.find(">40<").expect("the write that came first");
+    let second = table.find(">45<").expect("…and the one that replaced it");
+    assert!(
+        first < second,
+        "the writes read oldest first, as a history does: {table}"
+    );
+    assert!(
+        table.contains("2026-03-07") && table.contains("2026-03-08"),
+        "each write says when it happened: {table}"
     );
     ct.cancel();
 }

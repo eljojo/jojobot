@@ -119,9 +119,16 @@ impl Jojobot {
         let known = self.memory.declared_types().await.map_err(memory_error)?;
         let body = serde_json::json!({
             "type": declared_type_json(&declared),
-            // Names only. A caller that has just declared one is choosing what
-            // else to reach for, not weighing anybody's keys.
-            "types": known.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+            // **A name and where it came from — not the keys.** A caller
+            // that has just declared one is choosing what else to reach for
+            // rather than weighing anybody's keys, and which of these it may
+            // declare over is part of choosing.
+            "types": known
+                .iter()
+                .map(|t| {
+                    serde_json::json!({ "name": t.name, "origin": t.origin.as_token() })
+                })
+                .collect::<Vec<_>>(),
         });
         json_result(&body)
     }
@@ -206,6 +213,59 @@ mod tests {
             shipped,
             "the shipped type is untouched — keys, order and origin",
         );
+    }
+
+    /// **Where a type came from reaches the wire — on the type, and on every
+    /// type in the list beside it.**
+    ///
+    /// Without it a caller cannot tell a type the software ships from one it
+    /// declared itself, and the only way to find out is to declare over it and
+    /// read the refusal. That makes a closed type undiscoverable rather than
+    /// merely undocumented, which is rule 62 the wrong way round: the surface
+    /// should let a caller avoid the refusal, not spring it.
+    ///
+    /// Both origins in one read, because an answer that says `declared` on
+    /// everything passes a case that only ever looks at a caller's own type.
+    #[tokio::test]
+    async fn a_type_says_where_it_came_from_on_the_wire_and_in_the_list() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+        jojobot
+            .memory
+            .declare_type(DeclaredType::shipped(
+                "rota",
+                vec![Field::new("starts", ValueType::Date)],
+            ))
+            .await
+            .expect("the software declares its own types");
+
+        let body = json_of(
+            &jojobot
+                .declare_type(Parameters(declare_args("service", &["cost"])))
+                .await
+                .expect("declaring a name of my own is accepted"),
+        );
+        assert_eq!(
+            body["type"]["origin"], "declared",
+            "a type this caller declared says so: {body}"
+        );
+
+        let listed = |name: &str| {
+            body["types"]
+                .as_array()
+                .unwrap_or_else(|| panic!("the answer lists the types that exist: {body}"))
+                .iter()
+                .find(|t| t["name"] == name)
+                .unwrap_or_else(|| panic!("the list holds '{name}': {body}"))
+                .clone()
+        };
+        assert_eq!(
+            listed("rota")["origin"],
+            "shipped",
+            "…and the closed one in the list beside it says THAT, which is what \
+             tells a caller not to declare over it: {body}"
+        );
+        assert_eq!(listed("service")["origin"], "declared");
     }
 
     /// **A caller's own type still replaces on redeclare, through the served

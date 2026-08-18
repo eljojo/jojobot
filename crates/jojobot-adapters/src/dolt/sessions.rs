@@ -37,6 +37,11 @@ use super::ids::{self, Draw};
 pub struct DoltSessions {
     pool: MySqlPool,
     draw: Draw,
+    /// **Where the boundary marks are written**, which in production is the
+    /// pool beside it. It is a field of its own because a mark that fails must
+    /// leave the session standing, and the only way to watch that happen is to
+    /// break the marking and nothing else — see [`Self::snapshotting`].
+    snapshots: MySqlPool,
 }
 
 impl DoltSessions {
@@ -48,6 +53,7 @@ impl DoltSessions {
     /// [`crate::dolt::migrate`].
     pub fn open(pool: MySqlPool) -> Self {
         DoltSessions {
+            snapshots: pool.clone(),
             pool,
             draw: ids::drawing(),
         }
@@ -58,7 +64,25 @@ impl DoltSessions {
     /// collision on demand.
     #[cfg(test)]
     pub(crate) fn drawing(pool: MySqlPool, draw: Draw) -> Self {
-        DoltSessions { pool, draw }
+        DoltSessions {
+            snapshots: pool.clone(),
+            pool,
+            draw,
+        }
+    }
+
+    /// The same store marking its boundaries somewhere else, **so a store that
+    /// cannot be marked can be watched failing to stop a session**. A boundary
+    /// mark is a convenience beside the act it bounds; a store that refuses one
+    /// must still open and close runs, and a broken pool is the failure that
+    /// reaches the mark and nothing else.
+    #[cfg(test)]
+    pub(crate) fn snapshotting(pool: MySqlPool, snapshots: MySqlPool) -> Self {
+        DoltSessions {
+            pool,
+            draw: ids::drawing(),
+            snapshots,
+        }
     }
 
     /// Read one whole session inside a transaction, or say it is not there.
@@ -272,6 +296,16 @@ impl Sessions for DoltSessions {
         .map_err(store)?;
         let session = Self::read_in(&mut tx, &id).await?;
         tx.commit().await.map_err(store)?;
+        // **The near end of the run's span.** It fixes what the store looked
+        // like before this run touched anything, so a sitting is bounded at
+        // both ends rather than inferred from wherever the last one stopped.
+        // The retry above does not reach here: a caller offering a handle that
+        // already holds a run began nothing.
+        super::snapshot(
+            &self.snapshots,
+            &format!("session {} ({}) opened", id.as_str(), new.bot.as_str()),
+        )
+        .await;
         Ok(session)
     }
 
@@ -402,6 +436,18 @@ impl Sessions for DoltSessions {
             .map_err(store)?;
         let session = Self::read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
+        // The far end of the span, whichever ending this was: a run that told
+        // its story and one the sweep found stopped are both runs that ended.
+        super::snapshot(
+            &self.snapshots,
+            &format!(
+                "session {} ({}) ended {}",
+                id.as_str(),
+                session.bot.as_str(),
+                to.as_token()
+            ),
+        )
+        .await;
         Ok(session)
     }
 
@@ -475,7 +521,7 @@ async fn mint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dolt::tests::{Scratch, free_port};
+    use crate::dolt::tests::{Scratch, free_port, marks};
     use crate::dolt::{Dolt, migrate};
 
     /// A draw that hands back a fixed sequence, so what the store does with a
@@ -707,6 +753,138 @@ mod tests {
             .expect("a well-formed row reads back");
         assert_eq!(read.state, SessionState::Active);
         assert_eq!(read.focus, "what it was doing");
+
+        store.stop().await;
+    }
+
+    /// **Both ends of a run are marked, and they are two marks.**
+    ///
+    /// A sitting is bounded at both ends rather than inferred from wherever
+    /// the last one stopped, so the opening is its own mark: what the store
+    /// looked like before this run touched anything. What the pair honestly
+    /// bounds is what changed between them — runs overlap, and a mark is
+    /// global — which is why neither says the run did the work.
+    #[tokio::test]
+    async fn both_ends_of_a_run_are_marked_in_the_store() {
+        let scratch = Scratch::new("session-boundaries");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        let sessions = DoltSessions::open(store.pool().clone());
+
+        let before = marks(store.pool()).await;
+        let run = sessions
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("ab12".into()),
+                focus: "a run".into(),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+            })
+            .await
+            .expect("begin ok");
+
+        let opened = marks(store.pool()).await;
+        assert_eq!(
+            opened.len(),
+            before.len() + 1,
+            "opening a run marks a boundary: {opened:?}"
+        );
+        assert!(
+            opened
+                .iter()
+                .any(|m| m.contains(run.id.as_str()) && m.contains("opened")),
+            "the mark names the run it bounds: {opened:?}"
+        );
+
+        sessions
+            .close(&run.id, SessionState::Wrapped)
+            .await
+            .expect("close ok");
+
+        let ended = marks(store.pool()).await;
+        assert_eq!(
+            ended.len(),
+            opened.len() + 1,
+            "the ending is a boundary of its own, not the same one: {ended:?}"
+        );
+        assert!(
+            ended
+                .iter()
+                .any(|m| m.contains(run.id.as_str()) && m.contains("ended")),
+            "the far end names the run and how it ended: {ended:?}"
+        );
+
+        store.stop().await;
+    }
+
+    /// **A boundary that cannot be marked does not take the run down with it.**
+    ///
+    /// Opening and closing a run are the acts that matter; the mark is a
+    /// convenience beside them. The failure is real rather than staged around:
+    /// the marks go to a pool that has been closed, so every mark this store
+    /// tries to write fails while every session write lands.
+    ///
+    /// **Both halves.** That the run stands is asserted by reading it back off
+    /// the board, and that the mark truly failed is asserted by the store's
+    /// history not naming it — without the second, this passes on a build
+    /// where marking works perfectly.
+    #[tokio::test]
+    async fn a_boundary_that_cannot_be_marked_leaves_the_run_standing() {
+        let scratch = Scratch::new("boundary-unmarkable");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        let unreachable = store
+            .database("marks_go_nowhere")
+            .await
+            .expect("a pool of its own");
+        unreachable.close().await;
+        let sessions = DoltSessions::snapshotting(store.pool().clone(), unreachable);
+
+        let run = sessions
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("cd34".into()),
+                focus: "a run whose boundaries cannot be marked".into(),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+            })
+            .await
+            .expect("a run starts even when its boundary cannot be marked");
+        let read = sessions
+            .read_session(&run.id)
+            .await
+            .expect("and the run is on the board");
+        assert_eq!(read.state, SessionState::Active);
+
+        let closed = sessions
+            .close(&run.id, SessionState::Wrapped)
+            .await
+            .expect("and it ends, too");
+        assert_eq!(closed.state, SessionState::Wrapped);
+
+        assert!(
+            marks(store.pool())
+                .await
+                .iter()
+                .all(|m| !m.contains(run.id.as_str())),
+            "the marks really did fail, or this proves nothing"
+        );
+        // **And this store CAN be marked**, so what failed above was the pool
+        // the marks went to and not the store refusing every mark there is.
+        crate::dolt::snapshot(store.pool(), "a mark from a pool that works").await;
+        assert!(
+            marks(store.pool())
+                .await
+                .iter()
+                .any(|m| m == "a mark from a pool that works"),
+            "the store takes a mark from a pool that works"
+        );
 
         store.stop().await;
     }
