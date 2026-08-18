@@ -154,8 +154,8 @@ pub struct RecallArgs {
     /// written in, each with its own wording, provenance and the address that
     /// edits it.
     ///
-    /// **Off by default.** The fields are what a thing IS and they come back
-    /// always; the records say the same thing at length, and shipping every one
+    /// **Off by default.** The fields are what a thing HOLDS and they come
+    /// back always; the records say the same thing at length, and shipping every one
     /// of them unasked is the cost a caller cannot decline. Ask for them when
     /// you need a claim's own words, where it came from, or its address —
     /// and an answer that left them out says how many there were.
@@ -375,8 +375,8 @@ impl Jojobot {
                        there). WHAT OF EACH: every object always comes back as its FIELDS — \
                        every write on it folded, one value per key, the newest write of that key \
                        winning, and a write that takes a key off takes it off the thing. Those \
-                       fields are what the thing IS, and they answer most \
-                       questions; the records behind them are bigger and say the same thing at \
+                       fields are what the thing HOLDS — its KIND is what it \
+                       IS — and they answer most questions; the records behind them are bigger and say the same thing at \
                        length. Ask for facts when you need a claim's own wording, its \
                        provenance, or the address that edits it, and the answer says how many \
                        records it left out when you did not. Then prose, off by default, which is the human half of the \
@@ -636,7 +636,7 @@ mod tests {
     /// **A thing comes back as one dense row, and the records it was folded
     /// from say they are not here.**
     ///
-    /// The whole point of the read: a caller asking what a thing IS gets one
+    /// The whole point of the read: a caller asking what a thing HOLDS gets one
     /// value per key rather than every claim ever made about it. Both halves,
     /// because a row that is always there and records that are always there is
     /// the build this replaces.

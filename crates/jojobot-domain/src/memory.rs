@@ -2335,7 +2335,7 @@ pub trait Memory: Send + Sync {
     /// answers one.
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError>;
 
-    /// **What the thing IS: one value per key, the newest write winning.**
+    /// **What the thing HOLDS: one value per key, the newest write winning.**
     ///
     /// The other read of the same substrate [`history`](Memory::history) reads:
     /// that one answers with every write of one key, this one with the standing

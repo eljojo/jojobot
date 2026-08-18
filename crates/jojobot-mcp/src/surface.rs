@@ -1392,6 +1392,82 @@ fn no_agent_facing_text_promises_a_permanent_handle() {
     );
 }
 
+/// **The fields are what a thing HOLDS. The kind is what it IS.**
+///
+/// A thing's fields and a thing's identity were the same sentence while a
+/// schema and a kind were the same idea. They are not: a kind is the schema
+/// that is also identity (rule 213), and a declared type is a shape that any
+/// number of kinds can answer. **The gigs story is the proof and it is in this
+/// repository**: a jukebox carries the key a gig carries, honestly, and only
+/// the kind separates the two. If fields were identity that jukebox would be a
+/// gig.
+///
+/// So text telling a caller that the fields are what the thing IS teaches an
+/// identity the store does not keep — and a caller who believes it writes a
+/// key to change what something is, which is a write that will never do that.
+///
+/// **Asserted as the claim rather than as a sentence**: a sentence that speaks
+/// of fields and calls them what the thing is, in whatever words, and the
+/// positive that has to replace it — the fields are what the thing holds.
+#[test]
+fn no_agent_facing_text_makes_the_fields_the_identity() {
+    // A sentence that names the fields AND says one of these is saying the
+    // fields are the thing.
+    const IDENTITY: &[(&str, &str)] = &[
+        (
+            "what the thing is",
+            "a kind is what a thing is; the fields are what it holds",
+        ),
+        (
+            "what a thing is",
+            "a kind is what a thing is; the fields are what it holds",
+        ),
+    ];
+    // Where the model is taught, so where it has to be right.
+    const TAUGHT_BY: &[&str] = &["recall's description"];
+
+    let served = everything_served();
+    assert!(
+        !served.is_empty(),
+        "nothing was gathered, so the sweep below reads no text at all and passes on an empty \
+         corpus"
+    );
+
+    let mut identifying: Vec<String> = Vec::new();
+    let mut taught: Vec<&str> = Vec::new();
+    for (what, text) in &served {
+        for sentence in sentences(text) {
+            if !mentions(&sentence, "field") {
+                continue;
+            }
+            for (marker, why) in IDENTITY {
+                if says(&sentence, marker) {
+                    identifying.push(format!("{what} calls the fields {marker:?} — {why}"));
+                }
+            }
+            // **The whole claim, not the word.** `recall` says "the value it
+            // holds" about a key several sentences away, so a check for the
+            // verb alone passes on a description that never says what the
+            // fields are — which is what the sabotage behind this case showed.
+            if mentions(&sentence, "thing") && says(&sentence, "holds") {
+                taught.push(what);
+            }
+        }
+    }
+    assert!(
+        identifying.is_empty(),
+        "agent-facing text makes a thing's fields its identity. A caller reads this as the truth \
+         about what it is calling, and writes a key to change what something is:\n  {}",
+        identifying.join("\n  ")
+    );
+    let missing: Vec<&&str> = TAUGHT_BY.iter().filter(|w| !taught.contains(w)).collect();
+    assert!(
+        missing.is_empty(),
+        "the false claim is gone and nothing put the true one in its place — this teaches a \
+         session what fields are, so it must say they are what the thing HOLDS: {missing:?}"
+    );
+}
+
 /// **A type is matched against a THING, and `declare_type`'s text says so.**
 ///
 /// A separate claim from the fold above, and it needed its own assertion: that
