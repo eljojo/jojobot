@@ -548,6 +548,47 @@ impl Session {
         );
     }
 
+    /// **The tripwire for a gap whose capability will arrive as an ARGUMENT.**
+    ///
+    /// [`has_no_verb`] cannot hold one of these. A verb has to earn its place
+    /// against widening one that exists, so most of what is missing ships as a
+    /// parameter on a read that is already served — and a check reading the
+    /// verb list is green the day before that lands and green the day after.
+    ///
+    /// This reads the arguments the verb publishes to every client, at every
+    /// depth, and asserts that none of them is named for the capability. The
+    /// needle is matched as a SUBSTRING of each published name, because the
+    /// spelling is settled when the thing is built: a check pinned to one
+    /// guess is the test that cannot fail, one guess later. The positive half
+    /// is the verb's own schema arriving and carrying the arguments the
+    /// missing one would sit beside.
+    ///
+    /// It goes red on the day the argument ships, which is the point.
+    pub async fn has_no_argument(&self, verb: &str, named_for: &str, alongside: &[&str]) {
+        let listed = self.client.list_tools(None).await.expect("the verb list");
+        let tool = listed
+            .tools
+            .iter()
+            .find(|t| t.name == verb)
+            .unwrap_or_else(|| {
+                panic!("the verb list must carry {verb:?} for this to prove anything")
+            });
+        let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
+        let mut published = Vec::new();
+        argument_names(&schema, &mut published);
+        for known in alongside {
+            assert!(
+                published.iter().any(|name| name == known),
+                "{verb} must publish {known:?} — without it this proves nothing: {published:?}"
+            );
+        }
+        assert!(
+            !published.iter().any(|name| name.contains(named_for)),
+            "{verb} now takes an argument named for {named_for:?} — the gap is closed, \
+             so flip this assertion: {published:?}"
+        );
+    }
+
     /// **The tripwire for a write jojobot refuses today.**
     ///
     /// Returns the refusal so a story can say what it named. Unlike every
@@ -760,7 +801,7 @@ impl Session {
             "update_fact",
             json!({
                 "address": address,
-                "metadata": set, "clear_metadata": clear,
+                "fields": set, "clear_fields": clear,
             }),
         )
         .await;
@@ -778,11 +819,22 @@ impl Session {
         .await;
     }
 
+    /// **A thing and its claims** — the records read, asked for as one.
+    ///
+    /// `facts` is sent rather than left to the default, because every one of
+    /// this helper's call sites asserts something inside a record: the content,
+    /// the provenance, the standing, an address, an edge. A story that wants
+    /// the thing WITHOUT its claims asks for that shape through [`shape`],
+    /// which is where a beat says what it wants; this one is named for the
+    /// half it carries, and sending the argument is what keeps it true when
+    /// the default moves.
+    ///
+    /// [`shape`]: Session::shape
     pub async fn recall(&self, subject: &str) -> Answer {
         self.read(
             format!("recall of {subject}"),
             "recall",
-            json!({"subject": subject}),
+            json!({"subject": subject, "facts": true}),
         )
         .await
     }
@@ -891,7 +943,7 @@ impl Session {
     ///
     /// **The plain helper sends neither, and that is why several stories say a
     /// number or a link has nowhere to go but prose.** `capture` takes
-    /// `metadata` and `refs`; the DSL dropped them, so a story written through
+    /// `fields` and `refs`; the DSL dropped them, so a story written through
     /// the DSL could not reach a capability the surface already has, and the
     /// marker recording that read as a gap in jojobot rather than a gap in the
     /// fixture.
@@ -899,7 +951,7 @@ impl Session {
         &self,
         subject: &str,
         content: &str,
-        metadata: Value,
+        fields: Value,
         refs: &[&str],
     ) -> String {
         let body = self
@@ -909,7 +961,7 @@ impl Session {
                 json!({
                     "subject": subject, "content": content,
                     "provenance": "testimony",
-                    "metadata": metadata, "refs": refs,
+                    "fields": fields, "refs": refs,
                 }),
             )
             .await;
@@ -1119,6 +1171,24 @@ async fn call(client: &Client, tool: &str, args: Value) -> Value {
         .map(|t| t.text.clone())
         .unwrap_or_else(|| panic!("{tool} returned no text block"));
     serde_json::from_str(&text).unwrap_or_else(|_| json!({ "raw": text }))
+}
+
+/// **Every argument name one verb publishes, at every depth.**
+///
+/// The keys of each `properties` map anywhere in the schema document, the
+/// definitions an argument of its own shape is emitted through included — so a
+/// name nested inside a filter or a walk is read like a top-level one. Nothing
+/// here enumerates the levels a schema may have: it takes the whole document
+/// the client was served and reads every level it finds.
+fn argument_names(node: &Value, found: &mut Vec<String>) {
+    if let Some(properties) = node.get("properties").and_then(|p| p.as_object()) {
+        found.extend(properties.keys().cloned());
+    }
+    match node {
+        Value::Object(map) => map.values().for_each(|child| argument_names(child, found)),
+        Value::Array(items) => items.iter().for_each(|child| argument_names(child, found)),
+        _ => {}
+    }
 }
 
 /// The address a write handed back, which is how a claim is edited later.

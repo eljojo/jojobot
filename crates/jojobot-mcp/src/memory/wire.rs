@@ -37,7 +37,7 @@ pub(crate) fn fact_json(fact: &Fact) -> serde_json::Value {
         // **Always present, empty when the record carries none.** A reader must
         // not have to branch on whether the key is there to learn that a record
         // has no fields.
-        "metadata": fact.fields,
+        "fields": fact.fields,
         // Links whose meaning is deliberately unrecorded — see
         // `EdgeShape::Connection` for why these are not `about`.
         "refs": fact.refs.iter().map(|r| r.as_str()).collect::<Vec<_>>(),

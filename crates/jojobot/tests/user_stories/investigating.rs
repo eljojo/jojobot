@@ -35,18 +35,41 @@ async fn an_investigation_keeps_what_it_ruled_out() {
             .await;
     }
 
-    // The hypothesis this investigation inherits.
+    // The hypothesis this investigation inherits — and HOW it was reached rides
+    // with it, under a key of its own, because every record carries fields.
+    // What the next investigator needs is not that somebody guessed, but that
+    // the guess came off three samples that moved together.
     let bursty = s
-        .guess("thing:sigma", "hangs seem to track bursty load")
-        .await;
-
-    // GAP — `inference` says nobody confirmed a claim. It cannot say how the
-    // claim was reached, so a hunch drawn from three correlated samples and a
-    // status word decoded off the host itself arrive wearing the same word.
-    //   s.guess_by("thing:sigma", "…", method: "correlation over three samples").await;
-    s.recall("thing:sigma")
+        .call(
+            "capture",
+            json!({
+                "subject": "thing:sigma",
+                "content": "hangs seem to track bursty load",
+                "provenance": "inference",
+                "fields": {"method": "correlation over three samples"},
+            }),
+        )
         .await
+        .field("address");
+
+    // The hunch beside it, reached from nothing in particular. It is what makes
+    // the read below mean anything: without a claim carrying no method, "the
+    // method is on the record" and "everything says method" are one answer.
+    let rack = s.guess("thing:sigma", "phi may share sigma's rack").await;
+
+    // GAP — and `provenance` says the same word for both. It answers who backs
+    // a claim, so a hunch drawn from correlated samples and one drawn from
+    // nothing arrive as `inference` alike; the key above tells them apart and
+    // it is this session's invention, agreed with nobody and asked for by no
+    // read. What is stored is not what is served.
+    //   s.unbacked().weighing("method").await;
+    let inherited = s.recall("thing:sigma").await;
+    inherited
         .claim(&bursty)
+        .says("correlation over three samples")
+        .says("\"provenance\":\"inference\"");
+    inherited
+        .claim(&rack)
         .says("\"provenance\":\"inference\"")
         .never_says("\"method\"");
 
@@ -195,23 +218,37 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .await;
 
     // Refuted an hour later with direct access. The claim is rewritten in
-    // place, so a reader gets one answer rather than two and a judgement.
-    s.correct(
-        &deliberate,
-        "its reset was NOT a deliberate reboot — refuted by direct access",
+    // place, so a reader gets one answer rather than two and a judgement — and
+    // the REASONING error rides the same edit under a key of its own, because
+    // it is the part that generalises: a kernel change across a boot says
+    // nothing about whether the boot was deliberate, since a host already
+    // switched but not rebooted comes up on the newest generation however it
+    // goes down. One call fixes the claim and keeps the lesson.
+    s.call(
+        "update_fact",
+        json!({
+            "address": &deliberate,
+            "content": "its reset was NOT a deliberate reboot — refuted by direct access",
+            "fields": {
+                "reasoning_error": "a kernel change across a boot does not imply the boot \
+                                    was deliberate",
+            },
+        }),
     )
     .await;
     s.recall("thing:tau")
         .await
+        .claim(&deliberate)
         .says("NOT a deliberate reboot")
+        .says("does not imply the boot was deliberate")
         .never_says("since the kernel changed across the boot");
 
-    // GAP — the rewrite fixes the value and loses the reasoning error, which is
-    // the part that generalises: a kernel change across a boot says nothing
-    // about whether the boot was deliberate, because a host already switched
-    // but not rebooted comes up on the newest generation however it goes down.
-    // The next investigator can repeat the inference for free.
-    //   s.refuted(&deliberate, because: "…", reasoning_error: "…").await;
+    // GAP — and it sits where only somebody already reading this claim will
+    // meet it. The lesson is about a class of inference rather than about tau,
+    // and nothing carries it to the next investigator about to make it: no read
+    // asks for reasoning errors, the key is this session's own, and the claim
+    // it hangs on is one host's. What is kept is not what is circulated.
+    //   s.unbacked().weighing("reasoning_error").await;
     s.has_no_verb("refute", &["update_fact", "retract"]).await;
 
     s.wrap("was wrong, and said so").await;
@@ -249,22 +286,33 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // ── session 6 · state that was true this morning ────────────────────────
     let s = story.session().await;
 
-    s.fact(
-        "thing:upsilon",
-        "running the previous kernel, with the new one staged for next boot",
-    )
-    .await;
+    // The shelf life goes on the record, under a key, and the day is one that
+    // has already passed by the time this is read.
+    let kernel = s
+        .call(
+            "capture",
+            json!({
+                "subject": "thing:upsilon",
+                "content": "running the previous kernel, with the new one staged for next boot",
+                "provenance": "testimony",
+                "fields": {"stale_after": "2026-08-05"},
+            }),
+        )
+        .await
+        .field("address");
     s.recall("thing:upsilon").await.says("staged for next boot");
 
-    // GAP — that is true until the next reboot and reads as true forever. A
-    // claim has no shelf life, so a session reading a month-old kernel state
-    // and acting on it is worse off than one that knew nothing. Facts about
-    // machines go stale in a way facts about people do not.
-    //   s.fact_until("thing:upsilon", "…", stale_after: "the next boot").await;
+    // GAP — and nothing honours it. The date is a value like any other: it is
+    // stored, it is comparable, and no read consults it, so the claim comes
+    // back active and current long after the day it named. A session reading a
+    // month-old kernel state and acting on it is worse off than one that knew
+    // nothing, and the record it read said so in a key nobody asks about.
+    //   s.recall("thing:upsilon").says("stale since 2026-08-05").await;
     s.recall("thing:upsilon")
         .await
-        .says("staged for next boot")
-        .never_says("stale_after");
+        .claim(&kernel)
+        .says("2026-08-05")
+        .says("\"status\":\"active\"");
 
     s.wrap("recorded state that will quietly stop being true")
         .await;
@@ -285,8 +333,21 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // about minutes, and minutes are outside what a key can be declared to
     // hold. The claim's own date is out of reach either way: no filter takes
     // it.
-    //   s.events_between("2026-08-04T02:00Z", "2026-08-04T03:00Z").await;
-    s.has_no_verb("events_between", &["search", "recall"]).await;
+    // What is absent is a value type, so the tripwire asks for one: declaring a
+    // key to hold an instant is refused, and the day it is not, the window an
+    // hour wide becomes the same read as the window a week wide.
+    //   s.shape("what failed between two and three",
+    //           json!({"fields": [{"key": "occurred_at", "compare": "after",
+    //                             "value": "2026-08-04T02:00:00Z"}]})).await;
+    s.refused(
+        "declare_type",
+        json!({
+            "name": "incident-window",
+            "fields": [{ "key": "occurred_at", "holds": "timestamp" }],
+        }),
+    )
+    .await
+    .says("timestamp");
 
     // Topology turned a four-host outage into one: two of the four were guests
     // on a third. Of the typed shapes, `location` points at a place,

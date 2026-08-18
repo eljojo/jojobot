@@ -108,9 +108,12 @@ async fn a_read_on_a_lost_handle_is_refused_while_one_with_no_handle_is_served()
     s.recall("person:milhouse")
         .await
         .says("allergic to shellfish");
-    s.call("recall", json!({"subject": "person:milhouse", "sid": null}))
-        .await
-        .says("allergic to shellfish");
+    s.call(
+        "recall",
+        json!({"subject": "person:milhouse", "facts": true, "sid": null}),
+    )
+    .await
+    .says("allergic to shellfish");
 
     // ── and the one it must not ─────────────────────────────────────────────
     //

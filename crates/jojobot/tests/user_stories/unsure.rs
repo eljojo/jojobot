@@ -14,6 +14,8 @@
 //! about it, so no assertion can hold it and none pretends to — and it
 //! proposes no call either, because there is no verb that would fix it.
 
+use serde_json::json;
+
 use super::dsl::Story;
 
 #[tokio::test]
@@ -159,19 +161,34 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         .says("\"standing\":\"settled\"")
         .never_says("closes early on Sundays");
 
-    // GAP — and the claim now reads as though it were always this, settled and
-    // first hand, with no trace that it was a hedge, was confirmed, and was
-    // then walked back. `standing` is current state and keeps no history, so a
-    // claim that has moved twice and one written correctly the first time are
-    // indistinguishable — and the derived claim below still rests on a parent
-    // that has since reversed.
-    //   s.history_of(&hedged).says("open → settled → open").await;
-    s.has_no_verb("history_of", &["recall", "search"]).await;
+    // **Asking the read for how the hedge moved is a question the surface now
+    // takes**, and the answer is that nothing was ever written under that
+    // name. Every write of a KEY is kept, so a key's whole history comes back
+    // on this read — and `standing` is not a key. It is a column of the claim,
+    // rewritten in place by the confirmation and again by the walk-back, and a
+    // rewrite leaves nothing behind.
+    let moved = s
+        .shape(
+            "every time the hedge's standing moved",
+            json!({"subject": "place:moes", "history": "standing"}),
+        )
+        .await;
+    moved.says("\"key\":\"standing\"").says("\"count\":0");
+
+    // GAP — so the claim reads as though it were always this, settled and
+    // first hand, with no trace that it was a hedge, was confirmed and was then
+    // walked back. What the substrate keeps is the writes behind a key on a
+    // thing; what it does not keep is a claim's own columns, which is where
+    // `standing`, `content` and `status` live. A claim that has moved twice and
+    // one written correctly the first time are still indistinguishable — and
+    // the derived claim below still rests on a parent that has since reversed.
+    //   s.shape("every time the hedge's standing moved",
+    //           json!({"subject": "place:moes", "history": "standing"}))
+    //    .says("open → settled → open");
     walked_back
         .claim(&derived)
         .says("a Sunday visit should be earlier")
         .says("\"standing\":\"open\"");
-    //   s.standing_history(&hedged).says("open → settled → settled, content reversed");
 
     s.wrap("the hedge was confirmed, then reversed, and reads as neither")
         .await;

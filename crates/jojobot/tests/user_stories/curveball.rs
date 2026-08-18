@@ -73,8 +73,12 @@ async fn a_curveball_collides_with_the_week() {
     // because the key name is the schema. So two sessions that recorded their
     // dates under different names still do not collide, which is the residual:
     // the day is askable and the agreement it needs is nobody's job.
-    //   s.on_day("2027-01-14").says("event:winter-fest").await;
-    s.has_no_verb("on_day", &["search", "recall"]).await;
+    // A day asked for WITHOUT naming a key is the missing piece, and it would
+    // be an argument on this read rather than a verb beside it.
+    //   s.shape("what falls on the 14th",
+    //           json!({"date": "2027-01-14"})).await;
+    s.has_no_argument("recall", "date", &["fields", "compare"])
+        .await;
 
     s.wrap("both commitments in view, side by side by luck of the wording")
         .await;
@@ -139,8 +143,13 @@ async fn a_curveball_collides_with_the_week() {
     // The residual is what the window cannot span — records whose date sits
     // under a different key name, and the claim's own date, which no filter
     // reaches.
-    //   s.week_of("2027-01-11").await;
-    s.has_no_verb("week_of", &["search", "recall"]).await;
+    // Both residuals are the same absent argument: a day the read asks for
+    // itself, rather than a key the caller has to name and every writer has to
+    // have agreed on.
+    //   s.shape("the week of the 11th",
+    //           json!({"date": {"after": "2027-01-11", "before": "2027-01-18"}})).await;
+    s.has_no_argument("recall", "date", &["fields", "compare"])
+        .await;
 
     s.wrap("the week has a new shape, told in three pieces")
         .await;

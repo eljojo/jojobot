@@ -162,7 +162,7 @@ async fn throwing_a_birthday_party() {
             json!({
                 "subject": guest, "content": said, "provenance": "testimony",
                 "shape": "attendance", "object": "event:birthday-party",
-                "metadata": {"answer": answer},
+                "fields": {"answer": answer},
             }),
         )
         .await;
@@ -205,10 +205,13 @@ async fn throwing_a_birthday_party() {
 
     // GAP — but the one who has NOT answered is still not askable. Every
     // filter here says which records to keep, and "the guests carrying no
-    // reply at all" is a question about a record that does not exist.
+    // reply at all" is a question about a record that does not exist. It is a
+    // filter, so it arrives as an argument on the read that filters, which is
+    // what the tripwire watches.
     //   s.shape("the guests who have not replied",
     //           json!({"fields": [{"key": "answer", "missing": true}]})).await;
-    s.has_no_verb("rsvp", &["capture", "recall"]).await;
+    s.has_no_argument("recall", "missing", &["fields", "key"])
+        .await;
 
     s.wrap("two replies in, one outstanding").await;
 
@@ -246,6 +249,7 @@ async fn throwing_a_birthday_party() {
             "the party, its guests, and what each of them eats",
             json!({
                 "subject": "event:birthday-party",
+                "facts": true,
                 "follow": {"shape": "attendance", "direction": "in"},
             }),
         )

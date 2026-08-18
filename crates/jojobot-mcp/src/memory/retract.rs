@@ -119,7 +119,7 @@ mod tests {
         );
         assert_eq!(body["retraction"]["content"], "it was rebooked twice");
         assert_eq!(
-            body["retraction"]["metadata"]["retracts"],
+            body["retraction"]["fields"]["retracts"],
             address.as_str(),
             "the account names what it takes back"
         );

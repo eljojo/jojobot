@@ -328,6 +328,60 @@ mod tests {
         );
     }
 
+    /// **The old name for a record's fields is refused, and the new one is
+    /// taken** — the pair that says a rename happened rather than an alias.
+    ///
+    /// A caller written against the old surface does not have its argument
+    /// dropped and its write silently thinned: the gate refuses the call by
+    /// name and nothing is written. Loud beats silent, which is why no alias
+    /// was needed to soften the break.
+    #[tokio::test]
+    async fn the_old_name_for_a_records_fields_is_refused_and_the_new_one_is_taken() {
+        let jojobot = handler();
+        let with = |key: &str| {
+            serde_json::json!({
+                "subject": "person:alpha", "content": "weighed at the bench",
+                key: {"weight": "11"}, "sid": "any",
+            })
+        };
+        assert!(
+            advice(jojobot.unimplemented_arguments(&call("capture", with("metadata"))))
+                .contains("metadata"),
+            "the retired name is refused, and the refusal names it"
+        );
+        assert!(
+            jojobot
+                .unimplemented_arguments(&call("capture", with("fields")))
+                .is_none(),
+            "…and the name that replaced it goes through"
+        );
+
+        // The edit side, where the retired name had a second spelling of its
+        // own for taking a key off.
+        let edit = |set: &str, clear: &str| {
+            serde_json::json!({
+                "address": "person:alpha#f1", set: {"weight": "12"}, clear: ["wheel"],
+                "sid": "any",
+            })
+        };
+        assert!(
+            advice(
+                jojobot.unimplemented_arguments(&call(
+                    "update_fact",
+                    edit("metadata", "clear_metadata")
+                ))
+            )
+            .contains("metadata"),
+            "the retired names are refused on the edit too"
+        );
+        assert!(
+            jojobot
+                .unimplemented_arguments(&call("update_fact", edit("fields", "clear_fields")))
+                .is_none(),
+            "…and their replacements go through"
+        );
+    }
+
     /// **The same defect one level down.** `search`'s `edge` is the one
     /// argument on this surface that is a struct of its own, and its fields
     /// went unread: a caller sending `weight` inside it had the search done

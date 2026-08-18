@@ -86,14 +86,42 @@ async fn keeping_track_of_bikes() {
         .says("\"content\":\"needs tyres before it can be sold\"")
         .says("the rear rim is worn too");
 
-    // GAP — both of those are STATES rather than descriptions. Nothing carries
-    // state, so they read as permanent truths about the bike and will still
-    // read that way after it is sold.
-    //   s.state("thing:road-bike", "for sale").await;
+    // Both of those are STATES rather than descriptions, and a state has
+    // somewhere to go that is not a sentence: it rides a record under a key of
+    // its own, where a question can ask for it by value. The two claims above
+    // went in as prose, which is why neither answers the read below.
+    let for_sale = s
+        .event_with(
+            "thing:road-bike",
+            "listed on the club noticeboard",
+            json!({"state": "for sale"}),
+            &[],
+        )
+        .await;
+    let selling = s
+        .shape(
+            "the things that are up for sale",
+            json!({ "fields": [{ "key": "state", "value": "for sale" }] }),
+        )
+        .await;
+    selling.says("thing:road-bike");
+    // The bike that is not for sale, in the same answer that just proved the
+    // read is not empty.
+    selling.never_says("thing:gravel-bike");
+
+    // GAP — and nothing moves it. A record is current truth rewritten in place,
+    // so the day the bike sells the key is overwritten and what it said before
+    // is gone: "sold in March" and "for sale since March" read the same
+    // afterwards, and no read asks what a state used to be. What the key buys
+    // is the question, not the passage of the thing through it.
+    //   s.moved(&for_sale, "sold", on: "2027-03-02").await;
+    s.correct_fields(&for_sale, json!({"state": "sold"}), &[])
+        .await;
     s.recall("thing:road-bike")
         .await
-        .says("hanging in the basement")
-        .never_says("\"state\"");
+        .claim(&for_sale)
+        .says("sold")
+        .never_says("for sale");
 
     s.wrap("both bikes recorded").await;
 
@@ -156,11 +184,40 @@ async fn keeping_track_of_bikes() {
         .never_says("bearings")
         .never_says("2026-04-18");
 
-    // GAP — and no read orders them or takes the newest. "When did I last
-    // service it" comes back as every service ever recorded, and the session
-    // picks the latest date out by reading them.
-    //   s.latest("thing:gravel-bike", answers_type: "service").await;
-    s.has_no_verb("latest", &["search", "recall"]).await;
+    // **The day nobody wrote is off the record and not gone from it.** Every
+    // write of a key is kept, so the value that was there and the moment it was
+    // taken off are both on the key's history — each write naming the record it
+    // arrived in, that record's date and its status. A record read plainly says
+    // what the service is now; this says what the service has been.
+    let dates = s
+        .shape(
+            "every write of the service date",
+            json!({ "subject": "thing:gravel-bike", "history": "done_on" }),
+        )
+        .await;
+    dates
+        .says("\"key\":\"done_on\"")
+        .says("\"count\":2")
+        .says(&format!("\"record\":\"{service}\""))
+        .says("\"status\":\"active\"")
+        .says("2026-04-18")
+        // The clearing write says so in its own right rather than by a null the
+        // reader has to know the meaning of.
+        .says("\"cleared\":true");
+
+    // GAP — and no read orders the RECORDS or takes the newest one. A key's
+    // writes come back in order, which is the history above; "when did I last
+    // service it" is a question about the records, and it comes back as every
+    // service ever recorded with the session picking the latest date out by
+    // reading them. Ordering is how an answer comes back rather than a question
+    // of its own, so it arrives as an argument on the read and the tripwire
+    // watches for both halves of it.
+    //   s.shape("the newest service",
+    //           json!({"subject": "thing:gravel-bike", "order": "expires", "newest": 1})).await;
+    s.has_no_argument("recall", "order", &["fields", "facts"])
+        .await;
+    s.has_no_argument("recall", "newest", &["fields", "facts"])
+        .await;
 
     // GAP — the chain is a PART of the bike, not a fact about it. Parentage is
     // not reachable, so it cannot be its own thing with its own history, and
@@ -200,19 +257,94 @@ async fn keeping_track_of_bikes() {
     // ── session 3 · the numbers, year after year ────────────────────────────
     let s = story.session().await;
 
-    s.fact("thing:gravel-bike", "rode about 3,800 km in 2025")
-        .await;
-    s.fact("thing:gravel-bike", "rode 4,100 km so far in 2026")
-        .await;
-    s.fact("thing:road-bike", "rode 0 km in 2026").await;
+    // The same measurement at three sittings, a year apart. It goes under a
+    // key rather than into a sentence, which is what makes the three of them
+    // one set instead of three remarks that happen to mention kilometres.
+    let mut tallies = Vec::new();
+    for (year, km) in [("2024", "2600"), ("2025", "3800"), ("2026", "4100")] {
+        tallies.push(
+            s.event_with(
+                "thing:gravel-bike",
+                &format!("the year's tally for {year}"),
+                json!({"km": km, "year": year}),
+                &[],
+            )
+            .await,
+        );
+    }
+    // The other bike, ridden none of it. Without it "the tallies came back"
+    // and "everything came back" are the same answer.
+    s.event_with(
+        "thing:road-bike",
+        "the year's tally for 2026",
+        json!({"km": "0", "year": "2026"}),
+        &[],
+    )
+    .await;
 
-    // Those three are the same measurement at three different times, and as
-    // sentences nothing says so. Written as typed records instead — a `year`
-    // and a `km` under a declared type — they are one set: the type fetches
-    // them together and the declared number slices them by year. What no read
-    // does is put them in order, which is the gap in session 2.
+    // **The two questions one key answers, and the operator asks both.** How
+    // far has this bike been ridden — one value, the newest write, folded from
+    // every record about the bike. It is on the page he opens himself, where
+    // the year each tally was written for sits beside it.
+    let fields = story.page("thing:gravel-bike").await.section("fields");
+    fields.says("km").says("4100");
+    // The two tallies before it are not the answer to that question, and the
+    // fold says so by leaving them out.
+    fields.never_says("2600").never_says("3800");
 
-    s.wrap("tallies in").await;
+    // …and how much each year, which is the SAME key asked as every time it
+    // was written: oldest first, each write carrying the record it arrived in
+    // and that record's date, and the count is the answer to how many years
+    // there are.
+    let ridden = s
+        .shape(
+            "every tally ever written for the bike",
+            json!({ "subject": "thing:gravel-bike", "history": "km" }),
+        )
+        .await;
+    ridden
+        .says("\"key\":\"km\"")
+        .says("\"count\":3")
+        .says(&format!("\"record\":\"{}\"", tallies[0]));
+    // **Read out of the history itself, and asserted as an ORDER.** Every one
+    // of these numbers is also on the records above, so a search of the whole
+    // answer for them passes on a build that hands the writes back in any
+    // arrangement at all — which is the difference between three values being
+    // present and a reader being able to tell which way they went.
+    let answered: serde_json::Value =
+        serde_json::from_str(ridden.raw()).expect("the answer is json");
+    let each_year: Vec<&str> = answered["objects"][0]["history"]["writes"]
+        .as_array()
+        .expect("the writes behind the key")
+        .iter()
+        .map(|write| write["value"].as_str().expect("a write carries its value"))
+        .collect();
+    assert_eq!(
+        each_year,
+        ["2600", "3800", "4100"],
+        "the writes come back oldest first: {}",
+        ridden.raw()
+    );
+
+    // And the bike that was ridden none of it keeps its own history, so the
+    // key is answered per thing rather than across the store.
+    s.shape(
+        "every tally ever written for the other bike",
+        json!({ "subject": "thing:road-bike", "history": "km" }),
+    )
+    .await
+    .says("\"count\":1")
+    .never_says("4100");
+
+    // The ordinary read is untouched: a call that names no key carries no
+    // history at all, so the session that wants what the bike is now pays for
+    // none of this.
+    s.recall("thing:gravel-bike")
+        .await
+        .says("the year's tally for 2026")
+        .never_says("\"history\"");
+
+    s.wrap("tallies in, and what each year came to").await;
 
     // ── session 4 · months later, the questions actually asked ──────────────
     let s = story.session().await;

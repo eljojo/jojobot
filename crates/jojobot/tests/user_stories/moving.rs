@@ -148,19 +148,34 @@ async fn moving_abroad() {
     .await
     .says("membership");
 
-    // Everything listed goes in as prose, because prose is all there is.
+    // Most of the list goes in as prose, which is what a session records when
+    // it is taking dictation rather than filing.
     s.fact(
         "project:atlas",
         "visa: embassy appointments open on the first of January",
     )
     .await;
-    s.fact(
-        "project:atlas",
-        "visa photo has to be taken before the appointment",
-    )
-    .await;
     s.fact("project:atlas", "flights: watch prices, set money aside")
         .await;
+
+    // Two of them go in as records with keys, because they are the two the
+    // operator asks after: what is still outstanding, and when it is due. A
+    // key is where that goes — the state and the day are values a question can
+    // reach, where the sentences above can only be searched for by wording.
+    s.event_with(
+        "project:atlas",
+        "visa photo has to be taken before the appointment",
+        json!({"state": "open"}),
+        &[],
+    )
+    .await;
+    s.event_with(
+        "project:atlas",
+        "embassy appointment",
+        json!({"state": "open", "due": "2027-01-01"}),
+        &[],
+    )
+    .await;
     s.fact("project:atlas", "decide what ships and what gets sold")
         .await;
     s.fact(
@@ -174,22 +189,41 @@ async fn moving_abroad() {
     )
     .await;
 
-    // GAP — every line above is a TASK and none of them is one. As a fact,
-    // "the photo has to be taken first" still reads as true after it is taken,
-    // and rewriting it in place then destroys the record that it was ever
-    // outstanding. Facts are current truth by design; a task is a thing whose
-    // state changes and whose history matters.
+    // GAP — every line above is a TASK and none of them is one. The two keyed
+    // records hold a state and a day, which is what a task is made of, and
+    // nothing moves either: taking the photo means a session rewrites `state`
+    // in place, and the record that it was ever outstanding goes with the
+    // rewrite. Nothing orders them, nothing knows the photo comes before the
+    // appointment, and nothing is a task by construction — two sessions
+    // filing the same work under `state` and `status` are filing two things.
     //   s.task("project:atlas", "take the visa photo").before("book the appointment").await;
     s.has_no_verb("task", &["capture", "update_fact"]).await;
 
-    // GAP — and the date is missing for the same reason the task is. A day has
-    // somewhere to go: it rides a typed record under a key of its own, as the
-    // departure does in session 4. What it cannot ride is the thing it is due
-    // for, because no record carries a state and nothing tracks one from open
-    // to done — so a due date here would sit on a claim that reads as true
-    // before the appointment and after it.
-    //   s.task("project:atlas", "embassy appointment").due("2027-01-01").await;
-    s.has_no_verb("due", &["capture", "update_fact"]).await;
+    // …and the date the appointment is due for is on the record beside its
+    // state, where a question about January reaches it. Declaring the type is
+    // what makes the day comparable rather than a string that happens to sort.
+    s.call(
+        "declare_type",
+        json!({
+            "name": "commitment",
+            "fields": [{ "key": "due", "holds": "date" }],
+        }),
+    )
+    .await
+    .says("\"name\":\"commitment\"");
+    let january = s
+        .shape(
+            "what is due before the end of January",
+            json!({
+                "fields": [{ "key": "due", "compare": "before", "value": "2027-02-01" }],
+                "facts": true,
+            }),
+        )
+        .await;
+    january.says("embassy appointment");
+    // The negative in the same answer: the photo is outstanding too and nobody
+    // ever gave it a day, so a read about January must not reach it.
+    january.never_says("visa photo");
 
     // GAP — the visa, the housing, the shipping and the money are CHILDREN of
     // the move. Parentage is not reachable from the surface, so they sit flat
@@ -234,7 +268,7 @@ async fn moving_abroad() {
     // page and readable back off it.
     s.shape(
         "what has to happen before the cat can fly",
-        json!({ "subject": "pet:snowball" }),
+        json!({ "subject": "pet:snowball", "facts": true }),
     )
     .await
     .says("import permit")
@@ -296,10 +330,31 @@ async fn moving_abroad() {
         .await
         .says("person:bodoque");
 
-    // GAP — the question actually asked at this point. Nothing can answer
-    // "what is still open", because nothing here has a state.
-    //   s.open_under("project:atlas").says("visa photo").await;
-    s.has_no_verb("open_under", &["search", "recall"]).await;
+    // The question actually asked at this point, and the two records that were
+    // filed with a state answer it: one read, and the sentences come back
+    // filtered out rather than judged one by one.
+    let still_open = s
+        .shape(
+            "what is still open on the move",
+            json!({ "fields": [{ "key": "state", "value": "open" }], "facts": true }),
+        )
+        .await;
+    still_open.says("visa photo");
+    still_open.says("embassy appointment");
+    // What the read cannot see, in the same answer: the four lines that went in
+    // as sentences are as outstanding as the two above and carry no state, so
+    // "what is still open" answers over what somebody thought to file that way.
+    still_open.never_says("watch prices");
+
+    // GAP — so the answer is only as good as the filing, and nothing makes the
+    // filing happen. Every filter says which records to KEEP, so the four
+    // stateless lines cannot be asked for BY their absence either: "what is
+    // outstanding and nobody has said so" is a question about a key that is not
+    // there.
+    //   s.shape("the work carrying no state",
+    //           json!({"fields": [{"key": "state", "missing": true}]})).await;
+    s.has_no_argument("recall", "missing", &["fields", "key"])
+        .await;
 
     // The appointment moved, and the claim that held before it moved is put
     // past rather than rewritten or taken back: it was true in its day, so it

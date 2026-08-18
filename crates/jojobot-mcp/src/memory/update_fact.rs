@@ -53,13 +53,13 @@ pub struct UpdateFactArgs {
     /// the record already carries and this does not name is left alone, so an
     /// edit reaches one field without restating the rest.
     #[serde(default)]
-    pub metadata: Option<std::collections::BTreeMap<String, String>>,
+    pub fields: Option<std::collections::BTreeMap<String, String>>,
     /// **Fields to remove**, by key. Its own argument rather than an empty
-    /// value in `metadata`: an empty value is a value somebody wrote, and
+    /// value in `fields`: an empty value is a value somebody wrote, and
     /// setting a key to nothing and taking the key off the record are two
     /// different edits.
     #[serde(default)]
-    pub clear_metadata: Option<Vec<String>>,
+    pub clear_fields: Option<Vec<String>>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -83,8 +83,8 @@ impl Jojobot {
                        capture may declare standing settled and nobody is asked to confirm it, \
                        exactly as it declares its provenance — what needs the operator's word \
                        is moving a claim they hedged. IT ALSO REACHES THE RECORD'S FIELDS: \
-                       metadata sets the keys you name and leaves every other key alone, and \
-                       clear_metadata takes keys off. Those are two arguments rather than one, \
+                       fields sets the keys you name and leaves every other key alone, and \
+                       clear_fields takes keys off. Those are two arguments rather than one, \
                        because setting a key to an empty value and removing the key are \
                        different edits and a caller means one of them. An address that \
                        names no fact comes back status: blocked with the addresses that do \
@@ -110,8 +110,8 @@ impl Jojobot {
                 .transpose()?,
             standing: args.standing.as_deref().map(parse_standing).transpose()?,
             confirmed_by_user: args.confirmed_by_user.unwrap_or(false),
-            fields: args.metadata.unwrap_or_default(),
-            clear_fields: args.clear_metadata.unwrap_or_default(),
+            fields: args.fields.unwrap_or_default(),
+            clear_fields: args.clear_fields.unwrap_or_default(),
             edge: match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
                 Ok(edge) => edge,
                 Err(refused) => return Ok(refused),
@@ -166,7 +166,7 @@ mod tests {
         let captured = capture_ok(
             &jojobot,
             CaptureArgs {
-                metadata: Some(
+                fields: Some(
                     [
                         ("cost".to_string(), "40".to_string()),
                         ("done_on".to_string(), "2026-04-18".to_string()),
@@ -183,7 +183,7 @@ mod tests {
         let set = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
-                    metadata: Some(
+                    fields: Some(
                         [("cost".to_string(), "45".to_string())]
                             .into_iter()
                             .collect(),
@@ -193,30 +193,30 @@ mod tests {
                 .await
                 .expect("update ok"),
         );
-        assert_eq!(set["metadata"]["cost"], "45", "the key named is rewritten");
+        assert_eq!(set["fields"]["cost"], "45", "the key named is rewritten");
         assert_eq!(
-            set["metadata"]["done_on"], "2026-04-18",
+            set["fields"]["done_on"], "2026-04-18",
             "…and a key the patch did not name is left alone: {set}"
         );
 
         let cleared = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
-                    clear_metadata: Some(vec!["done_on".into()]),
+                    clear_fields: Some(vec!["done_on".into()]),
                     ..update_args(&address)
                 }))
                 .await
                 .expect("update ok"),
         );
         assert!(
-            cleared["metadata"]
+            cleared["fields"]
                 .as_object()
                 .expect("a bag")
                 .contains_key("cost"),
             "{cleared}"
         );
         assert!(
-            !cleared["metadata"]
+            !cleared["fields"]
                 .as_object()
                 .expect("a bag")
                 .contains_key("done_on"),
@@ -232,7 +232,7 @@ mod tests {
                 .expect("recall ok"),
         );
         assert_eq!(
-            recalled["objects"][0]["facts"][0]["metadata"],
+            recalled["objects"][0]["facts"][0]["fields"],
             serde_json::json!({"cost": "45"}),
             "{recalled}"
         );
@@ -251,7 +251,7 @@ mod tests {
         let refused = blocked(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
-                    metadata: Some(
+                    fields: Some(
                         [("retracts".to_string(), "person:alpha#f1".to_string())]
                             .into_iter()
                             .collect(),

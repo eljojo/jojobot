@@ -69,7 +69,7 @@ pub struct CaptureArgs {
     /// class of thing is asked for: the fields ARE what the record says, and a
     /// type is something the keys answer rather than something you announce.
     #[serde(default)]
-    pub metadata: Option<std::collections::BTreeMap<String, String>>,
+    pub fields: Option<std::collections::BTreeMap<String, String>>,
     /// The entities this record touches, as `kind:slug` — **each must already
     /// exist**, exactly as `subject` must.
     ///
@@ -105,7 +105,7 @@ impl Jojobot {
                        Every entity it names — the subject, and an edge's object — must \
                        ALREADY EXIST: one jojobot doesn't know comes back status: blocked with \
                        candidates and nothing is written. A genuinely new entity is two \
-                       deliberate steps — add_entity, then capture. GIVE IT FIELDS: metadata is \
+                       deliberate steps — add_entity, then capture. GIVE IT FIELDS: fields is \
                        a flat bag of key/value pairs jojobot stores and never interprets, and \
                        refs names the entities the record touches — those are links whose \
                        meaning is deliberately unrecorded, so they are searchable but assert \
@@ -149,7 +149,7 @@ impl Jojobot {
             status: Default::default(),
             date,
             edge,
-            fields: args.metadata.unwrap_or_default(),
+            fields: args.fields.unwrap_or_default(),
             refs: args
                 .refs
                 .iter()
@@ -205,7 +205,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .capture(Parameters(CaptureArgs {
-                    metadata: Some(
+                    fields: Some(
                         [
                             ("mood".to_string(), "delighted".to_string()),
                             ("weather".to_string(), "clear".to_string()),
@@ -220,8 +220,8 @@ mod tests {
                 .expect("capture ok"),
         );
         assert_ne!(body["status"], "blocked", "no label is asked for: {body}");
-        assert_eq!(body["metadata"]["mood"], "delighted");
-        assert_eq!(body["metadata"]["weather"], "clear");
+        assert_eq!(body["fields"]["mood"], "delighted");
+        assert_eq!(body["fields"]["weather"], "clear");
         assert_eq!(body["refs"], serde_json::json!(["person:milhouse"]));
 
         // …and they are on the record a later reader takes, not only in the
@@ -233,7 +233,7 @@ mod tests {
                 .expect("recall ok"),
         );
         assert_eq!(
-            recalled["objects"][0]["facts"][0]["metadata"]["mood"], "delighted",
+            recalled["objects"][0]["facts"][0]["fields"]["mood"], "delighted",
             "{recalled}"
         );
         assert_eq!(
@@ -251,7 +251,7 @@ mod tests {
     async fn a_capture_with_no_fields_answers_with_an_empty_bag() {
         let jojobot = handler();
         let body = capture_ok(&jojobot, capture_args("person:alpha", "plays go")).await;
-        assert_eq!(body["metadata"], serde_json::json!({}), "{body}");
+        assert_eq!(body["fields"], serde_json::json!({}), "{body}");
         assert_eq!(body["refs"], serde_json::json!([]), "{body}");
     }
 

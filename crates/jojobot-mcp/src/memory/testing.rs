@@ -108,7 +108,7 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
         shape: None,
         object: None,
         derived_from: None,
-        metadata: None,
+        fields: None,
         refs: None,
         sid: Some(crate::harness::TEST_SID.into()),
     }
@@ -137,8 +137,8 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
 pub(crate) fn update_args(address: &str) -> UpdateFactArgs {
     UpdateFactArgs {
         address: address.into(),
-        metadata: None,
-        clear_metadata: None,
+        fields: None,
+        clear_fields: None,
         content: None,
         details: None,
         status: None,

@@ -143,7 +143,7 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     let serviced = s
         .shape(
             "the things that have been serviced",
-            json!({ "answers_type": "service" }),
+            json!({ "answers_type": "service", "facts": true }),
         )
         .await;
     serviced.says("thing:gravel-bike");
@@ -156,7 +156,7 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     // have: the service that cost nothing.
     s.shape(
         "the things with a service that cost nothing",
-        json!({ "fields": [{ "key": "cost", "value": "0" }] }),
+        json!({ "fields": [{ "key": "cost", "value": "0" }], "facts": true }),
     )
     .await
     .says("reseated the hose, no charge")

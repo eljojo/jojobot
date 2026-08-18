@@ -231,7 +231,13 @@ impl Expectation for TheWritesLanded {
 
         let recalled = seen
             .room
-            .call("recall", json!({"subject": "person:smoke-alpha"}))
+            // This check reads the CLAIMS, so it asks for them: a read answers
+            // with what a thing is, and the records it was folded from come
+            // back only when the call says so.
+            .call(
+                "recall",
+                json!({"subject": "person:smoke-alpha", "facts": true}),
+            )
             .await;
         if recalled.contains("\"status\":\"blocked\"") {
             return missed(

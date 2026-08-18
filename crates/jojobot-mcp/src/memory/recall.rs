@@ -558,7 +558,7 @@ mod tests {
             capture_ok(
                 &jojobot,
                 CaptureArgs {
-                    metadata: Some(
+                    fields: Some(
                         [("donuts_eaten".to_string(), nth.to_string())]
                             .into_iter()
                             .collect(),
@@ -630,7 +630,7 @@ mod tests {
             capture_ok(
                 &jojobot,
                 CaptureArgs {
-                    metadata: Some([(key.to_string(), value.to_string())].into_iter().collect()),
+                    fields: Some([(key.to_string(), value.to_string())].into_iter().collect()),
                     ..capture_args("thing:gravel-bike", content)
                 },
             )
@@ -705,7 +705,7 @@ mod tests {
         capture_ok(
             &jojobot,
             CaptureArgs {
-                metadata: Some(
+                fields: Some(
                     [("weight".to_string(), "11".to_string())]
                         .into_iter()
                         .collect(),
@@ -755,7 +755,7 @@ mod tests {
             capture_ok(
                 &jojobot,
                 CaptureArgs {
-                    metadata: Some(
+                    fields: Some(
                         [("donuts_eaten".to_string(), nth.to_string())]
                             .into_iter()
                             .collect(),
@@ -1014,7 +1014,7 @@ mod tests {
             CaptureArgs {
                 shape: Some("attendance".into()),
                 object: Some("event:birthday-party".into()),
-                metadata: Some(
+                fields: Some(
                     [("answer".to_string(), "yes".to_string())]
                         .into_iter()
                         .collect(),
@@ -1129,7 +1129,7 @@ mod tests {
         capture_ok(
             &jojobot,
             CaptureArgs {
-                metadata: Some([("odometer".to_string(), "18000".to_string())].into()),
+                fields: Some([("odometer".to_string(), "18000".to_string())].into()),
                 ..capture_args("person:alpha", "the chain was replaced")
             },
         )
@@ -1197,7 +1197,7 @@ mod tests {
             capture_ok(
                 &jojobot,
                 CaptureArgs {
-                    metadata: Some(
+                    fields: Some(
                         [
                             ("born".to_string(), born.to_string()),
                             ("owner".to_string(), "person:bart".to_string()),
