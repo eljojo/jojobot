@@ -1019,6 +1019,24 @@ fn breaks_the_row(value: &str) -> bool {
 /// is a row, and rows are reached by address.
 pub const RETRACTS: &str = "retracts";
 
+/// **How long a field key may be**, in characters.
+///
+/// **The domain says the number and the store holds what the domain admits.**
+/// The column carrying a key is 191 characters wide and sits inside a primary
+/// key, where widening is bounded by the index rather than by preference — so
+/// the answer here is a limit under the column, not a wider column.
+///
+/// **128 is the number the other half of that key already gets.** A write is
+/// addressed by the thing and the key together, and an entity id is bounded at
+/// 128 by [`validate_subject`]. One rule for both halves beats two numbers
+/// nobody can derive from each other, and it leaves 63 characters of headroom
+/// under the column, so a key that passes here cannot reach the wall even if a
+/// store lengthens it on the way in.
+///
+/// It refuses no real key: a key is a name a caller invents for one property,
+/// and the longest this software ships is under twenty characters.
+pub const MAX_KEY_CHARS: usize = 128;
+
 /// **Whether a field key is one jojobot writes itself.**
 ///
 /// The bag is flat and free with exactly one exception, and it is the key that
@@ -1034,7 +1052,8 @@ pub fn reserved_key(key: &str) -> bool {
     key.trim() == RETRACTS
 }
 
-/// **A record's fields may not use the key jojobot writes itself.**
+/// **A record's fields may not use the key jojobot writes itself, and a key
+/// has a length.**
 ///
 /// Checked on the write path in the domain, so both adapters answer for it — a
 /// rule enforced in one store and not the other is a rule that holds until
@@ -1045,6 +1064,15 @@ pub fn validate_fields(fields: &BTreeMap<String, String>) -> Result<(), MemoryEr
             "a record's fields cannot use '{key}' as a key: jojobot writes that key itself, on \
              the record it writes when something is taken back, and it names the record that was \
              taken back. Rename the key — anything else is yours to choose."
+        )));
+    }
+    if let Some(key) = fields.keys().find(|k| k.chars().count() > MAX_KEY_CHARS) {
+        return Err(MemoryError::InvalidFact(format!(
+            "a field key may be {MAX_KEY_CHARS} characters and '{}…' is {}. A key names one \
+             property of a thing, so shorten the name — what it HOLDS has no such limit, and a \
+             key that is carrying a sentence probably wants to be a value.",
+            key.chars().take(24).collect::<String>(),
+            key.chars().count(),
         )));
     }
     Ok(())
@@ -2405,6 +2433,34 @@ mod tests {
             fact: FactId("f1".into()),
             status: FactStatus::Active,
         }
+    }
+
+    /// **A field key has a length, and the domain is what says so.**
+    ///
+    /// The column holding a key is 191 characters and a caller could write
+    /// more, so the store was the thing deciding where a key stopped working:
+    /// a short key round-tripped and a long one came back as a store failure,
+    /// which is a caller mistake wearing a broken-server answer (rules 9 and
+    /// 68).
+    ///
+    /// **Both ends in one case.** A limit that refused everything would pass a
+    /// check that only sent the long key, and a limit that refused nothing
+    /// would pass a check that only sent the short one. The refusal has to say
+    /// the number, because a caller that cannot read the limit off the answer
+    /// finds it by bisection.
+    #[test]
+    fn a_field_key_is_bounded_by_the_domain_and_the_refusal_says_the_bound() {
+        let at_the_limit = BTreeMap::from([("k".repeat(MAX_KEY_CHARS), "value".to_string())]);
+        validate_fields(&at_the_limit).expect("a key at the limit is one a caller may write");
+
+        let over = BTreeMap::from([("k".repeat(MAX_KEY_CHARS + 1), "value".to_string())]);
+        let refused = validate_fields(&over)
+            .expect_err("a key past the limit is refused before it reaches a store");
+        let said = refused.to_string();
+        assert!(
+            said.contains(&MAX_KEY_CHARS.to_string()),
+            "the refusal must carry the limit a caller has to write under: {said}"
+        );
     }
 
     /// **A key declared a counter sums its writes; every other key still takes

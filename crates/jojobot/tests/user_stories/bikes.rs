@@ -129,6 +129,22 @@ async fn keeping_track_of_bikes() {
     // read is not empty.
     selling.never_says("thing:gravel-bike");
 
+    // A key is a NAME for one property, and the domain says how long a name
+    // may be. Past that the write comes back blocked with the number in it, so
+    // a caller learns the limit from the refusal rather than by bisecting
+    // against a store error.
+    s.refused(
+        "capture",
+        json!({
+            "subject": "thing:road-bike",
+            "content": "a key that is carrying a sentence",
+            "provenance": "testimony",
+            "fields": {"k".repeat(129): "and its value"},
+        }),
+    )
+    .await
+    .says("128");
+
     // The day the bike sells, the key is rewritten where it stands: what a
     // thing IS is current truth, so the record reads back holding the new value
     // and not the one it replaced.

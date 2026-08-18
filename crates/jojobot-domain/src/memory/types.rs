@@ -612,6 +612,18 @@ pub fn validate_type(declared: &DeclaredType) -> Result<(), MemoryError> {
     let mut seen: Vec<&str> = Vec::new();
     for field in &declared.fields {
         label("key", &field.key)?;
+        // **The same number a written key gets.** A type names keys and a
+        // record carries them, and they are one namespace: a type free to name
+        // a longer key would declare a floor no record could meet.
+        if field.key.chars().count() > crate::memory::MAX_KEY_CHARS {
+            return Err(MemoryError::InvalidType(format!(
+                "type '{}' names a key of {} characters, and a key may be {}: no record could \
+                 carry it",
+                declared.name,
+                field.key.chars().count(),
+                crate::memory::MAX_KEY_CHARS,
+            )));
+        }
         if seen.contains(&field.key.as_str()) {
             return Err(MemoryError::InvalidType(format!(
                 "type '{}' names the key '{}' twice",
@@ -681,6 +693,7 @@ fn label(what: &str, value: &str) -> Result<(), MemoryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::MAX_KEY_CHARS;
 
     fn record(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs
@@ -977,5 +990,38 @@ mod tests {
             vec![Field::summing("donuts")],
         ))
         .expect("and a counter holding a number is what a counter is");
+    }
+
+    /// **A declared key is bounded by the same number a written key is.**
+    ///
+    /// A type names keys and a record carries them, and they are one
+    /// namespace: a type allowed to name a key longer than a record may carry
+    /// declares a floor no record can ever meet, and the thing that would
+    /// refuse the record is a store error rather than this rule.
+    ///
+    /// The bound was 190 against a column of 191, which is the store deciding
+    /// with one character to spare. [`MAX_KEY_CHARS`] is where the decision
+    /// lives now.
+    ///
+    /// Both ends again, because a limit that refused every key would pass on
+    /// the long one alone.
+    #[test]
+    fn a_declared_key_is_bounded_where_a_written_key_is() {
+        let refused = validate_type(&DeclaredType::new(
+            "snacking",
+            vec![Field::new(&"k".repeat(MAX_KEY_CHARS + 1), ValueType::Text)],
+        ))
+        .expect_err("a declared key past the limit names a key no record may carry");
+        let said = refused.to_string();
+        assert!(
+            said.contains(&MAX_KEY_CHARS.to_string()),
+            "the refusal must carry the limit a caller has to write under: {said}"
+        );
+
+        validate_type(&DeclaredType::new(
+            "snacking",
+            vec![Field::new(&"k".repeat(MAX_KEY_CHARS), ValueType::Text)],
+        ))
+        .expect("a key at the limit is one a record may carry, so a type may name it");
     }
 }

@@ -17,8 +17,8 @@ use jiff::civil::Date;
 
 use super::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, FactStatus,
-    FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, Standing,
-    apply_entity_patch, apply_fact_patch,
+    FieldWrite, Guarded, MAX_KEY_CHARS, Memory, MemoryError, NewEntity, NewFact, Retraction,
+    Standing, apply_entity_patch, apply_fact_patch,
     guard::{self, Decision},
     normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
     search, standing_of, validate_content, validate_details, validate_edge, validate_entity,
@@ -3317,6 +3317,16 @@ pub mod contract {
                 "punctuation".to_string(),
                 "a = b, c~d, <e> & \"f\" — 100% ünïcode".to_string(),
             ),
+            // **The longest key a caller may write, and that is not
+            // decoration.** A key crosses to a store as a column value, and
+            // the column carrying it is part of a primary key — so keys do not
+            // all cost the same, and a store that holds a short one can refuse
+            // a long one on the write. A case that picks a short key answers
+            // for short keys only. The fake keeps a map in memory and has no
+            // cell to overflow, so it answers the same either way: only a
+            // store can answer for this, which is why the key rides in the
+            // contract both stores run.
+            ("k".repeat(MAX_KEY_CHARS), "at the limit".to_string()),
         ]
         .into_iter()
         .collect();
