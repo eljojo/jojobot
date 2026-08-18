@@ -18,6 +18,7 @@ use jojobot_domain::session::Sessions;
 use tokio_util::sync::CancellationToken;
 
 mod support;
+use support::{event_stream_error, event_stream_result, open_with};
 
 /// The Memory and Search ports for the transport/auth tests, which never call the
 /// domain verbs — the in-memory double behind the real index, which is the same
@@ -833,57 +834,4 @@ async fn a_request_declaring_a_revision_jojobot_cannot_serve_is_refused_too() {
     );
 
     ct.cancel();
-}
-
-/// Open a connection asking for one revision. Answers the session id, if the
-/// agreed revision has sessions at all, and the body.
-async fn open_with(http: &reqwest::Client, url: &str, revision: &str) -> (Option<String>, String) {
-    let opened = http
-        .post(url)
-        .header("content-type", "application/json")
-        .header("accept", "application/json, text/event-stream")
-        .body(format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"{revision}","capabilities":{{}},"clientInfo":{{"name":"jojobot-test-client","version":"0.0.1"}}}}}}"#
-        ))
-        .send()
-        .await
-        .unwrap();
-    let session = opened
-        .headers()
-        .get("mcp-session-id")
-        .map(|v| v.to_str().unwrap().to_string());
-    (session, opened.text().await.unwrap())
-}
-
-/// The JSON-RPC error carried by an event stream.
-fn event_stream_error(body: &str) -> serde_json::Value {
-    let message = event_stream_message(body);
-    assert!(
-        !message["error"].is_null(),
-        "this call was expected to be refused: {message}",
-    );
-    message["error"].clone()
-}
-
-/// The JSON-RPC result carried by an event stream, which is how this transport
-/// answers a POST.
-fn event_stream_result(body: &str) -> serde_json::Value {
-    let message = event_stream_message(body);
-    assert!(
-        message["error"].is_null(),
-        "the call was refused: {}",
-        message["error"],
-    );
-    message["result"].clone()
-}
-
-/// The one JSON-RPC message an event stream carries in answer to a POST.
-fn event_stream_message(body: &str) -> serde_json::Value {
-    // Either shape of answer this transport gives: an event stream, whose first
-    // event is a priming one carrying no data, or one plain JSON body.
-    body.lines()
-        .filter_map(|line| line.strip_prefix("data: "))
-        .chain(std::iter::once(body))
-        .find_map(|json| serde_json::from_str::<serde_json::Value>(json).ok())
-        .unwrap_or_else(|| panic!("one JSON-RPC message, streamed or plain: {body}"))
 }

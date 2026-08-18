@@ -321,6 +321,17 @@ impl Story {
         story
     }
 
+    /// **The door itself**, for the one story that is about opening it.
+    ///
+    /// Every other story starts after the handshake, because [`connect`] makes
+    /// one and hands back a client. A story about a client that CANNOT open
+    /// has to knock on the same jojobot by hand, which is what this is for —
+    /// and it is the same server, so what the refusal says and what a working
+    /// session does are one instance answering.
+    pub fn door(&self) -> String {
+        format!("http://{}/mcp", self.addr)
+    }
+
     async fn connect(&self) -> Client {
         let transport =
             StreamableHttpClientTransport::from_uri(format!("http://{}/mcp", self.addr));
