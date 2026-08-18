@@ -23,6 +23,8 @@ mod boot;
 mod challenge;
 #[path = "user_stories/colleagues.rs"]
 mod colleagues;
+#[path = "user_stories/contracts.rs"]
+mod contracts;
 #[path = "user_stories/coordinating.rs"]
 mod coordinating;
 #[path = "user_stories/curveball.rs"]

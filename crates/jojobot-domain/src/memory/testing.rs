@@ -300,6 +300,20 @@ impl Memory for InMemoryMemory {
                 candidates,
             });
         }
+        // **A reference key names an entity, so it faces the same rule the
+        // edge's object faces** — beside the real store's copy, because a rule
+        // that holds in one adapter holds until somebody switches adapters.
+        for object in super::referenced_by(
+            &fact.fields,
+            &self.types.lock().expect("fake mutex poisoned"),
+        ) {
+            if let Decision::Block(candidates) = guard::decide_existing(&object, &index) {
+                return Ok(Guarded::Blocked {
+                    attempted: object,
+                    candidates,
+                });
+            }
+        }
         // **A record's refs are named entities like any other.** The rule is
         // not about edges, it is about naming: nothing a write mentions is
         // brought into being as a side effect of mentioning it. A ref that
@@ -370,6 +384,16 @@ impl Memory for InMemoryMemory {
             refs: fact.refs,
             derived_from: fact.derived_from,
         };
+        // **A new record's keys land on the thing too** — the same guard the
+        // edit path runs, because a thing's fields are every write on it
+        // folded. Run here beside the real store's copy, so a rule that held in
+        // one adapter and not the other cannot ship.
+        let writes = self.writes_on(&stored.home, &facts);
+        super::guard_fit(
+            &super::folded_fields(&writes),
+            &super::stood_after_capture(&writes, &stored),
+            &self.types.lock().expect("fake mutex poisoned"),
+        )?;
         // **The claim is kept without its fields and the fields are kept as
         // writes.** One body of data, projected on the way out.
         facts.push(Fact {
@@ -465,6 +489,20 @@ impl Memory for InMemoryMemory {
             {
                 return Ok(Guarded::Blocked {
                     attempted: edge.object.clone(),
+                    candidates,
+                });
+            }
+        }
+        // **The same rule on the edit path**, over the keys this patch sets:
+        // a reference names an entity, and nothing a write names is created as
+        // a side effect of being named.
+        for object in super::referenced_by(
+            &patch.fields,
+            &self.types.lock().expect("fake mutex poisoned"),
+        ) {
+            if let Decision::Block(candidates) = guard::decide_existing(&object, &self.index()) {
+                return Ok(Guarded::Blocked {
+                    attempted: object,
                     candidates,
                 });
             }
@@ -5317,9 +5355,14 @@ pub mod contract {
             })
             .unwrap_or_else(|| panic!("the thing is found, not dropped: {hits:?}"));
 
+        // The tolerant question keeps it and says what is wrong with it, which
+        // is the point of this case: no key is absent…
+        assert!(flagged.lacking.is_empty(), "{flagged:?}");
+        // …and it still does not fit, because holding a key badly is not
+        // holding it.
         assert!(
-            flagged.complete(),
-            "a bad value is not a missing key: {flagged:?}",
+            !flagged.complete(),
+            "a date slot holding a phrase leaves the type unanswered: {flagged:?}",
         );
         assert_eq!(flagged.mistyped.len(), 1, "{flagged:?}");
         assert_eq!(flagged.mistyped[0].key, "arrives");
@@ -5644,6 +5687,334 @@ pub mod contract {
             older.iter().any(|o| o.entity.id == held),
             "the record stored before that date is selected by the ordering: {older:?}",
         );
+    }
+
+    /// **The kind a reference points at survives the store.**
+    ///
+    /// A store keeps a declaration as one token, so a narrowing it can write
+    /// and not read back is a declaration that silently widens on the next
+    /// read — and every check that rests on it then passes a handle of any
+    /// kind. Only a store can answer for that, which is why this is a contract
+    /// case.
+    ///
+    /// The unnarrowed reference is in the same type, because a store that read
+    /// every reference back as one kind would satisfy the first assertion
+    /// alone.
+    pub async fn a_reference_keeps_the_kind_it_points_at<M: Memory>(store: &M) {
+        store
+            .declare_type(DeclaredType::new(
+                "contract-stay",
+                vec![
+                    Field::pointing_at("venue", EntityKind::Place),
+                    Field::new("booked_by", ValueType::Reference),
+                ],
+            ))
+            .await
+            .expect("declaring a type of my own is accepted");
+
+        let held = store
+            .declared_types()
+            .await
+            .expect("the roster reads")
+            .into_iter()
+            .find(|t| t.name == "contract-stay")
+            .expect("the store holds the type it just took");
+        assert_eq!(
+            held.field("venue").and_then(|f| f.points_at),
+            Some(EntityKind::Place),
+            "the narrowing came back off the store: {held:?}",
+        );
+        assert_eq!(
+            held.field("booked_by").and_then(|f| f.points_at),
+            None,
+            "…and a reference that named no kind is still any handle: {held:?}",
+        );
+    }
+
+    /// **A write cannot put a value on a thing that its type refuses — and
+    /// the same write against a thing that fits nothing is allowed.**
+    ///
+    /// Holding a key badly is not holding it, so a value that breaks its key's
+    /// declaration drops the thing below the type exactly as taking the key
+    /// away would. The refusal is the floor rule reaching a second way of
+    /// losing a key, never a second rule.
+    ///
+    /// Four beats, and the last three are what stop this becoming a gate: the
+    /// wrong-kinded handle is refused on a thing that IS a stay; the identical
+    /// write lands on a thing that fits nothing, which is what keeps a
+    /// half-described thing repairable; a key no type mentions is welcome on
+    /// the fitting thing, because strict is a floor; and the refused record is
+    /// unchanged afterwards.
+    ///
+    /// A contract case because only a store can say whether the write was
+    /// refused AND the record kept.
+    pub async fn a_write_cannot_put_a_value_the_type_refuses<M: Memory>(store: &M) {
+        store
+            .declare_type(DeclaredType::new(
+                "contract-stay-guarded",
+                vec![
+                    Field::pointing_at("stay_venue", EntityKind::Place),
+                    Field::new("stay_nights", ValueType::Number),
+                ],
+            ))
+            .await
+            .expect("declaring a type of my own is accepted");
+
+        let moes = EntityId::new(EntityKind::Place, "contract-moes");
+        let helper = EntityId::new(EntityKind::Pet, "contract-santas-little-helper");
+        ensure(store, &moes).await;
+        ensure(store, &helper).await;
+
+        // A thing that fits: the venue is a place and the nights are a number.
+        let stay = EntityId::new(EntityKind::Event, "contract-the-stay");
+        let booked = capture(
+            store,
+            NewFact {
+                fields: [
+                    ("stay_venue".to_string(), moes.to_string()),
+                    ("stay_nights".to_string(), "2".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(stay.clone(), "two nights booked", date(2026, 4, 18))
+            },
+        )
+        .await;
+
+        // ① The wrong kind on a thing that fits is refused, and the refusal
+        // says which key and what it wanted.
+        let refused = store
+            .update_fact(
+                &booked.address(),
+                FactPatch {
+                    fields: [("stay_venue".to_string(), helper.to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..Default::default()
+                },
+            )
+            .await;
+        let Err(MemoryError::BreaksType {
+            name,
+            key,
+            wanted,
+            value,
+        }) = &refused
+        else {
+            panic!("a handle of the wrong kind must be refused, got {refused:?}");
+        };
+        assert_eq!(name, "contract-stay-guarded", "the refusal names the type");
+        assert_eq!(key, "stay_venue", "…and the key");
+        assert_eq!(
+            wanted, "reference:place",
+            "…and what the key wanted, which `reference` alone could not say",
+        );
+        assert_eq!(value, &helper.to_string(), "…and what was actually sent");
+
+        // ② The record is exactly as it was: a refusal writes nothing.
+        assert_eq!(
+            read_back(store, &stay, &booked.id)
+                .await
+                .fields
+                .get("stay_venue")
+                .map(String::as_str),
+            Some(moes.to_string().as_str()),
+            "the refused write left the record alone",
+        );
+
+        // ③ **The same write, on a thing that fits nothing.** It carries one of
+        // the type's keys and not the other, so there is no fit to protect and
+        // the store takes the value as written. Without this beat the case
+        // above passes on a build that refuses every reference everywhere.
+        let sketch = EntityId::new(EntityKind::Event, "contract-the-sketch");
+        let jotted = capture(
+            store,
+            NewFact {
+                fields: [("stay_venue".to_string(), moes.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(sketch.clone(), "somewhere, some time", date(2026, 4, 18))
+            },
+        )
+        .await;
+        store
+            .update_fact(
+                &jotted.address(),
+                FactPatch {
+                    fields: [("stay_venue".to_string(), helper.to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("a thing that fits nothing has nothing to protect")
+            .written()
+            .expect("…and the write lands");
+
+        // ④ **Adding a key no type mentions is never refused**, on the thing
+        // that does fit. Strict is a floor: a type says what must survive, not
+        // what may be there.
+        store
+            .update_fact(
+                &booked.address(),
+                FactPatch {
+                    fields: [("stay_mood".to_string(), "quiet".to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("a key beyond the type is welcome")
+            .written()
+            .expect("…and it lands");
+
+        // ⑤ **The other door.** A thing's fields are every write on it folded,
+        // so a NEW record carrying the same bad value takes the key on the
+        // thing just as an edit does. Guarding only the edit would leave the
+        // rule true of one verb and the thing broken by the other.
+        let captured = store
+            .capture(NewFact {
+                fields: [("stay_venue".to_string(), helper.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(stay.clone(), "moved it, so they say", date(2026, 4, 19))
+            })
+            .await;
+        assert!(
+            matches!(&captured, Err(MemoryError::BreaksType { key, .. }) if key == "stay_venue"),
+            "a capture carrying the wrong kind is refused too, got {captured:?}",
+        );
+        // …and the same capture against the thing that fits nothing lands, so
+        // this cannot pass on a build where capture refuses every reference.
+        store
+            .capture(NewFact {
+                fields: [("stay_venue".to_string(), helper.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(sketch.clone(), "or maybe there", date(2026, 4, 19))
+            })
+            .await
+            .expect("a thing that fits nothing has nothing to protect")
+            .written()
+            .expect("…and the capture lands");
+    }
+
+    /// **A reference naming an entity nobody recorded is refused, the way a
+    /// missing edge object already is.**
+    ///
+    /// A reference is a walkable link, so a value naming nothing is a link into
+    /// a node no question can reach — the same hole an edge into a missing
+    /// entity leaves, arrived at through a key instead of an edge. It comes
+    /// back blocked with candidates rather than as an error, because the repair
+    /// is the caller's and the near handles are what it needs.
+    ///
+    /// **Only a value that is a HANDLE is asked about.** A reference key
+    /// holding a phrase is a value that fails its declaration, which is the
+    /// floor's business and not this one's — asking whether "the airport"
+    /// exists would refuse loose prose in the name of a link nobody drew.
+    ///
+    /// The real target is written in the same shape, so this cannot pass on a
+    /// build that refuses every reference.
+    pub async fn a_reference_must_name_an_entity_that_exists<M: Memory>(store: &M) {
+        store
+            .declare_type(DeclaredType::new(
+                "contract-loan",
+                vec![Field::new("loaned_to", ValueType::Reference)],
+            ))
+            .await
+            .expect("declaring a type of my own is accepted");
+
+        let borrower = EntityId::new(EntityKind::Person, "contract-milhouse");
+        ensure(store, &borrower).await;
+        let ledger = EntityId::new(EntityKind::Thing, "contract-the-ledger");
+        ensure(store, &ledger).await;
+
+        let missing = store
+            .capture(NewFact {
+                fields: [(
+                    "loaned_to".to_string(),
+                    "person:contract-nobody".to_string(),
+                )]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(ledger.clone(), "lent it to somebody", date(2026, 5, 1))
+            })
+            .await
+            .expect("a miss is an answer, not a failure");
+        let Guarded::Blocked { attempted, .. } = &missing else {
+            panic!("a reference to nobody must be blocked, got {missing:?}");
+        };
+        assert_eq!(
+            attempted.as_str(),
+            "person:contract-nobody",
+            "the answer names the handle that missed",
+        );
+
+        // …and the same key naming somebody who exists goes straight through.
+        store
+            .capture(NewFact {
+                fields: [("loaned_to".to_string(), borrower.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(ledger.clone(), "lent it to Milhouse", date(2026, 5, 2))
+            })
+            .await
+            .expect("capture succeeds")
+            .written()
+            .expect("a reference to somebody real lands");
+
+        // **The edit path names entities too.** A patch setting a reference key
+        // is a write that names one, so it faces the same rule — otherwise the
+        // link nobody could capture could still be edited into place.
+        let lent = capture(
+            store,
+            NewFact {
+                fields: [("loaned_to".to_string(), borrower.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(ledger.clone(), "out on loan", date(2026, 5, 4))
+            },
+        )
+        .await;
+        let edited = store
+            .update_fact(
+                &lent.address(),
+                FactPatch {
+                    fields: [(
+                        "loaned_to".to_string(),
+                        "person:contract-nobody".to_string(),
+                    )]
+                    .into_iter()
+                    .collect(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("a miss is an answer, not a failure");
+        assert!(
+            matches!(&edited, Guarded::Blocked { attempted, .. }
+                     if attempted.as_str() == "person:contract-nobody"),
+            "an edit to a reference nobody recorded is blocked too, got {edited:?}",
+        );
+
+        // **A value that is no handle is not asked to exist.** It fails its
+        // declaration and that is the floor's question; this thing fits no
+        // type, so nothing refuses it and the note stays writable.
+        let scrap = EntityId::new(EntityKind::Thing, "contract-the-scrap");
+        ensure(store, &scrap).await;
+        store
+            .capture(NewFact {
+                fields: [("loaned_to".to_string(), "somebody at the shop".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(scrap, "lent it to somebody, no idea who", date(2026, 5, 3))
+            })
+            .await
+            .expect("capture succeeds")
+            .written()
+            .expect("a phrase under a reference key is messy, not a broken link");
     }
 
     /// **A kind the code learned today survives the store.**
@@ -6419,6 +6790,9 @@ pub mod contract {
         the_newest_write_wins_however_old_the_record_it_landed_in(store).await;
         a_cleared_key_is_not_resurrected_by_an_older_record(store).await;
         clearing_a_key_the_record_never_carried_changes_nothing(store).await;
+        a_reference_keeps_the_kind_it_points_at(store).await;
+        a_write_cannot_put_a_value_the_type_refuses(store).await;
+        a_reference_must_name_an_entity_that_exists(store).await;
         a_write_cannot_break_a_fit_that_already_exists(store).await;
         a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not(store).await;
         a_long_history_is_cut_to_its_newest_and_says_how_many(store).await;

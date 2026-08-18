@@ -237,6 +237,26 @@ pub(crate) fn memory_declined(
                 keys.join(", ")
             ),
         )),
+        // **The key stays and the value has to change**, which is what makes
+        // this a different way forward from the one above. The caller is told
+        // what the key holds in the words a declaration uses, so the repair is
+        // a value it can write rather than a rule it has to infer.
+        MemoryError::BreaksType {
+            ref name,
+            ref key,
+            ref wanted,
+            ..
+        } => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. This thing is a '{name}' now, so '{key}' has to go on \
+                 holding {wanted} — sending the same value again will not change the answer. \
+                 Write a value that holds {wanted}, or say what you meant under a key of your \
+                 own: adding keys is never refused, and only the keys a type names are held to \
+                 what it declared."
+            ),
+        )),
         // **A different refusal, so a different way forward.** These two are
         // not malformed calls: the arguments are well-formed and jojobot is
         // declining to bless a claim the operator has not blessed. Telling a
@@ -273,6 +293,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::InvalidType(_)
         | MemoryError::ShippedType { .. }
         | MemoryError::BreaksFit { .. }
+        | MemoryError::BreaksType { .. }
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NotRetractable { .. }

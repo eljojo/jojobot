@@ -61,6 +61,8 @@ const ROSTER: &[&str] = &[
     "bot:worker-2",
     "event:birthday-party",
     "event:departure-flight",
+    "event:the-booking",
+    "event:the-jotting",
     "event:erosion-review",
     "event:leaving-party",
     "event:trail-survey",

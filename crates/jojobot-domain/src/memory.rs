@@ -1254,6 +1254,75 @@ pub fn stood_after(
     folded_fields(&next)
 }
 
+/// **The thing's fields as they will stand once this capture lands** — the
+/// capture-side twin of [`stood_after`], and what [`guard_fit`] weighs a new
+/// record against.
+///
+/// A thing's fields are every write on it folded, so a NEW record carrying a
+/// key takes that key on the thing exactly as an edit to an old record does.
+/// A guard that ran on the edit alone would hold the rule true of one verb
+/// while the other walked past it.
+///
+/// Every key the record carries is a write, taking the next ordinal of its key,
+/// which is the ordinal the substrate will give it — a guard judging a result
+/// the store would not produce is worse than no guard.
+pub fn stood_after_capture(writes: &[KeyWrite], captured: &Fact) -> BTreeMap<String, String> {
+    let mut next = writes.to_vec();
+    for (key, value) in &captured.fields {
+        let ordinal = next
+            .iter()
+            .filter(|w| &w.key == key)
+            .map(|w| w.ordinal)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        next.push(KeyWrite {
+            key: key.clone(),
+            ordinal,
+            value: Some(value.clone()),
+            fact: captured.id.clone(),
+            status: captured.status,
+        });
+    }
+    folded_fields(&next)
+}
+
+/// **The entities a write names through a declared reference key**, which must
+/// already exist exactly as an edge's object must.
+///
+/// A reference is a walkable link, so a value naming nothing leaves the same
+/// hole an edge into a missing entity leaves. This is rule 3 — everything a
+/// write NAMES must already exist — reached through a key rather than through
+/// an edge, which is why it is checked against what the write puts there rather
+/// than against the thing's whole state. Checking every reference the thing
+/// carries would make a link that went missing a wall in front of every later
+/// repair.
+///
+/// **Only a value that is a well-formed handle is named.** A reference key
+/// holding a phrase points at nothing and claims to point at nothing; asking
+/// whether it exists would refuse loose prose over a link nobody drew. That the
+/// phrase does not hold the key is the floor's question ([`guard_fit`]).
+///
+/// **A key any declaration calls a reference counts**, which is the question
+/// the relation walk asks: two types may name one key, and one of them calling
+/// it a reference is what makes it walkable.
+pub fn referenced_by(
+    fields: &BTreeMap<String, String>,
+    declared: &[types::DeclaredType],
+) -> Vec<EntityId> {
+    fields
+        .iter()
+        .filter(|(key, _)| {
+            declared.iter().any(|d| {
+                d.field(key)
+                    .is_some_and(|f| f.holds == types::ValueType::Reference)
+            })
+        })
+        .map(|(_, value)| EntityId(value.trim().to_string()))
+        .filter(|id| id.kind().is_some())
+        .collect()
+}
+
 /// **A write may not drop a thing below a type it already fits.**
 ///
 /// Strict is a **floor, not a ceiling**: what a type names has to survive, and
@@ -1274,17 +1343,26 @@ pub fn stood_after(
 /// a fact about the keys it carries, and this reads that fact at the moment of
 /// the write.
 ///
-/// The refusal names the type and the key it would lose, because those are what
-/// a caller needs to decide between putting the key back and leaving the thing
-/// as it is.
+/// **A key is lost two ways, and both are refused.** Taking the key off is one.
+/// Putting a value in it that the key does not hold is the other, because
+/// holding a key badly is not holding it — so a thing whose venue slot has a
+/// pet in it has stopped being a stay just as surely as one with no venue slot.
+/// Both fall out of the one definition of fitting
+/// ([`types::Match::complete`]) rather than being two rules that could come to
+/// disagree.
+///
+/// The refusal names the type and the key, because those are what a caller
+/// needs to decide what to do; the value refusal also names what the key wanted
+/// and what was sent, since a caller looking at a well-formed handle cannot
+/// otherwise see what is wrong with it.
 pub fn guard_fit(
     before: &BTreeMap<String, String>,
     after: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
 ) -> Result<(), MemoryError> {
     for kind in declared {
-        // Fitting means holding every key the type names. A thing that did not
-        // fit before has nothing this rule protects.
+        // Fitting means holding every key the type names, and holding it as
+        // declared. A thing that did not fit before has nothing this protects.
         if !kind.matched_by(before).is_some_and(|m| m.complete()) {
             continue;
         }
@@ -1298,6 +1376,19 @@ pub fn guard_fit(
             return Err(MemoryError::BreaksFit {
                 name: kind.name.clone(),
                 keys: lost,
+            });
+        }
+        // Read off the result's own match rather than recomputed here, so what
+        // the guard refuses and what a read reports as mistyped are one answer.
+        if let Some(bad) = kind
+            .matched_by(after)
+            .and_then(|m| m.mistyped.into_iter().next())
+        {
+            return Err(MemoryError::BreaksType {
+                name: kind.name.clone(),
+                key: bad.key.clone(),
+                wanted: bad.wanted(),
+                value: bad.value,
             });
         }
     }
@@ -1862,6 +1953,26 @@ pub enum MemoryError {
         name: String,
         /// The keys it names that the thing would no longer carry.
         keys: Vec<String>,
+    },
+    /// **The write would put a value in a key that the key does not hold, on a
+    /// thing that already fits the type.**
+    ///
+    /// The same loss as [`BreaksFit`](Self::BreaksFit) reached the other way:
+    /// holding a key badly is not holding it, so the thing stops fitting. It
+    /// is a variant of its own because the way forward is different — the key
+    /// is not going anywhere and what has to change is the value.
+    #[error("'{key}' holds {wanted} on anything that is a '{name}', and '{value}' is not one")]
+    BreaksType {
+        /// The type the thing would stop fitting.
+        name: String,
+        /// The key whose value the type refuses.
+        key: String,
+        /// What the key was declared to hold, as the declaration spells it —
+        /// `date`, or `reference:place`.
+        wanted: String,
+        /// What the write would have put there, so the caller sees what it
+        /// sent rather than being told it was wrong.
+        value: String,
     },
     /// The addressed fact doesn't exist, in an entity that does. Never
     /// auto-created, never guessed at — the live addresses come back so the

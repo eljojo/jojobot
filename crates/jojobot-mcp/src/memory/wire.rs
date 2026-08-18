@@ -83,7 +83,10 @@ pub(crate) fn declared_type_json(declared: &DeclaredType) -> serde_json::Value {
         "fields": declared
             .fields
             .iter()
-            .map(|f| serde_json::json!({ "key": f.key, "holds": f.holds.as_token() }))
+            // The whole declaration as one token, narrowing included — the same
+            // spelling `declare_type` takes, so what a caller reads back is
+            // what it would send to say the same thing again.
+            .map(|f| serde_json::json!({ "key": f.key, "holds": f.holds_token() }))
             .collect::<Vec<_>>(),
     })
 }
@@ -109,7 +112,14 @@ pub(crate) fn answers_json(found: &jojobot_domain::memory::types::Match) -> serd
             .iter()
             .map(|m| serde_json::json!({
                 "key": m.key,
-                "declared": m.declared.as_token(),
+                // The narrowing rides in the same token the declaration used,
+                // because `reference` alone says nothing about what is wrong
+                // with a value that is a perfectly good handle of some other
+                // kind.
+                "declared": match m.points_at {
+                    Some(kind) => format!("{}:{}", m.declared.as_token(), kind.as_token()),
+                    None => m.declared.as_token().to_string(),
+                },
                 "value": m.value,
             }))
             .collect::<Vec<_>>(),

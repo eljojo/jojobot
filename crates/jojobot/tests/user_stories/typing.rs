@@ -18,9 +18,11 @@
 //! looking for work to do is looking for precisely the untidy ones.
 //!
 //! **And the title is the other question.** "The ones with a cost on them"
-//! keeps only the things carrying every key, so the story asks both: the
-//! tolerant question for what is worth looking at, and the strict one for what
-//! actually is a service.
+//! keeps only the things that carry every key AND hold what the key was
+//! declared to hold, so the story asks both: the tolerant question for what is
+//! worth looking at, and the strict one for what actually is a service. The
+//! date somebody typed in words keeps that thing out of the strict answer and
+//! not out of the tolerant one, which is the whole difference between them.
 
 use serde_json::json;
 
@@ -147,11 +149,13 @@ async fn a_type_declared_today_finds_records_written_before_it() {
         .call("search", json!({ "fits_type": "service", "limit": 50 }))
         .await;
     whole.says("thing:gravel-bike");
-    // The messy one fits. A key holding a value the type did not describe is
-    // still a key the thing carries, and this question is about gaps — so the
-    // strict answer reports the bad value rather than dropping the thing.
-    whole.says("thing:floor-pump");
-    whole.says("\"value\":\"some time in may\"");
+    // **The messy one does not fit, and it is out for the same reason the
+    // brake bleed is.** Holding a key badly is not holding it: the pump's
+    // `serviced` slot has a phrase in it where the type asks for a date, so
+    // between them the pump and the bleed are the two ways a thing can be
+    // short of a key — one never wrote it, one wrote something else there.
+    // Both are still in the tolerant answer above, flagged and named.
+    whole.never_says("thing:floor-pump");
     // **The pair this turns on, asserted both ways.** The brake bleed IS in the
     // tolerant answer above and OUT of this one; a negative on its own would
     // pass on an empty answer.

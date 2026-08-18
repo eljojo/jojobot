@@ -93,7 +93,10 @@ identity, `assistant`, with its mailbox — which is what lets the next rule hav
 no hole in it: every memory write names the session behind it, with no exemption
 for any kind.
 
-Next: trace, portraits, attention, and sessions booting from jojobot.
+Next: the enforcement half of the type system — a declared reference naming the
+kind it points at, a wrong value refused rather than reported, and a filter that
+reads what a thing currently holds. Then trace, portraits, attention, and
+sessions booting from jojobot.
 
 Two layers hold it together: the **engine** (this repo — user-agnostic, golden
 tests) and **bots** (data in the user's own store). The design docs live with
@@ -189,6 +192,10 @@ discovered one at a time.
 |---|---|
 | **Compose a walk across several hops** | A single typed edge is filtered on and traversed today, which answers "which people are in X" in one call. What is not served is several edge filters combined, a walk of more than one hop, or a named query kept and re-run. |
 | **Read what a claim itself used to say** | A *key's* writes are kept and readable, so how many times a thing changed, and to what, is one read. A claim's own columns — its wording, how settled it is, whether it still stands — are not keys and keep no writes, so a claim is still rewritten in place and what it said before is gone. |
+| **Rely on a declared VALUE being enforced** | A key's declared value type is checked, and a mismatch is reported on the answer rather than refused. A declaration does govern presence. Once a thing holds every key a type names, jojobot refuses a write that would take one away, naming the type and the key. |
+| **Point a key at one kind of thing** | A key declared to hold a reference is satisfied by any known kind, and nothing checks that the target exists. An edge's object is checked; a reference-typed field is not. |
+| **Ask for a running total** | Every key keeps its newest write. Counting how many times a key was written is one read; adding those writes together is the caller's arithmetic rather than jojobot's. |
+| **Filter on what a thing currently holds** | A filter on a key's value reads one record's own write rather than the thing's folded value. Narrowing by type reads the fold; narrowing by value does not. |
 | **Get a synthesised portrait of a subject** | A projection over the graph rather than a read of one record. Waits on graph traversal. |
 | **Surface what has gone quiet, or is decaying** | Rules and rhythms are stored as ordinary facts and nothing fires on them. This is the largest single gap. |
 | **Verify a write by reading it back** | Every write already does this internally; no caller can ask for it as its own step. |

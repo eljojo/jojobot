@@ -130,17 +130,17 @@ Shipped and live:
   happened and a list of the occasions are one body of data rather than two,
   and it is what the next several capabilities stand on.
 - **Fields, and what declaring a type buys** — **a record carries fields**: a
-  flat bag of key/value pairs beside the claim, stored and never interpreted,
+  flat bag of key/value pairs beside the claim, which nothing interprets today,
   where a key the caller invents is kept as written. **A thing's fields are
   every write on it, folded together — the newest write of each key wins**, so a
   thing gains fields a piece at a time and an edit to any record reaches it. **Conformance is asked of the THING, across all its records,
   never of one record alone** — `answers_type` selects things carrying *some* of
   a type's keys and says which each one lacks, and `fits_type` keeps only the
   things with no gaps. **Which of the two you want is the reader's question**,
-  and the tolerant one is what a caller gets when they name neither. **Nothing
-  is gated on the way IN**: a thing is found by the keys it carries whether or
-  not anybody declared the type, matching stays structural, and a key no type
-  mentions is kept as written. **What a type asks for is a FLOOR:** once a
+  and the tolerant one is what a caller gets when they name neither. **A
+  declaration does not gate what a thing may BE**: a thing is found by the keys
+  it carries whether or not anybody declared the type, matching stays
+  structural, and a key no type mentions is kept as written. **What a type asks for is a FLOOR:** once a
   thing carries every key a type names, a write that would take one away is
   refused, naming the type and the key. **Adding keys is never refused, and a
   thing that answers no type is a first-class thing.** **The software ships its

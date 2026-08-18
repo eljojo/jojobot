@@ -33,8 +33,8 @@ use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
     FactPatch, FactStatus, FieldWrite, Guarded, KeyWrite, Memory, MemoryError, NewEntity, NewFact,
     Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch, folded_fields, guard,
-    guard_fit, normalize_content, normalize_details, normalize_prose, retraction_of,
-    screen_entity_patch, search, standing_of, stood_after,
+    guard_fit, normalize_content, normalize_details, normalize_prose, referenced_by, retraction_of,
+    screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
     types::{DeclaredType, Field, Origin, ValueType, guard_replacement, validate_type},
     validate_content, validate_details, validate_edge, validate_entity, validate_fields,
     validate_prose, validate_subject, writes_of,
@@ -658,6 +658,18 @@ impl Memory for DoltMemory {
                 });
             }
         }
+        // **A reference key names an entity, so it faces the same rule the
+        // edge's object faces.** A walkable link into a node nobody recorded is
+        // the hole rule 3 exists to close, and arriving through a key rather
+        // than through an edge does not make it a different hole.
+        for object in referenced_by(&fact.fields, &Self::types_in(&mut tx).await?) {
+            if let guard::Decision::Block(candidates) = guard::decide_existing(&object, &index) {
+                return Ok(Guarded::Blocked {
+                    attempted: object,
+                    candidates,
+                });
+            }
+        }
         // A claim this one is derived from is named, so it must already exist —
         // an unknown home is an entity miss and a home holding no such row is a
         // fact miss, which are the two shapes this rail already has.
@@ -693,6 +705,17 @@ impl Memory for DoltMemory {
             refs: fact.refs,
             derived_from: fact.derived_from,
         };
+        // **A new record's keys land on the thing too**, so the same guard the
+        // edit path runs applies here: a write may not drop a thing below a
+        // type it already fits, by taking a key away or by putting a value in
+        // one that the key does not hold. One function, called from both verbs
+        // in both stores.
+        let held = Self::writes_on(&mut tx, &stored.home).await?;
+        guard_fit(
+            &folded_fields(&held),
+            &stood_after_capture(&held, &stored),
+            &Self::types_in(&mut tx).await?,
+        )?;
         Self::write_fact(&mut tx, &stored).await?;
         // Every key this record carries is a write of its own, appended to the
         // history of that key on this thing.
@@ -795,6 +818,17 @@ impl Memory for DoltMemory {
             {
                 return Ok(Guarded::Blocked {
                     attempted: edge.object.clone(),
+                    candidates,
+                });
+            }
+        }
+        // **The same rule on the edit path**, over the keys this patch sets: a
+        // reference names an entity, and nothing a write names is created as a
+        // side effect of being named.
+        for object in referenced_by(&patch.fields, &Self::types_in(&mut tx).await?) {
+            if let guard::Decision::Block(candidates) = guard::decide_existing(&object, &index) {
+                return Ok(Guarded::Blocked {
+                    attempted: object,
                     candidates,
                 });
             }
@@ -986,7 +1020,7 @@ impl Memory for DoltMemory {
             .bind(&declared.name)
             .bind(&field.key)
             .bind(ordinal as i64 + 1)
-            .bind(field.holds.as_token())
+            .bind(field.holds_token())
             .bind(declared.origin.as_token())
             .execute(&mut *tx)
             .await
@@ -1026,10 +1060,9 @@ fn gather_types(rows: &[sqlx::mysql::MySqlRow]) -> Vec<DeclaredType> {
     let mut types: Vec<DeclaredType> = Vec::new();
     for row in rows {
         let name: String = row.get("type_name");
-        let field = Field::new(
-            &row.get::<String, _>("key_name"),
-            ValueType::of_token(&row.get::<String, _>("holds")).unwrap_or(ValueType::Text),
-        );
+        let key: String = row.get("key_name");
+        let field = Field::of_token(&key, &row.get::<String, _>("holds"))
+            .unwrap_or_else(|| Field::new(&key, ValueType::Text));
         match types.last_mut() {
             Some(last) if last.name == name => last.fields.push(field),
             _ => types.push(DeclaredType {

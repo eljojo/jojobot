@@ -955,6 +955,74 @@ fn no_agent_facing_text_folds_the_records() {
     );
 }
 
+/// **A type is matched against a THING, and `declare_type`'s text says so.**
+///
+/// A separate claim from the fold above, and it needed its own assertion: that
+/// one catches text saying a thing's fields are its RECORDS' fields combined,
+/// by the words of combining — `folded`, `together`, `between them`. This one
+/// is the other half of the same fork, and shares none of those words: text
+/// saying the unit a type is asked of is a RECORD, when it is the thing. An
+/// agent reading it calls `search answers_type` expecting the records that
+/// carry the keys, gets things, and reads a partial match as a missing record.
+///
+/// **Scoped to this verb's text, because `record` is the right word elsewhere
+/// and a corpus-wide sweep for it would be unusable.** `recall` filters that
+/// really are record-scoped say so on purpose — `fields` asks for objects
+/// holding ONE record carrying these keys, an inbound key walk returns every
+/// record using that key — and a guard that reported those would be deleted to
+/// get the suite green. `declare_type` is the one verb whose whole subject is
+/// type matching, and matching there is over the thing's folded fields
+/// (`Graph::answers`), so no sentence of its served text has a record to name.
+#[test]
+fn declare_types_text_scopes_a_type_to_the_thing() {
+    // Its description and its argument schema, addressed exactly as the
+    // gathering names them — both, because the false sentence sat in both.
+    const SITES: &[&str] = &[
+        "declare_type's description",
+        "declare_type's argument schema",
+    ];
+
+    let served = agent_facing_text();
+    let mut scoped_to_a_record: Vec<String> = Vec::new();
+    let mut read: Vec<&str> = Vec::new();
+    for site in SITES {
+        let (_, text) = served
+            .iter()
+            .find(|(what, _)| what == site)
+            .unwrap_or_else(|| panic!("the gathering serves {site}, or this test reads nothing"));
+        assert!(
+            !text.is_empty(),
+            "{site} is served empty, so the sweep below looks at no text at all"
+        );
+        read.push(site);
+        for sentence in sentences(text) {
+            if mentions(&sentence, "record") {
+                scoped_to_a_record.push(format!("{site}: {}", sentence.trim()));
+            }
+        }
+    }
+    assert_eq!(read, SITES, "both sites are read, not one");
+    assert!(
+        scoped_to_a_record.is_empty(),
+        "declare_type's text names a RECORD as what a type is matched against. A thing answers a \
+         type over every write on it, folded — so the thing is the unit here, and a writer told \
+         otherwise queries for the wrong shape:\n  {}",
+        scoped_to_a_record.join("\n  ")
+    );
+    // The word is gone; the claim has to be there in its place, or deleting the
+    // sentence passes as well as fixing it.
+    let (_, description) = served
+        .iter()
+        .find(|(what, _)| what == SITES[0])
+        .expect("the description was read above");
+    assert!(
+        sentences(description)
+            .iter()
+            .any(|s| mentions(s, "thing") && mentions(s, "key")),
+        "nothing in declare_type's description says what carries a type's keys: {description}"
+    );
+}
+
 /// **A shape the code can write is a shape the surface names.**
 ///
 /// A session forms its world model from the served text alone. An edge shape

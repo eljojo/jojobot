@@ -3,34 +3,45 @@
 //! One verb, one file: its arguments, the description a caller reads, and an
 //! entrypoint that chains the systems below it.
 //!
-//! **This verb admits nothing.** A record carrying a type's keys is found by
+//! **This verb admits nothing.** A THING carrying a type's keys is found by
 //! `search` whether or not this was ever called, so declaring is write-time
 //! help and never a precondition. That is why there is no verb to undeclare
 //! one: a declaration describes, and the only thing it can be wrong about is
 //! itself.
 //!
+//! **The unit matched is the thing, never one write's own record.** A thing
+//! answers a type over every write on it, folded — so a type is asked of what
+//! the thing IS now, and something described over two sittings answers a type
+//! neither sitting answers alone.
+//!
 //! **One thing here is refused**, and it is about the name rather than about
-//! any record: a type the software ships is closed to callers. It is still not
-//! a gate on records — nothing about that type stops being matched — it is a
-//! gate on writing over a declaration the software owns.
+//! anything that answers it: a type the software ships is closed to callers. It
+//! is still not a gate on what answers — nothing about that type stops being
+//! matched — it is a gate on writing over a declaration the software owns.
 
 use super::*;
 
 /// One key of a type, and what it holds.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct FieldArgs {
-    /// The key a record carries, exactly as a record spells it. **The key name
-    /// IS the schema**: `expires` and `expiry_date` are two different types and
-    /// nothing will point that out, because matching is structural and a key
-    /// means whatever the records carrying it mean by it.
+    /// The key a thing carries, exactly as the writes on it spell it. **The key
+    /// name IS the schema**: `expires` and `expiry_date` are two different types
+    /// and nothing will point that out, because matching is structural and a key
+    /// means whatever the things carrying it mean by it.
     pub key: String,
     /// What the value holds: `text`, `number`, `date`, `boolean`, or
     /// `reference` (another entity's `kind:slug` handle, which is what makes it
     /// walkable). Defaults to `text`, which holds anything.
     ///
-    /// **Nothing is rejected for holding the wrong thing.** A value that does
-    /// not hold what you say here comes back flagged on the hit, on a record
-    /// that is still found.
+    /// **A reference can name the kind on the other end** — write
+    /// `reference:place` and the key holds a place's handle and no other kind's.
+    /// Plain `reference` holds a handle of any kind, so naming one narrows the
+    /// key rather than describing it.
+    ///
+    /// **What you say here is enforced on a thing that already fits this type.**
+    /// A value that does not hold it is refused, naming the key and what was
+    /// wanted; on a thing that fits no type nothing is refused and the mismatch
+    /// comes back flagged on the hit.
     #[serde(default)]
     pub holds: Option<String>,
 }
@@ -44,7 +55,7 @@ pub struct DeclareTypeArgs {
     /// **Unless the software ships that type**, which is refused: a shipped
     /// type is closed and the answer says so. Pick a name of your own.
     pub name: String,
-    /// The keys a record of this type carries. **At least one**: a type is the
+    /// The keys a thing of this type carries. **At least one**: a type is the
     /// keys it names, and a name with nothing under it is one nobody can query
     /// by.
     pub fields: Vec<FieldArgs>,
@@ -54,22 +65,25 @@ pub struct DeclareTypeArgs {
     pub sid: Option<String>,
 }
 
-/// Declare a type: a name and the keys a record of it carries.
+/// Declare a type: a name and the keys a thing of it carries.
 #[tool_router(router = declare_type_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Declare a type: a name, and the keys a record of it carries. This is \
+        description = "Declare a type: a name, and the keys a THING of it carries. This is \
                        WRITE-TIME HELP and never a gate — it tells a writer which keys to fill \
-                       and tells `search` which keys to look for. It admits nothing: a record \
+                       and tells `search` which keys to look for. THE UNIT IS THE THING: a thing \
+                       answers a type over every write on it, folded, so a thing described over \
+                       two sittings answers a type neither sitting answers alone. It admits \
+                       nothing: a thing \
                        carrying these keys is found by search answers_type whether or not \
-                       anybody declared it, and a record carrying some of them is found too, \
-                       saying which it lacks. So declaring a type never makes a record findable \
+                       anybody declared it, and a thing carrying some of them is found too, \
+                       saying which it lacks. So declaring a type never makes a thing findable \
                        and never stops one being found, and there is nothing to undeclare. A \
                        type arrives COMPLETE: give at least one key, because a name with nothing \
                        under it is a type nobody can query by. Declaring a name that already \
                        exists REPLACES its keys, whole — a type is the keys it names now, and \
                        one that accumulated every key it ever named would report keys the writer \
-                       had already dropped as keys a record lacks. KEYS ARE SCOPED BY THE TYPE \
+                       had already dropped as keys a thing lacks. KEYS ARE SCOPED BY THE TYPE \
                        that names them and are registered nowhere: two types may use one key \
                        name and mean their own thing by it. SOME TYPES SHIP WITH THE SOFTWARE and \
                        those are CLOSED: declaring over one comes back blocked, because a caller \
@@ -91,19 +105,20 @@ impl Jojobot {
         }
         let mut fields = Vec::with_capacity(args.fields.len());
         for field in &args.fields {
-            let holds = match field.holds.as_deref().map(str::trim) {
-                None | Some("") => ValueType::Text,
-                Some(token) => ValueType::of_token(token).ok_or_else(|| {
+            let declared = match field.holds.as_deref().map(str::trim) {
+                None | Some("") => Field::new(&field.key, ValueType::Text),
+                Some(token) => Field::of_token(&field.key, token).ok_or_else(|| {
                     McpError::invalid_params(
                         format!(
                             "'{token}' is no value type: use text, number, date, boolean or \
-                             reference"
+                             reference — and a reference may name the kind it points at, as \
+                             'reference:place', using one of the kinds add_entity takes"
                         ),
                         None,
                     )
                 })?,
             };
-            fields.push(Field::new(&field.key, holds));
+            fields.push(declared);
         }
 
         let declared = match self
@@ -266,6 +281,90 @@ mod tests {
              tells a caller not to declare over it: {body}"
         );
         assert_eq!(listed("service")["origin"], "declared");
+    }
+
+    /// **A reference declares the kind it points at, through the served
+    /// surface and back out of the store.**
+    ///
+    /// Sent as a caller writes it, read back from the store rather than from
+    /// the answer, and served again — because a narrowing the verb parsed and
+    /// the store dropped would pass any beat that only read the response to the
+    /// call that wrote it.
+    ///
+    /// The unnarrowed reference is declared in the same type, so this cannot
+    /// pass on a build that pins every reference to one kind.
+    #[tokio::test]
+    async fn a_reference_names_the_kind_it_points_at_and_the_store_keeps_it() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+
+        let body = json_of(
+            &jojobot
+                .declare_type(Parameters(DeclareTypeArgs {
+                    name: "stay".to_string(),
+                    fields: vec![
+                        FieldArgs {
+                            key: "venue".to_string(),
+                            holds: Some("reference:place".to_string()),
+                        },
+                        FieldArgs {
+                            key: "booked_by".to_string(),
+                            holds: Some("reference".to_string()),
+                        },
+                    ],
+                    sid: Some(TEST_SID.to_string()),
+                }))
+                .await
+                .expect("declaring a type of my own is accepted"),
+        );
+        assert_eq!(
+            body["type"]["fields"][0]["holds"], "reference:place",
+            "the narrowing the caller wrote comes back on the wire: {body}"
+        );
+        assert_eq!(
+            body["type"]["fields"][1]["holds"], "reference",
+            "…and a reference that named no kind still says just that: {body}"
+        );
+
+        let held = stored(&jojobot, "stay").await;
+        assert_eq!(
+            held.fields[0].points_at,
+            Some(EntityKind::Place),
+            "the store kept the kind, so a later reader sees it too: {held:?}",
+        );
+        assert_eq!(held.fields[1].points_at, None, "{held:?}");
+    }
+
+    /// **A kind nobody has is refused at the door**, and the refusal says what
+    /// the token can be.
+    ///
+    /// Paired with the good token in the same shape, because a case that only
+    /// ever sent the bad one passes on a build that refuses every reference.
+    #[tokio::test]
+    async fn a_reference_to_a_kind_that_does_not_exist_is_refused() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+        let declaring = |holds: &str| {
+            let holds = holds.to_string();
+            jojobot.declare_type(Parameters(DeclareTypeArgs {
+                name: "stay".to_string(),
+                fields: vec![FieldArgs {
+                    key: "venue".to_string(),
+                    holds: Some(holds),
+                }],
+                sid: Some(TEST_SID.to_string()),
+            }))
+        };
+        let refused = declaring("reference:sofa")
+            .await
+            .expect_err("a kind that is no kind is refused");
+        assert!(
+            refused.to_string().contains("reference:sofa"),
+            "the refusal quotes what was sent: {refused}"
+        );
+        declaring("reference:place")
+            .await
+            .expect("…and the kind that is a kind goes through the same door");
     }
 
     /// **A caller's own type still replaces on redeclare, through the served
