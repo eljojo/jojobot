@@ -164,6 +164,9 @@ impl Jojobot {
             return Ok(refused);
         }
         let id = entity_id(&args.kind, &args.handle)?;
+        // Kept for the refusal below: which handle the guard turned back is
+        // what says whether it was this entity or the one it named as parent.
+        let creating = id.clone();
         let new = NewEntity {
             id,
             name: args.name,
@@ -197,6 +200,45 @@ impl Jojobot {
                 }
                 json_result(&body)
             }
+            // **A parent refusal is not a near miss, and saying it is offers a
+            // way forward that leads back to the same wall.** Neither of these
+            // is overridable: a parent must already exist, because nothing is
+            // created as a side effect of creating something else, and nothing
+            // is its own parent. The near-miss sentence tells a caller to
+            // re-call with a token, and a caller who does is refused again and
+            // minted another. Rule 68 is about a way FORWARD.
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } if candidates
+                .iter()
+                .any(|c| c.reason == guard::MatchReason::SelfParent) =>
+            {
+                Ok(blocked_body(
+                    &attempted,
+                    &candidates,
+                    format!(
+                        "Nothing was written. '{attempted}' names itself as its parent, and \
+                         nothing is its own parent. No override_token lifts this. Name the \
+                         entity this one sits under, or leave parent off and create it as a \
+                         root."
+                    ),
+                ))
+            }
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } if attempted != creating => Ok(blocked_body(
+                &attempted,
+                &candidates,
+                format!(
+                    "Nothing was written. '{attempted}' is the parent this call named, and it \
+                     is not an entity jojobot knows. No override_token lifts this: nothing is \
+                     created as a side effect of creating something else. Create '{attempted}' \
+                     with its own add_entity call first, then re-call this one — or drop the \
+                     parent to create '{creating}' as a root."
+                ),
+            )),
             Guarded::Blocked {
                 attempted,
                 candidates,
@@ -341,6 +383,142 @@ mod tests {
         assert_eq!(
             added["parent"], "thing:kettle",
             "the parent survives the door and comes back on the entity: {added}",
+        );
+    }
+
+    /// How a refusal HANDS OVER a token, which is the thing a caller can act
+    /// on — as against merely naming the argument to say no token applies.
+    const OFFERS_A_TOKEN: &str = "override_token: \"";
+
+    /// **A refusal about the PARENT says what repairs it, and does not offer a
+    /// token that cannot lift it.**
+    ///
+    /// Both parent refusals wore the near-miss sentence, which tells a caller
+    /// to re-call with an `override_token` when the handle is genuinely a
+    /// different thing sharing a name. Neither refusal is overridable: a parent
+    /// must exist, because nothing is created as a side effect of creating
+    /// something else, and nothing is its own parent ever. A caller following
+    /// that advice is refused again, is minted another token, and can repeat it
+    /// for ever — a way forward that leads back to the same wall is rule 68
+    /// failing while appearing to hold.
+    ///
+    /// Paired with the positive: the child's OWN handle resembling something
+    /// that exists is the near miss, and that one is overridable and still
+    /// says so.
+    #[tokio::test]
+    async fn a_parent_refusal_does_not_offer_a_token_that_cannot_lift_it() {
+        let jojobot = handler();
+        ensure(&jojobot, "thing:kettle").await;
+
+        let missing = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    parent: Some("thing:no-such-bike".into()),
+                    ..add_args("thing", "tau", "Tau")
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(missing["status"], "blocked");
+        assert_eq!(missing["attempted"], "thing:no-such-bike");
+        let how = missing["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        assert!(
+            !how.contains(OFFERS_A_TOKEN),
+            "no token lifts a parent that does not exist: {how}",
+        );
+        assert!(
+            how.contains("add_entity"),
+            "and the repair is to create it first: {how}",
+        );
+        // Nothing resembles it, which is what makes the token minted below the
+        // one this refusal would have carried rather than some other token.
+        assert_eq!(
+            missing["candidates"].as_array().map(Vec::len),
+            Some(0),
+            "no candidate resembles it: {missing}",
+        );
+
+        let itself = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    parent: Some("thing:sigma".into()),
+                    ..add_args("thing", "sigma", "Sigma")
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(itself["status"], "blocked");
+        let how = itself["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        assert!(
+            !how.contains(OFFERS_A_TOKEN),
+            "nothing is its own parent, and no token changes that: {how}",
+        );
+
+        // **And a token does not lift it, which is what the old advice sent a
+        // caller to find out.** The near-miss sentence told them to re-call
+        // with one; doing that is refused again, so the loop the advice opened
+        // is pinned shut here rather than only described.
+        let forced = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    parent: Some("thing:no-such-bike".into()),
+                    override_token: Some(guard::override_token(
+                        &EntityId::person("thing:no-such-bike"),
+                        &[],
+                    )),
+                    ..add_args("thing", "tau", "Tau")
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(
+            forced["status"], "blocked",
+            "a token cannot create the parent it names: {forced}",
+        );
+
+        // The positive: a near miss on the child's own handle is the refusal
+        // that IS overridable, and it still offers the token. Without this the
+        // two above pass on a build that never offers one at all.
+        let near_miss = json_of(
+            &jojobot
+                .add_entity(Parameters(add_args("thing", "kettl", "Kettl")))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(near_miss["status"], "blocked");
+        let offered = near_miss["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        assert!(
+            offered.contains(OFFERS_A_TOKEN),
+            "a near miss on the handle being created is lifted by a token: {near_miss}",
+        );
+
+        // **The control the two refusals above rest on: a token works.**
+        // Without it, "blocked with a token" proves nothing — the same result
+        // comes back on a build where no token lifts anything at all.
+        let token = offered
+            .split_once(OFFERS_A_TOKEN)
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .expect("the advice hands over the token it mints")
+            .0
+            .to_string();
+        let forced = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    override_token: Some(token),
+                    ..add_args("thing", "kettl", "Kettl")
+                }))
+                .await
+                .expect("add ok"),
+        );
+        assert_eq!(
+            forced["id"], "thing:kettl",
+            "the token this refusal minted lifts this refusal: {forced}",
         );
     }
 
