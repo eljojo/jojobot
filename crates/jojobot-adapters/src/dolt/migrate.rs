@@ -251,6 +251,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0018_type_field_holds_wider.sql"),
         leaves: Leaves::ColumnType("type_field", "holds", "varchar(32)"),
     },
+    Migration {
+        version: "0019_entity_source_wider",
+        sql: include_str!("../../migrations/0019_entity_source_wider.sql"),
+        leaves: Leaves::ColumnType("entity", "source", "varchar(255)"),
+    },
+    Migration {
+        version: "0020_entity_crm_wider",
+        sql: include_str!("../../migrations/0020_entity_crm_wider.sql"),
+        leaves: Leaves::ColumnType("entity", "crm", "varchar(255)"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -636,6 +646,8 @@ mod tests {
         "0016_field_write",
         "0017_type_field_folds",
         "0018_type_field_holds_wider",
+        "0019_entity_source_wider",
+        "0020_entity_crm_wider",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

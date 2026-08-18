@@ -1,0 +1,11 @@
+-- The cross-link to the task layer, at the width the domain admits.
+--
+-- `crm` takes the task layer's own grammar, so jojobot screens it as a
+-- frontmatter label and nothing more: one plain line of at most two hundred
+-- characters, with no space and no comma. This column held one hundred and
+-- ninety-one, so the same gap that closed for `source` was open here.
+--
+-- It is a column of its own, so it is a migration of its own: one statement
+-- per file is what makes the unit of a migration the unit of atomicity this
+-- store offers.
+ALTER TABLE entity MODIFY COLUMN crm VARCHAR(255) NULL;

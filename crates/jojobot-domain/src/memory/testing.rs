@@ -4332,6 +4332,49 @@ pub mod contract {
         assert_eq!(seen.crm.as_deref(), Some("ENG-421"));
     }
 
+    /// **A frontmatter field at the validator's limit survives the store.**
+    ///
+    /// `source` and `crm` are screened by one rule — one plain line, at most
+    /// two hundred characters — and a column narrower than that rule refuses a
+    /// value the domain admits. The write is already past every check jojobot
+    /// makes when the store answers, so nothing above the port sees it coming,
+    /// and a double cannot answer for it: a double keeps whatever bytes it is
+    /// handed, whatever a column would have said.
+    ///
+    /// The two fields are written together and asserted apart, because they
+    /// are two columns and a widening that reaches one leaves the other
+    /// exactly as it was.
+    pub async fn a_field_at_the_validators_limit_survives_storage<M: Memory>(store: &M) {
+        let id = EntityId::person("contract-brimful");
+        let source = format!("{:-<200}", "contract-source-");
+        let crm = format!("{:0<200}", "card:");
+        assert_eq!(
+            (source.chars().count(), crm.chars().count()),
+            (200, 200),
+            "this case is about the limit only if it writes the limit",
+        );
+
+        add(
+            store,
+            NewEntity {
+                crm: Some(crm.clone()),
+                ..NewEntity::new(id.clone(), "Omicron", source.clone())
+            },
+        )
+        .await;
+
+        let seen = read_entity(store, &id).await;
+        assert_eq!(
+            seen.source, source,
+            "the source the validator admits comes back whole",
+        );
+        assert_eq!(
+            seen.crm.as_deref(),
+            Some(crm.as_str()),
+            "…and so does the cross-link, which is a column of its own",
+        );
+    }
+
     // --- retrieval: the search verb ------------------------------------------
     //
     // These run against a store that also carries the search projection. They
@@ -6879,6 +6922,7 @@ pub mod contract {
         update_fact_requires_an_existing_edge_object(store).await;
         malformed_entity_fields_are_rejected(store).await;
         a_cross_link_takes_the_task_layers_own_grammar(store).await;
+        a_field_at_the_validators_limit_survives_storage(store).await;
 
         a_declared_type_reads_back(store).await;
         declaring_a_type_again_replaces_its_keys(store).await;

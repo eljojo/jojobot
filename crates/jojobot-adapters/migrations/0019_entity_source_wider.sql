@@ -1,0 +1,16 @@
+-- Where an entity came from, wide enough for every value the domain admits.
+--
+-- `source` is a frontmatter label, and one validator says what a label may be:
+-- one plain line of at most two hundred characters. This column held one
+-- hundred and ninety-one, so a value between one hundred and ninety-two and
+-- two hundred passed every check jojobot makes and was then refused by the
+-- store, on a write nothing above the port could see coming.
+--
+-- Two hundred and fifty-five is the width because it is past what the
+-- validator admits with room, and a column that has to be widened again is
+-- this same migration a second time.
+--
+-- **The domain says what a label may be and this column holds it.** Narrowing
+-- the validator to the old width would have made the store's furniture the
+-- domain's rule, which is the dependency the wrong way round.
+ALTER TABLE entity MODIFY COLUMN source VARCHAR(255) NOT NULL;
