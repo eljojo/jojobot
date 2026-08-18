@@ -2315,7 +2315,9 @@ mod tests {
                 });
             }
         }
-        let fields = folded_fields(&writes);
+        // Nothing is declared over a doc built by hand, so every key here folds
+        // the unconfigured way. A fixture that needs a counter declares one.
+        let fields = folded_fields(&writes, &[]);
         DocScan {
             doc_id: doc_id.into(),
             title: entity.as_ref().map(|e| e.name.clone()).unwrap_or_default(),

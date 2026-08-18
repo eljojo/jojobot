@@ -1,0 +1,18 @@
+-- What a key is declared to hold, wide enough for every kind a reference can
+-- name.
+--
+-- A declaration crosses to this table as ONE token: the value type, and for a
+-- reference narrowed to a kind, that kind after a colon. So the cell does not
+-- hold a fixed vocabulary of short words — it holds a composition, and the
+-- longest one it can be asked for is `reference:` and the longest kind.
+--
+-- Sixteen characters fitted every kind but one. The key that pointed at the
+-- longest kind made seventeen, and this store refuses an oversized value
+-- rather than cutting it, so that declaration failed on the write while every
+-- other kind worked. Nothing caught it because a case that picks a short kind
+-- answers for the short kinds only.
+--
+-- Thirty-two is the width because it is past every token this composition can
+-- produce today with room for a longer value type or kind, and a column that
+-- has to be widened again is this same migration a second time.
+ALTER TABLE type_field MODIFY COLUMN holds VARCHAR(32) NOT NULL;

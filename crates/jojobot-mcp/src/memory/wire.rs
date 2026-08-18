@@ -86,7 +86,16 @@ pub(crate) fn declared_type_json(declared: &DeclaredType) -> serde_json::Value {
             // The whole declaration as one token, narrowing included — the same
             // spelling `declare_type` takes, so what a caller reads back is
             // what it would send to say the same thing again.
-            .map(|f| serde_json::json!({ "key": f.key, "holds": f.holds_token() }))
+            //
+            // **How the key folds is on every key, not only on the counters.**
+            // Stated rather than left off when it is the default: a reader who
+            // has to infer newest-wins from a missing token cannot tell it from
+            // a build that does not have folds at all.
+            .map(|f| serde_json::json!({
+                "key": f.key,
+                "holds": f.holds_token(),
+                "folds": f.folds.as_token(),
+            }))
             .collect::<Vec<_>>(),
     })
 }

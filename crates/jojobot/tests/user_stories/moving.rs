@@ -211,11 +211,20 @@ async fn moving_abroad() {
     )
     .await
     .says("\"name\":\"commitment\"");
+    // **And the question is asked of the RECORD**, which is the whole of what
+    // the gap above is about: every commitment here is a row on the one
+    // project, so "what is due in January" is a question about the rows. Asked
+    // of the thing it would be a question about the project, and the project
+    // holds a `due` — so it would come back with all six of its rows, the
+    // undated photo among them. On a build where each of these is its own
+    // thing, this is the default question again.
     let january = s
         .shape(
             "what is due before the end of January",
             json!({
-                "fields": [{ "key": "due", "compare": "before", "value": "2027-02-01" }],
+                "fields": [{
+                    "key": "due", "compare": "before", "value": "2027-02-01", "scope": "record",
+                }],
                 "facts": true,
             }),
         )
@@ -370,10 +379,17 @@ async fn moving_abroad() {
     // The question actually asked at this point, and the two records that were
     // filed with a state answer it: one read, and the sentences come back
     // filtered out rather than judged one by one.
+    //
+    // **Asked of the record, for the reason the January read is** — these are
+    // rows on one project rather than things of their own, so what is open is a
+    // question about the rows. It is the same gap, seen from the other side.
     let still_open = s
         .shape(
             "what is still open on the move",
-            json!({ "fields": [{ "key": "state", "value": "open" }], "facts": true }),
+            json!({
+                "fields": [{ "key": "state", "value": "open", "scope": "record" }],
+                "facts": true,
+            }),
         )
         .await;
     still_open.says("visa photo");

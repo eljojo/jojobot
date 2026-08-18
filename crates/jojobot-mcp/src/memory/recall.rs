@@ -13,7 +13,7 @@ use jojobot_domain::memory::graph;
 /// One key filter of a `recall` — a key, and optionally the value it holds.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct KeyFilterArgs {
-    /// The key a record carries, exactly as the record spells it. Matching is
+    /// The key, exactly as it is spelled where it was written. Matching is
     /// structural, so nothing has to have declared it.
     pub key: String,
     /// The value it must hold. **Omit it to ask only that the key is there** —
@@ -29,6 +29,25 @@ pub struct KeyFilterArgs {
     /// answering the equality question instead.
     #[serde(default)]
     pub compare: Option<String>,
+    /// **What this filter is asked OF**, and it is two different questions.
+    ///
+    /// `thing` is the default: what the object HOLDS — the newest write of the
+    /// key, or the total when the key was declared a counter. *Which friends
+    /// have eaten three or more donuts* is this one, and it finds the friend
+    /// with three separate records of one as readily as the friend with one
+    /// record of three.
+    ///
+    /// `record` asks about the occasions instead: an object comes back when a
+    /// single record of its answers every `record` filter, and it arrives
+    /// carrying the records that answered. *Which visits cost more than fifty*
+    /// is this one — it is about what happened, not about what anybody holds
+    /// now, and no folding can answer it.
+    ///
+    /// ⚠️ **The two scopes combine in one list, and every `record` filter must
+    /// hold on the SAME record** — they describe a single record rather than a
+    /// list of separate questions.
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 /// The `follow` argument of a `recall` — which edges to walk, and how far.
@@ -192,6 +211,7 @@ fn key_filters(args: &[KeyFilterArgs]) -> Result<Vec<graph::FieldFilter>, McpErr
                 key: f.key.trim().to_string(),
                 value: f.value.as_ref().map(|v| v.trim().to_string()),
                 compare: parse_compare(f.compare.as_deref())?,
+                scope: parse_scope(f.scope.as_deref())?,
             })
         })
         .collect()
@@ -1033,6 +1053,9 @@ mod tests {
                         key: "answer".into(),
                         value: Some("yes".into()),
                         compare: None,
+                        // The record that answered is what this half is about,
+                        // so it asks the question that is about records.
+                        scope: Some("record".into()),
                     }]),
                     // The claim that answered is what this case is about, so
                     // it asks for the records the fold is taken from.
@@ -1122,6 +1145,7 @@ mod tests {
                 fields: vec![FieldArgs {
                     key: "odometer".into(),
                     holds: Some("number".into()),
+                    folds: None,
                 }],
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
@@ -1181,10 +1205,12 @@ mod tests {
                     FieldArgs {
                         key: "born".into(),
                         holds: Some("date".into()),
+                        folds: None,
                     },
                     FieldArgs {
                         key: "owner".into(),
                         holds: Some("reference".into()),
+                        folds: None,
                     },
                 ],
                 sid: Some(crate::harness::TEST_SID.into()),
@@ -1255,6 +1281,7 @@ mod tests {
                             key: "born".into(),
                             value: Some("2020-01-01".into()),
                             compare: Some("before".into()),
+                            scope: None,
                         }]),
                         ..no_follow()
                     }),
@@ -1295,6 +1322,7 @@ mod tests {
                         key: "born".into(),
                         value: Some("2020-01-01".into()),
                         compare: Some("before".into()),
+                        scope: None,
                     }]),
                     ..of_nothing()
                 }))

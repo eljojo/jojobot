@@ -27,6 +27,8 @@ mod colleagues;
 mod contracts;
 #[path = "user_stories/coordinating.rs"]
 mod coordinating;
+#[path = "user_stories/counting.rs"]
+mod counting;
 #[path = "user_stories/curveball.rs"]
 mod curveball;
 #[path = "user_stories/degraded.rs"]

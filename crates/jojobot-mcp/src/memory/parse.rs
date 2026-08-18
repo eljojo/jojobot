@@ -109,6 +109,25 @@ pub(crate) fn parse_direction(raw: Option<&str>) -> Result<Direction, McpError> 
     }
 }
 
+/// **What a key filter is asked of.** Absent is the thing, which is the
+/// question a caller asking about an object is asking; a token naming neither
+/// scope is refused rather than defaulted, because the two keep different
+/// things and picking one would answer a question nobody asked.
+pub(crate) fn parse_scope(
+    raw: Option<&str>,
+) -> Result<jojobot_domain::memory::graph::Scope, McpError> {
+    use jojobot_domain::memory::graph::Scope;
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(Scope::default()),
+        Some(token) => Scope::of_token(token).ok_or_else(|| {
+            McpError::invalid_params(
+                format!("scope must be thing or record, got '{token}'"),
+                None,
+            )
+        }),
+    }
+}
+
 /// The comparison a filter uses. Absent is equality, which is what a key with
 /// no declaration behind it has.
 pub(crate) fn parse_compare(

@@ -1,0 +1,16 @@
+-- How a key's writes come down to the one value the key holds.
+--
+-- Every key folded one way before this column: the newest write wins. A key
+-- declared `sum` is a counter and its writes add up, so a running total is
+-- arithmetic the software does rather than arithmetic each session has to do
+-- and write back.
+--
+-- **It sits on the key rather than on a write.** A fold declared per write lets
+-- two callers disagree about one key — one adding, one replacing — and the
+-- value then means two things with nothing to say which. A key IS a counter or
+-- it is not.
+--
+-- `newest` is the default because it is what every row written before this
+-- column is, and because it is the fold a key nobody declared still takes: the
+-- unconfigured behaviour is the old behaviour.
+ALTER TABLE type_field ADD COLUMN folds VARCHAR(16) NOT NULL DEFAULT 'newest';

@@ -46,7 +46,7 @@ pub struct InMemoryMemory {
     /// The type declarations, one per name. A `Vec` rather than a map because
     /// the real store keeps them as rows and the order they were declared in
     /// is part of what each one says.
-    types: Mutex<Vec<super::types::DeclaredType>>,
+    types: Mutex<Vec<crate::memory::types::DeclaredType>>,
 }
 
 impl InMemoryMemory {
@@ -138,7 +138,12 @@ impl InMemoryMemory {
     /// disagree about what a thing is.
     fn held(&self, entity: &EntityId) -> std::collections::BTreeMap<String, String> {
         let facts = self.facts.lock().expect("fake mutex poisoned");
-        super::folded_fields(&self.writes_on(entity, &facts))
+        super::folded_fields(&self.writes_on(entity, &facts), &self.declarations())
+    }
+
+    /// What has been declared — which is what says how each key folds.
+    fn declarations(&self) -> Vec<crate::memory::types::DeclaredType> {
+        self.types.lock().expect("fake mutex poisoned").clone()
     }
 
     /// **Every write on this thing, each with the standing of the record that
@@ -389,10 +394,11 @@ impl Memory for InMemoryMemory {
         // folded. Run here beside the real store's copy, so a rule that held in
         // one adapter and not the other cannot ship.
         let writes = self.writes_on(&stored.home, &facts);
+        let declared = self.types.lock().expect("fake mutex poisoned").clone();
         super::guard_fit(
-            &super::folded_fields(&writes),
-            &super::stood_after_capture(&writes, &stored),
-            &self.types.lock().expect("fake mutex poisoned"),
+            &super::folded_fields(&writes, &declared),
+            &super::stood_after_capture(&writes, &stored, &declared),
+            &declared,
         )?;
         // **The claim is kept without its fields and the fields are kept as
         // writes.** One body of data, projected on the way out.
@@ -562,13 +568,10 @@ impl Memory for InMemoryMemory {
         // cannot come to disagree about what a write may cost.
         let home = fact.home.clone();
         let writes = self.writes_on(&home, &facts);
-        let before = super::folded_fields(&writes);
-        let after = super::stood_after(&writes, &edited, &patch, &carried);
-        super::guard_fit(
-            &before,
-            &after,
-            &self.types.lock().expect("fake mutex poisoned"),
-        )?;
+        let declared = self.declarations();
+        let before = super::folded_fields(&writes, &declared);
+        let after = super::stood_after(&writes, &edited, &patch, &carried, &declared);
+        super::guard_fit(&before, &after, &declared)?;
         let id = fact.id.clone();
         for held in facts.iter_mut() {
             if held.home == home && held.id == id {
@@ -706,6 +709,7 @@ impl Memory for InMemoryMemory {
     async fn scan(&self) -> Result<Vec<search::DocScan>, MemoryError> {
         let facts = self.facts.lock().expect("fake mutex poisoned").clone();
         let prose = self.prose.lock().expect("fake mutex poisoned").clone();
+        let declared = self.declarations();
         // No Journal document: a wrap publishes nowhere, so the journal stays
         // dark until events land — there is no shared page for `search` to
         // scan here.
@@ -722,7 +726,7 @@ impl Memory for InMemoryMemory {
                         .collect(),
                     // The scan carries what the thing IS, because the records
                     // it also carries cannot be folded back into it.
-                    fields: super::folded_fields(&self.writes_on(&entity.id, &facts)),
+                    fields: super::folded_fields(&self.writes_on(&entity.id, &facts), &declared),
                     entity: Some(entity),
                 }
             }))
@@ -731,12 +735,12 @@ impl Memory for InMemoryMemory {
 
     async fn declare_type(
         &self,
-        declared: super::types::DeclaredType,
-    ) -> Result<super::types::DeclaredType, MemoryError> {
-        super::types::validate_type(&declared)?;
+        declared: crate::memory::types::DeclaredType,
+    ) -> Result<crate::memory::types::DeclaredType, MemoryError> {
+        crate::memory::types::validate_type(&declared)?;
         let declared = declared.normalized();
         let mut held = self.types.lock().unwrap();
-        super::types::guard_replacement(
+        crate::memory::types::guard_replacement(
             &declared,
             held.iter()
                 .find(|t| t.name == declared.name)
@@ -749,7 +753,7 @@ impl Memory for InMemoryMemory {
         Ok(declared)
     }
 
-    async fn declared_types(&self) -> Result<Vec<super::types::DeclaredType>, MemoryError> {
+    async fn declared_types(&self) -> Result<Vec<crate::memory::types::DeclaredType>, MemoryError> {
         Ok(self.types.lock().unwrap().clone())
     }
 }
@@ -2996,6 +3000,92 @@ pub mod contract {
             records.len(),
             written,
             "each sitting is its own record and the history says which"
+        );
+    }
+
+    /// **A key declared a counter reads back as the total of its writes, and
+    /// the writes are all still there.**
+    ///
+    /// The declaration is what buys it, so this asserts the fold both ways in
+    /// one case: the counter adds, and an undeclared key written the same
+    /// number of times on the same thing still takes its newest write. A case
+    /// that only looked at the counter would pass on a store that sums every
+    /// number it holds.
+    ///
+    /// It also reads the declaration back, because the fold travels through the
+    /// store's own type rows: a store that dropped the column would keep every
+    /// key on newest-wins and give no other sign of it.
+    pub async fn a_counter_totals_its_writes_and_keeps_them<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-totalled");
+        store
+            .declare_type(crate::memory::types::DeclaredType::new(
+                "contract-snacking",
+                vec![
+                    crate::memory::types::Field::summing("donuts"),
+                    crate::memory::types::Field::new("mood", crate::memory::types::ValueType::Text),
+                ],
+            ))
+            .await
+            .expect("declaring a type should succeed");
+        assert_eq!(
+            store
+                .declared_types()
+                .await
+                .expect("the roster reads")
+                .iter()
+                .find(|t| t.name == "contract-snacking")
+                .and_then(|t| t.field("donuts"))
+                .map(|f| f.folds),
+            Some(crate::memory::types::Fold::Sum),
+            "the fold survives the store, or nothing below is about a counter"
+        );
+
+        for (nth, mood) in [(1, "hopeful"), (2, "content"), (3, "queasy")] {
+            capture(
+                store,
+                NewFact {
+                    fields: [
+                        ("donuts".to_string(), "1".to_string()),
+                        ("mood".to_string(), mood.to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    ..NewFact::about(
+                        subject.clone(),
+                        format!("a donut, number {nth}"),
+                        date(2026, 7, 1),
+                    )
+                },
+            )
+            .await;
+        }
+
+        let held = store
+            .fields(&subject)
+            .await
+            .expect("the fields of a thing should succeed");
+        assert_eq!(
+            held.get("donuts").map(String::as_str),
+            Some("3"),
+            "three writes of one add up: {held:?}"
+        );
+        assert_eq!(
+            held.get("mood").map(String::as_str),
+            Some("queasy"),
+            "and the key nobody declared a counter takes its newest write: {held:?}"
+        );
+
+        let history = store
+            .history(&subject, "donuts")
+            .await
+            .expect("history should succeed");
+        assert_eq!(
+            history
+                .iter()
+                .map(|w| w.value.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("1"), Some("1"), Some("1")],
+            "the projection adds them up and the substrate keeps each one: {history:?}"
         );
     }
 
@@ -5700,12 +5790,20 @@ pub mod contract {
     /// The unnarrowed reference is in the same type, because a store that read
     /// every reference back as one kind would satisfy the first assertion
     /// alone.
+    ///
+    /// **One of the narrowings names the LONGEST kind, and that is not
+    /// decoration.** A declaration crosses to a store as one token —
+    /// `reference:` and the kind — so the kinds do not all cost the same
+    /// number of characters, and a cell wide enough for most of them holds a
+    /// declaration that reads back as any handle at all, or fails on the
+    /// write. A case that picks a short kind answers for the short kinds only.
     pub async fn a_reference_keeps_the_kind_it_points_at<M: Memory>(store: &M) {
         store
             .declare_type(DeclaredType::new(
                 "contract-stay",
                 vec![
                     Field::pointing_at("venue", EntityKind::Place),
+                    Field::pointing_at("part_of", EntityKind::Project),
                     Field::new("booked_by", ValueType::Reference),
                 ],
             ))
@@ -5723,6 +5821,12 @@ pub mod contract {
             held.field("venue").and_then(|f| f.points_at),
             Some(EntityKind::Place),
             "the narrowing came back off the store: {held:?}",
+        );
+        assert_eq!(
+            held.field("part_of").and_then(|f| f.points_at),
+            Some(EntityKind::Project),
+            "…and so did the one naming the longest kind, which is the token a cell sized for \
+             the others cannot hold: {held:?}",
         );
         assert_eq!(
             held.field("booked_by").and_then(|f| f.points_at),
@@ -6738,6 +6842,7 @@ pub mod contract {
         update_fact_sets_and_clears_a_field(store).await;
 
         a_key_written_many_times_holds_one_value_and_counts(store).await;
+        a_counter_totals_its_writes_and_keeps_them(store).await;
         an_edit_appends_and_the_value_it_replaced_stays_in_the_history(store).await;
         clearing_a_key_leaves_its_writes_behind(store).await;
         history_of_an_unwritten_key_is_empty_and_of_no_entity_is_a_miss(store).await;

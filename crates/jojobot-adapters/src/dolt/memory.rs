@@ -35,7 +35,7 @@ use jojobot_domain::memory::{
     Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch, folded_fields, guard,
     guard_fit, normalize_content, normalize_details, normalize_prose, referenced_by, retraction_of,
     screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
-    types::{DeclaredType, Field, Origin, ValueType, guard_replacement, validate_type},
+    types::{DeclaredType, Field, Fold, Origin, ValueType, guard_replacement, validate_type},
     validate_content, validate_details, validate_edge, validate_entity, validate_fields,
     validate_prose, validate_subject, writes_of,
 };
@@ -236,7 +236,12 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
-        Ok(folded_fields(&Self::writes_on(tx, entity).await?))
+        let writes = Self::writes_on(tx, entity).await?;
+        // Read inside the same transaction the writes are, because a key's fold
+        // is part of what its writes come to and a roster read beside the write
+        // is one that may already have moved.
+        let declared = Self::types_in(tx).await?;
+        Ok(folded_fields(&writes, &declared))
     }
 
     /// **Append what a write said about a record's keys**, each row taking the
@@ -371,7 +376,7 @@ impl DoltMemory {
     /// may already have moved.
     async fn types_in(tx: &mut Transaction<'_, MySql>) -> Result<Vec<DeclaredType>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT type_name, key_name, holds, origin FROM type_field
+            "SELECT type_name, key_name, holds, folds, origin FROM type_field
              ORDER BY type_name, ordinal",
         )
         .fetch_all(&mut **tx)
@@ -711,10 +716,11 @@ impl Memory for DoltMemory {
         // one that the key does not hold. One function, called from both verbs
         // in both stores.
         let held = Self::writes_on(&mut tx, &stored.home).await?;
+        let declared = Self::types_in(&mut tx).await?;
         guard_fit(
-            &folded_fields(&held),
-            &stood_after_capture(&held, &stored),
-            &Self::types_in(&mut tx).await?,
+            &folded_fields(&held, &declared),
+            &stood_after_capture(&held, &stored, &declared),
+            &declared,
         )?;
         Self::write_fact(&mut tx, &stored).await?;
         // Every key this record carries is a write of its own, appended to the
@@ -867,10 +873,11 @@ impl Memory for DoltMemory {
         // already fits; a thing that fits nothing has nothing to protect, so
         // its records stay repairable. One function, called from both stores.
         let held = Self::writes_on(&mut tx, &fact.home).await?;
+        let declared = Self::types_in(&mut tx).await?;
         guard_fit(
-            &folded_fields(&held),
-            &stood_after(&held, &fact, &patch, &carried),
-            &Self::types_in(&mut tx).await?,
+            &folded_fields(&held, &declared),
+            &stood_after(&held, &fact, &patch, &carried, &declared),
+            &declared,
         )?;
         Self::write_fact(&mut tx, &fact).await?;
         // **The edit appends.** The record reads back changed — that is the
@@ -1014,13 +1021,14 @@ impl Memory for DoltMemory {
             .map_err(store)?;
         for (ordinal, field) in declared.fields.iter().enumerate() {
             sqlx::query(
-                "INSERT INTO type_field (type_name, key_name, ordinal, holds, origin)
-                 VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO type_field (type_name, key_name, ordinal, holds, folds, origin)
+                 VALUES (?, ?, ?, ?, ?, ?)",
             )
             .bind(&declared.name)
             .bind(&field.key)
             .bind(ordinal as i64 + 1)
             .bind(field.holds_token())
+            .bind(field.folds.as_token())
             .bind(declared.origin.as_token())
             .execute(&mut *tx)
             .await
@@ -1038,7 +1046,7 @@ impl Memory for DoltMemory {
     /// quietly shrink a type and report the key as one no record carries.
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT type_name, key_name, holds, origin FROM type_field
+            "SELECT type_name, key_name, holds, folds, origin FROM type_field
              ORDER BY type_name, ordinal",
         )
         .fetch_all(&self.pool)
@@ -1056,13 +1064,20 @@ impl Memory for DoltMemory {
 /// dropping the key. Text holds anything, so the key still describes what a
 /// writer should fill and still matches a record — where dropping it would
 /// quietly shrink a type and report the key as one no record carries.
+///
+/// **A row whose `folds` names no fold reads as newest-wins**, which is the
+/// unconfigured behaviour and the one every key had before there was a choice.
+/// A token this build does not know must not turn a key into a counter.
 fn gather_types(rows: &[sqlx::mysql::MySqlRow]) -> Vec<DeclaredType> {
     let mut types: Vec<DeclaredType> = Vec::new();
     for row in rows {
         let name: String = row.get("type_name");
         let key: String = row.get("key_name");
-        let field = Field::of_token(&key, &row.get::<String, _>("holds"))
-            .unwrap_or_else(|| Field::new(&key, ValueType::Text));
+        let field = Field {
+            folds: Fold::of_token(&row.get::<String, _>("folds")).unwrap_or_default(),
+            ..Field::of_token(&key, &row.get::<String, _>("holds"))
+                .unwrap_or_else(|| Field::new(&key, ValueType::Text))
+        };
         match types.last_mut() {
             Some(last) if last.name == name => last.fields.push(field),
             _ => types.push(DeclaredType {

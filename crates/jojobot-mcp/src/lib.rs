@@ -61,7 +61,7 @@ use jojobot_domain::memory::{
     graph::Direction,
     guard::{self, EntityMatch},
     search::{Behind, Coverage, DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, Search, SearchQuery},
-    types::{DeclaredType, Field, ValueType},
+    types::{DeclaredType, Field, Fold, ValueType},
     validate_edge,
 };
 use jojobot_domain::session::{

@@ -60,6 +60,73 @@ pub enum ValueType {
     Reference,
 }
 
+/// **How a key's writes come down to the one value the key holds.**
+///
+/// A thing's fields are its writes folded together, and until now every key
+/// folded the one way: the newest write wins. That leaves a running total to
+/// the agent, which has to read the history, add it up and write the answer
+/// back — so the arithmetic lives in whichever session last touched the key
+/// rather than in the software, and two sessions can disagree about it.
+///
+/// **It is a property of the KEY, declared once, and never of a write.** On the
+/// write, two callers can disagree about the same key — one adding, one
+/// replacing — and the value quietly means two things with nothing to say which.
+/// A key IS a counter or it is not.
+///
+/// **This is not an aggregation language and must not become one.** There is
+/// one fold beyond the default because there is one case for one, and the next
+/// belongs here when a second real case arrives (rule 106).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Fold {
+    /// The newest write wins. **The default, and it needs no declaration**
+    /// (rule 9): a key nobody has declared folds this way, which is how every
+    /// key folded before there was a choice.
+    #[default]
+    Newest,
+    /// **A counter: the writes add up.** Three writes of one read back as
+    /// three, and how many times the key was written is still the substrate's
+    /// own answer — the projection changes, what is stored does not.
+    Sum,
+}
+
+impl Fold {
+    /// The token this reads and writes as.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            Fold::Newest => "newest",
+            Fold::Sum => "sum",
+        }
+    }
+
+    /// The fold a token names, or nothing when it names none.
+    pub fn of_token(token: &str) -> Option<Fold> {
+        match token.trim() {
+            "newest" => Some(Fold::Newest),
+            "sum" => Some(Fold::Sum),
+            _ => None,
+        }
+    }
+}
+
+/// **How a key folds, over everything that has been declared.**
+///
+/// Every declaration is asked, rather than the first one owning the name, for
+/// the reason [`super::graph`] asks them all about a relation: two types may
+/// name one key and mean their own thing by it, and which of them a store hands
+/// over first is its own ordering rather than anything a caller said. A key any
+/// type declares a counter sums.
+pub fn fold_of(key: &str, declared: &[DeclaredType]) -> Fold {
+    let key = key.trim();
+    if declared
+        .iter()
+        .any(|d| d.field(key).is_some_and(|f| f.folds == Fold::Sum))
+    {
+        Fold::Sum
+    } else {
+        Fold::Newest
+    }
+}
+
 /// **How a filter compares a record's value with the one it is looking for.**
 ///
 /// Not an expression language and not an operator set a caller composes: each
@@ -243,7 +310,7 @@ impl Origin {
     }
 }
 
-/// One key of a type, and what it holds.
+/// One key of a type, what it holds, and how its writes fold.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
     pub key: String,
@@ -260,6 +327,9 @@ pub struct Field {
     /// declaration that says nothing means: naming a kind NARROWS the key, so
     /// the unnarrowed reference stays the default (rule 62).
     pub points_at: Option<EntityKind>,
+    /// How the writes of this key come down to one value. [`Fold::Newest`]
+    /// unless the declaration says otherwise.
+    pub folds: Fold,
 }
 
 impl Field {
@@ -268,6 +338,16 @@ impl Field {
             key: key.trim().to_string(),
             holds,
             points_at: None,
+            folds: Fold::Newest,
+        }
+    }
+
+    /// **A counter.** It holds a number because a total of anything else is not
+    /// a total, and [`validate_type`] holds a declaration to that.
+    pub fn summing(key: &str) -> Field {
+        Field {
+            folds: Fold::Sum,
+            ..Field::new(key, ValueType::Number)
         }
     }
 
@@ -457,6 +537,7 @@ impl DeclaredType {
                     .iter()
                     .map(|f| Field {
                         points_at: f.points_at,
+                        folds: f.folds,
                         ..Field::new(&f.key, f.holds)
                     })
                     .collect(),
@@ -509,11 +590,17 @@ impl DeclaredType {
 /// it is a type nobody can query by, and it would have to be configured into
 /// usefulness before it did anything.
 ///
-/// This is the ONLY thing refused here, and it is about the declaration rather
-/// than about anything answering it. No record is checked on this path, and
-/// nothing here stops a record being found. The write-time check on what a
-/// record holds lives at [`super::guard_fit`], where the thing's own fields
-/// are in hand.
+/// **A key that sums holds a number**, which is the other thing refused here
+/// and is refused for the same reason: a total of dates or of prose is not a
+/// total, so a declaration asking for one is wrong about itself. **A reference
+/// narrowed to a kind is one of those**, so a key that both points at a kind
+/// and sums is refused by the same rule — the narrowing is on a reference, and
+/// a reference is not a number.
+///
+/// Everything refused here is about the DECLARATION rather than about anything
+/// answering it. No record is checked on this path, and nothing here stops a
+/// record being found. The write-time check on what a record holds lives at
+/// [`super::guard_fit`], where the thing's own fields are in hand.
 pub fn validate_type(declared: &DeclaredType) -> Result<(), MemoryError> {
     label("type name", &declared.name)?;
     if declared.fields.is_empty() {
@@ -529,6 +616,18 @@ pub fn validate_type(declared: &DeclaredType) -> Result<(), MemoryError> {
             return Err(MemoryError::InvalidType(format!(
                 "type '{}' names the key '{}' twice",
                 declared.name, field.key
+            )));
+        }
+        if field.folds == Fold::Sum && field.holds != ValueType::Number {
+            return Err(MemoryError::InvalidType(format!(
+                "type '{}' declares the key '{}' a counter and says it holds a {}. A counter adds \
+                 its writes up, so it holds a number",
+                declared.name,
+                field.key,
+                // The whole declared token, narrowing included: a key sent as
+                // `reference:place` is refused over what the caller wrote, and
+                // `reference` alone would name a half they did not send.
+                field.holds_token(),
             )));
         }
         seen.push(&field.key);
@@ -829,5 +928,54 @@ mod tests {
             1,
             "and the type that declared it a number says so, about the same record",
         );
+    }
+
+    /// **A summing key that points at a kind is refused because a reference is
+    /// no number**, and the refusal names the key and the value type as the
+    /// caller spelled it.
+    ///
+    /// **This is not a rule about the combination, and the name says so.** The
+    /// two halves of a declaration were built apart — one says which kind a
+    /// reference points at, the other says how the key's writes fold — and a
+    /// caller can name both on one key. Nothing weighs the pair. What refuses
+    /// it is the counter's own rule: a total of anything but a number is not a
+    /// total, and a narrowing is only ever set on a reference. Take that one
+    /// rule out and this declaration is accepted, which is what the sabotage
+    /// behind this case showed.
+    ///
+    /// The narrowing is what the refusal has to carry: `reference` alone would
+    /// leave a caller who wrote `reference:place` looking for a word they did
+    /// not send.
+    ///
+    /// Both halves are declared apart in the same case, because a refusal for
+    /// every declaration would pass this on a build that refuses everything.
+    #[test]
+    fn a_summing_key_that_points_at_a_kind_is_refused_because_a_reference_is_no_number() {
+        let refused = validate_type(&DeclaredType::new(
+            "snacking",
+            vec![Field {
+                folds: Fold::Sum,
+                ..Field::pointing_at("donuts", EntityKind::Place)
+            }],
+        ))
+        .expect_err("a total of handles is not a total");
+        let said = refused.to_string();
+        assert!(said.contains("donuts"), "the key a caller must fix: {said}");
+        assert!(
+            said.contains("reference:place"),
+            "…and the half that is wrong, spelled as the caller sent it: {said}",
+        );
+
+        // The two halves apart, each of which this refusal must not reach.
+        validate_type(&DeclaredType::new(
+            "stay",
+            vec![Field::pointing_at("venue", EntityKind::Place)],
+        ))
+        .expect("a narrowed reference that folds newest is an ordinary key");
+        validate_type(&DeclaredType::new(
+            "snacking",
+            vec![Field::summing("donuts")],
+        ))
+        .expect("and a counter holding a number is what a counter is");
     }
 }

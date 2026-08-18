@@ -1221,6 +1221,7 @@ pub fn stood_after(
     edited: &Fact,
     patch: &FactPatch,
     carried: &BTreeMap<String, String>,
+    declared: &[types::DeclaredType],
 ) -> BTreeMap<String, String> {
     let mut next: Vec<KeyWrite> = writes
         .iter()
@@ -1251,7 +1252,7 @@ pub fn stood_after(
             status: edited.status,
         });
     }
-    folded_fields(&next)
+    folded_fields(&next, declared)
 }
 
 /// **The thing's fields as they will stand once this capture lands** — the
@@ -1266,7 +1267,15 @@ pub fn stood_after(
 /// Every key the record carries is a write, taking the next ordinal of its key,
 /// which is the ordinal the substrate will give it — a guard judging a result
 /// the store would not produce is worse than no guard.
-pub fn stood_after_capture(writes: &[KeyWrite], captured: &Fact) -> BTreeMap<String, String> {
+///
+/// It reads the declarations for the same reason [`stood_after`] does: how a
+/// key folds is declared, so a guard that folded the capture path one way and
+/// the edit path another would judge two different things about one store.
+pub fn stood_after_capture(
+    writes: &[KeyWrite],
+    captured: &Fact,
+    declared: &[types::DeclaredType],
+) -> BTreeMap<String, String> {
     let mut next = writes.to_vec();
     for (key, value) in &captured.fields {
         let ordinal = next
@@ -1284,7 +1293,7 @@ pub fn stood_after_capture(writes: &[KeyWrite], captured: &Fact) -> BTreeMap<Str
             status: captured.status,
         });
     }
-    folded_fields(&next)
+    folded_fields(&next, declared)
 }
 
 /// **The entities a write names through a declared reference key**, which must
@@ -1694,7 +1703,10 @@ pub struct KeyWrite {
 /// [`Fact::is_retraction`] reads it. **Excluded here rather than at the callers
 /// because this is the one fold**, so a second reserved key is out of the dense
 /// row the day it is named.
-pub fn folded_fields(writes: &[KeyWrite]) -> BTreeMap<String, String> {
+pub fn folded_fields(
+    writes: &[KeyWrite],
+    declared: &[types::DeclaredType],
+) -> BTreeMap<String, String> {
     let mut standing: Vec<&KeyWrite> = writes
         .iter()
         .filter(|w| w.status == FactStatus::Active && !reserved_key(&w.key))
@@ -1704,13 +1716,92 @@ pub fn folded_fields(writes: &[KeyWrite]) -> BTreeMap<String, String> {
     // deciding the fold with its query plan.
     standing.sort_by(|a, b| a.key.cmp(&b.key).then(a.ordinal.cmp(&b.ordinal)));
     let mut folded = BTreeMap::new();
+    // A counter's running total, kept beside the row because the row holds text
+    // and a total has to keep adding. It is dropped with the key, so a clear
+    // ends the total the same way it ends the value.
+    let mut totals: BTreeMap<&str, Total> = BTreeMap::new();
     for write in standing {
-        match &write.value {
-            Some(value) => folded.insert(write.key.clone(), value.clone()),
-            None => folded.remove(&write.key),
+        let Some(value) = &write.value else {
+            folded.remove(&write.key);
+            totals.remove(write.key.as_str());
+            continue;
         };
+        if types::fold_of(&write.key, declared) == types::Fold::Newest {
+            folded.insert(write.key.clone(), value.clone());
+            continue;
+        }
+        match totals
+            .get(write.key.as_str())
+            .copied()
+            .unwrap_or_default()
+            .plus(value)
+        {
+            Some(total) => {
+                totals.insert(&write.key, total);
+                folded.insert(write.key.clone(), total.render());
+            }
+            // **A write that is no number adds nothing, and the key still
+            // arrives.** The messy record is the truth and the typed path
+            // reports it rather than refusing over it — the same posture
+            // [`types::Compare::holds_between`] takes when it is asked to
+            // compare a value that will not parse. Hiding the key instead would
+            // read as one nobody ever wrote.
+            None => {
+                folded
+                    .entry(write.key.clone())
+                    .or_insert_with(|| value.clone());
+            }
+        }
     }
     folded
+}
+
+/// **A counter's running total.**
+///
+/// Whole numbers add as whole numbers, because that is what a counter counts
+/// and a float sum shows a caller rounding they never wrote. The moment a value
+/// arrives that is not whole the total becomes fractional and stays there.
+#[derive(Debug, Clone, Copy, Default)]
+enum Total {
+    #[default]
+    Empty,
+    Whole(i128),
+    Fractional(f64),
+}
+
+impl Total {
+    /// This total with one more value added, or nothing when the value is no
+    /// number at all.
+    fn plus(self, value: &str) -> Option<Total> {
+        let value = value.trim();
+        let held = match self {
+            Total::Empty => Total::Whole(0),
+            held => held,
+        };
+        match (held, value.parse::<i64>()) {
+            (Total::Whole(running), Ok(added)) => Some(Total::Whole(running + i128::from(added))),
+            _ => {
+                let running = match held {
+                    Total::Fractional(running) => running,
+                    Total::Whole(running) => running as f64,
+                    Total::Empty => 0.0,
+                };
+                value
+                    .parse::<f64>()
+                    .ok()
+                    .map(|added| Total::Fractional(running + added))
+            }
+        }
+    }
+
+    /// What the folded row holds.
+    fn render(self) -> String {
+        match self {
+            Total::Empty => "0".to_string(),
+            Total::Whole(running) => running.to_string(),
+            Total::Fractional(running) => running.to_string(),
+        }
+    }
 }
 
 /// **Whether this row can be taken back, and why not when it cannot.**
@@ -2304,6 +2395,137 @@ pub trait Memory: Send + Sync {
 mod tests {
     use super::testing::{InMemoryMemory, contract};
     use super::*;
+
+    /// One write of a key, at the place in that key's history it took.
+    fn wrote(key: &str, ordinal: u64, value: Option<&str>) -> KeyWrite {
+        KeyWrite {
+            key: key.to_string(),
+            ordinal,
+            value: value.map(str::to_string),
+            fact: FactId("f1".into()),
+            status: FactStatus::Active,
+        }
+    }
+
+    /// **A key declared a counter sums its writes; every other key still takes
+    /// the newest.**
+    ///
+    /// Both halves in one case. A fold that summed every key would pass a check
+    /// that only looked at the counter, and a fold that summed nothing would
+    /// pass a check that only looked at the other key.
+    ///
+    /// The last read is the negative the whole feature rests on: the same
+    /// writes, with nothing declared, fold the way they always have. Without it
+    /// the case passes on a build that sums every number it sees, and the
+    /// declaration would be buying nothing.
+    #[test]
+    fn a_counter_sums_its_writes_and_every_other_key_takes_the_newest() {
+        let writes = vec![
+            wrote("donuts", 1, Some("1")),
+            wrote("donuts", 2, Some("1")),
+            wrote("donuts", 3, Some("1")),
+            wrote("mood", 1, Some("hungry")),
+            wrote("mood", 2, Some("content")),
+        ];
+        let snacking = types::DeclaredType::new(
+            "snacking",
+            vec![
+                types::Field::summing("donuts"),
+                types::Field::new("mood", types::ValueType::Text),
+            ],
+        );
+
+        let folded = folded_fields(&writes, std::slice::from_ref(&snacking));
+        assert_eq!(
+            folded.get("donuts").map(String::as_str),
+            Some("3"),
+            "three writes of one is three: {folded:?}",
+        );
+        assert_eq!(
+            folded.get("mood").map(String::as_str),
+            Some("content"),
+            "a key nobody declared a counter reads back its newest write: {folded:?}",
+        );
+
+        let undeclared = folded_fields(&writes, &[]);
+        assert_eq!(
+            undeclared.get("donuts").map(String::as_str),
+            Some("1"),
+            "with nothing declared the same writes take the newest, which is what the \
+             declaration changes: {undeclared:?}",
+        );
+    }
+
+    /// **A clear ends a total, and the writes after it start a new one.**
+    ///
+    /// A clear is a write and takes the key off the thing. On a counter that
+    /// has to reset it, or a key somebody cleared would keep counting from
+    /// whatever it held before nobody held it.
+    #[test]
+    fn clearing_a_counter_ends_its_total_and_the_next_write_starts_over() {
+        let snacking = types::DeclaredType::new("snacking", vec![types::Field::summing("donuts")]);
+        let cleared = folded_fields(
+            &[
+                wrote("donuts", 1, Some("2")),
+                wrote("donuts", 2, Some("3")),
+                wrote("donuts", 3, None),
+            ],
+            std::slice::from_ref(&snacking),
+        );
+        assert_eq!(
+            cleared.get("donuts"),
+            None,
+            "a clear takes a counter off the thing exactly as it takes any key off: {cleared:?}",
+        );
+
+        // **Two writes after the clear, so the three answers are three different
+        // numbers.** Counting since the clear is five; counting every write is
+        // ten; taking the newest is four. One write after the clear would leave
+        // the first and the third indistinguishable, and the case would pass on
+        // a build that sums nothing at all.
+        let again = folded_fields(
+            &[
+                wrote("donuts", 1, Some("2")),
+                wrote("donuts", 2, Some("3")),
+                wrote("donuts", 3, None),
+                wrote("donuts", 4, Some("1")),
+                wrote("donuts", 5, Some("4")),
+            ],
+            std::slice::from_ref(&snacking),
+        );
+        assert_eq!(
+            again.get("donuts").map(String::as_str),
+            Some("5"),
+            "the total after a clear counts the writes since it, not the five before: {again:?}",
+        );
+    }
+
+    /// **Only the writes that count are counted.**
+    ///
+    /// A write carried by a record somebody took back is not what the thing is
+    /// now, and the rule already holds for newest-wins. A sum that added every
+    /// row would resurrect the retracted one as arithmetic, where the old fold
+    /// merely passed it over.
+    #[test]
+    fn a_counter_passes_over_a_write_whose_record_no_longer_counts() {
+        let snacking = types::DeclaredType::new("snacking", vec![types::Field::summing("donuts")]);
+        let folded = folded_fields(
+            &[
+                wrote("donuts", 1, Some("1")),
+                KeyWrite {
+                    status: FactStatus::Retracted,
+                    ..wrote("donuts", 2, Some("40"))
+                },
+                wrote("donuts", 3, Some("1")),
+            ],
+            std::slice::from_ref(&snacking),
+        );
+        assert_eq!(
+            folded.get("donuts").map(String::as_str),
+            Some("2"),
+            "the retracted forty is passed over and the two standing ones add: {folded:?}",
+        );
+    }
 
     /// The invariant, red→green, in milliseconds against the fake: a capture
     /// succeeds only if a subsequent recall returns the fact.

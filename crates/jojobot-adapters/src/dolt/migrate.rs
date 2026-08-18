@@ -35,7 +35,7 @@
 use sqlx::{MySql, MySqlPool, Transaction};
 
 /// One migration: what it is called, what it does, and what it leaves behind.
-struct Migration {
+pub(crate) struct Migration {
     /// The name the ledger records and a failure reports.
     version: &'static str,
     /// The statement. One of them — see `every_migration_is_a_single_statement`.
@@ -67,13 +67,78 @@ enum Leaves {
     /// creation does, because `ADD COLUMN` cannot be made idempotent on this
     /// store and a re-issued one fails.
     Column(&'static str, &'static str),
+    /// The table this statement leaves with **no row answering this
+    /// condition** — the shape of a backfill.
+    ///
+    /// A backfill changes rows and leaves the schema exactly as it found it,
+    /// so every question above answers the same before it and after it. Given
+    /// the column shape — the nearest fit — it answers "already reached" from
+    /// the moment the migration BEFORE it added that column, and the runner
+    /// records a backfill it never ran. That failure is silent and permanent:
+    /// unfilled rows behind a ledger saying they were filled.
+    ///
+    /// So this one reaches the rows. The condition describes what is left to
+    /// do — `owner IS NULL`, `kind = ''` — and the migration has landed when
+    /// nothing answers it.
+    ///
+    /// **The condition is SQL, and that is not this file growing a language**
+    /// (rule 106). Every migration here already carries its whole statement as
+    /// an opaque string in the language the store speaks; this is a second
+    /// opaque string in the same language. Nothing parses it, nothing composes
+    /// it, and it reaches the store as the tail of one `SELECT COUNT(*)`. The
+    /// step past it — a free-form probe query — is the one refused, because a
+    /// probe that can ask anything is one nothing constrains to asking about
+    /// this migration.
+    ///
+    /// **No migration has this shape yet**, and the tests are its only users:
+    /// a shape and its first user are separate changes, because the user
+    /// arrives with the feature that needs one.
+    ///
+    /// `expect` rather than `allow`, so the first migration to take this shape
+    /// makes the attribute itself a warning and the note comes off in the diff
+    /// that dates it. `not(test)` because the tests below DO construct it, so
+    /// under `cfg(test)` there is nothing to expect.
+    #[cfg_attr(not(test), expect(dead_code))]
+    NoRows(&'static str, &'static str),
+    /// The index this statement puts on the table.
+    ///
+    /// The table and its columns are all there either way, so the questions
+    /// above answer "yes" for an index that was never built — and `CREATE
+    /// INDEX` is refused on a name that already exists, exactly as `ADD
+    /// COLUMN` is. Uniqueness is what makes an identity column an identity
+    /// rather than a suggestion, so this is not a shape a schema can be vague
+    /// about.
+    ///
+    /// No migration has this shape yet either — see [`Leaves::NoRows`].
+    #[cfg_attr(not(test), expect(dead_code))]
+    Index(&'static str, &'static str),
+    /// The type this statement leaves that column declared as — the shape of a
+    /// statement that changes a column rather than adding one.
+    ///
+    /// The table is there and the column is there before it and after it, so
+    /// [`Leaves::Column`] answers "already reached" for a change that never
+    /// landed. The runner then records the version, the column keeps the type
+    /// it had, and every write that needed the new one fails against a ledger
+    /// saying the change is in.
+    ///
+    /// **The type is compared, not the width**, because a width-only question
+    /// answers one migration and sends the next change to a column straight
+    /// back here. It is the store's own spelling of the declared type —
+    /// `varchar(32)` — read from the view [`column_exists`] already uses, and
+    /// a test pins the spelling so this does not rest on remembering it.
+    ColumnType(&'static str, &'static str, &'static str),
 }
 
 impl Leaves {
     /// The table this migration is about, for a log line that names it.
     fn table(self) -> &'static str {
         match self {
-            Leaves::Table(t) | Leaves::NoTable(t) | Leaves::Column(t, _) => t,
+            Leaves::Table(t)
+            | Leaves::NoTable(t)
+            | Leaves::Column(t, _)
+            | Leaves::NoRows(t, _)
+            | Leaves::Index(t, _)
+            | Leaves::ColumnType(t, _, _) => t,
         }
     }
 
@@ -83,6 +148,9 @@ impl Leaves {
             Leaves::Table(t) => object_exists(pool, t).await?,
             Leaves::NoTable(t) => !object_exists(pool, t).await?,
             Leaves::Column(t, c) => column_exists(pool, t, c).await?,
+            Leaves::NoRows(t, condition) => !any_row_answers(pool, t, condition).await?,
+            Leaves::Index(t, i) => index_exists(pool, t, i).await?,
+            Leaves::ColumnType(t, c, declared) => column_is(pool, t, c, declared).await?,
         })
     }
 }
@@ -92,7 +160,7 @@ impl Leaves {
 /// **The order is this list, not the filenames** — a sort is a rule somebody
 /// has to know, and a list is one they can read. Adding a migration is a line
 /// here and a file beside the others; nothing else.
-const MIGRATIONS: &[Migration] = &[
+pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: "0001_session",
         sql: include_str!("../../migrations/0001_session.sql"),
@@ -172,6 +240,16 @@ const MIGRATIONS: &[Migration] = &[
         version: "0016_field_write",
         sql: include_str!("../../migrations/0016_field_write.sql"),
         leaves: Leaves::Table("field_write"),
+    },
+    Migration {
+        version: "0017_type_field_folds",
+        sql: include_str!("../../migrations/0017_type_field_folds.sql"),
+        leaves: Leaves::Column("type_field", "folds"),
+    },
+    Migration {
+        version: "0018_type_field_holds_wider",
+        sql: include_str!("../../migrations/0018_type_field_holds_wider.sql"),
+        leaves: Leaves::ColumnType("type_field", "holds", "varchar(32)"),
     },
 ];
 
@@ -260,6 +338,17 @@ pub enum MigrateError {
 /// and this refuses it rather than adopting it — the marker is what makes
 /// acceptance a fact about this runner instead of a guess about the schema.
 pub async fn run(pool: &MySqlPool) -> Result<Vec<String>, MigrateError> {
+    apply(pool, MIGRATIONS).await
+}
+
+/// The runner itself, over the list it is given.
+///
+/// **The list is a parameter so a test can drive this over migrations of its
+/// own.** A shape is only proven by a migration that has it, and this file
+/// ships the shapes rather than users of them — so without a list of its own a
+/// test can reach a new shape only by calling [`Leaves::reached`] directly,
+/// which proves the question and not that the runner asks it.
+async fn apply(pool: &MySqlPool, migrations: &[Migration]) -> Result<Vec<String>, MigrateError> {
     fail_as(sqlx::raw_sql(LEDGER).execute(pool).await, "the ledger")?;
     fail_as(sqlx::raw_sql(BEGUN).execute(pool).await, "the ledger")?;
 
@@ -277,7 +366,7 @@ pub async fn run(pool: &MySqlPool) -> Result<Vec<String>, MigrateError> {
     )?;
 
     let mut applied = Vec::new();
-    for migration in MIGRATIONS {
+    for migration in migrations {
         let version = migration.version;
         if done.iter().any(|seen| seen == version) {
             continue;
@@ -352,6 +441,85 @@ async fn column_exists(pool: &MySqlPool, table: &str, column: &str) -> Result<bo
         )
         .bind(table)
         .bind(column)
+        .fetch_one(pool)
+        .await,
+        table,
+    )?;
+    Ok(found > 0)
+}
+
+/// Whether that table's column is declared as this type.
+///
+/// The question [`column_exists`] cannot ask, for a statement that changes a
+/// column instead of adding one: the column is there either way, so its
+/// presence says nothing about whether the change landed.
+///
+/// The comparison is against `column_type`, the store's own rendering of the
+/// declared type — `varchar(32)`, `int` — rather than against a width, so one
+/// question serves every change a column can undergo.
+async fn column_is(
+    pool: &MySqlPool,
+    table: &str,
+    column: &str,
+    declared: &str,
+) -> Result<bool, MigrateError> {
+    let found: i64 = fail_as(
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM information_schema.columns
+             WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
+               AND column_type = ?",
+        )
+        .bind(table)
+        .bind(column)
+        .bind(declared)
+        .fetch_one(pool)
+        .await,
+        table,
+    )?;
+    Ok(found > 0)
+}
+
+/// Whether any row of that table still answers the condition.
+///
+/// The question a start asks about a migration that changed rows rather than
+/// the schema, where every question about the schema answers the same before
+/// and after.
+///
+/// **The table and the condition are written into the statement rather than
+/// bound to it.** Neither is a value, so neither can be a parameter: a
+/// placeholder in a `FROM` or in place of a whole `WHERE` clause is a syntax
+/// error, not a slower way of doing the same thing. They come from
+/// [`MIGRATIONS`], which is compiled in, so the only writer is somebody editing
+/// this file — nothing a caller sends reaches here.
+async fn any_row_answers(
+    pool: &MySqlPool,
+    table: &str,
+    condition: &str,
+) -> Result<bool, MigrateError> {
+    let found: i64 = fail_as(
+        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {condition}"))
+            .fetch_one(pool)
+            .await,
+        table,
+    )?;
+    Ok(found > 0)
+}
+
+/// Whether that table already carries this index.
+///
+/// The same question [`column_exists`] asks, about the other thing an ALTER can
+/// add. The table and its columns are there either way, so nothing above
+/// reaches an index — and `CREATE INDEX` on a name that already exists is
+/// refused, so an interrupted one has to be recognized by what it left or the
+/// next start wedges on it for ever.
+async fn index_exists(pool: &MySqlPool, table: &str, index: &str) -> Result<bool, MigrateError> {
+    let found: i64 = fail_as(
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM information_schema.statistics
+             WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
+        )
+        .bind(table)
+        .bind(index)
         .fetch_one(pool)
         .await,
         table,
@@ -466,7 +634,545 @@ mod tests {
         "0014_message_delivery",
         "0015_type_field_origin",
         "0016_field_write",
+        "0017_type_field_folds",
+        "0018_type_field_holds_wider",
     ];
+
+    /// **A migration set of this test's own, carrying the shape no shipped
+    /// migration has.** A column arrives on a table that was already there,
+    /// and a second migration fills it.
+    ///
+    /// It is written here rather than added to [`MIGRATIONS`] because this
+    /// file ships the shapes and not users of them: the first real backfill
+    /// arrives with the feature that needs one.
+    const BACKFILL: &[Migration] = &[
+        Migration {
+            version: "t0001_pet",
+            sql: "CREATE TABLE pet (name VARCHAR(32) NOT NULL PRIMARY KEY)",
+            leaves: Leaves::Table("pet"),
+        },
+        Migration {
+            version: "t0002_pet_owner",
+            sql: "ALTER TABLE pet ADD COLUMN owner VARCHAR(32)",
+            leaves: Leaves::Column("pet", "owner"),
+        },
+        Migration {
+            version: "t0003_pet_owner_backfill",
+            sql: "UPDATE pet SET owner = 'bart' WHERE owner IS NULL",
+            leaves: Leaves::NoRows("pet", "owner IS NULL"),
+        },
+    ];
+
+    /// **An interrupted backfill is recognized by no row being left unfilled.**
+    ///
+    /// A backfill changes rows and leaves the schema exactly as it found it, so
+    /// every question the runner can ask about a schema answers the same before
+    /// and after. Given the nearest shape — the column — it answers "already
+    /// reached" from the moment the migration BEFORE it added that column. The
+    /// runner then records the backfill as landed and skips it, and rows that
+    /// were never filled sit behind a ledger saying they were, with nothing
+    /// downstream disagreeing.
+    ///
+    /// So the question has to reach the rows: is any row still unfilled.
+    ///
+    /// Both directions, because either alone is half a test. Unfilled rows
+    /// remaining means the backfill is applied; none remaining means it is
+    /// recorded rather than re-issued.
+    #[tokio::test]
+    async fn an_interrupted_backfill_is_recognized_by_no_row_being_left_unfilled() {
+        let scratch = Scratch::new("migrate-interrupted-backfill");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("backfilledpartway")
+            .await
+            .expect("a database of its own");
+
+        // Everything up to the backfill, applied normally.
+        assert_eq!(
+            apply(&pool, &BACKFILL[..2])
+                .await
+                .expect("the table and the column"),
+            vec!["t0001_pet".to_string(), "t0002_pet_owner".to_string()],
+        );
+        // …and a row for the backfill to have work to do on.
+        sqlx::query("INSERT INTO pet (name) VALUES ('santas-little-helper')")
+            .execute(&pool)
+            .await
+            .expect("the row lands");
+
+        // The state a death in the window leaves when the statement did NOT
+        // take effect: the marker committed, the ledger silent, the rows still
+        // unfilled.
+        mark_begun(&pool, "t0003_pet_owner_backfill")
+            .await
+            .expect("the marker lands");
+
+        assert_eq!(
+            apply(&pool, BACKFILL)
+                .await
+                .expect("the start completes the schema"),
+            vec!["t0003_pet_owner_backfill".to_string()],
+            "an interrupted backfill with rows still unfilled is applied",
+        );
+        let owners: Vec<Option<String>> = sqlx::query_scalar("SELECT owner FROM pet")
+            .fetch_all(&pool)
+            .await
+            .expect("the table is readable");
+        assert_eq!(
+            owners,
+            vec![Some("bart".to_string())],
+            "…and the rows it was for are really filled, which is what the ledger would \
+             otherwise be swearing to on its own",
+        );
+
+        // The other direction, and it is what makes the first one mean
+        // anything. The same marker over rows that ARE filled says the
+        // statement landed, so the version is recorded and nothing is applied.
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("t0003_pet_owner_backfill")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "t0003_pet_owner_backfill")
+            .await
+            .expect("the marker lands");
+
+        let applied = apply(&pool, BACKFILL)
+            .await
+            .expect("the start completes the schema");
+        assert!(
+            applied.is_empty(),
+            "an interrupted backfill that had landed is recorded, not re-issued: {applied:?}"
+        );
+        let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+        assert!(
+            recorded.iter().any(|v| v == "t0003_pet_owner_backfill"),
+            "…and the ledger says so, so the next start asks nothing: {recorded:?}"
+        );
+
+        store.stop().await;
+    }
+
+    /// **A second set of this test's own, for the other shape no shipped
+    /// migration has**: an index put on a table that was already there.
+    ///
+    /// **Two tables carry an index of the SAME NAME, and that is the point of
+    /// the second one.** An index name is scoped to its table in this store —
+    /// `owner_idx` on `kennel` and `owner_idx` on `pet` are both legal, and
+    /// this schema already ships `in_order` on two tables — so the table is
+    /// the whole of what the question discriminates on. With one table in
+    /// this list, every assertion below holds just as well on a build whose
+    /// probe never looks at the table it was handed, and the shape would be
+    /// answering "some index somewhere has that name".
+    ///
+    /// The decoy is applied BEFORE the migration under test, so a probe that
+    /// ignores the table finds it and reports a change that has not happened.
+    const INDEXED: &[Migration] = &[
+        Migration {
+            version: "t0001_pet",
+            sql: "CREATE TABLE pet (name VARCHAR(32) NOT NULL PRIMARY KEY, owner VARCHAR(32))",
+            leaves: Leaves::Table("pet"),
+        },
+        Migration {
+            version: "t0002_kennel",
+            sql: "CREATE TABLE kennel (name VARCHAR(32) NOT NULL PRIMARY KEY, owner VARCHAR(32))",
+            leaves: Leaves::Table("kennel"),
+        },
+        Migration {
+            version: "t0003_kennel_owner_index",
+            sql: "CREATE UNIQUE INDEX owner_idx ON kennel (owner)",
+            leaves: Leaves::Index("kennel", "owner_idx"),
+        },
+        Migration {
+            version: "t0004_pet_owner_index",
+            sql: "CREATE UNIQUE INDEX owner_idx ON pet (owner)",
+            leaves: Leaves::Index("pet", "owner_idx"),
+        },
+    ];
+
+    /// **An interrupted CREATE INDEX is recognized by the index being there.**
+    ///
+    /// An index changes neither the table nor its columns, so both questions
+    /// about the schema answer "yes" from the moment the table exists. A runner
+    /// asking either of them about an interrupted index concludes it landed and
+    /// records the version — leaving a table with no index and a ledger saying
+    /// it has one, which is what makes a unique index an identity rather than a
+    /// suggestion.
+    ///
+    /// The other way round is the permanent wedge the marker exists to end:
+    /// `CREATE INDEX` on a name that already exists is refused, exactly as
+    /// `ADD COLUMN` is, so a start that re-issues it fails on every start after
+    /// it too.
+    ///
+    /// **A second table carries an index of the same name throughout**, so the
+    /// question has to discriminate on the table and not merely on the name.
+    /// Without it every assertion here passes on a build whose probe ignores
+    /// the table it was handed.
+    ///
+    /// Both directions, built with the runner's own step.
+    #[tokio::test]
+    async fn an_interrupted_create_index_is_recognized_by_the_index_being_there() {
+        let scratch = Scratch::new("migrate-interrupted-index");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("indexedpartway")
+            .await
+            .expect("a database of its own");
+
+        // Both tables and the decoy index, applied normally. The decoy is the
+        // one that carries the name the migration under test is about.
+        assert_eq!(
+            apply(&pool, &INDEXED[..3])
+                .await
+                .expect("the tables and the index beside the one under test"),
+            vec![
+                "t0001_pet".to_string(),
+                "t0002_kennel".to_string(),
+                "t0003_kennel_owner_index".to_string(),
+            ],
+        );
+
+        // The state a death in the window leaves when the statement did NOT
+        // take effect: the marker committed, the ledger silent, and `pet`
+        // without the index — while `kennel` carries one of that very name.
+        mark_begun(&pool, "t0004_pet_owner_index")
+            .await
+            .expect("the marker lands");
+
+        assert_eq!(
+            apply(&pool, INDEXED)
+                .await
+                .expect("the start completes the schema"),
+            vec!["t0004_pet_owner_index".to_string()],
+            "an interrupted index that did NOT land is applied, and the same name standing on \
+             another table is not it",
+        );
+        assert!(
+            index_exists(&pool, "pet", "owner_idx")
+                .await
+                .expect("the schema is readable"),
+            "…and the index the migration is for is really there afterwards",
+        );
+        // **Read by a route that is not the function under test.** The
+        // assertion above asks the probe whether the probe's own subject is
+        // there; this asks the store to enforce what the index is FOR. A
+        // unique index that is merely recorded refuses nothing.
+        sqlx::query("INSERT INTO pet (name, owner) VALUES ('santas-little-helper', 'bart')")
+            .execute(&pool)
+            .await
+            .expect("the first row lands");
+        let doubled = sqlx::query("INSERT INTO pet (name, owner) VALUES ('snowball', 'bart')")
+            .execute(&pool)
+            .await;
+        assert!(
+            doubled.is_err(),
+            "the unique index really constrains the table it was built on: {doubled:?}"
+        );
+
+        // The other direction. The same marker over an index that IS there
+        // says the statement landed — and the run completing at all is half
+        // the point, because re-issuing `CREATE INDEX` on that name is refused
+        // and would wedge every start from here on.
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("t0004_pet_owner_index")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "t0004_pet_owner_index")
+            .await
+            .expect("the marker lands");
+
+        let applied = apply(&pool, INDEXED)
+            .await
+            .expect("the start completes the schema");
+        assert!(
+            applied.is_empty(),
+            "an interrupted index that had landed is recorded, not re-issued: {applied:?}"
+        );
+        let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+        assert!(
+            recorded.iter().any(|v| v == "t0004_pet_owner_index"),
+            "…and the ledger says so, so the next start asks nothing: {recorded:?}"
+        );
+
+        store.stop().await;
+    }
+
+    /// **A third set of this test's own**: a column that changes type rather
+    /// than arriving.
+    ///
+    /// **The other column of the table already has the type the widening
+    /// produces**, so the question has to discriminate on the column name and
+    /// not merely on that type standing somewhere in the table. Sized the
+    /// other way round, every assertion below passes on a build whose probe
+    /// never reads the column it was handed.
+    const WIDENED: &[Migration] = &[
+        Migration {
+            version: "t0001_pet",
+            sql: "CREATE TABLE pet (name VARCHAR(64) NOT NULL PRIMARY KEY, owner VARCHAR(8))",
+            leaves: Leaves::Table("pet"),
+        },
+        Migration {
+            version: "t0002_pet_owner_wider",
+            sql: "ALTER TABLE pet MODIFY COLUMN owner VARCHAR(64)",
+            leaves: Leaves::ColumnType("pet", "owner", "varchar(64)"),
+        },
+    ];
+
+    /// **An interrupted widening is recognized by the column's declared type.**
+    ///
+    /// A statement that changes a column's type leaves the table there and the
+    /// column there, so both questions above answer "yes" before it and after
+    /// it. The runner asking either about an interrupted widening records a
+    /// version whose change never landed, and the column stays the width it
+    /// was — behind a ledger saying otherwise, permanently, because no later
+    /// start asks again. Every write that needed the new width then fails, and
+    /// the schema and the ledger disagree with nothing to reconcile them.
+    ///
+    /// So the question is the column's declared type rather than its presence.
+    ///
+    /// Both directions, built with the runner's own step.
+    #[tokio::test]
+    async fn an_interrupted_widening_is_recognized_by_the_columns_type() {
+        let scratch = Scratch::new("migrate-interrupted-widening");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("widenedpartway")
+            .await
+            .expect("a database of its own");
+
+        // The table, applied normally, with the column at its first width.
+        assert_eq!(
+            apply(&pool, &WIDENED[..1]).await.expect("the table"),
+            vec!["t0001_pet".to_string()],
+        );
+
+        // The state a death in the window leaves when the statement did NOT
+        // take effect: the marker committed, the ledger silent, the column
+        // still narrow — and the table and the column both there, which is all
+        // the older questions can see.
+        mark_begun(&pool, "t0002_pet_owner_wider")
+            .await
+            .expect("the marker lands");
+
+        assert_eq!(
+            apply(&pool, WIDENED)
+                .await
+                .expect("the start completes the schema"),
+            vec!["t0002_pet_owner_wider".to_string()],
+            "an interrupted widening that did NOT land is applied",
+        );
+        // **Read by a route that is not the probe.** A width the store agrees
+        // to is a width that takes a value of that size; a probe agreeing with
+        // itself is not evidence.
+        sqlx::query("INSERT INTO pet (name, owner) VALUES ('santas-little-helper', ?)")
+            .bind("x".repeat(40))
+            .execute(&pool)
+            .await
+            .expect("…and the column really takes a value the old width refused");
+
+        // The other direction: the same marker over a column that IS the new
+        // type says the statement landed.
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("t0002_pet_owner_wider")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "t0002_pet_owner_wider")
+            .await
+            .expect("the marker lands");
+
+        let applied = apply(&pool, WIDENED)
+            .await
+            .expect("the start completes the schema");
+        assert!(
+            applied.is_empty(),
+            "an interrupted widening that had landed is recorded, not re-issued: {applied:?}"
+        );
+        let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+        assert!(
+            recorded.iter().any(|v| v == "t0002_pet_owner_wider"),
+            "…and the ledger says so, so the next start asks nothing: {recorded:?}"
+        );
+
+        store.stop().await;
+    }
+
+    /// **Every probe answers about the object it was handed, and about no
+    /// other.**
+    ///
+    /// A probe is a `COUNT(*)` over a schema view, and a view holds every
+    /// database on the server and every table in each. So each probe carries
+    /// predicates that narrow it — the database, the table, the column, the
+    /// name — and **a predicate that goes missing does not make a probe fail;
+    /// it makes one answer about somebody else's object.** The runner then
+    /// records a migration whose change never landed, which is silent and
+    /// permanent because no later start asks again.
+    ///
+    /// The interruption tests cannot reach this. Each builds the one schema
+    /// its own migration is about, so there is nothing else for a widened
+    /// probe to find, and every one of them passes on a build whose probe
+    /// reads none of what it was handed.
+    ///
+    /// **So this builds the near misses on purpose.** A second database on the
+    /// same server holds the same names; a second table in this database holds
+    /// the same column and index names. Every negative here is an object that
+    /// exists — just not the one that was asked about — so an assertion goes
+    /// red exactly when the predicate that excludes it goes missing.
+    #[tokio::test]
+    async fn a_probe_answers_about_the_object_it_was_handed() {
+        let scratch = Scratch::new("migrate-probe-scope");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let asked = store
+            .database("asked")
+            .await
+            .expect("the database the probes are pointed at");
+        let elsewhere = store
+            .database("notasked")
+            .await
+            .expect("a second database on the same server");
+
+        // In the OTHER database: every name this test asks about, so a probe
+        // that does not scope to one database finds them all.
+        for statement in [
+            "CREATE TABLE kennel (name VARCHAR(32) NOT NULL PRIMARY KEY, owner VARCHAR(64))",
+            "CREATE UNIQUE INDEX owner_idx ON kennel (owner)",
+        ] {
+            sqlx::raw_sql(statement)
+                .execute(&elsewhere)
+                .await
+                .expect("the other database's schema lands");
+        }
+        // In THIS database: the subject, and neighbours built so that every
+        // predicate has something to exclude.
+        //
+        // `bowl` holds neither the column nor the index, so a probe that does
+        // not scope to a table answers for the pair — and its primary key is
+        // an index of its own, so one that does not scope to an index NAME
+        // answers too. `pet` carries a second column of the type the subject
+        // is asked about, and `basket` carries a column of the subject's NAME
+        // at that same type: between them, a type question that skips the
+        // column or skips the table finds a match that is not its own.
+        for statement in [
+            "CREATE TABLE pet (name VARCHAR(32) NOT NULL PRIMARY KEY, owner VARCHAR(8), \
+             sound VARCHAR(64))",
+            "CREATE INDEX owner_idx ON pet (owner)",
+            "CREATE TABLE bowl (name VARCHAR(32) NOT NULL PRIMARY KEY)",
+            "CREATE TABLE basket (name VARCHAR(32) NOT NULL PRIMARY KEY, owner VARCHAR(64))",
+        ] {
+            sqlx::raw_sql(statement)
+                .execute(&asked)
+                .await
+                .expect("this database's schema lands");
+        }
+
+        // **Is this table here** — and a table of that name in another
+        // database is not this database's table.
+        assert!(
+            object_exists(&asked, "pet")
+                .await
+                .expect("the schema is readable"),
+            "the table this database really holds",
+        );
+        assert!(
+            !object_exists(&asked, "kennel")
+                .await
+                .expect("the schema is readable"),
+            "a table of that name in another database is not this one's",
+        );
+
+        // **Does this table hold this column** — not another database's table
+        // of the same name, and not another table of this database.
+        assert!(
+            column_exists(&asked, "pet", "owner")
+                .await
+                .expect("the schema is readable"),
+            "the column the table really holds",
+        );
+        assert!(
+            !column_exists(&asked, "kennel", "owner")
+                .await
+                .expect("the schema is readable"),
+            "another database's table holds it, and that is not this question",
+        );
+        assert!(
+            !column_exists(&asked, "bowl", "owner")
+                .await
+                .expect("the schema is readable"),
+            "a neighbouring table of this database holds it, and that is not this question",
+        );
+
+        // **Does this table carry this index** — an index name is scoped to
+        // its table, so the table is the whole discrimination.
+        assert!(
+            index_exists(&asked, "pet", "owner_idx")
+                .await
+                .expect("the schema is readable"),
+            "the index the table really carries",
+        );
+        assert!(
+            !index_exists(&asked, "kennel", "owner_idx")
+                .await
+                .expect("the schema is readable"),
+            "another database's table carries that name, and that is not this question",
+        );
+        assert!(
+            !index_exists(&asked, "bowl", "owner_idx")
+                .await
+                .expect("the schema is readable"),
+            "a neighbouring table of this database does not carry it",
+        );
+
+        // **Is this column declared as this type** — the type is asked of one
+        // column of one table of one database. The other database's column of
+        // the same name is the type this one is NOT, which is the near miss a
+        // widening actually meets.
+        assert!(
+            column_is(&asked, "pet", "owner", "varchar(8)")
+                .await
+                .expect("the schema is readable"),
+            "the type the column really has",
+        );
+        assert!(
+            !column_is(&asked, "pet", "owner", "varchar(64)")
+                .await
+                .expect("the schema is readable"),
+            "…and not the type it does not have",
+        );
+        assert!(
+            !column_is(&asked, "kennel", "owner", "varchar(64)")
+                .await
+                .expect("the schema is readable"),
+            "another database's column has that type, and that is not this question",
+        );
+
+        store.stop().await;
+    }
 
     #[test]
     fn every_migration_is_a_single_statement() {
@@ -1170,6 +1876,125 @@ mod tests {
             .execute(store.pool())
             .await
             .expect("the mailbox table is there and takes a row");
+
+        store.stop().await;
+    }
+
+    /// **Every migration's declared shape is one its own statement reaches.**
+    ///
+    /// A shape is written beside a migration by hand, and nothing until here
+    /// compared the two. A shape naming something the statement does not
+    /// produce — a type the column is not, a column the ALTER did not add, a
+    /// table spelled wrong — goes unnoticed while migrations run in order,
+    /// because the question is asked only of a migration that was interrupted.
+    /// It then answers `false` for a change that really landed, and the start
+    /// re-issues a statement the store has already taken.
+    ///
+    /// It covers every shape at once and needs nothing remembered: the store's
+    /// own rendering of a declared type is compared against the constant
+    /// rather than recalled, so the next column that is not a plain `varchar`
+    /// is covered by this the day it is added.
+    ///
+    /// **The question is asked the moment each migration runs, never after the
+    /// whole run.** A shape says what ITS statement leaves, and a later
+    /// migration may take that away again — `0007` drops the table `0003`
+    /// creates, so a check at the end would report a defect on a pair that is
+    /// working exactly as written.
+    #[tokio::test]
+    async fn every_migrations_declared_shape_is_reached_once_it_has_run() {
+        let scratch = Scratch::new("migrate-shapes-reached");
+        let mut store = crate::dolt::Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("shapesreached")
+            .await
+            .expect("a database of its own");
+
+        for (last, migration) in MIGRATIONS.iter().enumerate() {
+            assert_eq!(
+                apply(&pool, &MIGRATIONS[..=last])
+                    .await
+                    .expect("the schema moves"),
+                vec![migration.version.to_string()],
+                "each round applies exactly the one migration it added",
+            );
+            assert!(
+                migration
+                    .leaves
+                    .reached(&pool)
+                    .await
+                    .expect("the schema is readable"),
+                "{} declares a state its own statement does not leave behind, so an \
+                 interruption would re-issue a statement that had already landed",
+                migration.version,
+            );
+        }
+
+        store.stop().await;
+    }
+
+    /// **The shape migration 0018 declares is the one that recovers it.**
+    ///
+    /// The interruption cases for the other shapes drive migration lists this
+    /// module writes for itself. Those prove a shape works and NOT that any
+    /// shipped migration asks for it: put 0018 back to the column shape this
+    /// widening exists to replace and every one of them stays green, because
+    /// none of them reads that line.
+    ///
+    /// So this drives the real list. The widening is put back into the state a
+    /// death in the window leaves — the column at its old type, the ledger row
+    /// gone, the marker committed — and the start has to apply it again. The
+    /// column shape answers "already reached" here, because 0013 created the
+    /// column; only the type shape answers for what 0018 does.
+    #[tokio::test]
+    async fn an_interrupted_shipped_widening_is_recognized_by_the_columns_type() {
+        let scratch = Scratch::new("migrate-interrupted-shipped-widening");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("shippedwidening")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the statement did NOT
+        // take effect: the column back at the type 0013 gave it, the ledger
+        // row taken away, the marker committed.
+        sqlx::raw_sql("ALTER TABLE type_field MODIFY COLUMN holds VARCHAR(16) NOT NULL")
+            .execute(&pool)
+            .await
+            .expect("the column goes back to its old type");
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("0018_type_field_holds_wider")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "0018_type_field_holds_wider")
+            .await
+            .expect("the marker lands");
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0018_type_field_holds_wider".to_string()],
+            "the shipped widening that did NOT land is applied",
+        );
+
+        // **Read by a route that is not the probe**: the declaration that
+        // overflows the old width is what the widening is FOR, so the store
+        // taking it is the evidence. A probe agreeing with itself is not.
+        sqlx::query(
+            "INSERT INTO type_field (type_name, key_name, ordinal, holds)
+             VALUES ('contract-stay', 'part_of', 0, ?)",
+        )
+        .bind("reference:project")
+        .execute(&pool)
+        .await
+        .expect("…and the cell takes the token the old width refused");
 
         store.stop().await;
     }

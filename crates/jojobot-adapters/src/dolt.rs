@@ -641,9 +641,12 @@ pub(crate) mod tests {
         let (mut first, applied) = Dolt::ready(&path, free_port())
             .await
             .expect("the first boot brings the store up");
+        // **Counted from the set rather than written down**, so a new migration
+        // does not make this case fail for a reason that has nothing to do with
+        // what it is about.
         assert_eq!(
             applied.len(),
-            16,
+            migrate::MIGRATIONS.len(),
             "the first boot applies the set: {applied:?}"
         );
         // **And it opened the directory it was ASKED for.** Without this the

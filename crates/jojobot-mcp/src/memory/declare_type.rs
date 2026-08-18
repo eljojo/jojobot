@@ -31,7 +31,9 @@ pub struct FieldArgs {
     pub key: String,
     /// What the value holds: `text`, `number`, `date`, `boolean`, or
     /// `reference` (another entity's `kind:slug` handle, which is what makes it
-    /// walkable). Defaults to `text`, which holds anything.
+    /// walkable). Defaults to `text`, which holds anything — or to `number`
+    /// when you declare the key a counter, because a total of anything else is
+    /// not a total.
     ///
     /// **A reference can name the kind on the other end** — write
     /// `reference:place` and the key holds a place's handle and no other kind's.
@@ -44,6 +46,22 @@ pub struct FieldArgs {
     /// comes back flagged on the hit.
     #[serde(default)]
     pub holds: Option<String>,
+    /// **How the writes of this key come down to the one value it holds.**
+    /// `newest` is the default and needs no declaring: the newest write wins,
+    /// which is how every key reads unless you say otherwise.
+    ///
+    /// `sum` makes the key a **counter** — its writes add up. Write one donut
+    /// on each of three days and the thing reads back three, so a running total
+    /// is arithmetic jojobot does rather than arithmetic a session has to fetch,
+    /// add and write back. **Every write is still there**: ask for the key's
+    /// `history` and you get each occasion, with the claim it arrived in and
+    /// that claim's date.
+    ///
+    /// ⚠️ **It belongs to the KEY and never to a write.** Declared here once, a
+    /// counter cannot be written inconsistently; chosen per write, one caller
+    /// adds while another replaces and the value quietly means two things.
+    #[serde(default)]
+    pub folds: Option<String>,
 }
 
 /// Arguments to `declare_type`.
@@ -105,7 +123,21 @@ impl Jojobot {
         }
         let mut fields = Vec::with_capacity(args.fields.len());
         for field in &args.fields {
+            let folds = match field.folds.as_deref().map(str::trim) {
+                None | Some("") => Fold::Newest,
+                Some(token) => Fold::of_token(token).ok_or_else(|| {
+                    McpError::invalid_params(
+                        format!("'{token}' is no fold: use newest or sum"),
+                        None,
+                    )
+                })?,
+            };
             let declared = match field.holds.as_deref().map(str::trim) {
+                // **A counter holds a number unless the caller says otherwise**
+                // (rule 9). A total of dates or of prose is not a total, so the
+                // one type a counter can have is the one it gets for free; a
+                // caller who names another gets the refusal that says so.
+                None | Some("") if folds == Fold::Sum => Field::new(&field.key, ValueType::Number),
                 None | Some("") => Field::new(&field.key, ValueType::Text),
                 Some(token) => Field::of_token(&field.key, token).ok_or_else(|| {
                     McpError::invalid_params(
@@ -118,7 +150,7 @@ impl Jojobot {
                     )
                 })?,
             };
-            fields.push(declared);
+            fields.push(Field { folds, ..declared });
         }
 
         let declared = match self
@@ -163,6 +195,7 @@ mod tests {
                 .map(|key| FieldArgs {
                     key: (*key).to_string(),
                     holds: None,
+                    folds: None,
                 })
                 .collect(),
             sid: Some(TEST_SID.to_string()),
@@ -306,10 +339,12 @@ mod tests {
                         FieldArgs {
                             key: "venue".to_string(),
                             holds: Some("reference:place".to_string()),
+                            folds: None,
                         },
                         FieldArgs {
                             key: "booked_by".to_string(),
                             holds: Some("reference".to_string()),
+                            folds: None,
                         },
                     ],
                     sid: Some(TEST_SID.to_string()),
@@ -351,6 +386,7 @@ mod tests {
                 fields: vec![FieldArgs {
                     key: "venue".to_string(),
                     holds: Some(holds),
+                    folds: None,
                 }],
                 sid: Some(TEST_SID.to_string()),
             }))

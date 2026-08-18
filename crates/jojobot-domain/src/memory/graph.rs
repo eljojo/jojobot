@@ -31,7 +31,51 @@ use super::{
 /// for a subgraph nobody can read.
 pub const MAX_DEPTH: usize = 5;
 
-/// **One key of a record, and optionally the value it must hold.**
+/// **What a key filter is asked OF**, which is two different questions under
+/// one shape.
+///
+/// *Which friends have eaten three or more donuts* is about what each friend
+/// HOLDS — the newest write of the key, or the total when the key is a counter.
+/// *Which visits cost more than fifty* is about occurrences, and no folding
+/// answers it: it wants the individual record.
+///
+/// **They were one question once and the answer was the record's**, which made
+/// the first question quietly unanswerable: it returned the friends holding a
+/// single record saying three and left out the friend with three records of
+/// one. It returned rows and read like an answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Scope {
+    /// **What the thing holds**, over its writes folded together — the same map
+    /// the type question is asked of. The default, because it is the question a
+    /// caller asking about a THING is asking.
+    #[default]
+    Thing,
+    /// **What one record says.** An object is selected when a single record of
+    /// its answers every filter of this scope, and it arrives carrying the
+    /// records that answered.
+    Record,
+}
+
+impl Scope {
+    /// The token this reads and writes as.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            Scope::Thing => "thing",
+            Scope::Record => "record",
+        }
+    }
+
+    /// The scope a token names, or nothing when it names none.
+    pub fn of_token(token: &str) -> Option<Scope> {
+        match token.trim() {
+            "thing" => Some(Scope::Thing),
+            "record" => Some(Scope::Record),
+            _ => None,
+        }
+    }
+}
+
+/// **One key, and optionally the value it must hold.**
 ///
 /// `value: None` asks only that the key is carried at all — which is a
 /// different question from any particular value and the one to ask when you
@@ -39,8 +83,8 @@ pub const MAX_DEPTH: usize = 5;
 /// one way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldFilter {
-    /// The key, exactly as a record spells it. Matching is structural, so
-    /// nothing has to have declared it.
+    /// The key, exactly as it is spelled. Matching is structural, so nothing
+    /// has to have declared it.
     pub key: String,
     /// The value it must hold, compared whole and trimmed. `None` matches any
     /// value.
@@ -49,6 +93,9 @@ pub struct FieldFilter {
     /// was declared to hold rather than chosen freely. Equality needs no
     /// declaration and is the default.
     pub compare: types::Compare,
+    /// **What this is asked of** — what the thing holds, or what one record
+    /// says. [`Scope::Thing`] unless the caller says otherwise.
+    pub scope: Scope,
 }
 
 impl FieldFilter {
@@ -58,15 +105,15 @@ impl FieldFilter {
             key: key.trim().to_string(),
             value: None,
             compare: types::Compare::Equals,
+            scope: Scope::Thing,
         }
     }
 
     /// A filter asking that the key holds this value.
     pub fn holding(key: &str, value: &str) -> Self {
         FieldFilter {
-            key: key.trim().to_string(),
             value: Some(value.trim().to_string()),
-            compare: types::Compare::Equals,
+            ..FieldFilter::key(key)
         }
     }
 
@@ -79,14 +126,38 @@ impl FieldFilter {
         }
     }
 
-    /// Does this record satisfy the filter.
-    fn satisfied_by(&self, record: &BTreeMap<String, String>) -> bool {
-        match (record.get(&self.key), &self.value) {
+    /// The same filter asked of one record rather than of the thing.
+    pub fn on_a_record(self) -> Self {
+        FieldFilter {
+            scope: Scope::Record,
+            ..self
+        }
+    }
+
+    /// Does this bag of fields satisfy the filter. It is handed the thing's
+    /// folded fields or one record's, and does not know which.
+    fn satisfied_by(&self, fields: &BTreeMap<String, String>) -> bool {
+        match (fields.get(&self.key), &self.value) {
             (None, _) => false,
             (Some(_), None) => true,
             (Some(held), Some(wanted)) => self.compare.holds_between(held, wanted),
         }
     }
+}
+
+/// **Do this thing's folded fields answer every filter asked of the thing.**
+///
+/// `held` is `None` for a thing the store has no fields row for, and a filter
+/// naming a key is not answered by a thing carrying no keys. An empty set of
+/// filters is answered by anything, including that thing — asking nothing is
+/// not the same as asking for a key nobody wrote.
+fn holds_all<'f>(
+    held: Option<&BTreeMap<String, String>>,
+    filters: impl Iterator<Item = &'f FieldFilter>,
+) -> bool {
+    filters
+        .filter(|f| f.scope == Scope::Thing)
+        .all(|f| held.is_some_and(|fields| f.satisfied_by(fields)))
 }
 
 /// **Which objects the answer is about.** Every field narrows, and they
@@ -112,33 +183,40 @@ pub struct Selection {
     /// back saying which it lacks, because a filter that kept only whole ones
     /// would hide exactly the objects worth finding.
     pub answers_type: Option<types::DeclaredType>,
-    /// Objects holding a record that carries these keys, and the values named.
-    /// **Every filter must hold on ONE record**: two filters are a description
-    /// of a single record, not a pair of separate questions.
+    /// Objects carrying these keys and the values named. **Each filter says
+    /// what it is asked of** — what the thing holds, or what one record says
+    /// (see [`Scope`]) — and the ones asked of a record must all hold on the
+    /// SAME record, because they describe a single record rather than a pair of
+    /// separate questions.
     pub fields: Vec<FieldFilter>,
 }
 
 impl Selection {
-    /// Is there a filter here that the object's records have to answer? Kind
-    /// and subject are properties of the object itself.
+    /// Is there a filter here beyond the object's own properties? Kind and
+    /// subject are properties of the object itself.
     fn filters_facts(&self) -> bool {
         self.answers_type.is_some() || !self.fields.is_empty()
     }
 
     /// Is there a filter here that ONE record has to answer?
     ///
-    /// The type is not one of them any more: it is asked of the thing, so it
-    /// narrows which objects come back and never which of an object's records
-    /// do. A record that carries none of a type's keys still belongs to a thing
-    /// that answers it.
+    /// The type is not one of them: it is asked of the thing, so it narrows
+    /// which objects come back and never which of an object's records do. A
+    /// record that carries none of a type's keys still belongs to a thing that
+    /// answers it. **Nor is a key filter, unless it says it is** — asked of the
+    /// thing, a key filter is answered by the fold and no record has to carry
+    /// anything.
     fn filters_records(&self) -> bool {
-        !self.fields.is_empty()
+        self.fields.iter().any(|f| f.scope == Scope::Record)
     }
 
-    /// Does this fact answer every record filter. A fact carrying no field
-    /// answers none of them.
+    /// Does this fact answer every filter asked of a record. A fact carrying no
+    /// field answers none of them.
     fn keeps(&self, fact: &Fact) -> bool {
-        self.fields.iter().all(|f| f.satisfied_by(&fact.fields))
+        self.fields
+            .iter()
+            .filter(|f| f.scope == Scope::Record)
+            .all(|f| f.satisfied_by(&fact.fields))
     }
 }
 
@@ -262,9 +340,12 @@ pub struct Follow {
     /// **What the walk keeps of what it reaches.** Empty keeps everything,
     /// which is what a walk did before it could filter.
     ///
-    /// Each filter describes a RECORD, exactly as a selection's do: an object
-    /// is reached when one of its records answers every filter, and it arrives
-    /// carrying the records that answered.
+    /// The same filters a selection takes, asked the same two ways: one asked
+    /// of the THING is answered by its folded fields, and one asked of a RECORD
+    /// keeps an object when a single record of its answers every filter of that
+    /// scope, which then arrives with it. See [`Scope`] — a filter that meant
+    /// one thing here and another in a selection would be the defect the scope
+    /// exists to name, wearing a second name.
     pub keeping: Vec<FieldFilter>,
     /// **Keep only what FITS this type** — an object whose records carry every
     /// key the type names, between them.
@@ -294,6 +375,13 @@ impl Follow {
     /// whether the walk follows an edge shape or a relation's key.
     fn direction(&self) -> Direction {
         self.direction.unwrap_or_default()
+    }
+
+    /// Is there a filter here that ONE record of what the walk reaches has to
+    /// answer? A filter asked of the thing is answered by the fold, and no
+    /// record has to carry anything for it.
+    fn filters_records(&self) -> bool {
+        self.keeping.iter().any(|f| f.scope == Scope::Record)
     }
 }
 
@@ -784,6 +872,12 @@ impl<'a> Ctx<'a> {
             // carries a type's keys across everything said about it, and
             // whether one record describes what the caller is looking for.
             .filter(|e| select.answers_type.is_none() || self.answers(&e.id, select).is_some())
+            // **A key filter is asked of the thing's folded fields by default,
+            // which is the same map the type question is asked of.** Asked of
+            // one record instead, "which of these have eaten three" misses the
+            // thing that ate three one at a time and returns the thing that
+            // recorded three at once — an answer that looks like an answer.
+            .filter(|e| holds_all(self.held(&e.id), select.fields.iter()))
             .filter(|e| {
                 !select.filters_records() || self.kept_facts(&e.id, select).next().is_some()
             })
@@ -801,13 +895,19 @@ impl<'a> Ctx<'a> {
         declared.matched_by(&self.folded(id))
     }
 
-    /// This thing's fields: the newest write of each key on it, as the store
-    /// read them.
+    /// This thing's fields: what each key on it holds, as the store folded
+    /// them.
     fn folded(&self, id: &EntityId) -> BTreeMap<String, String> {
-        self.fields
-            .get(id)
-            .map(|f| (*f).clone())
-            .unwrap_or_default()
+        self.held(id).cloned().unwrap_or_default()
+    }
+
+    /// The same row, borrowed — `None` for a thing the scan has no fields for.
+    ///
+    /// **The filter path asks this once per candidate object**, so it does not
+    /// take the copy [`Ctx::folded`] takes: a clone per candidate is a copy of
+    /// the store's rows for a question that only reads them.
+    fn held(&self, id: &EntityId) -> Option<&BTreeMap<String, String>> {
+        self.fields.get(id).copied()
     }
 
     /// This entity's facts that answer the record filters.
@@ -877,8 +977,14 @@ impl<'a> Ctx<'a> {
                     // written about it is not the same as failing a filter, and
                     // an admission test that could not tell them apart would
                     // drop the far end of every edge into a bare place.
-                    if !follow.keeping.is_empty()
-                        && self.reached_facts(&reached, Some(follow)).is_empty()
+                    //
+                    // **Asked the same two ways a selection's are** — the
+                    // thing's folded fields, and one record of its — because a
+                    // filter that meant the record here and the thing there
+                    // would carry the defect this scope exists to remove.
+                    if !holds_all(self.held(&reached), follow.keeping.iter())
+                        || (follow.filters_records()
+                            && self.reached_facts(&reached, Some(follow)).is_empty())
                     {
                         unwalked = true;
                         continue;
@@ -950,12 +1056,17 @@ impl<'a> Ctx<'a> {
     /// described.
     fn reached_facts(&self, id: &EntityId, follow: Option<&Follow>) -> Vec<&'a Fact> {
         let mine = self.facts.get(id).into_iter().flatten().copied();
-        match follow.map(|f| f.keeping.as_slice()).unwrap_or_default() {
-            [] => mine.collect(),
-            keeping => mine
-                .filter(|f| keeping.iter().all(|k| k.satisfied_by(&f.fields)))
-                .collect(),
+        if !follow.is_some_and(Follow::filters_records) {
+            return mine.collect();
         }
+        let keeping = follow.map(|f| f.keeping.as_slice()).unwrap_or_default();
+        mine.filter(|f| {
+            keeping
+                .iter()
+                .filter(|k| k.scope == Scope::Record)
+                .all(|k| k.satisfied_by(&f.fields))
+        })
+        .collect()
     }
 
     /// The entities one hop from `id`, in handle order, each with the link the
@@ -1457,11 +1568,42 @@ mod tests {
             vec!["person:barney-gumble", "person:patana"],
             "the key with no value asked for holds for either value",
         );
+        // **A filter says which OBJECTS, and by default it says nothing about
+        // which of an object's records come back.** Patana holds two, one of
+        // which carries no key at all, and both are hers.
         assert_eq!(
             any[1].facts.len(),
-            1,
-            "the object comes back with the records that answered, not its whole page: {:?}",
+            2,
+            "a selection filter does not narrow the object's page: {:?}",
             any[1],
+        );
+
+        // **Asked of a record, the same filter also narrows the page** — the
+        // other question, and the pair is what says the two are apart. Without
+        // the assertion above, this one passes on a build where every filter is
+        // still the record's.
+        let on_a_record = resolve(
+            &scanned,
+            &[],
+            &GraphQuery {
+                select: Selection {
+                    fields: vec![FieldFilter::key("rsvp").on_a_record()],
+                    ..Selection::default()
+                },
+                ..GraphQuery::default()
+            },
+        )
+        .expect("a key filter asked of a record is a selection too");
+        assert_eq!(
+            handles(&on_a_record),
+            vec!["person:barney-gumble", "person:patana"],
+            "the same objects: each holds a record carrying the key",
+        );
+        assert_eq!(
+            on_a_record[1].facts.len(),
+            1,
+            "and it comes back with the record that answered, not its whole page: {:?}",
+            on_a_record[1],
         );
     }
 
@@ -2016,7 +2158,10 @@ mod tests {
             &GraphQuery {
                 select: Selection {
                     subject: Some(EntityId("person:ned-flanders".into())),
-                    fields: vec![FieldFilter::holding("rsvp", "yes")],
+                    // Asked of a record, so the object is the one thing that
+                    // brings it back and the filter decides only which of its
+                    // records ride along.
+                    fields: vec![FieldFilter::holding("rsvp", "yes").on_a_record()],
                     ..Selection::default()
                 },
                 ..GraphQuery::default()
@@ -2783,6 +2928,84 @@ mod tests {
                 .all(|f| f.content == "the greyhound"),
             "a kept object arrives with the records that answered: {:?}",
             older[0].connected[0],
+        );
+    }
+
+    /// **A walk's filters are asked the same two ways a selection's are**, and
+    /// which way decides both what the walk reaches and what each object brings.
+    ///
+    /// The greyhound is described over two records: one carries `born` and one
+    /// does not. Asked of the THING, `born` is answered by the fold and the
+    /// object arrives whole. Asked of a RECORD, it is answered by the one row
+    /// carrying the key, and only that row rides along. Both in one case,
+    /// because either alone passes on a build where every filter is the other
+    /// scope.
+    #[test]
+    fn a_walks_filter_is_asked_of_the_thing_or_of_one_record() {
+        let mut scanned = kennel();
+        let greyhound = scanned
+            .iter_mut()
+            .find(|d| d.doc_id == "pet:santas-little-helper")
+            .expect("the kennel holds the greyhound");
+        greyhound
+            .facts
+            .push(fact("pet:santas-little-helper", "f2", "went to the vet"));
+        let declarations = vec![pet()];
+        let from_bart = |keeping: Vec<FieldFilter>| {
+            resolve(
+                &scanned,
+                &declarations,
+                &GraphQuery {
+                    select: Selection {
+                        subject: Some(EntityId("person:bart".into())),
+                        ..Selection::default()
+                    },
+                    follow: Some(Follow {
+                        along: Along::Relation("owner".into()),
+                        direction: Some(Direction::In),
+                        keeping,
+                        ..Follow::hop()
+                    }),
+                    ..GraphQuery::default()
+                },
+            )
+            .expect("a walk with filters on what it reaches")
+        };
+
+        let of_the_thing = from_bart(vec![FieldFilter::comparing(
+            "born",
+            types::Compare::Before,
+            "2020-01-01",
+        )]);
+        assert_eq!(
+            handles(&of_the_thing[0].connected),
+            vec!["pet:santas-little-helper"],
+            "the fold answers `born`, so the walk reaches the greyhound: {of_the_thing:?}",
+        );
+        assert_eq!(
+            of_the_thing[0].connected[0].facts.len(),
+            2,
+            "and a filter about the thing does not narrow the thing's page: {:?}",
+            of_the_thing[0].connected[0],
+        );
+
+        let of_a_record = from_bart(vec![
+            FieldFilter::comparing("born", types::Compare::Before, "2020-01-01").on_a_record(),
+        ]);
+        assert_eq!(
+            handles(&of_a_record[0].connected),
+            vec!["pet:santas-little-helper"],
+            "the same object, reached because one record of its answers: {of_a_record:?}",
+        );
+        assert_eq!(
+            of_a_record[0].connected[0]
+                .facts
+                .iter()
+                .map(|f| f.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["the greyhound"],
+            "and it brings the record that answered, not the vet trip: {:?}",
+            of_a_record[0].connected[0],
         );
     }
 
