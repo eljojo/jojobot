@@ -71,29 +71,6 @@ fn shipped_files() -> Vec<(String, String)> {
         }
     }
 
-    /// A file's shipped half: everything before it starts declaring tests
-    /// INLINE.
-    ///
-    /// **Not simply "up to the first `#[cfg(test)]`".** That attribute wears two
-    /// meanings here and only one of them ends the shipped code: `#[cfg(test)]
-    /// mod tests {` opens the scaffolding, while `#[cfg(test)] mod surface;`
-    /// merely gates a child module and can sit at the very top of a file, above
-    /// everything this scan exists to count. Cutting at that one silently
-    /// reduced `lib.rs` to its imports.
-    fn shipped_half(text: &str) -> String {
-        let lines: Vec<&str> = text.lines().collect();
-        let end = lines.iter().enumerate().position(|(n, line)| {
-            line.trim_start().starts_with("#[cfg(test)]")
-                && !lines
-                    .get(n + 1)
-                    .is_some_and(|next| next.trim().ends_with(';') && next.contains("mod "))
-        });
-        match end {
-            Some(end) => lines[..end].join("\n"),
-            None => text.to_string(),
-        }
-    }
-
     /// The files this one's `#[cfg(test)] mod NAME;` declarations gate, in both
     /// spellings Rust resolves a module to.
     fn test_only_children(dir: &std::path::Path, text: &str) -> Vec<std::path::PathBuf> {
@@ -128,6 +105,122 @@ fn shipped_files() -> Vec<(String, String)> {
         "the walk found no shipped source at all, which is a broken test rather than a clean crate"
     );
     files
+}
+
+/// A file's shipped half: the file with its test items taken out.
+///
+/// **It SKIPS a test item rather than cutting the file at one, and the
+/// difference was 253 lines of `memory/search.rs`** — measured, not estimated:
+/// that file went from 279 shipped lines to 532, and the sweeps built on this
+/// walker gained six sentences they had never read. `#[cfg(test)]` wears three
+/// meanings here and only one of them is a wall:
+///
+/// * `#[cfg(test)] mod tests {` opens scaffolding — skipped, with the module.
+/// * `#[cfg(test)] fn helper()` is scaffolding in the MIDDLE of a file, with
+///   shipped code after it. Cutting there took the rest of the file with it.
+/// * `#[cfg(test)] mod surface;` merely gates a child file and can sit at the
+///   very top, above everything a scan exists to count. It is kept: the walk
+///   excludes the file it gates, and cutting at it once reduced `lib.rs` to its
+///   imports.
+///
+/// **An item ends at the line that closes it at its own indentation**, which is
+/// a fact about formatted Rust rather than a guess: `cargo fmt --check` is part
+/// of this repository's bar, so an item that closed anywhere else would fail
+/// the build before it reached here. A braceless item — `#[cfg(test)] use x;` —
+/// ends at its own line.
+fn shipped_half(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut kept: Vec<&str> = Vec::new();
+    let mut at = 0;
+    while at < lines.len() {
+        let line = lines[at];
+        if !line.trim_start().starts_with("#[cfg(test)]") {
+            kept.push(line);
+            at += 1;
+            continue;
+        }
+        let Some(item) = lines.get(at + 1) else {
+            break;
+        };
+        // The child-file gate, kept: what it gates is dropped by the walk, and
+        // the code around it ships.
+        if item.trim().ends_with(';') && item.trim().contains("mod ") {
+            kept.push(line);
+            at += 1;
+            continue;
+        }
+        // A braceless item is one line of scaffolding.
+        if !item.contains('{') {
+            at += 2;
+            continue;
+        }
+        let indent = &line[..line.len() - line.trim_start().len()];
+        let closes = format!("{indent}}}");
+        at += 1;
+        while at < lines.len() && lines[at] != closes {
+            at += 1;
+        }
+        at += 1;
+    }
+    kept.join("\n")
+}
+
+/// **The walker reads to the end of a file, past a test item and out the other
+/// side.**
+///
+/// It used to CUT a file at the first `#[cfg(test)]` that was not a `mod NAME;`
+/// declaration — an attribute on a plain function counted — so
+/// `memory/search.rs` was read to line 280 of 1767 and every sweep built on
+/// this walker was blind past that point. **Nothing was wrong with the sweeps;
+/// they were reading a fraction of the crate and saying so nowhere.**
+///
+/// **The fixture is the shape that caused it**: a test-annotated function in
+/// the middle of a file with shipped code after it. Both ends are asserted —
+/// the prose past the test item is IN and the prose inside it is OUT — because
+/// a walker returning the whole file, scaffolding included, would pass the
+/// first half alone.
+#[test]
+fn the_walker_reads_past_a_test_item_and_not_into_one() {
+    let source = concat!(
+        "const A: &str = \"a sentence in the head of the file\";\n",
+        "\n",
+        "#[cfg(test)]\n",
+        "fn helper() -> &'static str {\n",
+        "    \"a sentence only the tests see\"\n",
+        "}\n",
+        "\n",
+        "const B: &str = \"a sentence past the test helper\";\n",
+        "\n",
+        "#[cfg(test)]\n",
+        "mod tests {\n",
+        "    const C: &str = \"a sentence inside the test module\";\n",
+        "}\n",
+        "\n",
+        "const D: &str = \"the far end of the file\";\n",
+    );
+
+    let shipped = shipped_half(source);
+
+    assert!(
+        shipped.contains("in the head of the file"),
+        "the head of the file is shipped code: {shipped}"
+    );
+    assert!(
+        shipped.contains("past the test helper"),
+        "…and so is everything after a test item, which is the whole defect: {shipped}"
+    );
+    assert!(
+        shipped.contains("the far end of the file"),
+        "…including the far end, past an inline test module: {shipped}"
+    );
+    assert!(
+        !shipped.contains("only the tests see"),
+        "a test-annotated function is scaffolding and must not be counted: {shipped}"
+    );
+    assert!(
+        !shipped.contains("inside the test module"),
+        "…and neither is an inline test module: {shipped}"
+    );
 }
 
 /// The same shipped source, as one text, for the checks that count occurrences
