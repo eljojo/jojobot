@@ -9,10 +9,15 @@ use super::*;
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddEntityArgs {
     /// One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-    /// `topic`, `bot`, `pet`.
+    /// `topic`, `bot`, `pet`, `rhythm`.
     ///
     /// **A pet is a `pet` and not a `thing`.** `thing` is a named possession —
     /// a bike, a machine — and a companion animal is not one.
+    ///
+    /// **A `rhythm` is a recurring loop** — a thing that comes round on a
+    /// cadence — and it is the one kind that REQUIRES a `parent`: the parent
+    /// says whose job the loop is. Two loops on one object are two rhythms,
+    /// which is why they are entities rather than a label on the object.
     ///
     /// **`bot` is an ordinary kind here**, and creating one is what this verb
     /// is for: nothing about an identity is compiled in, so every bot beyond
@@ -44,6 +49,20 @@ pub struct AddEntityArgs {
     /// conversation reaches for it. Only the exact token `always` counts.
     #[serde(default)]
     pub boot: Option<String>,
+    /// **The entity this one sits under**, as `kind:slug`. Optional — most
+    /// entities are roots — and **it must already exist**, exactly as every
+    /// other handle a write names must: a parent jojobot does not know comes
+    /// back blocked with candidates, and nothing is written. Nothing may be its
+    /// own parent.
+    ///
+    /// **Fixed here and nowhere else.** There is no reparenting verb: where a
+    /// thing sits is decided when it is created, so choose it as deliberately
+    /// as the handle.
+    ///
+    /// A `rhythm` requires one — it is a loop ON something, and the parent is
+    /// what says on what.
+    #[serde(default)]
+    pub parent: Option<String>,
     /// The token a previous call's refusal handed you, sent back after you read
     /// its candidates and judged them a different entity. It lifts only the
     /// refusal that minted it — a token you made up, or one from another
@@ -151,10 +170,11 @@ impl Jojobot {
             aliases: args.aliases.unwrap_or_default(),
             source: args.source,
             crm: args.crm,
-            // The tool surface is unchanged this milestone: parentage is
-            // reachable only from inside, so every write through the door is
-            // a root.
-            parent: None,
+            // **Where a thing sits is the caller's to say.** The tree shipped
+            // in the domain and stopped at the door, which left every write
+            // through this verb a root — so a kind that requires a parent had
+            // no reachable way to be created at all.
+            parent: args.parent.as_deref().map(EntityId::person),
             boot: parse_boot(args.boot.as_deref())?,
             override_token: args.override_token.clone(),
         };
@@ -275,6 +295,53 @@ mod tests {
         let body = json_of(&listed);
         assert_eq!(body["entities"][0]["id"], "project:atlas");
         assert_eq!(body["count"], 1);
+    }
+
+    /// **A caller can put an entity under another one, and a rhythm needs it.**
+    ///
+    /// The tree shipped in the domain and stopped at the door: every write
+    /// through this verb was a root, so nothing a caller could send made a
+    /// child. A kind that requires a parent then had no reachable way to be
+    /// created at all, and every unit test below the door would still be green.
+    ///
+    /// Both halves. The refusal alone passes on a build where no rhythm can
+    /// ever be written, and the child alone passes on a build where the
+    /// requirement does nothing.
+    #[tokio::test]
+    async fn a_caller_can_name_a_parent_and_a_rhythm_is_refused_without_one() {
+        let jojobot = handler();
+        ensure(&jojobot, "thing:kettle").await;
+
+        let refused = json_of(
+            &jojobot
+                .add_entity(Parameters(add_args("rhythm", "descale", "Descale")))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["status"], "blocked");
+        assert_eq!(refused["wrote"], false);
+        assert!(
+            refused["how_to_proceed"]
+                .as_str()
+                .expect("a blocked answer says how to proceed")
+                .contains("parent"),
+            "the way forward names the argument that repairs it: {refused}",
+        );
+
+        let added = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    parent: Some("thing:kettle".into()),
+                    ..add_args("rhythm", "descale", "Descale")
+                }))
+                .await
+                .expect("add ok"),
+        );
+        assert_eq!(added["id"], "rhythm:descale");
+        assert_eq!(
+            added["parent"], "thing:kettle",
+            "the parent survives the door and comes back on the entity: {added}",
+        );
     }
 
     /// An unknown kind is a client error that names the closed set, rather than

@@ -189,6 +189,11 @@ pub(crate) fn entity_json(entity: &Entity) -> serde_json::Value {
         "source": entity.source,
         "crm": entity.crm,
         "boot": entity.boot.as_token(),
+        // **What this one sits under**, null for a root — which most entities
+        // are. It is rendered rather than left out because a caller that named
+        // a parent has no other way to see the pointer landed, and a rhythm
+        // cannot be read at all without knowing whose loop it is.
+        "parent": entity.parent.as_ref().map(|p| p.as_str()),
     })
 }
 
@@ -276,6 +281,7 @@ mod tests {
             (EntityKind::PROJECT, "project", "Project"),
             (EntityKind::BOT, "bot", "SoftwareApplication"),
             (EntityKind::PET, "pet", "Pet"),
+            (EntityKind::RHYTHM, "rhythm", "Rhythm"),
         ];
         assert_eq!(
             table.len(),

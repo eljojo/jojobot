@@ -380,6 +380,7 @@ mod tests {
                 source: "user-named".into(),
                 crm: None,
                 boot: None,
+                parent: None,
                 override_token: None,
                 sid: Some(crate::harness::TEST_SID.into()),
             }))

@@ -806,6 +806,7 @@ mod tests {
                             source: "test-fixture".into(),
                             crm: None,
                             boot: None,
+                            parent: None,
                             override_token: None,
                             sid: Some(dead.clone()),
                         }))

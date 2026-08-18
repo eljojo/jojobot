@@ -234,11 +234,20 @@ async fn moving_abroad() {
     // ever gave it a day, so a read about January must not reach it.
     january.never_says("visa photo");
 
-    // GAP — the visa, the housing, the shipping and the money are CHILDREN of
-    // the move. Parentage is not reachable from the surface, so they sit flat
-    // as six sentences on one node instead of being zoomable.
-    //   s.add_under("project:atlas", "project:atlas-visa", "Visa").await;
-    s.list("project").await.never_says("parent");
+    // The visa is a CHILD of the move, not a sixth sentence on one node: it is
+    // its own project, under the move, so the paperwork is zoomable rather than
+    // flat. Where it sits is fixed here, at the moment it is made.
+    //
+    // The handle does not repeat the parent's, because the near-miss guard
+    // reads one handle containing another as a probable duplicate — a child is
+    // its own entity and takes a name of its own.
+    s.add_under("project:atlas", "project:visa", "Visa").await;
+    s.list("project")
+        .await
+        .says("\"parent\":\"project:atlas\"")
+        // The move itself is under nothing, and the listing says so: a reader
+        // must be able to tell a root from a pointer nobody rendered.
+        .says("\"parent\":null");
 
     s.wrap("the list exists; nothing is done").await;
 

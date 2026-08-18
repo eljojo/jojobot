@@ -312,38 +312,34 @@ async fn keeping_track_of_bikes() {
     s.has_no_argument("recall", "newest", &["fields", "facts"])
         .await;
 
-    // GAP — the chain is a PART of the bike, not a fact about it. Parentage is
-    // not reachable, so it cannot be its own thing with its own history, and
-    // "how many km on the chain since I fitted it" has nothing to hang on.
-    //   s.add_under("thing:gravel-bike", "thing:bike-chain", "Chain").await;
-    //
-    // Asking for it anyway is refused, and the refusal names the argument.
-    // The alternative is worse than the gap: a flat entity created and success
-    // reported, which leaves a caller unable to tell "parentage is not on the
-    // surface yet" from "I set it and it worked".
-    s.refused(
-        "add_entity",
-        json!({
-            "kind": "thing", "handle": "bike-chain", "name": "Chain",
-            "source": "user-named", "parent": "thing:gravel-bike",
-        }),
-    )
-    .await
-    .says("parent")
-    // A blocked ANSWER with a way forward, not a schema error thrown back at
-    // the client: `wrote` is the field only the refusal carries, and a
-    // deserializer failing would never reach it.
-    .says("\"wrote\":false");
-    s.list("thing").await.never_says("thing:bike-chain");
-
-    // The same creation without it lands, so the refusal is about the argument
-    // and not about the entity. The chain goes in as its own thing and lands
-    // flat: nothing on the created record says what it is part of.
-    s.add("thing:bike-chain", "Chain").await;
+    // The chain is a PART of the bike, not a fact about it — so it is its own
+    // thing, with its own history, sitting under the bike. That is what gives
+    // "how many km on the chain since I fitted it" something to hang on.
+    s.add_under("thing:gravel-bike", "thing:bike-chain", "Chain")
+        .await;
     s.list("thing")
         .await
         .says("thing:bike-chain")
-        .never_says("parent");
+        .says("\"parent\":\"thing:gravel-bike\"");
+
+    // The negative the line above rests on: a thing nobody put anywhere is a
+    // root, and the listing says so rather than leaving a reader to guess
+    // whether the pointer is absent or merely unrendered.
+    s.list("thing").await.says("\"parent\":null");
+
+    // A parent nobody created is refused, exactly as every other handle a write
+    // names is, and nothing is written. `wrote` is the field only a blocked
+    // answer carries, so a deserializer failing would never reach it.
+    s.refused(
+        "add_entity",
+        json!({
+            "kind": "thing", "handle": "bar-tape", "name": "Bar Tape",
+            "source": "user-named", "parent": "thing:no-such-bike",
+        }),
+    )
+    .await
+    .says("\"wrote\":false");
+    s.list("thing").await.never_says("thing:bar-tape");
 
     s.wrap("service history, such as it is").await;
 

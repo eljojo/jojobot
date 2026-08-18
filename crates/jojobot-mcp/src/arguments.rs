@@ -1,12 +1,11 @@
 //! **An argument a verb does not implement is refused, not discarded.**
 //!
 //! Every `Args` struct on this surface ignores what it does not recognise, so a
-//! caller sending an argument the verb has no field for got the work done
-//! without it and a success answer that said nothing. The concrete case is
-//! parentage: an entity's parent is stored, `add_entity` takes no argument for
-//! it, and a caller passing one got a flat entity and `status: ok` — with no
-//! way to tell "parentage is not on the surface yet" from "I set it and it
-//! worked".
+//! caller sending an argument the verb has no field for gets the work done
+//! without it and a success answer that says nothing about the omission. The
+//! shape of the failure: a caller reaches for something the store really holds,
+//! or borrows an argument from a neighbouring verb, and cannot tell "that is
+//! not on this verb" from "I set it and it worked".
 //!
 //! **The check reads the schema jojobot serves**, not a list kept beside it. A
 //! verb's arguments are already published to every client in `input_schema`, so
@@ -298,27 +297,30 @@ mod tests {
             .to_string()
     }
 
-    /// **The concrete case.** `add_entity` implements no `parent`, so a call
-    /// carrying one is refused and the refusal names it.
+    /// **The concrete case.** `add_entity` implements no `details`, which
+    /// `capture` does, so a caller borrowing it from the neighbouring verb is
+    /// refused and the refusal names it.
     ///
     /// Paired with the positive it depends on: the same call without that one
     /// argument is not refused. Without it this passes identically against a
-    /// check that refuses everything.
+    /// check that refuses everything. The positive names `parent`, which this
+    /// verb DOES implement, so the pair also says the check reads the schema
+    /// jojobot serves rather than a list somebody keeps beside it.
     #[tokio::test]
     async fn an_argument_the_verb_does_not_implement_is_refused_by_name() {
         let jojobot = handler();
         let whole = serde_json::json!({
             "kind": "thing", "handle": "bike-chain", "name": "Chain",
-            "source": "user-named", "parent": "thing:gravel-bike", "sid": "any",
+            "source": "user-named", "details": "the one off the gravel bike", "sid": "any",
         });
         assert!(
-            advice(jojobot.unimplemented_arguments(&call("add_entity", whole))).contains("parent"),
+            advice(jojobot.unimplemented_arguments(&call("add_entity", whole))).contains("details"),
             "the refusal names the argument that was not understood"
         );
 
         let implemented = serde_json::json!({
             "kind": "thing", "handle": "bike-chain", "name": "Chain",
-            "source": "user-named", "sid": "any",
+            "source": "user-named", "parent": "thing:gravel-bike", "sid": "any",
         });
         assert!(
             jojobot

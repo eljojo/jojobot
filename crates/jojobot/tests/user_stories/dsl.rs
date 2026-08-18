@@ -713,6 +713,22 @@ impl Session {
         .await;
     }
 
+    /// **The same creation, under something else.** Where a thing sits is
+    /// fixed when it is made and there is no reparenting verb, so this is the
+    /// only moment a story can say it.
+    pub async fn add_under(&self, parent: &str, handle: &str, name: &str) {
+        let (kind, slug) = handle.split_once(':').expect("a handle is kind:slug");
+        self.write(
+            &format!("adding {handle} under {parent}"),
+            "add_entity",
+            json!({
+                "kind": kind, "handle": slug, "name": name,
+                "source": "user-named", "parent": parent,
+            }),
+        )
+        .await;
+    }
+
     /// Something the person said. Testimony. Hands back the fact's address,
     /// which is what `correct` later edits it through — and what rule 15 calls
     /// the receipt.
