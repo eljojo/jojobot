@@ -56,25 +56,72 @@ pub struct InMemoryMemory {
 }
 
 impl InMemoryMemory {
-    /// A new, empty fake.
+    /// A new fake, holding the shipped kinds as rows and **touching nothing
+    /// outside itself**.
     ///
-    /// **It loads the shipped kinds, because a store is what holds them.** The
-    /// set of kinds is a declaration in the store and a process parses against
-    /// what it loaded, so a double standing in for a store stands in for that
-    /// too — otherwise every handle in every test using this fake is refused
-    /// for a reason that has nothing to do with the case.
+    /// **A store holds the kinds, so this holds them** — the shipped ones
+    /// arrive as rows exactly as a boot writes them, in this object's own
+    /// state.
+    ///
+    /// **It does NOT fill the set this process parses against.** That is a
+    /// boot's step, not a store's, and the two were done here together: the
+    /// constructor wrote a process-wide set, so building a fixture reached
+    /// every case in the binary and a case could pass because of the order the
+    /// cases ran. A double stands in for a store; it does not stand in for a
+    /// startup. Ask for [`InMemoryMemory::booted`] when the case needs the set.
     pub fn new() -> Self {
         let fake = Self::default();
-        // **A store holds the kinds, and this stands in for a store.** The
-        // shipped ten arrive as rows exactly as a boot writes them, and the
-        // set this process parses against is loaded from those rows — so a
-        // case using the double meets the same two steps a real boot takes.
         *fake.kinds.lock().unwrap() = crate::memory::kinds::SHIPPED
             .iter()
             .map(|token| (token.to_string(), crate::memory::types::Origin::Shipped))
             .collect();
-        crate::memory::kinds::load(crate::memory::kinds::SHIPPED);
         fake
+    }
+
+    /// **A store that has been booted** — the fake, plus the step a startup
+    /// takes after standing one up: the set this process parses against is
+    /// filled from what this store holds.
+    ///
+    /// **This is the boundary, and it is explicit on purpose.** A case that
+    /// parses a handle needs the set the way it needs a runtime, and asking for
+    /// a booted store is how it says so. The constructor cannot do it: filling
+    /// a process-wide set as a side effect of building an object makes every
+    /// case in the binary depend on which case built one first.
+    ///
+    /// **Filled from what this store HOLDS, never from [`kinds::SHIPPED`]**, so
+    /// a case cannot be green because a constant was in scope, and a kind a
+    /// caller declared on this store is parsed here as it would be after a real
+    /// boot.
+    ///
+    /// It is synchronous where [`kinds::seed`] and [`kinds::reload`] are not,
+    /// because this store answers from memory and needs no runtime to say what
+    /// it holds. The rails with a real store keep those two, which are the same
+    /// two steps: write the rows, then load what came back.
+    ///
+    /// [`kinds::seed`]: crate::memory::kinds::seed
+    /// [`kinds::reload`]: crate::memory::kinds::reload
+    /// [`kinds::SHIPPED`]: crate::memory::kinds::SHIPPED
+    pub fn booted() -> Self {
+        let fake = Self::new();
+        fake.boot();
+        fake
+    }
+
+    /// **Boot a store that is already standing** — the second of the two steps,
+    /// on its own, for a case that has to write rows before the set is filled.
+    ///
+    /// [`booted`](Self::booted) is this call on a fresh store, and takes the
+    /// same shape a real startup does: stand the store up, then load the set
+    /// from what it answers.
+    pub fn boot(&self) {
+        let held: Vec<String> = self
+            .kinds
+            .lock()
+            .expect("fake mutex poisoned")
+            .iter()
+            .map(|(token, _)| token.clone())
+            .collect();
+        crate::memory::kinds::load(held);
     }
 
     /// **A kind's keys, in the same place a schema's keys live.** Declaring

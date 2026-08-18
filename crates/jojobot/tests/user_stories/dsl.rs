@@ -57,7 +57,7 @@ pub struct Blindable {
 impl Blindable {
     fn new() -> Self {
         Blindable {
-            inner: Arc::new(InMemoryMemory::new()),
+            inner: Arc::new(InMemoryMemory::booted()),
             blind: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -224,7 +224,7 @@ impl Story {
     /// Serve a fresh jojobot and stand the bot up, the way an operator would.
     /// `bot` carries its kind prefix, for the same reason `add` does.
     pub async fn begin(bot: &str) -> Self {
-        Self::serve(bot, Arc::new(InMemoryMemory::new())).await
+        Self::serve(bot, Arc::new(InMemoryMemory::booted())).await
     }
 
     async fn serve(bot: &str, store: Arc<dyn jojobot_domain::memory::Memory>) -> Self {

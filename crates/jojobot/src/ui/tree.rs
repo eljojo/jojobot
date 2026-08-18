@@ -71,7 +71,11 @@ mod tests {
     use jojobot_domain::memory::{Boot, EntityKind};
 
     fn entity(id: &str, parent: Option<&str>) -> Entity {
-        jojobot_domain::memory::kinds::load_shipped();
+        // **The fixture stands a store up, because the set is setup here.**
+        // Reading a handle asks the kinds this process loaded, and no case
+        // behind this fixture asserts anything about the set — so the set
+        // arrives the way a boot delivers it, from what a store holds.
+        let _booted = jojobot_domain::memory::testing::InMemoryMemory::booted();
         let id = EntityId(id.to_string());
         Entity {
             kind: id.kind().expect("a fixture handle names its kind"),
@@ -87,6 +91,11 @@ mod tests {
 
     #[test]
     fn a_path_is_handles_and_nothing_else() {
+        // **The set is this case's subject, not its setup.** What makes
+        // `/not-a-handle/` name nothing is that its first segment carries no
+        // kind the set holds, so the answer below is a statement about the
+        // loaded set as much as about the path grammar.
+        jojobot_domain::memory::kinds::load_shipped();
         assert_eq!(
             segments("/person:alpha/topic:widgets/"),
             Some(vec![

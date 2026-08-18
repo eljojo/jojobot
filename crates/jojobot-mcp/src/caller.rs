@@ -382,7 +382,7 @@ mod tests {
     #[tokio::test]
     async fn writing_with_another_identitys_sid_leaves_mine_where_it_was() {
         let store = Arc::new(InMemorySessions::new());
-        let memory = Arc::new(InMemoryMemory::new());
+        let memory = Arc::new(InMemoryMemory::booted());
         let jojobot = connection(memory.clone(), store.clone());
         make_bot(&jojobot, "gamma").await;
         make_bot(&jojobot, "delta").await;
@@ -438,7 +438,7 @@ mod tests {
     #[tokio::test]
     async fn two_identities_on_one_connection_each_keep_their_own_session() {
         let store = Arc::new(InMemorySessions::new());
-        let memory = Arc::new(InMemoryMemory::new());
+        let memory = Arc::new(InMemoryMemory::booted());
         let jojobot = connection(memory.clone(), store.clone());
         make_bot(&jojobot, "gamma").await;
         make_bot(&jojobot, "delta").await;

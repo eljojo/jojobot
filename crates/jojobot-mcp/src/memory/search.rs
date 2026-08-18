@@ -1486,6 +1486,11 @@ mod tests {
     /// be pinning prose about a rule that does not exist.
     #[test]
     fn the_search_description_names_every_filter_that_stands_in_for_a_query() {
+        // **This case runs in a booted process**, because the validator below
+        // parses a kind against the set and this case asserts about the
+        // DESCRIPTION rather than about the set. Standing a store up is where
+        // the set comes from; nothing else here needs the store.
+        let _booted = jojobot_domain::memory::testing::InMemoryMemory::booted();
         let a_type = || DeclaredType::new("kiln-firing", vec![Field::new("cone", ValueType::Text)]);
         let alone = [
             (

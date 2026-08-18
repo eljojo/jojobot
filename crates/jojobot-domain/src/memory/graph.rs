@@ -1315,7 +1315,11 @@ mod tests {
     use crate::memory::{Boot, FactId, FactStatus, Provenance, Standing};
 
     fn entity(handle: &str, name: &str) -> Entity {
-        crate::memory::kinds::load_shipped();
+        // **The fixture stands a store up, because the set is setup here.**
+        // Reading a handle asks the kinds this process loaded, and no case
+        // behind this fixture asserts anything about the set — so the set
+        // arrives the way a boot delivers it, from what a store holds.
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
         let id = EntityId(handle.to_string());
         Entity {
             kind: id.kind().expect("the fixture uses well-formed handles"),
@@ -1398,7 +1402,11 @@ mod tests {
     /// the party is at the tavern, and the party points back at Patana — so an
     /// outbound walk has somewhere to go twice, and somewhere to loop.
     fn store() -> Vec<DocScan> {
-        crate::memory::kinds::load_shipped();
+        // **The fixture stands a store up, because the set is setup here.**
+        // Reading a handle asks the kinds this process loaded, and no case
+        // behind this fixture asserts anything about the set — so the set
+        // arrives the way a boot delivers it, from what a store holds.
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
         let attending = |home: &str, id: &str, content: &str, rsvp: &str| Fact {
             fields: [("rsvp".to_string(), rsvp.to_string())]
                 .into_iter()

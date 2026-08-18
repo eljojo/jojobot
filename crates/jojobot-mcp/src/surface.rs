@@ -955,7 +955,7 @@ fn agent_facing_text() -> Vec<(String, String)> {
         (
             "the server instructions".to_string(),
             Jojobot::new(
-                Arc::new(jojobot_domain::memory::testing::InMemoryMemory::new()),
+                Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted()),
                 Arc::new(crate::memory::testing::SpySearch::default()),
                 Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
                 Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),

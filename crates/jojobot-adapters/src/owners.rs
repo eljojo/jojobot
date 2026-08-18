@@ -81,7 +81,7 @@ mod tests {
 
     /// A Memory holding exactly these handles, each named after its own slug.
     async fn roster(handles: &[&str]) -> Arc<dyn Memory> {
-        let memory = InMemoryMemory::new();
+        let memory = InMemoryMemory::booted();
         for handle in handles {
             let id = EntityId((*handle).to_string());
             let name = id.slug().to_string();

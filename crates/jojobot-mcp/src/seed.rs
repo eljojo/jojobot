@@ -205,7 +205,7 @@ mod tests {
 
     fn ports() -> (Arc<dyn Memory>, Arc<dyn Mailboxes>) {
         (
-            Arc::new(InMemoryMemory::new()),
+            Arc::new(InMemoryMemory::booted()),
             Arc::new(InMemoryMailboxes::knowing_any_owner()),
         )
     }

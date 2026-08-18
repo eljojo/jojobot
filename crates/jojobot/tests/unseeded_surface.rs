@@ -28,7 +28,11 @@ use tokio_util::sync::CancellationToken;
 async fn an_unseeded_surface_says_so_and_recites_no_kinds() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
-    let store = Arc::new(InMemoryMemory::new());
+    // **Booted on purpose, and emptied again below.** Seeding the identity is a
+    // write that parses a handle, so it needs the set — the state this case is
+    // about is a process that LOST the set, not one that never had it while
+    // its store was being filled.
+    let store = Arc::new(InMemoryMemory::booted());
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
     let state = AppState {
         resource: format!("http://{addr}/mcp"),

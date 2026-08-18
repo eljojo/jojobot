@@ -41,7 +41,7 @@ type TestPorts = (
 );
 
 fn test_ports() -> TestPorts {
-    let store: Arc<dyn Memory> = Arc::new(InMemoryMemory::new());
+    let store: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
     let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
     (
@@ -381,7 +381,7 @@ async fn mcp_accepts_public_host_but_still_guards_dns_rebinding() {
 /// else about the pairing is faked.
 fn searchable_state(addr: SocketAddr) -> AppState {
     let indexed = Arc::new(
-        IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("the search index opens"),
+        IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("the search index opens"),
     );
     AppState {
         resource: format!("http://{addr}/mcp"),

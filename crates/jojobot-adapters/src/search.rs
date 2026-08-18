@@ -2290,7 +2290,7 @@ mod tests {
     #[tokio::test]
     async fn the_contract_holds_over_the_fake() {
         let store =
-            Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens"));
+            Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
         contract::run_all_searchable(
             store.as_ref(),
             &Retrieval::new(store.index(), vec![store.clone()]),
@@ -2346,11 +2346,11 @@ mod tests {
     }
 
     fn entity(id: &str, name: &str) -> Entity {
-        // **The fixture seeds the set it needs.** Reading a handle asks the
-        // kinds this process loaded, and a unit test loads nothing — so a case
-        // building an entity says so itself rather than passing because a case
-        // beside it ran first.
-        jojobot_domain::memory::kinds::load_shipped();
+        // **The fixture stands a store up, because the set is setup here.**
+        // Reading a handle asks the kinds this process loaded, and no case
+        // behind this fixture asserts anything about the set — so the set
+        // arrives the way a boot delivers it, from what a store holds.
+        let _booted = jojobot_domain::memory::testing::InMemoryMemory::booted();
         let id = EntityId(id.into());
         assert!(validate_subject(&id).is_ok(), "test ids are well-formed");
         Entity {
@@ -2411,7 +2411,7 @@ mod tests {
     /// jojobot writes itself and no thing holds.
     #[tokio::test]
     async fn a_hand_built_doc_holds_what_the_store_would_hold() {
-        let store = InMemoryMemory::new();
+        let store = InMemoryMemory::booted();
         let who = EntityId::person("milhouse");
         store
             .add_entity(NewEntity::new(who.clone(), "Milhouse", "user-named"))
@@ -3305,7 +3305,7 @@ mod tests {
     #[tokio::test]
     async fn an_edit_leaves_one_indexed_copy_saying_the_new_thing() {
         let store =
-            Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens"));
+            Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
         store
             .add_entity(NewEntity::new(
                 EntityId::person("alpha"),
@@ -3363,7 +3363,7 @@ mod tests {
     #[tokio::test]
     async fn a_blocked_write_indexes_nothing() {
         let store =
-            Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::new())).expect("index opens"));
+            Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
         store
             .add_entity(NewEntity::new(
                 EntityId::person("zenith"),
@@ -3397,7 +3397,7 @@ mod tests {
     /// The boot path: a store already holding docs is indexed by one full re-scan.
     #[tokio::test]
     async fn rebuild_indexes_a_store_that_was_already_full() {
-        let inner = Arc::new(InMemoryMemory::new());
+        let inner = Arc::new(InMemoryMemory::booted());
         inner
             .add_entity(NewEntity::new(
                 EntityId::person("alpha"),
@@ -3460,7 +3460,7 @@ mod tests {
     /// ordinary edit is what moves a fact to superseded.
     #[tokio::test]
     async fn a_claim_taken_back_before_the_scan_is_not_served_after_it() {
-        let inner = Arc::new(InMemoryMemory::new());
+        let inner = Arc::new(InMemoryMemory::booted());
         inner
             .add_entity(NewEntity::new(
                 EntityId::person("alpha"),
@@ -5187,9 +5187,11 @@ mod tests {
         body: &str,
         state: MessageState,
     ) -> Message {
-        // A message carries its sender's handle, and reading one asks the
-        // kinds this process loaded — so this fixture seeds them too.
-        jojobot_domain::memory::kinds::load_shipped();
+        // **The fixture stands a store up, because the set is setup here.** A
+        // message carries its sender's handle, and reading one asks the kinds
+        // this process loaded — so the set arrives the way a boot delivers it,
+        // from what a store holds.
+        let _booted = jojobot_domain::memory::testing::InMemoryMemory::booted();
         Message {
             id: MessageId(id.into()),
             mailbox: MailboxName(mailbox.into()),

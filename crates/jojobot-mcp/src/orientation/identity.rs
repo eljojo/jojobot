@@ -622,7 +622,7 @@ mod tests {
     /// session most needs and they are in the other world entirely.
     #[tokio::test]
     async fn a_heal_that_fails_is_reported_rather_than_spun_on() {
-        let memory = Arc::new(InMemoryMemory::new());
+        let memory = Arc::new(InMemoryMemory::booted());
         let jojobot = Jojobot::new(
             memory,
             Arc::new(SpySearch::default()),

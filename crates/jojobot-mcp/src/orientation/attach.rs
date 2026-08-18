@@ -541,7 +541,7 @@ mod tests {
     #[tokio::test]
     async fn a_handle_written_on_the_card_survives_a_restart() {
         let store = Arc::new(InMemorySessions::new());
-        let memory = Arc::new(InMemoryMemory::new());
+        let memory = Arc::new(InMemoryMemory::booted());
         let jojobot = connection_sharing(
             memory.clone(),
             store.clone(),
@@ -655,7 +655,7 @@ mod tests {
     async fn a_card_with_no_stored_handle_is_offered_one_on_the_spot() {
         let store = Arc::new(InMemorySessions::new());
         let registry = Arc::new(sid::SessionRegistry::new());
-        let memory = Arc::new(InMemoryMemory::new());
+        let memory = Arc::new(InMemoryMemory::booted());
         let jojobot = connection_sharing(memory.clone(), store.clone(), registry.clone());
         seed_bot(&memory, "gamma").await;
 
@@ -931,7 +931,7 @@ mod tests {
     async fn an_old_abandoned_run_is_not_offered_and_is_still_resumable() {
         let store = Arc::new(InMemorySessions::new());
         let registry = crate::harness::seeded_registry();
-        let memory = Arc::new(InMemoryMemory::new());
+        let memory = Arc::new(InMemoryMemory::booted());
         let jojobot = connection_sharing(memory.clone(), store.clone(), registry.clone());
         seed_bot(&memory, "gamma").await;
         let ancient = abandoned_run(&store, "gamma", "something from last winter", 24 * 240).await;
@@ -1003,7 +1003,7 @@ mod tests {
     async fn a_wrapped_run_is_never_offered_and_never_reopens() {
         let store = Arc::new(InMemorySessions::new());
         let registry = crate::harness::seeded_registry();
-        let memory = Arc::new(InMemoryMemory::new());
+        let memory = Arc::new(InMemoryMemory::booted());
         let jojobot = connection_sharing(memory.clone(), store.clone(), registry.clone());
         seed_bot(&memory, "gamma").await;
 
@@ -1066,7 +1066,7 @@ mod tests {
     #[tokio::test]
     async fn booting_again_is_offered_the_session_in_flight() {
         let store = Arc::new(InMemorySessions::new());
-        let memory = Arc::new(InMemoryMemory::new());
+        let memory = Arc::new(InMemoryMemory::booted());
         let registry = crate::harness::seeded_registry();
         let first = connection_sharing(memory.clone(), store.clone(), registry.clone());
         make_bot(&first, "gamma").await;

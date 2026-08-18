@@ -265,7 +265,7 @@ mod tests {
     #[tokio::test]
     async fn the_beat_tally_survives_a_reconnect() {
         let store = Arc::new(InMemorySessions::new());
-        let memory = Arc::new(InMemoryMemory::new());
+        let memory = Arc::new(InMemoryMemory::booted());
         let first = connection(memory.clone(), store.clone());
         make_bot(&first, "gamma").await;
         let sid = booted(&first, "gamma").await;
@@ -317,7 +317,7 @@ mod tests {
     #[tokio::test]
     async fn a_hand_edited_beat_is_left_alone_and_the_class_starts_a_fresh_tally() {
         let store = Arc::new(InMemorySessions::new());
-        let memory = Arc::new(InMemoryMemory::new());
+        let memory = Arc::new(InMemoryMemory::booted());
         let first = connection(memory.clone(), store.clone());
         make_bot(&first, "gamma").await;
         let sid = booted(&first, "gamma").await;

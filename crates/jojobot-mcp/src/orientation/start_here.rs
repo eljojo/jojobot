@@ -615,7 +615,7 @@ mod tests {
     /// on a half-configured server still deserves the map.
     #[tokio::test]
     async fn start_here_survives_a_world_that_is_down() {
-        let out = handler_with_mailboxes_down(Arc::new(InMemoryMemory::new()))
+        let out = handler_with_mailboxes_down(Arc::new(InMemoryMemory::booted()))
             .start_here(Parameters(OrientArgs {
                 bot: None,
                 brief: None,

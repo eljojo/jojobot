@@ -2693,14 +2693,14 @@ mod tests {
     /// succeeds only if a subsequent recall returns the fact.
     #[tokio::test]
     async fn capture_reads_back_against_the_fake() {
-        contract::capture_reads_back(&InMemoryMemory::new()).await;
+        contract::capture_reads_back(&InMemoryMemory::booted()).await;
     }
 
     /// The full behavioural contract holds for the fake — the same suite the
     /// gated integration test runs against real Outline.
     #[tokio::test]
     async fn fake_satisfies_the_contract() {
-        contract::run_all(&InMemoryMemory::new()).await;
+        contract::run_all(&InMemoryMemory::booted()).await;
     }
 
     #[test]
@@ -2711,6 +2711,9 @@ mod tests {
 
     #[test]
     fn validate_subject_accepts_ids_and_rejects_adversarial_ones() {
+        // **The set is this case's subject, not its setup.** What makes an
+        // adversarial id adversarial is that its kind half names no kind the
+        // set holds, so the refusals below are statements about the loaded set.
         crate::memory::kinds::load_shipped();
         assert!(validate_subject(&EntityId::person("alpha")).is_ok());
         assert!(validate_subject(&EntityId("project:jojobot-server".into())).is_ok());
@@ -2735,6 +2738,9 @@ mod tests {
     /// parses — a token nobody declared can never enter the store.
     #[test]
     fn the_shipped_kinds_round_trip_and_the_set_is_closed() {
+        // **The set is this case's subject, not its setup.** The case walks the
+        // shipped tokens and then asserts the set holds nothing else, so what
+        // is loaded is the whole content of both assertions.
         crate::memory::kinds::load_shipped();
         let all = [
             (EntityKind::PERSON, "person"),
@@ -2772,6 +2778,9 @@ mod tests {
     /// need no per-kind branch to carry it.
     #[test]
     fn a_bot_handle_is_an_ordinary_entity_id() {
+        // **The set is this case's subject, not its setup.** The claim is that
+        // `bot` sits in the set beside the other kinds and is read the same
+        // way, so what is loaded is the thing being asserted.
         crate::memory::kinds::load_shipped();
         let id = EntityId::new(EntityKind::BOT, "otto");
         assert_eq!(id.as_str(), "bot:otto");
@@ -2785,6 +2794,9 @@ mod tests {
     /// what lets the guard compare slugs and the codec stamp a kind.
     #[test]
     fn an_id_splits_into_its_kind_and_slug() {
+        // **The set is this case's subject, not its setup.** The kind half of
+        // the split is answered from the set, so what comes back is a read of
+        // it rather than of the string.
         crate::memory::kinds::load_shipped();
         let id = EntityId::new(EntityKind::PROJECT, "jojobot-server");
         assert_eq!(id.as_str(), "project:jojobot-server");
@@ -2798,6 +2810,9 @@ mod tests {
     /// missing kind, an underscore, or a second colon is not an entity id.
     #[test]
     fn validate_subject_enforces_the_kind_slug_grammar() {
+        // **The set is this case's subject, not its setup.** The grammar's
+        // first half is "a kind", and only the set can say whether a token is
+        // one.
         crate::memory::kinds::load_shipped();
         for good in [
             "person:alpha",
@@ -2829,7 +2844,10 @@ mod tests {
     /// `update_fact` targets — round-trips, and a malformed one is rejected.
     #[test]
     fn a_fact_address_round_trips_through_its_wire_form() {
-        crate::memory::kinds::load_shipped();
+        // **This case runs in a booted process.** It parses a handle and asserts
+        // about something else, so the set is setup — and setup comes from
+        // standing a store up, filled from what that store holds.
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
         let addr = FactAddress::new(EntityId::person("alpha"), FactId("f3".into()));
         assert_eq!(addr.to_string(), "person:alpha#f3");
         assert_eq!(FactAddress::parse("person:alpha#f3").unwrap(), addr);
@@ -2916,7 +2934,10 @@ mod tests {
     /// `an_untyped_edge_is_walkable_like_any_other` holds it to.
     #[test]
     fn the_untyped_shape_is_its_own_shape_and_never_about() {
-        crate::memory::kinds::load_shipped();
+        // **This case runs in a booted process.** It parses a handle and asserts
+        // about something else, so the set is setup — and setup comes from
+        // standing a store up, filled from what that store holds.
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
         assert_eq!(EdgeShape::Connection.as_token(), "connection");
         assert_eq!(
             EdgeShape::from_token("connection"),
@@ -2953,6 +2974,8 @@ mod tests {
     /// is refused before anything is written.
     #[test]
     fn an_edge_object_must_be_the_kind_its_shape_requires() {
+        // **The set is this case's subject, not its setup.** The kind of the
+        // object is what this refuses on, read from the set.
         crate::memory::kinds::load_shipped();
         let ok = [
             (EdgeShape::Location, "place:north-trail"),

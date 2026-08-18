@@ -391,7 +391,7 @@ mod tests {
         let jojobot = Jojobot::new(
             Arc::new(DownMemory(
                 Down::TypeRoster,
-                Arc::new(InMemoryMemory::new()),
+                Arc::new(InMemoryMemory::booted()),
             )),
             Arc::new(SpySearch::default()),
             Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),

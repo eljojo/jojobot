@@ -248,7 +248,7 @@ mod tests {
     /// regression.
     #[tokio::test]
     async fn an_unreadable_entity_index_no_longer_hides_who_drains_what() {
-        let memory = Arc::new(InMemoryMemory::new());
+        let memory = Arc::new(InMemoryMemory::booted());
         let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
         let seeded = Jojobot::new(
             memory.clone(),
@@ -740,7 +740,7 @@ mod tests {
     async fn a_boot_survives_a_world_that_is_down_exactly_as_an_anonymous_one_does() {
         // Stood up while both worlds are up — a claim that cannot be screened
         // is refused, so this bot could not have been created below.
-        let memory = Arc::new(InMemoryMemory::new());
+        let memory = Arc::new(InMemoryMemory::booted());
         let healthy = Jojobot::new(
             memory.clone(),
             Arc::new(SpySearch::default()),

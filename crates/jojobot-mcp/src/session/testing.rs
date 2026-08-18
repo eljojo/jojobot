@@ -88,7 +88,7 @@ pub(crate) async fn abandoned_run(
 pub(crate) fn with_sessions_port_and_memory(
     sessions: Arc<dyn Sessions>,
 ) -> (Jojobot, Arc<InMemoryMemory>) {
-    let memory = Arc::new(InMemoryMemory::new());
+    let memory = Arc::new(InMemoryMemory::booted());
     let jojobot = Jojobot::new(
         memory.clone(),
         Arc::new(SpySearch::default()),
@@ -101,7 +101,7 @@ pub(crate) fn with_sessions_port_and_memory(
 
 /// A handler over a session store the test still holds a typed handle to.
 pub(crate) fn with_sessions(sessions: Arc<InMemorySessions>) -> Jojobot {
-    connection(Arc::new(InMemoryMemory::new()), sessions)
+    connection(Arc::new(InMemoryMemory::booted()), sessions)
 }
 
 /// A second connection to the same worlds — what a reconnect or a device hop
@@ -245,7 +245,7 @@ pub(crate) struct RefusingClose {
 /// `gamma` hands back — the fixture both wrap-retry specs start from.
 pub(crate) async fn refusing_close() -> (Jojobot, Arc<RefusingClose>, Arc<InMemoryMemory>, String) {
     let store = Arc::new(RefusingClose::new());
-    let memory = Arc::new(InMemoryMemory::new());
+    let memory = Arc::new(InMemoryMemory::booted());
     let jojobot = Jojobot::new(
         memory.clone(),
         Arc::new(SpySearch::default()),
@@ -364,7 +364,7 @@ pub(crate) struct Yielding(pub(crate) Arc<InMemorySessions>);
 /// A handler whose session store yields at every call — see [`Yielding`].
 pub(crate) fn racing(store: Arc<InMemorySessions>) -> Jojobot {
     Jojobot::new(
-        Arc::new(InMemoryMemory::new()),
+        Arc::new(InMemoryMemory::booted()),
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(Yielding(store)),
@@ -380,7 +380,7 @@ pub(crate) fn mailbox_state_abandoned() -> SessionState {
 impl NoAffinity {
     pub(crate) fn new() -> Self {
         NoAffinity {
-            memory: Arc::new(InMemoryMemory::new()),
+            memory: Arc::new(InMemoryMemory::booted()),
             sessions: Arc::new(InMemorySessions::new()),
             mailboxes: Arc::new(InMemoryMailboxes::knowing_any_owner()),
             registry: crate::harness::seeded_registry(),

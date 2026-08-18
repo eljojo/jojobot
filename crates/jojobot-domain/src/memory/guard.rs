@@ -510,11 +510,11 @@ mod tests {
     use super::*;
 
     fn entity(id: &str, name: &str, source: &str) -> Entity {
-        // **The fixture seeds the set it needs.** Reading a handle asks the
-        // kinds this process loaded, and a unit test loads nothing — so a case
-        // that builds an entity must say so itself rather than passing because
-        // a case beside it happened to run first.
-        crate::memory::kinds::load_shipped();
+        // **The fixture stands a store up, because the set is setup here.**
+        // Reading a handle asks the kinds this process loaded, and no case
+        // behind this fixture asserts anything about the set — so the set
+        // arrives the way a boot delivers it, from what a store holds.
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
         let id = EntityId(id.into());
         Entity {
             kind: id.kind().expect("test ids are well-formed"),
@@ -763,7 +763,10 @@ mod tests {
     /// threshold that blocks nothing each satisfy half of this on their own.
     #[test]
     fn the_two_channels_catch_typos_and_containment_and_leave_the_rest() {
-        crate::memory::kinds::load_shipped();
+        // **This case runs in a booted process.** It parses a handle and asserts
+        // about something else, so the set is setup — and setup comes from
+        // standing a store up, filled from what that store holds.
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
         // (existing handle, its name, incoming handle, its name, blocked)
         const CASES: &[(&str, &str, &str, &str, bool)] = &[
             // Typos inside the budget: caught, which is what it is for.

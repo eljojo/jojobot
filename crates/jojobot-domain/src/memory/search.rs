@@ -640,7 +640,10 @@ mod tests {
     /// "which people are in Shelbyville" carry no keyword.
     #[test]
     fn a_structural_filter_alone_is_a_valid_query() {
-        crate::memory::kinds::load_shipped();
+        // **This case runs in a booted process.** It parses a handle and asserts
+        // about something else, so the set is setup — and setup comes from
+        // standing a store up, filled from what that store holds.
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
         let superseded = SearchQuery {
             status: Some(FactStatus::Superseded),
             ..Default::default()
@@ -729,6 +732,8 @@ mod tests {
     /// filter has to come back as their mistake.
     #[test]
     fn an_edge_filter_whose_object_is_wrong_for_its_shape_is_refused() {
+        // **The set is this case's subject, not its setup.** The object's kind
+        // is what makes the filter wrong, and the set answers it.
         crate::memory::kinds::load_shipped();
         let impossible = SearchQuery {
             edge: Some(EdgeFilter {
@@ -767,10 +772,13 @@ mod tests {
     /// point is only that it stops being invisible.
     #[test]
     fn a_subject_that_names_no_known_entity_is_counted_once() {
+        // **This case runs in a booted process.** It parses a handle and asserts
+        // about something else, so the set is setup — and setup comes from
+        // standing a store up, filled from what that store holds.
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
         use crate::memory::{Boot, FactId};
         use jiff::civil::date;
 
-        crate::memory::kinds::load_shipped();
         let entity = |id: &str| Entity {
             id: EntityId(id.into()),
             kind: EntityId(id.into())
@@ -838,7 +846,10 @@ mod tests {
     /// *nothing*) had nothing to say about it.
     #[test]
     fn a_subject_naming_another_existing_entity_is_counted_apart_from_an_orphan() {
-        crate::memory::kinds::load_shipped();
+        // **This case runs in a booted process.** It parses a handle and asserts
+        // about something else, so the set is setup — and setup comes from
+        // standing a store up, filled from what that store holds.
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
         use crate::memory::{Boot, FactId};
         use jiff::civil::date;
 

@@ -59,7 +59,7 @@ pub(crate) fn writing_as(jojobot: &Jojobot) -> String {
 
 pub(crate) fn handler() -> Jojobot {
     Jojobot::new(
-        Arc::new(InMemoryMemory::new()),
+        Arc::new(InMemoryMemory::booted()),
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
@@ -70,7 +70,7 @@ pub(crate) fn handler() -> Jojobot {
 /// A handler whose search port is a spy the test keeps a handle on.
 pub(crate) fn handler_with(spy: Arc<SpySearch>) -> Jojobot {
     Jojobot::new(
-        Arc::new(InMemoryMemory::new()),
+        Arc::new(InMemoryMemory::booted()),
         spy,
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),

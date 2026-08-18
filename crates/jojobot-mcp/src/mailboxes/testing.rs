@@ -21,7 +21,7 @@ pub(crate) fn mailbox_handler() -> Jojobot {
 /// for the states only the store can put itself into.
 pub(crate) fn with_mailboxes(mailboxes: Arc<InMemoryMailboxes>) -> Jojobot {
     Jojobot::new(
-        Arc::new(InMemoryMemory::new()),
+        Arc::new(InMemoryMemory::booted()),
         Arc::new(SpySearch::default()),
         mailboxes,
         Arc::new(InMemorySessions::new()),
@@ -183,7 +183,7 @@ pub(crate) fn counting_handler() -> (Jojobot, Arc<CountingMailboxes>) {
         listings: std::sync::atomic::AtomicUsize::new(0),
     });
     let jojobot = Jojobot::new(
-        Arc::new(InMemoryMemory::new()),
+        Arc::new(InMemoryMemory::booted()),
         Arc::new(SpySearch::default()),
         mailboxes.clone(),
         Arc::new(InMemorySessions::new()),

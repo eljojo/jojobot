@@ -206,7 +206,7 @@ mod tests {
     async fn a_journal_whose_entry_fails_says_it_cannot_tell() {
         let store = Arc::new(RefusingAppend(InMemorySessions::new()));
         let jojobot = Jojobot::new(
-            Arc::new(crate::memory::testing::InMemoryMemory::new()),
+            Arc::new(crate::memory::testing::InMemoryMemory::booted()),
             Arc::new(crate::memory::testing::SpySearch::default()),
             Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
             store.clone(),
@@ -329,7 +329,7 @@ mod tests {
     async fn a_journal_whose_focus_fails_says_the_entry_landed() {
         let store = Arc::new(RefusingFocus(InMemorySessions::new()));
         let jojobot = Jojobot::new(
-            Arc::new(crate::memory::testing::InMemoryMemory::new()),
+            Arc::new(crate::memory::testing::InMemoryMemory::booted()),
             Arc::new(crate::memory::testing::SpySearch::default()),
             Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
             store.clone(),

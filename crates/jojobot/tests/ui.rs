@@ -76,7 +76,7 @@ fn as_text(raw: &str) -> String {
 /// Two roots and one child under the first, so a page can be wrong in a way a
 /// single entity would hide.
 async fn seeded_memory() -> Arc<dyn Memory> {
-    let store = Arc::new(InMemoryMemory::new());
+    let store = Arc::new(InMemoryMemory::booted());
     seed(store.as_ref()).await;
     store
 }
@@ -88,7 +88,7 @@ async fn seeded_memory() -> Arc<dyn Memory> {
 /// in the real store alike, so a record holding one came from a hand edit
 /// outside jojobot rather than from a verb.
 async fn memory_with_an_orphan() -> Arc<dyn Memory> {
-    let store = Arc::new(InMemoryMemory::new());
+    let store = Arc::new(InMemoryMemory::booted());
     seed(store.as_ref()).await;
     store.past_the_guard(Entity {
         id: EntityId::new(EntityKind::THING, "sigma"),

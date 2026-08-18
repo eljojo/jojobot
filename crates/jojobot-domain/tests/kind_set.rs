@@ -142,6 +142,80 @@ fn the_seed_writes_before_it_reads() {
     kinds::load_shipped();
 }
 
+/// **Standing a store up is not booting a process, and only one of the two
+/// fills the set.**
+///
+/// The double's constructor used to load the set as a side effect of being
+/// built, so every case in a binary got the set from whichever case happened to
+/// build a fake first. That is the hazard this whole file exists for, one layer
+/// down: a case could be green because of another case.
+///
+/// **Both halves, and the negative alone proves nothing.** Standing a store up
+/// and finding the set still empty is satisfied by a build where nothing ever
+/// loads it; booting one and finding a handle parses is satisfied by the old
+/// build that loaded on construction. Together they say which step did it.
+///
+/// It drives the future on a runtime of its own rather than being an async
+/// test, for the reason the seed case above does: the turn is a plain lock and
+/// holding one across an await is the shape that deadlocks a runtime.
+#[test]
+fn a_store_stood_up_loads_nothing_and_a_booted_one_loads_what_it_holds() {
+    let _turn = in_turn();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a runtime for this one case");
+
+    kinds::load::<[&str; 0], &str>([]);
+    let _stood_up = jojobot_domain::memory::testing::InMemoryMemory::new();
+    assert!(
+        !kinds::known("person"),
+        "building a store must not fill the set this process parses against — a \
+         constructor that does it makes every case beside it depend on the order \
+         they ran",
+    );
+
+    let _booted = jojobot_domain::memory::testing::InMemoryMemory::booted();
+    assert!(
+        kinds::known("person"),
+        "booting one does fill it, which is the step a case asks for by asking for a \
+         booted store",
+    );
+    assert_eq!(
+        EntityId::person("kind-set-reader").kind(),
+        Some(EntityKind::PERSON),
+        "and the set is filled well enough to parse a handle, which is what a case \
+         needs it for",
+    );
+
+    // **From the store's answer, not from the constant.** A kind this store
+    // holds and the shipped list does not is known once the store boots, which
+    // no build reading `SHIPPED` could answer for. It is asked of a store the
+    // case wrote to BEFORE the boot, because a store built and booted in one
+    // call holds exactly the constant and can never tell the two apart.
+    let holds_a_gadget = jojobot_domain::memory::testing::InMemoryMemory::new();
+    runtime
+        .block_on(jojobot_domain::memory::Memory::declare_kind(
+            &holds_a_gadget,
+            "gadget",
+            jojobot_domain::memory::types::Origin::Declared,
+            Vec::new(),
+        ))
+        .expect("a caller declares a kind");
+    kinds::load::<[&str; 0], &str>([]);
+    holds_a_gadget.boot();
+    assert!(
+        kinds::known("gadget"),
+        "what is loaded is what the store answers, so a kind nobody compiled is \
+         parsed too",
+    );
+    assert!(
+        kinds::known("person"),
+        "…and the shipped rows the same store holds are loaded beside it",
+    );
+
+    kinds::load_shipped();
+}
+
 /// **A refusal says which of the three things is wrong, and none of them
 /// recites a hardcoded list of kinds.**
 ///

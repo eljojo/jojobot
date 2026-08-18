@@ -721,7 +721,10 @@ mod tests {
     /// means nothing if everything matches everything.
     #[test]
     fn a_record_answers_a_type_it_never_declared() {
-        crate::memory::kinds::load_shipped();
+        // **This case runs in a booted process.** It parses a handle and asserts
+        // about something else, so the set is setup — and setup comes from
+        // standing a store up, filled from what that store holds.
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
         let carried = record(&[
             ("starts", "2026-08-10"),
             ("seats", "4"),
@@ -774,7 +777,10 @@ mod tests {
     /// have gone by.
     #[test]
     fn a_value_that_fails_its_type_is_flagged_and_does_not_complete_the_type() {
-        crate::memory::kinds::load_shipped();
+        // **This case runs in a booted process.** It parses a handle and asserts
+        // about something else, so the set is setup — and setup comes from
+        // standing a store up, filled from what that store holds.
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
         let found = booking()
             .matched_by(&record(&[
                 ("starts", "next tuesday"),
@@ -813,6 +819,12 @@ mod tests {
     /// good value would pass on a build where everything holds everything.
     #[test]
     fn each_value_type_accepts_its_own_and_refuses_the_rest() {
+        // **The set is this case's subject, not its setup, and it is pinned on
+        // both sides of the set on purpose.** `Reference` decides whether a
+        // value is a handle by asking it for its kind, so against an unloaded
+        // set it reports a well-formed handle as not a reference — an answer
+        // that is wrong rather than absent, which nothing else here would
+        // catch.
         crate::memory::kinds::load_shipped();
         for (holds, good, bad) in [
             (ValueType::Number, "4", "four"),
@@ -838,6 +850,9 @@ mod tests {
     /// kind nobody asked for.
     #[test]
     fn a_reference_declared_for_one_kind_refuses_a_handle_of_another() {
+        // **The set is this case's subject, not its setup.** Which kind a
+        // handle names is the thing being refused on, and the set is what
+        // answers it.
         crate::memory::kinds::load_shipped();
         let venue = Field::pointing_at("venue", EntityKind::PLACE);
         assert!(
@@ -899,7 +914,10 @@ mod tests {
     /// would accept nothing at all.
     #[test]
     fn a_declaration_survives_the_token_it_is_written_as() {
-        crate::memory::kinds::load_shipped();
+        // **This case runs in a booted process.** It parses a handle and asserts
+        // about something else, so the set is setup — and setup comes from
+        // standing a store up, filled from what that store holds.
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
         for field in [
             Field::new("starts", ValueType::Date),
             Field::new("venue", ValueType::Reference),
