@@ -190,6 +190,13 @@ mod tests {
             async fn recall(&self, _: &EntityId) -> Result<Vec<Fact>, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
+            async fn history(
+                &self,
+                _: &EntityId,
+                _: &str,
+            ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, MemoryError> {
+                unimplemented!("the owner index only reads the index")
+            }
             async fn update_fact(
                 &self,
                 _: &FactAddress,

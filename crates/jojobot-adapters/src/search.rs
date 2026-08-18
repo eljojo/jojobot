@@ -41,7 +41,7 @@ use std::collections::BTreeMap;
 
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
-    Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, folded_fields,
+    FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, folded_fields,
     guard::{self, MatchReason},
     search::{self, Behind, Coverage, DocScan, EntityRef, Hit, Search, SearchQuery},
     types::DeclaredType,
@@ -1752,6 +1752,13 @@ impl Memory for IndexedMemory {
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         self.inner.recall(subject).await
+    }
+
+    /// **Straight through, and it does not touch the index.** The writes behind
+    /// a key are the store's own record; the index projects current truth and
+    /// holds nothing a history is read from.
+    async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
+        self.inner.history(entity, key).await
     }
 
     async fn update_fact(
@@ -4041,6 +4048,9 @@ mod tests {
             Ok(Guarded::Written(entity.clone()))
         }
         async fn recall(&self, _: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+            unimplemented!("this double only scans")
+        }
+        async fn history(&self, _: &EntityId, _: &str) -> Result<Vec<FieldWrite>, MemoryError> {
             unimplemented!("this double only scans")
         }
         /// Replace the prose on the page that declares this entity. **No

@@ -1125,6 +1125,32 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     Ok(())
 }
 
+/// **The writes an edit makes on a record's keys**, in the order
+/// [`apply_fact_patch`] applies them: a cleared key carries no value, and a set
+/// key carries what it puts there.
+///
+/// It exists so that what the substrate records and what the record reads back
+/// are derived from one place. The keys are trimmed here because the patch
+/// trims them there, and a substrate holding `" cost"` under a record reading
+/// back `cost` is a history nobody can ask for.
+///
+/// A patch that names no key makes no write. An edit to a claim's content is not
+/// a write of a key, and a history that gained an entry every time a sentence
+/// was fixed would count sentences.
+pub fn writes_of(patch: &FactPatch) -> Vec<(String, Option<String>)> {
+    patch
+        .clear_fields
+        .iter()
+        .map(|key| (key.trim().to_string(), None))
+        .chain(
+            patch
+                .fields
+                .iter()
+                .map(|(key, value)| (key.trim().to_string(), Some(value.clone()))),
+        )
+        .collect()
+}
+
 /// The write guard's verdict on a metadata edit — the gate every adapter runs
 /// before [`apply_entity_patch`], so neither can drift into its own idea of when
 /// a patch is suspicious.
@@ -1490,6 +1516,39 @@ impl Fact {
     }
 }
 
+/// **One write of one key on one thing — the substrate a field read projects
+/// from.**
+///
+/// A key is written a piece at a time: every capture carrying it and every edit
+/// reaching it is a write of its own, kept. The current value of the key is the
+/// newest of them, which is what an ordinary read answers with; the writes
+/// themselves are what [`Memory::history`] answers with, and how many there are
+/// is the answer to "how many times".
+///
+/// **The address is the thing and the key**, never the record's id. A hundred
+/// sittings that each record one donut are a hundred records, so a history
+/// hanging off a record's id would be a hundred histories of length one and
+/// could count nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldWrite {
+    /// **What this write put there, and `None` says it took the key off.**
+    ///
+    /// A clear is a write like any other: nothing is removed from the
+    /// substrate, so the key stops being current while the writes that put it
+    /// there stay readable.
+    pub value: Option<String>,
+    /// The record that carried the write — its address, so a reader can go and
+    /// read what else that sitting said.
+    pub fact: FactAddress,
+    /// That record's own date: **when**, for a caller counting occurrences over
+    /// time.
+    pub date: Date,
+    /// That record's status. A write inside a record somebody took back still
+    /// happened, so it is reported rather than dropped — and reported as
+    /// retracted, so a count can leave it out.
+    pub status: FactStatus,
+}
+
 /// **What a retraction leaves behind: two rows, and both come back.**
 ///
 /// The marked record and the account of why it was marked are one answer,
@@ -1788,6 +1847,21 @@ pub trait Memory: Send + Sync {
         address: &FactAddress,
         patch: FactPatch,
     ) -> Result<Guarded<Fact>, MemoryError>;
+
+    /// **Every write of one key on one thing, oldest first** — what the
+    /// ordinary read projects away.
+    ///
+    /// A read answers with current truth: one value per key, the newest write.
+    /// This answers with the writes behind it, so the same data serves both
+    /// questions — what the key holds now, and every time it was written. The
+    /// count is the answer to "how many times", which is why the address is the
+    /// thing and the key ([`FieldWrite`]) rather than a record's id.
+    ///
+    /// A key nobody has written is an empty list, not a miss: the thing exists
+    /// and nothing was recorded under that key. An entity that does not exist
+    /// is [`MemoryError::UnknownEntity`], exactly as [`recall`](Memory::recall)
+    /// answers one.
+    async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError>;
 
     /// **Take back an event** — one way, never reversed, and still a write.
     ///

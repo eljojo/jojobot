@@ -112,8 +112,8 @@ Shipped and live:
   claim laundres it into one.
 - **The graph query** — `recall` is the precise lookup and `search` is the
   breadth. `recall` selects objects (a handle · a kind · a declared type · a
-  key and its value), says what of each comes back (facts · prose), and walks
-  to a depth in either direction. **Two kinds of link:** an **edge**, followed
+  key and its value), says what of each comes back (facts · prose · one key's
+  history), and walks to a depth in either direction. **Two kinds of link:** an **edge**, followed
   by one of the five shapes; and a **relation**, a key some type declared to
   hold a reference, followed by that key's own name. **A relation is
   key-scoped** — it reaches everything using that key, so *which of those are
@@ -122,6 +122,13 @@ Shipped and live:
   a bare fact list, so a caller does not branch on which question it asked. It
   reads the store directly rather than the search index, which is what makes it
   the way past an index that cannot scan.
+- **Edit-in-place is the surface; append-only is the substrate.** A write to a
+  key appends rather than overwriting, and a read projects the newest write of
+  each key — so a caller edits a claim and reads it back changed, exactly as
+  before. **The same rows answer both questions:** what a key holds now, and
+  every time it was written. That is why a count of how many times something
+  happened and a list of the occasions are one body of data rather than two,
+  and it is what the next several capabilities stand on.
 - **Fields, and what declaring a type buys** — **a record carries fields**: a
   flat bag of key/value pairs beside the claim, stored and never interpreted,
   where a key the caller invents is kept as written. **A thing's fields are the

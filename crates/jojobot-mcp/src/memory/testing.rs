@@ -126,6 +126,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
         prose: None,
         follow: None,
         sid: None,
+        history: None,
     }
 }
 
@@ -306,6 +307,13 @@ impl Memory for DownMemory {
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         self.1.recall(subject).await
+    }
+    async fn history(
+        &self,
+        entity: &EntityId,
+        key: &str,
+    ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, MemoryError> {
+        self.1.history(entity, key).await
     }
     async fn update_fact(
         &self,

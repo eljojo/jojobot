@@ -31,12 +31,13 @@ use async_trait::async_trait;
 use jiff::civil::Date;
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
-    FactPatch, FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance,
-    Retraction, Standing, apply_entity_patch, apply_fact_patch, guard, normalize_content,
-    normalize_details, normalize_prose, retraction_of, screen_entity_patch, search, standing_of,
+    FactPatch, FactStatus, FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact,
+    Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch, guard,
+    normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
+    search, standing_of,
     types::{DeclaredType, Field, Origin, ValueType, guard_replacement, validate_type},
     validate_content, validate_details, validate_edge, validate_entity, validate_fields,
-    validate_prose, validate_subject,
+    validate_prose, validate_subject, writes_of,
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
@@ -141,18 +142,7 @@ impl DoltMemory {
         for row in rows {
             let entity = EntityId(row.try_get::<String, _>("entity").map_err(store)?);
             let id = FactId(row.try_get::<String, _>("id").map_err(store)?);
-            let fields = sqlx::query(
-                "SELECT `key`, value FROM fact_event_metadata
-                 WHERE fact_home = ? AND fact_id = ? ORDER BY `key`",
-            )
-            .bind(entity.as_str())
-            .bind(id.as_str())
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(store)?
-            .iter()
-            .map(|r| (r.get::<String, _>("key"), r.get::<String, _>("value")))
-            .collect();
+            let fields = Self::fields_of(tx, &entity, &id).await?;
             let refs = sqlx::query(
                 "SELECT entity FROM fact_event_ref
                  WHERE fact_home = ? AND fact_id = ? ORDER BY ordinal",
@@ -170,8 +160,81 @@ impl DoltMemory {
         Ok(facts)
     }
 
-    /// Write one whole fact — the row and the two tables under it — replacing
+    /// **A record's fields, projected from the writes it made.**
+    ///
+    /// One value per key: the newest write of that key inside this record. A
+    /// key whose newest write here took it off is not on the record — the write
+    /// stays where it is, and the key stops being current.
+    async fn fields_of(
+        tx: &mut Transaction<'_, MySql>,
+        entity: &EntityId,
+        fact: &FactId,
+    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        let rows = sqlx::query(
+            "SELECT `key`, value FROM field_write
+             WHERE entity = ? AND fact_id = ? ORDER BY `key`, ordinal",
+        )
+        .bind(entity.as_str())
+        .bind(fact.as_str())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let mut fields = std::collections::BTreeMap::new();
+        for row in &rows {
+            let key: String = row.try_get("key").map_err(store)?;
+            match row.try_get::<Option<String>, _>("value").map_err(store)? {
+                Some(value) => fields.insert(key, value),
+                None => fields.remove(&key),
+            };
+        }
+        Ok(fields)
+    }
+
+    /// **Append what a write said about a record's keys**, each row taking the
+    /// next ordinal for its own (thing, key).
+    ///
+    /// The ordinal is counted inside the transaction that writes it, so two
+    /// writes of one key cannot come to share a place in its history. A value
+    /// of `None` is a clear, and it is stored rather than acted on: nothing is
+    /// removed from this table.
+    async fn append_writes(
+        tx: &mut Transaction<'_, MySql>,
+        entity: &EntityId,
+        fact: &FactId,
+        wrote: Vec<(String, Option<String>)>,
+    ) -> Result<(), MemoryError> {
+        for (key, value) in wrote {
+            let highest: Option<i64> = sqlx::query_scalar(
+                "SELECT MAX(ordinal) FROM field_write WHERE entity = ? AND `key` = ?",
+            )
+            .bind(entity.as_str())
+            .bind(&key)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(store)?;
+            sqlx::query(
+                "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
+                 VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(entity.as_str())
+            .bind(&key)
+            .bind(highest.unwrap_or(0) + 1)
+            .bind(value.as_deref())
+            .bind(fact.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(store)?;
+        }
+        Ok(())
+    }
+
+    /// Write one whole fact — the row and the references under it — replacing
     /// whatever was there under the same address.
+    ///
+    /// **The fields are not written here.** They are writes, and a write is
+    /// appended by the verb that made it: this rewrites the claim, which is
+    /// what edit-in-place means at the surface, and the substrate under the
+    /// keys is untouched by it.
     ///
     /// **The `event_kind` column is not written.** It held the free-text label
     /// that said what class a record was, and there are no classes: a record is
@@ -203,29 +266,12 @@ impl DoltMemory {
         .await
         .map_err(store)?;
 
-        for table in ["fact_event_metadata", "fact_event_ref"] {
-            sqlx::query(&format!(
-                "DELETE FROM `{table}` WHERE fact_home = ? AND fact_id = ?"
-            ))
+        sqlx::query("DELETE FROM fact_event_ref WHERE fact_home = ? AND fact_id = ?")
             .bind(fact.home.as_str())
             .bind(fact.id.as_str())
             .execute(&mut **tx)
             .await
             .map_err(store)?;
-        }
-        for (key, value) in &fact.fields {
-            sqlx::query(
-                "INSERT INTO fact_event_metadata (fact_home, fact_id, `key`, value)
-                 VALUES (?, ?, ?, ?)",
-            )
-            .bind(fact.home.as_str())
-            .bind(fact.id.as_str())
-            .bind(key)
-            .bind(value)
-            .execute(&mut **tx)
-            .await
-            .map_err(store)?;
-        }
         for (ordinal, object) in fact.refs.iter().enumerate() {
             sqlx::query(
                 "INSERT INTO fact_event_ref (fact_home, fact_id, ordinal, entity)
@@ -281,6 +327,16 @@ impl DoltMemory {
             .map(|f| f.address().to_string())
             .collect())
     }
+}
+
+/// **The writes a new record makes: every key it carries.** A capture and a
+/// retraction both land a record whose keys have never been written before, so
+/// each one is the first write of its key on that thing.
+fn written_keys(fact: &Fact) -> Vec<(String, Option<String>)> {
+    fact.fields
+        .iter()
+        .map(|(key, value)| (key.clone(), Some(value.clone())))
+        .collect()
 }
 
 /// The columns a fact reads back from, in one place so every read takes the
@@ -573,6 +629,9 @@ impl Memory for DoltMemory {
             derived_from: fact.derived_from,
         };
         Self::write_fact(&mut tx, &stored).await?;
+        // Every key this record carries is a write of its own, appended to the
+        // history of that key on this thing.
+        Self::append_writes(&mut tx, &stored.home, &stored.id, written_keys(&stored)).await?;
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(stored))
     }
@@ -591,6 +650,48 @@ impl Memory for DoltMemory {
         let facts = Self::facts_of(&mut tx, subject).await?;
         tx.commit().await.map_err(store)?;
         Ok(facts)
+    }
+
+    async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let index = Self::index(&mut tx).await?;
+        // An unknown entity is a miss with its near candidates, exactly as a
+        // recall of one is: a key nobody wrote and a handle nobody created are
+        // different answers with different repairs.
+        if !index.iter().any(|e| &e.id == entity) {
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        }
+        let rows = sqlx::query(
+            "SELECT value, fact_id FROM field_write
+             WHERE entity = ? AND `key` = ? ORDER BY ordinal",
+        )
+        .bind(entity.as_str())
+        .bind(key)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        // The record a write arrived in says when it happened and what became
+        // of it, so the claims are read alongside.
+        let facts = Self::facts_of(&mut tx, entity).await?;
+        tx.commit().await.map_err(store)?;
+
+        let mut history = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let carried = FactId(row.try_get::<String, _>("fact_id").map_err(store)?);
+            let Some(fact) = facts.iter().find(|f| f.id == carried) else {
+                continue;
+            };
+            history.push(FieldWrite {
+                value: row.try_get::<Option<String>, _>("value").map_err(store)?,
+                fact: fact.address(),
+                date: fact.date,
+                status: fact.status,
+            });
+        }
+        Ok(history)
     }
 
     async fn update_fact(
@@ -639,8 +740,14 @@ impl Memory for DoltMemory {
         }
         apply_fact_patch(&mut fact, &patch)?;
         Self::write_fact(&mut tx, &fact).await?;
+        // **The edit appends.** The record reads back changed — that is the
+        // surface — and the value it replaced stays where it was written.
+        Self::append_writes(&mut tx, &fact.home, &fact.id, writes_of(&patch)).await?;
+        // Read back from the substrate rather than from what the patch
+        // believed, so the answer is the projection a later read will give.
+        let fields = Self::fields_of(&mut tx, &fact.home, &fact.id).await?;
         tx.commit().await.map_err(store)?;
-        Ok(Guarded::Written(fact))
+        Ok(Guarded::Written(Fact { fields, ..fact }))
     }
 
     async fn retract(
@@ -689,6 +796,10 @@ impl Memory for DoltMemory {
         };
         Self::write_fact(&mut tx, &retracted).await?;
         Self::write_fact(&mut tx, &record).await?;
+        // The account is a record like any other, and the key naming what it
+        // takes back is a write of its own. The record being taken back writes
+        // no key: what changed there is its status.
+        Self::append_writes(&mut tx, &record.home, &record.id, written_keys(&record)).await?;
         tx.commit().await.map_err(store)?;
         Ok(Retraction { retracted, record })
     }

@@ -17,8 +17,8 @@ use jiff::civil::Date;
 
 use super::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, FactStatus,
-    Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, Standing, apply_entity_patch,
-    apply_fact_patch,
+    FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, Standing,
+    apply_entity_patch, apply_fact_patch,
     guard::{self, Decision},
     normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
     search, standing_of, validate_content, validate_details, validate_edge, validate_entity,
@@ -31,7 +31,15 @@ use super::{
 #[derive(Default)]
 pub struct InMemoryMemory {
     entities: Mutex<Vec<Entity>>,
+    /// The claims. **Their fields are not here**: a claim is stored with an
+    /// empty bag and its fields are projected from [`InMemoryMemory::writes`]
+    /// on every read, exactly as the real store projects them from its own
+    /// rows. A fake that kept a second copy of the current value could pass a
+    /// case the real store fails.
     facts: Mutex<Vec<Fact>>,
+    /// **The field substrate: every write of every key, oldest first.** Nothing
+    /// is ever removed from it — a clear is a write that carries no value.
+    writes: Mutex<Vec<StoredWrite>>,
     /// The human half of each entity's doc, keyed by handle — replaced whole by
     /// `set_prose`, exactly as the real store replaces the region.
     prose: Mutex<std::collections::HashMap<EntityId, String>>,
@@ -71,6 +79,72 @@ impl InMemoryMemory {
     fn index(&self) -> Vec<Entity> {
         self.entities.lock().expect("fake mutex poisoned").clone()
     }
+
+    /// **Append what a write said about a record's keys**, each taking the next
+    /// ordinal for its own (thing, key) — never for the record.
+    ///
+    /// A value of `None` is a clear: the key stops being current and the writes
+    /// that put it there stay where they are.
+    fn append_writes<I>(&self, home: &EntityId, fact: &FactId, wrote: I)
+    where
+        I: IntoIterator<Item = (String, Option<String>)>,
+    {
+        let mut writes = self.writes.lock().expect("fake mutex poisoned");
+        for (key, value) in wrote {
+            let ordinal = writes
+                .iter()
+                .filter(|w| &w.entity == home && w.key == key)
+                .count() as u64
+                + 1;
+            writes.push(StoredWrite {
+                entity: home.clone(),
+                key,
+                ordinal,
+                value,
+                fact: fact.clone(),
+            });
+        }
+    }
+
+    /// **The record as a reader sees it: its claim, with its fields projected.**
+    ///
+    /// One value per key — the newest write of that key made by THIS record —
+    /// and a key whose newest write inside the record took it off is not there.
+    fn projected(&self, fact: &Fact) -> Fact {
+        let writes = self.writes.lock().expect("fake mutex poisoned");
+        let mut mine: Vec<&StoredWrite> = writes
+            .iter()
+            .filter(|w| w.entity == fact.home && w.fact == fact.id)
+            .collect();
+        mine.sort_by_key(|w| w.ordinal);
+        let mut fields = std::collections::BTreeMap::new();
+        for write in mine {
+            match &write.value {
+                Some(value) => fields.insert(write.key.clone(), value.clone()),
+                None => fields.remove(&write.key),
+            };
+        }
+        Fact {
+            fields,
+            ..fact.clone()
+        }
+    }
+}
+
+/// One row of the fake's field substrate — the shape the real store keeps in a
+/// table, kept here so the two cannot come to disagree about what a read
+/// projects.
+struct StoredWrite {
+    /// The thing the key was written on. With [`StoredWrite::key`] it is the
+    /// address a history is asked for.
+    entity: EntityId,
+    key: String,
+    /// Which write of this key on this thing it is, counting from one.
+    ordinal: u64,
+    /// What it put there; `None` took the key off.
+    value: Option<String>,
+    /// The record that carried it.
+    fact: FactId,
 }
 
 #[async_trait::async_trait]
@@ -239,6 +313,11 @@ impl Memory for InMemoryMemory {
         let home = fact.subject.clone();
         let existing: Vec<&Fact> = facts.iter().filter(|f| f.home == home).collect();
         let id = FactId(format!("f{}", existing.len() + 1));
+        let wrote: Vec<(String, Option<String>)> = fact
+            .fields
+            .iter()
+            .map(|(key, value)| (key.clone(), Some(value.clone())))
+            .collect();
         let stored = Fact {
             id,
             home,
@@ -255,7 +334,13 @@ impl Memory for InMemoryMemory {
             refs: fact.refs,
             derived_from: fact.derived_from,
         };
-        facts.push(stored.clone());
+        // **The claim is kept without its fields and the fields are kept as
+        // writes.** One body of data, projected on the way out.
+        facts.push(Fact {
+            fields: Default::default(),
+            ..stored.clone()
+        });
+        self.append_writes(&stored.home, &stored.id, wrote);
         Ok(Guarded::Written(stored))
     }
 
@@ -274,10 +359,45 @@ impl Memory for InMemoryMemory {
             });
         }
         let facts = self.facts.lock().expect("fake mutex poisoned");
-        Ok(facts
+        let mine: Vec<Fact> = facts
             .iter()
             .filter(|f| &f.subject == subject || &f.home == subject)
             .cloned()
+            .collect();
+        drop(facts);
+        Ok(mine.iter().map(|f| self.projected(f)).collect())
+    }
+
+    async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
+        let index = self.index();
+        if !index.iter().any(|e| &e.id == entity) {
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        }
+        // The record each write arrived in says when it happened and what
+        // became of it, so the two are read together.
+        let facts = self.facts.lock().expect("fake mutex poisoned").clone();
+        let writes = self.writes.lock().expect("fake mutex poisoned");
+        let mut mine: Vec<&StoredWrite> = writes
+            .iter()
+            .filter(|w| &w.entity == entity && w.key == key)
+            .collect();
+        mine.sort_by_key(|w| w.ordinal);
+        Ok(mine
+            .into_iter()
+            .filter_map(|write| {
+                let carried = facts
+                    .iter()
+                    .find(|f| f.home == write.entity && f.id == write.fact)?;
+                Some(FieldWrite {
+                    value: write.value.clone(),
+                    fact: carried.address(),
+                    date: carried.date,
+                    status: carried.status,
+                })
+            })
             .collect())
     }
 
@@ -338,8 +458,24 @@ impl Memory for InMemoryMemory {
                     .to_string(),
             });
         }
-        apply_fact_patch(fact, &patch)?;
-        Ok(Guarded::Written(fact.clone()))
+        // **The patch is applied to the record as it reads now**, so a set that
+        // replaces a value is validated against the value it replaces — and the
+        // claim goes back without fields, because the fields are the writes.
+        let mut edited = self.projected(fact);
+        apply_fact_patch(&mut edited, &patch)?;
+        *fact = Fact {
+            fields: Default::default(),
+            ..edited
+        };
+        let (home, id) = (fact.home.clone(), fact.id.clone());
+        drop(facts);
+        self.append_writes(&home, &id, super::writes_of(&patch));
+        let facts = self.facts.lock().expect("fake mutex poisoned");
+        let stored = facts
+            .iter()
+            .find(|f| f.home == home && f.id == id)
+            .expect("the record was just edited in place");
+        Ok(Guarded::Written(self.projected(stored)))
     }
 
     async fn retract(
@@ -374,6 +510,10 @@ impl Memory for InMemoryMemory {
                 nearest,
             });
         };
+        // **Projected before it is judged.** What a record takes back is a key
+        // it carries, so a target read without its fields would read as an
+        // ordinary claim — and a retraction would become retractable.
+        let target = self.projected(&target);
         let account = retraction_of(&target, reason, date)?;
         let standing = standing_of(&account);
 
@@ -400,11 +540,31 @@ impl Memory for InMemoryMemory {
         };
         for fact in facts.iter_mut() {
             if fact.home == address.home && fact.id == address.local {
-                *fact = retracted.clone();
+                *fact = Fact {
+                    fields: Default::default(),
+                    ..retracted.clone()
+                };
             }
         }
-        facts.push(record.clone());
-        Ok(Retraction { retracted, record })
+        // The account is a new record like any other: its own keys — the one
+        // naming what it takes back — are writes of its own.
+        facts.push(Fact {
+            fields: Default::default(),
+            ..record.clone()
+        });
+        drop(facts);
+        self.append_writes(
+            &record.home,
+            &record.id,
+            record
+                .fields
+                .iter()
+                .map(|(key, value)| (key.clone(), Some(value.clone()))),
+        );
+        Ok(Retraction {
+            retracted: self.projected(&retracted),
+            record,
+        })
     }
 
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
@@ -448,7 +608,7 @@ impl Memory for InMemoryMemory {
                     facts: facts
                         .iter()
                         .filter(|f| f.home == entity.id)
-                        .cloned()
+                        .map(|f| self.projected(f))
                         .collect(),
                     entity: Some(entity),
                 }
@@ -2619,6 +2779,234 @@ pub mod contract {
         );
     }
 
+    /// **A key written a hundred times holds one value and counts a hundred.**
+    ///
+    /// The two questions the substrate exists to answer with one body of data.
+    /// Nobody wants the hundred sittings when they ask what the count is now;
+    /// one time in a hundred they want every one of them, with its date and the
+    /// record it arrived in.
+    ///
+    /// **The address is the thing and the key.** Every sitting here is a record
+    /// of its own with an id of its own, so a history hanging off a record's id
+    /// would return a hundred histories of length one — which is the same
+    /// firehose the caller already had, and counts nothing.
+    pub async fn a_key_written_many_times_holds_one_value_and_counts<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-counted");
+        let key = "donuts_eaten";
+        let written = 100;
+        for nth in 1..=written {
+            capture(
+                store,
+                NewFact {
+                    fields: [(key.to_string(), nth.to_string())].into_iter().collect(),
+                    ..NewFact::about(subject.clone(), format!("ate one, number {nth}"), {
+                        date(2026, 7, 1)
+                    })
+                },
+            )
+            .await;
+        }
+
+        let facts = store.recall(&subject).await.expect("recall should succeed");
+        assert_eq!(
+            crate::memory::folded_fields(&facts)
+                .get(key)
+                .map(String::as_str),
+            Some(written.to_string().as_str()),
+            "the ordinary read is current truth: the newest write, and one value"
+        );
+
+        let history = store
+            .history(&subject, key)
+            .await
+            .expect("history should succeed");
+        assert_eq!(
+            history.len(),
+            written,
+            "the count of the writes IS the answer to how many times"
+        );
+        assert_eq!(
+            history.first().map(|w| w.value.as_deref()),
+            Some(Some("1")),
+            "oldest first: {:?}",
+            history.first()
+        );
+        assert_eq!(
+            history.last().map(|w| w.value.as_deref()),
+            Some(Some(written.to_string().as_str())),
+            "…and the newest last"
+        );
+        assert!(
+            history
+                .iter()
+                .all(|w| w.date == date(2026, 7, 1) && w.status == FactStatus::Active),
+            "every write says when it happened and what became of the record that carried it"
+        );
+        // Each write names the record it arrived in, and the addresses differ:
+        // that is what makes the history worth having rather than a list of
+        // values, and what proves the writes were not gathered off one row.
+        let records: std::collections::BTreeSet<String> =
+            history.iter().map(|w| w.fact.to_string()).collect();
+        assert_eq!(
+            records.len(),
+            written,
+            "each sitting is its own record and the history says which"
+        );
+    }
+
+    /// **An edit appends; the value it replaced stays readable.**
+    ///
+    /// Fix-the-source is the surface — the record reads back changed, with no
+    /// second copy beside it — and underneath, the write that put the old value
+    /// there is still a write that happened. Both halves in one case: the
+    /// projection alone passes on a store that overwrites, and the history
+    /// alone passes on one that never projects.
+    pub async fn an_edit_appends_and_the_value_it_replaced_stays_in_the_history<M: Memory>(
+        store: &M,
+    ) {
+        let subject = EntityId::person("contract-appended");
+        let captured = capture(
+            store,
+            NewFact {
+                fields: [("cost".to_string(), "40".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(subject.clone(), "the annual service", date(2026, 4, 18))
+            },
+        )
+        .await;
+        edit(
+            store,
+            &captured.address(),
+            FactPatch {
+                fields: [("cost".to_string(), "45".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let seen = read_back(store, &subject, &captured.id).await;
+        assert_eq!(
+            seen.fields.get("cost").map(String::as_str),
+            Some("45"),
+            "the record reads back edited, which is the surface"
+        );
+
+        let history = store
+            .history(&subject, "cost")
+            .await
+            .expect("history should succeed");
+        assert_eq!(
+            history
+                .iter()
+                .map(|w| w.value.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("40"), Some("45")],
+            "both writes are there, oldest first: {history:?}"
+        );
+        assert!(
+            history.iter().all(|w| w.fact == captured.address()),
+            "an edit is a write on the record it edited"
+        );
+    }
+
+    /// **Clearing a key is a write, not a removal.**
+    ///
+    /// The key stops being current — the record reads back without it — and the
+    /// writes that put it there are still in its history, with the clear itself
+    /// recorded as the write that took it off. Nothing is deleted from the
+    /// substrate, which is the same one-way rule retraction runs on.
+    pub async fn clearing_a_key_leaves_its_writes_behind<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-cleared");
+        let captured = capture(
+            store,
+            NewFact {
+                fields: [("done_on".to_string(), "2026-04-18".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(subject.clone(), "the annual service", date(2026, 4, 18))
+            },
+        )
+        .await;
+        edit(
+            store,
+            &captured.address(),
+            FactPatch {
+                clear_fields: vec!["done_on".to_string()],
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let seen = read_back(store, &subject, &captured.id).await;
+        assert!(
+            !seen.fields.contains_key("done_on"),
+            "the cleared key is not current truth any more: {seen:?}"
+        );
+        let history = store
+            .history(&subject, "done_on")
+            .await
+            .expect("history should succeed");
+        assert_eq!(
+            history
+                .iter()
+                .map(|w| w.value.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("2026-04-18"), None],
+            "the write that set it and the write that took it off, in that order: {history:?}"
+        );
+    }
+
+    /// **A key nobody wrote is an empty history; an entity nobody created is a
+    /// miss.**
+    ///
+    /// The two nothings a caller has to tell apart, and the positive they rest
+    /// on: an empty list means the thing is there and nothing was recorded
+    /// under that key, which is a different instruction from "that handle is
+    /// wrong".
+    pub async fn history_of_an_unwritten_key_is_empty_and_of_no_entity_is_a_miss<M: Memory>(
+        store: &M,
+    ) {
+        let subject = EntityId::person("contract-unwritten");
+        capture(
+            store,
+            NewFact {
+                fields: [("weight".to_string(), "11".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(subject.clone(), "weighed at the yard", date(2026, 4, 18))
+            },
+        )
+        .await;
+
+        assert_eq!(
+            store
+                .history(&subject, "weight")
+                .await
+                .expect("history should succeed")
+                .len(),
+            1,
+            "the key that was written comes back — the positive the absences rest on"
+        );
+        assert!(
+            store
+                .history(&subject, "height")
+                .await
+                .expect("a key nobody wrote is an answer, not a failure")
+                .is_empty(),
+            "nothing was recorded under that key, and the thing is still there"
+        );
+        let missed = store
+            .history(&EntityId::person("contract-no-such"), "weight")
+            .await;
+        assert!(
+            matches!(missed, Err(MemoryError::UnknownEntity { .. })),
+            "a handle that names nothing is a miss, exactly as recall answers one: {missed:?}"
+        );
+    }
+
     /// `update_fact` attaches an edge to a fact that didn't have one — the
     /// day-to-day path for an edge realized after the fact was captured.
     pub async fn update_fact_attaches_an_edge<M: Memory>(store: &M) {
@@ -4575,6 +4963,7 @@ pub mod contract {
                     prose: true,
                 },
                 follow: None,
+                history: None,
             },
         )
         .await
@@ -4686,6 +5075,7 @@ pub mod contract {
                     keeping: Vec::new(),
                     fits_type: None,
                 }),
+                history: None,
             },
         )
         .await
@@ -4778,6 +5168,7 @@ pub mod contract {
                             direction: Some(graph::Direction::In),
                             ..graph::Follow::hop()
                         }),
+                        history: None,
                     },
                 )
                 .await
@@ -4900,6 +5291,11 @@ pub mod contract {
         an_edge_object_is_screened_by_the_guard(store).await;
         update_fact_attaches_an_edge(store).await;
         update_fact_sets_and_clears_a_field(store).await;
+
+        a_key_written_many_times_holds_one_value_and_counts(store).await;
+        an_edit_appends_and_the_value_it_replaced_stays_in_the_history(store).await;
+        clearing_a_key_leaves_its_writes_behind(store).await;
+        history_of_an_unwritten_key_is_empty_and_of_no_entity_is_a_miss(store).await;
 
         a_records_fields_survive_capture(store).await;
         a_records_ref_is_screened_by_the_guard(store).await;

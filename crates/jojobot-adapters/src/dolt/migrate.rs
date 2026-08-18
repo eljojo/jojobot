@@ -168,6 +168,11 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0015_type_field_origin.sql"),
         leaves: Leaves::Column("type_field", "origin"),
     },
+    Migration {
+        version: "0016_field_write",
+        sql: include_str!("../../migrations/0016_field_write.sql"),
+        leaves: Leaves::Table("field_write"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -460,6 +465,7 @@ mod tests {
         "0013_type_field",
         "0014_message_delivery",
         "0015_type_field_origin",
+        "0016_field_write",
     ];
 
     #[test]

@@ -307,6 +307,14 @@ pub struct GraphQuery {
     pub include: Include,
     /// Which edges to walk. `None` walks none, and the answer is flat.
     pub follow: Option<Follow>,
+    /// **A key whose writes come back on every object in the answer**, oldest
+    /// first. `None` asks for none, which is the ordinary read: current truth,
+    /// one value per key.
+    ///
+    /// It is read from the store rather than from the objects' records, because
+    /// what a record carries is the projection — the writes it replaced are not
+    /// on it any more.
+    pub history: Option<String>,
 }
 
 impl GraphQuery {
@@ -550,6 +558,24 @@ pub struct Object {
     /// which will eventually infer wrong. A caller that wants the rest asks
     /// again with a deeper walk, or from this handle.
     pub unwalked: bool,
+    /// **The writes behind the key the query named**, on this object, oldest
+    /// first. `None` when the query named no key, so a caller can tell "not
+    /// asked for" from "nobody ever wrote it".
+    pub history: Option<KeyHistory>,
+}
+
+/// Every write of one key on one object, and the key it answers for.
+///
+/// The count is the length of [`KeyHistory::writes`] and is not stored beside
+/// them: a total that could disagree with the list it totals is a second copy
+/// of one truth.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyHistory {
+    /// The key asked for, exactly as the caller spelled it.
+    pub key: String,
+    /// Its writes, oldest first. Empty when nobody has written the key on this
+    /// object — which is an answer, and a different one from `None`.
+    pub writes: Vec<super::FieldWrite>,
 }
 
 /// **The walk, over a store's own documents.** Pure: no I/O, no store, so the
@@ -832,6 +858,11 @@ impl<'a> Ctx<'a> {
             answers: answered,
             connected,
             unwalked,
+            // **Filled by the store, not here.** The writes behind a key are
+            // not on the records this pure walk reads: a record carries the
+            // projection, and what it replaced is in the substrate. See
+            // [`walk`].
+            history: None,
         }
     }
 
@@ -1033,7 +1064,41 @@ where
     } else {
         Vec::new()
     };
-    resolve(&scanned, &declarations, query)
+    let mut found = resolve(&scanned, &declarations, query)?;
+    // **The history is read after the shape is decided**, once per object in
+    // the answer: the walk cannot know which objects it will return, and a read
+    // of every entity's writes would pay for the ones nobody asked about.
+    if let Some(key) = &query.history {
+        for object in &mut found {
+            fill_history(store, object, key).await?;
+        }
+    }
+    Ok(found)
+}
+
+/// Attach one key's writes to an object and to everything it reached.
+///
+/// **Every object in the answer, roots and reached alike.** A caller that named
+/// a key asked it of the answer, and a walked object arriving without the half
+/// its siblings carry is the silent elision this project does not do.
+fn fill_history<'a, M>(
+    store: &'a M,
+    object: &'a mut Object,
+    key: &'a str,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), MemoryError>> + Send + 'a>>
+where
+    M: super::Memory + ?Sized,
+{
+    Box::pin(async move {
+        object.history = Some(KeyHistory {
+            key: key.to_string(),
+            writes: store.history(&object.entity.id, key).await?,
+        });
+        for reached in &mut object.connected {
+            fill_history(store, reached, key).await?;
+        }
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -1192,6 +1257,7 @@ mod tests {
                 prose: true,
             },
             follow: None,
+            history: None,
         };
         let found = resolve(&scanned, &[], &query).expect("a kind is a selection");
         assert_eq!(
@@ -1537,6 +1603,7 @@ mod tests {
                         keeping: Vec::new(),
                         fits_type: None,
                     }),
+                    history: None,
                 },
             )
             .expect("a subject with a walk")
@@ -1609,6 +1676,7 @@ mod tests {
                     keeping: Vec::new(),
                     fits_type: None,
                 }),
+                history: None,
             },
         )
         .expect("a walk of one hop");
@@ -1666,6 +1734,7 @@ mod tests {
                         keeping: Vec::new(),
                         fits_type: None,
                     }),
+                    history: None,
                 },
             )
             .expect("a walk out of a subject")
@@ -1725,6 +1794,7 @@ mod tests {
                         keeping: Vec::new(),
                         fits_type: None,
                     }),
+                    history: None,
                 },
             )
             .expect("a walk out of a subject")
@@ -1783,6 +1853,7 @@ mod tests {
                     keeping: Vec::new(),
                     fits_type: None,
                 }),
+                history: None,
             },
         )
         .expect("a walk at the ceiling");
@@ -1929,6 +2000,7 @@ mod tests {
                         fits_type: fits,
                         ..Follow::hop()
                     }),
+                    history: None,
                 },
             )
             .expect("a declared relation is followable");
@@ -2078,6 +2150,7 @@ mod tests {
                         direction: Some(direction),
                         ..Follow::hop()
                     }),
+                    history: None,
                 },
             )
             .expect("a declared relation is followable")
@@ -2132,6 +2205,7 @@ mod tests {
                 along: Along::Relation("owner".into()),
                 ..Follow::hop()
             }),
+            history: None,
         };
         resolve(&kennel(), &[], &query).expect_err(
             "with nothing declared, a key holding a handle is a string that looks like one",
@@ -2184,6 +2258,7 @@ mod tests {
                         direction: Some(Direction::Out),
                         ..Follow::hop()
                     }),
+                    history: None,
                 },
             )
             .expect("some type declares 'owner' a reference, so it is one")
@@ -2245,6 +2320,7 @@ mod tests {
                         direction: Some(direction),
                         ..Follow::hop()
                     }),
+                    history: None,
                 },
             )
             .expect("both keys are declared references");
@@ -2307,6 +2383,7 @@ mod tests {
                         direction: Some(direction),
                         ..Follow::hop()
                     }),
+                    history: None,
                 },
             )
         };
@@ -2404,6 +2481,7 @@ mod tests {
                         along,
                         ..Follow::hop()
                     }),
+                    history: None,
                 },
             )
             .expect("both vocabularies are followable");
@@ -2537,6 +2615,7 @@ mod tests {
                         keeping,
                         ..Follow::hop()
                     }),
+                    history: None,
                 },
             )
             .expect("a walk with filters on what it reaches")

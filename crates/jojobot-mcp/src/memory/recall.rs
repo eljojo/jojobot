@@ -140,6 +140,23 @@ pub struct RecallArgs {
     /// every one of them unasked is a cost the caller cannot decline.
     #[serde(default)]
     pub prose: Option<bool>,
+    /// **The writes behind one key, oldest first** — name the key, and each
+    /// object comes back carrying every write of it, with the record each one
+    /// arrived in and that record's date.
+    ///
+    /// A read is current truth: one value per key, the newest write. This is
+    /// the other question the same data answers — every time the key was
+    /// written — and **the count of the writes is the answer to "how many
+    /// times"**. Ask it of `weight` and you get what a thing has weighed over
+    /// the years; ask it of a key a sitting records once each time it happens
+    /// and you get how often.
+    ///
+    /// Omit it and no history comes back at all, which is the normal read: a
+    /// caller who wants the value wants one value. A key nobody has written
+    /// comes back as no writes rather than as a refusal — the thing is there
+    /// and nothing was recorded under that key.
+    #[serde(default)]
+    pub history: Option<String>,
     /// Which edges to walk. Omit to walk none, and the answer is flat.
     #[serde(default)]
     pub follow: Option<FollowArgs>,
@@ -164,6 +181,36 @@ fn key_filters(args: &[KeyFilterArgs]) -> Result<Vec<graph::FieldFilter>, McpErr
         .collect()
 }
 
+/// **One key's writes on the wire, oldest first, with how many there are.**
+///
+/// The count is rendered beside them because counting is the question the
+/// substrate exists to answer, and a caller that has to length the list to
+/// answer it is a caller doing arithmetic jojobot already did.
+///
+/// A write that took the key off carries `cleared` instead of a value. A null
+/// `value` would say the same thing to a reader who already knew the
+/// convention, and nothing to one who did not.
+fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
+    serde_json::json!({
+        "key": history.key,
+        "count": history.writes.len(),
+        "writes": history.writes.iter().map(|write| {
+            let mut rendered = serde_json::json!({
+                "record": write.fact.to_string(),
+                "date": write.date.to_string(),
+                "status": write.status.as_token(),
+            });
+            if let Some(fields) = rendered.as_object_mut() {
+                match &write.value {
+                    Some(value) => fields.insert("value".into(), value.as_str().into()),
+                    None => fields.insert("cleared".into(), true.into()),
+                };
+            }
+            rendered
+        }).collect::<Vec<_>>(),
+    })
+}
+
 /// One object on the wire, and everything it reached.
 ///
 /// **Absence means "not asked for"** on both halves that can be turned off:
@@ -186,6 +233,13 @@ fn object_json(object: &graph::Object, include: graph::Include) -> serde_json::V
     // be a field a reader has to learn to ignore.
     if let Some(answers) = object.answers.as_ref() {
         fields.insert("answers".into(), answers_json(answers));
+    }
+    // **The writes behind the key the call named**, absent when it named none:
+    // a `history` rendered null on every ordinary read is a key a reader has to
+    // learn to ignore. An empty list is the other answer — nobody wrote it —
+    // and it is not the same one.
+    if let Some(history) = object.history.as_ref() {
+        fields.insert("history".into(), history_json(history));
     }
     // How the walk got here. Absent on a root, which nothing reached.
     //
@@ -240,8 +294,15 @@ impl Jojobot {
                        the value it holds; omit the value to ask only that the key is there). \
                        WHAT OF EACH: facts, on \
                        by default, each carrying the address that makes it editable through \
-                       update_fact; and prose, off by default, which is the human half of the \
-                       object's page, whole. WHICH EDGES: follow {shape, direction, depth}, and \
+                       update_fact; prose, off by default, which is the human half of the \
+                       object's page, whole; and history, which names ONE KEY and brings back \
+                       every write of it, oldest first. A read is current truth — one value per \
+                       key, the newest write — and history is the other question the same data \
+                       answers: every time that key was written, with the record each write \
+                       arrived in and its date. THE COUNT OF THE WRITES IS THE ANSWER TO HOW \
+                       MANY TIMES, so a key a sitting records once each time something happens \
+                       is how you count occurrences. A key nobody wrote comes back as no \
+                       writes, never as a refusal. WHICH EDGES: follow {shape, direction, depth}, and \
                        THE ANSWER NESTS — a walked object carries the objects it reached, each \
                        carrying its own. NARROW A WALK WITH follow.fits_type, which is the \
                        stricter half of the pair: answers_type selects objects carrying SOME of \
@@ -365,6 +426,9 @@ impl Jojobot {
             },
             include,
             follow,
+            // Trimmed like every other key a caller names, so `donuts_eaten `
+            // asks the question `donuts_eaten` answers.
+            history: args.history.as_deref().map(|k| k.trim().to_string()),
         };
 
         let found = match graph::walk(self.memory.as_ref(), &query).await {
@@ -399,7 +463,79 @@ mod tests {
             prose: None,
             follow: None,
             sid: None,
+            history: None,
         }
+    }
+
+    /// **The writes behind a key come back on the read that already exists**,
+    /// and only when the call asks for them.
+    ///
+    /// Both halves, because either alone is satisfied by the wrong build: a
+    /// history that is always there costs every caller who never asked, and one
+    /// that is never there is a capability nothing can reach. The count is
+    /// asserted beside the values because counting is what the whole substrate
+    /// is for, and the addresses because a history of one record's edits and a
+    /// history of a key written by many records are the two answers this could
+    /// have been.
+    #[tokio::test]
+    async fn recall_answers_with_the_writes_behind_a_key_when_asked() {
+        let jojobot = handler();
+        for nth in 1..=3 {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    metadata: Some(
+                        [("donuts_eaten".to_string(), nth.to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args("alpha", &format!("ate one, number {nth}"))
+                },
+            )
+            .await;
+        }
+
+        let asked = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    history: Some("donuts_eaten".into()),
+                    ..of("alpha")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let history = &asked["objects"][0]["history"];
+        assert_eq!(history["key"], "donuts_eaten");
+        assert_eq!(
+            history["count"], 3,
+            "the count of the writes is the answer to how many times: {history}"
+        );
+        assert_eq!(
+            history["writes"]
+                .as_array()
+                .expect("the writes come back as a list")
+                .iter()
+                .map(|w| w["value"].as_str().unwrap_or_default().to_string())
+                .collect::<Vec<_>>(),
+            vec!["1", "2", "3"],
+            "oldest first: {history}"
+        );
+        assert_eq!(
+            history["writes"][0]["record"], "person:alpha#f1",
+            "each write names the record it arrived in, and they differ: {history}"
+        );
+        assert_eq!(history["writes"][2]["record"], "person:alpha#f3");
+
+        let plain = json_of(
+            &jojobot
+                .recall(Parameters(of("alpha")))
+                .await
+                .expect("recall ok"),
+        );
+        assert!(
+            plain["objects"][0].get("history").is_none(),
+            "a call that asked for no key is not charged for one: {plain}"
+        );
     }
 
     /// Every recalled fact carries its address, and that address is what
@@ -952,6 +1088,7 @@ mod tests {
             prose: None,
             follow: None,
             sid: None,
+            history: None,
         }
     }
 }
