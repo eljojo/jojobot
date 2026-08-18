@@ -11,6 +11,7 @@
 
 use super::*;
 use jojobot_domain::memory::Boot;
+use jojobot_domain::memory::kinds;
 
 /// Parse the `shape`/`object` pair into an edge. **Half an edge is an error, not
 /// a shrug:** a shape with no object has nothing to point at, and an object with
@@ -24,16 +25,18 @@ use jojobot_domain::memory::Boot;
 /// other one. That is a blocked answer, the same as every other misuse here.
 pub(crate) type ParsedEdge = Result<Result<Option<Edge>, CallToolResult>, McpError>;
 
-/// Parse a kind token; the closed set is named in the error so a caller can fix
-/// the call without guessing.
+/// Parse a kind token. **The refusal carries the store's own answer**, so a
+/// caller can fix the call without guessing — and so the two ways a token can
+/// fail to be a kind stay apart.
+///
+/// The set of kinds is data, so this cannot recite a list: an instance may hold
+/// a kind this build never heard of, and naming the shipped ten would tell a
+/// caller their own kind does not exist. **And a process that seeded nothing
+/// says so**, because a caller told "kind must be one of person, …, got
+/// 'person'" has been handed a contradiction and no way forward (rule 68).
 pub(crate) fn parse_kind(raw: &str) -> Result<EntityKind, McpError> {
-    EntityKind::from_token(raw.trim()).ok_or_else(|| {
-        let kinds: Vec<&str> = EntityKind::ALL.iter().map(|k| k.as_token()).collect();
-        McpError::invalid_params(
-            format!("kind must be one of {}, got '{raw}'", kinds.join(", ")),
-            None,
-        )
-    })
+    kinds::resolve(raw.trim())
+        .map_err(|why| McpError::invalid_params(format!("kind '{raw}': {why}"), None))
 }
 
 /// Build an entity id from a `kind` argument and a handle that may be a bare

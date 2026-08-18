@@ -131,6 +131,21 @@ async fn main() -> anyhow::Result<()> {
     // records moved, and the documents they came from are a person's copy now.
     let memory: Arc<dyn Memory> = Arc::new(DoltMemory::open(store.pool().clone()));
 
+    // **The kinds, before anything reads a handle.** Every kind this instance
+    // holds is written and then read back, and what comes back is the set this
+    // process parses handles against. A store that cannot be reached leaves
+    // that set empty, and an empty set refuses every handle in its own words
+    // rather than pretending the ten are there.
+    match jojobot_mcp::seed::ensure_kinds(&memory).await {
+        Ok(kinds) => tracing::info!(kinds, "loaded the kinds this instance holds"),
+        Err(e) => tracing::error!(
+            error = %e,
+            "KINDS NOT LOADED — the store could not be reached at startup, so no handle can be \
+             read and every write is refused. Nothing was written and nothing was lost; a restart \
+             once the store is reachable puts it right."
+        ),
+    }
+
     // The search projection sits in FRONT of the store, so every write through
     // the port keeps the index current. Boot is a plain full re-scan — and a
     // failed scan is not fatal: the store is the truth, and refusing to start
@@ -236,21 +251,6 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let seed_memory: Arc<dyn Memory> = indexed.clone();
-
-    // **The kinds, before anything reads a handle.** Every kind this instance
-    // holds is written and then read back, and what comes back is the set this
-    // process parses handles against. A store that cannot be reached leaves
-    // that set empty, and an empty set refuses every handle in its own words
-    // rather than pretending the ten are there.
-    match jojobot_mcp::seed::ensure_kinds(&seed_memory).await {
-        Ok(kinds) => tracing::info!(kinds, "loaded the kinds this instance holds"),
-        Err(e) => tracing::error!(
-            error = %e,
-            "KINDS NOT LOADED — the store could not be reached at startup, so no handle can be \
-             read and every write is refused. Nothing was written and nothing was lost; a restart \
-             once the store is reachable puts it right."
-        ),
-    }
 
     // **There is never a jojobot with no bot.** The default identity arrives
     // with the software, before anything serves — which is what makes the
