@@ -87,8 +87,11 @@ use memory::declined::*;
 use memory::parse::*;
 use memory::wire::*;
 use rmcp::{
-    ErrorData as McpError, RoleServer, ServerHandler, handler::server::router::tool::ToolRouter,
-    model::*, service::NotificationContext, tool_handler, tool_router,
+    ErrorData as McpError, RoleServer, ServerHandler,
+    handler::server::router::tool::ToolRouter,
+    model::*,
+    service::{NotificationContext, RequestContext},
+    tool_handler, tool_router,
 };
 use session::declined::*;
 use session::wire::*;
@@ -128,6 +131,12 @@ pub struct Jojobot {
 /// what a client actually sees.
 #[tool_router(router = core_router, vis = "pub(crate)")]
 impl Jojobot {
+    /// **The newest protocol revision jojobot serves in full**, and the cap on
+    /// what a handshake will agree to. It is not the newest revision the SDK
+    /// can name: this SDK answers a `2026-07-28` client without the fields
+    /// that revision requires on a list result.
+    const NEWEST_SERVED: ProtocolVersion = ProtocolVersion::V_2025_11_25;
+
     /// The whole surface: this file's verbs, plus every context's.
     ///
     /// **Summed, never scanned.** A verb reaches a client by its context naming
@@ -297,6 +306,55 @@ impl ServerHandler for Jojobot {
     /// unconditional on purpose: the server cannot know what any particular
     /// client cached, and re-listing is cheap where being stranded is silent.
     /// The capability in [`Jojobot::get_info`] is the other half — without it
+    /// **jojobot agrees to speak only a revision it serves in full, and says
+    /// so rather than agreeing to something else.**
+    ///
+    /// A handshake is a promise about the shape of everything after it: the
+    /// client reads every later answer against the revision the two of them
+    /// agreed. The `2026-07-28` revision makes `ttlMs` and `cacheScope`
+    /// mandatory on a tool list (SEP-2549) and this SDK emits neither, so a
+    /// client that agreed it discards the WHOLE list and reports the server
+    /// connected while holding no verbs at all. That looks nothing like an
+    /// outage from the inside and matches no runbook.
+    ///
+    /// **The answer is a refusal naming what jojobot does serve, not a quieter
+    /// version number.** Answering with an older revision was tried and it does
+    /// not work at this SDK: the transport picks its session lifecycle from the
+    /// version the CLIENT asked for, never from the one that was agreed, so a
+    /// downgraded client is served statelessly, gets no session, and its next
+    /// call is refused as an unexpected message. A refusal carries the
+    /// supported list, which is what a client needs to open again.
+    ///
+    /// **Raise the cap when the SDK serves the newer revision, never before.**
+    fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<InitializeResult, McpError>> + Send + '_ {
+        if request.protocol_version.as_str() > Self::NEWEST_SERVED.as_str() {
+            return std::future::ready(Err(McpError::unsupported_protocol_version(
+                request.protocol_version,
+                &self.supported_protocol_versions(),
+            )));
+        }
+        context.peer.set_peer_info(request.clone());
+        let mut info = self.get_info();
+        info.protocol_version = request.protocol_version;
+        std::future::ready(Ok(info))
+    }
+
+    /// The same rule at the other door: a request that declares its revision
+    /// inline, with no handshake behind it, is held to the same list.
+    fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
+        std::borrow::Cow::Owned(
+            ProtocolVersion::KNOWN_VERSIONS
+                .iter()
+                .filter(|version| version.as_str() <= Self::NEWEST_SERVED.as_str())
+                .cloned()
+                .collect(),
+        )
+    }
+
     /// this notification is one the client never agreed to receive.
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
         if let Err(e) = context.peer.notify_tool_list_changed().await {
