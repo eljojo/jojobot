@@ -24,7 +24,12 @@ use tokio_util::sync::CancellationToken;
 async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_call() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
-    let store = Arc::new(InMemoryMemory::new());
+    // **Booted on purpose, and emptied again below.** Two preconditions used
+    // to arrive on one line: the records this case needs, and the set it
+    // exists to find missing. Seeding an identity is a write that parses a
+    // handle, so the store is booted for it — and the set is emptied before
+    // the call under test, which is the state this case is about.
+    let store = Arc::new(InMemoryMemory::booted());
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
     let state = AppState {
         resource: format!("http://{addr}/mcp"),

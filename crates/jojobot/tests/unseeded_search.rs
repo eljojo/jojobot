@@ -23,7 +23,11 @@ use tokio_util::sync::CancellationToken;
 async fn a_search_on_an_unloaded_process_is_an_answer_rather_than_a_broken_store() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
-    let store = Arc::new(InMemoryMemory::new());
+    // **Booted on purpose, and emptied again below.** The index only has
+    // documents because records were written while the set was loaded, and
+    // that write is the reason the store is booted here. The set is emptied
+    // before the search, which is the half this case is about.
+    let store = Arc::new(InMemoryMemory::booted());
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
     let state = AppState {
         resource: format!("http://{addr}/mcp"),
