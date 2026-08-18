@@ -82,10 +82,10 @@ pub(crate) fn declared_type_json(declared: &DeclaredType) -> serde_json::Value {
     })
 }
 
-/// **How a record answers a type, on the wire.**
+/// **How a thing answers a type, on the wire.**
 ///
 /// `complete` is stated rather than left to be worked out from `lacking` being
-/// empty: what a caller branches on is whether the record is whole, and making
+/// empty: what a caller branches on is whether the thing is whole, and making
 /// them derive it invites two callers to derive it differently.
 ///
 /// `lacking` names the keys, because the caller's next move is to fill them or

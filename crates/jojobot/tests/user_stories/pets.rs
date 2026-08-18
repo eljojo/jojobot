@@ -10,10 +10,11 @@
 //! outbound to what a record points at and inbound to the records pointing
 //! back. It is not a sixth edge shape and nobody declared an inverse.
 //!
-//! **What the inbound walk computes is key-scoped, not type-scoped.** It
-//! reaches everything naming Bart through `owner`, the bicycle included. The
-//! gap block below says why that is right rather than loose, and shows the
-//! selection that answers "his pets" today.
+//! **What the inbound walk computes is key-scoped.** It reaches everything
+//! naming Bart through `owner`, the bicycle included — and that is the right
+//! answer to what it was asked. Narrowing it to "his PETS" is a second
+//! question asked beside the walk: which of the things it reached FIT the type,
+//! meaning carry every key it names. The bike answers `pet` and never fits it.
 //!
 //! **The ordering is the second half.** `born` holds a date, and saying so is
 //! what makes "before" a question this store can be asked. A key with no
@@ -134,20 +135,46 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
     // `owner`, and the bike does.
     pointing_at_bart.says("thing:red-bike");
 
-    // GAP — there is no type-scoped has-many. "Bart's PETS" is not a walk.
+    // ── the type-scoped has-many · "Bart's PETS", in one walk ───────────────
     //
-    // What a walk computes is key-scoped: everything pointing here through
-    // `owner`. It cannot be narrowed to one type on the way, because a record
-    // answers a type by holding ONE of its keys — and the key being walked is
-    // one of them, so every record the walk finds answers the type by
-    // construction. A type filter on this walk could never exclude anything.
+    // **What narrows the walk is FITTING the type, not answering it.** The bike
+    // answers `pet` — its repair record carries `owner`, which is one of the
+    // type's keys — and answering is what a partial match is. Fitting is
+    // carrying all of them, and the bike never will.
     //
-    //   s.shape("Bart's pets", json!({"subject": "person:bart",
-    //                                 "follow": {"relation": "pet.owner"}})).await;
-    //
-    // The name `pet.owner` is therefore gone rather than kept as decoration: it
-    // promised a narrowing that cannot fire, and a name that claims a filter is
-    // worse than no filter.
+    // The pets do, and neither of their records does it alone: the name came
+    // from one sitting and the rest from another. That is what makes this a
+    // question about the THINGS rather than about the rows.
+    for (pet, name) in [
+        ("pet:santas-little-helper", "Santa's Little Helper"),
+        ("pet:snowball", "Snowball"),
+    ] {
+        s.event_with(pet, "what we call it", json!({ "name": name }), &[])
+            .await;
+    }
+    let his_pets_walked = s
+        .shape(
+            "Bart's pets, walked",
+            json!({
+                "subject": "person:bart",
+                "facts": false,
+                "follow": { "relation": "owner", "direction": "in", "fits_type": "pet" },
+            }),
+        )
+        .await;
+    his_pets_walked.says("pet:santas-little-helper");
+    his_pets_walked.says("pet:snowball");
+    // The pair this turns on, asserted both ways: the bike IS in the unnarrowed
+    // walk above and OUT of this one. A negative on its own would pass on an
+    // empty answer.
+    his_pets_walked.never_says("thing:red-bike");
+    // …and the bike is not silently gone: the walk reached it and did not keep
+    // it, which is an edge nobody followed.
+    his_pets_walked.says("unwalked");
+
+    // The name `pet.owner` stays gone. It spelled the narrowing as part of the
+    // relation, which said the key belonged to one type; the key is one key and
+    // the narrowing is a separate question asked beside it.
     s.refused(
         "recall",
         json!({

@@ -179,6 +179,19 @@ impl FactId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// **Where this row sits in the order its home was written in.**
+    ///
+    /// A local id is `f` and a number counted up from the rows already on the
+    /// page, so the number is monotonic within one home and says which of two
+    /// rows was written later. That is the whole of the ordering
+    /// [`folded_fields`] needs, and it is read from the id rather than kept
+    /// beside it: an ordinal stored twice is an ordinal that can disagree.
+    ///
+    /// `None` for an id in any other shape, which nothing here mints.
+    pub fn ordinal(&self) -> Option<u64> {
+        self.0.trim().strip_prefix('f')?.parse().ok()
+    }
 }
 
 impl std::fmt::Display for FactId {
@@ -1350,6 +1363,39 @@ impl Fact {
     pub fn retracts(&self) -> Option<&str> {
         self.fields.get(RETRACTS).map(String::as_str)
     }
+}
+
+/// **A thing's fields: its records' fields, folded into one map.**
+///
+/// What a thing IS gets written down a piece at a time — one sitting records
+/// what it weighs, another records when it arrives — so the question "does this
+/// carry the keys of a type" is asked of the thing and never of one record. Ask
+/// it of a record and a thing described over two sittings answers nothing,
+/// which is how most things get written down.
+///
+/// **The newest write wins a repeated key.** Two records naming one key are not
+/// a conflict to report; they are the key being written twice, and what the
+/// thing holds now is what was written last. Later is read off
+/// [`FactId::ordinal`], so the answer does not depend on the order a store
+/// happened to hand the rows over in.
+///
+/// **Only [`FactStatus::Active`] rows fold.** A record that was taken back or
+/// moved past is not what the thing is now, and a thing that fitted a type on
+/// the strength of a retracted claim would be conforming because of something
+/// nobody stands behind.
+pub fn folded_fields(facts: &[Fact]) -> BTreeMap<String, String> {
+    let mut current: Vec<&Fact> = facts
+        .iter()
+        .filter(|f| f.status == FactStatus::Active)
+        .collect();
+    current.sort_by_key(|f| f.id.ordinal().unwrap_or(0));
+    let mut folded = BTreeMap::new();
+    for fact in current {
+        for (key, value) in &fact.fields {
+            folded.insert(key.clone(), value.clone());
+        }
+    }
+    folded
 }
 
 /// **Whether this row can be taken back, and why not when it cannot.**

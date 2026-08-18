@@ -230,6 +230,11 @@ pub struct Mistyped {
 /// A record that carries none of a type's keys is not a match at all, and the
 /// absence of this value is how that is said — otherwise every record matches
 /// every type and an answer means nothing.
+///
+/// **What gets asked is usually a THING's fields**, folded from its records by
+/// [`super::folded_fields`], rather than one record's. The matcher takes a flat
+/// map and does not know which it was handed, which is what let the unit change
+/// without the algorithm changing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Match {
     /// The keys the record carries, in the type's own order.

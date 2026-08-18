@@ -4253,7 +4253,7 @@ pub mod contract {
     /// Both matches come back in the one answer — complete and partial — and
     /// the partial names what it lacks. Complete-versus-partial is reported,
     /// never filtered.
-    pub async fn search_finds_records_that_answer_a_type_structurally<M: Memory, S: Search>(
+    pub async fn search_finds_things_that_answer_a_type_structurally<M: Memory, S: Search>(
         store: &M,
         search: &S,
     ) {
@@ -4268,48 +4268,50 @@ pub mod contract {
             .await
             .expect("declaring should succeed");
 
-        // Carries both keys, and calls itself something else entirely.
-        let whole = capture(
-            store,
-            NewFact {
-                fields: [
-                    ("weight".to_string(), "12".to_string()),
-                    ("arrives".to_string(), "2026-08-10".to_string()),
-                ]
-                .into_iter()
-                .collect(),
-                ..NewFact::about(
-                    EntityId::person("contract-crate-whole"),
-                    "the crate is on its way",
-                    date(2026, 8, 1),
-                )
-            },
-        )
-        .await;
-        // Carries one of them.
-        let partial = capture(
+        // **Carries both keys across TWO records, and neither answers alone.**
+        // This is the whole point of the unit: what a thing is gets written
+        // down a piece at a time, and a store full of half-descriptions is what
+        // a real one looks like.
+        let whole = EntityId::person("contract-crate-whole");
+        for (key, value, said) in [
+            ("weight", "12", "somebody weighed it"),
+            ("arrives", "2026-08-10", "and somebody else was told when"),
+        ] {
+            capture(
+                store,
+                NewFact {
+                    fields: [(key.to_string(), value.to_string())].into_iter().collect(),
+                    ..NewFact::about(whole.clone(), said, date(2026, 8, 1))
+                },
+            )
+            .await;
+        }
+        // Carries one of them, and nothing else ever says the rest.
+        let partial = EntityId::person("contract-crate-partial");
+        capture(
             store,
             NewFact {
                 fields: [("weight".to_string(), "3".to_string())]
                     .into_iter()
                     .collect(),
                 ..NewFact::about(
-                    EntityId::person("contract-crate-partial"),
+                    partial.clone(),
                     "a lighter one, and nobody wrote down when it lands",
                     date(2026, 8, 2),
                 )
             },
         )
         .await;
-        // Carries neither, and is a record all the same.
-        let unrelated = capture(
+        // Carries neither, and is a thing all the same.
+        let unrelated = EntityId::person("contract-crate-unrelated");
+        capture(
             store,
             NewFact {
                 fields: [("mood".to_string(), "curious".to_string())]
                     .into_iter()
                     .collect(),
                 ..NewFact::about(
-                    EntityId::person("contract-crate-unrelated"),
+                    unrelated.clone(),
                     "nothing to do with crates",
                     date(2026, 8, 3),
                 )
@@ -4326,26 +4328,32 @@ pub mod contract {
             },
         )
         .await;
-        let answered: Vec<(&Fact, &crate::memory::types::Match)> = hits
+        // **The answer is about THINGS**, so it is the entity hits that carry
+        // the match. A fact hit could not: the question was never asked of one
+        // row.
+        let answered: Vec<(&EntityId, &crate::memory::types::Match)> = hits
             .iter()
             .filter_map(|h| match h {
-                Hit::Fact { fact, answers, .. } => Some((fact, answers.as_deref()?)),
+                Hit::Entity {
+                    entity, answers, ..
+                } => Some((&entity.id, answers.as_deref()?)),
                 _ => None,
             })
             .collect();
 
         let (_, whole_match) = answered
             .iter()
-            .find(|(f, _)| f.id == whole.id && f.home == whole.home)
-            .unwrap_or_else(|| panic!("a record carrying every key must come back: {answered:?}"));
+            .find(|(id, _)| **id == whole)
+            .unwrap_or_else(|| panic!("a thing carrying every key must come back: {answered:?}"));
         assert!(
             whole_match.complete(),
-            "…and it says so, rather than the caller counting keys: {whole_match:?}",
+            "two records between them hold every key, and the thing says so \
+             rather than the caller counting: {whole_match:?}",
         );
 
         let (_, partial_match) = answered
             .iter()
-            .find(|(f, _)| f.id == partial.id && f.home == partial.home)
+            .find(|(id, _)| **id == partial)
             .unwrap_or_else(|| {
                 panic!("a partial match is returned, not filtered out: {answered:?}")
             });
@@ -4356,23 +4364,21 @@ pub mod contract {
             "and it names what it lacks, by name: {partial_match:?}",
         );
 
-        // **The negative, and it rests on the two positives above.** A record
+        // **The negative, and it rests on the two positives above.** A thing
         // sharing no key with the type is not a weak match, it is not a match:
         // without this, "it matched" says nothing, because everything would.
         assert!(
-            !answered
-                .iter()
-                .any(|(f, _)| f.id == unrelated.id && f.home == unrelated.home),
-            "a record carrying none of the keys is not in the answer: {answered:?}",
+            !answered.iter().any(|(id, _)| **id == unrelated),
+            "a thing carrying none of the keys is not in the answer: {answered:?}",
         );
     }
 
-    /// **A type query says which keys are wrong, and returns the record
+    /// **A type query says which keys are wrong, and returns the thing
     /// anyway.**
     ///
     /// The typed path is not a gate at read time either. A value that does not
     /// hold what the type declared comes back flagged, with what was declared
-    /// and what is actually there, on a record that is still found.
+    /// and what is actually there, on a thing that is still found.
     pub async fn a_type_query_flags_a_bad_value_and_returns_the_record<M: Memory, S: Search>(
         store: &M,
         search: &S,
@@ -4385,14 +4391,15 @@ pub mod contract {
             .await
             .expect("declaring should succeed");
 
-        let messy = capture(
+        let messy = EntityId::person("contract-pallet-messy");
+        capture(
             store,
             NewFact {
                 fields: [("arrives".to_string(), "next tuesday".to_string())]
                     .into_iter()
                     .collect(),
                 ..NewFact::about(
-                    EntityId::person("contract-pallet-messy"),
+                    messy.clone(),
                     "somebody wrote the date in words",
                     date(2026, 8, 4),
                 )
@@ -4412,14 +4419,12 @@ pub mod contract {
         let flagged = hits
             .iter()
             .find_map(|h| match h {
-                Hit::Fact { fact, answers, .. }
-                    if fact.id == messy.id && fact.home == messy.home =>
-                {
-                    answers.as_deref()
-                }
+                Hit::Entity {
+                    entity, answers, ..
+                } if entity.id == messy => answers.as_deref(),
                 _ => None,
             })
-            .unwrap_or_else(|| panic!("the record is found, not dropped: {hits:?}"));
+            .unwrap_or_else(|| panic!("the thing is found, not dropped: {hits:?}"));
 
         assert!(
             flagged.complete(),
@@ -4450,7 +4455,7 @@ pub mod contract {
         search_fact_hits_name_their_subject_and_home(store, search).await;
         search_entity_hits_carry_their_edges(store, search).await;
 
-        search_finds_records_that_answer_a_type_structurally(store, search).await;
+        search_finds_things_that_answer_a_type_structurally(store, search).await;
         a_type_query_flags_a_bad_value_and_returns_the_record(store, search).await;
     }
 
@@ -4607,6 +4612,7 @@ pub mod contract {
                     direction: Some(graph::Direction::In),
                     depth: 1,
                     keeping: Vec::new(),
+                    fits_type: None,
                 }),
             },
         )

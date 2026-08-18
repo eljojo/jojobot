@@ -331,7 +331,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
 
     // GAP — it lands as a fact about a project, and a decision CAN have a
     // shape of its own: a declared type names the keys one carries, and a
-    // search by type finds every record answering it whether or not anybody
+    // search by type finds every thing answering it whether or not anybody
     // filed it that way. What nothing does is carry it to whoever next
     // proposes that step. A shape is something a reader asks for, so a
     // constraint still gets re-litigated by every session that does not know

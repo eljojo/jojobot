@@ -37,9 +37,11 @@ use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term, doc};
 
 use jiff::civil::Date;
 use jojobot_domain::mailbox::{MailboxError, Mailboxes, Message};
+use std::collections::BTreeMap;
+
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
-    Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction,
+    Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, folded_fields,
     guard::{self, MatchReason},
     search::{self, Behind, Coverage, DocScan, EntityRef, Hit, Search, SearchQuery},
     types::DeclaredType,
@@ -133,12 +135,14 @@ struct Fields {
     /// location edge to somewhere else and an unrelated link to alpha. Neither
     /// field is wrong; the pair is what the caller actually asked about.
     edge_pair: Field,
-    /// **One term per key a fact carries.**
+    /// **One term per key a fact carries — and, on an entity document, per key
+    /// the THING carries across its records.**
     ///
-    /// A type is a set of key names and a record answers it by carrying at
-    /// least one of them, so the question is set membership over strings —
-    /// which is what a term index is. The values are deliberately not here: a
-    /// type filter asks which keys a record holds, never what is in them.
+    /// A type is a set of key names and a thing answers it by carrying at least
+    /// one of them, so the question is set membership over strings — which is
+    /// what a term index is. The values are deliberately not here: selecting
+    /// asks which keys are held, never what is in them, and saying HOW a thing
+    /// answers is done from the mirror where the values live.
     meta_key: Field,
     /// A session's own id — its own namespace again, for the same reason
     /// `message_id` is not `doc_id`: three stores, three id spaces, and one
@@ -875,18 +879,35 @@ impl FullTextIndex {
             .unwrap_or_default();
 
         if let Some(entity) = &scan.entity {
-            writer
-                .add_document(doc!(
-                    f.class => CLASS_ENTITY,
-                    f.text => format!("{} {} {}", entity.id, owner_labels, entity.kind),
-                    f.doc_id => scan.doc_id.clone(),
-                    f.kind => entity.kind.as_token(),
-                    f.payload => payload_json(&Payload::Entity {
-                        entity: entity.clone(),
-                        doc_id: scan.doc_id.clone(),
-                    })?,
-                ))
-                .map_err(store_err)?;
+            let mut document = doc!(
+                f.class => CLASS_ENTITY,
+                f.text => format!("{} {} {}", entity.id, owner_labels, entity.kind),
+                f.doc_id => scan.doc_id.clone(),
+                f.kind => entity.kind.as_token(),
+                f.payload => payload_json(&Payload::Entity {
+                    entity: entity.clone(),
+                    doc_id: scan.doc_id.clone(),
+                })?,
+            );
+            // **Every key this THING carries, folded from its records**, so a
+            // type filter is a clause over things rather than a pass over a
+            // ranked page. A thing is described a piece at a time, so the keys
+            // that answer a type are spread across its rows and no one row's
+            // postings can stand in for them.
+            //
+            // Only the rows this doc's entity is the subject of: a row about
+            // somebody else, written on this page, describes them and not this
+            // thing.
+            let mine: Vec<Fact> = scan
+                .facts
+                .iter()
+                .filter(|f| f.subject == entity.id)
+                .cloned()
+                .collect();
+            for key in folded_fields(&mine).keys() {
+                document.add_text(f.meta_key, key.trim());
+            }
+            writer.add_document(document).map_err(store_err)?;
         }
 
         for fact in &scan.facts {
@@ -1060,29 +1081,29 @@ impl FullTextIndex {
                 None => clauses.push(self.must_term(f.edge_object, edge.object.as_str())),
             }
         }
-        // **The type filter is a clause, like every other filter here.** A
-        // record answers a type by carrying at least one of its keys, so the
-        // clause is a disjunction over the key names and the index narrows to
-        // the records that answer before the depth cut ever applies. Filtering
-        // the ranked page instead would drop every answer that did not happen
-        // to rank in the top few — and for a type-only query nothing ranks, so
-        // which records survived would be an arbitrary tie-break reported as
-        // "nothing answers this type".
-        if let Some(declared) = &query.answers_type {
-            let keys: Vec<(Occur, Box<dyn Query>)> = declared
-                .fields
-                .iter()
-                .map(|field| {
-                    let q: Box<dyn Query> = Box::new(TermQuery::new(
-                        Term::from_field_text(f.meta_key, field.key.trim()),
-                        IndexRecordOption::Basic,
-                    ));
-                    (Occur::Should, q)
-                })
-                .collect();
-            clauses.push((Occur::Must, Box::new(BooleanQuery::new(keys))));
-        }
         clauses
+    }
+
+    /// **The type filter, as a clause.** A thing answers a type by carrying at
+    /// least one of its keys, so the clause is a disjunction over the key names
+    /// and the index narrows to the things that answer before the depth cut
+    /// ever applies. Filtering the ranked page instead would drop every answer
+    /// that did not happen to rank in the top few — and for a type-only query
+    /// nothing ranks, so which things survived would be an arbitrary tie-break
+    /// reported as "nothing answers this type".
+    fn type_clause(&self, declared: &DeclaredType) -> (Occur, Box<dyn Query>) {
+        let keys: Vec<(Occur, Box<dyn Query>)> = declared
+            .fields
+            .iter()
+            .map(|field| {
+                let q: Box<dyn Query> = Box::new(TermQuery::new(
+                    Term::from_field_text(self.fields.meta_key, field.key.trim()),
+                    IndexRecordOption::Basic,
+                ));
+                (Occur::Should, q)
+            })
+            .collect();
+        (Occur::Must, Box::new(BooleanQuery::new(keys)))
     }
 
     /// The clauses that select **entities, prose and messages**. Run as a second
@@ -1140,6 +1161,13 @@ impl FullTextIndex {
             // Prose in a doc that is nobody's entity has no kind, so a kind
             // filter excludes it — asking for one kind is asking about entities.
             clauses.push(self.must_term(f.kind, kind.as_token()));
+        }
+        // **A type narrows this half**, because a type is answered by a thing.
+        // Prose and messages carry no keys, so the same clause that selects the
+        // things that answer excludes them — which is the honest answer to "is
+        // a message one of my services".
+        if let Some(declared) = &query.answers_type {
+            clauses.push(self.type_clause(declared));
         }
         clauses
     }
@@ -1213,6 +1241,7 @@ impl FullTextIndex {
                         entity: d.entity.clone().expect("filtered to docs with an entity"),
                         doc_id: d.doc_id.clone(),
                         edges: edges_of(mirror, &m.handle),
+                        answers: None,
                     })
             })
             .collect()
@@ -1310,7 +1339,14 @@ impl FullTextIndex {
         query.validate()?;
         let depth = candidate_depth(query.limit);
 
-        let mut scored = self.collect(self.fact_clauses(query), depth)?;
+        // **A type query has no fact half.** The question is which THINGS
+        // carry the keys, and a row is not a thing: returning its rows beside
+        // the answer would crowd the things it asked about out of the limit.
+        let mut scored = if query.is_thing_scoped() {
+            Vec::new()
+        } else {
+            self.collect(self.fact_clauses(query), depth)?
+        };
         if !query.is_fact_scoped() {
             scored.extend(self.collect(self.other_clauses(query), depth)?);
         }
@@ -1355,15 +1391,15 @@ impl FullTextIndex {
         // sessions asking the same question see the same list in the same order.
         ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
 
-        // **How each record answers, written onto the hit.** The selecting was
-        // done by the clause in `fact_clauses`, over the whole corpus; this
-        // says how, which is the thing the caller asked for and which only the
-        // payload can answer. Nothing is expected to be dropped here — a record
+        // **How each thing answers, written onto the hit.** The selecting was
+        // done by the clause in `other_clauses`, over the whole corpus; this
+        // says how, which is what the caller asked for and which only the
+        // mirror can answer. Nothing is expected to be dropped here — a thing
         // reaching this point carries a declared key — and the filter stays a
-        // filter so that a record which somehow does not cannot arrive claiming
-        // an answer it has not got.
+        // filter so that one which somehow does not cannot arrive claiming an
+        // answer it has not got.
         if let Some(declared) = &query.answers_type {
-            ranked.retain_mut(|(_, _, hit)| answer_with(declared, hit));
+            ranked.retain_mut(|(_, _, hit)| answer_with(declared, hit, &mirror));
         }
 
         let mut hits = self.pinned(query, &mirror);
@@ -1388,16 +1424,16 @@ impl Payload {
                 edges: edges_of(mirror, &entity.id),
                 entity,
                 doc_id,
+                // **Filled in later, by the one step that knows the type.**
+                // Turning a payload into a hit does not know what was asked,
+                // and a thing answers a type only in the context of a query
+                // that named one.
+                answers: None,
             },
             Payload::Fact { fact } => Hit::Fact {
                 subject: resolve(mirror, &fact.subject),
                 home: resolve(mirror, &fact.home),
                 fact,
-                // **Filled in later, by the one step that knows the type.**
-                // Turning a payload into a hit does not know what was asked,
-                // and a record answers a type only in the context of a query
-                // that named one.
-                answers: None,
             },
             Payload::Prose {
                 doc_id,
@@ -1777,27 +1813,49 @@ impl Memory for IndexedMemory {
     }
 }
 
-/// **Does this record answer the type, and if so, say how — on the hit.**
+/// **Does this THING answer the type, and if so, say how — on the hit.**
 ///
-/// Structural: the record is never asked what it was declared to be, only what
-/// it carries. A hit that is not a fact answers no type, and neither does a
-/// fact carrying no fields — they have no keys to answer with.
+/// Structural: nothing is ever asked what it was declared to be, only what its
+/// records carry. A hit that is not an entity answers no type — prose and mail
+/// are not things and have no fields to answer with.
 ///
-/// A record carrying none of the type's keys is dropped, because that is not a
-/// weak match, it is not a match. A record carrying some is kept and says which
-/// it lacks: hiding partial matches would hide exactly the records worth
-/// finding.
-fn answer_with(declared: &DeclaredType, hit: &mut Hit) -> bool {
-    let Hit::Fact { fact, answers, .. } = hit else {
+/// **Read from the mirror rather than from the postings.** The index knows
+/// which keys a thing carries, which is enough to select it; saying how it
+/// answers needs the values too, and those live with the records the mirror
+/// holds.
+///
+/// A thing carrying none of the type's keys is dropped, because that is not a
+/// weak match, it is not a match. One carrying some is kept and says which it
+/// lacks: hiding partial matches would hide exactly the things worth finding.
+fn answer_with(declared: &DeclaredType, hit: &mut Hit, mirror: &[DocMirror]) -> bool {
+    let Hit::Entity {
+        entity, answers, ..
+    } = hit
+    else {
         return false;
     };
-    match declared.matched_by(&fact.fields) {
+    match declared.matched_by(&fields_of(mirror, &entity.id)) {
         Some(found) => {
             *answers = Some(Box::new(found));
             true
         }
         None => false,
     }
+}
+
+/// **A thing's fields, folded from every record about it the mirror holds.**
+///
+/// The mirror keeps each doc's whole scan, so this reads the same rows the
+/// store handed over — and a thing's rows can sit on more than one doc, which
+/// is why it walks all of them rather than the one the entity declares.
+fn fields_of(mirror: &[DocMirror], id: &EntityId) -> BTreeMap<String, String> {
+    let mine: Vec<Fact> = mirror
+        .iter()
+        .flat_map(|d| d.scanned.facts.iter())
+        .filter(|f| &f.subject == id)
+        .cloned()
+        .collect();
+    folded_fields(&mine)
 }
 
 /// One half of the corpus behind `search`, able to bring itself level with the
@@ -2747,14 +2805,14 @@ mod tests {
     /// **A type query is answered from the whole corpus, not from a page of it.**
     ///
     /// The corpus here is deliberately far bigger than the candidate depth the
-    /// limit buys, and the two records that answer are ordinary in every other
+    /// limit buys, and the two things that answer are ordinary in every other
     /// way — nothing about them ranks. A type filter that ran over an already
     /// truncated page would answer `0` here and say nothing about it, which is
     /// byte-identical to "nothing in memory answers this type".
     ///
     /// The small limits are paired with a limit past the whole corpus, in the
     /// same read: without the positive, a zero could just as well mean the
-    /// records were never indexed.
+    /// things were never indexed.
     #[tokio::test]
     async fn a_type_query_reaches_past_the_candidate_depth() {
         use jojobot_domain::memory::types::{Field as Key, ValueType};
@@ -2766,42 +2824,47 @@ mod tests {
             ],
         );
 
-        let mut facts: Vec<Fact> = (1..=200)
+        // A crowd of documents carrying no keys, competing for the same page
+        // the answering things have to reach, so the two that answer are buried
+        // rather than merely present. Prose rather than more things, because
+        // prose is collected by the same half of the query and needs no handle
+        // of its own.
+        let mut scans: Vec<DocScan> = (1..=200)
             .map(|n| {
-                fact(
-                    "person:alpha",
-                    &format!("plain-{n}"),
-                    "an ordinary claim with no payload on it",
-                    date(2026, 1, 1),
+                scan(
+                    &format!("doc-plain-{n}"),
+                    None,
+                    "an ordinary page with nothing typed on it",
+                    Vec::new(),
                 )
             })
             .collect();
-        for (n, keys) in [
+        for (handle, keys) in [
             (
-                "answering-whole",
+                "person:milhouse",
                 vec![("arrives", "2026-08-10"), ("crates", "4")],
             ),
-            ("answering-partial", vec![("arrives", "2026-08-11")]),
+            ("person:beta", vec![("arrives", "2026-08-11")]),
         ] {
-            facts.push(Fact {
-                fields: keys
-                    .into_iter()
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
-                    .collect(),
-                ..fact(
-                    "person:alpha",
-                    n,
-                    "an ordinary claim, with a payload on it",
-                    date(2026, 1, 1),
-                )
-            });
+            scans.push(scan(
+                &format!("doc-{handle}"),
+                Some(entity(handle, "Somebody Else")),
+                "",
+                vec![Fact {
+                    fields: keys
+                        .into_iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect(),
+                    ..fact(
+                        handle,
+                        "f1",
+                        "an ordinary claim, with keys on it",
+                        date(2026, 1, 1),
+                    )
+                }],
+            ));
         }
-        let index = index_of(vec![scan(
-            "doc-1",
-            Some(entity("person:alpha", "Alpha")),
-            "",
-            facts,
-        )]);
+        let index = index_of(scans);
 
         let answering = |limit: usize| -> Vec<String> {
             index
@@ -2813,7 +2876,11 @@ mod tests {
                 .expect("search ok")
                 .iter()
                 .filter_map(|h| match h {
-                    Hit::Fact { fact, answers, .. } if answers.is_some() => Some(fact.id.0.clone()),
+                    Hit::Entity {
+                        entity,
+                        answers: Some(_),
+                        ..
+                    } => Some(entity.id.to_string()),
                     _ => None,
                 })
                 .collect()
@@ -2823,16 +2890,16 @@ mod tests {
         past_the_corpus.sort();
         assert_eq!(
             past_the_corpus,
-            vec!["answering-partial", "answering-whole"],
-            "the corpus holds exactly two records that answer",
+            vec!["person:beta", "person:milhouse"],
+            "the corpus holds exactly two things that answer",
         );
         for limit in [20, 50] {
             let mut found = answering(limit);
             found.sort();
             assert_eq!(
                 found,
-                vec!["answering-partial", "answering-whole"],
-                "both records answer at limit {limit}, however deep in the corpus they sit",
+                vec!["person:beta", "person:milhouse"],
+                "both things answer at limit {limit}, however deep in the corpus they sit",
             );
         }
     }
@@ -5741,7 +5808,6 @@ mod tests {
         )]);
         let alpha = EntityRef::resolved(&entity("person:alpha", "Alpha"));
         let expected = vec![Hit::Fact {
-            answers: None,
             fact: linked,
             subject: alpha.clone(),
             home: alpha,
@@ -5822,7 +5888,6 @@ mod tests {
         assert_eq!(
             hits,
             vec![Hit::Fact {
-                answers: None,
                 fact: edged,
                 subject: alpha.clone(),
                 home: alpha,

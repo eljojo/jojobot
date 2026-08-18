@@ -3,14 +3,18 @@
 //!
 //! The records came first and nobody had a type in mind when they were
 //! written. **That is the case this exists to prove**: a type declared today
-//! reaches records written before it, because a record answers a type by the
-//! keys it carries and was never asked what it was declared to be. If
+//! reaches things described before it, because a thing answers a type by the
+//! keys its records carry and was never asked what it was declared to be. If
 //! declaring had to come first, every record already in the store would be out
 //! of reach for ever, which is exactly the store somebody has.
 //!
-//! The records are also messy, the way records are: one is missing a key, one
+//! **And the question is asked of the THING.** What a bike is gets written
+//! down a piece at a time, so its `serviced` and its `cost` can come from
+//! different sittings and still make it a serviced thing between them.
+//!
+//! The things are also messy, the way things are: one is missing a key, one
 //! has a date somebody typed in words. Both come back — a query that returned
-//! only the tidy ones would hide the records worth finding, and a caller
+//! only the tidy ones would hide the things worth finding, and a caller
 //! looking for work to do is looking for precisely the untidy ones.
 
 use serde_json::json;
@@ -57,11 +61,25 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     .await;
 
     // And one that is none of this: a record with keys that have nothing to do
-    // with a service. It is what stops "it matched" from meaning nothing.
+    // with a service, on a thing that HAS been serviced. It is what makes the
+    // unit legible — the outing does not stop the bike being a serviced thing,
+    // and it does not make it one either.
     s.event_with(
         "thing:gravel-bike",
         "rode it to the coast",
         json!({ "distance": "80" }),
+        &[],
+    )
+    .await;
+
+    // And the negative every answer below rests on: a thing nobody has ever
+    // serviced. Without it, "the type found the serviced things" would be
+    // indistinguishable from "the type found everything".
+    s.add("thing:torque-wrench", "The Torque Wrench").await;
+    s.event_with(
+        "thing:torque-wrench",
+        "borrowed twice, never serviced",
+        json!({ "distance": "3" }),
         &[],
     )
     .await;
@@ -86,47 +104,53 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     declared.says("\"key\":\"cost\"");
 
     // ── and it reaches everything already written ───────────────────────────
+    //
+    // **The answer is the THINGS.** A type describes what a thing is, and the
+    // records are how it came to be known — so a caller asking "which of mine
+    // are services" is asking about the bike, not about the row somebody typed
+    // it into.
     let found = s
         .call("search", json!({ "answers_type": "service", "limit": 50 }))
         .await;
 
-    // The positive everything else rests on: a record written months before
-    // the type existed, filed under a different name, comes back.
-    found.says("new chain and a full clean");
+    // The positive everything else rests on: a thing described months before
+    // the type existed, under nobody's type, comes back whole.
+    found.says("thing:gravel-bike");
     found.says("\"complete\":true");
 
     // The partial one is here too, saying what it lacks by name — not hidden,
     // and not reported as a count the caller has to interpret.
-    found.says("brake bleed, invoice never came");
+    found.says("thing:road-bike");
     found.says("\"lacking\":[\"cost\"]");
 
     // The messy one is here, flagged rather than dropped: the reader sees the
     // value that is wrong and can go and fix it.
-    found.says("reseated the hose, no charge");
+    found.says("thing:floor-pump");
     found.says("\"value\":\"some time in may\"");
 
     // …and the negative, in the same answer that just proved it is not empty:
-    // a record sharing no key with the type is not a weak match.
-    found.never_says("rode it to the coast");
+    // a thing sharing no key with the type is not a weak match.
+    found.never_says("thing:torque-wrench");
 
     // ── the same type, asked as a question about THINGS ─────────────────────
     //
-    // Search answers with the records. The other question is "which of my
-    // things have been serviced at all", and that is about the objects rather
-    // than about their rows — so it goes to the query that returns objects,
-    // and each one arrives holding only the records that answered.
+    // **A THING answers a type, not one of its rows.** The bike's `serviced`
+    // and its `cost` could have been written on different days by different
+    // sessions; what makes the bike a serviced thing is that between them its
+    // records carry the keys. So the object comes back whole — the outing
+    // included, because the outing is one of the bike's records and the answer
+    // is about the bike.
     let serviced = s
         .shape(
-            "the things carrying a service record",
+            "the things that have been serviced",
             json!({ "answers_type": "service" }),
         )
         .await;
     serviced.says("thing:gravel-bike");
     serviced.says("new chain and a full clean");
-    // The negative in the same answer: the outing shares no key with the type,
-    // so it is not one of the records that answered, even though it sits on
-    // the object that came back.
-    serviced.never_says("rode it to the coast");
+    serviced.says("\"complete\":true");
+    // The same negative, in the same answer that just proved it is not empty.
+    serviced.never_says("thing:torque-wrench");
 
     // And narrowed further by a value, which is the axis a type alone does not
     // have: the service that cost nothing.

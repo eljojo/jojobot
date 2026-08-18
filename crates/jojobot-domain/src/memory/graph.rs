@@ -1,7 +1,7 @@
 //! **The graph query: say the shape you want, and get that shape back.**
 //!
 //! Three axes, and they combine. **Select** says which objects the answer is
-//! about — one named handle, a kind, the records that answer a type, a key and
+//! about — one named handle, a kind, the things that answer a type, a key and
 //! the value it holds. **Include** says what of each object comes back — its
 //! facts, its prose, or neither. **Follow** says which edges to walk and how
 //! far, and the answer NESTS: a walked object carries the objects it reached,
@@ -101,8 +101,16 @@ pub struct Selection {
     pub subject: Option<EntityId>,
     /// Every entity of one kind.
     pub kind: Option<EntityKind>,
-    /// Objects holding a record that answers this type, matched structurally
-    /// over the keys it carries — never over what anybody declared it to be.
+    /// **Objects that answer this type**, matched structurally over the keys
+    /// their records carry — never over what anybody declared them to be.
+    ///
+    /// Asked of the THING: its records' fields folded into one map, so an
+    /// object described over several records answers a type that no one of them
+    /// answers alone. See [`super::folded_fields`].
+    ///
+    /// A partial answer is an answer. An object carrying some of the keys comes
+    /// back saying which it lacks, because a filter that kept only whole ones
+    /// would hide exactly the objects worth finding.
     pub answers_type: Option<types::DeclaredType>,
     /// Objects holding a record that carries these keys, and the values named.
     /// **Every filter must hold on ONE record**: two filters are a description
@@ -111,23 +119,25 @@ pub struct Selection {
 }
 
 impl Selection {
-    /// Is there a filter here that a fact has to answer? Kind and subject are
-    /// properties of the object; these two are properties of its records.
+    /// Is there a filter here that the object's records have to answer? Kind
+    /// and subject are properties of the object itself.
     fn filters_facts(&self) -> bool {
         self.answers_type.is_some() || !self.fields.is_empty()
+    }
+
+    /// Is there a filter here that ONE record has to answer?
+    ///
+    /// The type is not one of them any more: it is asked of the thing, so it
+    /// narrows which objects come back and never which of an object's records
+    /// do. A record that carries none of a type's keys still belongs to a thing
+    /// that answers it.
+    fn filters_records(&self) -> bool {
+        !self.fields.is_empty()
     }
 
     /// Does this fact answer every record filter. A fact carrying no field
     /// answers none of them.
     fn keeps(&self, fact: &Fact) -> bool {
-        if !self.filters_facts() {
-            return true;
-        }
-        if let Some(declared) = &self.answers_type
-            && declared.matched_by(&fact.fields).is_none()
-        {
-            return false;
-        }
         self.fields.iter().all(|f| f.satisfied_by(&fact.fields))
     }
 }
@@ -256,6 +266,16 @@ pub struct Follow {
     /// is reached when one of its records answers every filter, and it arrives
     /// carrying the records that answered.
     pub keeping: Vec<FieldFilter>,
+    /// **Keep only what FITS this type** — an object whose records carry every
+    /// key the type names, between them.
+    ///
+    /// Fitting is not the same question as [`Selection::answers_type`], which
+    /// keeps an object carrying SOME of the keys and reports which it lacks. A
+    /// walk narrowed by a partial match could not exclude anything it reached
+    /// through one of the type's own keys, which is most of what a walk is for;
+    /// and what a caller means by "which of these are pets" is the ones that
+    /// are, not the ones that share a field with one.
+    pub fits_type: Option<types::DeclaredType>,
 }
 
 impl Follow {
@@ -266,6 +286,7 @@ impl Follow {
             direction: None,
             depth: 1,
             keeping: Vec::new(),
+            fits_type: None,
         }
     }
 
@@ -380,9 +401,11 @@ impl GraphQuery {
 /// **A declaration establishes the key IS a relation, and does nothing else
 /// here.** It used to also scope the reverse walk to one type, under the name
 /// `type.key`. That scope could never exclude anything: the walked key is by
-/// construction one of the type's keys, and a record answers a type when it
-/// holds ONE of them, so the record carrying the key always answered the type.
-/// The name promised a narrowing the code could not perform, so both are gone.
+/// construction one of the type's keys, and answering a type takes only ONE of
+/// them, so whatever the walk reached answered the type. The name spelled the
+/// narrowing as part of the relation, and both are gone. What narrows a walk
+/// now is [`Follow::fits_type`], asked beside it and answered on the stricter
+/// question of whether the thing holds EVERY key.
 ///
 /// **Nothing is inferred.** A value that looks like a handle under a key nobody
 /// declared is a string that looks like a handle.
@@ -506,6 +529,17 @@ pub struct Object {
     /// Its prose, whole. `None` when prose was not asked for, so a caller can
     /// tell "not asked for" from "the page is blank".
     pub prose: Option<String>,
+    /// **How this THING answers the type the query named**, when it named one:
+    /// the keys it holds, the keys it lacks by name, and any whose value is not
+    /// what the type said it holds.
+    ///
+    /// Asked of the thing rather than of one record. A thing's fields are its
+    /// records' fields folded together, so a thing described over two sittings
+    /// answers a type that neither sitting answers alone — which is how most
+    /// things get written down.
+    ///
+    /// `None` when the query named no type.
+    pub answers: Option<types::Match>,
     /// The objects one hop further out, each carrying its own.
     pub connected: Vec<Object>,
     /// **This object has edges nobody followed.** Either the walk ran out of
@@ -642,11 +676,38 @@ impl<'a> Ctx<'a> {
             .entities
             .values()
             .filter(|e| select.kind.is_none_or(|k| e.kind == k))
-            .filter(|e| !select.filters_facts() || self.kept_facts(&e.id, select).next().is_some())
+            // **The type is asked of the thing and the keys of its records.**
+            // Two units, because they are two questions: whether this thing
+            // carries a type's keys across everything said about it, and
+            // whether one record describes what the caller is looking for.
+            .filter(|e| select.answers_type.is_none() || self.answers(&e.id, select).is_some())
+            .filter(|e| {
+                !select.filters_records() || self.kept_facts(&e.id, select).next().is_some()
+            })
             .map(|e| e.id.clone())
             .collect();
         found.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         Ok(found)
+    }
+
+    /// **How this thing answers the selection's type**, over its fields folded
+    /// together — `None` when no type was named, and when the thing carries
+    /// none of its keys.
+    fn answers(&self, id: &EntityId, select: &Selection) -> Option<types::Match> {
+        let declared = select.answers_type.as_ref()?;
+        declared.matched_by(&self.folded(id))
+    }
+
+    /// This thing's fields: every record of it, folded into one map.
+    fn folded(&self, id: &EntityId) -> BTreeMap<String, String> {
+        let mine: Vec<Fact> = self
+            .facts
+            .get(id)
+            .into_iter()
+            .flatten()
+            .map(|f| (*f).clone())
+            .collect();
+        super::folded_fields(&mine)
     }
 
     /// This entity's facts that answer the record filters.
@@ -722,6 +783,19 @@ impl<'a> Ctx<'a> {
                         unwalked = true;
                         continue;
                     }
+                    // **And the type it has to fit**, which is a question about
+                    // the object rather than about any one of its records: every
+                    // key the type names, held across everything recorded about
+                    // it. An object that answers the type in part is one this
+                    // walk was not asking for.
+                    if let Some(declared) = &follow.fits_type
+                        && !declared
+                            .matched_by(&self.folded(&reached))
+                            .is_some_and(|found| found.complete())
+                    {
+                        unwalked = true;
+                        continue;
+                    }
                     // The visited set is per root, so a cycle stops and two
                     // roots that share a neighbour each still report it — and
                     // the object whose edge was not followed says so.
@@ -735,6 +809,10 @@ impl<'a> Ctx<'a> {
             }
         }
 
+        let answered = via
+            .is_none()
+            .then(|| self.answers(id, &query.select))
+            .flatten();
         Object {
             entity,
             via,
@@ -747,6 +825,11 @@ impl<'a> Ctx<'a> {
                 .include
                 .prose
                 .then(|| self.prose.get(id).copied().unwrap_or_default().to_string()),
+            // **Only on a root.** The selection is what named a type, and it
+            // describes where the walk starts; an object the walk reached was
+            // reached because something pointed at it, not because it answers
+            // anything.
+            answers: answered,
             connected,
             unwalked,
         }
@@ -1268,6 +1351,164 @@ mod tests {
         );
     }
 
+    /// **A THING answers a type, across everything recorded about it.**
+    ///
+    /// The question is not whether one record carries the type's keys. It is
+    /// whether the thing does, and a thing's fields are its records' fields
+    /// folded into one. Asking it of a record makes a thing that was described
+    /// over two sittings answer nothing, which is how most things get written
+    /// down.
+    #[test]
+    fn a_thing_answers_a_type_its_records_answer_only_together() {
+        let declared = types::DeclaredType::new(
+            "crate",
+            vec![
+                types::Field::new("weight", types::ValueType::Number),
+                types::Field::new("arrives", types::ValueType::Date),
+            ],
+        );
+        // One key each, and neither record answers the type on its own.
+        let halves = |home: &str| {
+            vec![
+                Fact {
+                    fields: [("weight".to_string(), "12".to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..fact(home, "f1", "somebody weighed it")
+                },
+                Fact {
+                    fields: [("arrives".to_string(), "2026-08-10".to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..fact(home, "f2", "and somebody else was told when")
+                },
+            ]
+        };
+        let scanned = vec![
+            doc(
+                entity("thing:folding-chairs", "The Folding Chairs"),
+                "",
+                halves("thing:folding-chairs"),
+            ),
+            // The negative: a thing carrying one of the keys and no more. It is
+            // what stops "the fold reached it" from meaning "everything comes
+            // back".
+            doc(
+                entity("thing:torque-wrench", "The Torque Wrench"),
+                "",
+                vec![Fact {
+                    fields: [("weight".to_string(), "3".to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..fact("thing:torque-wrench", "f1", "a lighter thing")
+                }],
+            ),
+        ];
+
+        let found = resolve(
+            &scanned,
+            &[],
+            &GraphQuery {
+                select: Selection {
+                    answers_type: Some(declared),
+                    ..Selection::default()
+                },
+                ..GraphQuery::default()
+            },
+        )
+        .expect("a type is a selection");
+        assert_eq!(
+            handles(&found),
+            vec!["thing:folding-chairs", "thing:torque-wrench"],
+            "both answer; the fold is what lets the first one answer at all"
+        );
+        // …and the object says how it answers, which is the thing the caller
+        // asked for. Reported at the object, because that is the unit the
+        // question was asked of.
+        let whole = found
+            .iter()
+            .find(|o| o.entity.id.as_str() == "thing:folding-chairs")
+            .expect("the whole one is in the answer");
+        let answered = whole.answers.as_ref().expect("it answered a type");
+        assert!(
+            answered.complete(),
+            "two records between them hold every key: {answered:?}"
+        );
+        let partial = found
+            .iter()
+            .find(|o| o.entity.id.as_str() == "thing:torque-wrench")
+            .expect("the partial one is in the answer");
+        assert_eq!(
+            partial
+                .answers
+                .as_ref()
+                .expect("it answered a type")
+                .lacking,
+            vec!["arrives".to_string()],
+            "a partial answer names what it lacks rather than being dropped"
+        );
+    }
+
+    /// **The newest write wins a repeated key.** A thing's fields are folded
+    /// from records written at different times, so two records naming the same
+    /// key are not a conflict to report — they are the key being written twice,
+    /// and what a thing holds now is what was written last.
+    ///
+    /// Read through the declared value type, because that is where a folded
+    /// VALUE surfaces: the newer value is not a number and is reported as
+    /// mistyped, where the older one would have passed silently.
+    #[test]
+    fn the_newest_record_wins_a_repeated_key() {
+        let declared = types::DeclaredType::new(
+            "crate",
+            vec![types::Field::new("weight", types::ValueType::Number)],
+        );
+        let weighed = |id: &str, weight: &str| Fact {
+            fields: [("weight".to_string(), weight.to_string())]
+                .into_iter()
+                .collect(),
+            ..fact("thing:bike-chain", id, "somebody weighed it")
+        };
+        let scanned = vec![doc(
+            entity("thing:bike-chain", "The Chain"),
+            "",
+            // Out of order on purpose: the answer must come from the ids, not
+            // from the order the store happened to hand them over in.
+            vec![
+                weighed("f2", "heavier than the last one"),
+                weighed("f1", "12"),
+            ],
+        )];
+
+        let found = resolve(
+            &scanned,
+            &[],
+            &GraphQuery {
+                select: Selection {
+                    answers_type: Some(declared),
+                    ..Selection::default()
+                },
+                ..GraphQuery::default()
+            },
+        )
+        .expect("a type is a selection");
+        let answered = found
+            .first()
+            .expect("the thing answers the type either way")
+            .answers
+            .as_ref()
+            .expect("it answered a type");
+        assert_eq!(
+            answered
+                .mistyped
+                .iter()
+                .map(|m| m.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["heavier than the last one"],
+            "the later write is the value the thing holds: {answered:?}"
+        );
+    }
+
     /// **The walk goes both ways, and the answer nests.**
     ///
     /// From the party inbound reaches its guests; from a guest outbound reaches
@@ -1294,6 +1535,7 @@ mod tests {
                         direction: Some(direction),
                         depth: 1,
                         keeping: Vec::new(),
+                        fits_type: None,
                     }),
                 },
             )
@@ -1365,6 +1607,7 @@ mod tests {
                     direction: Some(Direction::In),
                     depth: 1,
                     keeping: Vec::new(),
+                    fits_type: None,
                 }),
             },
         )
@@ -1421,6 +1664,7 @@ mod tests {
                         direction: Some(Direction::Out),
                         depth,
                         keeping: Vec::new(),
+                        fits_type: None,
                     }),
                 },
             )
@@ -1479,6 +1723,7 @@ mod tests {
                         direction: Some(Direction::Out),
                         depth,
                         keeping: Vec::new(),
+                        fits_type: None,
                     }),
                 },
             )
@@ -1536,6 +1781,7 @@ mod tests {
                     direction: Some(Direction::Out),
                     depth: MAX_DEPTH,
                     keeping: Vec::new(),
+                    fits_type: None,
                 }),
             },
         )
@@ -1651,6 +1897,79 @@ mod tests {
             },
         )
         .expect("a walk within the ceiling is served");
+    }
+
+    /// **A walk narrows to the things that FIT a type, which is not the same
+    /// as the things that answer it.**
+    ///
+    /// The bike's repair record carries `owner`, and `owner` is one of `pet`'s
+    /// keys — so the bike ANSWERS `pet`, partially, and a narrowing that
+    /// admitted partial answers would keep it. Worse, it could never exclude
+    /// anything: the walk travels `owner`, so everything it reaches answers the
+    /// type by construction. Fitting — every key the type names — is what makes
+    /// the narrowing mean something.
+    #[test]
+    fn a_walk_keeps_what_fits_a_type_and_not_what_merely_answers_it() {
+        let reached = |fits: Option<types::DeclaredType>| {
+            let found = resolve(
+                &kennel(),
+                &[pet()],
+                &GraphQuery {
+                    select: Selection {
+                        subject: Some(EntityId("person:bart".into())),
+                        ..Selection::default()
+                    },
+                    include: Include {
+                        facts: false,
+                        prose: false,
+                    },
+                    follow: Some(Follow {
+                        along: Along::Relation("owner".into()),
+                        direction: Some(Direction::In),
+                        fits_type: fits,
+                        ..Follow::hop()
+                    }),
+                },
+            )
+            .expect("a declared relation is followable");
+            let mut handles: Vec<String> = found[0]
+                .connected
+                .iter()
+                .map(|o| o.entity.id.to_string())
+                .collect();
+            handles.sort();
+            (handles, found[0].unwalked)
+        };
+
+        // Unnarrowed, the walk reaches the bike, and that is the right answer
+        // to what it was asked.
+        let (everything, _) = reached(None);
+        assert_eq!(
+            everything,
+            vec![
+                "pet:santas-little-helper".to_string(),
+                "pet:snowball".to_string(),
+                "thing:red-bike".to_string(),
+            ],
+        );
+
+        // Narrowed to what fits, the bike drops out — and the pets, which hold
+        // every key, stay. The pair is the point: a negative on its own would
+        // pass on a walk that reached nothing at all.
+        let (fitting, unwalked) = reached(Some(pet()));
+        assert_eq!(
+            fitting,
+            vec![
+                "pet:santas-little-helper".to_string(),
+                "pet:snowball".to_string(),
+            ],
+        );
+        // …and the bike is not silently gone: the walk reached it and did not
+        // keep it, which is an edge nobody followed.
+        assert!(
+            unwalked,
+            "a thing the narrowing dropped is an unfollowed edge, not an absence"
+        );
     }
 
     /// The type the relation cases declare: a pet, whose `owner` is a

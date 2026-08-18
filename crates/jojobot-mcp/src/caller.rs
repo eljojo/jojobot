@@ -998,6 +998,7 @@ mod tests {
             },
             doc_id: "doc-alpha".into(),
             edges: Vec::new(),
+            answers: None,
         }])));
         capture_ok(&jojobot, capture_args("alpha", "plays go")).await;
         let good = writing_as(&jojobot);

@@ -44,15 +44,22 @@ pub struct SearchArgs {
     /// question ("which people are in X") is answered in one call.
     #[serde(default)]
     pub edge: Option<EdgeFilterArgs>,
-    /// **Records that answer this type, by name.** Matching is STRUCTURAL: a
-    /// record carrying the type's keys comes back whether or not anybody
-    /// declared it to be one, so this finds records nobody filed under it.
+    /// **THINGS that answer this type, by name.** Matching is STRUCTURAL: a
+    /// thing carrying the type's keys comes back whether or not anybody
+    /// declared it to be one, so this finds things nobody filed under it. It is
+    /// asked of the thing rather than of one of its records — what a thing is
+    /// gets written down a piece at a time, and the pieces count together.
     ///
-    /// A record carrying only some of the keys comes back too, saying which it
+    /// A thing carrying only some of the keys comes back too, saying which it
     /// lacks — partial matches are the ones usually worth finding, so they are
     /// reported and never filtered out. Each hit carries an `answers_type`
     /// saying which keys it holds, which it lacks by name, and any whose value
     /// is not what the type said it holds.
+    ///
+    /// ⚠️ **Some of the keys is enough here.** If you want only the things
+    /// with no gaps — *which of these ARE services*, rather than *which are
+    /// described like one, and what is missing* — that is `fits_type` on
+    /// `recall`'s `follow`, which keeps only what holds EVERY key.
     ///
     /// A name no type answers to comes back blocked, naming the types that do
     /// exist.
@@ -99,11 +106,23 @@ pub struct SearchArgs {
 /// index's business (`jojobot_adapters::search::tiebreak`) and it stops there.
 fn hit_json(hit: &Hit) -> serde_json::Value {
     match hit {
-        Hit::Entity { entity, edges, .. } => {
+        Hit::Entity {
+            entity,
+            edges,
+            answers,
+            ..
+        } => {
             let mut body = entity_json(entity);
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("hit".into(), "entity".into());
                 obj.insert("edges".into(), edges.iter().map(edge_json).collect());
+                // **How this THING answers the type that was asked for.**
+                // Absent when no type was asked for, rather than rendered
+                // empty: a caller who named no type is not being told this
+                // thing answers nothing.
+                if let Some(found) = answers {
+                    obj.insert("answers_type".into(), answers_json(found));
+                }
             }
             body
         }
@@ -111,20 +130,12 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
             fact,
             subject,
             home,
-            answers,
         } => {
             let mut body = fact_json(fact);
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("hit".into(), "fact".into());
                 obj.insert("about".into(), entity_ref_json(subject));
                 obj.insert("home".into(), entity_ref_json(home));
-                // **How this record answers the type that was asked for.**
-                // Absent when no type was asked for, rather than rendered
-                // empty: a caller who named no type is not being told this
-                // record answers nothing.
-                if let Some(found) = answers {
-                    obj.insert("answers_type".into(), answers_json(found));
-                }
             }
             body
         }
@@ -198,6 +209,11 @@ enum MailExcluded {
     /// true` here was the field's one wrong answer, and a field a caller is
     /// told to trust has to be right in every case rather than in most of them.
     KindFiltered,
+    /// **A type query asks about THINGS**, and a message is not one. It has no
+    /// fields to answer a type with, so the same clause that selects the things
+    /// that answer leaves mail out — structurally, exactly as a `kind` filter
+    /// does.
+    TypeFiltered,
 }
 
 impl MailExcluded {
@@ -209,6 +225,9 @@ impl MailExcluded {
         }
         if query.is_fact_scoped() {
             return Some(MailExcluded::FactScoped);
+        }
+        if query.is_thing_scoped() {
+            return Some(MailExcluded::TypeFiltered);
         }
         if query.kind.is_some() {
             return Some(MailExcluded::KindFiltered);
@@ -225,9 +244,14 @@ impl MailExcluded {
                  find a report another session filed."
             }
             MailExcluded::FactScoped => {
-                "this query filters on a property only a fact has (status, provenance, subject, \
-                 edge or answers_type), so it is a question about facts — messages, entities and \
-                 prose are all out of it."
+                "this query filters on a property only a fact has (status, provenance, subject \
+                 or edge), so it is a question about facts — messages, entities and prose are \
+                 all out of it."
+            }
+            MailExcluded::TypeFiltered => {
+                "this query names a type with answers_type, which asks which THINGS carry its \
+                 keys — and a message is not a thing and carries none, so mail was left out of \
+                 it. Drop answers_type to search messages too."
             }
             MailExcluded::KindFiltered => {
                 "this query narrows to one entity kind, and a message belongs to no entity, so \
@@ -242,7 +266,8 @@ impl MailExcluded {
     fn next(self) -> Option<Self> {
         match self {
             MailExcluded::NotAsked => Some(MailExcluded::FactScoped),
-            MailExcluded::FactScoped => Some(MailExcluded::KindFiltered),
+            MailExcluded::FactScoped => Some(MailExcluded::TypeFiltered),
+            MailExcluded::TypeFiltered => Some(MailExcluded::KindFiltered),
             MailExcluded::KindFiltered => None,
         }
     }
@@ -261,6 +286,13 @@ impl MailExcluded {
             // not-asked answers first, and it is now the default.
             MailExcluded::FactScoped => SearchQuery {
                 status: Some(FactStatus::Active),
+                ..asking_for_mail()
+            },
+            MailExcluded::TypeFiltered => SearchQuery {
+                answers_type: Some(DeclaredType {
+                    name: "kiln-firing".into(),
+                    fields: Vec::new(),
+                }),
                 ..asking_for_mail()
             },
             MailExcluded::KindFiltered => SearchQuery {
@@ -587,10 +619,31 @@ mod tests {
     /// without the filter they passed is told their answer was narrowed by
     /// something they never sent — and goes looking for it.
     ///
-    /// A type filter is that case: it is fact-only for the same reason the
-    /// others are, and it is the one a caller passes deliberately.
+    /// A type filter is NOT one of them, and gets a reason of its own: it asks
+    /// which THINGS carry a type's keys, so mail is out because a message is
+    /// not a thing rather than because the question is about rows.
     #[test]
     fn the_fact_scoped_note_names_every_filter_that_reaches_it() {
+        let served = mail_coverage(
+            &SearchQuery {
+                status: Some(FactStatus::Superseded),
+                ..asking_for_mail()
+            },
+            Coverage::Loaded,
+        );
+        let note = served["note"].as_str().expect("a note");
+        for filter in ["status", "provenance", "subject", "edge"] {
+            assert!(
+                note.contains(filter),
+                "the note leaves out {filter}, which is one of the filters that reaches it: {note}"
+            );
+        }
+        assert!(
+            !note.contains("answers_type"),
+            "a type filter no longer reaches this reason, so naming it here would send a \
+             caller looking for a narrowing that is not theirs: {note}"
+        );
+
         let by_type = SearchQuery {
             answers_type: Some(DeclaredType {
                 name: "kiln-firing".into(),
@@ -600,17 +653,15 @@ mod tests {
         };
         assert_eq!(
             MailExcluded::of(&by_type),
-            Some(MailExcluded::FactScoped),
-            "a type filter is one of the fact-only filters"
+            Some(MailExcluded::TypeFiltered),
+            "a type filter has a reason of its own"
         );
-        let served = mail_coverage(&by_type, Coverage::Loaded);
-        let note = served["note"].as_str().expect("a note");
-        for filter in ["status", "provenance", "subject", "edge", "answers_type"] {
-            assert!(
-                note.contains(filter),
-                "the note leaves out {filter}, which is one of the filters that reaches it: {note}"
-            );
-        }
+        let typed = mail_coverage(&by_type, Coverage::Loaded);
+        let note = typed["note"].as_str().expect("a note");
+        assert!(
+            note.contains("answers_type"),
+            "…and the reason names the argument the caller actually passed: {note}"
+        );
     }
 
     /// **Mail is opt-in at the door, and the opt-in reaches the port.**
@@ -1058,6 +1109,7 @@ mod tests {
                 },
                 doc_id: "doc-9".into(),
                 edges: Vec::new(),
+                answers: None,
             }]
         };
 
@@ -1494,9 +1546,9 @@ mod tests {
                 entity,
                 doc_id: "doc-9".into(),
                 edges: vec![guild.clone()],
+                answers: None,
             },
             Hit::Fact {
-                answers: None,
                 fact,
                 subject: EntityRef::resolved(&alpha),
                 home: EntityRef::resolved(&alpha),

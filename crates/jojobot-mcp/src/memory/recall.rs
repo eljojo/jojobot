@@ -76,6 +76,22 @@ pub struct FollowArgs {
     /// object that points at it marked as having edges nobody followed.
     #[serde(default)]
     pub keeping: Option<Vec<KeyFilterArgs>>,
+    /// **Keep only what FITS this type**, by name — the objects carrying EVERY
+    /// key the type names, counted across everything recorded about each one.
+    ///
+    /// ⚠️ **This is a different question from `answers_type` on the call
+    /// itself, and the difference is the whole point of having two words.**
+    /// `answers_type` selects objects carrying SOME of a type's keys and
+    /// reports which each one lacks — it is for finding things worth looking
+    /// at, gaps included. `fits_type` keeps only the objects with no gaps. Use
+    /// `answers_type` to ask *which of these are described like a pet, and what
+    /// is missing*; use `fits_type` to ask *which of these ARE pets*.
+    ///
+    /// It narrows a walk for a reason a partial match could not: a walk
+    /// travelling one of a type's own keys reaches things that answer the type
+    /// by construction, so admitting partials would exclude nothing.
+    #[serde(default)]
+    pub fits_type: Option<String>,
 }
 
 /// Arguments to `recall`.
@@ -92,10 +108,22 @@ pub struct RecallArgs {
     /// Every entity of one kind.
     #[serde(default)]
     pub kind: Option<String>,
-    /// Objects holding a record that answers this type, by name. Matching is
-    /// STRUCTURAL — a record carrying the type's keys answers it whether or not
-    /// anybody declared it one. A name no type answers to comes back blocked,
-    /// naming the types that do exist.
+    /// **Objects that answer this type**, by name. Matching is STRUCTURAL — an
+    /// object carrying the type's keys answers it whether or not anybody
+    /// declared it one — and it is asked of the OBJECT: its records' fields
+    /// count together, so a thing described over two sittings answers a type
+    /// that neither sitting answers alone.
+    ///
+    /// ⚠️ **Some of the keys is enough, and that is what separates this from
+    /// `follow.fits_type`.** An object holding a few of them comes back saying
+    /// which it lacks, because a filter that kept only whole ones would hide
+    /// exactly the objects worth finding. `fits_type`, on a walk, keeps only
+    /// the objects that hold EVERY key. Ask this one for *which of these are
+    /// described like a service, and what is missing*; ask that one for *which
+    /// of these ARE services*.
+    ///
+    /// A name no type answers to comes back blocked, naming the types that do
+    /// exist.
     #[serde(default)]
     pub answers_type: Option<String>,
     /// Objects holding a record that carries these keys, and the values named.
@@ -153,6 +181,12 @@ fn object_json(object: &graph::Object, include: graph::Include) -> serde_json::V
     if let Some(prose) = object.prose.as_ref() {
         fields.insert("prose".into(), prose.as_str().into());
     }
+    // **How this THING answers the type, when one was named.** Absent when
+    // none was: a key rendered null on every object of every other query would
+    // be a field a reader has to learn to ignore.
+    if let Some(answers) = object.answers.as_ref() {
+        fields.insert("answers".into(), answers_json(answers));
+    }
     // How the walk got here. Absent on a root, which nothing reached.
     //
     // An edge names its shape and a relation names itself, under different
@@ -200,14 +234,20 @@ impl Jojobot {
                        and its value — and use search when you are looking for something and only \
                        have words for it. Three axes, and they COMBINE into one question rather \
                        than three. WHICH OBJECTS: subject (one handle), kind, answers_type \
-                       (structural — a record answers a type by the keys it carries, whether or \
-                       not anybody declared it one), and fields (a key, and the value it holds; \
-                       omit the value to ask only that the key is there). WHAT OF EACH: facts, on \
+                       (structural — an OBJECT answers a type by the keys its records carry \
+                       between them, whether or not anybody declared it one, and carrying SOME of \
+                       them is enough: the answer says which it lacks), and fields (a key, and \
+                       the value it holds; omit the value to ask only that the key is there). \
+                       WHAT OF EACH: facts, on \
                        by default, each carrying the address that makes it editable through \
                        update_fact; and prose, off by default, which is the human half of the \
                        object's page, whole. WHICH EDGES: follow {shape, direction, depth}, and \
                        THE ANSWER NESTS — a walked object carries the objects it reached, each \
-                       carrying its own. Direction is two different questions: `out` follows the \
+                       carrying its own. NARROW A WALK WITH follow.fits_type, which is the \
+                       stricter half of the pair: answers_type selects objects carrying SOME of \
+                       a type's keys and reports the gaps, fits_type keeps only the ones \
+                       carrying EVERY key. Which of these are described like a pet, versus which \
+                       of these ARE pets. Direction is two different questions: `out` follows the \
                        edges this object's records draw, `in` follows the edges drawn AT it, so \
                        from a party `in` reaches its guests and from a guest `out` reaches the \
                        party. A RELATION is the other kind of link, and a DECLARATION is what \
@@ -258,6 +298,17 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             },
         };
+        // Resolved here for the same reason `answers_type` is, and separately
+        // from it: the two narrow different halves of one call, and a name that
+        // names no type has to be answered where the roster to offer instead is
+        // in reach.
+        let fits_type = match args.follow.as_ref().and_then(|f| f.fits_type.as_ref()) {
+            None => None,
+            Some(wanted) => match self.declared(wanted, "walked to").await? {
+                Ok(declared) => Some(declared),
+                Err(refused) => return Ok(refused),
+            },
+        };
         // **Two link vocabularies, and a call names one of them.** An edge
         // shape and a relation describe different things — a link nobody typed,
         // and a link a declaration made — so a call carrying both is refused
@@ -297,6 +348,7 @@ impl Jojobot {
                         .transpose()?,
                     depth: f.depth.map_or(1, |d| d as usize),
                     keeping: key_filters(f.keeping.as_deref().unwrap_or_default())?,
+                    fits_type: fits_type.clone(),
                 })
             })
             .transpose()?;
@@ -580,6 +632,7 @@ mod tests {
                         direction: Some("in".into()),
                         depth: None,
                         keeping: None,
+                        fits_type: None,
                     }),
                     ..of_nothing()
                 }))
@@ -622,13 +675,13 @@ mod tests {
             .expect("one filter is enough");
     }
 
-    /// **A type query reaches a record nobody labelled.**
+    /// **A type query reaches a thing nobody labelled.**
     ///
-    /// A record answers a type by the keys it carries, and it carried them
-    /// whether or not its writer also named a class. While a key could only be
-    /// written beside a label, the set a type query ran over was the set that
-    /// opted in, so a type reported the writers who knew about it rather than
-    /// the records that answer it.
+    /// A thing answers a type by the keys its records carry, and they carried
+    /// them whether or not their writer also named a class. While a key could
+    /// only be written beside a label, the set a type query ran over was the
+    /// set that opted in, so a type reported the writers who knew about it
+    /// rather than the things that answer it.
     #[tokio::test]
     async fn a_type_query_reaches_a_record_written_with_no_label() {
         let jojobot = handler();
@@ -884,6 +937,7 @@ mod tests {
             direction: None,
             depth: None,
             keeping: None,
+            fits_type: None,
         }
     }
 

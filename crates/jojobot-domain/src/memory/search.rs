@@ -148,19 +148,25 @@ pub struct SearchQuery {
     pub subject: Option<EntityId>,
     /// Facts drawing a matching edge.
     pub edge: Option<EdgeFilter>,
-    /// **Records that answer a type, matched STRUCTURALLY.**
+    /// **THINGS that answer a type, matched STRUCTURALLY.**
     ///
     /// It carries the declaration itself rather than a name, because nothing
-    /// below this point needs a store: a record answers a type by the keys it
-    /// carries, so the keys are the whole of what a search needs. Resolving a
-    /// name to a declaration happens once, at the surface, where a name that
-    /// names no type can be answered as a name that names no type.
+    /// below this point needs a store: a thing answers a type by the keys its
+    /// records carry, so the keys are the whole of what a search needs.
+    /// Resolving a name to a declaration happens once, at the surface, where a
+    /// name that names no type can be answered as a name that names no type.
     ///
-    /// **A record is never asked what it was declared to be.** One carrying
-    /// these keys comes back whether or not anybody declared anything, and a
-    /// record carrying some of them comes back too, saying which it lacks — a
-    /// filter that kept only complete matches would hide exactly the records
-    /// worth finding.
+    /// **The question is asked of the thing, not of one row.** What a thing is
+    /// gets written down a piece at a time, so its fields are its records'
+    /// fields folded into one map ([`super::folded_fields`]) and a thing
+    /// described over two sittings answers a type that neither sitting answers
+    /// alone.
+    ///
+    /// **Nothing is ever asked what it was declared to be.** A thing carrying
+    /// these keys comes back whether or not anybody declared anything, and one
+    /// carrying some of them comes back too, saying which it lacks — a filter
+    /// that kept only complete matches would hide exactly the things worth
+    /// finding.
     pub answers_type: Option<types::DeclaredType>,
     /// Whether messages are in the answer. **False by default, and worth
     /// setting true.**
@@ -231,28 +237,40 @@ impl SearchQuery {
     }
 
     /// Is this query scoped to **facts alone**? `status`, `provenance`,
-    /// `subject`, `edge` and `answers_type` are properties only a fact has, so
-    /// naming one is a statement that entities and prose are not what the
-    /// caller is looking for.
+    /// `subject` and `edge` are properties only a fact has, so naming one is a
+    /// statement that entities and prose are not what the caller is looking
+    /// for.
     ///
     /// The *default* status (active only) does not count — a default must not
     /// silently narrow a search to one hit type.
+    ///
+    /// **`answers_type` is not one of them any more.** A type is answered by a
+    /// THING, over the keys its records carry between them, so naming one is a
+    /// question about things — see [`SearchQuery::is_thing_scoped`].
     pub fn is_fact_scoped(&self) -> bool {
         self.status.is_some()
             || self.provenance.is_some()
             || self.subject.is_some()
             || self.edge.is_some()
-            // A type is answered by the keys a record carries, and a record
-            // with keys is a fact. Naming one says entities and prose are not
-            // what the caller is after, exactly as the filters above do.
-            || self.answers_type.is_some()
+    }
+
+    /// Is this query scoped to **things**? Naming a type asks which things
+    /// carry its keys, so rows, prose and messages are not what the caller is
+    /// after: none of them is a thing, and none of them has fields to answer
+    /// with.
+    pub fn is_thing_scoped(&self) -> bool {
+        self.answers_type.is_some()
     }
 
     /// Reject a query that cannot be served, before any index work: no text and
     /// no filter is a request for "everything", which is not a search; and the
     /// entity references it carries must be well-formed ids.
     pub fn validate(&self) -> Result<(), MemoryError> {
-        if self.terms().is_none() && self.kind.is_none() && !self.is_fact_scoped() {
+        if self.terms().is_none()
+            && self.kind.is_none()
+            && !self.is_fact_scoped()
+            && !self.is_thing_scoped()
+        {
             return Err(MemoryError::InvalidQuery(
                 "give a query, or at least one filter (kind, status, provenance, subject, edge, \
                  answers_type)"
@@ -358,6 +376,17 @@ pub enum Hit {
         /// The edges its facts draw — where this entity sits in the graph,
         /// deduped and in first-seen order.
         edges: Vec<Edge>,
+        /// **How this THING answers the type the query named**, when it named
+        /// one: the keys its records carry between them, the keys they lack by
+        /// name, and any whose value is not what the type said it holds.
+        ///
+        /// `None` when the query named no type. It is never `None` for a hit a
+        /// type query returned — a thing that answers none of a type's keys is
+        /// not a match at all, so it is not in the answer to be reported on.
+        ///
+        /// **Boxed** so that the one variant carrying it does not set the size
+        /// of every hit in a result list.
+        answers: Option<Box<types::Match>>,
     },
     /// A fact matched by content, details, or a filter. Carried **whole** — the
     /// row, not a snippet — because the answer usually IS the row, and its
@@ -365,18 +394,6 @@ pub enum Hit {
     Fact {
         /// The fact, address and all.
         fact: Fact,
-        /// **How this record answers the type the query named**, when it named
-        /// one: the keys it holds, the keys it lacks by name, and any whose
-        /// value is not what the type said it holds.
-        ///
-        /// `None` when the query named no type. It is never `None` for a hit a
-        /// type query returned — a record that answers none of a type's keys is
-        /// not a match at all, so it is not in the answer to be reported on.
-        ///
-        /// **Boxed** so that the one variant carrying it does not set the size
-        /// of every hit in a result list: most hits are not fact hits and no
-        /// hit at all carries this unless a type was asked for.
-        answers: Option<Box<types::Match>>,
         /// The entity the fact is about, resolved.
         subject: EntityRef,
         /// The entity whose doc holds the row, resolved. Usually the same as

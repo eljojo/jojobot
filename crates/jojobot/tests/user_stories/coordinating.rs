@@ -68,11 +68,11 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .says("bot:otto");
 
     // GAP — nothing here says what class of thing this is, and nothing needs
-    // to: a record is its keys, and `found_by` plus `surface` is what makes it
-    // a defect. Declaring a type publishes a name and the keys it carries, the
-    // answer names every type that exists, and a search by type matches
-    // records structurally and says which keys each one lacks. So comparing
-    // them is served. What is not is agreement — declaring is write-time help
+    // to: a thing is its keys, and `found_by` plus `surface` is what makes this
+    // one a defect. Declaring a type publishes a name and the keys it carries,
+    // the answer names every type that exists, and a search by type matches
+    // things structurally — over the keys their records carry between them —
+    // and says which keys each one lacks. So comparing them is served. What is not is agreement — declaring is write-time help
     // and never a gate, the key name is the whole schema, and nothing stops
     // the next session recording the same class of incident under keys of its
     // own.
