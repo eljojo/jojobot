@@ -220,7 +220,8 @@ async fn throwing_a_birthday_party() {
 
     // The venue went in under the short name everybody says. Giving it its
     // proper one edits the same entity rather than standing a second one
-    // beside it: the handle is permanent and the label is not.
+    // beside it: the handle says which entity to edit, and the label is what
+    // changes.
     s.call(
         "update_entity",
         json!({"handle": "place:moes", "name": "Moe's Tavern"}),

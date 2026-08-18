@@ -141,7 +141,7 @@ Do not create work. Do not add a date that the operator did not give.
 
 A backward rhythm reviews the period that ended. State what got attention,
 what stopped, and what did not start. It is a conversation. Do not produce a
-document, a count or a dashboard.
+write-up, a count or a dashboard.
 
 ## What belongs to the operator
 

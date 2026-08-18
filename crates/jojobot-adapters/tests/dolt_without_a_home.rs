@@ -18,6 +18,7 @@
 use std::path::PathBuf;
 
 use jojobot_adapters::dolt::Dolt;
+use jojobot_adapters::testing::free_port;
 
 /// A directory of this run's own, removed when it is done.
 struct Scratch(PathBuf);
@@ -41,21 +42,6 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
-}
-
-/// A port no other caller in this process will be given. The same cursor the
-/// suites beside this one use: a candidate nobody here has been offered, then
-/// a bind to check it is free.
-fn free_port() -> u16 {
-    static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
-    for _ in 0..40_000 {
-        let slot = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let port = 20_000 + slot % 40_000;
-        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
-            return port;
-        }
-    }
-    panic!("no free port in the range this suite uses")
 }
 
 /// **A home the process cannot reach does not stop the store.**

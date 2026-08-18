@@ -11,7 +11,7 @@
 use super::*;
 use crate::orientation::essay::ORIENTATION;
 
-/// Every shipped `.rs` file in this crate, with its test half cut off.
+/// Every shipped `.rs` file in this crate, named, with its test half cut off.
 ///
 /// The constraints below are about what SHIPS, and the way they are asserted
 /// is by counting occurrences in the source — so what counts as "the source"
@@ -30,8 +30,12 @@ use crate::orientation::essay::ORIENTATION;
 ///   by reading the declarations that gate them, never by a list somebody has to
 ///   remember to update: a list is how this goes stale, and going stale here is
 ///   invisible.
-fn shipped_source() -> String {
-    fn walk(dir: &std::path::Path, gated: &mut Vec<std::path::PathBuf>, out: &mut Vec<String>) {
+fn shipped_files() -> Vec<(String, String)> {
+    fn walk(
+        dir: &std::path::Path,
+        gated: &mut Vec<std::path::PathBuf>,
+        out: &mut Vec<(String, String)>,
+    ) {
         let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
             .expect("the crate's own src is readable")
             .map(|e| e.expect("a directory entry").path())
@@ -57,7 +61,13 @@ fn shipped_source() -> String {
             if gated.contains(&path) {
                 continue;
             }
-            out.push(shipped_half(&text));
+            out.push((
+                path.strip_prefix(env!("CARGO_MANIFEST_DIR"))
+                    .unwrap_or(&path)
+                    .display()
+                    .to_string(),
+                shipped_half(&text),
+            ));
         }
     }
 
@@ -117,7 +127,17 @@ fn shipped_source() -> String {
         !files.is_empty(),
         "the walk found no shipped source at all, which is a broken test rather than a clean crate"
     );
-    files.concat()
+    files
+}
+
+/// The same shipped source, as one text, for the checks that count occurrences
+/// across the crate rather than asking which file carried one.
+fn shipped_source() -> String {
+    shipped_files()
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect::<Vec<String>>()
+        .concat()
 }
 
 /// **Every kind the store accepts is a kind the surface lists.**
@@ -642,6 +662,274 @@ fn the_orientation_states_the_one_move_declaring_a_type_refuses() {
     );
 }
 
+/// **Every sentence this crate compiles in**, with the file and line that
+/// carries it.
+///
+/// **The second corpus, and it exists because the first cannot reach a
+/// refusal.** [`agent_facing_text`] gathers what a caller reads BEFORE a call
+/// — descriptions, schemas, the essay, the instructions — plus one module's
+/// answer notes. The prose a caller reads AFTER a call is built where the
+/// refusal is decided: some of it by a pure function of an error value, some
+/// of it as a `format!` inside an async handler that only a rigged store
+/// reaches. A gatherer that called the reachable ones would be a list of call
+/// sites, and a list of call sites goes stale the moment somebody writes the
+/// next refusal.
+///
+/// **So this reads the source instead, and takes every literal.** A sentence
+/// jojobot compiles in is one it can serve; nothing in the source says which
+/// ones do. That is deliberately wider than "agent-facing" — an `expect`
+/// message is in here too — and the rule swept over it is the one worth
+/// holding everywhere: the vocabulary. Holding an internal message to the
+/// same words costs a word, and the alternative is a corpus that stops at
+/// whichever sites somebody remembered.
+fn shipped_prose() -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for (file, text) in shipped_files() {
+        for (line, literal) in string_literals(&text) {
+            // Prose, rather than every literal: a JSON key, a handle and a
+            // token are not sentences, and the rules below are about
+            // sentences.
+            if literal.split_whitespace().count() >= 4 {
+                found.push((format!("{file}:{line}"), literal));
+            }
+        }
+    }
+    found
+}
+
+/// The string literals of one Rust source, each with the line it opens on.
+///
+/// **Written out rather than approximated by a regular expression**, because
+/// three things in this crate's own source defeat the approximation and each
+/// of them changes the answer:
+///
+/// * A comment that quotes a sentence is not a literal. Half the prose in
+///   these files sits in doc comments discussing the strings below them, so a
+///   scan that counts those reports a sentence at a line nobody ships.
+/// * The long descriptions are written as `\` continuations, and Rust drops
+///   the newline AND the indentation that follows it. Rejoining them with a
+///   space instead splits words that were written whole — `crm-\n card` is
+///   how a hyphenated word becomes two, and one of them is a word this file
+///   forbids.
+/// * The skills and the essay are raw strings. A scanner that does not know
+///   `r#"` reads no skill body at all and passes, having looked at nothing.
+///
+/// Escapes are resolved to what the string holds, not to what it looks like.
+fn string_literals(text: &str) -> Vec<(usize, String)> {
+    let src: Vec<char> = text.chars().collect();
+    let mut found = Vec::new();
+    let mut at = 0;
+    let mut line = 1;
+    while at < src.len() {
+        match src[at] {
+            '\n' => {
+                line += 1;
+                at += 1;
+            }
+            '/' if src.get(at + 1) == Some(&'/') => {
+                while at < src.len() && src[at] != '\n' {
+                    at += 1;
+                }
+            }
+            '/' if src.get(at + 1) == Some(&'*') => {
+                let mut depth = 1;
+                at += 2;
+                while at < src.len() && depth > 0 {
+                    match (src[at], src.get(at + 1)) {
+                        ('/', Some('*')) => {
+                            depth += 1;
+                            at += 2;
+                        }
+                        ('*', Some('/')) => {
+                            depth -= 1;
+                            at += 2;
+                        }
+                        ('\n', _) => {
+                            line += 1;
+                            at += 1;
+                        }
+                        _ => at += 1,
+                    }
+                }
+            }
+            // A char literal or a lifetime. Only `'x'` and `'\x'` close; a
+            // lifetime never does, and reading one as a literal swallows the
+            // code after it.
+            '\'' => {
+                let escaped = src.get(at + 1) == Some(&'\\');
+                let closes = src.get(at + if escaped { 3 } else { 2 }) == Some(&'\'');
+                at += match (closes, escaped) {
+                    (true, true) => 4,
+                    (true, false) => 3,
+                    (false, _) => 1,
+                };
+            }
+            // A raw string, in any number of hashes. `r#type` is a raw
+            // identifier and opens nothing.
+            'r' if !src
+                .get(at.wrapping_sub(1))
+                .is_some_and(|c| c.is_alphanumeric() || *c == '_') =>
+            {
+                let mut hashes = 0;
+                while src.get(at + 1 + hashes) == Some(&'#') {
+                    hashes += 1;
+                }
+                if src.get(at + 1 + hashes) != Some(&'"') {
+                    at += 1;
+                    continue;
+                }
+                let opened = line;
+                let mut end = at + 2 + hashes;
+                while end < src.len() {
+                    if src[end] == '"' && (1..=hashes).all(|h| src.get(end + h) == Some(&'#')) {
+                        break;
+                    }
+                    if src[end] == '\n' {
+                        line += 1;
+                    }
+                    end += 1;
+                }
+                found.push((
+                    opened,
+                    src[at + 2 + hashes..end.min(src.len())].iter().collect(),
+                ));
+                at = end + 1 + hashes;
+            }
+            '"' => {
+                let opened = line;
+                let mut literal = String::new();
+                let mut end = at + 1;
+                while end < src.len() && src[end] != '"' {
+                    if src[end] != '\\' {
+                        if src[end] == '\n' {
+                            line += 1;
+                        }
+                        literal.push(src[end]);
+                        end += 1;
+                        continue;
+                    }
+                    match src.get(end + 1) {
+                        // The continuation: the newline and every space after
+                        // it are not in the string.
+                        Some('\n') => {
+                            line += 1;
+                            end += 2;
+                            while src.get(end).is_some_and(|c| c.is_whitespace()) {
+                                if src[end] == '\n' {
+                                    line += 1;
+                                }
+                                end += 1;
+                            }
+                        }
+                        Some('n') | Some('t') => {
+                            literal.push(' ');
+                            end += 2;
+                        }
+                        Some(escaped) => {
+                            literal.push(*escaped);
+                            end += 2;
+                        }
+                        None => end += 1,
+                    }
+                }
+                found.push((opened, literal));
+                at = end + 1;
+            }
+            _ => at += 1,
+        }
+    }
+    found
+}
+
+/// **The scanner reads what the compiler reads.**
+///
+/// Every case here is one this crate's own source contains, and each one
+/// changes the answer rather than tidying it: a quoted sentence inside a
+/// comment is a line nobody ships, a `\` continuation is where a hyphenated
+/// word gets split in two, and a raw string is where every skill body lives.
+/// The char literal is the one that does not look like prose at all: `'\"'`
+/// is a quote the compiler does not open a string with, and a scanner that
+/// misses that reads the CODE after it as a sentence — while a lifetime,
+/// which never closes, must not be skipped as though it were a literal.
+#[test]
+fn the_scanner_reads_the_strings_and_not_the_source_around_them() {
+    let source = concat!(
+        "// a comment saying \"nothing shipped\"\n",
+        "const A: &str = \"a plain shipped sentence\";\n",
+        "/* a block\n saying \"nothing shipped\" */\n",
+        "fn f<'a>(x: &'a str) -> char { '\\n' }\n",
+        "fn g() -> char { '\"' }\n",
+        "const B: &str = \"a crm-\\\n    card is one word\";\n",
+        "const C: &str = r#\"a raw \"quoted\" body\"#;\n",
+        "const D: &str = \"an escaped \\\" quote\";\n",
+    );
+    assert_eq!(
+        string_literals(source),
+        vec![
+            (2, "a plain shipped sentence".to_string()),
+            (7, "a crm-card is one word".to_string()),
+            (9, "a raw \"quoted\" body".to_string()),
+            (10, "an escaped \" quote".to_string()),
+        ],
+        "the scanner must read the literals, at the lines that carry them, and nothing else"
+    );
+}
+
+/// **A file whose sentences went ungathered is the failure this gather
+/// exists to end.**
+///
+/// A scanner that quietly read no raw string, or walked off a file, leaves
+/// every sweep below green over a corpus with a hole in it — the same shape
+/// as the refusals going unread in the first place, and invisible for the
+/// same reason. So the scanner is checked against a SECOND, cruder reading:
+/// one line at a time, quotes counted rather than parsed, comments skipped.
+///
+/// **One direction only, and that is the whole point.** The crude read misses
+/// things the real one catches — a sentence written across a `\` continuation
+/// is two short fragments to it — so it can never demand prose that is not
+/// there. What it CAN do is name a file it can plainly see a sentence in and
+/// the scanner returned nothing for, which is the only failure a scanner has.
+///
+/// It is derived rather than listed: no file is named here, so a file added
+/// tomorrow is covered tomorrow.
+#[test]
+fn no_shipped_file_has_its_sentences_missed() {
+    /// The crude reading: quoted runs on one line, outside a comment.
+    fn plainly_carries_prose(text: &str) -> bool {
+        text.lines()
+            .filter(|line| {
+                let start = line.trim_start();
+                !start.starts_with("//") && !start.starts_with('*')
+            })
+            .flat_map(|line| line.split('"').skip(1).step_by(2))
+            .any(|run| run.split_whitespace().count() >= 4)
+    }
+
+    let gathered = shipped_prose();
+    assert!(
+        !gathered.is_empty(),
+        "the gather returned no sentence at all, so every sweep over it reads nothing and passes"
+    );
+    let plain: Vec<String> = shipped_files()
+        .into_iter()
+        .filter(|(_, text)| plainly_carries_prose(text))
+        .map(|(file, _)| file)
+        .collect();
+    assert!(
+        !plain.is_empty(),
+        "the crude read found no prose anywhere, so it demands nothing of the scanner below"
+    );
+    let missed: Vec<&String> = plain
+        .iter()
+        .filter(|file| !gathered.iter().any(|(at, _)| at.starts_with(*file)))
+        .collect();
+    assert!(
+        missed.is_empty(),
+        "a sentence can be read off these files one line at a time and the scanner gathered \
+         none of it, so no check on this text can fail for them: {missed:?}"
+    );
+}
+
 /// **Every word an agent reads before a call, and `search`'s coverage notes**
 /// — tool descriptions, the argument-schema field docs, the orientation essay,
 /// the server instructions, and that one set of notes.
@@ -655,13 +943,12 @@ fn the_orientation_states_the_one_move_declaring_a_type_refuses() {
 /// reads every description and no answer reads the half a caller meets before
 /// the call and skips the half it meets after.
 ///
-/// **The answer half gathered here is one module's, and the principle above is
-/// wider than the reach below.** `search`'s coverage notes are in; the
-/// chronology note, the unreadable-items report, the notes on the identity
-/// path, the orient notes, the mailbox note and the refusal texts are answer
-/// prose that nothing here reads, so no check on this text can fail for any of
-/// them. Gathering answer prose generically is its own piece of work. Until it
-/// lands, read a pass here as covering the descriptions and one module.
+/// **The answer half gathered HERE is still one module's**, and the rest of
+/// it — the chronology note, the unreadable-items report, the notes on the
+/// identity path, the orient notes, the mailbox note, the refusal texts —
+/// comes in through [`shipped_prose`] instead, because it is written where it
+/// is decided rather than returned by anything this function could call.
+/// [`everything_served`] is the pair, and it is what the sweeps read.
 fn agent_facing_text() -> Vec<(String, String)> {
     let mut found = vec![
         ("the orientation essay".to_string(), ORIENTATION.to_string()),
@@ -716,6 +1003,21 @@ fn the_gathered_text_holds_every_coverage_note() {
             "{what} is served to an agent and no check on this text reads it"
         );
     }
+}
+
+/// **Everything jojobot can put in front of an agent**: what a caller reads
+/// before a call, and every sentence the crate compiles in.
+///
+/// The two halves are gathered differently because they are reachable
+/// differently — one by asking the router, one by reading the source — and
+/// the sweeps below want them together, because a rule about the words
+/// jojobot uses does not stop at the moment of the call. The retired-word
+/// sweep found its last two offenders on the second half.
+fn everything_served() -> Vec<(String, String)> {
+    agent_facing_text()
+        .into_iter()
+        .chain(shipped_prose())
+        .collect()
 }
 
 /// Whether this text uses `word` as a word, rather than as a run of letters
@@ -813,7 +1115,13 @@ fn no_agent_facing_text_teaches_the_store() {
 
     let mut teaching: Vec<String> = Vec::new();
     let mut unused: Vec<&(&str, &str)> = ALLOWED.iter().collect();
-    for (what, text) in agent_facing_text() {
+    let served = everything_served();
+    assert!(
+        !served.is_empty(),
+        "nothing was gathered, so the sweep below reads no text at all and passes on an empty \
+         corpus"
+    );
+    for (what, text) in served {
         let haystack = text.to_lowercase();
         for (word, why) in RETIRED {
             if !mentions(&haystack, word) {
@@ -912,7 +1220,7 @@ fn no_agent_facing_text_folds_the_records() {
         "recall's description",
     ];
 
-    let served = agent_facing_text();
+    let served = everything_served();
     assert!(
         !served.is_empty(),
         "nothing was gathered, so the sweep below reads no text at all and passes on an empty \
@@ -1033,7 +1341,7 @@ fn no_agent_facing_text_promises_a_permanent_handle() {
         "add_entity's argument schema",
     ];
 
-    let served = agent_facing_text();
+    let served = everything_served();
     assert!(
         !served.is_empty(),
         "nothing was gathered, so the sweep below reads no text at all and passes on an empty \

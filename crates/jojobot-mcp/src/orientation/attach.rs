@@ -243,7 +243,7 @@ impl Jojobot {
                 answer,
                 format!(
                     "No session was started. That session is gone: '{answer}' is not a handle \
-                 this jojobot is holding — a handle whose run never wrote a card has nothing \
+                 this jojobot is holding — a handle whose run never wrote has nothing \
                  to be recovered from. The work itself is untouched and still \
                  readable. Call start_here with your bot name again and take the offer it \
                  makes."

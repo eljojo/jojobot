@@ -528,39 +528,11 @@ pub(crate) mod tests {
             .expect("the store keeps its own history")
     }
 
-    /// A port no other caller in this process will be given.
-    ///
-    /// **A cursor, not just a bind.** Asking the OS for `:0` and letting the
-    /// listener go hands two concurrent callers the same number often enough to
-    /// matter — measured on this machine at 4 collisions in 400 with two callers,
-    /// and 339 in 3200 with sixteen. Two servers then get one port: the loser's
-    /// child cannot bind and dies, and the winner answers its client, so a whole
-    /// test runs against another test's database.
-    ///
-    /// Taking a distinct slot first means no two callers here can be offered the
-    /// same candidate, whatever the kernel would have said. The bind that follows
-    /// only checks the candidate is free; the window it leaves is somebody outside
-    /// this process, and `Dolt::start` refuses a port it cannot take.
-    /// **Seeded from the process id**, because a cursor that makes two callers
-    /// in one process disagree makes every process agree: each begins at the
-    /// same slot and walks up in the same order, so two test binaries starting
-    /// together are offered the same numbers and the second store cannot take
-    /// its port. The bind below does not close that — the candidate is bound,
-    /// released, and taken later by the store — so this narrows the window
-    /// rather than shutting it, exactly as the cursor did when it replaced
-    /// asking the OS for `:0`.
-    pub(crate) fn free_port() -> u16 {
-        static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
-        let seed = std::process::id() as u16;
-        for _ in 0..40_000 {
-            let slot = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let port = 20_000 + seed.wrapping_add(slot) % 40_000;
-            if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
-                return port;
-            }
-        }
-        panic!("no free port in the range this suite uses")
-    }
+    /// **The port helper lives in [`crate::testing`]**, so the suites in this
+    /// crate and the ones beside it hand out ports from one block rather than
+    /// from a copy each. The copies are what let the same race be repaired
+    /// three times and still arrive.
+    pub(crate) use crate::testing::free_port;
 
     /// **The store comes up on an empty directory and answers.**
     ///

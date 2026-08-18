@@ -34,8 +34,16 @@ thiserror = { workspace = true }
 # between the fork and the exec rather than anything the parent can do after.
 libc = { workspace = true }
 
+# The port helper these suites share lives behind this feature so it compiles
+# for tests and NEVER ships in a production binary.
+[features]
+testing = []
+
 [dev-dependencies]
 tokio = { workspace = true }
+# This crate's own integration suites use its test support, which the feature
+# above keeps out of a normal build.
+jojobot-adapters = { path = ".", features = ["testing"] }
 # The shared contract + fake live behind the domain's `testing` feature; the
 # contract runs here against the real Outline adapter (gated integration test).
 jojobot-domain = { workspace = true, features = ["testing"] }

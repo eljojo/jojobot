@@ -1,13 +1,13 @@
 //! **The shared contract, against the real store.**
 //!
-//! Not `#[ignore]` and not credential-gated, which is the whole difference from
-//! the Outline suite beside it: this one needs a temporary directory and the
-//! binary that is already in the toolchain, so it runs in an ordinary
-//! `cargo test` and nobody has to remember it.
+//! Not `#[ignore]` and not credential-gated: it needs a temporary directory
+//! and the binary that is already in the toolchain, so it runs in an ordinary
+//! `cargo test` and nobody has to remember it. That is what makes the
+//! real-dependency gate cheap enough to have no excuse behind it.
 //!
 //! The contract is the specification. Nothing here restates what a session
-//! does — it points the existing cases at a third implementation and lets them
-//! say whether it behaves.
+//! does — it points the existing cases at the store and lets them say whether
+//! it behaves.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,6 +19,7 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
+use jojobot_adapters::testing::free_port;
 use jojobot_domain::mailbox::testing::contract as mailboxes;
 use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
 use jojobot_domain::memory::EntityId;
@@ -47,31 +48,6 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
-}
-
-/// A port no other caller in this process will be given.
-///
-/// **A cursor, not just a bind.** Asking the OS for `:0` and letting the
-/// listener go hands two concurrent callers the same number often enough to
-/// matter — measured on this machine at 4 collisions in 400 with two callers,
-/// and 339 in 3200 with sixteen. Two servers then get one port: the loser's
-/// child cannot bind and dies, and the winner answers its client, so a whole
-/// test runs against another test's database.
-///
-/// Taking a distinct slot first means no two callers here can be offered the
-/// same candidate, whatever the kernel would have said. The bind that follows
-/// only checks the candidate is free; the window it leaves is somebody outside
-/// this process, and `Dolt::start` refuses a port it cannot take.
-fn free_port() -> u16 {
-    static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
-    for _ in 0..40_000 {
-        let slot = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let port = 20_000 + slot % 40_000;
-        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
-            return port;
-        }
-    }
-    panic!("no free port in the range this suite uses")
 }
 
 /// **The contract's cases, each against a store of its own.**

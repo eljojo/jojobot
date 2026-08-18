@@ -16,5 +16,11 @@ pub mod dolt;
 pub mod owners;
 pub mod search;
 
+// The port helper the suites share lives behind this feature, exactly as the
+// domain's fake and its contract do: test support that ships is test support
+// in the product.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+
 #[cfg(test)]
 mod log_capture;
