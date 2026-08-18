@@ -194,6 +194,28 @@ pub struct RecallArgs {
     /// you reach the far end — deliberately, rather than by surprise.
     #[serde(default)]
     pub history_most: Option<u32>,
+    /// **The values already recorded under one key**, across the objects this
+    /// call selected, each with how many of them hold it — most used first.
+    ///
+    /// **A read, never a rule.** It says what is there so a caller can pick a
+    /// spelling that is already in use instead of inventing a third one; a
+    /// value nobody has used is still written, and nothing here refuses one.
+    ///
+    /// The values come from what each thing HOLDS — its folded fields — so a
+    /// value that was written and later replaced is not in use, and a thing
+    /// counts once however many times it was written. **The scope is the
+    /// selection**: name a `kind` and you get that kind's values, and a
+    /// `fields` filter naming the key alone is how you ask across everything
+    /// carrying it.
+    ///
+    /// A key nobody has written comes back with nothing in use rather than as
+    /// a refusal.
+    #[serde(default)]
+    pub values: Option<String>,
+    /// **How many values come back**, most used kept. Twenty when you do not
+    /// say. The answer always says how many exist and how many it left out.
+    #[serde(default)]
+    pub values_most: Option<u32>,
     /// **Keep only what is OWED as of a date** — what has a due moment that
     /// day has reached.
     ///
@@ -262,6 +284,37 @@ fn key_filters(args: &[KeyFilterArgs]) -> Result<Vec<graph::FieldFilter>, McpErr
             })
         })
         .collect()
+}
+
+/// **The values one key already holds, on the wire.**
+///
+/// `distinct` is how many there are and `left_out` how many this answer does
+/// not carry, so a caller who has to reach the far end knows there is one and
+/// which argument gets there (rule 106).
+fn values_json(objects: &[graph::Object], key: &str, most: usize) -> serde_json::Value {
+    let in_use = graph::values_in_use(objects, key);
+    let shown = in_use.len().min(most);
+    let left_out = in_use.len() - shown;
+    let mut body = serde_json::json!({
+        "key": key.trim(),
+        "distinct": in_use.len(),
+        "left_out": left_out,
+        "in_use": in_use
+            .iter()
+            .take(shown)
+            .map(|v| serde_json::json!({ "value": v.value, "things": v.things }))
+            .collect::<Vec<_>>(),
+    });
+    let note = if in_use.is_empty() {
+        "nothing here holds that key yet, which is an answer rather than a refusal: write the \
+         value you meant and it becomes the first one in use"
+    } else if left_out > 0 {
+        "the most used are here and the rest are not: raise values_most to reach them"
+    } else {
+        return body;
+    };
+    body["note"] = note.into();
+    body
 }
 
 /// **One key's writes on the wire, oldest first, with how many there are.**
@@ -436,7 +489,17 @@ impl Jojobot {
                        is how you count occurrences. A key nobody wrote comes back as no \
                        writes, never as a refusal. A long history comes back CUT to its newest \
                        twenty, saying how many exist and how many it left out; history_most \
-                       raises the window when you really want the far end. WHICH EDGES: follow {shape, direction, depth}, and \
+                       raises the window when you really want the far end. VALUES names a key \
+                       and answers with the values the selected objects already hold under it, \
+                       most used first, each with how many hold it — what to write in a key \
+                       like colour or status when you want the spelling everything else \
+                       uses. IT IS A READ AND NEVER A RULE: a value nobody has used is written \
+                       exactly as any other, and this is how you see the list before adding to \
+                       it. The scope is whatever the call selected, so a `fields` filter naming \
+                       the key alone asks it of everything carrying the key. A key nobody has \
+                       written comes back with nothing in use rather than as a refusal, and a \
+                       long list is cut to its most used twenty with values_most to reach the \
+                       rest. WHICH EDGES: follow {shape, direction, depth}, and \
                        THE ANSWER NESTS — a walked object carries the objects it reached, each \
                        carrying its own. NARROW A WALK WITH follow.fits_type, which is the \
                        stricter half of the pair: answers_type selects objects carrying SOME of \
@@ -558,6 +621,12 @@ impl Jojobot {
                 &self.zone_for(args.sid.as_deref()),
             )?),
         };
+        // The same window the writes behind a key get, for the same reason: a
+        // key with a thousand spellings would otherwise bury the caller who
+        // asked one narrow question.
+        let most_values = args
+            .values_most
+            .map_or(graph::WRITES_SHOWN, |most| most as usize);
         let include = graph::Include {
             facts: args.facts.unwrap_or(false),
             prose: args.prose.unwrap_or(false),
@@ -605,6 +674,11 @@ impl Jojobot {
         }
         let body = serde_json::json!({
             "count": found.len(),
+            // **What the selected things already hold under one key**, when the
+            // call named one. It is a read of the store and never a rule: a
+            // caller picks a value that is in use, or writes one that is not,
+            // and nothing here refuses the second.
+            "values": args.values.as_deref().map(|key| values_json(&found, key, most_values)),
             // **The day the question was asked about**, and null when it asked
             // about none. A caller that let jojobot supply today has no other
             // way to learn which day that was, and an answer about an unnamed
@@ -641,6 +715,8 @@ mod tests {
             sid: None,
             history: None,
             history_most: None,
+            values: None,
+            values_most: None,
         }
     }
 
@@ -751,6 +827,103 @@ mod tests {
             !said.contains("person:alpha"),
             "a kind no carrier speaks for owes nothing, whatever it holds: {said}",
         );
+    }
+
+    /// **The values a key already holds, so a caller picks one instead of
+    /// inventing a spelling.**
+    ///
+    /// A dynamic enum rather than a constraint: the answer says what is
+    /// recorded and how much of it, and **a value nobody has used is still
+    /// written**. The second half of this case is what stops the first from
+    /// being satisfied by a build that turned the list into a rule.
+    ///
+    /// **It also cannot be satisfied by a build that ignores the store.** The
+    /// colour written half way through is invented here, so a hardcoded list
+    /// cannot contain it, and the counts change between the two reads.
+    #[tokio::test]
+    async fn recall_says_which_values_a_key_already_holds_and_refuses_no_new_one() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        async fn paint(jojobot: &Jojobot, sid: &str, handle: &str, colour: &str) {
+            capture_ok(
+                jojobot,
+                CaptureArgs {
+                    sid: Some(sid.to_string()),
+                    fields: Some(
+                        [("colour".to_string(), colour.to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args(handle, "what colour it is")
+                },
+            )
+            .await;
+        }
+        async fn asking(jojobot: &Jojobot, sid: &str, key: &str) -> serde_json::Value {
+            let answered = jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("thing".into()),
+                    values: Some(key.to_string()),
+                    sid: Some(sid.to_string()),
+                    // The selection is the kind, not one handle: the values in
+                    // use are asked of every thing, which is the question a
+                    // caller picking a colour is asking.
+                    subject: None,
+                    facts: None,
+                    ..of("thing:kettle")
+                }))
+                .await
+                .expect("a read of what is in use is an answer");
+            json_of(&answered)
+        }
+        paint(&jojobot, &sid, "thing:kettle", "dark green").await;
+        paint(&jojobot, &sid, "thing:jukebox", "dark green").await;
+        paint(&jojobot, &sid, "thing:floor-pump", "amber").await;
+
+        let body = asking(&jojobot, &sid, "colour").await;
+        let values = &body["values"];
+        assert_eq!(values["key"], "colour", "the answer names the key: {body}");
+        assert_eq!(
+            values["in_use"],
+            serde_json::json!([
+                {"value": "dark green", "things": 2},
+                {"value": "amber", "things": 1},
+            ]),
+            "the values in use, most used first, each with how many things hold it: {body}"
+        );
+        assert_eq!(values["distinct"], 2, "how many values exist: {body}");
+
+        // **The half that matters: a value nobody has used is written.** This
+        // is a read of what is recorded, never a rule about what may be.
+        let invented = "chartreuse";
+        paint(&jojobot, &sid, "thing:bar-tape", invented).await;
+        let after = asking(&jojobot, &sid, "colour").await;
+        assert_eq!(
+            after["values"]["distinct"], 3,
+            "the new value is in use now: {after}"
+        );
+        assert!(
+            after["values"]["in_use"]
+                .as_array()
+                .expect("the values in use")
+                .iter()
+                .any(|v| v["value"] == invented && v["things"] == 1),
+            "a value that was in no list is recorded and comes back: {after}"
+        );
+
+        // **A key nobody has written is an answer.** Nothing is there to pick
+        // from, and that is a fact about the store rather than a refusal.
+        let unused = asking(&jojobot, &sid, "smell").await;
+        assert_ne!(
+            unused["status"], "blocked",
+            "an unused key is no refusal: {unused}"
+        );
+        assert_eq!(
+            unused["values"]["in_use"],
+            serde_json::json!([]),
+            "an unused key comes back with nothing in use: {unused}"
+        );
+        assert_eq!(unused["values"]["distinct"], 0, "and says so: {unused}");
     }
 
     /// A rhythm under something, holding a whole schedule.
@@ -1883,6 +2056,8 @@ mod tests {
             sid: None,
             history: None,
             history_most: None,
+            values: None,
+            values_most: None,
         }
     }
 }

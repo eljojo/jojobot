@@ -703,6 +703,52 @@ impl KeyHistory {
     }
 }
 
+/// **A value one key already holds, and how many things hold it.**
+///
+/// The count is what makes the list usable for picking: a bare list cannot tell
+/// a spelling forty things share from a typo one thing carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValueInUse {
+    /// The value as it is recorded, exactly.
+    pub value: String,
+    /// How many of the selected things hold it.
+    pub things: usize,
+}
+
+/// **The values already recorded under one key**, over the objects a query
+/// selected, most used first and then alphabetically.
+///
+/// **A read, never a rule.** Nothing here constrains a later write: a caller
+/// picks a spelling that is already in use, or writes one that is not, and the
+/// second is as ordinary as the first. What it removes is the guess — without
+/// it, `dark green`, `Dark Green` and `darkgreen` become three values because
+/// nobody could see the first one.
+///
+/// It is asked of each thing's FOLDED fields — what the thing holds now, one
+/// value per key — so a value that was written and later replaced is not in
+/// use, and a thing counts once however many times it was written.
+pub fn values_in_use(objects: &[Object], key: &str) -> Vec<ValueInUse> {
+    let key = key.trim();
+    let mut counted: BTreeMap<&str, usize> = BTreeMap::new();
+    for object in objects {
+        if let Some(value) = object.fields.get(key) {
+            *counted.entry(value.as_str()).or_default() += 1;
+        }
+    }
+    let mut in_use: Vec<ValueInUse> = counted
+        .into_iter()
+        .map(|(value, things)| ValueInUse {
+            value: value.to_string(),
+            things,
+        })
+        .collect();
+    // Most used first, because that is the order a caller picking one reads in.
+    // Ties keep the alphabetical order the map already put them in, so the
+    // answer is the same twice running.
+    in_use.sort_by_key(|in_use| std::cmp::Reverse(in_use.things));
+    in_use
+}
+
 /// **Which key's writes to bring back, and how many of them.**
 ///
 /// One value rather than two loose arguments, because a window with no key is
