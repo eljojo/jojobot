@@ -9,7 +9,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 
-use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact};
+use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact, folded_fields};
 use jojobot_domain::text;
 
 use crate::AppState;
@@ -165,6 +165,8 @@ pub async fn node(State(state): State<AppState>, Path(path): Path<String>) -> Re
         trail(&handles)
     );
     body.push_str(&about(entity));
+    body.push_str(&fields_section(&facts));
+    body.push_str(&conforms_section(&state, &facts).await);
 
     body.push_str("<h2>Below here</h2>\n");
     if children.is_empty() {
@@ -412,6 +414,81 @@ fn about(entity: &Entity) -> String {
     format!("<table>\n{rows}</table>\n")
 }
 
+/// **What the thing IS: its records' fields, folded into one map.**
+///
+/// A thing gets described a piece at a time, so this is the map every type
+/// question is asked of — not a per-record scattering the reader has to merge
+/// in their head. It is the fold the domain does, over the facts this page has
+/// already read, so it costs nothing beyond what the page was doing anyway.
+///
+/// **The heading stands even when there is nothing under it.** A section that
+/// vanished would leave a reader unable to tell a thing with no fields from a
+/// page that does not show them, which is the very confusion this section
+/// exists to end.
+fn fields_section(facts: &[Fact]) -> String {
+    let folded = folded_fields(facts);
+    if folded.is_empty() {
+        return "<h2>Fields</h2>\n<p>Nothing is recorded on this.</p>\n".to_string();
+    }
+    let mut out = String::from("<h2>Fields</h2>\n<table id=\"fields\">\n");
+    for (key, value) in &folded {
+        out.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td></tr>\n",
+            escape(key),
+            escape(value)
+        ));
+    }
+    out.push_str("</table>\n");
+    out
+}
+
+/// **What the thing's fields add up to**: every declared type it answers, the
+/// keys it holds and the keys it lacks.
+///
+/// This is the payoff of the fold and the one thing on the page a reader cannot
+/// work out for himself — he would have to hold every declaration in his head.
+///
+/// **One extra read, and no walk.** The declarations are a table of their own
+/// and the fold is over facts already in hand, so this costs one query on a
+/// small table rather than a pass over the corpus per thing.
+///
+/// **Absent when the thing answers nothing.** A standing "conforms to nothing"
+/// on every page is a judgement nobody asked for, and a store with no
+/// declarations at all would carry it everywhere.
+async fn conforms_section(state: &AppState, facts: &[Fact]) -> String {
+    let folded = folded_fields(facts);
+    if folded.is_empty() {
+        return String::new();
+    }
+    let declared = match state.memory.declared_types().await {
+        Ok(declared) => declared,
+        Err(err) => {
+            tracing::debug!(error = %err, "the listing could not read the declared types");
+            return String::new();
+        }
+    };
+    let mut rows = String::new();
+    for kind in &declared {
+        let Some(found) = kind.matched_by(&folded) else {
+            continue;
+        };
+        rows.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            escape(&kind.name),
+            if found.complete() { "whole" } else { "partly" },
+            escape(&found.held.join(", ")),
+            escape(&found.lacking.join(", ")),
+        ));
+    }
+    if rows.is_empty() {
+        return String::new();
+    }
+    format!(
+        "<h2>Conforms to</h2>\n<table id=\"conforms\">\n\
+         <tr><th>Type</th><th>How far</th><th>Holds</th><th>Lacks</th></tr>\n{rows}</table>\n"
+    )
+}
+
 /// The facts held at this node.
 ///
 /// **Every claim arrives with what qualifies it.** Who backs it and how settled
@@ -445,9 +522,34 @@ fn facts_table(facts: &[Fact], by_id: &HashMap<&EntityId, &Entity>) -> String {
             relation(fact, by_id),
             escape(&fact.address().to_string()),
         ));
+        out.push_str(&record_fields(fact));
     }
     out.push_str("</table>\n");
     out
+}
+
+/// **The fields this one record carries**, on a line of its own under it.
+///
+/// Not an eighth column. The seven columns are each one value and each present
+/// on every row; a record's fields are a map of any size and are on few rows,
+/// so a column would be empty almost everywhere and would push the address out
+/// of a readable width when it was not. A line under the row keeps the columns
+/// meaning what they say and puts the fields where the record is.
+///
+/// Empty for a record carrying none, which is most of them.
+fn record_fields(fact: &Fact) -> String {
+    if fact.fields.is_empty() {
+        return String::new();
+    }
+    let pairs: Vec<String> = fact
+        .fields
+        .iter()
+        .map(|(key, value)| format!("{} = {}", escape(key), escape(value)))
+        .collect();
+    format!(
+        "<tr class=\"fields\"><td colspan=\"7\"><small>{}</small></td></tr>\n",
+        pairs.join(" · ")
+    )
 }
 
 /// The relation a fact draws, as a link to where that entity lives.

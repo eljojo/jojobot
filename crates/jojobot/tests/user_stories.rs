@@ -9,6 +9,10 @@
 //!
 //! Handles come from the fixture roster, which scans commented-out code too.
 
+// The issuer and the login round trip, shared with the listing's own suite:
+// one story reads the operator's page, and it logs in the way his browser does.
+mod support;
+
 // A test target's root file does not get the `foo.rs` + `foo/` convention, so
 // the folder is named explicitly.
 #[path = "user_stories/bikes.rs"]

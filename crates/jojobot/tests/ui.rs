@@ -6,17 +6,9 @@
 //! code against the wrong verifier. A login that never left this process would
 //! prove the handlers and not the flow.
 
-use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use axum::{
-    Json, Router,
-    extract::{Query, State},
-    response::{IntoResponse, Redirect, Response},
-    routing::{get, post},
-};
-use base64::Engine;
 use jiff::civil::Date;
 use jojobot::auth::IssuerEndpoints;
 use jojobot::config::UiConfig;
@@ -27,15 +19,16 @@ use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage};
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::memory::testing::InMemoryMemory;
+use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 use jojobot_domain::memory::{
     Boot, Edge, EdgeShape, Entity, EntityId, EntityKind, Memory, NewEntity, NewFact, Provenance,
 };
 use jojobot_domain::session::testing::InMemorySessions;
 use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
-use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 mod support;
+use support::{browser, location, log_in, log_in_raw, query_of, session_pair, spawn_idp};
 
 const CLIENT_ID: &str = "jojobot-ui";
 const READER: &str = "sub-reader";
@@ -76,111 +69,6 @@ fn as_text(raw: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
-}
-
-// --- the issuer ------------------------------------------------------------
-
-/// A minimal authorization server: it hands out a code, remembers the PKCE
-/// challenge that code was requested with, and exchanges the code only for the
-/// verifier that challenge came from.
-#[derive(Clone)]
-struct Idp {
-    /// code → the `code_challenge` the authorization request carried.
-    issued: Arc<Mutex<HashMap<String, String>>>,
-    /// The ID token to hand back on a successful exchange.
-    id_token: Arc<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct AuthorizeQuery {
-    redirect_uri: String,
-    state: String,
-    code_challenge: String,
-}
-
-async fn authorize(State(idp): State<Idp>, Query(q): Query<AuthorizeQuery>) -> Response {
-    let code = format!("code-{}", q.state);
-    idp.issued
-        .lock()
-        .unwrap()
-        .insert(code.clone(), q.code_challenge);
-    Redirect::to(&format!("{}?code={code}&state={}", q.redirect_uri, q.state)).into_response()
-}
-
-async fn token(State(idp): State<Idp>, body: String) -> Response {
-    let form: HashMap<String, String> = body
-        .split('&')
-        .filter_map(|pair| pair.split_once('='))
-        .map(|(k, v)| (decode(k), decode(v)))
-        .collect();
-
-    let code = form.get("code").cloned().unwrap_or_default();
-    let verifier = form.get("code_verifier").cloned().unwrap_or_default();
-    let Some(challenge) = idp.issued.lock().unwrap().remove(&code) else {
-        return (axum::http::StatusCode::BAD_REQUEST, "unknown code").into_response();
-    };
-    // The whole point of PKCE: the code is worthless without the verifier the
-    // challenge was derived from.
-    if challenge != s256(&verifier) {
-        return (axum::http::StatusCode::BAD_REQUEST, "bad verifier").into_response();
-    }
-
-    Json(json!({
-        "access_token": "unused-by-the-listing",
-        "token_type": "Bearer",
-        "id_token": idp.id_token.as_str(),
-    }))
-    .into_response()
-}
-
-fn s256(verifier: &str) -> String {
-    use sha2::{Digest, Sha256};
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
-}
-
-fn decode(raw: &str) -> String {
-    let bytes = raw.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' if i + 2 < bytes.len() => {
-                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap();
-                out.push(u8::from_str_radix(hex, 16).unwrap());
-                i += 3;
-            }
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            other => {
-                out.push(other);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8(out).unwrap()
-}
-
-async fn spawn_idp(id_token: String) -> (SocketAddr, IssuerEndpoints) {
-    let idp = Idp {
-        issued: Arc::new(Mutex::new(HashMap::new())),
-        id_token: Arc::new(id_token),
-    };
-    let app = Router::new()
-        .route("/authorize", get(authorize))
-        .route("/token", post(token))
-        .with_state(idp);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (
-        addr,
-        IssuerEndpoints {
-            authorization_endpoint: format!("http://{addr}/authorize"),
-            token_endpoint: format!("http://{addr}/token"),
-        },
-    )
 }
 
 // --- the server under test -------------------------------------------------
@@ -255,6 +143,34 @@ async fn seed(store: &dyn Memory) {
         EntityId::new(EntityKind::Place, "shelbyville"),
     ));
     store.capture(fact).await.expect("the fact is written");
+
+    // **Two records carrying one key each**, so the page has to fold them to
+    // show what the thing is — which is the whole reason a thing's fields are
+    // not the same as a record's.
+    for (key, value, said) in [
+        ("opens", "2026-03-05", "somebody wrote down when it opens"),
+        ("pitch", "14", "and somebody else counted the pitches"),
+    ] {
+        let mut piece = NewFact::about(
+            EntityId::new(EntityKind::Topic, "widgets"),
+            said,
+            Date::constant(2026, 3, 6),
+        );
+        piece.fields = [(key.to_string(), value.to_string())].into_iter().collect();
+        store.capture(piece).await.expect("the field is written");
+    }
+    // A type the fold makes the stall answer whole, which no one of its records
+    // answers alone.
+    store
+        .declare_type(DeclaredType::new(
+            "stall",
+            vec![
+                Field::new("opens", ValueType::Date),
+                Field::new("pitch", ValueType::Number),
+            ],
+        ))
+        .await
+        .expect("the type is declared");
 
     // A claim and a portrait are free text too, and they land in different
     // parts of a node page — the fact table and the prose block.
@@ -448,92 +364,6 @@ async fn spawn_jojobot_at(
             .unwrap();
     });
     (addr, ct, board)
-}
-
-/// A browser: it does not follow redirects on its own here, so every hop is
-/// asserted rather than assumed.
-fn browser() -> reqwest::Client {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap()
-}
-
-fn location(response: &reqwest::Response) -> String {
-    response
-        .headers()
-        .get(reqwest::header::LOCATION)
-        .unwrap_or_else(|| panic!("no Location on a {} response", response.status()))
-        .to_str()
-        .unwrap()
-        .to_string()
-}
-
-fn query_of(url: &str) -> HashMap<String, String> {
-    url.split_once('?')
-        .map(|(_, q)| q)
-        .unwrap_or("")
-        .split('&')
-        .filter_map(|pair| pair.split_once('='))
-        .map(|(k, v)| (decode(k), decode(v)))
-        .collect()
-}
-
-/// What a browser sends back: the pair, without the attributes that govern
-/// *when* it sends it. Those attributes are the subject of a test of their own,
-/// so they are separated here rather than thrown away here.
-fn session_pair(set_cookie: &str) -> String {
-    set_cookie
-        .split(';')
-        .next()
-        .expect("a cookie header has a first field")
-        .to_string()
-}
-
-/// Walk the whole login and hand back the session cookie a browser would send.
-async fn log_in(client: &reqwest::Client, jojobot: SocketAddr, from: &str) -> String {
-    session_pair(&log_in_raw(client, jojobot, from).await)
-}
-
-/// Walk the whole login: the gate turns the browser away, the login sends it to
-/// the issuer, the issuer sends it back with a code, and the callback opens a
-/// session. Returns the `Set-Cookie` the server sent, **whole**.
-async fn log_in_raw(client: &reqwest::Client, jojobot: SocketAddr, from: &str) -> String {
-    let turned_away = client
-        .get(format!("http://{jojobot}{from}"))
-        .send()
-        .await
-        .unwrap();
-    assert!(
-        turned_away.status().is_redirection(),
-        "a browser with no session must be sent to the login, got {}",
-        turned_away.status()
-    );
-    let to_login = location(&turned_away);
-
-    let sent_out = client
-        .get(format!("http://{jojobot}{to_login}"))
-        .send()
-        .await
-        .unwrap();
-    let at_issuer = location(&sent_out);
-
-    let back = client.get(&at_issuer).send().await.unwrap();
-    let callback = location(&back);
-
-    let opened = client.get(&callback).send().await.unwrap();
-    assert!(
-        opened.status().is_redirection(),
-        "a completed login must land the browser back at the page it wanted, got {}",
-        opened.status()
-    );
-    opened
-        .headers()
-        .get(reqwest::header::SET_COOKIE)
-        .expect("a completed login sets a session cookie")
-        .to_str()
-        .unwrap()
-        .to_string()
 }
 
 // --- the tests -------------------------------------------------------------
@@ -919,6 +749,81 @@ async fn a_node_page_shows_the_facts_held_there_and_who_backs_them() {
     assert!(
         body.contains("2026-03-04"),
         "a fact carries its date: {body}"
+    );
+    ct.cancel();
+}
+
+/// **A thing's page shows what the thing IS — its fields, folded.**
+///
+/// A thing's fields are what it conforms to and what that unlocks, and they
+/// arrive one record at a time. The page rendered seven columns of a record's
+/// qualifiers and never the fields themselves, so the one surface the operator
+/// reads directly could not show him the thing the model is about.
+#[tokio::test]
+async fn a_node_page_shows_the_things_folded_fields_and_what_they_conform_to() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let body = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    // **Both keys, from two different records.** Either one alone would pass on
+    // a page that rendered a single record's fields and called it the thing's.
+    assert!(
+        body.contains("opens") && body.contains("2026-03-05"),
+        "a key one record carries is on the page: {body}"
+    );
+    assert!(
+        body.contains("pitch") && body.contains("14"),
+        "…and so is the key the OTHER record carries, which is the fold: {body}"
+    );
+    // What the thing is, said in the type's own words — the payoff of the fold
+    // and the thing a reader of this page cannot work out for himself.
+    assert!(
+        body.contains("stall"),
+        "the type the thing answers is named: {body}"
+    );
+    ct.cancel();
+}
+
+/// **A thing nobody has recorded a field on says so**, rather than carrying an
+/// empty table. Most things have no fields, and a page that grew a blank
+/// scaffold on every one of them teaches a reader to skip the section that
+/// matters on the few that do.
+#[tokio::test]
+async fn a_node_page_with_no_fields_says_so_rather_than_showing_an_empty_table() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let body = read(&client, addr, "/place:shelbyville/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        body.contains("Fields"),
+        "the section is there, so a reader learns the difference between \
+         nothing recorded and nothing shown: {body}"
+    );
+    assert!(
+        !body.contains("id=\"fields\""),
+        "…and there is no table to read: {body}"
+    );
+    // A thing with no fields conforms to nothing, and a heading saying so on
+    // every page would be a judgement nobody asked for.
+    assert!(
+        !body.contains("Conforms"),
+        "a thing answering no type carries no conformance section: {body}"
     );
     ct.cancel();
 }

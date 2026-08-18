@@ -172,5 +172,25 @@ async fn a_type_declared_today_finds_records_written_before_it() {
 
     s.wrap("named the shape the services already had, and found them")
         .await;
+
+    // ── and the operator opens the page, which speaks no MCP ────────────────
+    //
+    // **The one surface he reads himself.** Everything above went through the
+    // verbs a session calls; this is the window, and what a thing IS has to be
+    // legible in it or the model is invisible to the person it is for.
+    let page = story.page("thing:gravel-bike").await;
+    // **The fold, asserted on the fold's own table.** `serviced` and `cost`
+    // were written on one record and `distance` on another, and both are on the
+    // page a second time under the records they came from — so a beat that
+    // matched the whole page would pass with the folded table missing
+    // altogether.
+    let fields = page.section("fields");
+    fields.says("serviced").says("2026-03-14");
+    fields.says("distance").says("80");
+    // What the fields add up to, in the type's own words. It is the one thing
+    // on the page he could not work out for himself without holding every
+    // declaration in his head.
+    page.section("conforms").says("service").says("whole");
+
     story.finish().await;
 }

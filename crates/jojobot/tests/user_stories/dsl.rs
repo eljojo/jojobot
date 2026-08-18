@@ -30,6 +30,13 @@ pub struct Story {
     bot: String,
 }
 
+/// The subject the operator's browser logs in as. One reader, because the
+/// listing is his own window and nobody else's.
+const READER: &str = "sub-the-operator";
+
+/// The client id the listing registers with its issuer.
+const UI_CLIENT: &str = "jojobot-ui";
+
 /// **A store that can stop being readable, the way a real one does.**
 ///
 /// The service behind memory is a process on a network: it is up when jojobot
@@ -214,9 +221,25 @@ impl Story {
         ));
         let boxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> = mail;
         let boxes_for_seed = boxes.clone();
+        // **The operator's own window is served too, over the same state.**
+        // A story that could not open a page could not tell whether what it
+        // wrote is visible to the one reader who does not speak MCP — and every
+        // story before this one ran against a server with no page at all, so
+        // nothing it renders was ever exercised by a use case.
+        let idp = crate::support::TestIdp::new();
+        let (_, endpoints) = crate::support::spawn_idp(idp.token_for(READER, UI_CLIENT)).await;
+        let ui = jojobot::ui::Ui::new(
+            &jojobot::config::UiConfig {
+                client_id: UI_CLIENT.to_string(),
+                base_url: format!("http://{addr}"),
+            },
+            endpoints,
+            idp.validator_for(UI_CLIENT, &[READER]),
+            reqwest::Client::new(),
+        );
         let state = AppState {
             resource: format!("http://{addr}/mcp"),
-            issuer: None,
+            issuer: Some(crate::support::ISS.to_string()),
             validator: None,
             metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
             memory: indexed.clone(),
@@ -224,7 +247,7 @@ impl Story {
             mailboxes: boxes,
             sessions: runs,
             registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
-            ui: None,
+            ui: Some(Arc::new(ui)),
         };
         let ct = CancellationToken::new();
         let app = build_app(state, ct.child_token());
@@ -288,6 +311,32 @@ impl Story {
         .serve(transport)
         .await
         .unwrap()
+    }
+
+    /// **Open the operator's own page for a handle, as his browser does.**
+    ///
+    /// The whole login runs — the gate turns the browser away, the issuer
+    /// vouches for him, the callback opens a session — because a page reached
+    /// any other way is not the page he reads. It takes no `sid` and starts no
+    /// run: looking through the window is not a session, and nothing on this
+    /// path may change what a bot sees.
+    pub async fn page(&self, handle: &str) -> Answer {
+        let path = format!("/{handle}/");
+        let client = crate::support::browser();
+        let cookie = crate::support::log_in(&client, self.addr, &path).await;
+        let body = client
+            .get(format!("http://{}{path}", self.addr))
+            .header(reqwest::header::COOKIE, &cookie)
+            .send()
+            .await
+            .expect("the listing answers")
+            .text()
+            .await
+            .expect("the page is text");
+        Answer {
+            what: format!("the page for {handle}"),
+            body,
+        }
     }
 
     /// A new session, on its own connection.
@@ -921,6 +970,30 @@ impl Answer {
             self.body
         );
         self
+    }
+
+    /// **One named table on a page**, so an assertion says which part of it it
+    /// is about.
+    ///
+    /// A page repeats a value in more than one place on purpose — a thing's
+    /// folded fields and the record each one came from — so a substring over
+    /// the whole page cannot tell the two apart, and a beat written that way
+    /// passes on a build where the part it names is missing.
+    pub fn section(&self, id: &str) -> Answer {
+        let anchor = format!("id=\"{id}\"");
+        let start = self
+            .body
+            .find(&anchor)
+            .unwrap_or_else(|| panic!("no {id} section in the {}: {}", self.what, self.body));
+        let rest = &self.body[start..];
+        let body = match rest.find("</table>") {
+            Some(end) => &rest[..end],
+            None => rest,
+        };
+        Answer {
+            what: format!("{} section of the {}", id, self.what),
+            body: body.to_string(),
+        }
     }
 
     /// **What ONE claim says, picked by its address.** `says` is a substring
