@@ -835,10 +835,20 @@ async fn the_handshake_names_jojobot_and_agrees_with_what_ping_reports() {
     let version = served["serverInfo"]["version"]
         .as_str()
         .expect("…and which build of it");
-    assert!(
-        name.starts_with("jojobot"),
-        "the handshake introduces this server as {name:?}, which is the library rather than \
-         jojobot"
+    assert_eq!(
+        name, "jojobot",
+        "the handshake introduces this server as {name:?}. It is the product's name that a \
+         client displays — not the library's, and not the crate that happens to serve the \
+         surface, which is jojobot's own arrangement and no business of a caller's (rule 53)"
+    );
+    // **The version is a fact about the binary and is not hand-maintained.**
+    // A literal would pass every check above while going stale the first time
+    // nobody remembered it, so it is compared against the build's own.
+    assert_eq!(
+        version,
+        env!("CARGO_PKG_VERSION"),
+        "the version served must be the one this was built at, read from the build rather than \
+         written down"
     );
 
     // **The other door, over the same connection.** Either half could be right

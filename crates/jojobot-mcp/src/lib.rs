@@ -190,9 +190,18 @@ impl Jojobot {
 /// handshake says who is answering and `ping` says which build answered, and a
 /// server with two answers about its own identity is worse than one wrong
 /// answer: whichever a person quotes in an incident is the one they act on.
-pub(crate) const SERVER_NAME: &str = env!("CARGO_PKG_NAME");
+///
+/// **The name is the product's, written down, and the package name is not it.**
+/// That the surface lives in a crate of its own is jojobot's own arrangement,
+/// and a client has no business learning it from a handshake — the same rule
+/// that keeps the library's name off the wire keeps the crate layout off it
+/// (rule 53).
+pub(crate) const SERVER_NAME: &str = "jojobot";
 
-/// The build's version, beside [`SERVER_NAME`] and read from the same place.
+/// **The build's version, and it is read rather than written.** A literal here
+/// would pass every check the name does and go stale the first time nobody
+/// remembered it: a version is a fact about the binary, so it comes from the
+/// build.
 pub(crate) const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. Two worlds live here.\
