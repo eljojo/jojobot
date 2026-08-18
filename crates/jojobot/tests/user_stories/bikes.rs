@@ -30,13 +30,12 @@ async fn keeping_track_of_bikes() {
     )
     .await;
 
-    // GAP — that date went into the only date field there is, which means when
-    // the claim became known. The purchase happened on it, and nothing
-    // distinguishes the two, so the store holds a date whose meaning can only
-    // be recovered by reading the sentence beside it.
-    //   s.event("thing:gravel-bike", "purchased", happened_at: "2024-04-11").await;
-    s.has_no_verb("record_occurrence", &["capture", "recall"])
-        .await;
+    // That date went into the only date field a plain claim has, which means
+    // when the claim became known. The two ARE separable: an occurrence goes
+    // under a key of its own on a typed record, where its meaning is the key
+    // name rather than the sentence beside it, and the service in session 2
+    // goes in that way. Nothing forces it, so a claim written this way still
+    // holds one date doing both jobs.
 
     // Purchase plus five years is arithmetic, and the arithmetic is the
     // session's — but its ANSWER goes in as a value under a key rather than as
@@ -45,7 +44,6 @@ async fn keeping_track_of_bikes() {
     s.event_with(
         "thing:gravel-bike",
         "frame warranty",
-        "warranty",
         json!({"expires": "2029-04-11"}),
         &[],
     )
@@ -67,7 +65,6 @@ async fn keeping_track_of_bikes() {
     s.event_with(
         "thing:road-bike",
         "frame warranty",
-        "warranty",
         json!({"expires": "2025-06-30"}),
         &[],
     )
@@ -125,14 +122,13 @@ async fn keeping_track_of_bikes() {
         .await
         .says("person:milhouse");
 
-    // A service IS an event with a type and fields, and it goes in as one:
-    // what was done and when, as values, with `refs` naming who did it. "What
-    // has been done to this bike" is one read of its record.
+    // A service goes down as fields on a record: what was done and when, as
+    // values, with `refs` naming who did it. "What has been done to this bike"
+    // is one read of its record.
     let service = s
         .event_with(
             "thing:gravel-bike",
             "annual service",
-            "service",
             json!({"done_on": "2026-04-18", "work": "chain, cables, bearings"}),
             &["person:milhouse"],
         )
@@ -143,10 +139,27 @@ async fn keeping_track_of_bikes() {
         .says("2026-04-18")
         .says("person:milhouse");
 
+    // The shop calls back: the bearings were not touched, and nobody wrote
+    // down the day after all. The record is edited where it stands — the key
+    // that was wrong is rewritten, the key that was guessed is taken off, and
+    // the keys nobody mentioned stay as they were.
+    s.correct_fields(&service, json!({"work": "chain, cables"}), &["done_on"])
+        .await;
+    // **The old value is named as gone**, not merely the new one as present:
+    // "chain, cables" is a substring of "chain, cables, bearings", so the
+    // positive half alone passes on a build where nothing was rewritten.
+    s.recall("thing:gravel-bike")
+        .await
+        .claim(&service)
+        .says("chain, cables")
+        .says("person:milhouse")
+        .never_says("bearings")
+        .never_says("2026-04-18");
+
     // GAP — and no read orders them or takes the newest. "When did I last
     // service it" comes back as every service ever recorded, and the session
     // picks the latest date out by reading them.
-    //   s.latest("thing:gravel-bike", event_type: "service").await;
+    //   s.latest("thing:gravel-bike", answers_type: "service").await;
     s.has_no_verb("latest", &["search", "recall"]).await;
 
     // GAP — the chain is a PART of the bike, not a fact about it. Parentage is
@@ -193,13 +206,11 @@ async fn keeping_track_of_bikes() {
         .await;
     s.fact("thing:road-bike", "rode 0 km in 2026").await;
 
-    // GAP — those are the same measurement at three different times and
-    // nothing says so. There is no series: three unrelated sentences, so
-    // nothing can fetch the yearly tallies as a set or slice them by year.
-    // Comparing them is the session's job; having something to compare is
-    // jojobot's, and that is the half missing.
-    //   s.series("thing:gravel-bike", "km ridden", &[("2025", "3800")]).await;
-    s.has_no_verb("series", &["capture", "search"]).await;
+    // Those three are the same measurement at three different times, and as
+    // sentences nothing says so. Written as typed records instead — a `year`
+    // and a `km` under a declared type — they are one set: the type fetches
+    // them together and the declared number slices them by year. What no read
+    // does is put them in order, which is the gap in session 2.
 
     s.wrap("tallies in").await;
 
@@ -276,13 +287,11 @@ async fn keeping_track_of_bikes() {
     // hold a reference is what turns the key into a relation the query can
     // travel.
     //
-    // It rides on an event because an event is where keys live — a plain fact
-    // carries none — so the lending goes down as chronology and the claim
-    // above stays the current truth beside it.
+    // It goes on a record of its own rather than on the claim above, so the
+    // lending is one thing and what the pump is stays another beside it.
     s.event_with(
         "thing:floor-pump",
         "lent out at the spring service",
-        "loan",
         json!({"loaned_to": "person:milhouse"}),
         &[],
     )

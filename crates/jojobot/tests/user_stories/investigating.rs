@@ -83,17 +83,15 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     s.event(
         "thing:sigma",
         "stopped responding, and came back on a power cycle",
-        "outage",
     )
     .await;
 
-    // An event's typed fields take what prose would have swallowed: when it
-    // happened and how long it lasted, as values rather than as a sentence.
+    // A record's fields take what prose would have swallowed: when it happened
+    // and how long it lasted, as values rather than as a sentence.
     let outage = s
         .event_with(
             "thing:tau",
             "stopped responding",
-            "outage",
             json!({"occurred_at": "2026-08-04T02:14:00Z", "down_seconds": "38"}),
             &[],
         )
@@ -105,7 +103,6 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     s.event_with(
         "thing:phi",
         "stopped responding",
-        "outage",
         json!({"occurred_at": "2026-08-04T02:41:00Z", "down_seconds": "4"}),
         &[],
     )
@@ -113,7 +110,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
 
     // `down_seconds` has held a number all along and nothing could order by
     // it: an undeclared key has equality and no more. Declaring `outage` is
-    // the whole of what changes — no record is rewritten, and the two events
+    // the whole of what changes — no record is rewritten, and the two records
     // above were written before this call.
     s.call(
         "declare_type",
@@ -147,7 +144,6 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .event_with(
             "thing:sigma",
             "machine-check status word decoded to two flags",
-            "measurement",
             json!({"ran": "mcelog --client", "got": "0xB200000000010A"}),
             &["thing:sigma"],
         )
@@ -165,9 +161,11 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // ── session 3 · the reading was taken off the wrong host ────────────────
     let s = story.session().await;
 
-    // An event is taken back rather than corrected: it did not happen the way
-    // it was written down, and a fact would instead be rewritten to the truth.
-    // Nothing is removed — the record keeps its address and reads as retracted.
+    // The record is taken back rather than corrected: it did not happen the
+    // way it was written down, so the reading stands as something that was
+    // said and is marked withdrawn, where a rewrite would leave one claim and
+    // no trace that anybody ever read it off the wrong host. Nothing is
+    // removed — the record keeps its address and reads as retracted.
     s.retract(&reading, "the status word was read off a different host")
         .await;
     s.recall("thing:sigma")
@@ -278,9 +276,15 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     s.recall("thing:sigma").await.says("stopped responding");
     s.recall("thing:tau").await.says("deliberate reboot");
 
-    // GAP — but no read takes a window and returns every event across every
-    // host inside it. "Did these two fail together" has to be re-assembled by
-    // hand, one subject at a time, by whoever thinks to ask.
+    // GAP — a window over DAYS is a read now: two filters on one key declared
+    // to hold a date, after one day and before another, both holding on one
+    // record, and the answer crosses every host at once. This question is an
+    // hour wide, and that is the part still missing — a declared date is a
+    // calendar date, so a record holding a timestamp does not compare and an
+    // instant cannot be asked for. "Did these two fail together" is a question
+    // about minutes, and minutes are outside what a key can be declared to
+    // hold. The claim's own date is out of reach either way: no filter takes
+    // it.
     //   s.events_between("2026-08-04T02:00Z", "2026-08-04T03:00Z").await;
     s.has_no_verb("events_between", &["search", "recall"]).await;
 
@@ -306,9 +310,14 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .await
         .says("thing:upsilon");
 
-    // GAP — so the walk proves the two hosts are linked and cannot say that one
-    // going down takes the other with it, which is the entire content of the
-    // finding that collapsed a four-host outage into one.
+    // GAP — so the walk by SHAPE proves the two hosts are linked and cannot
+    // say that one going down takes the other with it, which is the entire
+    // content of the finding that collapsed a four-host outage into one.
+    // Naming the link is served, and both ends here are entities: a `runs_on`
+    // key declared to hold a reference is a relation the query walks from
+    // either end, and the guest is then distinguishable from a host that is
+    // merely near. The residual is the narrow one — the name lives on a KEY of
+    // the record, never on the edge, and the five shapes stay closed.
     //   s.fact_about("thing:upsilon", "…", "runs-on", "thing:sigma").await;
     s.has_no_verb("depends_on", &["capture", "search"]).await;
 
@@ -320,10 +329,13 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     )
     .await;
 
-    // GAP — it lands as a fact about a project because a decision has no shape
-    // of its own, and nothing carries it to whoever next proposes that step. A
-    // constraint that has to be searched for gets re-litigated by every session
-    // that does not know to look.
+    // GAP — it lands as a fact about a project, and a decision CAN have a
+    // shape of its own: a declared type names the keys one carries, and a
+    // search by type finds every record answering it whether or not anybody
+    // filed it that way. What nothing does is carry it to whoever next
+    // proposes that step. A shape is something a reader asks for, so a
+    // constraint still gets re-litigated by every session that does not know
+    // to look.
     //   s.decided("project:jojobot-server", "do not run the crash test", binds: …).await;
     s.has_no_verb("decision", &["capture", "search"]).await;
 

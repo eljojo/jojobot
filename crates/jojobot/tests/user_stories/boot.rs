@@ -116,9 +116,12 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
     s.has_no_verb("whose_assistant", &["start_here", "search"])
         .await;
 
-    // GAP — no verb composes "what matters right now" for a person or a topic
-    // once a name is in hand. Search and recall return hits; putting them into
-    // one picture is left to whoever asked.
+    // GAP — no read composes "what MATTERS right now" for a person or a topic
+    // once a name is in hand. Composing the picture is served: one recall
+    // takes the subject, its prose and the objects it reaches to a depth, and
+    // the answer nests. What no read does is weigh the picture — nothing ranks
+    // a claim, nothing prefers the recent one, and a page of forty claims
+    // comes back as forty claims.
     //   s.brief("person:ned-flanders").await;
     s.has_no_verb("brief", &["search", "recall"]).await;
 

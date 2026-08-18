@@ -84,10 +84,13 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
         .says("\"edge\":null")
         .says("\"derived_from\":null");
 
-    // GAP — but that comparison took a read per candidate. Nothing groups
-    // these two as the candidates for one decision: listing places and
-    // searching for a word both return every place in the store, with nothing
-    // saying which are being weighed against each other.
+    // GAP — but that comparison took a read per candidate, and it did not have
+    // to. Grouping them is served: a key declared to hold a reference points
+    // each candidate at the decision, and one walk back from the decision
+    // returns the pair, where listing places and searching for a word both
+    // return every place in the store. What is still missing is the rest of
+    // choosing — nothing ranks the two, and the one ruled out cannot be asked
+    // for by its absence.
     //   s.shortlist("the Thursday dinner pick", &["place:leftorium", "place:riverbend"]).await;
     s.has_no_verb("shortlist", &["capture", "search"]).await;
 
@@ -103,11 +106,14 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     checked.says("probably good");
     s.find("Riverbend").await.says("place:riverbend");
 
-    // GAP — and having checked, there is nowhere to say so. A claim nobody has
-    // looked into and a claim somebody rang up and verified the absence of read
-    // the same: `inference`, no edge, no parent. The record cannot tell an
-    // unexamined guess from a checked dead end, so the next session pays for
-    // the phone call again.
+    // GAP — and having checked, saying so is a record and reaching it is not.
+    // The check goes down as a typed record naming the claim it checked, since
+    // `derived_from` takes a fact address, with what was found under a key of
+    // its own. Nothing gets it back from the claim: the claim reads the same
+    // either way — `inference`, no edge, no parent — and `derived_from` is
+    // neither an edge nor a declared relation, so no walk turns it around and
+    // no filter takes a fact address. The check is findable by its wording,
+    // which is where the next session pays for the phone call again.
     //   s.checked(&riverbend_guess, found: "nothing to source it to").await;
     s.has_no_verb("checked", &["update_fact", "capture"]).await;
 

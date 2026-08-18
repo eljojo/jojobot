@@ -1,7 +1,7 @@
 //! **Memory, as rows.**
 //!
 //! An entity is a row, a fact is a row under it, and the two tables that hang
-//! off a fact carry an event's payload and its references. The rules are the
+//! off a fact carry its fields and its references. The rules are the
 //! domain's and have not moved: what changed is that they are held in columns a
 //! query can reach rather than in a page a person could edit.
 //!
@@ -32,12 +32,10 @@ use jiff::civil::Date;
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
     FactPatch, FactStatus, Guarded, Memory, MemoryError, NewEntity, NewFact, Provenance,
-    Retraction, Standing, apply_entity_patch, apply_fact_patch,
-    event::Event,
-    guard, normalize_content, normalize_details, normalize_prose, retraction_of,
-    screen_entity_patch, search, standing_of,
+    Retraction, Standing, apply_entity_patch, apply_fact_patch, guard, normalize_content,
+    normalize_details, normalize_prose, retraction_of, screen_entity_patch, search, standing_of,
     types::{DeclaredType, Field, ValueType, validate_type},
-    validate_content, validate_details, validate_edge, validate_entity, validate_event,
+    validate_content, validate_details, validate_edge, validate_entity, validate_fields,
     validate_prose, validate_subject,
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
@@ -129,12 +127,12 @@ impl DoltMemory {
         Ok(Self::assemble(tx, &rows).await?.pop())
     }
 
-    /// Rows into facts, each with its event's payload read back beside it.
+    /// Rows into facts, each with its fields and references read back beside
+    /// it.
     ///
-    /// **The payload is read per fact rather than joined**, because a fact with
-    /// no event must come back with none rather than with an empty bag it never
-    /// had: `Some(Event { metadata: {} })` and `None` are different records,
-    /// and a join cannot tell them apart.
+    /// **They are read per fact rather than joined**, because a fact carrying
+    /// no field must come back with an empty bag rather than with a row of
+    /// NULLs a join invents for it.
     async fn assemble(
         tx: &mut Transaction<'_, MySql>,
         rows: &[sqlx::mysql::MySqlRow],
@@ -143,46 +141,42 @@ impl DoltMemory {
         for row in rows {
             let entity = EntityId(row.try_get::<String, _>("entity").map_err(store)?);
             let id = FactId(row.try_get::<String, _>("id").map_err(store)?);
-            let event = match row
-                .try_get::<Option<String>, _>("event_kind")
-                .map_err(store)?
-            {
-                None => None,
-                Some(kind) => Some(Event {
-                    kind,
-                    metadata: sqlx::query(
-                        "SELECT `key`, value FROM fact_event_metadata
-                         WHERE fact_home = ? AND fact_id = ? ORDER BY `key`",
-                    )
-                    .bind(entity.as_str())
-                    .bind(id.as_str())
-                    .fetch_all(&mut **tx)
-                    .await
-                    .map_err(store)?
-                    .iter()
-                    .map(|r| (r.get::<String, _>("key"), r.get::<String, _>("value")))
-                    .collect(),
-                    refs: sqlx::query(
-                        "SELECT entity FROM fact_event_ref
-                         WHERE fact_home = ? AND fact_id = ? ORDER BY ordinal",
-                    )
-                    .bind(entity.as_str())
-                    .bind(id.as_str())
-                    .fetch_all(&mut **tx)
-                    .await
-                    .map_err(store)?
-                    .iter()
-                    .map(|r| EntityId(r.get::<String, _>("entity")))
-                    .collect(),
-                }),
-            };
-            facts.push(fact_from(row, entity, id, event)?);
+            let fields = sqlx::query(
+                "SELECT `key`, value FROM fact_event_metadata
+                 WHERE fact_home = ? AND fact_id = ? ORDER BY `key`",
+            )
+            .bind(entity.as_str())
+            .bind(id.as_str())
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?
+            .iter()
+            .map(|r| (r.get::<String, _>("key"), r.get::<String, _>("value")))
+            .collect();
+            let refs = sqlx::query(
+                "SELECT entity FROM fact_event_ref
+                 WHERE fact_home = ? AND fact_id = ? ORDER BY ordinal",
+            )
+            .bind(entity.as_str())
+            .bind(id.as_str())
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?
+            .iter()
+            .map(|r| EntityId(r.get::<String, _>("entity")))
+            .collect();
+            facts.push(fact_from(row, entity, id, fields, refs)?);
         }
         Ok(facts)
     }
 
-    /// Write one whole fact — the row and its event's two tables — replacing
+    /// Write one whole fact — the row and the two tables under it — replacing
     /// whatever was there under the same address.
+    ///
+    /// **The `event_kind` column is not written.** It held the free-text label
+    /// that said what class a record was, and there are no classes: a record is
+    /// its fields. The column stays in the table because dropping it is a
+    /// migration and this writes NULL into it either way.
     ///
     /// **One writer for every verb that produces a fact**, so a capture, an
     /// edit and a retraction cannot come to write a record three different
@@ -190,9 +184,8 @@ impl DoltMemory {
     async fn write_fact(tx: &mut Transaction<'_, MySql>, fact: &Fact) -> Result<(), MemoryError> {
         sqlx::query(
             "REPLACE INTO fact (entity, id, content, details, provenance, standing, status,
-                                date, edge_shape, edge_object, event_kind, derived_from,
-                                derived_from_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                date, edge_shape, edge_object, derived_from, derived_from_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
@@ -204,7 +197,6 @@ impl DoltMemory {
         .bind(fact.date.to_string())
         .bind(fact.edge.as_ref().map(|e| e.shape.as_token()))
         .bind(fact.edge.as_ref().map(|e| e.object.as_str()))
-        .bind(fact.event.as_ref().map(|e| e.kind.as_str()))
         .bind(fact.derived_from.as_ref().map(|d| d.home.as_str()))
         .bind(fact.derived_from.as_ref().map(|d| d.local.as_str()))
         .execute(&mut **tx)
@@ -221,10 +213,7 @@ impl DoltMemory {
             .await
             .map_err(store)?;
         }
-        let Some(event) = &fact.event else {
-            return Ok(());
-        };
-        for (key, value) in &event.metadata {
+        for (key, value) in &fact.fields {
             sqlx::query(
                 "INSERT INTO fact_event_metadata (fact_home, fact_id, `key`, value)
                  VALUES (?, ?, ?, ?)",
@@ -237,7 +226,7 @@ impl DoltMemory {
             .await
             .map_err(store)?;
         }
-        for (ordinal, object) in event.refs.iter().enumerate() {
+        for (ordinal, object) in fact.refs.iter().enumerate() {
             sqlx::query(
                 "INSERT INTO fact_event_ref (fact_home, fact_id, ordinal, entity)
                  VALUES (?, ?, ?, ?)",
@@ -297,7 +286,7 @@ impl DoltMemory {
 /// The columns a fact reads back from, in one place so every read takes the
 /// same ones.
 const FACT_COLUMNS: &str = "entity, id, content, details, provenance, standing, status, date, \
-                            edge_shape, edge_object, event_kind, derived_from, derived_from_id";
+                            edge_shape, edge_object, derived_from, derived_from_id";
 
 /// A store failure, in the domain's own words. **The server's account never
 /// crosses** — no SQL, no table names, no product (rule 53); it goes to the log
@@ -340,7 +329,8 @@ fn fact_from(
     row: &sqlx::mysql::MySqlRow,
     entity: EntityId,
     id: FactId,
-    event: Option<Event>,
+    fields: std::collections::BTreeMap<String, String>,
+    refs: Vec<EntityId>,
 ) -> Result<Fact, MemoryError> {
     let provenance =
         Provenance::from_token(&row.try_get::<String, _>("provenance").map_err(store)?);
@@ -401,7 +391,8 @@ fn fact_from(
         status,
         date,
         edge,
-        event,
+        fields,
+        refs,
         derived_from,
     })
 }
@@ -502,15 +493,13 @@ impl Memory for DoltMemory {
         if let Some(edge) = &fact.edge {
             validate_edge(edge)?;
         }
-        if let Some(event) = &fact.event {
-            validate_event(event)?;
-        }
+        validate_fields(&fact.fields)?;
         let standing = standing_of(&fact);
 
         let mut tx = self.pool.begin().await.map_err(store)?;
         let index = Self::index(&mut tx).await?;
         // Every entity this write names must already exist — the subject first,
-        // then the edge's object, then anything the event points at. Nothing
+        // then the edge's object, then anything the record points at. Nothing
         // here provisions.
         if let guard::Decision::Block(candidates) = guard::decide_existing(&fact.subject, &index) {
             return Ok(Guarded::Blocked {
@@ -526,7 +515,7 @@ impl Memory for DoltMemory {
                 candidates,
             });
         }
-        for object in fact.event.iter().flat_map(|e| &e.refs) {
+        for object in &fact.refs {
             validate_subject(object)?;
             if let guard::Decision::Block(candidates) = guard::decide_existing(object, &index) {
                 return Ok(Guarded::Blocked {
@@ -566,7 +555,8 @@ impl Memory for DoltMemory {
             status: fact.status,
             date: fact.date,
             edge: fact.edge,
-            event: fact.event,
+            fields: fact.fields,
+            refs: fact.refs,
             derived_from: fact.derived_from,
         };
         Self::write_fact(&mut tx, &stored).await?;
@@ -676,7 +666,8 @@ impl Memory for DoltMemory {
             status: account.status,
             date: account.date,
             edge: account.edge,
-            event: account.event,
+            fields: account.fields,
+            refs: account.refs,
             derived_from: account.derived_from,
         };
         let retracted = Fact {

@@ -51,15 +51,12 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // ── session 2 · a defect found by a session doing something else ────────
     let s = story.session().await;
 
-    // It happened, it stays put, and it is not current truth — so it goes in
-    // as an event rather than a fact.
-    // What it touched and how it was found are typed fields and `refs`, not
-    // prose: the record carries them as values a later session can read.
+    // What it touched and how it was found are fields and `refs`, not prose:
+    // the record carries them as values a later session can read.
     let defect = s
         .event_with(
             "project:jojobot-server",
             "a claim carrying an escaped quote could not be written at all",
-            "defect",
             json!({"found_by": "a write that failed", "surface": "capture"}),
             &["bot:otto"],
         )
@@ -70,10 +67,15 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .says("found_by")
         .says("bot:otto");
 
-    // GAP — `event_type` is free text, so "defect" is a word this session
-    // chose and nothing else in the system knows. Two sessions recording the
-    // same class of incident agree on no word and no field names, so nothing
-    // can compare their records.
+    // GAP — nothing here says what class of thing this is, and nothing needs
+    // to: a record is its keys, and `found_by` plus `surface` is what makes it
+    // a defect. Declaring a type publishes a name and the keys it carries, the
+    // answer names every type that exists, and a search by type matches
+    // records structurally and says which keys each one lacks. So comparing
+    // them is served. What is not is agreement — declaring is write-time help
+    // and never a gate, the key name is the whole schema, and nothing stops
+    // the next session recording the same class of incident under keys of its
+    // own.
     //   s.incident("project:jojobot-server", touched: &[…], closed_by: …).await;
     s.has_no_verb("incident", &["capture", "search"]).await;
 
@@ -93,9 +95,12 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // GAP — nothing distinguishes the operator's exact words from a faithful
     // rendering of them. Both are `testimony`, and the difference is the whole
     // value of a receipt: a session asking why it was built this way needs to
-    // know whether it is reading the operator or somebody's summary. The only
-    // way to keep the quote is to put it in the claim text and hope nobody
-    // tidies it.
+    // know whether it is reading the operator or somebody's summary. Keeping
+    // the quote is no longer a matter of hoping nobody tidies the claim — the
+    // words go under a key of their own on a typed record, which a rewrite of
+    // the claim does not reach. What stays missing is the distinction itself:
+    // the key is a convention this session invented, provenance still has one
+    // value for both, and no read treats the field as more than a value.
     //   s.quoted("project:jojobot-server", verbatim: "…").await;
     s.has_no_verb("quote", &["capture", "recall"]).await;
 
@@ -224,14 +229,17 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .says("thing:commit-omicron");
 
     // GAP — but the link is `connection`, which records that the two are
-    // related and not that one AUTHORIZED the other. Nothing distinguishes the
-    // commit a ruling called for from a commit that merely mentions it, so the
-    // chain is walkable and its meaning is still a reading job.
+    // related and not that one AUTHORIZED the other. Naming a link is served
+    // where both ends are entities: a key declared to hold a reference points
+    // the commit at the project and walks both ways, the way the bikes story
+    // walks a loan. It does not reach THIS link, because the authority is a
+    // CLAIM — the ruling is a fact address — and a reference holds an entity
+    // handle. So the chain is walkable and its meaning is still a reading job.
     //   s.commit("thing:commit-omicron", authorized_by: &ruling).await;
     s.has_no_verb("authorized_by", &["capture", "search"]).await;
 
     // GAP — the defect has the same problem from the other end: nothing
-    // connects it to the commit that closed it. The event is on the page, the
+    // connects it to the commit that closed it. The record is on the page, the
     // fix is in the history, and only a person knows they are the same story.
     //   s.fact_about(&defect, "closed by", "closed-by", "thing:commit-omicron").await;
     s.has_no_verb("closed_by", &["capture", "update_fact"])
@@ -324,12 +332,15 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .says("the schema grew a column");
     s.find("escaped quote").await.says("project:jojobot-server");
 
-    // GAP — but every read above needed the project's handle, and nothing
-    // hands a fresh coordinator the state of the work. A session that boots
-    // and asks where we are gets its own chronology, which is its own past
-    // runs and not the build's, and no read composes what is open, what
-    // shipped and what is waiting on somebody. That is the question this
-    // persona opens with every time.
+    // GAP — and the handle is not what is missing: a read selects by KIND, so
+    // every project and its prose comes back to a session that knows no
+    // handles, exactly as the roster of implementers did two sessions ago.
+    // What nothing hands a fresh coordinator is the STATE of the work. A
+    // session that boots and asks where we are gets its own chronology, which
+    // is its own past runs and not the build's, and no read composes what is
+    // open, what shipped and what is waiting on somebody, because no record
+    // carries any of the three. That is the question this persona opens with
+    // every time.
     //   s.standing("project:jojobot-server").says("delta is mid-slice").await;
     s.has_no_verb("standing_of_work", &["start_here", "search"])
         .await;

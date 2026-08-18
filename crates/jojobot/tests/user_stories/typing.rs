@@ -27,12 +27,12 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     s.add("thing:road-bike", "The Road Bike").await;
     s.add("thing:floor-pump", "The Floor Pump").await;
 
-    // Whole: both keys, and it calls itself something else entirely. Nothing
-    // on this record says "service" in the way a type would.
+    // Whole: both keys, and nothing on the record says "service" at all. There
+    // is no name for a class of record to give, so keys are the only thing a
+    // type can be answered by.
     s.event_with(
         "thing:gravel-bike",
         "new chain and a full clean",
-        "workshop-visit",
         json!({ "serviced": "2026-03-14", "cost": "40" }),
         &[],
     )
@@ -42,7 +42,6 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     s.event_with(
         "thing:road-bike",
         "brake bleed, invoice never came",
-        "workshop-visit",
         json!({ "serviced": "2026-04-02" }),
         &[],
     )
@@ -52,18 +51,16 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     s.event_with(
         "thing:floor-pump",
         "reseated the hose, no charge",
-        "workshop-visit",
         json!({ "serviced": "some time in may", "cost": "0" }),
         &[],
     )
     .await;
 
-    // And one that is none of this: an event with keys that have nothing to do
+    // And one that is none of this: a record with keys that have nothing to do
     // with a service. It is what stops "it matched" from meaning nothing.
     s.event_with(
         "thing:gravel-bike",
         "rode it to the coast",
-        "outing",
         json!({ "distance": "80" }),
         &[],
     )

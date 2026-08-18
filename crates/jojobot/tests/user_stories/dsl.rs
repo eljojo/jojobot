@@ -695,6 +695,20 @@ impl Session {
     /// Rewrite a claim in place AND re-point its edge — for the case where
     /// what changed is not just the wording but which thing the claim now
     /// traces to, so the edge does not go on naming what used to be true.
+    /// Rewrite the record's own fields: set the keys named, take away the keys
+    /// listed. Every other key on the record is left where it is.
+    pub async fn correct_fields(&self, address: &str, set: Value, clear: &[&str]) {
+        self.write(
+            &format!("correcting the fields of {address}"),
+            "update_fact",
+            json!({
+                "address": address,
+                "metadata": set, "clear_metadata": clear,
+            }),
+        )
+        .await;
+    }
+
     pub async fn correct_with_source(&self, address: &str, content: &str, object: &str) {
         self.write(
             &format!("correcting {address} and its source"),
@@ -784,8 +798,8 @@ impl Session {
         .await
     }
 
-    /// Take an event back. One way, chronology only: a fact is corrected
-    /// instead, because the negative truth is still the truth.
+    /// Take a record back. One way: what was said stands and is marked
+    /// withdrawn, where a correction rewrites a claim to the current truth.
     pub async fn retract(&self, address: &str, reason: &str) {
         self.write(
             &format!("retracting {address}"),
@@ -810,16 +824,15 @@ impl Session {
     }
 
     /// A record of something that HAPPENED, rather than something that is
-    /// true now. `kind` is free text and jojobot interprets none of it, so two
-    /// sessions recording the same class of thing need not agree on the word.
-    pub async fn event(&self, subject: &str, content: &str, kind: &str) -> String {
-        self.event_with(subject, content, kind, json!({}), &[])
-            .await
+    /// true now. **Nothing on the record says which it is**: the two are one
+    /// class, and what a record is gets read off the fields it carries.
+    pub async fn event(&self, subject: &str, content: &str) -> String {
+        self.event_with(subject, content, json!({}), &[]).await
     }
 
-    /// The same, carrying an event's typed fields and the entities it touches.
+    /// The same, carrying the record's fields and the entities it touches.
     ///
-    /// **The plain helper sent neither, and that is why several stories say a
+    /// **The plain helper sends neither, and that is why several stories say a
     /// number or a link has nowhere to go but prose.** `capture` takes
     /// `metadata` and `refs`; the DSL dropped them, so a story written through
     /// the DSL could not reach a capability the surface already has, and the
@@ -829,17 +842,16 @@ impl Session {
         &self,
         subject: &str,
         content: &str,
-        kind: &str,
         metadata: Value,
         refs: &[&str],
     ) -> String {
         let body = self
             .write(
-                &format!("an event about {subject}"),
+                &format!("a record about {subject}"),
                 "capture",
                 json!({
                     "subject": subject, "content": content,
-                    "provenance": "testimony", "event_type": kind,
+                    "provenance": "testimony",
                     "metadata": metadata, "refs": refs,
                 }),
             )

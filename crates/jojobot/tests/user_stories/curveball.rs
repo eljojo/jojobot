@@ -3,8 +3,10 @@
 //!
 //! jojobot can hold each piece of a collision as it is decided — what was
 //! already committed, what just arrived, what the replan settled. Whether it
-//! can FIND the collision is a different question, and it needs one nothing can
-//! ask yet.
+//! can FIND the collision is a different question, and it turns on how the
+//! commitments were written down: a day under a declared date key is a day a
+//! question reaches, and prose is not. Every commitment here is prose, so the
+//! collision below is found by the wording and not by the dates.
 //!
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
 //! call is the missing capability, written the way it would be asked for, and
@@ -32,11 +34,12 @@ async fn a_curveball_collides_with_the_week() {
     s.fact("project:atlas", "draft due by Thursday, and it matters")
         .await;
 
-    // GAP — "Thursday" is prose in both, not a date either can be asked about.
-    // The one date a claim carries is when it became known, not when the thing
-    // it describes happens, so neither commitment has a day the system can see.
-    //   s.due("project:atlas", "2027-01-14").await;
-    s.has_no_verb("schedule", &["capture", "search"]).await;
+    // "Thursday" is prose in both, and the choice was this session's. The one
+    // date a plain claim carries is still when it became known — but a day the
+    // thing happens on goes under a key of its own on a typed record, and a
+    // key declared to hold a date is comparable, so "what falls on the 14th"
+    // is a question the surface takes. Neither commitment above was written
+    // that way, which is what the next two sessions pay for.
 
     s.wrap("the week as it already stood").await;
 
@@ -63,11 +66,13 @@ async fn a_curveball_collides_with_the_week() {
         .says("event:winter-fest")
         .says("event:birthday-party");
 
-    // GAP — and that is the whole mechanism. Two commitments worded "the 14th"
-    // and "Thursday" are the same day and would not collide in this search at
-    // all: nothing asks what is scheduled for a date, only what mentions a
-    // word. The collision was found by the wording matching, not by jojobot
-    // knowing the two happen at once.
+    // GAP — and that is the whole mechanism HERE. Two commitments worded "the
+    // 14th" and "Thursday" are the same day and would not collide in this
+    // search at all: it asks what mentions a word. Asking what falls on a date
+    // is served, over a declared date key — and it is scoped to that one key,
+    // because the key name is the schema. So two sessions that recorded their
+    // dates under different names still do not collide, which is the residual:
+    // the day is askable and the agreement it needs is nobody's job.
     //   s.on_day("2027-01-14").says("event:winter-fest").await;
     s.has_no_verb("on_day", &["search", "recall"]).await;
 
@@ -103,10 +108,13 @@ async fn a_curveball_collides_with_the_week() {
     // sentences it was handed and checked none of them against the other two;
     // there is no schedule here for anything to collide against.
 
-    // GAP — and the trade-off is not on the record. The claim says what was
-    // decided and cannot say what it was decided AGAINST, so the reasoning
-    // that survives is three unconnected sentences. A decision has nowhere to
-    // name what it chose over what.
+    // GAP — and the trade-off is not on the record. What a decision chose over
+    // is nameable when the alternative is an ENTITY: a key declared to hold a
+    // reference points the record at the party it gave up, and the walk goes
+    // both ways. What it chose over here is a CLAIM — the postponed festival
+    // is a fact address — and a reference holds a handle. `derived_from` is
+    // the one claim-to-claim link and it says derived, never chosen over. So
+    // the reasoning that survives is three unconnected sentences.
     //   s.decided("project:atlas", "…", instead_of: "event:winter-fest").await;
     s.has_no_verb("decide", &["capture", "update_fact"]).await;
     let _ = &accepted;
@@ -125,8 +133,12 @@ async fn a_curveball_collides_with_the_week() {
     s.recall("project:atlas").await.says("protected");
 
     // GAP — but "the new shape of the week" is three reads and an assembly,
-    // not one call. Composing them is the session's job; having something to
-    // compose is jojobot's.
+    // not one call, and that is the wording's fault rather than the surface's.
+    // A window IS one call over a declared date key: two filters on the same
+    // key, after the Monday and before the Sunday, both holding on one record.
+    // The residual is what the window cannot span — records whose date sits
+    // under a different key name, and the claim's own date, which no filter
+    // reaches.
     //   s.week_of("2027-01-11").await;
     s.has_no_verb("week_of", &["search", "recall"]).await;
 

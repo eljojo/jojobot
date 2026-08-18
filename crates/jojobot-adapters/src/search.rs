@@ -128,12 +128,12 @@ struct Fields {
     /// **One term per edge, shape and object together.**
     ///
     /// A fact can carry several edges now — its own, plus one per entity its
-    /// event payload points at — and the two fields above are independent, so
+    /// fields point at — and the two fields above are independent, so
     /// `shape=location AND object=person:alpha` would match a fact holding a
     /// location edge to somewhere else and an unrelated link to alpha. Neither
     /// field is wrong; the pair is what the caller actually asked about.
     edge_pair: Field,
-    /// **One term per key a fact's event payload carries.**
+    /// **One term per key a fact carries.**
     ///
     /// A type is a set of key names and a record answers it by carrying at
     /// least one of them, so the question is set membership over strings —
@@ -928,19 +928,18 @@ impl FullTextIndex {
             if let Some(kind) = fact.subject.kind() {
                 document.add_text(f.kind, kind.as_token());
             }
-            // **Every edge this fact draws**, its own and its event's. An
-            // event's links are `connection`s: the pointer is real, and what
-            // the link MEANS is deliberately unrecorded rather than guessed.
+            // **Every edge this fact draws**, its own and the ones its fields
+            // point with. A field's link is a `connection`: the pointer is
+            // real, and what the link MEANS is deliberately unrecorded rather
+            // than guessed.
             //
-            // What makes a payload value one of these is that it IS a handle,
-            // not the key it sits under — `ref=` is the unnamed case and a
-            // later named field is the same link annotated. Keying this on the
-            // literal word `ref` would work today and drop every named
-            // reference the day the first type ships.
+            // What makes a field value one of these is that it IS a handle, not
+            // the key it sits under — the unnamed list is one case and a named
+            // key is the same link annotated. Keying this on the unnamed list
+            // alone would drop every named reference.
             let linked = fact
-                .event
-                .iter()
-                .flat_map(|e| e.linked())
+                .linked()
+                .into_iter()
                 .map(|object| Edge::new(EdgeShape::Connection, object));
             for edge in fact.edge.iter().cloned().chain(linked) {
                 document.add_text(f.edge_shape, edge.shape.as_token());
@@ -950,13 +949,13 @@ impl FullTextIndex {
                     format!("{}={}", edge.shape.as_token(), edge.object),
                 );
             }
-            // **Every key the payload carries, so a type filter is a clause.**
+            // **Every key the record carries, so a type filter is a clause.**
             // A type is answered by the keys a record holds, and holding one is
             // the whole of the match — so the question the caller asks is
             // answerable from postings, and asking it here means the answer is
             // drawn from the whole corpus rather than from the page the limit
             // happened to buy.
-            for key in fact.event.iter().flat_map(|e| e.metadata.keys()) {
+            for key in fact.fields.keys() {
                 document.add_text(f.meta_key, key.trim());
             }
             writer.add_document(document).map_err(store_err)?;
@@ -1781,9 +1780,8 @@ impl Memory for IndexedMemory {
 /// **Does this record answer the type, and if so, say how — on the hit.**
 ///
 /// Structural: the record is never asked what it was declared to be, only what
-/// it carries. An event's payload IS the record here, so a hit that is not a
-/// fact, and a fact carrying no event, answer no type — they have no keys to
-/// answer with.
+/// it carries. A hit that is not a fact answers no type, and neither does a
+/// fact carrying no fields — they have no keys to answer with.
 ///
 /// A record carrying none of the type's keys is dropped, because that is not a
 /// weak match, it is not a match. A record carrying some is kept and says which
@@ -1793,10 +1791,7 @@ fn answer_with(declared: &DeclaredType, hit: &mut Hit) -> bool {
     let Hit::Fact { fact, answers, .. } = hit else {
         return false;
     };
-    let Some(event) = &fact.event else {
-        return false;
-    };
-    match declared.matched_by(&event.metadata) {
+    match declared.matched_by(&fact.fields) {
         Some(found) => {
             *answers = Some(Box::new(found));
             true
@@ -2126,7 +2121,6 @@ mod tests {
     use jiff::civil::date;
     use jojobot_domain::mailbox::testing::{InMemoryMailboxes, contract as mail_contract};
     use jojobot_domain::mailbox::{MailboxName, Message, MessageId, MessageState};
-    use jojobot_domain::memory::event::Event;
     use jojobot_domain::memory::search::{DEFAULT_LIMIT, EdgeFilter, EntityRef};
     use jojobot_domain::memory::testing::{InMemoryMemory, contract};
     use jojobot_domain::memory::{
@@ -2189,7 +2183,8 @@ mod tests {
             status: FactStatus::Active,
             date: on,
             edge: None,
-            event: None,
+            fields: Default::default(),
+            refs: Vec::new(),
             derived_from: None,
         }
     }
@@ -2553,14 +2548,12 @@ mod tests {
                 vec![
                     Fact {
                         edge: Some(shelbyville.clone()),
-                        event: None,
                         ..fact("person:alpha", "f1", "wintering", date(2026, 1, 1))
                     },
                     // Beta's row, homed on Alpha's page: Beta's edge, not Alpha's.
                     Fact {
                         subject: beta.id.clone(),
                         edge: Some(guild.clone()),
-                        event: None,
                         ..fact("person:alpha", "f2", "joined up", date(2026, 1, 2))
                     },
                 ],
@@ -2607,7 +2600,6 @@ mod tests {
             "Keeps a spare key under the third flowerpot; it came up once and never got filed.",
             vec![Fact {
                 edge: Some(shop.clone()),
-                event: None,
                 ..fact(
                     "person:ned-flanders",
                     "f1",
@@ -2792,14 +2784,10 @@ mod tests {
             ("answering-partial", vec![("arrives", "2026-08-11")]),
         ] {
             facts.push(Fact {
-                event: Some(Event {
-                    kind: "a-type-nobody-declared".into(),
-                    metadata: keys
-                        .into_iter()
-                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                        .collect(),
-                    refs: vec![],
-                }),
+                fields: keys
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
                 ..fact(
                     "person:alpha",
                     n,
@@ -3115,27 +3103,21 @@ mod tests {
             .await
             .expect("add ok");
         let stands = inner
-            .capture(NewFact {
-                event: Some(jojobot_domain::memory::event::Event::of("a-rehearsal")),
-                ..NewFact::about(
-                    EntityId::person("alpha"),
-                    "the quartet rehearsed",
-                    date(2026, 7, 1),
-                )
-            })
+            .capture(NewFact::about(
+                EntityId::person("alpha"),
+                "the quartet rehearsed",
+                date(2026, 7, 1),
+            ))
             .await
             .expect("capture ok")
             .written()
             .expect("not blocked");
         let taken_back = inner
-            .capture(NewFact {
-                event: Some(jojobot_domain::memory::event::Event::of("a-rehearsal")),
-                ..NewFact::about(
-                    EntityId::person("alpha"),
-                    "the quartet rehearsed twice",
-                    date(2026, 7, 2),
-                )
-            })
+            .capture(NewFact::about(
+                EntityId::person("alpha"),
+                "the quartet rehearsed twice",
+                date(2026, 7, 2),
+            ))
             .await
             .expect("capture ok")
             .written()
@@ -3953,7 +3935,8 @@ mod tests {
                 status: fact.status,
                 date: fact.date,
                 edge: fact.edge,
-                event: None,
+                fields: fact.fields,
+                refs: fact.refs,
                 derived_from: fact.derived_from,
             };
             doc.facts.push(stored.clone());
@@ -4045,7 +4028,8 @@ mod tests {
             status: FactStatus::Active,
             date: date(2026, 1, 1),
             edge: None,
-            event: None,
+            fields: Default::default(),
+            refs: Vec::new(),
             derived_from: None,
         }
     }
@@ -5598,19 +5582,16 @@ mod tests {
     #[tokio::test]
     async fn every_payload_value_that_is_a_handle_is_walkable_and_nothing_else_is() {
         let event = Fact {
-            event: Some(Event {
-                kind: "a-thing-that-happened".into(),
-                metadata: [
-                    // Named, and it must walk exactly as the unnamed one does.
-                    ("mechanic".to_string(), "person:milhouse".to_string()),
-                    // Not handles: these must NOT become edges.
-                    ("mood".to_string(), "delighted".to_string()),
-                    ("nearly".to_string(), "person:".to_string()),
-                ]
-                .into_iter()
-                .collect(),
-                refs: vec![EntityId("place:north-trail".into())],
-            }),
+            fields: [
+                // Named, and it must walk exactly as the unnamed one does.
+                ("mechanic".to_string(), "person:milhouse".to_string()),
+                // Not handles: these must NOT become edges.
+                ("mood".to_string(), "delighted".to_string()),
+                ("nearly".to_string(), "person:".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            refs: vec![EntityId("place:north-trail".into())],
             ..fact("person:alpha", "f1", "the kiln was lit", date(2026, 1, 1))
         };
         let index = index_of(vec![scan(
@@ -5685,11 +5666,8 @@ mod tests {
                 EdgeShape::About,
                 EntityId("topic:widgets".into()),
             )),
-            event: Some(Event {
-                kind: "a-thing-that-happened".into(),
-                metadata: Default::default(),
-                refs: vec![EntityId("person:milhouse".into())],
-            }),
+            fields: Default::default(),
+            refs: vec![EntityId("person:milhouse".into())],
             ..fact("person:alpha", "f1", "the kiln was lit", date(2026, 1, 1))
         };
         let index = index_of(vec![scan(

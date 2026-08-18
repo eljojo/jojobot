@@ -69,10 +69,14 @@ async fn moving_abroad() {
     )
     .await;
 
-    // GAP — the most common move in the whole conversation, and there is
-    // nowhere for it. These two are candidates under evaluation, one probably
-    // ahead. The graph can say what is true of each and cannot say either is
-    // being considered, ranked, or ruled out.
+    // GAP — the most common move in the whole conversation, and half of it is
+    // served now. HOLDING the candidates is a key: a declared `candidate_for`
+    // reference points each city at the move, and the walk back from the move
+    // returns the pair, which is what "being considered" needs. The rest of
+    // choosing is still missing. Nothing ranks them, and ruling one out is
+    // recordable but not askable — every filter says which records to KEEP, so
+    // "the candidates not ruled out" is a question about a record that is not
+    // there.
     //   s.shortlist("project:atlas", &["place:capital-city", "place:north-haverbrook"]).await;
     s.has_no_verb("shortlist", &["capture", "search"]).await;
 
@@ -94,10 +98,14 @@ async fn moving_abroad() {
         .says("place:capital-city")
         .says("place:north-haverbrook");
 
-    // GAP — and the containment is only as good as the claim's wording.
-    // Nothing says this edge means "inside" rather than "near" or "flies
-    // to", so a walk finds the pair and a reader still has to read each
-    // sentence to learn what the link was.
+    // GAP — and the EDGE is only as good as the claim's wording. Nothing says
+    // this shape means "inside" rather than "near" or "flies to", so a walk by
+    // shape finds the pair and a reader still reads each sentence to learn
+    // what the link was. Naming the link is no longer out of reach: a key
+    // declared to hold a reference is a relation the query walks both ways, so
+    // an `inside` key says what `location` cannot. The residual is the narrow
+    // one — the name lives on a KEY of the record and never on the edge, and
+    // the five shapes stay a closed vocabulary.
     //   s.fact_about("place:capital-city", "…", "inside", "place:far-country").await;
     s.has_no_verb("contains", &["capture", "search"]).await;
 
@@ -174,9 +182,12 @@ async fn moving_abroad() {
     //   s.task("project:atlas", "take the visa photo").before("book the appointment").await;
     s.has_no_verb("task", &["capture", "update_fact"]).await;
 
-    // GAP — and the appointment date has nowhere to go. Putting January the
-    // first in a claim's date field redefines that field for every other claim
-    // in the system.
+    // GAP — and the date is missing for the same reason the task is. A day has
+    // somewhere to go: it rides a typed record under a key of its own, as the
+    // departure does in session 4. What it cannot ride is the thing it is due
+    // for, because no record carries a state and nothing tracks one from open
+    // to done — so a due date here would sit on a claim that reads as true
+    // before the appointment and after it.
     //   s.task("project:atlas", "embassy appointment").due("2027-01-01").await;
     s.has_no_verb("due", &["capture", "update_fact"]).await;
 
@@ -236,13 +247,12 @@ async fn moving_abroad() {
     )
     .await;
 
-    // The occurrence is a typed event on that entity: the fields a flight has
-    // are values, and `refs` says who is on it.
+    // The occurrence is a record on that entity: the fields a flight has are
+    // values, and `refs` says who is on it.
     let flight = s
         .event_with(
             "event:departure-flight",
             "the flight the family is booked on",
-            "flight",
             json!({"departs_on": "2027-02-09", "one_way": "yes"}),
             &["person:tulio"],
         )
@@ -255,8 +265,8 @@ async fn moving_abroad() {
 
     // GAP — and the entity itself still has no date. `event:departure-flight`
     // is a node whose occurrence lives on a claim about it, so "what is
-    // happening in February" has to read every event's claims rather than the
-    // events.
+    // happening in February" has to read every event entity's claims rather
+    // than the entities.
     //   s.happens_on("event:departure-flight", "2027-02-09").await;
     s.list("event").await.never_says("\"happens_on\"");
 

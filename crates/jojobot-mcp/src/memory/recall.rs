@@ -539,7 +539,6 @@ mod tests {
             CaptureArgs {
                 shape: Some("attendance".into()),
                 object: Some("event:birthday-party".into()),
-                event_type: Some("rsvp".into()),
                 metadata: Some(
                     [("answer".to_string(), "yes".to_string())]
                         .into_iter()
@@ -623,6 +622,56 @@ mod tests {
             .expect("one filter is enough");
     }
 
+    /// **A type query reaches a record nobody labelled.**
+    ///
+    /// A record answers a type by the keys it carries, and it carried them
+    /// whether or not its writer also named a class. While a key could only be
+    /// written beside a label, the set a type query ran over was the set that
+    /// opted in, so a type reported the writers who knew about it rather than
+    /// the records that answer it.
+    #[tokio::test]
+    async fn a_type_query_reaches_a_record_written_with_no_label() {
+        let jojobot = handler();
+        ensure(&jojobot, "alpha").await;
+        jojobot
+            .declare_type(Parameters(DeclareTypeArgs {
+                name: "service".into(),
+                fields: vec![FieldArgs {
+                    key: "odometer".into(),
+                    holds: Some("number".into()),
+                }],
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("declare_type ok");
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                metadata: Some([("odometer".to_string(), "18000".to_string())].into()),
+                ..capture_args("person:alpha", "the chain was replaced")
+            },
+        )
+        .await;
+
+        let found = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    answers_type: Some("service".into()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            found["objects"][0]["id"], "person:alpha",
+            "the record answers the type by its key: {found}"
+        );
+        assert_eq!(
+            found["objects"][0]["facts"][0]["content"], "the chain was replaced",
+            "{found}"
+        );
+    }
+
     /// **A declared reference key is walkable through the wire**, both ways,
     /// and the ordering a declaration licenses narrows what the walk reaches.
     ///
@@ -665,7 +714,6 @@ mod tests {
             capture_ok(
                 &jojobot,
                 CaptureArgs {
-                    event_type: Some("pet".into()),
                     metadata: Some(
                         [
                             ("born".to_string(), born.to_string()),

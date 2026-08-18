@@ -17,10 +17,11 @@
 //! name roles and synthetic placeholders; every real specific is data, read from
 //! the store at runtime.
 
+use std::collections::BTreeMap;
+
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
-pub mod event;
 pub mod graph;
 pub mod guard;
 pub mod search;
@@ -384,6 +385,18 @@ pub struct FactPatch {
     /// A typed edge to attach. `None` leaves any existing edge alone; this
     /// milestone writes one edge per fact, so setting it replaces.
     pub edge: Option<Edge>,
+    /// **Fields to set.** Each key named is written; a key the record already
+    /// carries and this does not name is left alone, so an edit reaches one
+    /// field without restating the rest.
+    pub fields: BTreeMap<String, String>,
+    /// **Fields to remove**, by key. Its own list rather than an empty value in
+    /// [`FactPatch::fields`]: an empty value is a value somebody wrote, and
+    /// setting a key to nothing and taking the key off the record are two
+    /// different edits.
+    ///
+    /// A key that is not on the record is not an error. The patch says what
+    /// the record must not carry afterwards, and it does not.
+    pub clear_fields: Vec<String>,
     /// The user's explicit confirmation, required to promote a claim to
     /// testimony AND to settle one that is open. jojobot infers freely; it
     /// never blesses on its own, on either axis.
@@ -984,24 +997,37 @@ fn breaks_the_row(value: &str) -> bool {
 
 /// A fact's content must be one non-empty line — a table cell is one line, and
 /// an empty claim is not a claim.
-/// **An event's metadata may not use the grammar's own tokens as keys.**
+/// The key that marks a record as a retraction, holding the ADDRESS it takes
+/// back — not a handle, so it is deliberately not a walkable link: the target
+/// is a row, and rows are reached by address.
+pub const RETRACTS: &str = "retracts";
+
+/// **Whether a field key is one jojobot writes itself.**
 ///
-/// The bag is flat and free with exactly two exceptions, and they are the
-/// words the record's line format spends on itself. A caller's `type` key
-/// rendered a second type token and the reader took the last one, so the
-/// event's real type was destroyed and the key vanished with it.
+/// The bag is flat and free with exactly one exception, and it is the key that
+/// says a record takes another one back. jojobot writes that key and a caller
+/// may not: a record naming what it retracts is the only record on this rail
+/// that changes the standing of a different row, so a caller able to write the
+/// key could mark somebody else's record taken back.
 ///
-/// Checked on the write path in the domain, so both adapters answer for it —
-/// the fake never round-trips a record, so it accepted this input happily
-/// while the real store refused it with an opaque read-back error. The two
-/// disagreeing about the same input is exactly what the shared contract
-/// exists to catch.
-pub fn validate_event(event: &event::Event) -> Result<(), MemoryError> {
-    if let Some(key) = event.metadata.keys().find(|k| event::reserved_key(k)) {
+/// Refused rather than renamed. Renaming it would hand back a record the caller
+/// did not write, and what a type is gets derived from what accumulates here,
+/// so a silently moved key is a corrupted sample.
+pub fn reserved_key(key: &str) -> bool {
+    key.trim() == RETRACTS
+}
+
+/// **A record's fields may not use the key jojobot writes itself.**
+///
+/// Checked on the write path in the domain, so both adapters answer for it — a
+/// rule enforced in one store and not the other is a rule that holds until
+/// somebody switches stores.
+pub fn validate_fields(fields: &BTreeMap<String, String>) -> Result<(), MemoryError> {
+    if let Some(key) = fields.keys().find(|k| reserved_key(k)) {
         return Err(MemoryError::InvalidFact(format!(
-            "an event's metadata cannot use '{key}' as a key: that word belongs to the record's \
-             own grammar, and a value under it would overwrite the event's {key}. Rename the key \
-             — anything else is yours to choose."
+            "a record's fields cannot use '{key}' as a key: jojobot writes that key itself, on \
+             the record it writes when something is taken back, and it names the row that was \
+             taken back. Rename the key — anything else is yours to choose."
         )));
     }
     Ok(())
@@ -1048,6 +1074,9 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     if let Some(edge) = &patch.edge {
         validate_edge(edge)?;
     }
+    // The same gate the write path has, on the other verb that can reach a
+    // record's fields — see [`reserved_key`].
+    validate_fields(&patch.fields)?;
 
     if let Some(content) = &patch.content {
         fact.content = normalize_content(content);
@@ -1070,6 +1099,15 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     }
     if let Some(edge) = &patch.edge {
         fact.edge = Some(edge.clone());
+    }
+    // **Cleared first, then set**, so a patch naming one key in both lists
+    // leaves the value it asked for rather than depending on which list the
+    // reader walked first.
+    for key in &patch.clear_fields {
+        fact.fields.remove(key.trim());
+    }
+    for (key, value) in &patch.fields {
+        fact.fields.insert(key.trim().to_string(), value.clone());
     }
     Ok(())
 }
@@ -1177,19 +1215,16 @@ pub struct NewFact {
     /// the fact: an edge is never a second, separately-failing write.
     ///
     /// There is deliberately **no `override_token` on this record.** Every
-    /// entity a capture names — its subject, its edge's object, an event's refs
+    /// entity a capture names — its subject, its edge's object, a record's refs
     /// — must already exist (see [`guard::decide_existing`]), so there is no
     /// suspicion for a caller to wave away and no refusal that mints a token: a
     /// new entity is `add_entity` and then this, two steps.
     pub edge: Option<Edge>,
-    /// **The marker that makes this fact an event**, or `None` for an ordinary
-    /// fact — which is the common case and the default.
-    ///
-    /// A fact is current truth and is rewritten in place; an event is
-    /// chronology and stays put. Nothing else distinguishes them, which is why
-    /// this rides on the same record and the same write rather than on a verb
-    /// of its own: an event IS a fact, with a date and this.
-    pub event: Option<event::Event>,
+    /// The flat bag of fields this record carries. **Empty is the ordinary
+    /// case, not a special one** — see [`Fact::fields`].
+    pub fields: BTreeMap<String, String>,
+    /// The entities this record points at — see [`Fact::refs`].
+    pub refs: Vec<EntityId>,
     /// The claim this one was derived from, if any — see [`Fact::derived_from`].
     /// Written atomically with the fact, exactly as an edge is.
     pub derived_from: Option<FactAddress>,
@@ -1208,7 +1243,8 @@ impl NewFact {
             status: FactStatus::default(),
             date,
             edge: None,
-            event: None,
+            fields: BTreeMap::new(),
+            refs: Vec::new(),
             derived_from: None,
         }
     }
@@ -1241,10 +1277,27 @@ pub struct Fact {
     /// The typed edge this fact draws, if any. Read tolerantly: a cell the reader
     /// can't parse costs the edge, never the fact.
     pub edge: Option<Edge>,
-    /// The event record, when this fact is one. Read exactly as tolerantly as
-    /// the edge is, and for a stronger reason: a payload this build cannot make
-    /// sense of must still come back whole — see [`event::Event`].
-    pub event: Option<event::Event>,
+    /// **The fields this record carries — always, and empty is ordinary.**
+    ///
+    /// A flat bag, sorted, that jojobot stores and never interprets. There are
+    /// no native types and no schema: a key this build has never seen is simply
+    /// a key, kept as it was written, and what the real types eventually are
+    /// gets derived from what accumulates here. That is why the reader must not
+    /// be allowed opinions — it is going to be wrong about the shape, and being
+    /// wrong must cost nothing.
+    ///
+    /// **Nothing has to be declared for a record to carry fields.** While a
+    /// field could only be written beside a class name its writer chose, "the
+    /// fields of a thing" meant "the fields somebody opted in", and every read
+    /// that groups a thing's records ran over that biased sample.
+    pub fields: BTreeMap<String, String>,
+    /// **The entities this record points at under no key at all.**
+    ///
+    /// Links whose nature is deferred — see [`EdgeShape::Connection`] for why
+    /// that is not the same as `about` and must not be collapsed into it. A
+    /// field holding a handle is the same link with the key doing the
+    /// annotating; [`Fact::linked`] is what reads both.
+    pub refs: Vec<EntityId>,
     /// **The claim this one was derived from, if it was derived from a claim
     /// rather than from an entity.** An edge's object is an [`EntityId`]; a
     /// claim derived from another claim has no entity to point at, only the
@@ -1255,19 +1308,56 @@ pub struct Fact {
 }
 
 impl Fact {
-    /// Whether this fact is an event. **The class filter's one question**, so
-    /// nothing downstream has to re-derive what "is an event" means.
-    pub fn is_event(&self) -> bool {
-        self.event.is_some()
+    /// **Every entity this record points at — whatever key it sits under.**
+    ///
+    /// What makes a field's value a walkable reference is that it IS an entity
+    /// handle, not the key it happens to have. [`Fact::refs`] is the unnamed
+    /// case, used when there is nothing to call the relationship; `mechanic =
+    /// person:alpha` is the same link with the key doing the annotating. **The
+    /// key is the annotation** — so a projection keyed on the unnamed list
+    /// alone would silently miss every named reference.
+    ///
+    /// That is also the boundary: a key annotates a link cheaply, and it does
+    /// not make the link a place to keep things. An edge growing its own fields
+    /// is a node that has not admitted it yet.
+    ///
+    /// Deduplicated and ordered, so two spellings of the same answer cannot
+    /// come back as two answers.
+    pub fn linked(&self) -> Vec<EntityId> {
+        let mut found: Vec<EntityId> = self.refs.clone();
+        found.extend(
+            self.fields
+                .values()
+                .map(|v| EntityId(v.trim().to_string()))
+                .filter(|id| validate_subject(id).is_ok()),
+        );
+        found.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        found.dedup();
+        found
+    }
+
+    /// Whether this record IS a retraction — the question [`check_retractable`]
+    /// asks to refuse retracting one.
+    ///
+    /// **Read off the key jojobot writes**, which is the key no caller may
+    /// write: the marker cannot be forged, where a class name a writer chose
+    /// could be typed by anybody.
+    pub fn is_retraction(&self) -> bool {
+        self.fields.contains_key(RETRACTS)
+    }
+
+    /// The address this retraction takes back, if it is one.
+    pub fn retracts(&self) -> Option<&str> {
+        self.fields.get(RETRACTS).map(String::as_str)
     }
 }
 
 /// **Whether this row can be taken back, and why not when it cannot.**
 ///
-/// Three different mistakes with three different ways out, which is why they
-/// are three sentences rather than one refusal. It lives in the domain because
-/// both adapters call it: a rule enforced in one store and not the other is a
-/// rule that holds until somebody switches stores.
+/// Two different mistakes with two different ways out, which is why they are
+/// two sentences rather than one refusal. It lives in the domain because both
+/// adapters call it: a rule enforced in one store and not the other is a rule
+/// that holds until somebody switches stores.
 ///
 /// **One-way is enforced here rather than intended elsewhere.** Nothing takes
 /// a row out of [`FactStatus::Retracted`] — not this verb, which refuses a
@@ -1289,7 +1379,7 @@ pub fn check_retractable(fact: &Fact) -> Result<(), MemoryError> {
             attempted: fact.address().to_string(),
         });
     }
-    if fact.event.as_ref().is_some_and(event::Event::is_retraction) {
+    if fact.is_retraction() {
         return refuse(
             "it is itself a retraction. A retraction is the last word on what it takes back; \
              retracting one would be the reversal the one-way rule exists to forbid. If the \
@@ -1297,28 +1387,19 @@ pub fn check_retractable(fact: &Fact) -> Result<(), MemoryError> {
                 .to_string(),
         );
     }
-    if !fact.is_event() {
-        return refuse(
-            "it is a fact, not an event. Facts are current truth and get FIXED: rewrite the \
-             content with update_fact to state what is so — including the negative truth, if \
-             the claim turned out false. Only chronology is retracted, because only chronology \
-             stays put"
-                .to_string(),
-        );
-    }
     Ok(())
 }
 
-/// The record a retraction leaves behind: **a dated event of its own**, homed
+/// The record a retraction leaves behind: **a dated record of its own**, homed
 /// with the record it takes back and naming it by address.
 ///
-/// Two rows rather than one, and the shape follows from what an event is. An
-/// event stays put — if it needed amending it was never an event — so the
-/// reason cannot be written into the row being retracted without editing a
-/// record that is supposed to be immutable chronology. Taking something back
-/// is itself a thing that happened, on a day, so it gets recorded the way
-/// everything else that happened does. The two then read as one story: the
-/// retracted row is marked, and the row beside it says why.
+/// **Two rows rather than one, and this is what an append-only substrate looks
+/// like in miniature.** The reason is not written into the row being retracted,
+/// because that row is what somebody wrote and a later act does not get to
+/// rewrite it. Taking something back is itself a thing that happened, on a day,
+/// so it is recorded the way everything else that happened is. The two then
+/// read as one story: the retracted row is marked, and the row beside it says
+/// why.
 ///
 /// Inference, like any other claim jojobot did not hear from the user
 /// directly. The retraction is a real act either way — what is a hypothesis is
@@ -1344,7 +1425,13 @@ pub fn retraction_of(
         None => "retracted; no reason was given".to_string(),
     };
     Ok(NewFact {
-        event: Some(event::Event::retraction_of(&target.address().to_string())),
+        // **The link is written here, by jojobot, and never by a caller** — a
+        // retraction that pointed wherever its author said would be a way to
+        // mark somebody else's record taken back. That is why the key is
+        // reserved; see [`reserved_key`].
+        fields: [(RETRACTS.to_string(), target.address().to_string())]
+            .into_iter()
+            .collect(),
         ..NewFact::about(target.subject.clone(), content, date)
     })
 }

@@ -716,7 +716,8 @@ mod tests {
             status: FactStatus::Active,
             date: date(2026, 7, 1),
             edge: None,
-            event: None,
+            fields: Default::default(),
+            refs: Vec::new(),
             derived_from: None,
         };
 
@@ -784,7 +785,8 @@ mod tests {
             status: FactStatus::Active,
             date: date(2026, 7, 1),
             edge: None,
-            event: None,
+            fields: Default::default(),
+            refs: Vec::new(),
             derived_from: None,
         };
         let doc = DocScan {

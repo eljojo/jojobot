@@ -41,7 +41,6 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
     s.event_with(
         "pet:santas-little-helper",
         "the greyhound, came home from the track",
-        "pet",
         json!({ "born": "2019-04-15", "weight": "27", "owner": "person:bart" }),
         &[],
     )
@@ -49,7 +48,6 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
     s.event_with(
         "pet:snowball",
         "the cat",
-        "pet",
         json!({ "born": "2024-11-02", "weight": "4", "owner": "person:bart" }),
         &[],
     )
@@ -62,7 +60,6 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
     s.event_with(
         "thing:floor-pump",
         "reseated the hose",
-        "repair",
         json!({ "fitted": "2026-02-01" }),
         &[],
     )
@@ -74,7 +71,6 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
     s.event_with(
         "thing:red-bike",
         "needs new brake pads",
-        "repair",
         json!({ "owner": "person:bart" }),
         &[],
     )

@@ -894,20 +894,18 @@ mod a_write_needs_an_identity {
             .expect("an identified capture answers");
         let address = address_of(&json_of(&captured));
 
-        // **Retract needs an input it would otherwise accept.** A fact is not
-        // retractable on its own merits, so the arm below refused for two
-        // reasons at once and only the `how_to_proceed` assertion could tell
-        // them apart — an arm that survives a rename of a refusal message
-        // rather than a deletion of the gate. An event is chronology, which
-        // retract takes, so identity is the only thing left to refuse it for.
-        let event = jojobot
-            .capture(Parameters(CaptureArgs {
-                event_type: Some("visit".into()),
-                ..capture_args("place:springfield", "the inspector came by")
-            }))
+        // **Retract needs an input it would otherwise accept**, so that the arm
+        // below refuses for one reason and a deleted gate cannot hide behind a
+        // second one. A record nothing has taken back is such an input, and
+        // identity is then the only thing left to refuse it for.
+        let second = jojobot
+            .capture(Parameters(capture_args(
+                "place:springfield",
+                "the inspector came by",
+            )))
             .await
-            .expect("an identified event capture answers");
-        let event_address = address_of(&json_of(&event));
+            .expect("a second identified capture answers");
+        let second_address = address_of(&json_of(&second));
 
         // …and now the same writes with nobody behind them. **Every one is
         // built explicitly rather than through a builder**, because the
@@ -961,7 +959,7 @@ mod a_write_needs_an_identity {
         refused(
             &jojobot
                 .retract(Parameters(RetractArgs {
-                    address: event_address.clone(),
+                    address: second_address.clone(),
                     reason: None,
                     sid: None,
                 }))

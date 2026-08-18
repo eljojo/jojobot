@@ -22,7 +22,7 @@ use super::{
     guard::{self, Decision},
     normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
     search, standing_of, validate_content, validate_details, validate_edge, validate_entity,
-    validate_event, validate_prose, validate_subject,
+    validate_fields, validate_prose, validate_subject,
 };
 
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
@@ -170,9 +170,7 @@ impl Memory for InMemoryMemory {
         if let Some(edge) = &fact.edge {
             validate_edge(edge)?;
         }
-        if let Some(event) = &fact.event {
-            validate_event(event)?;
-        }
+        validate_fields(&fact.fields)?;
         let standing = standing_of(&fact);
 
         // Every entity this write names must already exist — the subject first,
@@ -192,12 +190,12 @@ impl Memory for InMemoryMemory {
                 candidates,
             });
         }
-        // **An event's refs are named entities like any other.** The rule is
+        // **A record's refs are named entities like any other.** The rule is
         // not about edges, it is about naming: nothing a write mentions is
         // brought into being as a side effect of mentioning it. A ref that
         // provisioned its own entity would make the open hatch the one place on
         // the surface where that stopped being true.
-        for object in fact.event.iter().flat_map(|e| &e.refs) {
+        for object in &fact.refs {
             validate_subject(object)?;
             if let Decision::Block(candidates) = guard::decide_existing(object, &index) {
                 return Ok(Guarded::Blocked {
@@ -253,7 +251,8 @@ impl Memory for InMemoryMemory {
             status: fact.status,
             date: fact.date,
             edge: fact.edge,
-            event: fact.event,
+            fields: fact.fields,
+            refs: fact.refs,
             derived_from: fact.derived_from,
         };
         facts.push(stored.clone());
@@ -391,7 +390,8 @@ impl Memory for InMemoryMemory {
             status: account.status,
             date: account.date,
             edge: account.edge,
-            event: account.event,
+            fields: account.fields,
+            refs: account.refs,
             derived_from: account.derived_from,
         };
         let retracted = Fact {
@@ -490,9 +490,7 @@ pub mod contract {
     use crate::memory::graph;
     use crate::memory::search::{EdgeFilter, Hit, Search, SearchQuery};
     use crate::memory::types::{DeclaredType, Field, ValueType};
-    use crate::memory::{
-        Boot, Edge, EdgeShape, FACTS_HEADER, FactStatus, Provenance, event::Event,
-    };
+    use crate::memory::{Boot, Edge, EdgeShape, FACTS_HEADER, FactStatus, Provenance};
     use jiff::civil::{Date, date};
 
     /// Make sure `id` exists, so the write guard's **existence gate** is not
@@ -733,7 +731,10 @@ pub mod contract {
             status: FactStatus::Active,
             date: date(2026, 3, 9),
             edge: None,
-            event: None,
+            fields: [("seats".to_string(), "2".to_string())]
+                .into_iter()
+                .collect(),
+            refs: vec![subject.clone()],
             derived_from: Some(source.clone()),
         };
         let captured = capture(store, new).await;
@@ -743,6 +744,8 @@ pub mod contract {
         assert_eq!(captured.provenance, Provenance::Testimony);
         assert_eq!(captured.standing, Standing::Open);
         assert_eq!(captured.date, date(2026, 3, 9));
+        assert_eq!(captured.fields.get("seats").map(String::as_str), Some("2"));
+        assert_eq!(captured.refs, vec![subject.clone()]);
         assert_eq!(captured.derived_from, Some(source));
 
         let seen = read_back(store, &subject, &captured.id).await;
@@ -2419,7 +2422,6 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(edge.clone()),
-                event: None,
                 ..NewFact::about(
                     subject.clone(),
                     "spending the winter away",
@@ -2453,7 +2455,6 @@ pub mod contract {
                 store,
                 NewFact {
                     edge: Some(Edge::new(shape, object.clone())),
-                    event: None,
                     ..NewFact::about(
                         subject.clone(),
                         format!("a {shape} claim"),
@@ -2527,7 +2528,6 @@ pub mod contract {
         let outcome = store
             .capture(NewFact {
                 edge: Some(Edge::new(EdgeShape::Location, typo.clone())),
-                event: None,
                 ..NewFact::about(subject.clone(), "should not land yet", date(2026, 7, 1))
             })
             .await
@@ -2551,12 +2551,66 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Location, object.clone())),
-                event: None,
                 ..NewFact::about(subject.clone(), "now it lands", date(2026, 7, 1))
             },
         )
         .await;
         assert_eq!(landed.edge.map(|e| e.object), Some(object));
+    }
+
+    /// **`update_fact` sets and clears a field, and the store keeps both
+    /// moves.**
+    ///
+    /// A contract case rather than a domain one, because the claim is about
+    /// STORAGE: the patch is applied to a record in memory either way, and only
+    /// a real store can say that a cleared key left the rows under the fact
+    /// rather than lingering there to be read back on the next call.
+    pub async fn update_fact_sets_and_clears_a_field<M: Memory>(store: &M) {
+        let subject = EntityId::person("contract-field-edit");
+        let captured = capture(
+            store,
+            NewFact {
+                fields: [
+                    ("cost".to_string(), "40".to_string()),
+                    ("done_on".to_string(), "2026-04-18".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(subject.clone(), "the annual service", date(2026, 7, 1))
+            },
+        )
+        .await;
+
+        let edited = edit(
+            store,
+            &captured.address(),
+            FactPatch {
+                fields: [("cost".to_string(), "45".to_string())]
+                    .into_iter()
+                    .collect(),
+                clear_fields: vec!["done_on".to_string()],
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(
+            edited.fields,
+            [("cost".to_string(), "45".to_string())]
+                .into_iter()
+                .collect(),
+            "the key named is rewritten and the key cleared is gone"
+        );
+
+        let seen = read_back(store, &subject, &captured.id).await;
+        assert_eq!(
+            seen.fields.get("cost").map(String::as_str),
+            Some("45"),
+            "the new value is on the read path"
+        );
+        assert!(
+            !seen.fields.contains_key("done_on"),
+            "…and the cleared key did not survive the store: {seen:?}"
+        );
     }
 
     /// `update_fact` attaches an edge to a fact that didn't have one — the
@@ -2591,62 +2645,57 @@ pub mod contract {
         );
     }
 
-    /// **An event survives capture through any store, payload and all.**
+    /// **A record's fields survive capture through any store, and no label is
+    /// asked for.**
     ///
-    /// Every other event spec in this workspace runs against something that
-    /// holds the record in memory, so all of them can pass while the one store
-    /// production actually writes to drops the payload on the floor. That is
-    /// not hypothetical: it is what the Outline adapter did — it built its
-    /// stored fact field by field and left the event at `None`, so a capture
-    /// answered with a record it had not written and a restart read back an
-    /// ordinary fact.
+    /// Every other spec for these fields in this workspace runs against
+    /// something that holds the record in memory, so all of them can pass while
+    /// the one store production actually writes to drops the bag on the floor.
+    /// That is not hypothetical: it is what the Outline adapter did — it built
+    /// its stored fact field by field and left the bag out, so a capture
+    /// answered with a record it had not written and a restart read back a
+    /// record with no fields.
     ///
     /// **The read-back guard cannot catch this one**, which is why it needs a
     /// spec of its own. Read-back compares what came back against what the
-    /// adapter *believed* it stored, and both halves were missing the payload
+    /// adapter *believed* it stored, and both halves were missing the fields
     /// in the same way — so a lossy write passed its own invariant. The
     /// comparison a dropped field cannot survive is against the CALLER's
     /// record, and this is the only place that comparison is made.
-    pub async fn an_event_survives_capture<M: Memory>(store: &M) {
+    pub async fn a_records_fields_survive_capture<M: Memory>(store: &M) {
         let subject = EntityId::person("contract-evented");
         let touched = EntityId::new(EntityKind::Place, "contract-kiln-yard");
         ensure(store, &touched).await;
 
-        let recorded = Event {
-            kind: "a-type-nobody-defined".into(),
-            metadata: [
-                ("mood".to_string(), "delighted".to_string()),
-                // A key no build has ever heard of, because the promise is
-                // that an unknown field is kept as written rather than that
-                // known fields survive.
-                (
-                    "a-field-from-a-later-build".to_string(),
-                    "and its value".to_string(),
-                ),
-                // **The punctuation battery, and it is not decoration.** A
-                // markdown store rewrites markdown, so the payload's own
-                // grammar is the thing most likely not to survive being
-                // stored — and every character below was mangled by real
-                // Outline at some point in this record's short life: a space
-                // and an `=` because the grammar escaped them with a
-                // backslash and the store re-serialized every backslash it
-                // saw, and a `~` because the store INSERTED an escape of its
-                // own in front of it. A fake that stores bytes verbatim finds
-                // none of this, which is why it rides in the shared contract
-                // rather than in an adapter's own tests.
-                (
-                    "punctuation".to_string(),
-                    "a = b, c~d, <e> & \"f\" — 100% ünïcode".to_string(),
-                ),
-            ]
-            .into_iter()
-            .collect(),
-            refs: vec![touched.clone()],
-        };
+        let recorded: std::collections::BTreeMap<String, String> = [
+            ("mood".to_string(), "delighted".to_string()),
+            // A key no build has ever heard of, because the promise is that an
+            // unknown field is kept as written rather than that known fields
+            // survive.
+            (
+                "a-field-from-a-later-build".to_string(),
+                "and its value".to_string(),
+            ),
+            // **The punctuation battery, and it is not decoration.** Every
+            // character below was mangled by a real store at some point in this
+            // record's short life: a space and an `=`, which a store rewrote
+            // when it re-serialized the escapes around them, and a `~`, in
+            // front of which a store INSERTED an escape of its own. A fake that
+            // stores bytes verbatim finds none of this, which is why the battery
+            // rides in the shared contract rather than in an adapter's own
+            // tests.
+            (
+                "punctuation".to_string(),
+                "a = b, c~d, <e> & \"f\" — 100% ünïcode".to_string(),
+            ),
+        ]
+        .into_iter()
+        .collect();
         let captured = capture(
             store,
             NewFact {
-                event: Some(recorded.clone()),
+                fields: recorded.clone(),
+                refs: vec![touched.clone()],
                 ..NewFact::about(
                     subject.clone(),
                     "the kiln was finally lit",
@@ -2656,22 +2705,24 @@ pub mod contract {
         )
         .await;
         assert_eq!(
-            captured.event.as_ref(),
-            Some(&recorded),
-            "capture answered with an event it did not store"
+            captured.fields, recorded,
+            "capture answered with fields it did not store"
         );
 
         let seen = read_back(store, &subject, &captured.id).await;
         assert_eq!(
             seen, captured,
-            "the event must survive read-back byte-identical"
+            "the fields must survive read-back byte-identical"
         );
         assert_eq!(
-            seen.event.as_ref(),
-            Some(&recorded),
-            "the payload is what makes this an event at all"
+            seen.fields, recorded,
+            "…and they are what a later reader takes off the record"
         );
-        assert!(seen.is_event(), "…and the class filter has to see it");
+        assert_eq!(
+            seen.refs,
+            vec![touched],
+            "the unnamed references survive with them"
+        );
     }
 
     /// **An event's refs name entities, so the guard screens them too.**
@@ -2683,19 +2734,16 @@ pub mod contract {
     /// this surface where naming a stranger was free, and the hatch is ungated
     /// on its TYPE precisely so that everything else about it stays strict.
     ///
-    /// And it takes the whole write with it: an event is one write, so a ref
+    /// And it takes the whole write with it: a record is one write, so a ref
     /// that cannot be resolved leaves no half-recorded fact behind.
-    pub async fn an_events_ref_is_screened_by_the_guard<M: Memory>(store: &M) {
+    pub async fn a_records_ref_is_screened_by_the_guard<M: Memory>(store: &M) {
         let subject = EntityId::person("contract-ref-guarded");
         ensure(store, &subject).await;
         let stranger = EntityId::person("contract-nobody-created-this");
 
         let outcome = store
             .capture(NewFact {
-                event: Some(Event {
-                    refs: vec![stranger.clone()],
-                    ..Event::of("a-thing-that-happened")
-                }),
+                refs: vec![stranger.clone()],
                 ..NewFact::about(subject.clone(), "should not land", date(2026, 7, 2))
             })
             .await
@@ -2707,65 +2755,62 @@ pub mod contract {
         assert_nothing_recorded(store, &subject).await;
     }
 
-    /// **A metadata key the record's own grammar reserves is refused, not
-    /// silently eaten.**
+    /// **The key jojobot writes itself is refused to a caller, not silently
+    /// eaten.**
     ///
-    /// `type` and `ref` are the grammar's own tokens. A caller passing
-    /// `type` as metadata rendered two type tokens and the second won, so the
-    /// event's actual type was destroyed and the metadata key vanished with
-    /// it.
+    /// `retracts` names the row a retraction takes back, and jojobot is the
+    /// only writer of it: a caller able to write that key could mark somebody
+    /// else's record taken back without going through the verb that decides
+    /// whether it may be.
     ///
-    /// **The fake and the real store disagreed on this input**, which is why
-    /// the spec belongs here: the real store renders and reparses, so the
-    /// guard caught a mismatch and refused a legitimate write with an opaque
-    /// error, while the fake holds the record in memory, never round-trips it,
-    /// and accepted it uncorrupted. A row that did reach disk in that shape
-    /// would be reparsed and re-rendered by table migration with nothing
-    /// comparing wrote against read, baking the loss in permanently.
-    pub async fn a_reserved_metadata_key_is_refused<M: Memory>(store: &M) {
+    /// **The spec belongs in the shared contract because the refusal is the
+    /// domain's**, so both stores answer for it: a rule one store enforces and
+    /// the other does not is a rule that holds until somebody switches stores.
+    pub async fn a_reserved_field_key_is_refused<M: Memory>(store: &M) {
         let subject = EntityId::person("contract-reserved-key");
         ensure(store, &subject).await;
 
-        for reserved in ["type", "ref"] {
-            let outcome = store
-                .capture(NewFact {
-                    event: Some(Event {
-                        metadata: [(reserved.to_string(), "something".to_string())]
-                            .into_iter()
-                            .collect(),
-                        ..Event::of("an-appointment")
-                    }),
-                    ..NewFact::about(subject.clone(), "it happened", date(2026, 7, 3))
-                })
-                .await;
-            assert!(
-                matches!(outcome, Err(MemoryError::InvalidFact(_))),
-                "a metadata key named {reserved:?} must be refused rather than \
-                 silently destroying the event's type: {outcome:?}"
-            );
-        }
+        let outcome = store
+            .capture(NewFact {
+                fields: [("retracts".to_string(), "person:someone-else#f1".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(subject.clone(), "it happened", date(2026, 7, 3))
+            })
+            .await;
+        assert!(
+            matches!(outcome, Err(MemoryError::InvalidFact(_))),
+            "a field named `retracts` must be refused rather than forging the marker \
+             that says a record was taken back: {outcome:?}"
+        );
 
-        // …and the ordinary keys beside them are untouched.
+        // …and the ordinary keys beside it are untouched, `type` and `ref`
+        // included: those were the previous grammar's words, not the record's.
         let landed = capture(
             store,
             NewFact {
-                event: Some(Event {
-                    metadata: [("kind".to_string(), "a value".to_string())]
-                        .into_iter()
-                        .collect(),
-                    ..Event::of("an-appointment")
-                }),
+                fields: [
+                    ("kind".to_string(), "a value".to_string()),
+                    ("type".to_string(), "another".to_string()),
+                    ("ref".to_string(), "a third".to_string()),
+                ]
+                .into_iter()
+                .collect(),
                 ..NewFact::about(subject.clone(), "it happened later", date(2026, 7, 4))
             },
         )
         .await;
         assert_eq!(
-            landed
-                .event
-                .as_ref()
-                .and_then(|e| e.metadata.get("kind"))
-                .map(String::as_str),
-            Some("a value"),
+            landed.fields.get("kind").map(String::as_str),
+            Some("a value")
+        );
+        assert_eq!(
+            landed.fields.get("type").map(String::as_str),
+            Some("another")
+        );
+        assert_eq!(
+            landed.fields.get("ref").map(String::as_str),
+            Some("a third")
         );
     }
 
@@ -2773,14 +2818,11 @@ pub mod contract {
     /// it.** Nothing is removed — that is the no-delete rule, and it is what
     /// makes this different from every store where taking something back means
     /// losing the evidence that it was ever said.
-    pub async fn retracting_an_event_marks_it_and_records_why<M: Memory>(store: &M) {
+    pub async fn retracting_a_record_marks_it_and_records_why<M: Memory>(store: &M) {
         let subject = EntityId::person("contract-retracted");
         let event = capture(
             store,
-            NewFact {
-                event: Some(Event::of("an-appointment")),
-                ..NewFact::about(subject.clone(), "moved to the 14th", date(2026, 7, 3))
-            },
+            NewFact::about(subject.clone(), "moved to the 14th", date(2026, 7, 3)),
         )
         .await;
 
@@ -2791,12 +2833,12 @@ pub mod contract {
                 date(2026, 7, 4),
             )
             .await
-            .expect("retracting an event should succeed");
+            .expect("retracting a record should succeed");
 
         // The row it names: same id, same words, same place.
         assert_eq!(taken_back.retracted.id, event.id);
         assert_eq!(taken_back.retracted.content, event.content);
-        assert_eq!(taken_back.retracted.event, event.event);
+        assert_eq!(taken_back.retracted.fields, event.fields);
         assert_eq!(
             taken_back.retracted.status,
             FactStatus::Retracted,
@@ -2807,7 +2849,7 @@ pub mod contract {
         assert_eq!(taken_back.record.content, "it was rebooked twice");
         assert_eq!(taken_back.record.date, date(2026, 7, 4));
         assert_eq!(
-            taken_back.record.event.as_ref().and_then(Event::retracts),
+            taken_back.record.retracts(),
             Some(event.address().to_string().as_str()),
             "the retraction names what it takes back, or the two are not one story"
         );
@@ -2836,10 +2878,7 @@ pub mod contract {
         let subject = EntityId::person("contract-unreasoned");
         let event = capture(
             store,
-            NewFact {
-                event: Some(Event::of("an-appointment")),
-                ..NewFact::about(subject.clone(), "it happened", date(2026, 7, 3))
-            },
+            NewFact::about(subject.clone(), "it happened", date(2026, 7, 3)),
         )
         .await;
 
@@ -2852,7 +2891,7 @@ pub mod contract {
         // record, linked, dated, and on the read path like any other.
         assert_eq!(taken_back.retracted.status, FactStatus::Retracted);
         assert_eq!(
-            taken_back.record.event.as_ref().and_then(Event::retracts),
+            taken_back.record.retracts(),
             Some(event.address().to_string().as_str()),
         );
         assert_eq!(
@@ -2882,10 +2921,7 @@ pub mod contract {
         let subject = EntityId::person("contract-oneway");
         let event = capture(
             store,
-            NewFact {
-                event: Some(Event::of("a-thing-that-happened")),
-                ..NewFact::about(subject.clone(), "it happened", date(2026, 7, 3))
-            },
+            NewFact::about(subject.clone(), "it happened", date(2026, 7, 3)),
         )
         .await;
         let taken_back = store
@@ -2937,33 +2973,6 @@ pub mod contract {
             FactStatus::Retracted,
             "and none of the three moved it"
         );
-    }
-
-    /// **A fact is fixed, not retracted** — the boundary the whole model rests
-    /// on, and the refusal has to name the way forward or it is a wall.
-    pub async fn an_ordinary_fact_is_not_retractable<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-not-an-event");
-        let fact = capture(
-            store,
-            NewFact::about(subject.clone(), "plays the theremin", date(2026, 7, 3)),
-        )
-        .await;
-
-        let refused = store
-            .retract(&fact.address(), Some("turns out not"), date(2026, 7, 4))
-            .await;
-        let Err(MemoryError::NotRetractable { why, .. }) = refused else {
-            panic!("a fact must not be retractable: {refused:?}");
-        };
-        assert!(
-            why.contains("update_fact"),
-            "the refusal must name what to do instead: {why}"
-        );
-
-        // Untouched, and still the current truth.
-        let seen = read_back(store, &subject, &fact.id).await;
-        assert_eq!(seen.status, FactStatus::Active);
-        assert_eq!(seen.content, "plays the theremin");
     }
 
     /// An address naming nothing is the same miss an edit's is — never a new
@@ -3213,7 +3222,6 @@ pub mod contract {
         let outcome = store
             .capture(NewFact {
                 edge: Some(Edge::new(EdgeShape::Attendance, stranger.clone())),
-                event: None,
                 ..NewFact::about(subject.clone(), "should not land", date(2026, 7, 1))
             })
             .await
@@ -3250,7 +3258,6 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Attendance, stranger.clone())),
-                event: None,
                 ..NewFact::about(subject.clone(), "went both nights", date(2026, 7, 1))
             },
         )
@@ -3604,22 +3611,16 @@ pub mod contract {
         let subject = EntityId::person("contract-retraction-hit");
         let live = capture(
             store,
-            NewFact {
-                event: Some(Event::of("a-rehearsal")),
-                ..NewFact::about(subject.clone(), "the quartet rehearsed", date(2026, 7, 1))
-            },
+            NewFact::about(subject.clone(), "the quartet rehearsed", date(2026, 7, 1)),
         )
         .await;
         let taken_back = capture(
             store,
-            NewFact {
-                event: Some(Event::of("a-rehearsal")),
-                ..NewFact::about(
-                    subject.clone(),
-                    "the quartet rehearsed twice",
-                    date(2026, 7, 2),
-                )
-            },
+            NewFact::about(
+                subject.clone(),
+                "the quartet rehearsed twice",
+                date(2026, 7, 2),
+            ),
         )
         .await;
         store
@@ -3629,7 +3630,7 @@ pub mod contract {
                 date(2026, 7, 3),
             )
             .await
-            .expect("retracting an event should succeed");
+            .expect("retracting a record should succeed");
 
         let addresses = |hits: &[Hit]| -> Vec<String> {
             fact_hits(hits)
@@ -3762,7 +3763,6 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Location, far.clone())),
-                event: None,
                 ..NewFact::about(
                     project.clone(),
                     "runs out of contract-faraway",
@@ -3809,7 +3809,6 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Attendance, fest.clone())),
-                event: None,
                 ..NewFact::about(
                     EntityId::person("contract-conn-one"),
                     "went both nights",
@@ -3822,7 +3821,6 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::About, fest.clone())),
-                event: None,
                 ..NewFact::about(
                     EntityId::new(EntityKind::Work, "contract-conn-mix"),
                     "recorded live that weekend",
@@ -3984,7 +3982,6 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Location, hall.clone())),
-                event: None,
                 ..NewFact::about(
                     handle.clone(),
                     "meets on the first Sunday",
@@ -4015,7 +4012,6 @@ pub mod contract {
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Location, place.clone())),
-                event: None,
                 ..NewFact::about(EntityId::person(who), "spending the season there", on)
             },
         )
@@ -4249,11 +4245,10 @@ pub mod contract {
     /// said which type it was.**
     ///
     /// This is the card's load-bearing claim, exercised through the verb a
-    /// caller actually uses rather than through the matcher. The record is
-    /// stored with an event type name that is not the type being searched for,
-    /// so nothing on the record admits it to the answer: only its keys do. A
-    /// build that matched on the declared name instead would pass every case
-    /// in the domain and fail this one.
+    /// caller actually uses rather than through the matcher. The records here
+    /// name no type at all, so nothing on a record admits it to the answer:
+    /// only its keys do. A build that matched on a name the record carried
+    /// would pass every case in the domain and fail this one.
     ///
     /// Both matches come back in the one answer — complete and partial — and
     /// the partial names what it lacks. Complete-versus-partial is reported,
@@ -4277,16 +4272,12 @@ pub mod contract {
         let whole = capture(
             store,
             NewFact {
-                event: Some(Event {
-                    kind: "a-type-nobody-defined".into(),
-                    metadata: [
-                        ("weight".to_string(), "12".to_string()),
-                        ("arrives".to_string(), "2026-08-10".to_string()),
-                    ]
-                    .into_iter()
-                    .collect(),
-                    refs: vec![],
-                }),
+                fields: [
+                    ("weight".to_string(), "12".to_string()),
+                    ("arrives".to_string(), "2026-08-10".to_string()),
+                ]
+                .into_iter()
+                .collect(),
                 ..NewFact::about(
                     EntityId::person("contract-crate-whole"),
                     "the crate is on its way",
@@ -4299,13 +4290,9 @@ pub mod contract {
         let partial = capture(
             store,
             NewFact {
-                event: Some(Event {
-                    kind: "a-type-nobody-defined".into(),
-                    metadata: [("weight".to_string(), "3".to_string())]
-                        .into_iter()
-                        .collect(),
-                    refs: vec![],
-                }),
+                fields: [("weight".to_string(), "3".to_string())]
+                    .into_iter()
+                    .collect(),
                 ..NewFact::about(
                     EntityId::person("contract-crate-partial"),
                     "a lighter one, and nobody wrote down when it lands",
@@ -4314,17 +4301,13 @@ pub mod contract {
             },
         )
         .await;
-        // Carries neither, and is an event all the same.
+        // Carries neither, and is a record all the same.
         let unrelated = capture(
             store,
             NewFact {
-                event: Some(Event {
-                    kind: "a-type-nobody-defined".into(),
-                    metadata: [("mood".to_string(), "curious".to_string())]
-                        .into_iter()
-                        .collect(),
-                    refs: vec![],
-                }),
+                fields: [("mood".to_string(), "curious".to_string())]
+                    .into_iter()
+                    .collect(),
                 ..NewFact::about(
                     EntityId::person("contract-crate-unrelated"),
                     "nothing to do with crates",
@@ -4405,13 +4388,9 @@ pub mod contract {
         let messy = capture(
             store,
             NewFact {
-                event: Some(Event {
-                    kind: "a-type-nobody-defined".into(),
-                    metadata: [("arrives".to_string(), "next tuesday".to_string())]
-                        .into_iter()
-                        .collect(),
-                    refs: vec![],
-                }),
+                fields: [("arrives".to_string(), "next tuesday".to_string())]
+                    .into_iter()
+                    .collect(),
                 ..NewFact::about(
                     EntityId::person("contract-pallet-messy"),
                     "somebody wrote the date in words",
@@ -4568,13 +4547,10 @@ pub mod contract {
         let yes = "yes = certain, ~confirmed~ 100% ünïcode";
         let reply = |who: &EntityId, answer: &str, said: &str| NewFact {
             edge: Some(Edge::new(EdgeShape::Attendance, gathering.clone())),
-            event: Some(Event {
-                kind: "contract-reply".into(),
-                metadata: [("answer".to_string(), answer.to_string())]
-                    .into_iter()
-                    .collect(),
-                refs: Vec::new(),
-            }),
+            fields: [("answer".to_string(), answer.to_string())]
+                .into_iter()
+                .collect(),
+            refs: Vec::new(),
             ..NewFact::about(who.clone(), said, date(2026, 8, 10))
         };
         capture(store, reply(&coming, yes, "will be there")).await;
@@ -4680,16 +4656,13 @@ pub mod contract {
         capture(
             store,
             NewFact {
-                event: Some(Event {
-                    kind: "contract-holding".into(),
-                    metadata: [
-                        ("keeper".to_string(), owner.to_string()),
-                        ("since".to_string(), "2019-04-15".to_string()),
-                    ]
-                    .into_iter()
-                    .collect(),
-                    refs: Vec::new(),
-                }),
+                fields: [
+                    ("keeper".to_string(), owner.to_string()),
+                    ("since".to_string(), "2019-04-15".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                refs: Vec::new(),
                 ..NewFact::about(held.clone(), "the one that is held", date(2026, 8, 10))
             },
         )
@@ -4848,14 +4821,14 @@ pub mod contract {
         a_wrong_kind_edge_object_is_refused(store).await;
         an_edge_object_is_screened_by_the_guard(store).await;
         update_fact_attaches_an_edge(store).await;
+        update_fact_sets_and_clears_a_field(store).await;
 
-        an_event_survives_capture(store).await;
-        an_events_ref_is_screened_by_the_guard(store).await;
-        a_reserved_metadata_key_is_refused(store).await;
-        retracting_an_event_marks_it_and_records_why(store).await;
+        a_records_fields_survive_capture(store).await;
+        a_records_ref_is_screened_by_the_guard(store).await;
+        a_reserved_field_key_is_refused(store).await;
+        retracting_a_record_marks_it_and_records_why(store).await;
         a_retraction_is_one_way(store).await;
         a_retraction_needs_no_reason(store).await;
-        an_ordinary_fact_is_not_retractable(store).await;
         retracting_an_unknown_address_never_writes(store).await;
 
         facts_carry_a_usable_address(store).await;

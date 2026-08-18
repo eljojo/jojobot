@@ -49,6 +49,17 @@ pub struct UpdateFactArgs {
     /// `add_entity` first if it is genuinely new.
     #[serde(default)]
     pub object: Option<String>,
+    /// **Fields to set**, as key/value pairs. Each key named is written; a key
+    /// the record already carries and this does not name is left alone, so an
+    /// edit reaches one field without restating the rest.
+    #[serde(default)]
+    pub metadata: Option<std::collections::BTreeMap<String, String>>,
+    /// **Fields to remove**, by key. Its own argument rather than an empty
+    /// value in `metadata`: an empty value is a value somebody wrote, and
+    /// setting a key to nothing and taking the key off the record are two
+    /// different edits.
+    #[serde(default)]
+    pub clear_metadata: Option<Vec<String>>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -71,7 +82,11 @@ impl Jojobot {
                        Reopening is free. THE GATE IS ON PROMOTION, NOT ON ASSERTION: a fresh \
                        capture may declare standing settled and nobody is asked to confirm it, \
                        exactly as it declares its provenance — what needs the operator's word \
-                       is moving a claim they hedged. An address that \
+                       is moving a claim they hedged. IT ALSO REACHES THE RECORD'S FIELDS: \
+                       metadata sets the keys you name and leaves every other key alone, and \
+                       clear_metadata takes keys off. Those are two arguments rather than one, \
+                       because setting a key to an empty value and removing the key are \
+                       different edits and a caller means one of them. An address that \
                        names no fact comes back status: blocked with the addresses that do \
                        exist — it never creates.")]
     pub(crate) async fn update_fact(
@@ -95,6 +110,8 @@ impl Jojobot {
                 .transpose()?,
             standing: args.standing.as_deref().map(parse_standing).transpose()?,
             confirmed_by_user: args.confirmed_by_user.unwrap_or(false),
+            fields: args.metadata.unwrap_or_default(),
+            clear_fields: args.clear_metadata.unwrap_or_default(),
             edge: match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
                 Ok(edge) => edge,
                 Err(refused) => return Ok(refused),
@@ -131,6 +148,128 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
+
+    /// **A field is set and cleared in place, and a plain recall shows it.**
+    ///
+    /// Edit-in-place is the surface the model puts in front of an agent: it
+    /// edits and it sees the record change. This is that surface reaching the
+    /// one part of a record it could not reach — a record's fields could only
+    /// be written by the call that created it, so a key that turned out wrong
+    /// meant a second record beside the first.
+    ///
+    /// **Set and clear are separate arguments** rather than one bag where an
+    /// empty value means "remove". An empty value is a value somebody wrote,
+    /// and the two moves must not be spelled the same.
+    #[tokio::test]
+    async fn update_fact_sets_and_clears_a_field() {
+        let jojobot = handler();
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                metadata: Some(
+                    [
+                        ("cost".to_string(), "40".to_string()),
+                        ("done_on".to_string(), "2026-04-18".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("alpha", "the annual service")
+            },
+        )
+        .await;
+        let address = address_of(&captured);
+
+        let set = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    metadata: Some(
+                        [("cost".to_string(), "45".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(set["metadata"]["cost"], "45", "the key named is rewritten");
+        assert_eq!(
+            set["metadata"]["done_on"], "2026-04-18",
+            "…and a key the patch did not name is left alone: {set}"
+        );
+
+        let cleared = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    clear_metadata: Some(vec!["done_on".into()]),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            cleared["metadata"]
+                .as_object()
+                .expect("a bag")
+                .contains_key("cost"),
+            "{cleared}"
+        );
+        assert!(
+            !cleared["metadata"]
+                .as_object()
+                .expect("a bag")
+                .contains_key("done_on"),
+            "the key named is gone: {cleared}"
+        );
+
+        // …and both moves are on the record a later read takes, which is what
+        // makes editing in place true rather than an answer's shape.
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(recall_args("person:alpha")))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            recalled["objects"][0]["facts"][0]["metadata"],
+            serde_json::json!({"cost": "45"}),
+            "{recalled}"
+        );
+    }
+
+    /// **The key jojobot writes itself is refused here too.** A verb that
+    /// could set `retracts` would be a way to mark somebody else's record
+    /// taken back without going through the verb that decides whether it may
+    /// be — so the gate is on both write paths, not on the one somebody
+    /// thought of first.
+    #[tokio::test]
+    async fn update_fact_refuses_the_reserved_key() {
+        let jojobot = handler();
+        let captured = capture_ok(&jojobot, capture_args("alpha", "a claim")).await;
+
+        let refused = blocked(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    metadata: Some(
+                        [("retracts".to_string(), "person:alpha#f1".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..update_args(&address_of(&captured))
+                }))
+                .await
+                .expect("a caller mistake is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        assert!(
+            refused["how_to_proceed"]
+                .as_str()
+                .expect("advice")
+                .contains("retracts"),
+            "the refusal names the key: {refused}"
+        );
+    }
 
     /// `update_fact` attaches an edge to a fact that didn't have one.
     #[tokio::test]

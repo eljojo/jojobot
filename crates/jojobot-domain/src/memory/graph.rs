@@ -117,21 +117,18 @@ impl Selection {
         self.answers_type.is_some() || !self.fields.is_empty()
     }
 
-    /// Does this fact answer every record filter. A fact carrying no record
+    /// Does this fact answer every record filter. A fact carrying no field
     /// answers none of them.
     fn keeps(&self, fact: &Fact) -> bool {
         if !self.filters_facts() {
             return true;
         }
-        let Some(event) = fact.event.as_ref() else {
-            return false;
-        };
         if let Some(declared) = &self.answers_type
-            && declared.matched_by(&event.metadata).is_none()
+            && declared.matched_by(&fact.fields).is_none()
         {
             return false;
         }
-        self.fields.iter().all(|f| f.satisfied_by(&event.metadata))
+        self.fields.iter().all(|f| f.satisfied_by(&fact.fields))
     }
 }
 
@@ -766,11 +763,7 @@ impl<'a> Ctx<'a> {
         match follow.map(|f| f.keeping.as_slice()).unwrap_or_default() {
             [] => mine.collect(),
             keeping => mine
-                .filter(|f| {
-                    f.event
-                        .as_ref()
-                        .is_some_and(|e| keeping.iter().all(|k| k.satisfied_by(&e.metadata)))
-                })
+                .filter(|f| keeping.iter().all(|k| k.satisfied_by(&f.fields)))
                 .collect(),
         }
     }
@@ -863,18 +856,13 @@ impl<'a> Ctx<'a> {
         match direction {
             Direction::Out => from
                 .iter()
-                .filter_map(|f| f.event.as_ref())
-                .filter_map(|e| e.metadata.get(key))
+                .filter_map(|f| f.fields.get(key))
                 .map(|handle| (link(), direction, EntityId(handle.trim().to_string())))
                 .collect(),
             Direction::In => self
                 .all
                 .iter()
-                .filter(|f| {
-                    f.event.as_ref().is_some_and(|e| {
-                        e.metadata.get(key).is_some_and(|v| v.trim() == id.as_str())
-                    })
-                })
+                .filter(|f| f.fields.get(key).is_some_and(|v| v.trim() == id.as_str()))
                 .map(|f| (link(), direction, f.subject.clone()))
                 .collect(),
         }
@@ -968,7 +956,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::{Boot, FactId, FactStatus, Provenance, Standing, event::Event};
+    use crate::memory::{Boot, FactId, FactStatus, Provenance, Standing};
 
     fn entity(handle: &str, name: &str) -> Entity {
         let id = EntityId(handle.to_string());
@@ -996,7 +984,8 @@ mod tests {
             status: FactStatus::Active,
             date: "2026-08-10".parse().expect("a civil date"),
             edge: None,
-            event: None,
+            fields: Default::default(),
+            refs: Vec::new(),
             derived_from: None,
         }
     }
@@ -1029,13 +1018,9 @@ mod tests {
     /// outbound walk has somewhere to go twice, and somewhere to loop.
     fn store() -> Vec<DocScan> {
         let attending = |home: &str, id: &str, content: &str, rsvp: &str| Fact {
-            event: Some(Event {
-                kind: "rsvp".into(),
-                metadata: [("rsvp".to_string(), rsvp.to_string())]
-                    .into_iter()
-                    .collect(),
-                refs: Vec::new(),
-            }),
+            fields: [("rsvp".to_string(), rsvp.to_string())]
+                .into_iter()
+                .collect(),
             ..edged(
                 home,
                 id,
@@ -1686,18 +1671,14 @@ mod tests {
     /// a key the declaration calls a reference.
     fn kennel() -> Vec<DocScan> {
         let pet_record = |home: &str, id: &str, content: &str, born: &str, weight: &str| Fact {
-            event: Some(Event {
-                kind: "pet".into(),
-                metadata: [
-                    ("name".to_string(), home.to_string()),
-                    ("born".to_string(), born.to_string()),
-                    ("weight".to_string(), weight.to_string()),
-                    ("owner".to_string(), "person:bart".to_string()),
-                ]
-                .into_iter()
-                .collect(),
-                refs: Vec::new(),
-            }),
+            fields: [
+                ("name".to_string(), home.to_string()),
+                ("born".to_string(), born.to_string()),
+                ("weight".to_string(), weight.to_string()),
+                ("owner".to_string(), "person:bart".to_string()),
+            ]
+            .into_iter()
+            .collect(),
             ..fact(home, id, content)
         };
         vec![
@@ -1731,16 +1712,12 @@ mod tests {
                 entity("thing:red-bike", "The Red Bike"),
                 "The bike's page.",
                 vec![Fact {
-                    event: Some(Event {
-                        kind: "repair".into(),
-                        metadata: [
-                            ("fitted".to_string(), "2026-02-01".to_string()),
-                            ("owner".to_string(), "person:bart".to_string()),
-                        ]
-                        .into_iter()
-                        .collect(),
-                        refs: Vec::new(),
-                    }),
+                    fields: [
+                        ("fitted".to_string(), "2026-02-01".to_string()),
+                        ("owner".to_string(), "person:bart".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
                     ..fact("thing:red-bike", "f1", "needs new brake pads")
                 }],
             ),
@@ -1917,16 +1894,12 @@ mod tests {
             ],
         );
         let travelling = Fact {
-            event: Some(Event {
-                kind: "trip".into(),
-                metadata: [
-                    ("from".to_string(), "place:springfield".to_string()),
-                    ("to".to_string(), "place:shelbyville".to_string()),
-                ]
-                .into_iter()
-                .collect(),
-                refs: Vec::new(),
-            }),
+            fields: [
+                ("from".to_string(), "place:springfield".to_string()),
+                ("to".to_string(), "place:shelbyville".to_string()),
+            ]
+            .into_iter()
+            .collect(),
             ..fact("person:bart", "f1", "went over for the day")
         };
         let scanned = vec![
@@ -2077,13 +2050,9 @@ mod tests {
             vec![types::Field::new("location", types::ValueType::Reference)],
         );
         let by_key = Fact {
-            event: Some(Event {
-                kind: "posting".into(),
-                metadata: [("location".to_string(), "place:shelbyville".to_string())]
-                    .into_iter()
-                    .collect(),
-                refs: Vec::new(),
-            }),
+            fields: [("location".to_string(), "place:shelbyville".to_string())]
+                .into_iter()
+                .collect(),
             ..fact("person:bart", "f1", "posted from over there")
         };
         let by_edge = edged(

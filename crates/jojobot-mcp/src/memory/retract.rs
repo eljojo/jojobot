@@ -1,4 +1,4 @@
-//! `retract` — Take back an event: one way, never reversed, and nothing is removed.
+//! `retract` — Take back a record: one way, never reversed, and nothing is removed.
 //!
 //! One verb, one file: its arguments, the description a caller reads,
 //! and an entrypoint that chains the systems below it.
@@ -8,7 +8,7 @@ use super::*;
 /// Arguments to `retract`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RetractArgs {
-    /// The event's global address, `kind:slug#local-id` — exactly as `recall`
+    /// The record's global address, `kind:slug#local-id` — exactly as `recall`
     /// or a search hit returned it.
     pub address: String,
     /// Why it is being taken back, in one line. Optional — worth giving: a
@@ -24,28 +24,28 @@ pub struct RetractArgs {
     pub sid: Option<String>,
 }
 
-/// Take back one addressed event, and record why.
+/// Take back one addressed record, and record why.
 #[tool_router(router = retract_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Take back an EVENT — one way, never reversed, and a deliberate act rather \
+        description = "Take back a record — one way, never reversed, and a deliberate act rather \
                        than a flag on an edit. Nothing is removed: the record keeps its address, \
                        its words and its place, and is marked retracted; beside it lands a dated \
                        record of the retraction itself, naming what it takes back and the reason \
                        if you give one. The two then read as one story. A retracted record is \
                        out of every default read and out of \
                        every later edit, INCLUDING a status flip back — there is no un-retract, \
-                       so if you are unsure, capture what is so now instead. THIS IS FOR \
-                       CHRONOLOGY ONLY. A fact is current truth and gets FIXED: to correct one, \
-                       or to say a claim turned out false, rewrite its content with update_fact \
-                       — that stays active, because the negative truth is the truth. Retracting \
-                       a fact or retracting a retraction comes back status: blocked, saying \
-                       which it is and what to do instead. Retracting something ALREADY \
-                       retracted comes back blocked as well, and reads differently on purpose: \
-                       it says the record is retracted, because it is — that answer tells you \
-                       the state you asked for is the state jojobot holds, not that nothing \
-                       happened. An address that names no record comes back blocked too, with \
-                       the addresses that do exist."
+                       so if you are unsure, capture what is so now instead. THIS IS THE MOVE FOR \
+                       SOMETHING THAT HAPPENED and turned out not to have. For a claim about what \
+                       is true NOW, rewrite its content with update_fact instead — that stays \
+                       active, because the negative truth is the truth, and it leaves one current \
+                       record where this leaves two. Retracting a retraction comes back status: \
+                       blocked: it is the last word on what it takes back. Retracting something \
+                       ALREADY retracted comes back blocked as well, and reads differently on \
+                       purpose: it says the record is retracted, because it is — that answer \
+                       tells you the state you asked for is the state jojobot holds, not that \
+                       nothing happened. An address that names no record comes back blocked too, \
+                       with the addresses that do exist."
     )]
     pub(crate) async fn retract(
         &self,
@@ -85,17 +85,9 @@ mod tests {
     use crate::harness::*;
     use crate::memory::testing::*;
 
-    /// Capture an event and hand back its address.
-    async fn an_event(jojobot: &Jojobot, content: &str) -> String {
-        let captured = capture_ok(
-            jojobot,
-            CaptureArgs {
-                event_type: Some("an-appointment".into()),
-                ..capture_args("person:alpha", content)
-            },
-        )
-        .await;
-        address_of(&captured)
+    /// Capture a record and hand back its address.
+    async fn a_record(jojobot: &Jojobot, content: &str) -> String {
+        address_of(&capture_ok(jojobot, capture_args("person:alpha", content)).await)
     }
 
     fn retract_args(address: &str, reason: &str) -> RetractArgs {
@@ -109,9 +101,9 @@ mod tests {
     /// **The whole verb in one pass**: the record stays and is marked, the
     /// reason lands beside it as a record of its own, and both come back.
     #[tokio::test]
-    async fn retracting_an_event_marks_it_and_answers_with_both_rows() {
+    async fn retracting_a_record_marks_it_and_answers_with_both_rows() {
         let jojobot = handler();
-        let address = an_event(&jojobot, "moved to the 14th").await;
+        let address = a_record(&jojobot, "moved to the 14th").await;
 
         let body = json_of(
             &jojobot
@@ -126,9 +118,8 @@ mod tests {
             "marked, not edited"
         );
         assert_eq!(body["retraction"]["content"], "it was rebooked twice");
-        assert_eq!(body["retraction"]["event"]["type"], "retraction");
         assert_eq!(
-            body["retraction"]["event"]["metadata"]["retracts"],
+            body["retraction"]["metadata"]["retracts"],
             address.as_str(),
             "the account names what it takes back"
         );
@@ -142,31 +133,30 @@ mod tests {
         // `search_excludes_a_retracted_record_by_default`.
     }
 
-    /// **A fact is fixed, not retracted**, and the refusal has to name the way
-    /// forward — a caller that only hears "no" tries the same call again.
+    /// **Any record can be taken back**, because there is one class of record.
+    ///
+    /// The refusal that stood here read the class off a label the writer
+    /// chose, so whether a claim could be taken back depended on a word rather
+    /// than on the claim. Editing in place is still the usual move for
+    /// something that turned out false, and it is a choice the caller makes.
     #[tokio::test]
-    async fn retracting_a_fact_is_blocked_and_says_to_edit_it_instead() {
+    async fn retracting_a_plain_record_is_accepted() {
         let jojobot = handler();
         let captured =
             capture_ok(&jojobot, capture_args("person:alpha", "plays the theremin")).await;
+        let address = address_of(&captured);
 
-        let body = blocked(
+        let body = json_of(
             &jojobot
-                .retract(Parameters(retract_args(
-                    &address_of(&captured),
-                    "turns out not",
-                )))
+                .retract(Parameters(retract_args(&address, "turns out not")))
                 .await
-                .expect("a refusal is an answer, not a protocol failure"),
+                .expect("retract ok"),
         );
-        assert_eq!(body["wrote"], false);
-        let advice = body["how_to_proceed"].as_str().expect("advice");
-        assert!(
-            advice.contains("update_fact"),
-            "the refusal must name what to do instead: {advice}"
-        );
+        assert_ne!(body["status"], "blocked", "{body}");
+        assert_eq!(body["retracted"]["address"], address.as_str());
+        assert_eq!(body["retracted"]["status"], "retracted");
 
-        // Untouched: still active, still the current truth.
+        // …and the mark is on the record a later reader takes.
         let recalled = json_of(
             &jojobot
                 .recall(Parameters(RecallArgs {
@@ -176,7 +166,45 @@ mod tests {
                 .await
                 .expect("recall ok"),
         );
-        assert_eq!(recalled["objects"][0]["facts"][0]["status"], "active");
+        assert_eq!(
+            recalled["objects"][0]["facts"][0]["status"], "retracted",
+            "{recalled}"
+        );
+    }
+
+    /// **A retraction is the last word on what it takes back.** Retracting one
+    /// would be the reversal the one-way rule exists to forbid, so it is
+    /// refused — and the refusal survives the class going, because the marker
+    /// is a reserved key on the record rather than a label somebody typed.
+    #[tokio::test]
+    async fn retracting_a_retraction_is_blocked() {
+        let jojobot = handler();
+        let address = a_record(&jojobot, "it happened").await;
+        let taken_back = json_of(
+            &jojobot
+                .retract(Parameters(retract_args(&address, "it did not")))
+                .await
+                .expect("the first retraction lands"),
+        );
+        let account = taken_back["retraction"]["address"]
+            .as_str()
+            .expect("the account has an address of its own")
+            .to_string();
+
+        let refused = blocked(
+            &jojobot
+                .retract(Parameters(retract_args(&account, "and neither did that")))
+                .await
+                .expect("a refusal is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        assert!(
+            refused["how_to_proceed"]
+                .as_str()
+                .expect("advice")
+                .contains("retraction"),
+            "the refusal must say which record it is refusing: {refused}"
+        );
     }
 
     /// **One way, on the surface too.** A second retraction and an edit back to
@@ -184,7 +212,7 @@ mod tests {
     #[tokio::test]
     async fn a_retracted_record_cannot_be_retracted_again_or_edited_back() {
         let jojobot = handler();
-        let address = an_event(&jojobot, "it happened").await;
+        let address = a_record(&jojobot, "it happened").await;
         jojobot
             .retract(Parameters(retract_args(&address, "it did not")))
             .await
@@ -236,7 +264,7 @@ mod tests {
     #[tokio::test]
     async fn a_malformed_address_errors_and_a_missed_one_is_blocked() {
         let jojobot = handler();
-        an_event(&jojobot, "the only record here").await;
+        a_record(&jojobot, "the only record here").await;
 
         let err = jojobot
             .retract(Parameters(retract_args("not-an-address", "nope")))

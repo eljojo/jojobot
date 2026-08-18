@@ -41,18 +41,21 @@ async fn throwing_a_birthday_party() {
     )
     .await;
 
-    // GAP — two venues and two dates, both under evaluation. Nothing can hold
-    // candidates, rank them, or record one as ruled out, and choosing is what
-    // planning mostly is.
+    // GAP — two venues and two dates, both under evaluation, and choosing is
+    // what planning mostly is. Holding the candidates is served: a key
+    // declared to hold a reference points each venue at the party, and the
+    // walk back from the party returns them as a set. Ranking them is not, and
+    // neither is asking which are still in play — ruling one out is
+    // recordable, and every filter says which records to KEEP, so the ones
+    // carrying no such record cannot be asked for.
     //   s.shortlist("the venue", &["place:moes"]).await;
     s.has_no_verb("shortlist", &["capture", "search"]).await;
 
-    // GAP — the party has no date, because there is no field for one. A
-    // claim's date is when it became known, and neither the 14th nor the 21st
-    // has happened yet.
-    //   s.happens_on("event:birthday-party", "2027-01-14").await;
-    s.has_no_verb("happens_on", &["capture", "add_entity"])
-        .await;
+    // The day is not missing either, though the party has not got one here. A
+    // claim's own date is still when it became known, and the day a thing
+    // happens on goes under a key of its own on a typed record, where a
+    // declared date is comparable. What carries no date is the ENTITY, and the
+    // moving story marks that.
 
     s.wrap("party sketched").await;
 
@@ -159,7 +162,7 @@ async fn throwing_a_birthday_party() {
             json!({
                 "subject": guest, "content": said, "provenance": "testimony",
                 "shape": "attendance", "object": "event:birthday-party",
-                "event_type": "reply", "metadata": {"answer": answer},
+                "metadata": {"answer": answer},
             }),
         )
         .await;
@@ -269,11 +272,13 @@ async fn throwing_a_birthday_party() {
     .await;
     s.find("chairs").await.says("thing:folding-chairs");
 
-    // GAP — but neither side of that sum is a number. "Six of them" is prose
-    // and so is "ten or twelve people", so the session gets two sentences and
-    // has to parse quantities out of English it wrote itself. A claim's value
-    // is always prose, so every question with arithmetic in it dies at the
-    // read.
+    // GAP — but neither side of that sum is a number HERE. "Six of them" is
+    // prose and so is "ten or twelve people", so the session gets two
+    // sentences and parses quantities out of English it wrote itself. A count
+    // does not have to be prose: a key declared to hold a number is compared
+    // as one, so "the chairs, if there are fewer than ten" is a read. What no
+    // read does is the sum — nothing adds, counts or totals, so the arithmetic
+    // stays the session's whichever way the two went in.
     //   s.fact_keyed("thing:folding-chairs", "count", "6").await;
     s.has_no_verb("count_of", &["capture", "search"]).await;
 

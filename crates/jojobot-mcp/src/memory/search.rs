@@ -1474,7 +1474,8 @@ mod tests {
                 EdgeShape::Membership,
                 EntityId("org:guild".into()),
             )),
-            event: None,
+            fields: Default::default(),
+            refs: Vec::new(),
             derived_from: None,
         };
         let alpha = Entity {
