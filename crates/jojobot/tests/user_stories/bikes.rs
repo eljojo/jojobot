@@ -171,6 +171,31 @@ async fn keeping_track_of_bikes() {
         .says("\"count\":2")
         .says("\"value\":\"for sale\"")
         .says("\"value\":\"sold\"");
+    // **Asked and empty is not the same answer as never asked**, and only one
+    // of the two was ever proven through the surface. A key nobody has written
+    // on this bike comes back as a history of nothing — the key named, the
+    // count zero, no writes — so a caller that asked a real question about a
+    // key that has no past reads its answer rather than looking for a block
+    // that is not there.
+    let never = s
+        .shape(
+            "every write of a key nobody has used",
+            json!({ "subject": "thing:road-bike", "history": "stolen_on" }),
+        )
+        .await;
+    never
+        .says("\"key\":\"stolen_on\"")
+        .says("\"count\":0")
+        .says("\"writes\":[]");
+    // …and the partner it has to be told apart from: the same read with no
+    // history asked for carries no history at all.
+    s.shape(
+        "the bike, with no history asked for",
+        json!({ "subject": "thing:road-bike" }),
+    )
+    .await
+    .never_says("\"history\"");
+
     // **Read as an ORDER, not as two values present.** What the key holds now
     // is on this same answer in the fold above the history, so a substring over
     // the whole thing cannot tell the two apart — and no substring says which

@@ -390,6 +390,39 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     )
     .await;
 
+    // **And the incidents belong to the build**, which is a link a key carries
+    // rather than a shape: `part_of` is declared to hold a reference to a
+    // project, so the walk from either end is the key's own name.
+    //
+    // **The kind here is the LONGEST one there is**, and that is the point of
+    // choosing it. A narrowed reference crosses to a store as one token — the
+    // word, a colon, the kind — so the kinds do not all cost the same number of
+    // characters, and a cell wide enough for most of them takes the shortest
+    // spellings and refuses this one on the write. Every other declaration on
+    // this surface names a shorter kind, so nothing a caller does would have
+    // reached the boundary.
+    s.call(
+        "declare_type",
+        json!({
+            "name": "incident",
+            "fields": [{ "key": "part_of", "holds": "reference:project" }],
+        }),
+    )
+    .await
+    .says("\"holds\":\"reference:project\"");
+    s.event_with(
+        "thing:sigma",
+        "counted against the build it happened on",
+        json!({ "part_of": "project:jojobot-server" }),
+        &[],
+    )
+    .await;
+    // It survived the round trip as written, which a narrowing that did not fit
+    // its column could not do.
+    s.recall("thing:sigma")
+        .await
+        .says("\"part_of\":\"project:jojobot-server\"");
+
     // GAP — it lands as a fact about a project, and a decision CAN have a
     // shape of its own: a declared type names the keys one carries, and a
     // search by type finds every thing answering it whether or not anybody

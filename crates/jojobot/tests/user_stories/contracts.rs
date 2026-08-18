@@ -2,8 +2,8 @@
 //!
 //! **Because on this thing the declaration had stopped describing and started
 //! holding.** A type says what its keys hold; once a thing carries every one of
-//! them, that is what the thing IS, and a write that would leave it otherwise
-//! is refused rather than stored and reported.
+//! them, the type is a floor under what it holds, and a write that would leave
+//! it otherwise is refused rather than stored and reported.
 //!
 //! **The narrowing is the new half.** A reference used to mean "a handle of
 //! some kind jojobot knows", so a key meant for a venue was satisfied by a pet.
@@ -158,6 +158,22 @@ async fn a_declared_key_is_held_to_on_the_thing_that_answers_it() {
     // The candidate it should have meant, which is what makes this a repair
     // rather than a dead end.
     dangling.says("place:moes");
+
+    // ── a key is a name, and a name has a length ────────────────────────────
+    //
+    // The other door onto the same rule: a record's key is bounded where it is
+    // written, and a declaration names keys a record will carry, so a type may
+    // not name one no record could hold. The refusal carries the number, which
+    // is what a caller writes to instead of bisecting against a store error.
+    s.refused(
+        "declare_type",
+        json!({
+            "name": "long-winded",
+            "fields": [{ "key": "k".repeat(129), "holds": "text" }],
+        }),
+    )
+    .await
+    .says("128");
 
     // ── ⑤ and the two questions, over everything above ──────────────────────
     //

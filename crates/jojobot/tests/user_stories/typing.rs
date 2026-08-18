@@ -228,8 +228,8 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     // ── and the operator opens the page, which speaks no MCP ────────────────
     //
     // **The one surface the operator reads directly.** Everything above went through the
-    // verbs a session calls; this is the window, and what a thing IS has to be
-    // legible in it or the model is invisible to the person it is for.
+    // verbs a session calls; this is the window, and what a thing HOLDS has to
+    // be legible in it or the model is invisible to the person it is for.
     let page = story.page("thing:gravel-bike").await;
     // **The fold, asserted on the fold's own table.** `serviced` and `cost`
     // were written on one record and `distance` on another, and both are on the

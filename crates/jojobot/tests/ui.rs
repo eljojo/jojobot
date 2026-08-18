@@ -770,7 +770,7 @@ async fn a_node_page_shows_the_facts_held_there_and_who_backs_them() {
     ct.cancel();
 }
 
-/// **A thing's page shows what the thing IS — its fields, folded.**
+/// **A thing's page shows what the thing HOLDS — its fields, folded.**
 ///
 /// A thing's fields are what it conforms to and what that unlocks, and they
 /// arrive one record at a time. The page rendered seven columns of a record's
