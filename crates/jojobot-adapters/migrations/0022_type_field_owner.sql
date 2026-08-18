@@ -1,0 +1,16 @@
+-- Which half of the sentence owns a key row.
+--
+-- A kind is a schema that is also identity, so a kind's keys are keys like any
+-- other and live in this table beside a declared schema's. The name is the
+-- whole key here, and that left the two halves able to take each other's rows:
+-- a declaration on either side replaced whatever was under that name, with no
+-- refusal and no trace of what went. The seed declares every shipped kind on
+-- every boot, so the worst case needed no new verb at all — a schema a caller
+-- had declared under one of those names went at the next restart.
+--
+-- `owner` says which declaration a row belongs to, so each side can refuse to
+-- write over the other rather than discovering the collision afterwards.
+--
+-- `type` is the default because every row written before this column belongs to
+-- a declared schema: kinds gained keys in the change that adds this.
+ALTER TABLE type_field ADD COLUMN owner VARCHAR(16) NOT NULL DEFAULT 'type';

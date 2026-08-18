@@ -296,8 +296,9 @@ impl Memory for DownMemory {
         &self,
         token: &str,
         origin: jojobot_domain::memory::types::Origin,
+        fields: Vec<jojobot_domain::memory::types::Field>,
     ) -> Result<(), MemoryError> {
-        self.1.declare_kind(token, origin).await
+        self.1.declare_kind(token, origin, fields).await
     }
 
     async fn declared_kinds(

@@ -164,9 +164,25 @@ pub fn intern(token: &str) -> &'static str {
 pub async fn seed<M: super::Memory + ?Sized>(store: &M) -> Result<usize, super::MemoryError> {
     for token in SHIPPED {
         store
-            .declare_kind(token, super::types::Origin::Shipped)
+            // **The shipped ten name no keys.** What a `person` or a `place`
+            // carries is not the software's to decide, and an empty kind is
+            // coherent: its identity is its row.
+            .declare_kind(token, super::types::Origin::Shipped, Vec::new())
             .await?;
     }
+    let held = store.declared_kinds().await?;
+    load(held.iter().map(|(token, _)| token.clone()));
+    Ok(held.len())
+}
+
+/// **Re-read the set from the store**, for a process that has just declared a
+/// kind and must be able to read a handle carrying it.
+///
+/// A declaration writes a row; the set this process parses against is a copy
+/// taken at the boot. Without this, a kind a caller declares is one their very
+/// next call cannot use, and the refusal would say nobody declared it — while
+/// the store says somebody did.
+pub async fn reload<M: super::Memory + ?Sized>(store: &M) -> Result<usize, super::MemoryError> {
     let held = store.declared_kinds().await?;
     load(held.iter().map(|(token, _)| token.clone()));
     Ok(held.len())

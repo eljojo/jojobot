@@ -2478,7 +2478,17 @@ pub trait Memory: Send + Sync {
     /// caller's origin is refused, exactly as a shipped type is, so the
     /// software's own nouns cannot be reshaped from outside. Re-declaring a
     /// shipped kind AS shipped is the seed running again and changes nothing.
-    async fn declare_kind(&self, token: &str, origin: types::Origin) -> Result<(), MemoryError>;
+    /// **The keys are keys like any other**, kept where a schema's keys are
+    /// kept and owned by the kind's name. The kind row holds what makes it a
+    /// kind; hanging its keys off that row would be one concept in two tables
+    /// rather than the two halves of one sentence in the two places they
+    /// belong.
+    async fn declare_kind(
+        &self,
+        token: &str,
+        origin: types::Origin,
+        fields: Vec<types::Field>,
+    ) -> Result<(), MemoryError>;
 
     /// **Every kind the store holds**, with where each came from.
     ///

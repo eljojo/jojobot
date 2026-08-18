@@ -181,6 +181,7 @@ mod tests {
                 &self,
                 _: &str,
                 _: jojobot_domain::memory::types::Origin,
+                _: Vec<jojobot_domain::memory::types::Field>,
             ) -> Result<(), MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }

@@ -1887,8 +1887,9 @@ impl Memory for IndexedMemory {
         &self,
         token: &str,
         origin: jojobot_domain::memory::types::Origin,
+        fields: Vec<jojobot_domain::memory::types::Field>,
     ) -> Result<(), MemoryError> {
-        self.inner.declare_kind(token, origin).await
+        self.inner.declare_kind(token, origin, fields).await
     }
 
     async fn declared_kinds(
@@ -4327,6 +4328,7 @@ mod tests {
             &self,
             _: &str,
             _: jojobot_domain::memory::types::Origin,
+            _: Vec<jojobot_domain::memory::types::Field>,
         ) -> Result<(), MemoryError> {
             unimplemented!("this double only scans")
         }

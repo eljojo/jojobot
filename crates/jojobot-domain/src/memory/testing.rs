@@ -50,6 +50,9 @@ pub struct InMemoryMemory {
     /// The kinds, one per token, with where each came from. Rows in the real
     /// store, so a `Vec` here for the same reason the types are one.
     kinds: Mutex<Vec<(String, crate::memory::types::Origin)>>,
+    /// Which declarations are a kind's. The real store carries this on the row;
+    /// here it is the same fact kept beside the rows.
+    kind_keys: Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl InMemoryMemory {
@@ -72,6 +75,43 @@ impl InMemoryMemory {
             .collect();
         crate::memory::kinds::load(crate::memory::kinds::SHIPPED);
         fake
+    }
+
+    /// **A kind's keys, in the same place a schema's keys live.** Declaring
+    /// with no keys leaves none, so a kind that names nothing is representable
+    /// while a schema that names nothing still is not — the kind's identity is
+    /// its row, not its keys.
+    fn keys_of_kind(
+        &self,
+        token: &str,
+        origin: crate::memory::types::Origin,
+        fields: Vec<crate::memory::types::Field>,
+    ) -> Result<(), MemoryError> {
+        use crate::memory::types::DeclaredType;
+        // **Naming no keys is not taking every key away**, and neither half of
+        // the sentence may write over the other's — the real store holds both
+        // lines, so the double does too.
+        if fields.is_empty() {
+            return Ok(());
+        }
+        let mut types = self.types.lock().unwrap();
+        if types
+            .iter()
+            .any(|held| held.name == token && !self.kind_keys.lock().unwrap().contains(&held.name))
+        {
+            return Err(MemoryError::InvalidEntity(format!(
+                "'{token}' already names a declared type, and its keys are not this \
+                 declaration's to replace"
+            )));
+        }
+        types.retain(|held| held.name != token);
+        types.push(DeclaredType {
+            name: token.to_string(),
+            fields,
+            origin,
+        });
+        self.kind_keys.lock().unwrap().insert(token.to_string());
+        Ok(())
     }
 
     /// Put an entity in the store without the write guard seeing it — **the
@@ -780,6 +820,7 @@ impl Memory for InMemoryMemory {
         &self,
         token: &str,
         origin: crate::memory::types::Origin,
+        fields: Vec<crate::memory::types::Field>,
     ) -> Result<(), MemoryError> {
         use crate::memory::types::Origin;
         let mut kinds = self.kinds.lock().unwrap();
@@ -790,10 +831,12 @@ impl Memory for InMemoryMemory {
                 )));
             }
             *held_origin = origin;
-            return Ok(());
+            drop(kinds);
+            return self.keys_of_kind(token, origin, fields);
         }
         kinds.push((token.to_string(), origin));
-        Ok(())
+        drop(kinds);
+        self.keys_of_kind(token, origin, fields)
     }
 
     async fn declared_kinds(
@@ -5823,7 +5866,7 @@ pub mod contract {
         // **Re-seeding changes nothing**, which is what lets the boot write
         // them unconditionally.
         store
-            .declare_kind("person", Origin::Shipped)
+            .declare_kind("person", Origin::Shipped, Vec::new())
             .await
             .expect("the seed runs again");
         let after = store.declared_kinds().await.expect("the kinds read back");
@@ -5836,7 +5879,7 @@ pub mod contract {
         // **A caller cannot take one over.** The refusal reads the row's own
         // origin, so nothing anywhere keeps a list of protected names.
         let refused = store
-            .declare_kind("person", Origin::Declared)
+            .declare_kind("person", Origin::Declared, Vec::new())
             .await
             .expect_err("a caller cannot redeclare a kind the software ships");
         assert!(

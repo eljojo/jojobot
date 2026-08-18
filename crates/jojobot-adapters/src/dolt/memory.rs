@@ -1020,15 +1020,23 @@ impl Memory for DoltMemory {
                 .await
                 .map_err(store)?;
         guard_replacement(&declared, held.as_deref().map(read_origin))?;
-        sqlx::query("DELETE FROM type_field WHERE type_name = ?")
+        owned_by_the_other_half(&mut tx, &declared.name, KEYS_OF_A_KIND).await?;
+        sqlx::query("DELETE FROM type_field WHERE type_name = ? AND owner = ?")
             .bind(&declared.name)
+            .bind(KEYS_OF_A_TYPE)
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        sqlx::query("DELETE FROM type_field WHERE type_name = ? AND owner = ?")
+            .bind(&declared.name)
+            .bind(KEYS_OF_A_TYPE)
             .execute(&mut *tx)
             .await
             .map_err(store)?;
         for (ordinal, field) in declared.fields.iter().enumerate() {
             sqlx::query(
-                "INSERT INTO type_field (type_name, key_name, ordinal, holds, folds, origin)
-                 VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO type_field (type_name, key_name, ordinal, holds, folds, origin, owner)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&declared.name)
             .bind(&field.key)
@@ -1036,6 +1044,7 @@ impl Memory for DoltMemory {
             .bind(field.holds_token())
             .bind(field.folds.as_token())
             .bind(declared.origin.as_token())
+            .bind(KEYS_OF_A_TYPE)
             .execute(&mut *tx)
             .await
             .map_err(store)?;
@@ -1061,13 +1070,35 @@ impl Memory for DoltMemory {
         Ok(gather_types(&rows))
     }
 
-    async fn declare_kind(&self, token: &str, origin: Origin) -> Result<(), MemoryError> {
+    async fn declare_kind(
+        &self,
+        token: &str,
+        origin: Origin,
+        fields: Vec<Field>,
+    ) -> Result<(), MemoryError> {
+        // The keys are screened exactly as a schema's are — one declaration
+        // shape, one validator, so a kind cannot name a key twice where a type
+        // could not.
+        let declared = DeclaredType {
+            name: token.to_string(),
+            fields,
+            origin,
+        };
+        if !declared.fields.is_empty() {
+            validate_type(&declared)?;
+        }
+        let declared = declared.normalized();
+
+        // **One transaction.** A kind whose row landed and whose keys did not
+        // would be a kind describing something nobody declared.
+        let mut tx = self.pool.begin().await.map_err(store)?;
+
         // **The shipped ten are closed to a caller**, read from the row rather
         // than from a list here: what makes a kind the software's is the origin
         // it was written with, so there is nothing to keep in step with code.
         let held: Option<String> = sqlx::query_scalar("SELECT origin FROM kind WHERE token = ?")
             .bind(token)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(store)?;
         if held.as_deref() == Some(Origin::Shipped.as_token()) && origin == Origin::Declared {
@@ -1078,9 +1109,39 @@ impl Memory for DoltMemory {
         sqlx::query("REPLACE INTO kind (token, origin) VALUES (?, ?)")
             .bind(token)
             .bind(origin.as_token())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(store)?;
+
+        // **Naming no keys is not taking every key away.** The seed declares
+        // every shipped kind on every boot and names none, so a delete here
+        // would take away whatever that name held at each restart.
+        if !declared.fields.is_empty() {
+            owned_by_the_other_half(&mut tx, token, KEYS_OF_A_TYPE).await?;
+            sqlx::query("DELETE FROM type_field WHERE type_name = ? AND owner = ?")
+                .bind(token)
+                .bind(KEYS_OF_A_KIND)
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
+            for (ordinal, field) in declared.fields.iter().enumerate() {
+                sqlx::query(
+                    "INSERT INTO type_field (type_name, key_name, ordinal, holds, folds, origin, owner)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(token)
+                .bind(&field.key)
+                .bind(ordinal as i64 + 1)
+                .bind(field.holds_token())
+                .bind(field.folds.as_token())
+                .bind(origin.as_token())
+                .bind(KEYS_OF_A_KIND)
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
+            }
+        }
+        tx.commit().await.map_err(store)?;
         Ok(())
     }
 
@@ -1098,6 +1159,43 @@ impl Memory for DoltMemory {
             .map(|(token, origin)| (token, Origin::of_token(&origin).unwrap_or(Origin::Declared)))
             .collect())
     }
+}
+
+/// **Which half of the sentence a key row belongs to.** A kind is a schema
+/// that is also identity, so both keep their keys here — and the name alone
+/// cannot say which one wrote a row.
+const KEYS_OF_A_TYPE: &str = "type";
+const KEYS_OF_A_KIND: &str = "kind";
+
+/// **Refuse to write over the other half's keys.**
+///
+/// Sharing the table is the model working: a kind's keys ARE keys. Taking the
+/// other side's rows is not, and the name is the whole key, so without this
+/// each side silently replaced whatever the other had put there.
+async fn owned_by_the_other_half(
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+    name: &str,
+    theirs: &str,
+) -> Result<(), MemoryError> {
+    let held: Option<String> = sqlx::query_scalar(
+        "SELECT owner FROM type_field WHERE type_name = ? AND owner = ? LIMIT 1",
+    )
+    .bind(name)
+    .bind(theirs)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(store)?;
+    if held.is_some() {
+        let holder = if theirs == KEYS_OF_A_KIND {
+            "a kind"
+        } else {
+            "a declared type"
+        };
+        return Err(MemoryError::InvalidEntity(format!(
+            "'{name}' already names {holder}, and its keys are not this declaration's to replace"
+        )));
+    }
+    Ok(())
 }
 
 /// Rows into the types they are — **one reader**, so the roster a write is
