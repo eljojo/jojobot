@@ -235,26 +235,7 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
 
-    // **There is never a jojobot with no bot.** The default identity arrives
-    // with the software, before anything serves — which is what makes the
-    // write gate shippable at all: an identity IS a bot, so a server with none
-    // could never create the first one through its own surface.
     let seed_memory: Arc<dyn Memory> = indexed.clone();
-    match jojobot_mcp::seed::ensure_default_identity(&seed_memory, &mailboxes).await {
-        jojobot_mcp::seed::Seeded::Created => {
-            tracing::info!(
-                bot = jojobot_mcp::seed::DEFAULT_BOT,
-                "seeded the default identity"
-            )
-        }
-        jojobot_mcp::seed::Seeded::AlreadyThere => {}
-        jojobot_mcp::seed::Seeded::Unreachable(why) => tracing::warn!(
-            error = %why,
-            "DEFAULT IDENTITY NOT SEEDED — the store could not be reached at startup, so this \
-             instance may have no bot to boot as. Nothing was written and nothing was lost; a \
-             restart once the store is reachable puts it right."
-        ),
-    }
 
     // **The kinds, before anything reads a handle.** Every kind this instance
     // holds is written and then read back, and what comes back is the set this
@@ -268,6 +249,26 @@ async fn main() -> anyhow::Result<()> {
             "KINDS NOT LOADED — the store could not be reached at startup, so no handle can be \
              read and every write is refused. Nothing was written and nothing was lost; a restart \
              once the store is reachable puts it right."
+        ),
+    }
+
+    // **There is never a jojobot with no bot.** The default identity arrives
+    // with the software, before anything serves — which is what makes the
+    // write gate shippable at all: an identity IS a bot, so a server with none
+    // could never create the first one through its own surface.
+    match jojobot_mcp::seed::ensure_default_identity(&seed_memory, &mailboxes).await {
+        jojobot_mcp::seed::Seeded::Created => {
+            tracing::info!(
+                bot = jojobot_mcp::seed::DEFAULT_BOT,
+                "seeded the default identity"
+            )
+        }
+        jojobot_mcp::seed::Seeded::AlreadyThere => {}
+        jojobot_mcp::seed::Seeded::Unreachable(why) => tracing::warn!(
+            error = %why,
+            "DEFAULT IDENTITY NOT SEEDED — the store could not be reached at startup, so this \
+             instance may have no bot to boot as. Nothing was written and nothing was lost; a \
+             restart once the store is reachable puts it right."
         ),
     }
 

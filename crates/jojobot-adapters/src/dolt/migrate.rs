@@ -155,6 +155,18 @@ impl Leaves {
     }
 }
 
+/// **The step a boot takes after the schema**: write the kinds this build
+/// ships, then load what the store answers with, so this process can read a
+/// handle at all.
+///
+/// It sits beside the schema rather than inside a store's `open`, because a
+/// load hidden in `open` would make a caller that happens to touch memory look
+/// seeded while a caller that touches only the mail rail does not — and no
+/// handle's refusal can tell those two apart.
+pub async fn seed_kinds(pool: &MySqlPool) -> Result<usize, jojobot_domain::memory::MemoryError> {
+    jojobot_domain::memory::kinds::seed(&crate::dolt::memory::DoltMemory::open(pool.clone())).await
+}
+
 /// Every migration, in the order they apply.
 ///
 /// **The order is this list, not the filenames** — a sort is a rule somebody

@@ -56,11 +56,13 @@ impl DoltMemory {
     ///
     /// **The schema is not this adapter's to create.** It arrives through the
     /// migrations the server applies on start — see [`crate::dolt::migrate`].
+    /// **Opening a store is not booting one.** It loads no kinds: the set a
+    /// process parses against is written and read by the boot's seed, and a
+    /// load here would make every caller that happens to open a memory store
+    /// look seeded while a caller that opens only the mail rail does not.
+    /// That is a difference nobody can see from a handle's refusal, which is
+    /// exactly the failure the two refusals exist to name.
     pub fn open(pool: MySqlPool) -> Self {
-        // **The kinds this process parses against come from a store**, and
-        // this is one. Until a kind is a row, the shipped ten are what every
-        // store holds, so opening one loads them.
-        jojobot_domain::memory::kinds::load(jojobot_domain::memory::kinds::SHIPPED);
         DoltMemory { pool }
     }
 

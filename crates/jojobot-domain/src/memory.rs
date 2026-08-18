@@ -184,6 +184,13 @@ impl EntityId {
             .and_then(|(k, _)| EntityKind::from_token(k))
     }
 
+    /// The token before the colon, whatever it is — **the prefix as written**,
+    /// which is what a refusal has to name and what the loaded set is asked
+    /// about. Empty when the id carries no colon at all.
+    pub fn kind_token(&self) -> &str {
+        self.0.split_once(':').map(|(k, _)| k).unwrap_or("")
+    }
+
     /// The id's slug — the part after the kind. Empty for a malformed id.
     pub fn slug(&self) -> &str {
         self.0.split_once(':').map(|(_, s)| s).unwrap_or("")
@@ -842,19 +849,29 @@ fn is_slug_byte(b: u8) -> bool {
 }
 
 /// Validate an entity id before it is written anywhere. Ids are **structured**
-/// (`kind:slug`, kind one of the nine, slug `[a-z0-9-]+`), never free text — so
-/// an adversarial subject can neither forge markdown nor invent a kind. This is
-/// the primary defence; escaping-on-write is the belt-and-suspenders.
+/// (`kind:slug`, slug `[a-z0-9-]+`), never free text — so an adversarial
+/// subject can neither forge markdown nor invent a kind. This is the primary
+/// defence; escaping-on-write is the belt-and-suspenders.
+///
+/// **The refusal says which thing is wrong**, and the kind half of that has two
+/// answers rather than one. A process that loaded no kinds refuses `bot:gamma`
+/// exactly as it refuses a typo, and a caller told "unknown kind" about the
+/// most ordinary handle in the system has no way forward from it (rule 68).
 pub fn validate_subject(subject: &EntityId) -> Result<(), MemoryError> {
     let s = subject.as_str();
-    let ok = s.len() <= 128
-        && subject.kind().is_some()
-        && !subject.slug().is_empty()
-        && subject.slug().bytes().all(is_slug_byte);
-    if ok {
-        Ok(())
-    } else {
-        Err(MemoryError::InvalidSubject(s.to_string()))
+    let shaped =
+        s.len() <= 128 && !subject.slug().is_empty() && subject.slug().bytes().all(is_slug_byte);
+    if !shaped {
+        return Err(MemoryError::InvalidSubject(format!(
+            "'{s}' is no handle: a handle is kind:slug, slug [a-z0-9-]+, at most 128 characters"
+        )));
+    }
+    // The kind is asked of the loaded set, which is what makes the answer say
+    // what is really wrong: nothing seeded this process, or nobody declared
+    // this kind.
+    match kinds::resolve(subject.kind_token()) {
+        Ok(_) => Ok(()),
+        Err(why) => Err(MemoryError::InvalidSubject(format!("'{s}': {why}"))),
     }
 }
 
@@ -2041,10 +2058,12 @@ pub enum MemoryError {
     InvalidFact(String),
     /// The subject id is not a well-formed entity id (see [`validate_subject`]).
     /// Treated as adversarial: it never reaches the store.
-    #[error(
-        "invalid entity id '{0}': ids are kind:slug — kind one of \
-         person|project|place|event|work|thing|org|topic|bot|pet, slug [a-z0-9-]+"
-    )]
+    /// **The refusal carries its own reason**, because there are three and they
+    /// have three repairs: the handle is not shaped like one, the kind set was
+    /// never loaded, or nobody declared that kind. **It does not recite a list
+    /// of kinds**: the set is data, so a sentence naming ten of them is one
+    /// that goes stale the first time an instance declares an eleventh.
+    #[error("invalid entity id {0}")]
     InvalidSubject(String),
     /// A fact address didn't parse (see [`FactAddress::parse`]).
     #[error("invalid fact address '{0}': expected kind:slug#local-id, e.g. person:alpha#f3")]
@@ -2701,28 +2720,6 @@ mod tests {
                 EntityKind::from_token(unknown),
                 None,
                 "{unknown:?} is not a kind"
-            );
-        }
-    }
-
-    /// **The refusal for a bad handle names every kind the store accepts.**
-    ///
-    /// It is the only place a caller who got the grammar wrong is told what the
-    /// grammar is, so a kind missing from it is a caller sent back to guess.
-    /// The same closed-set discipline the enum has, applied to the sentence
-    /// that teaches it — `bot` and `pet` both reached the enum before they
-    /// reached prose like this.
-    #[test]
-    fn the_refusal_for_a_bad_handle_names_every_kind() {
-        let refused = validate_subject(&EntityId("not a handle".into()))
-            .expect_err("a handle that is no handle is refused");
-        let said = refused.to_string();
-        for kind in EntityKind::ALL {
-            assert!(
-                said.contains(kind.as_token()),
-                "the refusal does not name `{}`, so a caller reaching for it is told it is not a \
-                 kind: {said}",
-                kind.as_token(),
             );
         }
     }

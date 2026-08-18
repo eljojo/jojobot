@@ -50,6 +50,22 @@ impl Drop for Scratch {
     }
 }
 
+/// **The two steps a boot takes after the schema**, in the order it takes them:
+/// write the kinds this build ships, then parse handles against what the store
+/// answered with.
+///
+/// A suite that stands a rail up is standing up a process, and a process that
+/// never seeded cannot read a handle at all — which is the refusal a caller
+/// meets and not a state a suite should be in silently. Opening a store does
+/// not do this, deliberately: a load hidden inside `open` would make a suite
+/// that touches memory look seeded while one that touches only the mail rail
+/// does not.
+async fn booted(pool: &sqlx::MySqlPool) {
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+}
+
 /// **The contract's cases, each against a store of its own.**
 ///
 /// `fresh` is synchronous and opening a store is not, so the stores are opened
@@ -72,6 +88,8 @@ async fn dolt_satisfies_the_session_contract() {
             .await
             .expect("a database of this case's own");
         migrate::run(&pool).await.expect("the schema");
+        booted(&pool).await;
+        booted(&pool).await;
         prepared.push(DoltSessions::open(pool));
     }
 
@@ -110,6 +128,7 @@ async fn dolt_satisfies_the_memory_contract() {
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
 
     memory::run_all(&DoltMemory::open(pool)).await;
 
@@ -135,6 +154,7 @@ async fn the_indexed_dolt_store_satisfies_the_whole_contract() {
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
 
     let indexed = Arc::new(
         IndexedMemory::new(Arc::new(DoltMemory::open(pool))).expect("the search index opens"),
@@ -206,6 +226,8 @@ async fn dolt_satisfies_the_mailbox_contract() {
             .await
             .expect("a database of this case's own");
         migrate::run(&pool).await.expect("the schema");
+        booted(&pool).await;
+        booted(&pool).await;
         prepared.push(DoltMailboxes::open(pool, Arc::new(RosterOnly)));
     }
 

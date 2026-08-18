@@ -562,6 +562,11 @@ mod tests {
             .await
             .expect("the store comes up");
         migrate::run(store.pool()).await.expect("the schema");
+        // The rest of a boot: without it this process cannot read a handle,
+        // which is what a caller meets rather than a state a suite hides.
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
         let sessions = DoltSessions::drawing(
             store.pool().clone(),
             rigged(&[
@@ -654,6 +659,11 @@ mod tests {
             .await
             .expect("the store comes up");
         migrate::run(store.pool()).await.expect("the schema");
+        // The rest of a boot: without it this process cannot read a handle,
+        // which is what a caller meets rather than a state a suite hides.
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
         let sessions = DoltSessions::drawing(
             store.pool().clone(),
             rigged(&["aaaaaa", "bbbbbb", "eeeeee", "eeeeee"]),
@@ -729,6 +739,11 @@ mod tests {
             .await
             .expect("the store comes up");
         migrate::run(store.pool()).await.expect("the schema");
+        // The rest of a boot: without it this process cannot read a handle,
+        // which is what a caller meets rather than a state a suite hides.
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
         let sessions = DoltSessions::open(store.pool().clone());
 
         // Two ways a row stops being readable: a state that is no state, and a
@@ -773,6 +788,11 @@ mod tests {
             .await
             .expect("the store comes up");
         migrate::run(store.pool()).await.expect("the schema");
+        // The rest of a boot: without it this process cannot read a handle,
+        // which is what a caller meets rather than a state a suite hides.
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
         let sessions = DoltSessions::open(store.pool().clone());
 
         let before = marks(store.pool()).await;
@@ -840,6 +860,11 @@ mod tests {
             .await
             .expect("the store comes up");
         migrate::run(store.pool()).await.expect("the schema");
+        // The rest of a boot: without it this process cannot read a handle,
+        // which is what a caller meets rather than a state a suite hides.
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
         let unreachable = store
             .database("marks_go_nowhere")
             .await

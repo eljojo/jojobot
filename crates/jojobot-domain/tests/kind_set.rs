@@ -10,7 +10,7 @@
 //! **If you add a case that calls `load`, add it here.**
 
 use jojobot_domain::memory::kinds::{self, NotAKind};
-use jojobot_domain::memory::{EntityId, EntityKind};
+use jojobot_domain::memory::{EntityId, EntityKind, validate_subject};
 
 /// These two share the one set even here, so they take turns.
 fn in_turn() -> std::sync::MutexGuard<'static, ()> {
@@ -140,4 +140,71 @@ fn the_seed_writes_before_it_reads() {
     );
 
     kinds::load_shipped();
+}
+
+/// **A refusal says which of the three things is wrong, and none of them
+/// recites a hardcoded list of kinds.**
+///
+/// The set is data, so a sentence naming ten nouns goes stale the first time an
+/// instance declares an eleventh — and a caller reading it about a kind their
+/// own store holds is being told something false.
+///
+/// The three answers have three repairs, which is why one sentence cannot
+/// serve them: fix the handle's shape, boot a process that seeded, or declare
+/// the kind. **Only the last one names kinds, and it names the ones this
+/// process actually loaded** — that is the way forward rule 68 asks for, and it
+/// is a read of the set rather than a list somebody wrote down.
+///
+/// It lives here because it empties the set, which reaches every test beside it.
+#[test]
+fn a_refusal_says_which_thing_is_wrong_and_recites_no_written_list() {
+    let _turn = in_turn();
+    kinds::load_shipped();
+
+    let shape = validate_subject(&EntityId("not a handle".into()))
+        .expect_err("a handle that is no handle is refused")
+        .to_string();
+    assert!(
+        shape.contains("kind:slug"),
+        "a malformed handle is told the grammar: {shape}",
+    );
+
+    let undeclared = validate_subject(&EntityId("gadget:one".into()))
+        .expect_err("a kind nobody declared is refused")
+        .to_string();
+    assert!(
+        undeclared.contains("gadget") && undeclared.contains("person"),
+        "the refusal names the token sent and the kinds this process holds: {undeclared}",
+    );
+
+    kinds::load::<[&str; 0], &str>([]);
+    // The handle here carries a prefix that is no shipped kind, so a kind
+    // token appearing in this refusal came from the sentence rather than from
+    // the caller's own words.
+    let unseeded = validate_subject(&EntityId("gadget:one".into()))
+        .expect_err("an unseeded process cannot read a handle")
+        .to_string();
+    kinds::load_shipped();
+    assert!(
+        !unseeded.contains("no kind is named"),
+        "an unseeded process does not blame the handle: {unseeded}",
+    );
+
+    // **Whole words, not substrings.** `nothing` carries `thing` inside it, and
+    // a check that counted that would fail on a sentence naming no kind at all.
+    for said in [&shape, &unseeded] {
+        let named: Vec<&str> = EntityKind::ALL
+            .into_iter()
+            .map(|kind| kind.as_token())
+            .filter(|token| {
+                said.split(|c: char| !c.is_ascii_alphanumeric())
+                    .any(|word| word == *token)
+            })
+            .collect();
+        assert!(
+            named.is_empty(),
+            "this refusal knows nothing about which kinds exist, so it must name none, and it \
+             names {named:?}: {said}",
+        );
+    }
 }

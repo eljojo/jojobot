@@ -582,6 +582,11 @@ mod tests {
             .await
             .expect("the store comes up");
         migrate::run(store.pool()).await.expect("the schema");
+        // The rest of a boot: without it this process cannot read a handle,
+        // which is what a caller meets rather than a state a suite hides.
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
         let mail = DoltMailboxes::open(store.pool().clone(), Arc::new(AnyOwner));
 
         mail.create_mailbox(
@@ -647,6 +652,11 @@ mod tests {
             .await
             .expect("the store comes up");
         migrate::run(store.pool()).await.expect("the schema");
+        // The rest of a boot: without it this process cannot read a handle,
+        // which is what a caller meets rather than a state a suite hides.
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
         let mail = DoltMailboxes::drawing(
             store.pool().clone(),
             Arc::new(AnyOwner),
@@ -793,6 +803,11 @@ mod tests {
             .await
             .expect("the store comes up");
         migrate::run(store.pool()).await.expect("the schema");
+        // The rest of a boot: without it this process cannot read a handle,
+        // which is what a caller meets rather than a state a suite hides.
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
 
         let down = DoltMailboxes::open(store.pool().clone(), Arc::new(Down));
         let outcome = down
