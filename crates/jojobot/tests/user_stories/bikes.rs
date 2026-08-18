@@ -48,6 +48,26 @@ async fn keeping_track_of_bikes() {
         &[],
     )
     .await;
+    // **When the cover runs out is a question about the BIKE, so the read that
+    // answers it asks for the bike and not for everything ever said about it.**
+    // A thing comes back as its records' fields folded into one row — one value
+    // per key — and that row is the answer here. The records are behind it and
+    // the answer says how many, so nothing is hidden and nothing is shipped
+    // unasked.
+    let bike = s
+        .shape(
+            "what the bike is, without every claim ever made about it",
+            json!({ "subject": "thing:gravel-bike", "facts": false }),
+        )
+        .await;
+    bike.says("\"expires\":\"2029-04-11\"");
+    bike.says("records are behind these fields");
+    // The sentence that needed a whole read is not in this answer, which is the
+    // point of asking this way rather than the old one.
+    bike.never_says("frame warranty runs five years from purchase");
+
+    // …and the sentence is still there for the read that wants it, so the dense
+    // answer left it out rather than losing it.
     s.recall("thing:gravel-bike")
         .await
         .says("frame warranty runs five years from purchase")

@@ -148,6 +148,7 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 
     /// **A field is set and cleared in place, and a plain recall shows it.**
     ///
@@ -160,6 +161,99 @@ mod tests {
     /// **Set and clear are separate arguments** rather than one bag where an
     /// empty value means "remove". An empty value is a value somebody wrote,
     /// and the two moves must not be spelled the same.
+    /// **A clear that would drop the thing below a type it answers is blocked,
+    /// and the same clear on a thing that answers nothing goes through.**
+    ///
+    /// Strict is a floor: what a type asks for has to survive. The pairing is
+    /// the point — a build that refused both would pass the first half and
+    /// make a half-described thing unrepairable, which is the failure the rule
+    /// is shaped to avoid.
+    #[tokio::test]
+    async fn a_clear_that_would_break_a_fit_is_blocked_and_says_what_it_would_cost() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+        jojobot
+            .memory
+            .declare_type(DeclaredType::new(
+                "service",
+                vec![
+                    Field::new("cost", ValueType::Number),
+                    Field::new("done_on", ValueType::Date),
+                ],
+            ))
+            .await
+            .expect("declaring a type is accepted");
+
+        let whole = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [
+                        ("cost".to_string(), "40".to_string()),
+                        ("done_on".to_string(), "2026-04-18".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("thing:gravel-bike", "the annual service")
+            },
+        )
+        .await;
+        let refused = blocked(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    clear_fields: Some(vec!["cost".into()]),
+                    ..update_args(&address_of(&whole))
+                }))
+                .await
+                .expect("a refusal is an answer, not a protocol failure"),
+        );
+        let advice = refused["how_to_proceed"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a refusal carries its way forward: {refused}"));
+        assert!(
+            advice.contains("service") && advice.contains("cost"),
+            "the refusal names the type and the key it would cost: {advice}"
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+
+        // The same clear, on a thing that answers no type: served. Nothing
+        // here is protecting anything, and a record nobody can repair is worse
+        // than a record with a key missing.
+        let loose = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("cost".to_string(), "40".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("thing:road-bike", "somebody wrote down a price")
+            },
+        )
+        .await;
+        let edited = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    clear_fields: Some(vec!["cost".into()]),
+                    ..update_args(&address_of(&loose))
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_ne!(
+            edited["status"], "blocked",
+            "a thing that fits nothing has nothing to protect: {edited}"
+        );
+        assert!(
+            !edited["fields"]
+                .as_object()
+                .expect("a record renders its fields")
+                .contains_key("cost"),
+            "…so the key comes off: {edited}"
+        );
+    }
+
     #[tokio::test]
     async fn update_fact_sets_and_clears_a_field() {
         let jojobot = handler();

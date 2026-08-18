@@ -168,6 +168,23 @@ pub struct SearchQuery {
     /// that kept only complete matches would hide exactly the things worth
     /// finding.
     pub answers_type: Option<types::DeclaredType>,
+    /// **Only the things that FIT this type** — the ones carrying every key it
+    /// names, counted across everything recorded about each.
+    ///
+    /// The strict half of the same question, and which of the two a reader is
+    /// asking is the reader's choice: `answers_type` finds the things described
+    /// like one of these and says what each is missing, and this keeps only the
+    /// ones with nothing missing. *Which of these are described like a service*
+    /// against *which of these ARE services*.
+    ///
+    /// **The tolerant one is the default wherever neither is named**, because a
+    /// thing arriving with its gaps named can neither hide nor overclaim, while
+    /// a thing missing from an answer reads exactly like a thing that is not
+    /// there (rule 62).
+    ///
+    /// Structural, like everything else here: a thing carrying the keys fits
+    /// whether or not anybody declared it anything.
+    pub fits_type: Option<types::DeclaredType>,
     /// Whether messages are in the answer. **False by default, and worth
     /// setting true.**
     ///
@@ -212,6 +229,7 @@ impl Default for SearchQuery {
             subject: None,
             edge: None,
             answers_type: None,
+            fits_type: None,
             asked_by: None,
             include_mail: false,
             limit: DEFAULT_LIMIT,
@@ -259,7 +277,21 @@ impl SearchQuery {
     /// after: none of them is a thing, and none of them has fields to answer
     /// with.
     pub fn is_thing_scoped(&self) -> bool {
-        self.answers_type.is_some()
+        self.answers_type.is_some() || self.fits_type.is_some()
+    }
+
+    /// The type this query narrows by, whichever question it asked — and
+    /// whether only whole matches survive it.
+    ///
+    /// **One place decides which is which.** The two filters select the same
+    /// way and differ only in what they keep, so a reader that asked each of
+    /// them separately would be two readers to keep in step.
+    pub fn typed(&self) -> Option<(&types::DeclaredType, bool)> {
+        match (&self.answers_type, &self.fits_type) {
+            (_, Some(strict)) => Some((strict, true)),
+            (Some(tolerant), None) => Some((tolerant, false)),
+            (None, None) => None,
+        }
     }
 
     /// Reject a query that cannot be served, before any index work: no text and
@@ -273,7 +305,7 @@ impl SearchQuery {
         {
             return Err(MemoryError::InvalidQuery(
                 "give a query, or at least one filter (kind, status, provenance, subject, edge, \
-                 answers_type)"
+                 answers_type, fits_type)"
                     .into(),
             ));
         }
@@ -288,6 +320,20 @@ impl SearchQuery {
         // must read as one rather than as an honest empty answer.
         if let Some(declared) = &self.answers_type {
             types::validate_type(declared)?;
+        }
+        if let Some(declared) = &self.fits_type {
+            types::validate_type(declared)?;
+        }
+        // **Two questions about one type, and a call names one of them.** They
+        // keep different things, so a query carrying both is refused rather
+        // than one of them being picked for the caller.
+        if self.answers_type.is_some() && self.fits_type.is_some() {
+            return Err(MemoryError::InvalidQuery(
+                "ask answers_type or fits_type, not both: one keeps the things carrying some of a \
+                 type's keys and says what each lacks, and the other keeps only the things \
+                 carrying every key"
+                    .into(),
+            ));
         }
         // The same rule the write path applies, reused rather than restated: a
         // filter combination no write could ever produce must read as the

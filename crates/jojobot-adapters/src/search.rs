@@ -1166,7 +1166,7 @@ impl FullTextIndex {
         // Prose and messages carry no keys, so the same clause that selects the
         // things that answer excludes them — which is the honest answer to "is
         // a message one of my services".
-        if let Some(declared) = &query.answers_type {
+        if let Some((declared, _)) = query.typed() {
             clauses.push(self.type_clause(declared));
         }
         clauses
@@ -1398,8 +1398,16 @@ impl FullTextIndex {
         // reaching this point carries a declared key — and the filter stays a
         // filter so that one which somehow does not cannot arrive claiming an
         // answer it has not got.
-        if let Some(declared) = &query.answers_type {
-            ranked.retain_mut(|(_, _, hit)| answer_with(declared, hit, &mirror));
+        // **Selecting is one clause; which of the two questions was asked
+        // decides what survives it.** The tolerant one keeps a thing carrying
+        // some of the keys and says which it lacks; the strict one keeps only
+        // the things with nothing lacking. Both say how the thing answered,
+        // because a caller that asked the strict question still wants to see
+        // what it got rather than a bare list.
+        if let Some((declared, strictly)) = query.typed() {
+            ranked.retain_mut(|(_, _, hit)| {
+                answer_with(declared, hit, &mirror) && (!strictly || whole(hit))
+            });
         }
 
         let mut hits = self.pinned(query, &mirror);
@@ -1847,6 +1855,18 @@ fn answer_with(declared: &DeclaredType, hit: &mut Hit, mirror: &[DocMirror]) -> 
             true
         }
         None => false,
+    }
+}
+
+/// **Does this hit answer its type with nothing lacking.**
+///
+/// Read off the answer the hit is already carrying rather than matched a second
+/// time: two matchers over one question is how the filter and the report come
+/// to disagree about the same thing.
+fn whole(hit: &Hit) -> bool {
+    match hit {
+        Hit::Entity { answers, .. } => answers.as_deref().is_some_and(|found| found.complete()),
+        _ => false,
     }
 }
 

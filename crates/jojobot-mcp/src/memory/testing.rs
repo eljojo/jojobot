@@ -253,6 +253,7 @@ pub(crate) fn search_args() -> SearchArgs {
         include_mail: None,
         limit: None,
         sid: None,
+        fits_type: None,
     }
 }
 

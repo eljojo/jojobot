@@ -58,13 +58,28 @@ pub struct SearchArgs {
     ///
     /// ⚠️ **Some of the keys is enough here.** If you want only the things
     /// with no gaps — *which of these ARE services*, rather than *which are
-    /// described like one, and what is missing* — that is `fits_type` on
-    /// `recall`'s `follow`, which keeps only what holds EVERY key.
+    /// described like one, and what is missing* — that is `fits_type`, below.
     ///
     /// A name no type answers to comes back blocked, naming the types that do
     /// exist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answers_type: Option<String>,
+    /// **Only the things that FIT this type**, by name — the ones carrying
+    /// EVERY key it names, counted across everything recorded about each.
+    ///
+    /// The strict half of the same question, and which one you are asking is
+    /// yours to choose: `answers_type` asks *which of these are described like
+    /// a service, and what is missing*, and this asks *which of these ARE
+    /// services*.
+    ///
+    /// Reach for `answers_type` unless you have a reason not to. A thing that
+    /// arrives with its gaps named can be judged; a thing this filter leaves
+    /// out looks exactly like a thing that is not there.
+    ///
+    /// Pass one or the other, never both. A name no type answers to comes back
+    /// blocked, naming the types that do exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fits_type: Option<String>,
     /// Whether messages left in mailboxes are searched too. **Defaults to
     /// false, and worth passing true** when you are looking for what a session
     /// knows: a report filed for another session is exactly the context you
@@ -527,6 +542,16 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             },
         };
+        // The strict half, resolved the same way and in the same place: the
+        // two are one question with two answers, and a name that names no type
+        // is answered here whichever of them carried it.
+        let fits = match &args.fits_type {
+            None => None,
+            Some(wanted) => match self.declared(wanted, "searched").await? {
+                Ok(declared) => Some(declared),
+                Err(refused) => return Ok(refused),
+            },
+        };
         let edge = args
             .edge
             .as_ref()
@@ -539,6 +564,7 @@ impl Jojobot {
             .transpose()?;
         let query = SearchQuery {
             answers_type: declared,
+            fits_type: fits,
             asked_by: asking.as_ref().map(|c| c.bot.clone()),
             text: args.query,
             kind: args.kind.as_deref().map(parse_kind).transpose()?,
@@ -709,6 +735,7 @@ mod tests {
                 include_mail: Some(false),
                 limit: Some(5),
                 sid: None,
+                fits_type: None,
             }))
             .await
             .expect("search ok");

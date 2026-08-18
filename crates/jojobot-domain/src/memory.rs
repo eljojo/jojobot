@@ -1151,6 +1151,56 @@ pub fn writes_of(patch: &FactPatch) -> Vec<(String, Option<String>)> {
         .collect()
 }
 
+/// **A write may not drop a thing below a type it already fits.**
+///
+/// Strict is a **floor, not a ceiling**: what a type names has to survive, and
+/// anything else a caller wants to say is welcome. Adding a key is never
+/// refused, including a key no type mentions, and a record that fits no type at
+/// all is a first-class record.
+///
+/// **It reads the RESULT, never the change** — the thing's fields as they will
+/// stand once the write lands, against the thing's fields as they stand now. A
+/// check on the change itself builds a wedge: a thing already missing a key
+/// would have every repair to it measured against a rule it already breaks, and
+/// the record could never be fixed. Reading the result means **a thing that
+/// fits nothing has nothing to protect**, so nothing is refused and it stays
+/// repairable.
+///
+/// **Derived, never configured** (rule 9). Nothing is stored to say a thing is
+/// strict, nothing is declared and nothing is switched on: what a thing fits is
+/// a fact about the keys it carries, and this reads that fact at the moment of
+/// the write.
+///
+/// The refusal names the type and the key it would lose, because those are what
+/// a caller needs to decide between putting the key back and leaving the thing
+/// as it is.
+pub fn guard_fit(
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+    declared: &[types::DeclaredType],
+) -> Result<(), MemoryError> {
+    for kind in declared {
+        // Fitting means holding every key the type names. A thing that did not
+        // fit before has nothing this rule protects.
+        if !kind.matched_by(before).is_some_and(|m| m.complete()) {
+            continue;
+        }
+        let lost: Vec<String> = kind
+            .fields
+            .iter()
+            .map(|f| f.key.clone())
+            .filter(|key| !after.contains_key(key))
+            .collect();
+        if !lost.is_empty() {
+            return Err(MemoryError::BreaksFit {
+                name: kind.name.clone(),
+                keys: lost,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// The write guard's verdict on a metadata edit — the gate every adapter runs
 /// before [`apply_entity_patch`], so neither can drift into its own idea of when
 /// a patch is suspicious.
@@ -1648,6 +1698,22 @@ pub enum MemoryError {
     ShippedType {
         /// The type name that was declared.
         name: String,
+    },
+    /// **The write would drop the thing below a type it already fits.**
+    ///
+    /// Not a malformed call: the edit is well formed and the record is real.
+    /// What it would cost is a key the thing needs to go on being what it is,
+    /// so the way forward is to leave the key where it is or to put its value
+    /// somewhere the type can still see — never the same call again.
+    #[error(
+        "this would leave '{name}' incomplete on this thing: it needs {}",
+        keys.join(", ")
+    )]
+    BreaksFit {
+        /// The type that would stop being answered.
+        name: String,
+        /// The keys it names that the thing would no longer carry.
+        keys: Vec<String>,
     },
     /// The addressed fact doesn't exist, in an entity that does. Never
     /// auto-created, never guessed at — the live addresses come back so the

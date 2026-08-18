@@ -435,15 +435,17 @@ impl Memory for InMemoryMemory {
             .filter(|f| f.home == address.home)
             .map(|f| f.address().to_string())
             .collect();
-        let Some(fact) = facts
-            .iter_mut()
+        let Some(found) = facts
+            .iter()
             .find(|f| f.home == address.home && f.id == address.local)
+            .cloned()
         else {
             return Err(MemoryError::UnknownFact {
                 attempted: address.to_string(),
                 nearest,
             });
         };
+        let fact = &found;
         // A retracted row is out of reach of an ordinary edit — checked here,
         // beside the real store's copy, because one-way that holds in only one
         // adapter holds until somebody switches adapters.
@@ -463,11 +465,42 @@ impl Memory for InMemoryMemory {
         // claim goes back without fields, because the fields are the writes.
         let mut edited = self.projected(fact);
         apply_fact_patch(&mut edited, &patch)?;
-        *fact = Fact {
-            fields: Default::default(),
-            ..edited
-        };
-        let (home, id) = (fact.home.clone(), fact.id.clone());
+        // **The thing's fields as they will stand, against the thing's fields
+        // as they stand now** — the same guard the real store runs, so the two
+        // cannot come to disagree about what a write may cost.
+        let home = fact.home.clone();
+        let mine: Vec<Fact> = facts
+            .iter()
+            .filter(|f| f.home == home)
+            .map(|f| self.projected(f))
+            .collect();
+        let before = super::folded_fields(&mine);
+        let after = super::folded_fields(
+            &mine
+                .iter()
+                .map(|f| {
+                    if f.id == edited.id {
+                        edited.clone()
+                    } else {
+                        f.clone()
+                    }
+                })
+                .collect::<Vec<_>>(),
+        );
+        super::guard_fit(
+            &before,
+            &after,
+            &self.types.lock().expect("fake mutex poisoned"),
+        )?;
+        let id = fact.id.clone();
+        for held in facts.iter_mut() {
+            if held.home == home && held.id == id {
+                *held = Fact {
+                    fields: Default::default(),
+                    ..edited.clone()
+                };
+            }
+        }
         drop(facts);
         self.append_writes(&home, &id, super::writes_of(&patch));
         let facts = self.facts.lock().expect("fake mutex poisoned");
@@ -4833,6 +4866,128 @@ pub mod contract {
         );
     }
 
+    /// **The strict question keeps only what fits; the tolerant one still
+    /// reports the gaps.**
+    ///
+    /// Which question a reader is asking is the reader's choice, and `recall`
+    /// has let them make it for a while. Both halves in one case: strict alone
+    /// passes on a build that returns nothing, and tolerant alone passes on the
+    /// build this replaces.
+    ///
+    /// **The tolerant one is what a caller naming neither gets.** A thing
+    /// arriving with its gaps named can neither hide nor overclaim; a thing
+    /// missing from an answer looks exactly like a thing that is not there.
+    pub async fn search_keeps_only_what_fits_when_the_caller_asks<M: Memory, S: Search>(
+        store: &M,
+        search: &S,
+    ) {
+        let declared = store
+            .declare_type(DeclaredType::new(
+                "contract-pallet",
+                vec![
+                    Field::new("stacked", ValueType::Number),
+                    Field::new("shipped_on", ValueType::Date),
+                ],
+            ))
+            .await
+            .expect("declaring should succeed");
+
+        let whole = EntityId::new(EntityKind::Thing, "contract-pallet-whole");
+        for (key, value, said) in [
+            ("stacked", "12", "somebody counted the boxes"),
+            (
+                "shipped_on",
+                "2026-08-10",
+                "and somebody else stamped the day",
+            ),
+        ] {
+            capture(
+                store,
+                NewFact {
+                    fields: [(key.to_string(), value.to_string())].into_iter().collect(),
+                    ..NewFact::about(whole.clone(), said, date(2026, 8, 1))
+                },
+            )
+            .await;
+        }
+        let partial = EntityId::new(EntityKind::Thing, "contract-pallet-half");
+        capture(
+            store,
+            NewFact {
+                fields: [("stacked".to_string(), "3".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    partial.clone(),
+                    "a shorter stack, and no day",
+                    date(2026, 8, 2),
+                )
+            },
+        )
+        .await;
+
+        let strict = found(
+            search,
+            SearchQuery {
+                fits_type: Some(declared.clone()),
+                limit: 50,
+                ..Default::default()
+            },
+        )
+        .await;
+        let kept: Vec<&EntityId> = strict
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Entity { entity, .. } => Some(&entity.id),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            kept.contains(&&whole),
+            "a thing holding every key is what the strict question is for: {kept:?}"
+        );
+        assert!(
+            !kept.contains(&&partial),
+            "…and a thing with a gap is not in that answer: {kept:?}"
+        );
+
+        // The other question, over the same two things: both come back, and
+        // the incomplete one says what it lacks rather than disappearing.
+        let tolerant = found(
+            search,
+            SearchQuery {
+                answers_type: Some(declared),
+                limit: 50,
+                ..Default::default()
+            },
+        )
+        .await;
+        let answered: Vec<(&EntityId, &crate::memory::types::Match)> = tolerant
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Entity {
+                    entity, answers, ..
+                } => Some((&entity.id, answers.as_deref()?)),
+                _ => None,
+            })
+            .collect();
+        let (_, gapped) = answered
+            .iter()
+            .find(|(id, _)| **id == partial)
+            .unwrap_or_else(|| {
+                panic!("the tolerant question keeps the gapped thing: {answered:?}")
+            });
+        assert_eq!(
+            gapped.lacking,
+            vec!["shipped_on"],
+            "…and names the gap: {gapped:?}"
+        );
+        assert!(
+            answered.iter().any(|(id, _)| **id == whole),
+            "…without losing the whole one: {answered:?}"
+        );
+    }
+
     /// **A type query says which keys are wrong, and returns the thing
     /// anyway.**
     ///
@@ -4916,6 +5071,7 @@ pub mod contract {
         search_entity_hits_carry_their_edges(store, search).await;
 
         search_finds_things_that_answer_a_type_structurally(store, search).await;
+        search_keeps_only_what_fits_when_the_caller_asks(store, search).await;
         a_type_query_flags_a_bad_value_and_returns_the_record(store, search).await;
     }
 
@@ -5218,6 +5374,234 @@ pub mod contract {
     ///
     /// The store keeps a kind as a string and reads it back off the handle, so
     /// a kind arriving in the enum needs nothing migrated — but that is a claim
+    /// **A write cannot drop a thing below a type it already fits — and the
+    /// same write against a thing that fits nothing is allowed.**
+    ///
+    /// Three claims that only hold together. The refusal protects a thing that
+    /// IS something; the acceptance keeps a thing that is not something
+    /// repairable, which is the whole reason the check reads the result rather
+    /// than the change; and adding keys is never refused, because strict here
+    /// is a floor and not a ceiling.
+    ///
+    /// A contract case rather than a domain one: what is under test is that a
+    /// STORE refuses the write and keeps the record, which only a store can
+    /// answer for.
+    pub async fn a_write_cannot_break_a_fit_that_already_exists<M: Memory>(store: &M) {
+        store
+            .declare_type(DeclaredType::new(
+                "contract-service",
+                vec![
+                    Field::new("cost", ValueType::Number),
+                    Field::new("done_on", ValueType::Date),
+                ],
+            ))
+            .await
+            .expect("declaring a type of my own is accepted");
+
+        // A thing that fits: both keys, over two sittings, because that is how
+        // things get written down.
+        let whole = EntityId::new(EntityKind::Thing, "contract-fitting-thing");
+        let costed = capture(
+            store,
+            NewFact {
+                fields: [("cost".to_string(), "40".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(whole.clone(), "the annual service", date(2026, 4, 18))
+            },
+        )
+        .await;
+        capture(
+            store,
+            NewFact {
+                fields: [("done_on".to_string(), "2026-04-18".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(whole.clone(), "and it was done that day", date(2026, 4, 18))
+            },
+        )
+        .await;
+
+        let refused = store
+            .update_fact(
+                &costed.address(),
+                FactPatch {
+                    clear_fields: vec!["cost".to_string()],
+                    ..Default::default()
+                },
+            )
+            .await;
+        let Err(MemoryError::BreaksFit { name, keys }) = &refused else {
+            panic!("taking a key off a thing that fits must be refused, got {refused:?}");
+        };
+        assert_eq!(name, "contract-service", "the refusal names the type");
+        assert!(
+            keys.contains(&"cost".to_string()),
+            "…and the key that would go: {keys:?}"
+        );
+        assert_eq!(
+            read_back(store, &whole, &costed.id)
+                .await
+                .fields
+                .get("cost")
+                .map(String::as_str),
+            Some("40"),
+            "a refused write leaves the record exactly as it was"
+        );
+
+        // **The same write, against a thing that fits nothing: allowed.** A
+        // thing with one of the two keys was never a service, so there is
+        // nothing here to protect — and a rule that read the CHANGE rather
+        // than the result would refuse this one too and leave the record
+        // unrepairable.
+        let partial = EntityId::new(EntityKind::Thing, "contract-loose-record");
+        let half = capture(
+            store,
+            NewFact {
+                fields: [("cost".to_string(), "40".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    partial.clone(),
+                    "somebody wrote down a price",
+                    date(2026, 4, 18),
+                )
+            },
+        )
+        .await;
+        edit(
+            store,
+            &half.address(),
+            FactPatch {
+                clear_fields: vec!["cost".to_string()],
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(
+            !read_back(store, &partial, &half.id)
+                .await
+                .fields
+                .contains_key("cost"),
+            "a thing that fits nothing has nothing to protect, so the key goes"
+        );
+
+        // **Adding is never refused**, including a key no type names: the
+        // floor is what a type asks for, and everything above it is welcome.
+        let added = edit(
+            store,
+            &costed.address(),
+            FactPatch {
+                fields: [
+                    ("cost".to_string(), "45".to_string()),
+                    ("mechanic".to_string(), "somebody at the yard".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(
+            added.fields.get("mechanic").map(String::as_str),
+            Some("somebody at the yard"),
+            "a key no type mentions is welcome on a thing that fits one"
+        );
+        assert_eq!(added.fields.get("cost").map(String::as_str), Some("45"));
+    }
+
+    /// **Moving a record past is refused when it would break a fit; taking it
+    /// back is not.**
+    ///
+    /// A supersede and a clear are the same act with two spellings — both take
+    /// a key out of what the thing carries, neither is ceremonious, and a rule
+    /// that refused one and served the other would read as arbitrary.
+    ///
+    /// **Retraction is the other kind of write and is left alone.** It is
+    /// one-way, it is deliberate, and it says a record should never have been
+    /// written; refusing it because of what it costs a type would make a claim
+    /// somebody wants taken back impossible to take back. Guard the ordinary
+    /// writes, never the deliberate ones.
+    ///
+    /// Both in one case, on one record, because each half passes on its own
+    /// against a build that refuses everything or nothing.
+    pub async fn a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not<M: Memory>(
+        store: &M,
+    ) {
+        store
+            .declare_type(DeclaredType::new(
+                "contract-tenancy-run",
+                vec![
+                    Field::new("season", ValueType::Text),
+                    Field::new("pitch_fee", ValueType::Number),
+                ],
+            ))
+            .await
+            .expect("declaring a type of my own is accepted");
+
+        let held = EntityId::new(EntityKind::Thing, "contract-run-of-stalls");
+        let seasonal = capture(
+            store,
+            NewFact {
+                fields: [("season".to_string(), "summer".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(held.clone(), "the season it runs in", date(2026, 4, 18))
+            },
+        )
+        .await;
+        capture(
+            store,
+            NewFact {
+                fields: [("pitch_fee".to_string(), "14".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(held.clone(), "and what a pitch costs", date(2026, 4, 18))
+            },
+        )
+        .await;
+
+        // Only active records fold, so moving this one past takes its key out
+        // of what the thing carries — the same cost a clear has.
+        let refused = store
+            .update_fact(
+                &seasonal.address(),
+                FactPatch {
+                    status: Some(FactStatus::Superseded),
+                    ..Default::default()
+                },
+            )
+            .await;
+        let Err(MemoryError::BreaksFit { name, keys }) = &refused else {
+            panic!("moving a record past must cost what a clear costs, got {refused:?}");
+        };
+        assert_eq!(name, "contract-tenancy-run");
+        assert!(keys.contains(&"season".to_string()), "{keys:?}");
+        assert_eq!(
+            read_back(store, &held, &seasonal.id).await.status,
+            FactStatus::Active,
+            "a refused write leaves the record where it was"
+        );
+
+        // **The same record, taken back: served.** Retraction is deliberate and
+        // one-way, and a claim somebody wants taken back has to be takeable
+        // back whatever it costs a type.
+        let taken = store
+            .retract(
+                &seasonal.address(),
+                Some("it was never so"),
+                date(2026, 4, 19),
+            )
+            .await
+            .expect("a retraction is not refused by the fit guard");
+        assert_eq!(taken.retracted.status, FactStatus::Retracted);
+        assert_eq!(
+            read_back(store, &held, &seasonal.id).await.status,
+            FactStatus::Retracted,
+            "…and the store kept it"
+        );
+    }
+
     /// **A thing reads back as one dense row: its records' fields, folded.**
     ///
     /// What a thing IS gets written down over several sittings, so the answer
@@ -5571,6 +5955,8 @@ pub mod contract {
         a_declared_reference_key_is_walkable_against_the_store(store).await;
         a_pet_is_its_own_kind_in_the_store(store).await;
         a_thing_reads_back_as_its_fields_folded(store).await;
+        a_write_cannot_break_a_fit_that_already_exists(store).await;
+        a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not(store).await;
         a_long_history_is_cut_to_its_newest_and_says_how_many(store).await;
     }
 }

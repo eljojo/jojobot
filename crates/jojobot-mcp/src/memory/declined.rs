@@ -221,6 +221,22 @@ pub(crate) fn memory_declined(
                  a different name, and that type is yours to declare and redeclare as you like."
             ),
         )),
+        // **The write is well formed and the record is real** — what it would
+        // cost is a key the thing needs to go on being what it is. Re-sending
+        // it cannot change that, so the way forward is the choice the caller
+        // actually has: leave the key, or say the same thing somewhere the
+        // type can still see it.
+        MemoryError::BreaksFit { ref name, ref keys } => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. This thing answers '{name}' now, and {verb} would take \
+                 {} off it, so sending this call again will not change the answer. Leave the key \
+                 where it is, or write what you meant under a key of your own — adding keys is \
+                 never refused, and a thing may carry anything beyond what a type asks for.",
+                keys.join(", ")
+            ),
+        )),
         // **A different refusal, so a different way forward.** These two are
         // not malformed calls: the arguments are well-formed and jojobot is
         // declining to bless a claim the operator has not blessed. Telling a
@@ -256,6 +272,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::InvalidQuery(_)
         | MemoryError::InvalidType(_)
         | MemoryError::ShippedType { .. }
+        | MemoryError::BreaksFit { .. }
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NotRetractable { .. }

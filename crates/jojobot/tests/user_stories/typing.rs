@@ -137,18 +137,31 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     // **A THING answers a type, not one of its rows.** The bike's `serviced`
     // and its `cost` could have been written on different days by different
     // sessions; what makes the bike a serviced thing is that between them its
-    // records carry the keys. So the object comes back whole — the outing
-    // included, because the outing is one of the bike's records and the answer
-    // is about the bike.
+    // records carry the keys.
+    //
+    // **So the answer is the fold, and the records are not asked for.** Which
+    // sitting each key arrived in is not what "have I serviced it" is asking,
+    // and reading every claim to work out a thing's keys is the long way round
+    // a question the object now answers by itself.
     let serviced = s
         .shape(
             "the things that have been serviced",
-            json!({ "answers_type": "service", "facts": true }),
+            json!({ "answers_type": "service" }),
         )
         .await;
     serviced.says("thing:gravel-bike");
-    serviced.says("new chain and a full clean");
+    // Both keys on one row, off two records written on different days. That is
+    // the fold doing the work the type depends on.
+    serviced.says("\"serviced\":\"2026-03-14\"");
+    serviced.says("\"cost\":\"40\"");
+    // …and the outing's key is on the same row, because the fold is over
+    // everything the bike has, not over what the type asked about.
+    serviced.says("\"distance\":\"80\"");
     serviced.says("\"complete\":true");
+    // The claims are behind it and the answer says how many rather than leaving
+    // a reader to wonder whether the bike has any.
+    serviced.says("records are behind these fields");
+    serviced.never_says("new chain and a full clean");
     // The same negative, in the same answer that just proved it is not empty.
     serviced.never_says("thing:torque-wrench");
 

@@ -136,12 +136,18 @@ Shipped and live:
   piece at a time. **Conformance is asked of the THING, across all its records,
   never of one record alone** — `answers_type` selects things carrying *some* of
   a type's keys and says which each one lacks, and `fits_type` keeps only the
-  things with no gaps. **Nothing is gated by declaring**: a thing is found by
-  the keys it carries whether or not anybody declared the type, and matching
-  stays structural. A walk carries its own filters, and a key's declared value
-  type licenses comparison on it — before/after on a date, less/greater on a
-  number, equals on anything. Declaring buys write-time help plus ordering and
-  traversal on the keys it names, which is the first thing it is worth.
+  things with no gaps. **Which of the two you want is the reader's question**,
+  and the tolerant one is what a caller gets when they name neither. **Nothing
+  is gated on the way IN**: a thing is found by the keys it carries whether or
+  not anybody declared the type, matching stays structural, and a key no type
+  mentions is kept as written. **What a type asks for is a FLOOR:** once a
+  thing carries every key a type names, a write that would take one away is
+  refused, naming the type and the key. **Adding keys is never refused, and a
+  thing that answers no type is a first-class thing.** A walk carries its own
+  filters, and a key's declared value type licenses comparison on it —
+  before/after on a date, less/greater on a number, equals on anything.
+  Declaring buys write-time help, ordering and traversal on the keys it names,
+  and that floor.
 
 > **One front door, over both worlds.** Mail is in the same `search` — no
 > second verb, one ranked list — and **opt-in**: `include_mail: true` reaches

@@ -297,11 +297,48 @@ async fn moving_abroad() {
         .says("2027-02-09")
         .says("person:tulio");
 
-    // GAP — and the entity itself still has no date. `event:departure-flight`
-    // is a node whose occurrence lives on a claim about it, so "what is
-    // happening in February" has to read every event entity's claims rather
-    // than the entities.
-    //   s.happens_on("event:departure-flight", "2027-02-09").await;
+    // The other thing on the calendar, and nobody gave it a day under a key —
+    // which is what makes the read below mean anything.
+    s.add("event:leaving-party", "The Leaving Party").await;
+    s.fact("event:leaving-party", "the weekend before they fly")
+        .await;
+
+    // **"What is happening in February" reads the EVENTS, not their claims.**
+    // The day is on a record and the thing's fields are its records folded, so
+    // the date is on the event itself; declaring the type is what makes the
+    // window comparable.
+    s.call(
+        "declare_type",
+        json!({
+            "name": "departure",
+            "fields": [{ "key": "departs_on", "holds": "date" }],
+        }),
+    )
+    .await
+    .says("\"name\":\"departure\"");
+    let february = s
+        .shape(
+            "what is happening in February",
+            json!({
+                "kind": "event",
+                "facts": false,
+                "fields": [
+                    { "key": "departs_on", "compare": "after", "value": "2027-01-31" },
+                    { "key": "departs_on", "compare": "before", "value": "2027-03-01" },
+                ],
+            }),
+        )
+        .await;
+    february.says("event:departure-flight");
+    february.says("\"departs_on\":\"2027-02-09\"");
+
+    // GAP — and the answer is only the events somebody keyed. The party is as
+    // real a thing in February as the flight and it carries no day under any
+    // key, so nothing reaches it: an entity has no date of its own, and nothing
+    // asks for one when an event is created. The question is one read now and
+    // what it answers over is what a session remembered to file.
+    //   s.happens_on("event:leaving-party", "2027-02-06").await;
+    february.never_says("event:leaving-party");
     s.list("event").await.never_says("\"happens_on\"");
 
     s.wrap("movers quoted, flight sketched").await;

@@ -116,12 +116,26 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
     s.has_no_verb("whose_assistant", &["start_here", "search"])
         .await;
 
-    // GAP — no read composes "what MATTERS right now" for a person or a topic
-    // once a name is in hand. Composing the picture is served: one recall
-    // takes the subject, its prose and the objects it reaches to a depth, and
-    // the answer nests. What no read does is weigh the picture — nothing ranks
-    // a claim, nothing prefers the recent one, and a page of forty claims
-    // comes back as forty claims.
+    // And a read that only wants to know what somebody IS does not have to
+    // take everything ever said about them: the answer is the fields folded
+    // into one row, with the records counted behind it rather than shipped.
+    let dense = s
+        .shape(
+            "what jojobot holds on him, without every claim",
+            json!({"subject": "person:ned-flanders", "facts": false}),
+        )
+        .await;
+    dense.says("person:ned-flanders");
+    dense.says("records are behind these fields");
+    dense.never_says("left-handed");
+
+    // GAP — but no read composes "what MATTERS right now" for a person or a
+    // topic once a name is in hand. Composing the picture is served: one recall
+    // takes the subject, its fields, its prose and the objects it reaches to a
+    // depth, and the answer nests. Size is served too, by the read above. What
+    // no read does is WEIGH the picture — nothing ranks a claim, nothing
+    // prefers the recent one, and nothing says which of forty facts is the one
+    // that matters this morning.
     //   s.brief("person:ned-flanders").await;
     s.has_no_verb("brief", &["search", "recall"]).await;
 

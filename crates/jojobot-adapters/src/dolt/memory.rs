@@ -32,9 +32,9 @@ use jiff::civil::Date;
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
     FactPatch, FactStatus, FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact,
-    Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch, guard,
-    normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
-    search, standing_of,
+    Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch, folded_fields, guard,
+    guard_fit, normalize_content, normalize_details, normalize_prose, retraction_of,
+    screen_entity_patch, search, standing_of,
     types::{DeclaredType, Field, Origin, ValueType, guard_replacement, validate_type},
     validate_content, validate_details, validate_edge, validate_entity, validate_fields,
     validate_prose, validate_subject, writes_of,
@@ -313,6 +313,22 @@ impl DoltMemory {
             .max()
             .unwrap_or(0);
         Ok(FactId(format!("f{}", highest + 1)))
+    }
+
+    /// The declared types, read inside the transaction that is about to write.
+    ///
+    /// **Inside it rather than beside it**, because a guard that read the
+    /// declarations outside the write is a guard deciding against a roster that
+    /// may already have moved.
+    async fn types_in(tx: &mut Transaction<'_, MySql>) -> Result<Vec<DeclaredType>, MemoryError> {
+        let rows = sqlx::query(
+            "SELECT type_name, key_name, holds, origin FROM type_field
+             ORDER BY type_name, ordinal",
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        Ok(gather_types(&rows))
     }
 
     /// The addresses a page already holds, which is what a fact miss carries so
@@ -739,6 +755,26 @@ impl Memory for DoltMemory {
             });
         }
         apply_fact_patch(&mut fact, &patch)?;
+        // **The thing's fields as they will stand, against the thing's fields
+        // as they stand now.** A write may not drop a thing below a type it
+        // already fits; a thing that fits nothing has nothing to protect, so
+        // its records stay repairable. One function, called from both stores.
+        let held = Self::facts_of(&mut tx, &fact.home).await?;
+        let after: Vec<Fact> = held
+            .iter()
+            .map(|f| {
+                if f.id == fact.id {
+                    fact.clone()
+                } else {
+                    f.clone()
+                }
+            })
+            .collect();
+        guard_fit(
+            &folded_fields(&held),
+            &folded_fields(&after),
+            &Self::types_in(&mut tx).await?,
+        )?;
         Self::write_fact(&mut tx, &fact).await?;
         // **The edit appends.** The record reads back changed — that is the
         // surface — and the value it replaced stays where it was written.
@@ -908,24 +944,35 @@ impl Memory for DoltMemory {
         .fetch_all(&self.pool)
         .await
         .map_err(store)?;
-
-        let mut types: Vec<DeclaredType> = Vec::new();
-        for row in rows {
-            let name: String = row.get("type_name");
-            let field = Field::new(
-                &row.get::<String, _>("key_name"),
-                ValueType::of_token(&row.get::<String, _>("holds")).unwrap_or(ValueType::Text),
-            );
-            match types.last_mut() {
-                Some(last) if last.name == name => last.fields.push(field),
-                _ => types.push(DeclaredType {
-                    origin: read_origin(&row.get::<String, _>("origin")),
-                    ..DeclaredType::new(&name, vec![field])
-                }),
-            }
-        }
-        Ok(types)
+        Ok(gather_types(&rows))
     }
+}
+
+/// Rows into the types they are — **one reader**, so the roster a write is
+/// screened against and the roster a caller lists cannot come to be assembled
+/// two different ways.
+///
+/// **A row whose `holds` names no value type reads as text** rather than
+/// dropping the key. Text holds anything, so the key still describes what a
+/// writer should fill and still matches a record — where dropping it would
+/// quietly shrink a type and report the key as one no record carries.
+fn gather_types(rows: &[sqlx::mysql::MySqlRow]) -> Vec<DeclaredType> {
+    let mut types: Vec<DeclaredType> = Vec::new();
+    for row in rows {
+        let name: String = row.get("type_name");
+        let field = Field::new(
+            &row.get::<String, _>("key_name"),
+            ValueType::of_token(&row.get::<String, _>("holds")).unwrap_or(ValueType::Text),
+        );
+        match types.last_mut() {
+            Some(last) if last.name == name => last.fields.push(field),
+            _ => types.push(DeclaredType {
+                origin: read_origin(&row.get::<String, _>("origin")),
+                ..DeclaredType::new(&name, vec![field])
+            }),
+        }
+    }
+    types
 }
 
 /// Write one whole entity — the row and the aliases under it — replacing
