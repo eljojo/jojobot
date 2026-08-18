@@ -5218,6 +5218,237 @@ pub mod contract {
     ///
     /// The store keeps a kind as a string and reads it back off the handle, so
     /// a kind arriving in the enum needs nothing migrated — but that is a claim
+    /// **A thing reads back as one dense row: its records' fields, folded.**
+    ///
+    /// What a thing IS gets written down over several sittings, so the answer
+    /// to "what is this" is the fold and not the list of sittings. A caller
+    /// handed the records and left to fold them itself is a caller doing
+    /// jojobot's job.
+    ///
+    /// **The row is there whether or not the records are**, which is the half
+    /// that cannot be tested against the records alone: a fold taken from the
+    /// shipped list would come back empty on exactly the call that asked for
+    /// the dense answer and nothing else.
+    ///
+    /// **And it folds over ALL the thing's records rather than the kept ones.**
+    /// A filter chooses which objects come back; it does not change what each
+    /// one is.
+    pub async fn a_thing_reads_back_as_its_fields_folded<M: Memory>(store: &M) {
+        let subject = EntityId::new(EntityKind::Thing, "contract-folded-thing");
+        let sittings = [
+            [("weight", "11"), ("wheel", "700c")],
+            // The second sitting adds a key and writes one of the first
+            // sitting's again — the newest write is what the thing holds now.
+            [("weight", "12"), ("gears", "22")],
+        ];
+        for fields in sittings {
+            capture(
+                store,
+                NewFact {
+                    fields: fields
+                        .iter()
+                        .map(|(key, value)| (key.to_string(), value.to_string()))
+                        .collect(),
+                    ..NewFact::about(subject.clone(), "a sitting at the bench", date(2026, 4, 18))
+                },
+            )
+            .await;
+        }
+
+        let dense = graph::walk(
+            store,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(subject.clone()),
+                    ..graph::Selection::default()
+                },
+                include: graph::Include {
+                    facts: false,
+                    prose: false,
+                },
+                follow: None,
+                history: None,
+            },
+        )
+        .await
+        .expect("a handle is a selection");
+        let object = &dense[0];
+        assert_eq!(
+            object.fields,
+            [
+                ("gears".to_string(), "22".to_string()),
+                ("weight".to_string(), "12".to_string()),
+                ("wheel".to_string(), "700c".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            "one row, one value per key, the newest write winning"
+        );
+        assert!(
+            object.facts.is_empty(),
+            "…and the records themselves were not asked for: {:?}",
+            object.facts
+        );
+
+        // The other half, and the positive the negative above rests on: asking
+        // for the records still gets every one of them, each addressed.
+        let whole = graph::walk(
+            store,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(subject.clone()),
+                    ..graph::Selection::default()
+                },
+                include: graph::Include {
+                    facts: true,
+                    prose: false,
+                },
+                follow: None,
+                history: None,
+            },
+        )
+        .await
+        .expect("a handle is a selection");
+        assert_eq!(
+            whole[0].facts.len(),
+            2,
+            "the sittings are still reachable: {:?}",
+            whole[0].facts
+        );
+        assert_eq!(
+            whole[0].fields, object.fields,
+            "and the row does not change with them"
+        );
+        assert!(
+            whole[0]
+                .facts
+                .iter()
+                .all(|f| f.address().home == subject && f.address().local.ordinal().is_some()),
+            "every record keeps the address that makes it editable: {:?}",
+            whole[0].facts
+        );
+    }
+
+    /// **A history longer than the window comes back cut, and says how much
+    /// exists.**
+    ///
+    /// The read whose job is the small answer must not be able to flood the
+    /// caller it serves. The total is what makes the cut honest: it says how
+    /// many writes are there without handing them over.
+    ///
+    /// Both ends of the rule in one case, because a cap that always fires is
+    /// indistinguishable from one that never does: a history inside the window
+    /// comes back whole, with nothing left out.
+    pub async fn a_long_history_is_cut_to_its_newest_and_says_how_many<M: Memory>(store: &M) {
+        let subject = EntityId::new(EntityKind::Thing, "contract-long-history");
+        let written = graph::WRITES_SHOWN + 5;
+        for nth in 1..=written {
+            capture(
+                store,
+                NewFact {
+                    fields: [("weight".to_string(), nth.to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..NewFact::about(subject.clone(), "weighed at the bench", date(2026, 4, 18))
+                },
+            )
+            .await;
+        }
+        let asking = |key: &str| {
+            let key = key.to_string();
+            let subject = subject.clone();
+            async move {
+                graph::walk(
+                    store,
+                    &graph::GraphQuery {
+                        select: graph::Selection {
+                            subject: Some(subject),
+                            ..graph::Selection::default()
+                        },
+                        include: graph::Include {
+                            facts: false,
+                            prose: false,
+                        },
+                        follow: None,
+                        history: Some(graph::History::of(&key)),
+                    },
+                )
+                .await
+                .expect("a handle is a selection")
+            }
+        };
+
+        let found = asking("weight").await;
+        let history = found[0]
+            .history
+            .as_ref()
+            .expect("the query named a key, so the object carries its writes");
+        assert_eq!(
+            history.total, written,
+            "the answer says how many writes exist"
+        );
+        assert_eq!(
+            history.writes.len(),
+            graph::WRITES_SHOWN,
+            "…and hands back a window rather than all of them"
+        );
+        assert_eq!(history.elided(), 5, "…and how many it left out");
+        assert_eq!(
+            history
+                .writes
+                .iter()
+                .map(|w| w.value.as_deref())
+                .collect::<Vec<_>>(),
+            (6..=written)
+                .map(|nth| nth.to_string())
+                .collect::<Vec<_>>()
+                .iter()
+                .map(|v| Some(v.as_str()))
+                .collect::<Vec<_>>(),
+            "the window is the NEWEST writes, still oldest first inside it"
+        );
+
+        // A key written a handful of times is untouched by any of this, and
+        // says nothing was left out.
+        let short = EntityId::new(EntityKind::Thing, "contract-short-history");
+        for nth in 1..=3 {
+            capture(
+                store,
+                NewFact {
+                    fields: [("cost".to_string(), nth.to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..NewFact::about(short.clone(), "paid at the counter", date(2026, 4, 18))
+                },
+            )
+            .await;
+        }
+        let found = graph::walk(
+            store,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(short.clone()),
+                    ..graph::Selection::default()
+                },
+                include: graph::Include {
+                    facts: false,
+                    prose: false,
+                },
+                follow: None,
+                history: Some(graph::History::of("cost")),
+            },
+        )
+        .await
+        .expect("a handle is a selection");
+        let history = found[0].history.as_ref().expect("the query named a key");
+        assert_eq!((history.total, history.writes.len()), (3, 3));
+        assert_eq!(
+            history.elided(),
+            0,
+            "a history that fits leaves nothing out, and says so"
+        );
+    }
+
     /// about the store rather than about the enum, and only a store can answer
     /// it. The negative is the filter: a pet is not returned by a listing of
     /// things, so the kind is carried rather than defaulted to something.
@@ -5339,5 +5570,7 @@ pub mod contract {
         a_graph_query_filters_on_a_stored_value_and_walks_an_edge(store).await;
         a_declared_reference_key_is_walkable_against_the_store(store).await;
         a_pet_is_its_own_kind_in_the_store(store).await;
+        a_thing_reads_back_as_its_fields_folded(store).await;
+        a_long_history_is_cut_to_its_newest_and_says_how_many(store).await;
     }
 }

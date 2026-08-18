@@ -114,19 +114,23 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
     }
 }
 
-/// **The whole-page query**: one handle, its facts, no walk. What `recall`
+/// **The whole-page query**: one handle, its records, no walk. What `recall`
 /// answered before it could walk, and still the commonest thing asked of it.
+///
+/// **It asks for the records explicitly**, since they are off by default: a
+/// case that asserts on what a claim SAYS has to ask for the claim.
 pub(crate) fn recall_args(subject: &str) -> RecallArgs {
     RecallArgs {
         subject: Some(subject.into()),
         kind: None,
         answers_type: None,
         fields: None,
-        facts: None,
+        facts: Some(true),
         prose: None,
         follow: None,
         sid: None,
         history: None,
+        history_most: None,
     }
 }
 

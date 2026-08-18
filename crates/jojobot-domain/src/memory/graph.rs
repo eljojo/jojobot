@@ -308,13 +308,13 @@ pub struct GraphQuery {
     /// Which edges to walk. `None` walks none, and the answer is flat.
     pub follow: Option<Follow>,
     /// **A key whose writes come back on every object in the answer**, oldest
-    /// first. `None` asks for none, which is the ordinary read: current truth,
-    /// one value per key.
+    /// first, and how many of them. `None` asks for none, which is the ordinary
+    /// read: current truth, one value per key.
     ///
     /// It is read from the store rather than from the objects' records, because
     /// what a record carries is the projection — the writes it replaced are not
     /// on it any more.
-    pub history: Option<String>,
+    pub history: Option<History>,
 }
 
 impl GraphQuery {
@@ -531,9 +531,27 @@ pub struct Object {
     pub entity: Entity,
     /// How the walk got here; `None` on a root.
     pub via: Option<Via>,
+    /// **What this thing IS: every record's fields, folded into one map.**
+    ///
+    /// One value per key, the newest write winning — the dense row a caller
+    /// wants when the question is what the thing is rather than what was said
+    /// about it. **Always here**, whatever else the query asked for, because it
+    /// is the answer rather than a part of it, and a caller that had to fold
+    /// the records itself would be doing jojobot's job.
+    ///
+    /// **Folded over ALL of the thing's records, never the kept ones.** A
+    /// filter says which objects the caller is after; it does not change what
+    /// each one is. A row that shrank because the query narrowed would be a
+    /// different thing on every call.
+    pub fields: BTreeMap<String, String>,
     /// Its facts — the ones that answered the record filters, or all of them
     /// when none were given. Empty when facts were not asked for.
     pub facts: Vec<Fact>,
+    /// **How many records are behind the fields**, whether or not they came
+    /// back. It is what lets an answer that left them out say so, and say how
+    /// much it left out — an empty [`Object::facts`] otherwise means both
+    /// "nobody asked" and "nothing is recorded here".
+    pub facts_held: usize,
     /// Its prose, whole. `None` when prose was not asked for, so a caller can
     /// tell "not asked for" from "the page is blank".
     pub prose: Option<String>,
@@ -564,18 +582,67 @@ pub struct Object {
     pub history: Option<KeyHistory>,
 }
 
-/// Every write of one key on one object, and the key it answers for.
+/// Every write of one key on one object, capped, and how many there are.
 ///
-/// The count is the length of [`KeyHistory::writes`] and is not stored beside
-/// them: a total that could disagree with the list it totals is a second copy
-/// of one truth.
+/// **The total is stored beside the writes because they are not the same
+/// number.** A history that fits comes back whole and the two agree; a history
+/// longer than the window comes back cut, and the total is what makes the cut
+/// honest — a caller learns how much exists without being handed it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyHistory {
     /// The key asked for, exactly as the caller spelled it.
     pub key: String,
-    /// Its writes, oldest first. Empty when nobody has written the key on this
+    /// The writes that came back, oldest first: **the newest ones**, when there
+    /// were more than the window. Empty when nobody has written the key on this
     /// object — which is an answer, and a different one from `None`.
+    ///
+    /// The newest end is kept for the reason a session's chronology keeps its
+    /// newest entries: what a thing has been doing lately is what a reader is
+    /// nearly always after, and the far end of a long history is reachable by
+    /// asking for a bigger window.
     pub writes: Vec<super::FieldWrite>,
+    /// **How many writes exist behind the key**, whatever came back.
+    pub total: usize,
+}
+
+impl KeyHistory {
+    /// How many writes the window left out. Zero when the history fits, which
+    /// is what a renderer branches on to keep an ordinary answer free of
+    /// elision noise.
+    pub fn elided(&self) -> usize {
+        self.total.saturating_sub(self.writes.len())
+    }
+}
+
+/// **Which key's writes to bring back, and how many of them.**
+///
+/// One value rather than two loose arguments, because a window with no key is
+/// not a question anybody can ask.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct History {
+    /// The key.
+    pub key: String,
+    /// The most writes to return. A key written more times than this comes back
+    /// cut, saying so.
+    pub most: usize,
+}
+
+/// **How many of a key's writes come back when the caller does not say.**
+///
+/// The same twenty `list_sent` shows of a bot's own mail, for the same reason:
+/// it is enough to see the shape of what is there, and small enough that an
+/// answer cannot bury the caller who asked one narrow question. A caller that
+/// needs the far end asks for a bigger window.
+pub const WRITES_SHOWN: usize = 20;
+
+impl History {
+    /// This key, with the default window.
+    pub fn of(key: &str) -> Self {
+        History {
+            key: key.to_string(),
+            most: WRITES_SHOWN,
+        }
+    }
 }
 
 /// **The walk, over a store's own documents.** Pure: no I/O, no store, so the
@@ -842,6 +909,8 @@ impl<'a> Ctx<'a> {
         Object {
             entity,
             via,
+            fields: self.folded(id),
+            facts_held: kept.len(),
             facts: if query.include.facts {
                 kept.into_iter().cloned().collect()
             } else {
@@ -1068,9 +1137,9 @@ where
     // **The history is read after the shape is decided**, once per object in
     // the answer: the walk cannot know which objects it will return, and a read
     // of every entity's writes would pay for the ones nobody asked about.
-    if let Some(key) = &query.history {
+    if let Some(wanted) = &query.history {
         for object in &mut found {
-            fill_history(store, object, key).await?;
+            fill_history(store, object, wanted).await?;
         }
     }
     Ok(found)
@@ -1084,18 +1153,29 @@ where
 fn fill_history<'a, M>(
     store: &'a M,
     object: &'a mut Object,
-    key: &'a str,
+    wanted: &'a History,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), MemoryError>> + Send + 'a>>
 where
     M: super::Memory + ?Sized,
 {
     Box::pin(async move {
+        let mut writes = store.history(&object.entity.id, &wanted.key).await?;
+        let total = writes.len();
+        // **The window is cut from the old end, and the answer keeps its
+        // order.** A caller reading a capped history reads the newest writes
+        // oldest-first, which is the same shape a short history has — so
+        // nothing has to be read differently because it was cut.
+        if total > wanted.most {
+            writes.drain(..total - wanted.most);
+        }
+
         object.history = Some(KeyHistory {
-            key: key.to_string(),
-            writes: store.history(&object.entity.id, key).await?,
+            key: wanted.key.clone(),
+            writes,
+            total,
         });
         for reached in &mut object.connected {
-            fill_history(store, reached, key).await?;
+            fill_history(store, reached, wanted).await?;
         }
         Ok(())
     })

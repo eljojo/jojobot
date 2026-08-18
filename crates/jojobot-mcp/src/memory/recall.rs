@@ -131,8 +131,15 @@ pub struct RecallArgs {
     /// record, not two separate questions.
     #[serde(default)]
     pub fields: Option<Vec<KeyFilterArgs>>,
-    /// Whether each object's facts come back. **True by default.** Turn it off
-    /// when you want the shape of the graph and not its contents.
+    /// Whether each object's records come back — the claims its fields were
+    /// folded from, each with its own wording, provenance and the address that
+    /// edits it.
+    ///
+    /// **Off by default.** The fields are what a thing IS and they come back
+    /// always; the records say the same thing at length, and shipping every one
+    /// of them unasked is the cost a caller cannot decline. Ask for them when
+    /// you need a claim's own words, where it came from, or its address —
+    /// and an answer that left them out says how many there were.
     #[serde(default)]
     pub facts: Option<bool>,
     /// Whether each object's **prose** comes back — the human half of its page,
@@ -157,6 +164,15 @@ pub struct RecallArgs {
     /// and nothing was recorded under that key.
     #[serde(default)]
     pub history: Option<String>,
+    /// **How many of that key's writes come back**, newest kept. Twenty when
+    /// you do not say.
+    ///
+    /// A key written a thousand times would otherwise be a thousand entries in
+    /// an answer somebody asked one narrow question of. The answer always says
+    /// how many writes exist and how many it left out, so raising this is how
+    /// you reach the far end — deliberately, rather than by surprise.
+    #[serde(default)]
+    pub history_most: Option<u32>,
     /// Which edges to walk. Omit to walk none, and the answer is flat.
     #[serde(default)]
     pub follow: Option<FollowArgs>,
@@ -191,9 +207,10 @@ fn key_filters(args: &[KeyFilterArgs]) -> Result<Vec<graph::FieldFilter>, McpErr
 /// `value` would say the same thing to a reader who already knew the
 /// convention, and nothing to one who did not.
 fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
-    serde_json::json!({
+    let mut body = serde_json::json!({
         "key": history.key,
-        "count": history.writes.len(),
+        "count": history.total,
+        "shown": history.writes.len(),
         "writes": history.writes.iter().map(|write| {
             let mut rendered = serde_json::json!({
                 "record": write.fact.to_string(),
@@ -208,7 +225,24 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
             }
             rendered
         }).collect::<Vec<_>>(),
-    })
+    });
+    // **A cut says so, and says the way past itself.** A window that quietly
+    // dropped the older writes would read as a complete history — the one
+    // reading a caller cannot check and would have no reason to doubt.
+    if let Some(fields) = body.as_object_mut()
+        && history.elided() > 0
+    {
+        fields.insert(
+            "older".into(),
+            format!(
+                "{} older writes are not here — ask again with a bigger history_most to reach \
+                 them",
+                history.elided()
+            )
+            .into(),
+        );
+    }
+    body
 }
 
 /// One object on the wire, and everything it reached.
@@ -222,8 +256,34 @@ fn object_json(object: &graph::Object, include: graph::Include) -> serde_json::V
     let Some(fields) = body.as_object_mut() else {
         return body;
     };
+    // **What the thing IS, in one row.** Always here: every record's fields
+    // folded together, one value per key. It is the answer to the question a
+    // caller usually has, and it is a fraction of the size of the records it
+    // was folded from.
+    fields.insert(
+        "fields".into(),
+        object
+            .fields
+            .iter()
+            .map(|(key, value)| (key.clone(), serde_json::Value::from(value.as_str())))
+            .collect::<serde_json::Map<_, _>>()
+            .into(),
+    );
+    // **Eliding is never silent.** Without the note an object carrying no
+    // `facts` key says both "you did not ask for them" and "there is nothing
+    // recorded here", and a reader who has to infer which will infer wrong.
     if include.facts {
         fields.insert("facts".into(), object.facts.iter().map(fact_json).collect());
+    } else if object.facts_held > 0 {
+        fields.insert(
+            "records".into(),
+            format!(
+                "{} records are behind these fields and are not here — ask again with facts: \
+                 true to read them, each with the address that edits it",
+                object.facts_held
+            )
+            .into(),
+        );
     }
     if let Some(prose) = object.prose.as_ref() {
         fields.insert("prose".into(), prose.as_str().into());
@@ -292,9 +352,13 @@ impl Jojobot {
                        between them, whether or not anybody declared it one, and carrying SOME of \
                        them is enough: the answer says which it lacks), and fields (a key, and \
                        the value it holds; omit the value to ask only that the key is there). \
-                       WHAT OF EACH: facts, on \
-                       by default, each carrying the address that makes it editable through \
-                       update_fact; prose, off by default, which is the human half of the \
+                       WHAT OF EACH: every object always comes back as its FIELDS — every \
+                       record about it folded together, one value per key, the newest write \
+                       winning. Those fields are what the thing IS, and they answer most \
+                       questions; the records behind them are bigger and say the same thing at \
+                       length. Ask for facts when you need a claim's own wording, its \
+                       provenance, or the address that edits it, and the answer says how many \
+                       records it left out when you did not. Then prose, off by default, which is the human half of the \
                        object's page, whole; and history, which names ONE KEY and brings back \
                        every write of it, oldest first. A read is current truth — one value per \
                        key, the newest write — and history is the other question the same data \
@@ -302,7 +366,9 @@ impl Jojobot {
                        arrived in and its date. THE COUNT OF THE WRITES IS THE ANSWER TO HOW \
                        MANY TIMES, so a key a sitting records once each time something happens \
                        is how you count occurrences. A key nobody wrote comes back as no \
-                       writes, never as a refusal. WHICH EDGES: follow {shape, direction, depth}, and \
+                       writes, never as a refusal. A long history comes back CUT to its newest \
+                       twenty, saying how many exist and how many it left out; history_most \
+                       raises the window when you really want the far end. WHICH EDGES: follow {shape, direction, depth}, and \
                        THE ANSWER NESTS — a walked object carries the objects it reached, each \
                        carrying its own. NARROW A WALK WITH follow.fits_type, which is the \
                        stricter half of the pair: answers_type selects objects carrying SOME of \
@@ -414,7 +480,7 @@ impl Jojobot {
             })
             .transpose()?;
         let include = graph::Include {
-            facts: args.facts.unwrap_or(true),
+            facts: args.facts.unwrap_or(false),
             prose: args.prose.unwrap_or(false),
         };
         let query = graph::GraphQuery {
@@ -428,7 +494,12 @@ impl Jojobot {
             follow,
             // Trimmed like every other key a caller names, so `donuts_eaten `
             // asks the question `donuts_eaten` answers.
-            history: args.history.as_deref().map(|k| k.trim().to_string()),
+            history: args.history.as_deref().map(|key| graph::History {
+                key: key.trim().to_string(),
+                most: args
+                    .history_most
+                    .map_or(graph::WRITES_SHOWN, |most| most as usize),
+            }),
         };
 
         let found = match graph::walk(self.memory.as_ref(), &query).await {
@@ -452,18 +523,21 @@ mod tests {
     use crate::harness::*;
     use crate::memory::testing::*;
 
-    /// The whole-page query, spelled once: one handle, facts and nothing else.
+    /// The whole-page query, spelled once: one handle, its records and nothing
+    /// else. **It asks for the records**, which are off by default — a case
+    /// asserting on a claim's own wording has to ask for the claim.
     fn of(subject: &str) -> RecallArgs {
         RecallArgs {
             subject: Some(subject.into()),
             kind: None,
             answers_type: None,
             fields: None,
-            facts: None,
+            facts: Some(true),
             prose: None,
             follow: None,
             sid: None,
             history: None,
+            history_most: None,
         }
     }
 
@@ -535,6 +609,219 @@ mod tests {
         assert!(
             plain["objects"][0].get("history").is_none(),
             "a call that asked for no key is not charged for one: {plain}"
+        );
+    }
+
+    /// **A thing comes back as one dense row, and the records it was folded
+    /// from say they are not here.**
+    ///
+    /// The whole point of the read: a caller asking what a thing IS gets one
+    /// value per key rather than every claim ever made about it. Both halves,
+    /// because a row that is always there and records that are always there is
+    /// the build this replaces.
+    #[tokio::test]
+    async fn recall_answers_with_the_folded_row_and_names_what_it_left_out() {
+        let jojobot = handler();
+        for (key, value, content) in [
+            ("weight", "11", "weighed at the bench"),
+            ("wheel", "700c", "measured the rim"),
+            ("weight", "12", "weighed again after the rebuild"),
+        ] {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    metadata: Some([(key.to_string(), value.to_string())].into_iter().collect()),
+                    ..capture_args("thing:gravel-bike", content)
+                },
+            )
+            .await;
+        }
+
+        let dense = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    facts: Some(false),
+                    ..of("thing:gravel-bike")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let object = &dense["objects"][0];
+        assert_eq!(
+            object["fields"],
+            serde_json::json!({"weight": "12", "wheel": "700c"}),
+            "one row, the newest write winning a repeated key: {object}"
+        );
+        assert!(
+            object.get("facts").is_none(),
+            "the records were not asked for: {object}"
+        );
+        let note = object["records"]
+            .as_str()
+            .expect("an answer that left the records out says so");
+        assert!(
+            note.contains('3') && note.contains("facts"),
+            "…how many there are, and the call that returns them: {note}"
+        );
+
+        // The other half: asked for, they come back — with the addresses that
+        // make them editable, which is what a caller loses if the dense read
+        // is the only one.
+        let whole = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    facts: Some(true),
+                    ..of("thing:gravel-bike")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let object = &whole["objects"][0];
+        assert_eq!(
+            object["facts"].as_array().map(Vec::len),
+            Some(3),
+            "every record is reachable: {object}"
+        );
+        assert_eq!(object["facts"][0]["address"], "thing:gravel-bike#f1");
+        assert!(
+            object.get("records").is_none(),
+            "…and nothing was left out, so nothing says it was: {object}"
+        );
+        assert_eq!(
+            object["fields"], dense["objects"][0]["fields"],
+            "the row does not change with the records"
+        );
+    }
+
+    /// **The records are off unless the call asks**, and the fields are not.
+    ///
+    /// The default itself, which every other case here now states explicitly —
+    /// so a build that quietly went back to shipping every claim would pass
+    /// all of them and fail this one. It reads a plain call, the one an agent
+    /// makes when it knows nothing about arguments.
+    #[tokio::test]
+    async fn a_plain_recall_ships_the_fields_and_not_the_records() {
+        let jojobot = handler();
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                metadata: Some(
+                    [("weight".to_string(), "11".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("thing:gravel-bike", "weighed at the bench")
+            },
+        )
+        .await;
+
+        let plain = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("thing:gravel-bike".into()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let object = &plain["objects"][0];
+        assert_eq!(
+            object["fields"],
+            serde_json::json!({"weight": "11"}),
+            "what the thing is comes back unasked: {object}"
+        );
+        assert!(
+            object.get("facts").is_none(),
+            "…and the claims behind it do not: {object}"
+        );
+        assert!(
+            object["records"].as_str().is_some_and(|n| n.contains('1')),
+            "…and the answer says they are there and how to read them: {object}"
+        );
+    }
+
+    /// **A history longer than the window comes back cut, and the answer says
+    /// how many exist and how to reach the rest.**
+    ///
+    /// A read whose job is the small answer must not be able to flood the
+    /// caller it serves. The short case is asserted beside it because a cap
+    /// that fires always and a cap that fires never look the same from one
+    /// call.
+    #[tokio::test]
+    async fn a_long_history_is_capped_on_the_wire_and_says_what_it_left_out() {
+        let jojobot = handler();
+        let written = jojobot_domain::memory::graph::WRITES_SHOWN + 5;
+        for nth in 1..=written {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    metadata: Some(
+                        [("donuts_eaten".to_string(), nth.to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args("alpha", &format!("ate one, number {nth}"))
+                },
+            )
+            .await;
+        }
+
+        let capped = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    history: Some("donuts_eaten".into()),
+                    facts: Some(false),
+                    ..of("alpha")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let history = &capped["objects"][0]["history"];
+        assert_eq!(
+            history["count"], written,
+            "the answer says how many writes exist: {history}"
+        );
+        assert_eq!(
+            history["shown"],
+            jojobot_domain::memory::graph::WRITES_SHOWN,
+            "…and how many it handed over"
+        );
+        assert_eq!(
+            history["writes"].as_array().map(Vec::len),
+            Some(jojobot_domain::memory::graph::WRITES_SHOWN),
+            "…which is what it actually handed over: {history}"
+        );
+        assert_eq!(
+            history["writes"][0]["value"], "6",
+            "the window is the newest writes, still oldest first: {history}"
+        );
+        let older = history["older"]
+            .as_str()
+            .expect("a cut answer says it was cut");
+        assert!(
+            older.contains('5') && older.contains("history_most"),
+            "…how many are missing, and the way to them: {older}"
+        );
+
+        // Raising the window is that way, and it works — the whole history,
+        // and no note, because nothing was left out.
+        let whole = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    history: Some("donuts_eaten".into()),
+                    history_most: Some(written as u32),
+                    facts: Some(false),
+                    ..of("alpha")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let history = &whole["objects"][0]["history"];
+        assert_eq!(history["writes"].as_array().map(Vec::len), Some(written));
+        assert_eq!(history["writes"][0]["value"], "1");
+        assert!(
+            history.get("older").is_none(),
+            "a history that came back whole carries no elision noise: {history}"
         );
     }
 
@@ -746,6 +1033,9 @@ mod tests {
                         value: Some("yes".into()),
                         compare: None,
                     }]),
+                    // The claim that answered is what this case is about, so
+                    // it asks for the records the fold is taken from.
+                    facts: Some(true),
                     ..of_nothing()
                 }))
                 .await
@@ -770,6 +1060,9 @@ mod tests {
                         keeping: None,
                         fits_type: None,
                     }),
+                    // The claim a reached object carries is what the walk half
+                    // asserts on, so this half asks for the records too.
+                    facts: Some(true),
                     ..of_nothing()
                 }))
                 .await
@@ -846,6 +1139,7 @@ mod tests {
             &jojobot
                 .recall(Parameters(RecallArgs {
                     answers_type: Some("service".into()),
+                    facts: Some(true),
                     ..of_nothing()
                 }))
                 .await
@@ -1089,6 +1383,7 @@ mod tests {
             follow: None,
             sid: None,
             history: None,
+            history_most: None,
         }
     }
 }
