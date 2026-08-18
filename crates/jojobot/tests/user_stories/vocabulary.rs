@@ -44,6 +44,7 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
         json!({
             "cadence_days": "60",
             "advances_from": "the day it happened",
+            "counts_from": "2026-06-30",
             "last_check_in": "2026-06-30",
             "outcome": "no play in it",
         }),
@@ -87,7 +88,7 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
     // NAME — which is what a reader acts on. A count would leave them nothing
     // to fill in.
     described.says("thing:torque-wrench");
-    described.says("\"lacking\":[\"last_check_in\",\"outcome\"]");
+    described.says("\"lacking\":[\"counts_from\",\"last_check_in\",\"outcome\"]");
     // …and the negative in the same answer that just proved it is not empty:
     // the trip shares no key with a rhythm, so it is not a weak match.
     described.never_says("event:trail-survey");
@@ -173,12 +174,12 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
     listed.says("Types that do exist");
     listed.says("rhythm");
     // …and the keys under that name are the ones the software shipped: the
-    // wrench still lacks exactly the two it never wrote, and the key the
+    // wrench still lacks exactly the three it never wrote, and the key the
     // refused call would have replaced them with is nowhere.
     let still = s
         .call("search", json!({ "answers_type": "rhythm", "limit": 50 }))
         .await;
-    still.says("\"lacking\":[\"last_check_in\",\"outcome\"]");
+    still.says("\"lacking\":[\"counts_from\",\"last_check_in\",\"outcome\"]");
     still.never_says("cadence_km");
 
     s.wrap("used the vocabulary the software came with, and found its own name refused")

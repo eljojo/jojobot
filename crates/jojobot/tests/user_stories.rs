@@ -49,6 +49,8 @@ mod moving;
 mod party;
 #[path = "user_stories/pets.rs"]
 mod pets;
+#[path = "user_stories/rhythms.rs"]
+mod rhythms;
 #[path = "user_stories/sourcing.rs"]
 mod sourcing;
 #[path = "user_stories/spotlight.rs"]

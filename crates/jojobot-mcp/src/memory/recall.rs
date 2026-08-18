@@ -7,6 +7,8 @@
 //! when a filter chose them. A verb whose answer changed shape with its
 //! arguments would make every caller branch on which question they had asked.
 
+use jojobot_domain::attention;
+
 use super::*;
 use jojobot_domain::memory::graph;
 
@@ -192,6 +194,22 @@ pub struct RecallArgs {
     /// you reach the far end — deliberately, rather than by surprise.
     #[serde(default)]
     pub history_most: Option<u32>,
+    /// **Keep only the rhythms that have gone quiet**, as of a date.
+    ///
+    /// A rhythm is next due a cadence after the date its cycle counts from, and
+    /// this keeps the ones that day has reached. It OFFERS and never acts:
+    /// arithmetic on a declared cadence and a recorded date, never a judgement
+    /// that something should run.
+    ///
+    /// **A rhythm whose schedule cannot be read comes back overdue**, carrying
+    /// its fields so you can see which key it is short of. That is deliberate:
+    /// a half-built loop that surfaced at no read ever would never be heard
+    /// from again.
+    ///
+    /// Pair it with `kind: "rhythm"`. It keeps objects of any kind that carry a
+    /// schedule, because matching here is structural like everywhere else.
+    #[serde(default)]
+    pub overdue: Option<OverdueArgs>,
     /// Which edges to walk. Omit to walk none, and the answer is flat.
     #[serde(default)]
     pub follow: Option<FollowArgs>,
@@ -200,6 +218,25 @@ pub struct RecallArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub sid: Option<String>,
+}
+
+/// **The overdue question of a `recall`** — which rhythms have gone quiet, as
+/// of a date.
+///
+/// It is a sub-object rather than a flag beside a date because the date only
+/// means anything when the question is asked. Two flat arguments would admit a
+/// call that names a day and filters nothing, which reads as an answer to a
+/// question nobody asked.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct OverdueArgs {
+    /// **The date the question is asked about**, `YYYY-MM-DD`. Omit it and
+    /// jojobot uses today — the one clock read, taken here at the edge, and the
+    /// answer says which day it used.
+    ///
+    /// Naming a date is what makes *what has gone quiet by next Friday* a
+    /// question this can be asked.
+    #[serde(default)]
+    pub as_of: Option<String>,
 }
 
 /// The key filters of a call, wherever they sit: a selection describes the
@@ -500,6 +537,14 @@ impl Jojobot {
                 })
             })
             .transpose()?;
+        // **The one clock read, and only when the question needs it.** The
+        // domain reads no clock at all: it is handed the date and stays a
+        // function of its arguments, so *what is overdue as of next Friday* is
+        // the same code path as *what is overdue now*.
+        let as_of = match &args.overdue {
+            None => None,
+            Some(overdue) => Some(parse_date(overdue.as_of.as_deref())?),
+        };
         let include = graph::Include {
             facts: args.facts.unwrap_or(false),
             prose: args.prose.unwrap_or(false),
@@ -523,12 +568,25 @@ impl Jojobot {
             }),
         };
 
-        let found = match graph::walk(self.memory.as_ref(), &query).await {
+        let mut found = match graph::walk(self.memory.as_ref(), &query).await {
             Ok(found) => found,
             Err(e) => return memory_declined("recall", e),
         };
+        // **The arithmetic is the domain's and the selection is here.** It is
+        // asked of the object's FOLDED fields — every write on it, one value
+        // per key — because a rhythm is described a record at a time: the
+        // record that set it up carries the cadence, and each check-in since
+        // carries what it found.
+        if let Some(as_of) = as_of {
+            found.retain(|object| attention::overdue(&object.fields, as_of));
+        }
         let body = serde_json::json!({
             "count": found.len(),
+            // **The day the question was asked about**, and null when it asked
+            // about none. A caller that let jojobot supply today has no other
+            // way to learn which day that was, and an answer about an unnamed
+            // day is one nobody can check.
+            "overdue_as_of": as_of.map(|d| d.to_string()),
             "objects": found
                 .iter()
                 .map(|o| object_json(o, include))
@@ -556,10 +614,195 @@ mod tests {
             facts: Some(true),
             prose: None,
             follow: None,
+            overdue: None,
             sid: None,
             history: None,
             history_most: None,
         }
+    }
+
+    /// A rhythm under something, holding a whole schedule.
+    async fn a_rhythm(jojobot: &Jojobot, handle: &str, cadence: &str, counts_from: &str) {
+        ensure(jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", handle, handle)
+            }))
+            .await
+            .expect("add ok");
+        capture_ok(
+            jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [
+                        ("cadence_days".to_string(), cadence.to_string()),
+                        ("advances_from".to_string(), "due_date".to_string()),
+                        ("counts_from".to_string(), counts_from.to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args(&format!("rhythm:{handle}"), "the loop, set up")
+            },
+        )
+        .await;
+    }
+
+    /// Which handles an answer came back with, in order.
+    fn handles(body: &serde_json::Value) -> Vec<String> {
+        body["objects"]
+            .as_array()
+            .expect("an answer carries objects")
+            .iter()
+            .map(|o| {
+                o["id"]
+                    .as_str()
+                    .expect("an object has a handle")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// **Which rhythms have gone quiet, as of a date the caller names.**
+    ///
+    /// Two loops on different cadences and one date: the answer is the
+    /// difference between them. Asserted with the loop that is NOT overdue in
+    /// the same store, because an answer that returns everything is
+    /// indistinguishable from one that returns the right things.
+    ///
+    /// The date is an argument, so the same store gives a different answer for
+    /// a later day — which is what makes *what is overdue as of next Friday* a
+    /// question this can be asked, and what stops the case rotting when the
+    /// calendar moves.
+    #[tokio::test]
+    async fn recall_says_which_rhythms_have_gone_quiet_as_of_a_date() {
+        let jojobot = handler();
+        a_rhythm(&jojobot, "descale", "7", "2026-08-01").await;
+        a_rhythm(&jojobot, "deep-clean", "90", "2026-08-01").await;
+
+        let quiet = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    overdue: Some(OverdueArgs {
+                        as_of: Some("2026-08-10".into()),
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            handles(&quiet),
+            vec!["rhythm:descale".to_string()],
+            "the weekly loop fell due on the eighth and the quarterly one has not: {quiet}",
+        );
+        assert_eq!(
+            quiet["overdue_as_of"], "2026-08-10",
+            "the answer says which day it was asked about: {quiet}",
+        );
+
+        // The same store, a later day: the quarterly one has fallen due too.
+        // Without this the case passes on a build that keeps whatever it likes.
+        let later = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    overdue: Some(OverdueArgs {
+                        as_of: Some("2026-11-01".into()),
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            handles(&later),
+            vec![
+                "rhythm:deep-clean".to_string(),
+                "rhythm:descale".to_string()
+            ],
+            "both loops have gone quiet by November: {later}",
+        );
+
+        // And the positive the filter rests on: without it the read is the
+        // ordinary one and both come back whatever the date.
+        let all = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            handles(&all).len(),
+            2,
+            "an unfiltered read keeps both: {all}"
+        );
+        assert_eq!(
+            all["overdue_as_of"],
+            serde_json::Value::Null,
+            "and it names no date, because it asked about none: {all}",
+        );
+    }
+
+    /// **A rhythm that cannot say when it is due is overdue**, which is the
+    /// loud answer rather than the tidy one: the alternative is a half-built
+    /// loop that surfaces at no boot ever and is never heard from again.
+    ///
+    /// It comes back carrying its fields, so the caller can see which key it is
+    /// short of.
+    #[tokio::test]
+    async fn a_rhythm_with_half_a_schedule_is_overdue_rather_than_invisible() {
+        let jojobot = handler();
+        a_rhythm(&jojobot, "descale", "7", "2026-08-01").await;
+        ensure(&jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", "half-made", "Half Made")
+            }))
+            .await
+            .expect("add ok");
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("cadence_days".to_string(), "7".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("rhythm:half-made", "every week, roughly")
+            },
+        )
+        .await;
+
+        // A date before the whole loop is due: the only reason the half-made
+        // one is here is that nothing can say when it falls due.
+        let quiet = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    overdue: Some(OverdueArgs {
+                        as_of: Some("2026-08-02".into()),
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            handles(&quiet),
+            vec!["rhythm:half-made".to_string()],
+            "the loop nobody finished is the one that surfaces: {quiet}",
+        );
+        assert_eq!(
+            quiet["objects"][0]["fields"]["cadence_days"], "7",
+            "and it arrives with what it does hold, so the gap is readable: {quiet}",
+        );
     }
 
     /// **The writes behind a key come back on the read that already exists**,
@@ -1421,6 +1664,7 @@ mod tests {
             facts: None,
             prose: None,
             follow: None,
+            overdue: None,
             sid: None,
             history: None,
             history_most: None,

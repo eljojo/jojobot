@@ -112,26 +112,71 @@ const RHYTHMS: &str = r#"# rhythms
 
 A rhythm is a recurring loop. You offer it. The operator decides.
 
-There are two kinds. A timed rhythm is due on a cadence and has a last-run
-stamp. A weave has no stamp and starts when its trigger occurs.
+A rhythm is an entity of kind `rhythm`. Its parent says whose job the loop is.
+A maintenance loop sits under the thing maintained. A review loop sits under
+the bot that carries it. Two loops on one object are two rhythms.
+
+There are two kinds. A timed rhythm is due on a cadence. A weave has no
+cadence and starts when its trigger occurs.
+
+## What a timed rhythm holds
+
+`cadence_days` is how long one cycle lasts. A cadence is always time. What the
+check measures — a reading, a distance, a count — belongs on the check-in and
+is never a unit of the schedule.
+
+`advances_from` says which date the next cycle counts from when a check-in is
+late. It takes `due_date`, the day the cycle fell due, or `check_in_date`, the
+day the check-in happened. It has no default. The operator picks it for each
+rhythm, so ask. A wrong pick is silent: every late check-in re-arms the loop
+it was meant to settle.
+
+`counts_from` is the date this cycle counts from. jojobot writes it. The
+rhythm falls due `cadence_days` after it.
+
+## How to find what is due
+
+Call `recall` with `kind: "rhythm"` and `overdue: {}`. You get the loops that
+have gone quiet as of today. Put a date in `as_of` to ask about another day.
+
+The answer says which day it used. Read it.
+
+A rhythm that holds only part of a schedule comes back overdue, with the
+fields it does hold. Ask the operator for the key it lacks. Do not guess one.
 
 ## Keep the pressure low
 
 Offer a rhythm in one line at the start of a session. Then do the work the
 operator opened the session for. If the operator does not take the offer,
-stop.
-
-A refusal counts as a run. Record the stamp and continue. Do not offer the
-same rhythm again in the same window.
+stop. Do not offer the same rhythm again in the same window.
 
 Remove a rhythm that the operator finds stressful. Remove it with the
 operator. Add a new rhythm with the operator. Do not add one alone.
 
+## How to close one
+
+Call `capture` on the rhythm and pass `check_in`. It takes one of three words,
+and the difference between them is whether the cycle is consumed.
+
+`ran` — it happened, and the cycle advances.
+
+`skipped` — it did not happen, and the cycle advances anyway. The record says
+that it did not happen.
+
+`snoozed` — the cycle is not consumed. The rhythm comes back at its own date.
+
+A refusal is not a run. Ask the operator whether the cycle moves on, which is
+`skipped`, or comes back, which is `snoozed`. A refusal recorded as `ran` says
+the work was done, and nothing later can tell it from work that was done.
+
+jojobot writes `outcome`, `last_check_in` and `counts_from` itself. Do not
+compute them and do not send them. Put what the check measured in `fields`.
+
 ## How to run a rhythm
 
-Read the stamps. Offer each timed rhythm that is due, in one line. Record the
-stamp when the operator runs it and when the operator refuses it. Test each
-weave's trigger and start the ones that match.
+Read what is due. Offer each timed rhythm that is due, in one line. Record a
+check-in when the operator runs it, and when the operator turns it down. Test
+each weave's trigger and start the ones that match.
 
 ## The two timed shapes
 
@@ -203,3 +248,67 @@ become closeness. One thing that follows another becomes cause. Membership
 of a set becomes meaning. Each one is a reasonable step and none of them is
 a fact.
 "#;
+
+#[cfg(test)]
+mod tests {
+    use jojobot_domain::attention;
+
+    /// The body of one shipped skill, or a panic naming the ones that exist.
+    fn body(name: &str) -> &'static str {
+        super::SKILLS
+            .iter()
+            .find(|skill| skill.name == name)
+            .unwrap_or_else(|| panic!("no skill is called `{name}`"))
+            .body
+    }
+
+    /// Whether the text names this token as a word of its own, rather than
+    /// inside a longer one: `ran` must not be satisfied by `arrange`.
+    fn names(text: &str, token: &str) -> bool {
+        text.match_indices(token).any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            let after = text[at + token.len()..].chars().next();
+            let edge = |c: Option<char>| c.is_none_or(|c| !c.is_alphanumeric());
+            edge(before) && edge(after)
+        })
+    }
+
+    /// **The procedure and the engine use one vocabulary**, and the vocabulary
+    /// is read off the engine rather than written down here.
+    ///
+    /// A session closes a rhythm by sending one of these tokens. A procedure
+    /// naming a word the verb does not take is a procedure that fails on the
+    /// call it exists to describe, and the failure is invisible to every test
+    /// of the verb itself.
+    ///
+    /// The same for the keys the schedule is read from: the procedure says
+    /// which date a rhythm counts from, so it names the key that holds the
+    /// choice and both values that key takes. Written apart from the read, the
+    /// two disagree about the date and nothing catches it.
+    #[test]
+    fn the_rhythms_procedure_names_the_vocabulary_the_engine_takes() {
+        let text = body("rhythms");
+        for outcome in attention::Outcome::ALL {
+            let token = outcome.as_token();
+            assert!(
+                names(text, token),
+                "the rhythms procedure does not name the `{token}` outcome, which a check-in \
+                 takes — a session following it closes a loop with a word the verb refuses"
+            );
+        }
+        for key in [attention::CADENCE_DAYS, attention::ADVANCES_FROM] {
+            assert!(
+                names(text, key),
+                "the rhythms procedure does not name the `{key}` key the schedule is read from"
+            );
+        }
+        for advances in attention::AdvancesFrom::ALL {
+            let token = advances.as_token();
+            assert!(
+                names(text, token),
+                "the rhythms procedure does not name `{token}`, one of the two dates a late \
+                 check-in can advance from — so it cannot say which date a rhythm counts from"
+            );
+        }
+    }
+}

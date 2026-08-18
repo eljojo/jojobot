@@ -5,6 +5,11 @@
 //! One verb, one file: its arguments, the description a caller reads,
 //! and an entrypoint that chains the systems below it.
 
+use std::collections::BTreeMap;
+
+use jojobot_domain::attention;
+use jojobot_domain::memory::graph;
+
 use super::*;
 
 /// Arguments to `capture`.
@@ -80,11 +85,157 @@ pub struct CaptureArgs {
     /// touches it.
     #[serde(default)]
     pub refs: Option<Vec<String>>,
+    /// **Record this as a check-in on a rhythm** — `ran`, `skipped` or
+    /// `snoozed`. The subject must be a `rhythm`; on anything else this is
+    /// refused.
+    ///
+    /// **The difference between the three is whether the cycle is consumed.**
+    /// `ran` happened. `skipped` did not happen and the cycle advances anyway,
+    /// with the record saying plainly that it did not — which is what lets a
+    /// skipped cycle be told from a completed one later. `snoozed` does NOT
+    /// consume the cycle: the rhythm comes back at its own date and is acted on
+    /// again.
+    ///
+    /// **jojobot does the arithmetic.** It writes `outcome`, `last_check_in`
+    /// (the `date` of this record) and, when the cycle is consumed, the new
+    /// `counts_from` — worked out from the rhythm's own `advances_from`. Do not
+    /// compute those yourself and do not send them in `fields`.
+    ///
+    /// **What the check MEASURED is yours to send** in `fields`: a reading, a
+    /// distance, a count. A cadence is always time, so a measurement is a field
+    /// on the check-in and never a unit of the schedule.
+    ///
+    /// A rhythm that does not hold a whole schedule — a cadence, an
+    /// `advances_from`, a `counts_from` — comes back blocked naming the key it
+    /// is short of, and nothing is written.
+    #[serde(default)]
+    pub check_in: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
     pub sid: Option<String>,
+}
+
+/// **The keys a check-in computes**, which a caller therefore does not send.
+/// Sending one alongside `check_in` is a contradiction rather than an override,
+/// so it is refused: the record would say two things about one schedule and
+/// nothing could say which was meant.
+const COMPUTED: [&str; 3] = [
+    attention::OUTCOME,
+    attention::LAST_CHECK_IN,
+    attention::COUNTS_FROM,
+];
+
+impl Jojobot {
+    /// **The keys a check-in on a rhythm writes**, or the refusal that says why
+    /// it cannot.
+    ///
+    /// The arithmetic itself belongs to the domain; what is here is the reach
+    /// into the store the domain cannot make. It reads the rhythm's fields —
+    /// every write on it folded to one value per key — because the schedule is
+    /// described a record at a time: the record that set it up carries the
+    /// cadence, and every check-in since carries what it found.
+    ///
+    /// **The read happens before the write and never instead of it.** A
+    /// schedule this cannot read is a refusal, so a half-configured rhythm
+    /// never takes a check-in that would look applied and move nothing.
+    async fn check_in(
+        &self,
+        subject: &EntityId,
+        outcome: &str,
+        on: jiff::civil::Date,
+        sent: &BTreeMap<String, String>,
+    ) -> Result<Result<BTreeMap<String, String>, CallToolResult>, McpError> {
+        // An unparseable token is an error rather than a refusal, exactly as an
+        // unknown provenance or edge shape is: nothing about the store is
+        // wrong, and the vocabulary is closed.
+        let Some(outcome) = attention::Outcome::of_token(outcome) else {
+            return Err(McpError::invalid_params(
+                format!(
+                    "check_in takes one of: {}",
+                    attention::Outcome::ALL
+                        .map(attention::Outcome::as_token)
+                        .join(", ")
+                ),
+                None,
+            ));
+        };
+        if subject.kind() != Some(EntityKind::RHYTHM) {
+            return Ok(Err(blocked_body(
+                subject,
+                &[],
+                format!(
+                    "Nothing was written. A check-in records a turn of a recurring loop, so its \
+                     subject must be a rhythm, and '{subject}' is not one. Capture this as an \
+                     ordinary claim without check_in, or name the rhythm this was a turn of."
+                ),
+            )));
+        }
+        // **A contradiction, not an override.** A caller that sends one of
+        // these alongside `check_in` has said two things about one schedule,
+        // and picking either would make the other silently untrue.
+        if let Some(key) = COMPUTED.iter().find(|key| sent.contains_key(**key)) {
+            return Ok(Err(blocked_body(
+                subject,
+                &[],
+                format!(
+                    "Nothing was written. This call sends '{key}' in fields AND asks for a \
+                     check-in, and a check-in computes '{key}' itself. Send the check-in without \
+                     that key, or send the fields without check_in and keep the arithmetic."
+                ),
+            )));
+        }
+
+        let held = match graph::walk(
+            self.memory.as_ref(),
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(subject.clone()),
+                    ..Default::default()
+                },
+                include: graph::Include {
+                    facts: false,
+                    prose: false,
+                },
+                follow: None,
+                history: None,
+            },
+        )
+        .await
+        {
+            Ok(found) => found
+                .first()
+                .map(|object| object.fields.clone())
+                .unwrap_or_default(),
+            Err(e) => return Ok(Err(memory_declined("capture", e)?)),
+        };
+
+        match attention::check_in(&held, outcome, on) {
+            Ok(computed) => Ok(Ok(computed)),
+            // **The way forward names the key and, when it is a vocabulary, its
+            // values.** A rhythm short of a schedule is the caller's to
+            // complete, and the repair is a capture of the missing key — which
+            // is a different move from correcting a value that is already
+            // there, so the domain's own sentence carries which of the two it
+            // is.
+            Err(why) => Ok(Err(blocked_body(
+                subject,
+                &[],
+                format!(
+                    "Nothing was written: {why}. A rhythm takes a check-in once it holds a whole \
+                     schedule — '{}' in days, '{}' ({}), and the '{}' this cycle counts from. \
+                     Capture the missing key on '{subject}', then send this check-in again.",
+                    attention::CADENCE_DAYS,
+                    attention::ADVANCES_FROM,
+                    attention::AdvancesFrom::ALL
+                        .map(attention::AdvancesFrom::as_token)
+                        .join(" or "),
+                    attention::COUNTS_FROM,
+                ),
+            ))),
+        }
+    }
 }
 
 /// Remember a fact about an entity. Returns the stored fact including the
@@ -146,6 +297,14 @@ impl Jojobot {
             .transpose()
             .map_err(memory_error)?;
 
+        let mut fields = args.fields.unwrap_or_default();
+        if let Some(outcome) = args.check_in.as_deref() {
+            match self.check_in(&subject, outcome, date, &fields).await? {
+                Ok(computed) => fields.extend(computed),
+                Err(refused) => return Ok(refused),
+            }
+        }
+
         let new = NewFact {
             subject,
             content: args.content,
@@ -155,7 +314,7 @@ impl Jojobot {
             status: Default::default(),
             date,
             edge,
-            fields: args.fields.unwrap_or_default(),
+            fields,
             refs: args
                 .refs
                 .iter()
@@ -194,6 +353,339 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
+
+    /// A rhythm with a whole schedule on it, ready to take a check-in.
+    async fn a_weekly_rhythm(jojobot: &Jojobot, handle: &str, counts_from: &str, advances: &str) {
+        ensure(jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", handle, handle)
+            }))
+            .await
+            .expect("add ok");
+        capture_ok(
+            jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [
+                        ("cadence_days".to_string(), "7".to_string()),
+                        ("advances_from".to_string(), advances.to_string()),
+                        ("counts_from".to_string(), counts_from.to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args(&format!("rhythm:{handle}"), "every week")
+            },
+        )
+        .await;
+    }
+
+    /// What a thing holds, folded, as `recall` renders it.
+    async fn fields_of(jojobot: &Jojobot, subject: &str) -> serde_json::Value {
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(recall_args(subject)))
+                .await
+                .expect("recall ok"),
+        );
+        body["objects"][0]["fields"].clone()
+    }
+
+    /// **A check-in records what was found, and jojobot does the arithmetic.**
+    ///
+    /// The caller says which of the three outcomes it was and on what day; the
+    /// date the next cycle counts from is worked out here, because a caller
+    /// doing that by hand is a caller who can get it wrong once and never find
+    /// out.
+    ///
+    /// The three outcomes together, because the difference between them is the
+    /// whole point of having three: a run and a skip move the schedule
+    /// identically and only the record tells them apart, while a snooze moves
+    /// nothing at all.
+    #[tokio::test]
+    async fn a_check_in_moves_the_schedule_and_a_snooze_does_not() {
+        let jojobot = handler();
+        a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                date: Some("2026-08-10".into()),
+                ..capture_args("rhythm:descale", "descaled it, took ten minutes")
+            },
+        )
+        .await;
+        let held = fields_of(&jojobot, "rhythm:descale").await;
+        assert_eq!(held["outcome"], "ran");
+        assert_eq!(held["last_check_in"], "2026-08-10");
+        assert_eq!(
+            held["counts_from"], "2026-08-10",
+            "advancing from the check-in date moves the cycle to the day it happened: {held}",
+        );
+
+        // A snooze is still a check-in — it says when it happened — and the
+        // schedule is exactly where it was.
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                check_in: Some("snoozed".into()),
+                date: Some("2026-08-19".into()),
+                ..capture_args("rhythm:descale", "not this week")
+            },
+        )
+        .await;
+        let held = fields_of(&jojobot, "rhythm:descale").await;
+        assert_eq!(held["outcome"], "snoozed");
+        assert_eq!(held["last_check_in"], "2026-08-19");
+        assert_eq!(
+            held["counts_from"], "2026-08-10",
+            "a snooze does not consume the cycle, so the schedule is untouched: {held}",
+        );
+
+        // And a skip advances it exactly as the run did, leaving a record that
+        // says it did not happen — which is the only place the two differ.
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                check_in: Some("skipped".into()),
+                date: Some("2026-08-20".into()),
+                ..capture_args("rhythm:descale", "away, not doing it")
+            },
+        )
+        .await;
+        let held = fields_of(&jojobot, "rhythm:descale").await;
+        assert_eq!(held["outcome"], "skipped");
+        assert_eq!(
+            held["counts_from"], "2026-08-20",
+            "a skipped cycle advances as if it had run: {held}",
+        );
+    }
+
+    /// **A measurement rides on the check-in, never on the schedule.**
+    ///
+    /// A cadence is always time. What the check found — a reading, a distance,
+    /// a count — is the caller's own key on the same record, kept as written
+    /// beside the keys jojobot computed.
+    #[tokio::test]
+    async fn a_check_in_carries_the_callers_own_measurement() {
+        let jojobot = handler();
+        a_weekly_rhythm(&jojobot, "read-meter", "2026-08-01", "due_date").await;
+
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                date: Some("2026-08-12".into()),
+                fields: Some(
+                    [("reading_kwh".to_string(), "4184".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("rhythm:read-meter", "read it off the dial")
+            },
+        )
+        .await;
+
+        let held = fields_of(&jojobot, "rhythm:read-meter").await;
+        assert_eq!(
+            held["reading_kwh"], "4184",
+            "the caller's key is kept: {held}"
+        );
+        assert_eq!(
+            held["counts_from"], "2026-08-08",
+            "and this one advances from the date it fell due, not from the late check-in: {held}",
+        );
+    }
+
+    /// **A rhythm that cannot say what it advances from takes no check-in.**
+    ///
+    /// The choice has no default, deliberately: the two answers diverge exactly
+    /// when a check-in is late, and guessing wrong leaves a rhythm that re-arms
+    /// itself for ever. So the refusal names the key and both values, and
+    /// writes nothing.
+    #[tokio::test]
+    async fn a_rhythm_with_no_advances_from_refuses_the_check_in_and_writes_nothing() {
+        let jojobot = handler();
+        ensure(&jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", "half-made", "Half Made")
+            }))
+            .await
+            .expect("add ok");
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [
+                        ("cadence_days".to_string(), "7".to_string()),
+                        ("counts_from".to_string(), "2026-08-01".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("rhythm:half-made", "every week, roughly")
+            },
+        )
+        .await;
+
+        let refused = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    check_in: Some("ran".into()),
+                    date: Some("2026-08-12".into()),
+                    ..capture_args("rhythm:half-made", "did it")
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["status"], "blocked");
+        assert_eq!(refused["wrote"], false);
+        let how = refused["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        assert!(
+            how.contains("advances_from")
+                && how.contains("due_date")
+                && how.contains("check_in_date"),
+            "the way forward names the key and both values it takes: {how}",
+        );
+
+        // Nothing was written — not the record, and not the outcome key that a
+        // half-applied check-in would have left behind.
+        let held = fields_of(&jojobot, "rhythm:half-made").await;
+        assert_eq!(held["outcome"], serde_json::Value::Null);
+        assert_eq!(held["last_check_in"], serde_json::Value::Null);
+    }
+
+    /// **A key the check-in computes is a contradiction when the caller sends
+    /// it too**, not an override.
+    ///
+    /// The record would say two things about one schedule and nothing could say
+    /// which was meant, so the call is refused and nothing is written. The
+    /// refusal names the key, because which of the three it was is what the
+    /// caller has to remove.
+    #[tokio::test]
+    async fn a_check_in_that_also_sends_a_computed_key_is_refused() {
+        let jojobot = handler();
+        a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+
+        let refused = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    check_in: Some("ran".into()),
+                    date: Some("2026-08-10".into()),
+                    fields: Some(
+                        [("counts_from".to_string(), "2026-09-01".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args(
+                        "rhythm:descale",
+                        "descaled it, and moved the schedule myself",
+                    )
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["status"], "blocked");
+        assert_eq!(refused["wrote"], false);
+        assert!(
+            refused["how_to_proceed"]
+                .as_str()
+                .expect("a blocked answer says how to proceed")
+                .contains("counts_from"),
+            "the way forward names the key that is doubled: {refused}",
+        );
+
+        // Nothing moved: not the caller's date, and not the arithmetic either.
+        let held = fields_of(&jojobot, "rhythm:descale").await;
+        assert_eq!(
+            held["counts_from"], "2026-08-01",
+            "the schedule is where it was: {held}",
+        );
+        assert_eq!(held["outcome"], serde_json::Value::Null);
+
+        // The paired positive: the same check-in without that key lands, so the
+        // refusal is about the contradiction and not about the check-in.
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                date: Some("2026-08-10".into()),
+                ..capture_args("rhythm:descale", "descaled it")
+            },
+        )
+        .await;
+        let held = fields_of(&jojobot, "rhythm:descale").await;
+        assert_eq!(held["counts_from"], "2026-08-10");
+    }
+
+    /// **A check-in is rhythm vocabulary**, and a subject of any other kind is
+    /// refused rather than quietly written with keys that mean nothing on it.
+    ///
+    /// ⚠️ **The subject carries a whole schedule on purpose.** Matching is
+    /// structural everywhere else here, so a `thing` holding the three keys
+    /// answers every question the schedule reader asks — which leaves the KIND
+    /// as the only thing that can refuse this call. Without those keys the case
+    /// passed against a build with no kind check at all, refused by the
+    /// half-configured gate instead and asserting nothing it claimed to.
+    #[tokio::test]
+    async fn a_check_in_on_something_that_is_not_a_rhythm_is_refused() {
+        let jojobot = handler();
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [
+                        ("cadence_days".to_string(), "7".to_string()),
+                        ("advances_from".to_string(), "check_in_date".to_string()),
+                        ("counts_from".to_string(), "2026-08-01".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("thing:kettle", "descaled weekly, in principle")
+            },
+        )
+        .await;
+
+        let refused = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    check_in: Some("ran".into()),
+                    date: Some("2026-08-10".into()),
+                    ..capture_args("thing:kettle", "boiled it")
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["status"], "blocked");
+        assert_eq!(refused["wrote"], false);
+        assert_eq!(refused["attempted"], "thing:kettle");
+
+        // The paired positive: nothing about the schedule was the problem, so
+        // the same keys on a real rhythm take the same check-in.
+        a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                date: Some("2026-08-10".into()),
+                ..capture_args("rhythm:descale", "boiled it")
+            },
+        )
+        .await;
+
+        // And the refused call left nothing on the thing.
+        let held = fields_of(&jojobot, "thing:kettle").await;
+        assert_eq!(held["outcome"], serde_json::Value::Null);
+        assert_eq!(held["last_check_in"], serde_json::Value::Null);
+    }
 
     /// **Fields ride on a fact, and no label is asked for.**
     ///

@@ -110,6 +110,7 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
         derived_from: None,
         fields: None,
         refs: None,
+        check_in: None,
         sid: Some(crate::harness::TEST_SID.into()),
     }
 }
@@ -128,6 +129,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
         facts: Some(true),
         prose: None,
         follow: None,
+        overdue: None,
         sid: None,
         history: None,
         history_most: None,
@@ -166,6 +168,7 @@ pub(crate) async fn ensure(jojobot: &Jojobot, handle: &str) {
             source: "test-fixture".into(),
             crm: None,
             boot: None,
+            parent: None,
             override_token: None,
             // The handler's own registry, for the same reason `make_bot` uses
             // it: a bare-registry test must be able to provision a subject.
@@ -236,6 +239,7 @@ pub(crate) fn add_args(kind: &str, handle: &str, name: &str) -> AddEntityArgs {
         source: "user-named".into(),
         crm: None,
         boot: None,
+        parent: None,
         override_token: None,
         sid: Some(crate::harness::TEST_SID.into()),
     }

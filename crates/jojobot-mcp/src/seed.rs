@@ -62,6 +62,16 @@ pub fn shipped_types() -> Vec<DeclaredType> {
                 // two answers are different enough that guessing one is worse
                 // than a rhythm that does not fit until somebody says.
                 Field::new("advances_from", ValueType::Text),
+                // **The date this cycle counts from**, and the rhythm is next
+                // due a cadence after it. It is the value the key above chose:
+                // one is the policy, this one is what the policy picked, and
+                // the overdue read is arithmetic over this pair.
+                //
+                // Declared a date so an ordering can be asked of it — which is
+                // what a declaration buys, and what lets a caller ask for the
+                // rhythms counting from before some day without the engine
+                // being asked first.
+                Field::new("counts_from", ValueType::Date),
                 // **What "when did this last happen" reads**, and the reason it
                 // is a key is the projection. A thing's fields are the newest
                 // write of each key by WRITE ORDER rather than by date, so the
@@ -245,6 +255,7 @@ mod tests {
             vec![
                 ("cadence_days", "number"),
                 ("advances_from", "text"),
+                ("counts_from", "date"),
                 ("last_check_in", "date"),
                 ("outcome", "text"),
             ],
@@ -295,6 +306,7 @@ mod tests {
             vec![
                 ("cadence_days", "number"),
                 ("advances_from", "text"),
+                ("counts_from", "date"),
                 ("last_check_in", "date"),
                 ("outcome", "text"),
             ],
