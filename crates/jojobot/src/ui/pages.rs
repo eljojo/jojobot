@@ -562,13 +562,13 @@ async fn conforms_section(state: &AppState, folded: &BTreeMap<String, String>) -
         }
     };
     let mut rows = String::new();
-    for kind in &declared {
-        let Some(found) = kind.matched_by(folded) else {
+    for declaration in &declared {
+        let Some(found) = declaration.matched_by(folded) else {
             continue;
         };
         rows.push_str(&format!(
             "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
-            escape(&kind.name),
+            escape(&declaration.name),
             if found.complete() { "whole" } else { "partly" },
             escape(&found.held.join(", ")),
             escape(&found.lacking.join(", ")),

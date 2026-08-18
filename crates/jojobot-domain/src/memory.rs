@@ -1425,13 +1425,13 @@ pub fn guard_fit(
     after: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
 ) -> Result<(), MemoryError> {
-    for kind in declared {
+    for declaration in declared {
         // Fitting means holding every key the type names, and holding it as
         // declared. A thing that did not fit before has nothing this protects.
-        if !kind.matched_by(before).is_some_and(|m| m.complete()) {
+        if !declaration.matched_by(before).is_some_and(|m| m.complete()) {
             continue;
         }
-        let lost: Vec<String> = kind
+        let lost: Vec<String> = declaration
             .fields
             .iter()
             .map(|f| f.key.clone())
@@ -1439,18 +1439,18 @@ pub fn guard_fit(
             .collect();
         if !lost.is_empty() {
             return Err(MemoryError::BreaksFit {
-                name: kind.name.clone(),
+                name: declaration.name.clone(),
                 keys: lost,
             });
         }
         // Read off the result's own match rather than recomputed here, so what
         // the guard refuses and what a read reports as mistyped are one answer.
-        if let Some(bad) = kind
+        if let Some(bad) = declaration
             .matched_by(after)
             .and_then(|m| m.mistyped.into_iter().next())
         {
             return Err(MemoryError::BreaksType {
-                name: kind.name.clone(),
+                name: declaration.name.clone(),
                 key: bad.key.clone(),
                 wanted: bad.wanted(),
                 value: bad.value,
