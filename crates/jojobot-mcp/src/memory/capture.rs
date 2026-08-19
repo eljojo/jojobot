@@ -255,8 +255,15 @@ impl Jojobot {
 impl Jojobot {
     #[tool(
         description = "Remember one fact about an entity: the claim, when it became true, and \
-                       whether it is testimony or inference (default inference — a hypothesis, \
-                       not a finding). PROVENANCE AND STANDING ARE TWO QUESTIONS: provenance says \
+                       whether it is testimony, observation or inference (default \
+                       inference — a hypothesis, not a finding). OBSERVATION is a claim you READ \
+                       out of a system of record, confidently — a statement, an app, a service — \
+                       and it reads back settled, so it MUST say where: give fields a read_from \
+                       naming the system, and a read_ref for what you read there if you have \
+                       one. Without read_from the call is refused, because who confirmed \
+                       something and on what is one question and half of it is no answer. Use it \
+                       where nobody said it to you and you did not work it out. \
+                       PROVENANCE AND STANDING ARE TWO QUESTIONS: provenance says \
                        WHO BACKS IT, standing says HOW SURE anyone is (settled or open). Leave \
                        standing off and it follows the provenance. Set it when the two come \
                        apart, and the case that matters is the operator stating something \
@@ -315,6 +322,20 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             }
         }
+        // **jojobot's own arithmetic is jojobot's, whatever the caller said
+        // about their claim.** A check-in computes the schedule keys, and
+        // merging them into a record carrying `testimony` made a date nobody
+        // uttered read back as the user's word — permanently, since a folded
+        // value is read with the certainty of the claim that carried it. A
+        // claim mixing the two is written as a derivation, and the caller's
+        // words are not what is being demoted: the record is a caller's
+        // sentence and a computed schedule together, and only one of those
+        // has anybody's word behind it.
+        let provenance = if args.check_in.is_some() {
+            Provenance::Inference
+        } else {
+            provenance
+        };
 
         let new = NewFact {
             subject,
@@ -407,6 +428,51 @@ mod tests {
                 .expect("recall ok"),
         );
         body["objects"][0]["fields"].clone()
+    }
+
+    /// **A schedule jojobot worked out is not something the user said.**
+    ///
+    /// A check-in computes the dates the next cycle counts from, and those keys
+    /// were merged into the caller's own record — so a record captured as
+    /// testimony made a date nobody uttered read back as the user's word.
+    /// **A folded value is read with the certainty of the claim that carried
+    /// it**, so that was permanent and invisible.
+    ///
+    /// **Paired with an ordinary capture in the same case**: testimony stays
+    /// testimony when nothing was computed, so this cannot pass against a build
+    /// that files everything as a derivation.
+    #[tokio::test]
+    async fn a_computed_schedule_does_not_inherit_the_callers_word() {
+        let jojobot = handler();
+        a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+
+        let checked_in = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                provenance: Some("testimony".into()),
+                date: Some("2026-08-10".into()),
+                ..capture_args("rhythm:descale", "did it this morning")
+            },
+        )
+        .await;
+        assert_eq!(
+            checked_in["provenance"], "inference",
+            "a record carrying dates jojobot computed reads as the user's own word: {checked_in}",
+        );
+
+        let said = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                ..capture_args("rhythm:descale", "he says it is due fortnightly now")
+            },
+        )
+        .await;
+        assert_eq!(
+            said["provenance"], "testimony",
+            "a claim with nothing computed in it was demoted too: {said}",
+        );
     }
 
     /// **A check-in records what was found, and jojobot does the arithmetic.**

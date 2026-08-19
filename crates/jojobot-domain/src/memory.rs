@@ -504,7 +504,13 @@ pub fn check_promotion(
     requested: Provenance,
     confirmed_by_user: bool,
 ) -> Result<(), MemoryError> {
-    let promoting = current == Provenance::Inference && requested == Provenance::Testimony;
+    // **Only the user's own word is gated, and it is gated from everywhere.**
+    // A machine-read claim is not a step on a ladder towards testimony: it is a
+    // different answer to a different question, and promoting one to testimony
+    // still means saying the user said it. Everything else moves freely,
+    // including testimony downward — a claim somebody decides they misheard is
+    // a correction, and refusing it would keep the wrong answer.
+    let promoting = current != Provenance::Testimony && requested == Provenance::Testimony;
     if promoting && !confirmed_by_user {
         return Err(MemoryError::UnconfirmedPromotion);
     }
@@ -520,6 +526,16 @@ pub fn check_promotion(
 pub enum Provenance {
     /// The user said or confirmed it.
     Testimony,
+    /// **An agent read it out of a system of record**, confidently, and says
+    /// which system and what it read.
+    ///
+    /// Neither of the other two: filing a bank's own statement as a derivation
+    /// makes a system of record read as a guess, and filing it as testimony
+    /// puts words in the user's mouth. **What makes it usable later is the
+    /// attribution** — a claim carrying this must name where it was read
+    /// ([`READ_FROM`]), because *who confirmed it and on what* is the whole
+    /// question a later reader asks.
+    Observation,
     /// jojobot (or Claude) derived it. Carries no more authority than a guess.
     #[default]
     Inference,
@@ -530,6 +546,7 @@ impl Provenance {
     pub fn as_token(self) -> &'static str {
         match self {
             Provenance::Testimony => "testimony",
+            Provenance::Observation => "observation",
             Provenance::Inference => "inference",
         }
     }
@@ -542,6 +559,7 @@ impl Provenance {
     pub fn from_token(cell: &str) -> Self {
         match cell.trim() {
             "testimony" => Provenance::Testimony,
+            "observation" => Provenance::Observation,
             _ => Provenance::Inference,
         }
     }
@@ -598,6 +616,12 @@ impl Standing {
     pub fn default_for(provenance: Provenance) -> Self {
         match provenance {
             Provenance::Testimony => Standing::Settled,
+            // **A confident read of a system of record is settled**, and the
+            // guard that keeps it honest is on the source rather than here: a
+            // claim carrying this provenance without naming where it was read
+            // is refused, so nothing reaches this line unattributed. Reading it
+            // back as a hypothesis would be the opposite of what it records.
+            Provenance::Observation => Standing::Settled,
             Provenance::Inference => Standing::Open,
         }
     }
@@ -1164,6 +1188,43 @@ pub const MAX_KEY_CHARS: usize = 128;
 /// so a silently moved key is a corrupted sample.
 pub fn reserved_key(key: &str) -> bool {
     key.trim() == RETRACTS
+}
+
+/// **Where a machine-read claim was read**, and it is required on one.
+///
+/// The system that was read — an app, a service, a statement. It is a field on
+/// the claim rather than an edge because a claim carries ONE edge, and spending
+/// it here would forbid the claim from also saying where it happened or who it
+/// is about.
+pub const READ_FROM: &str = "read_from";
+
+/// **What was read there**, when the reader has a handle for it: a reference,
+/// an id, a line. Optional — the system is what a later reader needs to go
+/// back to, and refusing a claim for want of an identifier would push an agent
+/// to file it as a guess, which is the answer this provenance exists to stop.
+pub const READ_REF: &str = "read_ref";
+
+/// **A claim read out of a system of record has to say which one.**
+///
+/// *Who confirmed it and on what* is the question the third provenance exists
+/// to answer, and a token without an attribution answers only half of it —
+/// while reading back as settled. **So the check is on the source, never on
+/// the standing** (rule 68): the way forward is the same call naming where it
+/// was read, or the same call as an ordinary derivation.
+pub fn validate_provenance_source(
+    provenance: Provenance,
+    fields: &BTreeMap<String, String>,
+) -> Result<(), MemoryError> {
+    if provenance != Provenance::Observation {
+        return Ok(());
+    }
+    let named = fields
+        .get(READ_FROM)
+        .is_some_and(|value| !value.trim().is_empty());
+    if named {
+        return Ok(());
+    }
+    Err(MemoryError::UnsourcedObservation)
 }
 
 /// **A record's fields may not use the key jojobot writes itself, and a key
@@ -2479,6 +2540,18 @@ pub enum MemoryError {
         /// Which reason, in a sentence that names the way forward.
         why: String,
     },
+    /// **A claim read out of a system of record did not say which one.**
+    ///
+    /// The provenance is the answer to *who backs this*; the source is the
+    /// answer to *on what*, and this provenance is worth having only because it
+    /// carries both. A token with no attribution reads back settled and cannot
+    /// be reassessed by anybody later, which is the use it was asked for.
+    #[error(
+        "a claim read out of a system of record has to name it: give the field 'read_from' the \
+         system that was read — and 'read_ref' what was read there, if you have it — or capture \
+         it as an inference instead"
+    )]
+    UnsourcedObservation,
     /// A claim can only become testimony on the user's explicit confirmation.
     #[error(
         "promoting inference → testimony requires the user's explicit confirmation \

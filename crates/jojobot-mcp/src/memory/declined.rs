@@ -176,6 +176,17 @@ pub(crate) fn memory_declined(
         // **The claim is real and it is withdrawn**, so this is neither a
         // missing source nor a malformed call: the way forward keeps the claim
         // and drops the citation (rule 68).
+        // **Half an attribution is what is missing, and the caller has both
+        // ways out** (rule 68): name where it was read, or file it as the
+        // derivation it would otherwise be.
+        MemoryError::UnsourcedObservation => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. The claim itself is fine — send it again with \
+                 read_from naming the system, or with provenance inference."
+            ),
+        )),
         MemoryError::SourceRetracted { .. } => Ok(blocked_body(
             &EntityId(String::new()),
             &[],
@@ -322,6 +333,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NotRetractable { .. }
         | MemoryError::SourceRetracted { .. }
+        | MemoryError::UnsourcedObservation
         | MemoryError::AlreadyRetracted { .. }
         | MemoryError::UnconfirmedPromotion
         | MemoryError::UnconfirmedSettling => McpError::invalid_params(e.to_string(), None),

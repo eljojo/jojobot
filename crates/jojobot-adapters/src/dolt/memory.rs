@@ -39,7 +39,7 @@ use jojobot_domain::memory::{
     screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
     types::{DeclaredType, Field, Fold, Origin, ValueType, guard_replacement, validate_type},
     validate_content, validate_details, validate_edge, validate_entity, validate_fields,
-    validate_prose, validate_subject, writes_of,
+    validate_prose, validate_provenance_source, validate_subject, writes_of,
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
@@ -689,6 +689,7 @@ impl Memory for DoltMemory {
             validate_edge(edge)?;
         }
         validate_fields(&fact.fields)?;
+        validate_provenance_source(fact.provenance, &fact.fields)?;
         let standing = standing_of(&fact);
 
         let mut tx = self.pool.begin().await.map_err(store)?;

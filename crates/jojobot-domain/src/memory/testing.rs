@@ -22,7 +22,7 @@ use super::{
     guard::{self, Decision},
     normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
     search, standing_of, validate_content, validate_details, validate_edge, validate_entity,
-    validate_fields, validate_prose, validate_subject,
+    validate_fields, validate_prose, validate_provenance_source, validate_subject,
 };
 
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
@@ -394,6 +394,7 @@ impl Memory for InMemoryMemory {
             validate_edge(edge)?;
         }
         validate_fields(&fact.fields)?;
+        validate_provenance_source(fact.provenance, &fact.fields)?;
         let standing = standing_of(&fact);
 
         // Every entity this write names must already exist — the subject first,
@@ -1717,6 +1718,100 @@ pub mod contract {
     /// NOT, which is what stops this passing on a build that reports whatever
     /// it finds first · and **the answer changes when the winning write
     /// changes**, which no test that only adds one claim can reach.
+    /// **A claim an agent read out of a system of record, and what it costs to
+    /// say so.**
+    ///
+    /// It is neither the user's word nor a guess: filing a statement as a
+    /// derivation makes a system of record read as a hypothesis, and filing it
+    /// as testimony puts words in somebody's mouth. **What makes it usable a
+    /// year later is the attribution**, so the claim is refused when it names
+    /// no system — the check is on the source and never on the standing.
+    ///
+    /// Four legs, and each of the last three is why the first means anything:
+    /// unattributed is refused · attributed lands and **reads back settled**,
+    /// which is the whole point of the value · an ordinary derivation with no
+    /// source is untouched, so the rule reaches only the claims it is about ·
+    /// and **a claim that stops being machine-read stops being held to it**.
+    pub async fn a_machine_read_claim_names_what_it_was_read_from<M: Memory>(store: &M) {
+        let subject = EntityId::new(EntityKind::PERSON, "contract-observed");
+        add(
+            store,
+            NewEntity::new(subject.clone(), "Contract Observed", "contract-fixture"),
+        )
+        .await;
+
+        let unattributed = store
+            .capture(NewFact {
+                provenance: Provenance::Observation,
+                ..NewFact::about(subject.clone(), "the invoice is paid", date(2026, 8, 1))
+            })
+            .await
+            .expect_err("a machine-read claim with no source is refused");
+        assert!(
+            matches!(unattributed, MemoryError::UnsourcedObservation),
+            "the refusal is about something else: {unattributed:?}",
+        );
+
+        let read = capture(
+            store,
+            NewFact {
+                provenance: Provenance::Observation,
+                fields: [
+                    ("read_from".to_string(), "the ledger app".to_string()),
+                    ("read_ref".to_string(), "invoice-4471".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(subject.clone(), "the invoice is paid", date(2026, 8, 1))
+            },
+        )
+        .await;
+        assert_eq!(read.provenance, Provenance::Observation);
+        assert_eq!(
+            read.standing,
+            Standing::Settled,
+            "a confident read of a system of record reads back as a hypothesis",
+        );
+        assert_eq!(
+            read_back(store, &subject, &read.id).await.provenance,
+            Provenance::Observation,
+            "the provenance did not survive the store",
+        );
+
+        // **The rule reaches only the claims it is about.** An ordinary
+        // derivation names no source and is written as it always was — without
+        // this, the refusal above passes against a store demanding a source
+        // from everything.
+        capture(
+            store,
+            NewFact::about(
+                subject.clone(),
+                "so the account is square",
+                date(2026, 8, 2),
+            ),
+        )
+        .await;
+
+        // **The leg a change reaches.** Edit the machine-read claim down to a
+        // derivation and the source stops being required: what is held to the
+        // rule is the claim's provenance now, not the one it was written with.
+        let softened = edit(
+            store,
+            &read.address(),
+            FactPatch {
+                provenance: Some(Provenance::Inference),
+                clear_fields: vec!["read_from".to_string(), "read_ref".to_string()],
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(softened.provenance, Provenance::Inference);
+        assert!(
+            !softened.fields.contains_key("read_from"),
+            "the source stayed on a claim that is no longer machine-read: {softened:?}",
+        );
+    }
+
     pub async fn a_folded_value_says_who_backs_it<M: Memory>(store: &M) {
         let subject = EntityId::new(EntityKind::PERSON, "contract-backing");
         add(
@@ -8128,6 +8223,7 @@ pub mod contract {
         a_claim_carries_when_it_was_taken_in(store).await;
         a_claims_lineage_is_walkable_from_its_source(store).await;
         a_folded_value_says_who_backs_it(store).await;
+        a_machine_read_claim_names_what_it_was_read_from(store).await;
         referring_to_answers_from_the_far_end(store).await;
         a_child_names_its_parent_and_reads_back(store).await;
         children_are_handles_and_one_level_deep(store).await;

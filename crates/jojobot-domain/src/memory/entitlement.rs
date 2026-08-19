@@ -159,8 +159,15 @@ fn stands(fact: &Fact) -> bool {
 /// Testimony sorts before inference, and this is the number that says so.
 fn backing(fact: &Fact) -> u8 {
     match fact.provenance {
+        // The user's own word first: they are the one who will be at the door.
         Provenance::Testimony => 0,
-        Provenance::Inference => 1,
+        // **A confident read of a system of record outranks a guess and not the
+        // user.** It is checkable — it names the system it came from, so a
+        // reader can go back to it — while a derivation names nothing anybody
+        // can return to. It sits below testimony because a system can be read
+        // wrongly and the user cannot be misquoted about what they hold.
+        Provenance::Observation => 1,
+        Provenance::Inference => 2,
     }
 }
 

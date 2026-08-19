@@ -240,9 +240,10 @@ pub(crate) fn parse_boot(raw: Option<&str>) -> Result<Boot, McpError> {
 pub(crate) fn parse_one_provenance(raw: &str) -> Result<Provenance, McpError> {
     match raw.trim() {
         "testimony" => Ok(Provenance::Testimony),
+        "observation" => Ok(Provenance::Observation),
         "inference" => Ok(Provenance::Inference),
         other => Err(McpError::invalid_params(
-            format!("provenance must be 'testimony' or 'inference', got '{other}'"),
+            format!("provenance must be 'testimony', 'observation' or 'inference', got '{other}'"),
             None,
         )),
     }
@@ -253,8 +254,9 @@ pub(crate) fn parse_provenance(raw: Option<&str>) -> Result<Provenance, McpError
     match raw.map(str::trim) {
         None | Some("") | Some("inference") => Ok(Provenance::Inference),
         Some("testimony") => Ok(Provenance::Testimony),
+        Some("observation") => Ok(Provenance::Observation),
         Some(other) => Err(McpError::invalid_params(
-            format!("provenance must be 'testimony' or 'inference', got '{other}'"),
+            format!("provenance must be 'testimony', 'observation' or 'inference', got '{other}'"),
             None,
         )),
     }
