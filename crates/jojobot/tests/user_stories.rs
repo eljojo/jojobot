@@ -65,6 +65,10 @@ mod stale_handle;
 mod statusbar;
 #[path = "user_stories/talkingpast.rs"]
 mod talkingpast;
+/// One claim, two runs, two zones — and both answers are right.
+#[path = "user_stories/timezones.rs"]
+mod timezones;
+
 #[path = "user_stories/typing.rs"]
 mod typing;
 #[path = "user_stories/unprompted.rs"]

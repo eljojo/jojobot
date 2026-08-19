@@ -217,6 +217,7 @@ pub(crate) async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
     json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                timezone: None,
                 bot: Some(name.into()),
                 brief: None,
                 skill: None,
@@ -237,6 +238,7 @@ pub(crate) async fn boot_answering(
     json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                timezone: None,
                 bot: Some(name.into()),
                 brief: None,
                 skill: None,
@@ -256,4 +258,31 @@ pub(crate) fn sid_of(body: &serde_json::Value) -> Option<String> {
 /// Boot as this bot and take the handle the door hands back.
 pub(crate) async fn booted(jojobot: &Jojobot, name: &str) -> String {
     sid_of(&boot(jojobot, name).await).unwrap_or_else(|| panic!("{name} booted without a handle"))
+}
+
+/// **Boot a run that works in a named zone**, and take its handle.
+///
+/// `resume` answers the choice a second boot of one bot is handed: a bot may
+/// have several runs at once, which is what lets one case hold two of them in
+/// two zones.
+pub(crate) async fn booted_in(
+    jojobot: &Jojobot,
+    name: &str,
+    zone: &str,
+    resume: Option<&str>,
+) -> String {
+    let body = json_of(
+        &jojobot
+            .start_here(Parameters(OrientArgs {
+                timezone: Some(zone.into()),
+                bot: Some(name.into()),
+                brief: Some(true),
+                skill: None,
+                resume: resume.map(str::to_string),
+                sid: None,
+            }))
+            .await
+            .expect("the boot call is ok"),
+    );
+    sid_of(&body).unwrap_or_else(|| panic!("{name} booted in {zone} without a handle: {body}"))
 }

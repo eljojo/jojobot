@@ -68,6 +68,12 @@ pub struct Handle {
     pub bot: EntityId,
     /// The store's card, once there is one.
     pub card: Option<SessionId>,
+    /// **The zone this run resolves days against**, as the IANA name the caller
+    /// supplied at the door, or nothing when it supplied none.
+    ///
+    /// Held here as well as on the card because the card is lazy: a run that has
+    /// only read has no row yet, and its reads are day-grained too.
+    pub zone: Option<String>,
 }
 
 /// Minting found no free handle. See [`MINT_ATTEMPTS`].
@@ -159,6 +165,7 @@ impl SessionRegistry {
                 Handle {
                     bot: bot.clone(),
                     card,
+                    zone: None,
                 },
             );
             return Ok(Sid(candidate));
@@ -224,10 +231,32 @@ impl SessionRegistry {
                 Handle {
                     bot: session.bot.clone(),
                     card: Some(session.id.clone()),
+                    // **Off the card, so a restart does not silently reframe a
+                    // run that survived it.** The handle registry is rebuilt
+                    // from the board; a zone kept only in the process would be
+                    // gone while the run it belongs to is still being worked.
+                    zone: session.timezone.clone(),
                 },
             );
         }
         held.len()
+    }
+
+    /// **Record the zone this run resolves days against**, replacing whatever it
+    /// carried.
+    ///
+    /// The door calls this on every boot that supplies one, resume included: a
+    /// run outlives a device hop, so the zone it was born in is not always the
+    /// zone it is being worked in.
+    pub fn set_zone(&self, sid: &Sid, zone: Option<String>) {
+        if let Some(handle) = self
+            .held
+            .write()
+            .expect("the registry is poisoned")
+            .get_mut(sid.as_str())
+        {
+            handle.zone = zone;
+        }
     }
 
     /// Record the card a handle's session landed on, once the first write

@@ -43,6 +43,25 @@ pub struct OrientArgs {
     /// in the same call it re-orients with.
     #[serde(default)]
     pub sid: Option<String>,
+    /// **The timezone this session works in** — an IANA name like
+    /// `America/New_York` or `Europe/Madrid`. Send it when you boot, and send
+    /// it again when you resume from somewhere else.
+    ///
+    /// It is what *today* means for everything day-grained: the date a `capture`
+    /// gets when you name none, and whether a recurring loop has fallen due.
+    /// **It is a property of YOUR RUN and not a setting on the server** — the
+    /// frame belongs to the caller, so jojobot never assumes one.
+    ///
+    /// ⚠️ **Two sessions in different zones will disagree about what today is
+    /// for the same stored claim, and that is correct.** A claim captured at
+    /// nine in the evening in New York is the 18th there and the 19th in
+    /// Madrid; both runs are reading the same claim and answering in their own
+    /// frame. It is not a fault and there is nothing to work around.
+    ///
+    /// Send none and days are resolved in UTC. On a resume, sending none keeps
+    /// the zone the run already had rather than moving it.
+    #[serde(default)]
+    pub timezone: Option<String>,
 }
 
 /// **The one orienting door**, with or without an identity: the world-model
@@ -180,8 +199,26 @@ impl Jojobot {
                 )),
             };
         }
-        self.orient(bot.as_ref(), args.brief.unwrap_or(false), resume, carried)
-            .await
+        // **Validated at the door, where a caller can still fix it.** A name
+        // that is no zone is a malformed argument rather than a near miss, and
+        // it is refused before any session is minted or resumed.
+        let timezone = parse_zone(args.timezone.as_deref())?
+            .iana_name()
+            .map(str::to_string)
+            .filter(|_| {
+                args.timezone
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|z| !z.is_empty())
+            });
+        self.orient(
+            bot.as_ref(),
+            args.brief.unwrap_or(false),
+            resume,
+            timezone.as_deref(),
+            carried,
+        )
+        .await
     }
 }
 
@@ -210,6 +247,7 @@ mod tests {
         // is reached at all.
         let out = jojobot
             .start_here(Parameters(OrientArgs {
+                timezone: None,
                 bot: None,
                 brief: None,
                 skill: Some("evidence".into()),
@@ -232,6 +270,7 @@ mod tests {
         // bot rather than the resume.
         let out = jojobot
             .start_here(Parameters(OrientArgs {
+                timezone: None,
                 bot: Some("dev".into()),
                 brief: None,
                 skill: Some("evidence".into()),
@@ -270,6 +309,7 @@ mod tests {
         let fetched = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: None,
                     brief: None,
                     skill: Some("evidence".into()),
@@ -321,6 +361,7 @@ mod tests {
             json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        timezone: None,
                         bot: None,
                         brief: Some(true),
                         skill: None,
@@ -391,6 +432,7 @@ mod tests {
 
         let out = jojobot
             .start_here(Parameters(OrientArgs {
+                timezone: None,
                 bot: None,
                 brief: None,
                 skill: None,
@@ -465,6 +507,7 @@ mod tests {
         let full = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: None,
                     brief: None,
                     skill: None,
@@ -480,6 +523,7 @@ mod tests {
         let brief = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: None,
                     brief: Some(true),
                     skill: None,
@@ -537,6 +581,7 @@ mod tests {
             json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        timezone: None,
                         bot: None,
                         brief: None,
                         skill: None,
@@ -549,6 +594,7 @@ mod tests {
             json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        timezone: None,
                         bot: None,
                         brief: Some(true),
                         skill: None,
@@ -595,6 +641,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: Some("gamma".into()),
                     brief: Some(true),
                     skill: None,
@@ -617,6 +664,7 @@ mod tests {
     async fn start_here_survives_a_world_that_is_down() {
         let out = handler_with_mailboxes_down(Arc::new(InMemoryMemory::booted()))
             .start_here(Parameters(OrientArgs {
+                timezone: None,
                 bot: None,
                 brief: None,
                 skill: None,
@@ -645,6 +693,7 @@ mod tests {
         let jojobot = handler();
         let out = jojobot
             .start_here(Parameters(OrientArgs {
+                timezone: None,
                 bot: None,
                 brief: None,
                 skill: None,
@@ -687,6 +736,7 @@ mod tests {
 
         let err = jojobot
             .start_here(Parameters(OrientArgs {
+                timezone: None,
                 bot: Some("person:milhouse".into()),
                 brief: None,
                 skill: None,
@@ -723,6 +773,7 @@ mod tests {
         let near = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: Some("gamm".into()),
                     brief: None,
                     skill: None,
@@ -740,6 +791,7 @@ mod tests {
         let stranger = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: Some("nobody".into()),
                     brief: None,
                     skill: None,
@@ -804,6 +856,7 @@ mod tests {
         let body = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,

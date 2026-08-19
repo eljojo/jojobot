@@ -31,6 +31,26 @@ pub(crate) struct Caller {
     /// The card this run landed on, once one exists. `None` until the first
     /// real write materializes it.
     pub(crate) card: Option<SessionId>,
+    /// **The zone this run resolves days against**, as the IANA name it
+    /// supplied at the door. `None` is a run that supplied none, and those are
+    /// answered in [`crate::memory::parse::FALLBACK_ZONE`].
+    pub(crate) zone: Option<String>,
+}
+
+impl Caller {
+    /// **The zone to resolve a day in**, resolved leniently: a name this build
+    /// can no longer look up falls back rather than failing the call.
+    ///
+    /// Strict at the door and lenient here on purpose. A caller sending a name
+    /// that is no zone is told so while it can still fix the call; a run whose
+    /// stored name stopped resolving — a tzdb that lost it — is a call that
+    /// should still answer, in the frame everything with no zone gets.
+    pub(crate) fn zone(&self) -> jiff::tz::TimeZone {
+        self.zone
+            .as_deref()
+            .and_then(|name| jiff::tz::TimeZone::get(name).ok())
+            .unwrap_or(jiff::tz::TimeZone::UTC)
+    }
 }
 
 /// A session verb reached on a connection that never booted. Not an error: the
@@ -131,7 +151,23 @@ impl Jojobot {
             sid: sid::Sid(raw.to_string()),
             bot: held.bot,
             card: held.card,
+            zone: held.zone,
         }))
+    }
+
+    /// **The zone a call resolves days in**, from the run that carries the
+    /// handle.
+    ///
+    /// A call with no handle, or one this process is not holding, gets the
+    /// fallback. Both are already refused by [`Jojobot::identified`] and
+    /// [`Jojobot::attributable`] where carrying a good handle is required, so
+    /// this never decides whether a call is allowed — only which frame answers
+    /// it.
+    pub(crate) fn zone_for(&self, sid: Option<&str>) -> jiff::tz::TimeZone {
+        match self.caller(sid) {
+            Ok(Some(caller)) => caller.zone(),
+            _ => jiff::tz::TimeZone::UTC,
+        }
     }
 
     /// **A handle that is present must be good, even where carrying one is
@@ -272,6 +308,7 @@ impl Jojobot {
                 sid: caller.sid.clone(),
                 focus,
                 started_at: jiff::Timestamp::now(),
+                timezone: caller.zone.clone(),
             })
             .await
             .map_err(session_error)?;

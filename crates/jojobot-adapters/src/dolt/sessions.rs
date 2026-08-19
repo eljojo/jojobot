@@ -93,15 +93,16 @@ impl DoltSessions {
         tx: &mut Transaction<'_, MySql>,
         id: &SessionId,
     ) -> Result<Session, SessionError> {
-        let row =
-            sqlx::query("SELECT id, sid, bot, focus, started_at, state FROM session WHERE id = ?")
-                .bind(id.as_str())
-                .fetch_optional(&mut **tx)
-                .await
-                .map_err(store)?
-                .ok_or_else(|| SessionError::UnknownSession {
-                    attempted: id.to_string(),
-                })?;
+        let row = sqlx::query(
+            "SELECT id, sid, bot, focus, started_at, state, timezone FROM session WHERE id = ?",
+        )
+        .bind(id.as_str())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(store)?
+        .ok_or_else(|| SessionError::UnknownSession {
+            attempted: id.to_string(),
+        })?;
         let entries = sqlx::query(
             "SELECT id, at, text, touched, beat FROM journal_entry
              WHERE session = ? ORDER BY ordinal",
@@ -170,6 +171,9 @@ fn session_from(
     Ok(Session {
         id: SessionId(row.try_get::<String, _>("id").map_err(store)?),
         sid: sid.map(Sid),
+        timezone: row
+            .try_get::<Option<String>, _>("timezone")
+            .map_err(store)?,
         bot: EntityId(row.try_get::<String, _>("bot").map_err(store)?),
         focus: row.try_get::<String, _>("focus").map_err(store)?,
         started_at: instant(&started)?,
@@ -283,7 +287,8 @@ impl Sessions for DoltSessions {
             .await?,
         );
         sqlx::query(
-            "INSERT INTO session (id, sid, bot, focus, started_at, state) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO session (id, sid, bot, focus, started_at, state, timezone)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(id.as_str())
         .bind(new.sid.as_str())
@@ -291,6 +296,7 @@ impl Sessions for DoltSessions {
         .bind(new.focus.trim())
         .bind(stamp(new.started_at))
         .bind(SessionState::Active.as_token())
+        .bind(new.timezone.as_deref())
         .execute(&mut *tx)
         .await
         .map_err(store)?;
@@ -413,6 +419,25 @@ impl Sessions for DoltSessions {
         Self::writable(&mut tx, id).await?;
         sqlx::query("UPDATE session SET focus = ? WHERE id = ?")
             .bind(focus.trim())
+            .bind(id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        let session = Self::read_in(&mut tx, id).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(session)
+    }
+
+    async fn set_timezone(
+        &self,
+        id: &SessionId,
+        timezone: Option<&str>,
+    ) -> Result<Session, SessionError> {
+        validate_session_id(id)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        Self::writable(&mut tx, id).await?;
+        sqlx::query("UPDATE session SET timezone = ? WHERE id = ?")
+            .bind(timezone.map(str::trim).filter(|z| !z.is_empty()))
             .bind(id.as_str())
             .execute(&mut *tx)
             .await
@@ -580,6 +605,7 @@ mod tests {
         let begin = async |slug: &str, sid: &str, at: &str| {
             sessions
                 .begin(NewSession {
+                    timezone: None,
                     bot: EntityId(format!("bot:{slug}")),
                     sid: Sid(sid.into()),
                     focus: "a run".into(),
@@ -671,6 +697,7 @@ mod tests {
         let begin = async |slug: &str, sid: &str, at: &str| {
             sessions
                 .begin(NewSession {
+                    timezone: None,
                     bot: EntityId(format!("bot:{slug}")),
                     sid: Sid(sid.into()),
                     focus: "a run".into(),
@@ -798,6 +825,7 @@ mod tests {
         let before = marks(store.pool()).await;
         let run = sessions
             .begin(NewSession {
+                timezone: None,
                 bot: EntityId("bot:gamma".into()),
                 sid: Sid("ab12".into()),
                 focus: "a run".into(),
@@ -874,6 +902,7 @@ mod tests {
 
         let run = sessions
             .begin(NewSession {
+                timezone: None,
                 bot: EntityId("bot:gamma".into()),
                 sid: Sid("cd34".into()),
                 focus: "a run whose boundaries cannot be marked".into(),

@@ -1,0 +1,19 @@
+-- The zone a run resolves days against, as the IANA name the caller supplied.
+--
+-- A day-grained answer needs a frame: what "today" means for a default capture
+-- date and for whether a due moment has arrived. That frame was UTC everywhere,
+-- so an operator west of it read a claim captured in the evening as stamped
+-- tomorrow, and a due moment as arrived up to a day early.
+--
+-- It is a property of the RUN and not of the server. A run outlives a
+-- disconnect and a device hop, and the handle registry is rebuilt from these
+-- rows at startup, so a zone kept only in the process would be lost by a
+-- restart while the run it belongs to survived — and the run would fall back
+-- silently.
+--
+-- The name is stored as given and resolved where it is used. What a name means
+-- comes from a database on the machine serving the call.
+--
+-- NULL is a run that supplied none, which is what every row written before this
+-- column is. Those are answered in UTC, which is what they already meant.
+ALTER TABLE session ADD COLUMN timezone VARCHAR(64) NULL;

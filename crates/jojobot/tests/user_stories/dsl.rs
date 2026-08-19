@@ -428,6 +428,24 @@ impl Story {
         Session { client, sid }
     }
 
+    /// **A new session that works in a named zone**, on its own connection.
+    ///
+    /// `resume` answers the choice a second boot of one bot is handed, which is
+    /// what lets one story hold two runs in two zones at once.
+    pub async fn session_in(&self, zone: &str, resume: Option<&str>) -> Session {
+        let client = self.connect().await;
+        let mut args = json!({"bot": self.bot, "brief": true, "timezone": zone});
+        if let Some(answer) = resume {
+            args["resume"] = json!(answer);
+        }
+        let booted = call(&client, "start_here", args).await;
+        let sid = booted["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("boot in {zone} handed back no handle: {booted}"))
+            .to_string();
+        Session { client, sid }
+    }
+
     /// A new session's own boot, whole — the essay included. `.session()`
     /// takes `brief` on every other story, because they act after booting;
     /// this exists for a story whose whole point is what a full boot itself
@@ -741,6 +759,22 @@ impl Session {
             )
             .await;
         address_of(&body)
+    }
+
+    /// Something the person said, with no date on it — and **the day jojobot
+    /// stamped it with**, which is the run's own day rather than the server's.
+    pub async fn undated_fact(&self, subject: &str, content: &str) -> String {
+        let body = self
+            .write(
+                &format!("an undated fact about {subject}"),
+                "capture",
+                json!({"subject": subject, "content": content, "provenance": "testimony"}),
+            )
+            .await;
+        body["date"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a capture is stamped with a day: {body}"))
+            .to_string()
     }
 
     /// A fact carrying a date. **Which date it is, is the whole problem** — the

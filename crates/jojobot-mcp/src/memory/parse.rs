@@ -277,13 +277,49 @@ pub(crate) fn parse_standing(raw: &str) -> Result<Standing, McpError> {
     }
 }
 
-/// Parse the date argument, or default to today in UTC. The UTC default keeps
-/// the domain clock-free while giving `capture` a sensible freshness stamp.
-pub(crate) fn parse_date(raw: Option<&str>) -> Result<jiff::civil::Date, McpError> {
+/// **The zone a run resolves days against when it named none.**
+///
+/// Stated rather than silent: a session that supplies no zone is answered in
+/// UTC, and every surface that takes one says so. It is a fallback and not a
+/// setting — the frame belongs to the caller, and this is what jojobot uses
+/// when the caller declined to supply one.
+pub(crate) const FALLBACK_ZONE: &str = "UTC";
+
+/// **The zone a name says, or why it is no zone.**
+///
+/// IANA names, which are what a session supplies. **Resolution happens here
+/// rather than in the domain**, which stays clock-free and carries the name as
+/// written: what a name means depends on a database on this machine, and that
+/// is not a thing a pure model should have to read.
+pub(crate) fn parse_zone(raw: Option<&str>) -> Result<jiff::tz::TimeZone, McpError> {
+    let name = raw.map(str::trim).filter(|n| !n.is_empty());
+    let Some(name) = name else {
+        return Ok(jiff::tz::TimeZone::UTC);
+    };
+    jiff::tz::TimeZone::get(name).map_err(|e| {
+        McpError::invalid_params(
+            format!(
+                "'{name}' is no timezone this build can resolve: {e}. Send an IANA name, like                  'America/New_York' or 'Europe/Madrid', or send none and days are resolved in                  {FALLBACK_ZONE}."
+            ),
+            None,
+        )
+    })
+}
+
+/// Parse the date argument, or default to today **in the zone the run
+/// supplied**.
+///
+/// The domain stays clock-free: it takes the day it is asked about. This is
+/// where a caller that named no day is told which day that is, and the frame is
+/// the session's rather than the server's — two runs in different zones
+/// legitimately disagree about what today is, and that is the caller's frame
+/// working rather than a fault.
+pub(crate) fn parse_date(
+    raw: Option<&str>,
+    zone: &jiff::tz::TimeZone,
+) -> Result<jiff::civil::Date, McpError> {
     match raw.map(str::trim) {
-        None | Some("") => Ok(jiff::Timestamp::now()
-            .to_zoned(jiff::tz::TimeZone::UTC)
-            .date()),
+        None | Some("") => Ok(jiff::Timestamp::now().to_zoned(zone.clone()).date()),
         Some(s) => s.parse().map_err(|e| {
             McpError::invalid_params(format!("date must be YYYY-MM-DD, got '{s}': {e}"), None)
         }),
@@ -293,6 +329,49 @@ pub(crate) fn parse_date(raw: Option<&str>) -> Result<jiff::civil::Date, McpErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **This build can resolve an IANA zone, and says so when it cannot.**
+    ///
+    /// Pinned rather than assumed: what a zone name means comes from a database
+    /// on the machine, so a build that cannot read one would resolve every name
+    /// to nothing and quietly answer every session in the fallback. That is the
+    /// failure nobody would see from a green suite anywhere else.
+    ///
+    /// Two zones, because one proves only that SOMETHING resolved — and a
+    /// negative offset and a positive one, so a case cannot pass on a build
+    /// that hands back UTC under another name.
+    #[test]
+    fn a_zone_name_resolves_and_a_name_that_is_no_zone_says_so() {
+        let stamp: jiff::Timestamp = "2026-08-19T02:30:00Z".parse().expect("a fixed instant");
+        for (name, expected) in [
+            // West of UTC: 02:30 UTC is still the previous evening.
+            ("America/New_York", "2026-08-18"),
+            // East of UTC: the same instant is already the same morning.
+            ("Europe/Madrid", "2026-08-19"),
+        ] {
+            let zone = parse_zone(Some(name)).unwrap_or_else(|e| panic!("{name} is a zone: {e}"));
+            assert_eq!(
+                stamp.to_zoned(zone).date().to_string(),
+                expected,
+                "{name} puts that instant on {expected}",
+            );
+        }
+
+        // The fallback, and it is what a caller that named none gets.
+        assert_eq!(
+            parse_zone(None)
+                .expect("no name is the fallback")
+                .iana_name(),
+            Some(FALLBACK_ZONE),
+        );
+
+        let refused = parse_zone(Some("Nowhere/Atall")).expect_err("that is no zone");
+        assert!(
+            refused.to_string().contains("Nowhere/Atall"),
+            "the refusal quotes what was sent: {refused}",
+        );
+    }
+
     use crate::harness::*;
     use crate::memory::testing::*;
 

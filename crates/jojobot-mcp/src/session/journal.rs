@@ -406,6 +406,7 @@ mod tests {
         let stopped = abandoned_run(&store, "gamma", "reading the hand-off", 30).await;
         let told = store
             .begin(NewSession {
+                timezone: None,
                 bot: EntityId("bot:gamma".into()),
                 sid: Sid("t001".into()),
                 focus: "a finished piece of work".into(),

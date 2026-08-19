@@ -553,7 +553,10 @@ impl Jojobot {
         // the same code path as *what is overdue now*.
         let as_of = match &args.overdue {
             None => None,
-            Some(overdue) => Some(parse_date(overdue.as_of.as_deref())?),
+            Some(overdue) => Some(parse_date(
+                overdue.as_of.as_deref(),
+                &self.zone_for(args.sid.as_deref()),
+            )?),
         };
         let include = graph::Include {
             facts: args.facts.unwrap_or(false),
@@ -884,6 +887,83 @@ mod tests {
     ///
     /// It comes back carrying its fields, so the caller can see which key it is
     /// short of.
+    /// **The same stored loop has fallen due in one zone and not yet in the
+    /// other, and both answers are right.**
+    ///
+    /// This is the sharp end of the frame belonging to the caller. One row, one
+    /// question, two runs — and a loop that falls due today has genuinely
+    /// arrived for the run whose day it already is and genuinely has not for
+    /// the run still on yesterday. **It is not a fault and there is nothing to
+    /// work around**, which is why the door says so in its own text.
+    ///
+    /// The two zones are twenty-six hours apart, the widest the map goes, so
+    /// their local dates differ at every instant and this case does not pass or
+    /// fail by the hour it is run at. The due date is worked out from the
+    /// leading zone's own today, so nothing here rots when the calendar moves.
+    ///
+    /// **Both directions are asserted in the one case.** A build ignoring zones
+    /// gives the two runs one answer, whichever answer that is, so pinning only
+    /// the arrival or only the absence would pass on it.
+    #[tokio::test]
+    async fn one_loop_falls_due_in_one_zone_and_not_yet_in_the_other() {
+        let jojobot = handler();
+        make_bot(&jojobot, "otto").await;
+
+        let day_in = |zone: &str| {
+            jiff::Timestamp::now()
+                .to_zoned(jiff::tz::TimeZone::get(zone).expect("a zone"))
+                .date()
+        };
+        // A cadence of one day counting from the leading zone's yesterday: the
+        // loop falls due on that zone's TODAY, which every other zone on the
+        // map is either on or behind.
+        let counts_from = day_in("Pacific/Kiritimati")
+            .yesterday()
+            .expect("a day before");
+        a_rhythm(&jojobot, "descale", "1", &counts_from.to_string()).await;
+
+        let overdue_for = async |sid: String| {
+            let body = json_of(
+                &jojobot
+                    .recall(Parameters(RecallArgs {
+                        kind: Some("rhythm".into()),
+                        sid: Some(sid),
+                        // No `as_of`: the whole point is which day the RUN
+                        // thinks it is.
+                        overdue: Some(OverdueArgs { as_of: None }),
+                        ..of_nothing()
+                    }))
+                    .await
+                    .expect("recall ok"),
+            );
+            (handles(&body), body)
+        };
+
+        let ahead = booted_in(&jojobot, "otto", "Pacific/Kiritimati", Some("new")).await;
+        let behind = booted_in(&jojobot, "otto", "Etc/GMT+12", Some("new")).await;
+        let (arrived, ahead_body) = overdue_for(ahead).await;
+        let (not_yet, behind_body) = overdue_for(behind).await;
+
+        assert_eq!(
+            arrived,
+            vec!["rhythm:descale".to_string()],
+            "the run whose day it already is finds the loop due: {ahead_body}",
+        );
+        assert!(
+            not_yet.is_empty(),
+            "…and the run still on an earlier day does not, from the same row: {behind_body}",
+        );
+        assert_eq!(
+            ahead_body["overdue_as_of"],
+            day_in("Pacific/Kiritimati").to_string(),
+            "each answer says which day it was asked about, in its own frame",
+        );
+        assert_eq!(
+            behind_body["overdue_as_of"],
+            day_in("Etc/GMT+12").to_string(),
+        );
+    }
+
     #[tokio::test]
     async fn a_rhythm_with_half_a_schedule_is_overdue_rather_than_invisible() {
         let jojobot = handler();

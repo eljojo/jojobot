@@ -16,6 +16,8 @@ impl Jojobot {
         bot: Option<&EntityId>,
         brief: bool,
         resume: Option<&str>,
+        // The IANA zone this run resolves days in, validated at the door.
+        timezone: Option<&str>,
         // What the handle this caller arrived with is worth — from
         // [`Jojobot::standing`], and `Null` when they arrived with none.
         carried: serde_json::Value,
@@ -195,7 +197,7 @@ impl Jojobot {
         // belonging to nobody.
         let session = match bot {
             None => serde_json::Value::Null,
-            Some(bot) => match self.attach(bot, resume).await {
+            Some(bot) => match self.attach(bot, resume, timezone).await {
                 Ok(session) => session,
                 // A handle that addresses nothing stops the whole answer.
                 // Handing back orientation around it would bury the one thing
@@ -530,6 +532,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: None,
                     brief: None,
                     skill: None,
@@ -622,6 +625,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: None,
                     brief: None,
                     skill: None,
@@ -696,6 +700,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: None,
                     brief: None,
                     skill: None,
@@ -824,6 +829,7 @@ mod skills_are_indexed_not_shipped {
         let booted = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: None,
                     brief: None,
                     resume: None,
@@ -879,6 +885,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: None,
                     brief: None,
                     resume: None,
@@ -912,6 +919,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: Some("otto".into()),
                     brief: None,
                     skill: Some("recommend".into()),
@@ -951,6 +959,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: None,
                     brief: None,
                     resume: None,

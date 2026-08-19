@@ -46,6 +46,13 @@ impl Jojobot {
         &self,
         bot: &EntityId,
         resume: Option<&str>,
+        // **The zone this run resolves days in**, already validated by the
+        // door: an unresolvable name never reaches here. `None` is a boot that
+        // supplied none, and on a RESUME that means keep what the run carries
+        // rather than reframing it — a caller that said nothing has not asked
+        // for the fallback, and silently moving a running session's frame is
+        // the one thing this must not do.
+        timezone: Option<&str>,
     ) -> Result<serde_json::Value, CallToolResult> {
         // **A boot is a read-the-board → decide → write-the-registry span like
         // the write verbs, so it takes the same gate, on the same key.** Its
@@ -100,6 +107,8 @@ impl Jojobot {
             // ── the caller answered the offer ───────────────────────────────
             Some(answer) if answer.eq_ignore_ascii_case(sid::NEW) => {
                 let handle = self.mint_or_say_why(bot, None)?;
+                self.registry
+                    .set_zone(&handle, timezone.map(str::to_string));
                 // Bound to the identity with no session: the first write is
                 // what begins the card, exactly as a first boot's is. **The run
                 // that was offered is left running** — a new session never
@@ -108,6 +117,23 @@ impl Jojobot {
             }
             Some(answer) => {
                 let (handle, session) = self.resumable(bot, answer, &live).await?;
+                // **A resume that names a zone moves the run into it**, card
+                // included, because a run outlives a device hop and the zone it
+                // began in is not always the zone it is being worked in. A
+                // resume that names none keeps what the run had: see `attach`.
+                if let Some(zone) = timezone {
+                    self.registry.set_zone(&handle, Some(zone.to_string()));
+                    if let Some(session) = &session
+                        && let Err(e) = self.sessions.set_timezone(&session.id, Some(zone)).await
+                    {
+                        tracing::warn!(
+                            error = %e, session = %session.id,
+                            "the resumed session's timezone could not be written — this run \
+                             answers in the zone it was given, and a restart would read the old \
+                             one back"
+                        );
+                    }
+                }
                 match session {
                     Some(session) => {
                         let block = serde_json::json!({
@@ -129,6 +155,8 @@ impl Jojobot {
             // ── a first boot: the two branches ──────────────────────────────
             None if live.is_empty() && offerable.is_none() => {
                 let handle = self.mint_or_say_why(bot, None)?;
+                self.registry
+                    .set_zone(&handle, timezone.map(str::to_string));
                 self.fresh_block(handle)
             }
             None => {
@@ -329,6 +357,58 @@ mod tests {
     use crate::session::testing::*;
     use jojobot_domain::session::Sid;
 
+    /// **A resume that names a zone moves the run into it; one that names none
+    /// leaves it where it was.**
+    ///
+    /// A run outlives a device hop, so the zone it began in is not always the
+    /// zone it is being worked in — and a caller that said nothing has not
+    /// asked for the fallback. Silently reframing a running session is the one
+    /// thing this must not do, because nothing about it would be visible to the
+    /// caller until a date came out wrong.
+    ///
+    /// **Both halves in one case**, because a build that always overwrote and a
+    /// build that never did are each told apart by only one of them. The card
+    /// is read back rather than the answer to the write: a zone the door
+    /// changed in the process and not on the record is one a restart loses.
+    #[tokio::test]
+    async fn a_resume_moves_the_zone_only_when_it_names_one() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+
+        let sid = booted_in(&jojobot, "gamma", "Europe/Madrid", None).await;
+        // The record is lazy, so a write is what puts the run on it.
+        journal_entry(&jojobot, &sid, "started").await;
+
+        let zone_on_record = async || {
+            store
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok")
+                .into_iter()
+                .find(|s| s.sid.as_ref().map(|h| h.as_str()) == Some(sid.as_str()))
+                .expect("the run is on the record")
+                .timezone
+        };
+        assert_eq!(zone_on_record().await.as_deref(), Some("Europe/Madrid"));
+
+        // Picked up somewhere else, naming the new zone.
+        booted_in(&jojobot, "gamma", "America/New_York", Some(&sid)).await;
+        assert_eq!(
+            zone_on_record().await.as_deref(),
+            Some("America/New_York"),
+            "a resume that names a zone moves the run into it",
+        );
+
+        // Picked up again, naming none: the run keeps what it had.
+        boot_answering(&jojobot, "gamma", &sid).await;
+        assert_eq!(
+            zone_on_record().await.as_deref(),
+            Some("America/New_York"),
+            "…and a resume that names none leaves it where it was",
+        );
+    }
+
     /// **An anonymous boot is an orientation preview: nothing usable behind
     /// it.** The world and the snapshot, no identity, and above all no handle —
     /// a caller who was handed one would reasonably believe it addressed
@@ -341,6 +421,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: None,
                     brief: None,
                     skill: None,
@@ -418,6 +499,7 @@ mod tests {
         {
             store
                 .begin(NewSession {
+                    timezone: None,
                     bot: EntityId("bot:gamma".into()),
                     sid: fixture_sid(line!() + nth as u32),
                     focus: focus.into(),
@@ -474,6 +556,7 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         let begun = store
             .begin(NewSession {
+                timezone: None,
                 bot: EntityId("bot:gamma".into()),
                 sid: Sid("t001".into()),
                 focus: "reading the hand-off".into(),
@@ -661,6 +744,7 @@ mod tests {
 
         let legacy = store
             .begin(NewSession {
+                timezone: None,
                 bot: EntityId("bot:gamma".into()),
                 sid: Sid("t900".into()),
                 focus: "from before handles were stored".into(),
@@ -740,6 +824,7 @@ mod tests {
         let body = blocked(
             &restarted
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,
@@ -760,6 +845,7 @@ mod tests {
         let mistyped = blocked(
             &restarted
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,
@@ -786,6 +872,7 @@ mod tests {
         let body = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: Some("delta".into()),
                     brief: None,
                     skill: None,
@@ -833,6 +920,7 @@ mod tests {
         for nth in 0..2 {
             store
                 .begin(NewSession {
+                    timezone: None,
                     bot: EntityId("bot:gamma".into()),
                     sid: fixture_sid(line!() + nth),
                     focus: focus.into(),
@@ -970,6 +1058,7 @@ mod tests {
         abandoned_run(&store, "gamma", "the newest stop", 40).await;
         store
             .begin(NewSession {
+                timezone: None,
                 bot: EntityId("bot:gamma".into()),
                 sid: Sid("t001".into()),
                 focus: "still going".into(),
@@ -1009,6 +1098,7 @@ mod tests {
 
         let told = store
             .begin(NewSession {
+                timezone: None,
                 bot: EntityId("bot:gamma".into()),
                 sid: Sid("t001".into()),
                 focus: "a finished piece of work".into(),
@@ -1033,6 +1123,7 @@ mod tests {
         let refused = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    timezone: None,
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,
@@ -1126,6 +1217,7 @@ mod tests {
         // Begun two days ago and never touched since.
         let stale = store
             .begin(NewSession {
+                timezone: None,
                 bot: EntityId("bot:gamma".into()),
                 sid: Sid("t001".into()),
                 focus: "something from the day before yesterday".into(),
@@ -1187,6 +1279,7 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         let recent = store
             .begin(NewSession {
+                timezone: None,
                 bot: EntityId("bot:gamma".into()),
                 sid: Sid("t001".into()),
                 focus: "still going".into(),
@@ -1311,6 +1404,7 @@ mod tests {
             // through.
             store
                 .begin(NewSession {
+                    timezone: None,
                     bot: EntityId("bot:gamma".into()),
                     sid: fixture_sid(line!()),
                     focus: "from the day before yesterday".into(),
@@ -1320,6 +1414,7 @@ mod tests {
                 .expect("begin ok");
 
             let booting = jojobot.start_here(Parameters(OrientArgs {
+                timezone: None,
                 bot: Some("gamma".into()),
                 brief: None,
                 skill: None,
@@ -1397,6 +1492,7 @@ mod tests {
             let sid = booted(&jojobot, "gamma").await;
 
             let booting = jojobot.start_here(Parameters(OrientArgs {
+                timezone: None,
                 bot: Some("gamma".into()),
                 brief: None,
                 skill: None,

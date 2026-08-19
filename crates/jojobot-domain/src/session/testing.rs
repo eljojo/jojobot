@@ -137,6 +137,7 @@ impl Sessions for InMemorySessions {
             started_at: new.started_at,
             state: SessionState::Active,
             entries: Vec::new(),
+            timezone: new.timezone,
         };
         self.sessions
             .lock()
@@ -215,6 +216,21 @@ impl Sessions for InMemorySessions {
         Ok(sessions[at].clone())
     }
 
+    async fn set_timezone(
+        &self,
+        id: &SessionId,
+        timezone: Option<&str>,
+    ) -> Result<Session, SessionError> {
+        validate_session_id(id)?;
+        let mut sessions = self.sessions.lock().expect("session lock");
+        let at = Self::writable(&mut sessions, id)?;
+        sessions[at].timezone = timezone
+            .map(str::trim)
+            .filter(|z| !z.is_empty())
+            .map(str::to_string);
+        Ok(sessions[at].clone())
+    }
+
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         validate_session_id(id)?;
         let mut sessions = self.sessions.lock().expect("session lock");
@@ -282,6 +298,7 @@ pub mod contract {
                 sid: sid(at_offset),
                 focus: focus.to_string(),
                 started_at: at(at_offset),
+                timezone: None,
             })
             .await
             .expect("begin should succeed")
@@ -325,6 +342,7 @@ pub mod contract {
                 sid: sid(0),
                 focus: "reading the hand-off".to_string(),
                 started_at: at(0),
+                timezone: None,
             })
             .await
             .expect("beginning again under a live handle is not an error");
@@ -567,6 +585,79 @@ pub mod contract {
             read.entries.is_empty(),
             "…and it wrote nothing: {:?}",
             read.entries
+        );
+    }
+
+    /// **A run's zone survives storage, and the door can move it.**
+    ///
+    /// A contract case because only a store can say whether the name came back
+    /// as it went in. The handle registry is rebuilt from these rows at
+    /// startup, so a zone the store dropped would be a run that answered in the
+    /// caller's frame until the process restarted and then silently in the
+    /// fallback.
+    ///
+    /// Three beats, and the third is the one the other two rest on: a run born
+    /// with no zone carries none, so this cannot pass on a store that hands
+    /// back a zone whatever it was given.
+    pub async fn a_runs_zone_is_stored_and_can_be_moved(store: &dyn Sessions) {
+        let born = store
+            .begin(NewSession {
+                bot: bot("gamma"),
+                sid: sid(70),
+                focus: "reading the hand-off".to_string(),
+                started_at: at(70),
+                timezone: Some("Europe/Madrid".to_string()),
+            })
+            .await
+            .expect("a run may be born in a zone");
+        assert_eq!(
+            store
+                .read_session(&born.id)
+                .await
+                .expect("it reads back")
+                .timezone
+                .as_deref(),
+            Some("Europe/Madrid"),
+            "the name comes back as it went in",
+        );
+
+        // **The device hop.** The same run, picked up somewhere else.
+        let moved = store
+            .set_timezone(&born.id, Some("America/New_York"))
+            .await
+            .expect("a run may be moved into another zone");
+        assert_eq!(moved.timezone.as_deref(), Some("America/New_York"));
+        assert_eq!(
+            store
+                .read_session(&born.id)
+                .await
+                .expect("it reads back")
+                .timezone
+                .as_deref(),
+            Some("America/New_York"),
+            "…and the card says so, not just the answer to the write",
+        );
+
+        // A run that named none carries none. Without this the beats above pass
+        // on a store that invents a zone for every row.
+        let bare = store
+            .begin(NewSession {
+                bot: bot("gamma"),
+                sid: sid(71),
+                focus: "no zone named".to_string(),
+                started_at: at(71),
+                timezone: None,
+            })
+            .await
+            .expect("a run may name no zone");
+        assert_eq!(
+            store
+                .read_session(&bare.id)
+                .await
+                .expect("it reads back")
+                .timezone,
+            None,
+            "a run that named no zone is not handed one",
         );
     }
 
@@ -897,6 +988,7 @@ pub mod contract {
                     sid: sid(900),
                     focus: "  ".into(),
                     started_at: at(0),
+                    timezone: None,
                 })
                 .await
                 .is_err(),
@@ -945,6 +1037,7 @@ pub mod contract {
         amending_a_beat_keeps_its_place_but_moves_the_clock(&fresh()).await;
         amending_with_no_entries_is_refused(&fresh()).await;
         focus_is_rewritten_in_place_and_leaves_the_chronology_alone(&fresh()).await;
+        a_runs_zone_is_stored_and_can_be_moved(&fresh()).await;
         a_closed_session_is_terminal_both_ways(&fresh()).await;
         an_abandoned_session_reopens_and_a_wrapped_one_never_does(&fresh()).await;
         sessions_are_listed_per_bot_newest_first(&fresh()).await;

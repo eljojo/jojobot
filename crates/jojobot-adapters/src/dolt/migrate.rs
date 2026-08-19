@@ -294,6 +294,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0025_type_field_one_of.sql"),
         leaves: Leaves::Column("type_field", "one_of"),
     },
+    Migration {
+        version: "0026_session_timezone",
+        sql: include_str!("../../migrations/0026_session_timezone.sql"),
+        leaves: Leaves::Column("session", "timezone"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -686,6 +691,7 @@ mod tests {
         "0023_type_field_required",
         "0024_rhythm_kind_takes_its_name",
         "0025_type_field_one_of",
+        "0026_session_timezone",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

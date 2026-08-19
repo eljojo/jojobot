@@ -489,6 +489,7 @@ mod tests {
         // reached with one…
         let err = jojobot
             .start_here(Parameters(OrientArgs {
+                timezone: None,
                 bot: Some("person:milhouse".into()),
                 brief: None,
                 skill: None,
@@ -535,6 +536,7 @@ mod tests {
             .expect("set_charter ok");
         store
             .begin(NewSession {
+                timezone: None,
                 bot: EntityId("bot:gamma".into()),
                 sid: fixture_sid(line!()),
                 focus: "reading the hand-off".into(),

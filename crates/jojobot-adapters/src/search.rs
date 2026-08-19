@@ -3922,6 +3922,7 @@ mod tests {
     fn run(id: &str, bot: &str, focus: &str, beat: &str) -> jojobot_domain::session::Session {
         use jojobot_domain::session::{EntryId, JournalEntry, Session, SessionId, SessionState};
         Session {
+            timezone: None,
             id: SessionId(id.into()),
             sid: None,
             bot: EntityId(bot.into()),

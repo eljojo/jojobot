@@ -284,7 +284,7 @@ impl Jojobot {
         }
         let subject = EntityId::person(&args.subject);
         let provenance = parse_provenance(args.provenance.as_deref())?;
-        let date = parse_date(args.date.as_deref())?;
+        let date = parse_date(args.date.as_deref(), &self.zone_for(args.sid.as_deref()))?;
         let edge = match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
             Ok(edge) => edge,
             Err(refused) => return Ok(refused),
@@ -1225,9 +1225,69 @@ mod tests {
         assert!(refused.is_err(), "an unknown standing must be refused");
     }
 
-    /// Omitting `date` defaults to today in UTC.
+    /// **Two runs in two zones disagree about what today is, and both are
+    /// right.**
+    ///
+    /// The frame belongs to the caller, so a claim captured with no date is
+    /// stamped with the day it is in the run's own zone. The two zones here are
+    /// the extremes on purpose: twenty-six hours apart, so their local dates
+    /// differ at every instant and this case does not pass or fail by the hour
+    /// it is run at.
+    ///
+    /// **Each date is pinned to its own zone, not merely to being different.**
+    /// A case asserting only that two answers differ passes on a build that
+    /// stamps them wrong in two directions.
     #[tokio::test]
-    async fn date_defaults_to_today_utc() {
+    async fn two_runs_in_two_zones_stamp_a_claim_with_their_own_day() {
+        let jojobot = handler();
+        make_bot(&jojobot, "otto").await;
+        ensure(&jojobot, "person:milhouse").await;
+
+        // Twenty-six hours apart: the widest the map goes, so the two local
+        // dates can never coincide.
+        // Both answer `new`: the fixture handle already has a run in flight,
+        // and a bot may have several at once — which is what lets one case hold
+        // two of them in two zones.
+        let behind = booted_in(&jojobot, "otto", "Etc/GMT+12", Some("new")).await;
+        let ahead = booted_in(&jojobot, "otto", "Pacific/Kiritimati", Some("new")).await;
+
+        let stamped = async |sid: &str| {
+            let mut args = capture_args("milhouse", "no date on this one");
+            args.sid = Some(sid.to_string());
+            args.date = None;
+            capture_ok(&jojobot, args).await["date"]
+                .as_str()
+                .expect("a capture is stamped with a day")
+                .to_string()
+        };
+        let (behind, ahead) = (stamped(&behind).await, stamped(&ahead).await);
+
+        let day_in = |zone: &str| {
+            jiff::Timestamp::now()
+                .to_zoned(jiff::tz::TimeZone::get(zone).expect("a zone"))
+                .date()
+                .to_string()
+        };
+        assert_eq!(behind, day_in("Etc/GMT+12"), "the run west of everything");
+        assert_eq!(
+            ahead,
+            day_in("Pacific/Kiritimati"),
+            "and the run east of it"
+        );
+        assert_ne!(
+            behind, ahead,
+            "…which are never the same day, whatever hour this runs at",
+        );
+    }
+
+    /// **A run that named no zone is answered in UTC**, which is the stated
+    /// fallback rather than a server setting.
+    ///
+    /// The negative the case above rests on: without it, a build that always
+    /// used the fallback and a build that reads the run's zone are told apart
+    /// by nothing here.
+    #[tokio::test]
+    async fn a_run_with_no_zone_is_dated_in_the_fallback() {
         let jojobot = handler();
         let today = jiff::Timestamp::now()
             .to_zoned(jiff::tz::TimeZone::UTC)

@@ -535,6 +535,7 @@ mod tests {
         // Somebody else's session, on the same board.
         let theirs = store
             .begin(NewSession {
+                timezone: None,
                 bot: EntityId("bot:delta".into()),
                 sid: Sid("d001".into()),
                 focus: "their run".into(),

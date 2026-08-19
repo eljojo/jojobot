@@ -274,6 +274,7 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
     let sessions = Arc::new(InMemorySessions::new());
     let session = sessions
         .begin(NewSession {
+            timezone: None,
             bot: bot.clone(),
             sid: Sid("ot1x".to_string()),
             focus: "Reading the survey".to_string(),

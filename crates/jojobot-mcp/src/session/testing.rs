@@ -63,6 +63,7 @@ pub(crate) async fn abandoned_run(
 ) -> Session {
     let begun = store
         .begin(NewSession {
+            timezone: None,
             bot: EntityId(format!("bot:{bot}")),
             sid: Sid(format!("t{:03}", hours_ago.rem_euclid(1000))),
             focus: focus.into(),
@@ -225,6 +226,13 @@ impl Sessions for CommitsThenFails {
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
         self.inner.set_focus(id, focus).await
     }
+    async fn set_timezone(
+        &self,
+        id: &SessionId,
+        timezone: Option<&str>,
+    ) -> Result<Session, SessionError> {
+        self.inner.set_timezone(id, timezone).await
+    }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.inner.close(id, to).await
     }
@@ -298,6 +306,11 @@ impl Sessions for RefusingFocus {
             "the focus cell on the page could not be written".into(),
         ))
     }
+    async fn set_timezone(&self, _: &SessionId, _: Option<&str>) -> Result<Session, SessionError> {
+        Err(SessionError::Store(
+            "the timezone cell on the page could not be written".into(),
+        ))
+    }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.0.close(id, to).await
     }
@@ -343,6 +356,13 @@ impl Sessions for RefusingAppend {
     }
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
         self.0.set_focus(id, focus).await
+    }
+    async fn set_timezone(
+        &self,
+        id: &SessionId,
+        timezone: Option<&str>,
+    ) -> Result<Session, SessionError> {
+        self.0.set_timezone(id, timezone).await
     }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.0.close(id, to).await
@@ -446,6 +466,13 @@ impl Sessions for RefusingClose {
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
         self.inner.set_focus(id, focus).await
     }
+    async fn set_timezone(
+        &self,
+        id: &SessionId,
+        timezone: Option<&str>,
+    ) -> Result<Session, SessionError> {
+        self.inner.set_timezone(id, timezone).await
+    }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         if self.refuse.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(SessionError::Store("the close failed in flight".into()));
@@ -509,6 +536,14 @@ impl Sessions for Yielding {
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
         self.pause().await;
         self.0.set_focus(id, focus).await
+    }
+    async fn set_timezone(
+        &self,
+        id: &SessionId,
+        timezone: Option<&str>,
+    ) -> Result<Session, SessionError> {
+        self.pause().await;
+        self.0.set_timezone(id, timezone).await
     }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.pause().await;

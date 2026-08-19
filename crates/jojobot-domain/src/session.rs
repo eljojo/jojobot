@@ -388,6 +388,13 @@ pub struct NewSession {
     pub focus: String,
     /// When it began.
     pub started_at: Timestamp,
+    /// **The zone this run resolves days against**, as the IANA name the caller
+    /// supplied at the door, or nothing when it supplied none.
+    ///
+    /// It is carried as a NAME and never resolved here: what a name means comes
+    /// from a database on the machine serving the call, and this model stays
+    /// clock-free and reads nothing.
+    pub timezone: Option<String>,
 }
 
 /// One session on the record.
@@ -416,6 +423,17 @@ pub struct Session {
     pub state: SessionState,
     /// The chronology, oldest first.
     pub entries: Vec<JournalEntry>,
+    /// **The zone this run resolves days against**, as an IANA name.
+    ///
+    /// **A property of the RUN, not of the server.** Two runs of one bot in two
+    /// zones legitimately disagree about what today is for the same stored row,
+    /// and that is the caller's frame working rather than a fault.
+    ///
+    /// `None` is a run that supplied none, and every surface that takes one says
+    /// which zone answers it then. Absent on every card written before runs
+    /// carried one.
+    #[serde(default)]
+    pub timezone: Option<String>,
 }
 
 impl Session {
@@ -591,6 +609,22 @@ pub trait Sessions: Send + Sync {
 
     /// Rewrite what the session is working on now. Refused on a closed session.
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError>;
+
+    /// **Record the zone this run resolves days against**, replacing whatever
+    /// it carried.
+    ///
+    /// A run outlives a disconnect and a device hop, so the zone it was born in
+    /// is not always the zone it is being worked in. The door writes this when
+    /// a boot supplies one, so the card and the live run never say two
+    /// different things about the same run.
+    ///
+    /// The name is stored as given and is never resolved here — see
+    /// [`Session::timezone`].
+    async fn set_timezone(
+        &self,
+        id: &SessionId,
+        timezone: Option<&str>,
+    ) -> Result<Session, SessionError>;
 
     /// Move a session to a terminal state. Refused if it is already in one —
     /// terminal both ways.
@@ -890,6 +924,7 @@ mod tests {
             text: text.to_string(),
         };
         let session = Session {
+            timezone: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -924,6 +959,7 @@ mod tests {
     async fn run(store: &dyn Sessions, nth: u8, focus: &str, hours_ago: i64) -> Session {
         store
             .begin(NewSession {
+                timezone: None,
                 bot: EntityId("bot:gamma".into()),
                 sid: Sid(format!("s{nth:03}")),
                 focus: focus.to_string(),
@@ -1006,6 +1042,13 @@ mod tests {
             }
             async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
                 self.0.begin(new).await
+            }
+            async fn set_timezone(
+                &self,
+                id: &SessionId,
+                timezone: Option<&str>,
+            ) -> Result<Session, SessionError> {
+                self.0.set_timezone(id, timezone).await
             }
             async fn append(
                 &self,
@@ -1142,6 +1185,7 @@ mod tests {
     fn staleness_is_measured_from_the_last_beat_or_the_start() {
         let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
         let bare = Session {
+            timezone: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -1233,6 +1277,7 @@ mod tests {
     fn only_a_recently_abandoned_run_is_offered_back() {
         let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
         let run = Session {
+            timezone: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
