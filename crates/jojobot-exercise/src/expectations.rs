@@ -431,15 +431,18 @@ impl Expectation for TheLoopIsOnTheRecord {
     }
 }
 
-/// **Phase 10 — a vocabulary of your own.**
+/// **Phase 10 — a vocabulary of your own, and it DESCRIBES.**
 ///
-/// The declaration is proved by USING it: a read that selects the things
-/// fitting `smoke-errand` can only answer if the type was declared and the
-/// thing carries its required keys. That is one read for two claims, and
-/// neither can pass without the other.
+/// The declaration is proved by USING it: a read that selects by
+/// `smoke-errand` can only answer if the type was declared. That is one read
+/// for two claims, and neither can pass without the other.
 ///
-/// **The absence needs its positive, as always here**: nothing carries the
-/// value the set refused, checked beside a thing that carries a value it names.
+/// **The second half is the surprise the phase exists for.** A caller's type
+/// turns no write away — only a kind's declaration gates — so the value its set
+/// does not name is KEPT, and the read is what flags it. So this requires the
+/// bad value to be present AND reported as mistyped: a room where it is missing
+/// is a room where something refused a write that should have landed, and a
+/// room where it is present unflagged is a read that lost the mistake.
 struct TheVocabularyGovernsAThing;
 
 #[async_trait::async_trait]
@@ -475,42 +478,38 @@ impl Expectation for TheVocabularyGovernsAThing {
                     .to_string(),
             );
         }
-        // Answering is not fitting. A thing short of a required key is a phase
-        // that wrote something and not the thing the phase asked for.
-        if !answering.contains("\"complete\":true") {
+        // **The write a caller's type does not turn away.** The phase writes a
+        // value outside the set on purpose, so the read must carry it and must
+        // say it is wrong. Both, because either one alone is a different build:
+        // no flag is a read that lost the mistake, and no value is a gate
+        // nobody asked for.
+        if !answering.contains("\"mistyped\"") || answering.contains("\"mistyped\":[]") {
             return missed(
                 self.name(),
                 format!(
-                    "something answers the type and nothing holds every key it requires: \
-                     {answering}"
+                    "nothing on the thing is reported as mistyped, so either the value the set \
+                     does not name never landed — which would mean a caller's type gated a \
+                     write — or the read lost it: {answering}"
                 ),
-            );
-        }
-        // The refusal the phase provokes must have left nothing behind. Read
-        // over everything rather than the fitting set: a thing the refused
-        // write created would not fit, which is exactly where it would hide.
-        let everything = seen
-            .room
-            .call("search", json!({"query": "smoke-errand"}))
-            .await;
-        if everything.contains("smoke-not-a-stage") {
-            return missed(
-                self.name(),
-                "a value the set does not name was written anyway".to_string(),
             );
         }
         held(
             self.name(),
-            "a caller's own type governs a thing that holds every key it requires, and the value \
-             its set refused is nowhere",
+            "a caller's own type is declared, something answers it, and the value its set does \
+             not name is kept and flagged rather than refused",
         )
     }
 }
 
 /// **Phase 11 — the day it is where you are.**
 ///
-/// Two undated claims on one subject, written minutes apart by one run, coming
-/// back stamped with two different days. **That can only happen if the frame
+/// Two undated claims on **this phase's own subject**, written minutes apart by
+/// one run, coming back stamped with two different days.
+///
+/// Its own subject on purpose: an earlier phase's check counts the claims on
+/// the person IT wrote to, and a later phase adding two more would break a
+/// correct check. A phase that leaves its evidence on somebody else's subject
+/// is a phase that measures its neighbour. **That can only happen if the frame
 /// came from the caller**: a server with a zone of its own stamps both the
 /// same, and so does a build that ignores the argument.
 ///
@@ -530,7 +529,7 @@ impl Expectation for TheFrameStampedTwoDays {
             .room
             .call(
                 "recall",
-                json!({"subject": "person:smoke-alpha", "facts": true}),
+                json!({"subject": "person:smoke-beta", "facts": true}),
             )
             .await;
         let Ok(body) = serde_json::from_str::<serde_json::Value>(&recalled) else {
@@ -547,7 +546,7 @@ impl Expectation for TheFrameStampedTwoDays {
             return missed(
                 self.name(),
                 format!(
-                    "the claims on person:smoke-alpha carry {} distinct day(s) — {:?} — so \
+                    "the claims on person:smoke-beta carry {} distinct day(s) — {:?} — so \
                      nothing here says the frame came from the caller",
                     days.len(),
                     days,

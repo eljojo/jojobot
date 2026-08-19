@@ -924,7 +924,7 @@ async fn the_frame_check_fails_when_both_claims_landed_on_one_day() {
         &surface,
         &sid,
         "add_entity",
-        json!({"kind": "person", "handle": "smoke-alpha", "name": "Alpha",
+        json!({"kind": "person", "handle": "smoke-beta", "name": "Beta",
                "source": "user-named"}),
     )
     .await;
@@ -934,7 +934,7 @@ async fn the_frame_check_fails_when_both_claims_landed_on_one_day() {
             &surface,
             &sid,
             "capture",
-            json!({"subject": "person:smoke-alpha", "content": what, "date": day}),
+            json!({"subject": "person:smoke-beta", "content": what, "date": day}),
         )
         .await
     };
@@ -964,12 +964,12 @@ async fn the_frame_check_fails_when_both_claims_landed_on_one_day() {
     );
 }
 
-/// **Phase 10 holds only once a thing FITS the type**, not once the type
-/// exists.
+/// **Phase 10 holds only once a caller's type has failed to gate a write.**
 ///
-/// Three rooms, and the middle one is the trap: a declaration with nothing
-/// written under it is a caller who declared a vocabulary and never used it,
-/// which is a phase that stopped halfway rather than one that worked.
+/// Four rooms. A declaration nobody wrote under is half a phase. A thing
+/// carrying only values the set names has not shown the surprise the phase
+/// exists for — that a caller's type DESCRIBES — and a check that passed there
+/// would pass identically on a build where caller types gate.
 #[tokio::test]
 async fn the_vocabulary_check_needs_a_thing_that_fits_the_type() {
     let (_room, surface, sid) = room().await;
@@ -1015,10 +1015,29 @@ async fn the_vocabulary_check_needs_a_thing_that_fits_the_type() {
                "fields": {"smoke_stage": "draft", "smoke_note": "the one that fits"}}),
     )
     .await;
-    let fitting = judge(&surface, "Phase 10").await;
+    let only_good_values = judge(&surface, "Phase 10").await;
     assert!(
-        fitting.held,
-        "a thing carrying the required key with a value the set names fits: {}",
-        fitting.saying,
+        !only_good_values.held,
+        "a thing carrying only values the set names has not shown that a caller's type turns \
+         no write away: {}",
+        only_good_values.saying,
+    );
+
+    // **The write a caller's type does not gate.** The newest write wins, so
+    // the folded value is now one the set does not name — kept, and flagged.
+    as_the_agent(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:smoke-the-errand", "content": "trying one outside the set",
+               "provenance": "testimony",
+               "fields": {"smoke_stage": "cancelled"}}),
+    )
+    .await;
+    let kept_and_flagged = judge(&surface, "Phase 10").await;
+    assert!(
+        kept_and_flagged.held,
+        "the value the set does not name is kept and the read flags it: {}",
+        kept_and_flagged.saying,
     );
 }

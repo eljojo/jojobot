@@ -131,7 +131,8 @@ phase below is marked one way or the other in the last section.
 holds a connection open, so identity travels on the handle or it does not
 travel. This failed wholesale in production once, on two clients at once.
 
-> 9. Call `list_entities`, passing the handle from phase 2.
+> 9. Call `list_entities`, passing **the handle you recorded when you booted
+>    as `assistant`** — not the anonymous boot, which handed you none.
 > 10. Call `search` for a common word, passing the same handle.
 > 11. Call `read_mailbox` with counts only, passing the same handle.
 > 12. Call `ping` passing the same handle. Expected: it says the handle still
@@ -301,6 +302,13 @@ due sits in the same instance and stays out of it.
 **Session: continues phase 9.** The operator keeps track of something the
 software has never heard of, and wants the same words used every time.
 
+**What this phase measures is a surprise, not a gate.** A type a caller
+declares DESCRIBES: it tells a writer what belongs in a key, the read flags a
+value that does not, and no write is turned away. A kind's declaration is the
+one that gates, which the loop phase already met. **A caller who expects the
+two to behave alike loses a write they believed was refused**, so the phase
+asks for the prediction before the answer.
+
 > 54. Declare a type of your own called `smoke-errand`, with two keys: one the
 >     thing must hold, and one it may. Give one of them a small closed set of
 >     values it may take. Report how you worked out that a key could be held to
@@ -312,13 +320,26 @@ software has never heard of, and wants the same words used every time.
 >     cannot restate is one you cannot copy or move.
 > 56. Write a thing that carries those keys, with a value the set names.
 >     Expected: taken.
-> 57. Write again with a value the set does NOT name. Expected: blocked,
->     **naming the values you may write.** Report the exact refusal, and report
->     FAIL if it told you only that the value was wrong.
-> 58. Declare a type whose key is narrowed to a set with nothing in it.
+> 57. **Before you try it, say what you expect**, in one line: if you now write
+>     a value the set does NOT name, is it refused or is it kept?
+> 58. Now write it. **Expected: it is KEPT.** A type you declared DESCRIBES —
+>     it tells a writer what belongs in a key and it turns no write away.
+>     Report whether that is what you predicted in step 57, and say so plainly
+>     if it is not. **A wrong prediction here is worth more than a right one**:
+>     it names something the surface let you believe.
+> 59. Read the thing back. Expected: the value is there, and the read **flags
+>     it** — the key says what it wanted and the record says what it actually
+>     holds. Report whether you could see the mistake from the answer alone,
+>     and report FAIL if the bad value came back looking like every other value.
+> 60. **You met the other half in the loop phase**, where a word outside the
+>     check-in's own set was turned away at the door. Say, in your own words,
+>     what is different about the two — and report FAIL if nothing in either
+>     answer told you, because a caller who declares a type expecting a gate
+>     will find out by losing a write they thought was refused.
+> 61. Declare a type whose key is narrowed to a set with nothing in it.
 >     Expected: refused, saying what is wrong with it. Report whether you could
 >     tell what to change.
-> 59. Add a key nobody declared to the thing from step 56. Expected: taken —
+> 62. Add a key nobody declared to the thing from step 56. Expected: taken —
 >     a declaration is a floor and not a fence. Report whether anything told
 >     you that before you tried.
 
@@ -328,23 +349,26 @@ software has never heard of, and wants the same words used every time.
 frame the session supplies, and the point of this phase is whether a session
 learns that before it gets a date wrong.
 
-> 60. From what you have read so far, say **whether you can tell the server
+> 63. From what you have read so far, say **whether you can tell the server
 >     which day it is for you**, and where you learnt it. **Answer before
 >     looking for the argument.** If you cannot, that is the finding and it is
 >     worth more than a right answer.
-> 61. Boot as `assistant` again, resuming the run you are in, and tell it you
->     are working in `Pacific/Kiritimati`.
-> 62. `capture` a claim about `smoke-alpha` **with no date on it**. Report the
+> 64. `add_entity` for a person with handle `smoke-beta`, then boot as
+>     `assistant` again, resuming the run you are in, and tell it you are
+>     working in `Pacific/Kiritimati`. **The claims below go on `smoke-beta`
+>     and not on anyone an earlier phase wrote to**, so what this phase leaves
+>     stands on its own.
+> 65. `capture` a claim about `smoke-beta` **with no date on it**. Report the
 >     day it came back stamped with.
-> 63. Boot again, resuming the same run, saying you are working in
->     `Etc/GMT+12` instead. Capture another undated claim about `smoke-alpha`
+> 66. Boot again, resuming the same run, saying you are working in
+>     `Etc/GMT+12` instead. Capture another undated claim about `smoke-beta`
 >     and report the day THAT one came back stamped with.
-> 64. The two days are different, and the same instance stamped both. **Say
+> 67. The two days are different, and the same instance stamped both. **Say
 >     whether that reads to you as a fault or as intended**, and say what in
 >     the surface told you which. Report FAIL if nothing did — a session that
 >     reads it as a fault will start correcting dates, and a corrected right
 >     date is a wrong one.
-> 65. Tell it you are working in `Nowhere/Atall`. Expected: refused, saying
+> 68. Tell it you are working in `Nowhere/Atall`. Expected: refused, saying
 >     what a zone name looks like. Report whether it refused before or after
 >     starting anything.
 
@@ -353,11 +377,11 @@ learns that before it gets a date wrong.
 **Session: continues phase 11.** Deliberately does NOT wrap: phase 13 needs a
 run left open, which is the ordinary case rather than a failure.
 
-> 66. You are stopping, and the work is not done. Journal one entry for
+> 69. You are stopping, and the work is not done. Journal one entry for
 >     whoever picks this up: where you got to, what you already ruled out, and
 >     the exact next step. Set what you are working on to something a later
 >     session could recognise.
-> 67. Do **not** wrap this session. Report what you would have expected to
+> 70. Do **not** wrap this session. Report what you would have expected to
 >     happen if you had.
 
 ## Phase 13 — the reader who was not here
@@ -377,24 +401,24 @@ where to look. Nothing in this block names a verb on purpose.
 >
 > Boot as the bot `assistant`. Then:
 >
-> 68. **Before anything else, report what the boot offered you** about work
+> 71. **Before anything else, report what the boot offered you** about work
 >     already in flight, and whether you could tell from it what the earlier
 >     run had been doing. Take that earlier run rather than starting a new one.
-> 69. Read what that run recorded. Report whether somebody with none of its
+> 72. Read what that run recorded. Report whether somebody with none of its
 >     context — you — could tell what it had done and what to do next, and name
 >     the part that was missing if any was.
-> 70. **Somebody left something for you, and it may not be the only thing
+> 73. **Somebody left something for you, and it may not be the only thing
 >     waiting.** Find what is there and act on it: take delivery, and mark each
 >     one handled with a note saying what you did. Report how you found them and
 >     whether anything told you they were waiting.
-> 71. **Find out what this server knows about `smoke-alpha`.** Report what you
+> 74. **Find out what this server knows about `smoke-alpha`.** Report what you
 >     found, how you found it, and whether the claim read as something somebody
 >     confirmed or as something an AI worked out.
-> 72. Now finish the run properly, with a closing story written for somebody
+> 75. Now finish the run properly, with a closing story written for somebody
 >     who was not here.
-> 73. Try to add one more entry to the run you just finished. Report what
+> 76. Try to add one more entry to the run you just finished. Report what
 >     happened.
-> 74. Ask the server about the handle you have been carrying, and read that
+> 77. Ask the server about the handle you have been carrying, and read that
 >     answer beside step 55. Say whether the two together could leave a session
 >     believing it can still write. Report FAIL if they could — the handle and
 >     the run are different things, and a caller has to be able to tell which
@@ -410,13 +434,13 @@ where to look. Nothing in this block names a verb on purpose.
 > where data is STORED, and any error arriving as a raw failure rather than a
 > refusal naming a way forward.
 >
-> 75. Boot as the bot `assistant`. Expected: a fresh run, and the run that was
+> 78. Boot as the bot `assistant`. Expected: a fresh run, and the run that was
 >     finished earlier is **not** offered back to you. Report what you were
 >     offered.
-> 76. Report everything this instance now holds that looks like it was made by
+> 79. Report everything this instance now holds that looks like it was made by
 >     a test rather than by a person, and say how you can tell. You have no
 >     stake in the answer being tidy.
-> 77. **Now say which of those you could remove, and how.** Expected: none of
+> 80. **Now say which of those you could remove, and how.** Expected: none of
 >     them, because nothing over this surface deletes. Report FAIL if you
 >     believe you found a way — and report FAIL if you could not tell either
 >     way, because a session that thinks it might be able to delete will
@@ -486,8 +510,8 @@ exists only in the model's answer, by design.
 | 7 · mail, read-only | **assertable, as no-change** | Every mailbox in the same state as before the phase. This is the phase whose whole claim is that nothing moved. |
 | 8 · writes | **assertable, richest** | `person:smoke-alpha` with exactly one active fact, carrying the rewritten wording and `inference` provenance. No `person:smoke-alfa`. `bot:smoke-gamma` with its charter and a mailbox named for it. Two messages in the `assistant` box, both `new`: the one the room was furnished with and the one step 45 posts. |
 | 9 · the loop | **assertable** | `thing:smoke-kettle` with two `rhythm` children. `rhythm:smoke-descale` carrying a name and a last check-in and NO cadence — the loop nobody set a frequency for, which a build demanding one would have lost. `rhythm:smoke-filter` carrying a cadence and a schedule the check-in moved. No record anywhere carrying `swapped` under the check-in's own key. |
-| 10 · the vocabulary | **assertable** | A caller's type named `smoke-errand`, present twice over — declared, then declared again from its own read-back — and holding the same keys both times. One thing carrying its keys with a value the set names, and a key no type declared. No thing carrying the value the set refused. |
-| 11 · the frame | **assertable** | The run for `assistant` carrying a zone, and two claims on `person:smoke-alpha` stamped with two different days. Steps 60 and 64 are runner-reported on top of that, and they are the ones that matter. |
+| 10 · the vocabulary | **assertable** | A caller's type named `smoke-errand`, present twice over — declared, then declared again from its own read-back. A thing answering it, carrying a value the set names, a value it does not, and a key no type declared. **The out-of-set value is THERE and the read flags it**: a caller's type describes, so the write it does not fit still lands. |
+| 11 · the frame | **assertable** | `person:smoke-beta` carrying two claims stamped with two different days — its OWN subject, so this phase does not change what phase 8's count is measured against. Steps 60 and 64 are runner-reported on top of that, and they are the ones that matter. |
 | 12 · stopping | **assertable** | The run still open — not wrapped — with a further entry and a focus. |
 | 13 · the reader | **assertable** | The run from phases 2–9 now `wrapped`, its final entry carrying the focus; the message step 45 posted now `processed` with a note — the furniture sits beside it and what the reader does with that is not pinned; a second run for `assistant`. Steps 68, 69 and 71 are runner-reported on top of that. |
 | 14 · the ending | **assertable** | A third run for `assistant`, and the wrapped one still wrapped. Everything every earlier phase left is still there: step 77 asks the model to find a way to remove it, and the room is what says it found none. |
@@ -503,5 +527,54 @@ would have found, and that lives entirely in phases 1, 5 and 10.
 
 ## Run history
 
-Each entry: the build, and what came out. A run against a build nobody recorded
-cannot be read later.
+Each entry: **the commit**, and what came out. A run against a build nobody
+recorded cannot be read later — and `ping` answers `unknown` for a build with no
+revision behind it, which is honest and is not a name a later reader can use.
+The commit always is.
+
+### 2026-08-19 · commit 6a89ea7 · model `sonnet`
+
+**The first recorded run.** 14 phases. 7 checks held, 4 failed, 1 phase failed
+the harness's own continuity check, and 4 phases reported that they have no
+machine check and therefore did not pass.
+
+**Held:** the door minted no identity · polling a box moved nothing in it · the
+run accrued a chronology · **two undated claims came back on two different
+days** · the run was left open for whoever came next · what an earlier run left
+was picked up.
+
+**The largest thing this run found — reproduced, not new.** The shipped
+`assistant` answers with **no charter and no rules**, so the identity a fresh
+instance arrives holding cannot say what it is for. A previous paid run found
+the same thing and it is recorded. **Reproducing it independently is evidence
+about this instrument as well as about the product.** The milestone is on hold
+by the operator's ruling and nothing here is dispatchable — but *on hold* is not
+*small*, and this is the widest gap between what jojobot claims to be and what a
+fresh instance gets.
+
+**Three failures were defects in the suite, introduced the same afternoon.**
+Recorded rather than tidied away, because a history that only lists product
+findings is a history somebody will trust wrongly.
+
+* **Phase 8** failed on a subject collision: the frame phase captured its claims
+  on the person phase 8 counts, and the checks read the finished room. The frame
+  phase now writes to its own subject.
+* **Phase 10** failed against a bar the product was never built to clear. The
+  phase demanded that a caller's declared type refuse a write; **a caller's type
+  describes and only a kind's declaration gates.** The phase now asks for the
+  prediction first and then asserts what the product does.
+* **Phases 6 and 14** failed downstream of one ambiguous phrase: phase 3 said
+  *the handle from phase 2*, the model could not tell which boot that meant,
+  and it stopped to ask rather than guessing — **correct behaviour, and the cost
+  was the ambiguity rather than the caution.** The step now names the boot.
+
+**Phase 9 is unclassified and stays that way.** The loop with no cadence came
+back carrying no last check-in either. Whether that is the model or the wording
+needs the transcript read properly, and calling it either way to tidy this entry
+is the thing this entry must not do.
+
+**Both watches came back clean and explicitly zero** rather than silent: no tool
+revealed where data is stored, and no error arrived as a raw failure.
+
+⚠️ **No clean run has happened.** The four fixes above landed after this run and
+have not been driven by a model.
