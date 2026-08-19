@@ -3018,8 +3018,8 @@ mod tests {
         let declared = DeclaredType::new(
             "delivery",
             vec![
-                Key::new("arrives", ValueType::Date),
-                Key::new("crates", ValueType::Number),
+                Key::required("arrives", ValueType::Date),
+                Key::required("crates", ValueType::Number),
             ],
         );
 
@@ -3121,8 +3121,8 @@ mod tests {
         let delivery = DeclaredType::new(
             "delivery",
             vec![
-                Key::new("arrives", ValueType::Date),
-                Key::new("crates", ValueType::Number),
+                Key::required("arrives", ValueType::Date),
+                Key::required("crates", ValueType::Number),
             ],
         );
 

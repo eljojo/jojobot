@@ -83,10 +83,10 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
         json!({
             "name": "pet",
             "fields": [
-                { "key": "name", "holds": "text" },
-                { "key": "born", "holds": "date" },
-                { "key": "weight", "holds": "number" },
-                { "key": "owner", "holds": "reference" },
+                { "key": "name", "holds": "text", "required": true },
+                { "key": "born", "holds": "date", "required": true },
+                { "key": "weight", "holds": "number", "required": true },
+                { "key": "owner", "holds": "reference", "required": true },
             ],
         }),
     )

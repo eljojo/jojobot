@@ -47,6 +47,12 @@ pub const DEFAULT_BOT: &str = "assistant";
 /// The keys are the vocabulary and their spelling is the schema: renaming one
 /// is a new type that reaches no record already written under the old spelling.
 pub fn shipped_types() -> Vec<DeclaredType> {
+    // **Every key of these two is REQUIRED, which is what they already meant.**
+    // Fitting was once every key a declaration named, so a shipped key was one
+    // nobody could leave out; saying so keeps these types answering exactly the
+    // things they answered before optional keys existed. The required set of
+    // each is the re-spec's to shrink, and shrinking it is a change to what the
+    // type IS rather than a change to the model.
     vec![
         // **A cyclical thing, and the question it answers is what has gone
         // quiet.** A cadence is always TIME: the time prompts the check, and
@@ -55,13 +61,13 @@ pub fn shipped_types() -> Vec<DeclaredType> {
         DeclaredType::shipped(
             "rhythm",
             vec![
-                Field::new("cadence_days", ValueType::Number),
+                Field::required("cadence_days", ValueType::Number),
                 // Whether the next one is counted from the date it fell due or
                 // from the date it happened. **It has no default**, against the
                 // convention that everything works unconfigured (rule 9): the
                 // two answers are different enough that guessing one is worse
                 // than a rhythm that does not fit until somebody says.
-                Field::new("advances_from", ValueType::Text),
+                Field::required("advances_from", ValueType::Text),
                 // **The date this cycle counts from**, and the rhythm is next
                 // due a cadence after it. It is the value the key above chose:
                 // one is the policy, this one is what the policy picked, and
@@ -71,7 +77,7 @@ pub fn shipped_types() -> Vec<DeclaredType> {
                 // what a declaration buys, and what lets a caller ask for the
                 // rhythms counting from before some day without the engine
                 // being asked first.
-                Field::new("counts_from", ValueType::Date),
+                Field::required("counts_from", ValueType::Date),
                 // **What "when did this last happen" reads**, and the reason it
                 // is a key is the projection. A thing's fields are the newest
                 // write of each key by WRITE ORDER rather than by date, so the
@@ -85,8 +91,8 @@ pub fn shipped_types() -> Vec<DeclaredType> {
                 // this key feeds the fold, the record's date feeds chronology.
                 // They agree because they are one value, and what keeps them
                 // from drifting is that this key is what gets read.
-                Field::new("last_check_in", ValueType::Date),
-                Field::new("outcome", ValueType::Text),
+                Field::required("last_check_in", ValueType::Date),
+                Field::required("outcome", ValueType::Text),
             ],
         ),
         // **When am I next away, and when was I last there.** The two places
@@ -95,10 +101,10 @@ pub fn shipped_types() -> Vec<DeclaredType> {
         DeclaredType::shipped(
             "trip",
             vec![
-                Field::new("departs_from", ValueType::Reference),
-                Field::new("arrives_at", ValueType::Reference),
-                Field::new("leaves_on", ValueType::Date),
-                Field::new("returns_on", ValueType::Date),
+                Field::required("departs_from", ValueType::Reference),
+                Field::required("arrives_at", ValueType::Reference),
+                Field::required("leaves_on", ValueType::Date),
+                Field::required("returns_on", ValueType::Date),
             ],
         ),
     ]

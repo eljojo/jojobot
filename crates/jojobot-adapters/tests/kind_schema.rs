@@ -32,7 +32,7 @@ async fn a_kinds_keys_are_a_schema_and_the_two_questions_differ() {
         .declare_kind(
             "stall",
             Origin::Declared,
-            vec![Field::new("pitch", ValueType::Text)],
+            vec![Field::required("pitch", ValueType::Text)],
         )
         .await
         .expect("a caller declares a kind of their own");
@@ -145,7 +145,7 @@ async fn a_key_added_to_a_kind_refuses_no_write_that_worked_before() {
         .declare_kind(
             "kiosk",
             Origin::Declared,
-            vec![Field::new("pitch", ValueType::Text)],
+            vec![Field::required("pitch", ValueType::Text)],
         )
         .await
         .expect("a caller declares a kind");
@@ -162,8 +162,8 @@ async fn a_key_added_to_a_kind_refuses_no_write_that_worked_before() {
             "kiosk",
             Origin::Declared,
             vec![
-                Field::new("pitch", ValueType::Text),
-                Field::new("opens_at", ValueType::Text),
+                Field::required("pitch", ValueType::Text),
+                Field::required("opens_at", ValueType::Text),
             ],
         )
         .await
@@ -236,7 +236,7 @@ async fn the_floor_protects_a_thing_that_fits_and_leaves_one_that_does_not() {
         .declare_kind(
             "pitch-stall",
             Origin::Declared,
-            vec![Field::new("pitch", ValueType::Text)],
+            vec![Field::required("pitch", ValueType::Text)],
         )
         .await
         .expect("a caller declares a kind");
@@ -298,7 +298,7 @@ async fn identity_does_not_lapse_when_a_thing_lacks_its_kinds_keys() {
         .declare_kind(
             "barrow",
             Origin::Declared,
-            vec![Field::new("pitch", ValueType::Text)],
+            vec![Field::required("pitch", ValueType::Text)],
         )
         .await
         .expect("a caller declares a kind");
@@ -425,7 +425,7 @@ async fn a_boot_does_not_destroy_a_schema_named_like_a_shipped_kind() {
     store
         .declare_type(DeclaredType::new(
             "project",
-            vec![Field::new("budget", ValueType::Text)],
+            vec![Field::required("budget", ValueType::Text)],
         ))
         .await
         .expect("a caller declares a schema of their own");
@@ -464,7 +464,7 @@ async fn a_kind_and_a_schema_cannot_take_each_others_keys() {
         .declare_kind(
             "cartwright",
             Origin::Declared,
-            vec![Field::new("pitch", ValueType::Text)],
+            vec![Field::required("pitch", ValueType::Text)],
         )
         .await
         .expect("a caller declares a kind");
@@ -472,7 +472,7 @@ async fn a_kind_and_a_schema_cannot_take_each_others_keys() {
     let refused = store
         .declare_type(DeclaredType::new(
             "cartwright",
-            vec![Field::new("price", ValueType::Text)],
+            vec![Field::required("price", ValueType::Text)],
         ))
         .await
         .expect_err("a schema cannot reshape a kind");
@@ -502,7 +502,7 @@ async fn a_kind_and_a_schema_cannot_take_each_others_keys() {
     store
         .declare_type(DeclaredType::new(
             "barrow-boy",
-            vec![Field::new("price", ValueType::Text)],
+            vec![Field::required("price", ValueType::Text)],
         ))
         .await
         .expect("a caller declares a schema");
@@ -510,13 +510,260 @@ async fn a_kind_and_a_schema_cannot_take_each_others_keys() {
         .declare_kind(
             "barrow-boy",
             Origin::Declared,
-            vec![Field::new("pitch", ValueType::Text)],
+            vec![Field::required("pitch", ValueType::Text)],
         )
         .await
         .expect_err("a kind cannot reshape a schema somebody declared");
     assert!(
         refused.to_string().contains("barrow-boy"),
         "…and that refusal names it too: {refused}",
+    );
+
+    server.stop().await;
+}
+
+/// **A required key is a floor; an optional key is checked and never demanded.**
+///
+/// Two independent properties, and the whole slice is that they stopped being
+/// one. Fitting used to be every key a declaration named, so declaring what a
+/// thing MAY carry was impossible without demanding all of it — which is how a
+/// schema ends up shaped by what the type system can carry rather than by what
+/// somebody keeps.
+///
+/// **Three beats, and the third is the one that matters.** A missing optional
+/// key is served; a missing required key is refused; and an optional key
+/// holding something it does not hold is refused all the same.
+///
+/// ⚠️ **A build where "optional" means "not checked at all" passes the first
+/// two and fails the third**, which is why the third is here: the two easy
+/// halves are satisfied by simply removing optional keys from every check.
+#[tokio::test]
+async fn a_required_key_is_a_floor_and_an_optional_one_is_checked_but_never_demanded() {
+    let (mut server, store, _turn) = a_store("required").await;
+
+    store
+        .declare_kind(
+            "market-stall",
+            Origin::Declared,
+            vec![
+                Field::required("pitch", ValueType::Text),
+                // Welcome, never demanded — and still a date when it is there.
+                Field::new("awning", ValueType::Date),
+            ],
+        )
+        .await
+        .expect("a caller declares a kind");
+    kinds::reload(&store).await.expect("the set is re-read");
+    let stall = EntityKind::from_token("market-stall").expect("the kind was just declared");
+
+    let corner = EntityId::new(stall, "corner-pitch");
+    added(&store, &corner, "the pitch on the corner").await;
+    let record = store
+        .capture(NewFact {
+            provenance: Provenance::Testimony,
+            fields: [
+                ("pitch".to_string(), "the corner".to_string()),
+                ("awning".to_string(), "2026-05-02".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(corner.clone(), "a record", jiff::civil::date(2026, 5, 2))
+        })
+        .await
+        .expect("the record is written")
+        .written()
+        .expect("nothing blocked it");
+
+    // ① The optional key goes, and nothing is refused: a thing without it is
+    // not a thing with something missing.
+    store
+        .update_fact(
+            &record.address(),
+            FactPatch {
+                clear_fields: vec!["awning".to_string()],
+                ..FactPatch::default()
+            },
+        )
+        .await
+        .expect("an optional key is never demanded")
+        .written()
+        .expect("nothing blocked it");
+
+    // ② The required key does not: it is what makes this thing one of these.
+    let refused = store
+        .update_fact(
+            &record.address(),
+            FactPatch {
+                clear_fields: vec!["pitch".to_string()],
+                ..FactPatch::default()
+            },
+        )
+        .await
+        .expect_err("the required key has to survive the write");
+    let said = refused.to_string();
+    assert!(
+        said.contains("market-stall") && said.contains("pitch"),
+        "the refusal names the kind and the key it would cost: {said}",
+    );
+
+    // ③ **And what the optional key HOLDS is checked whenever it is set.** The
+    // key is welcome to be absent and is held to its declaration the moment it
+    // is there — the two questions are independent, and this is the one a
+    // build that simply skips optional keys gets wrong.
+    let wrong = store
+        .update_fact(
+            &record.address(),
+            FactPatch {
+                fields: [("awning".to_string(), "sometime in may".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..FactPatch::default()
+            },
+        )
+        .await
+        .expect_err("an optional key still holds what it was declared to hold");
+    let said = wrong.to_string();
+    assert!(
+        said.contains("awning") && said.contains("date"),
+        "the refusal names the key and what it wanted: {said}",
+    );
+
+    server.stop().await;
+}
+
+/// **A key may hold zero or more, and a span is one value rather than two
+/// keys.**
+///
+/// Both are here because both were missing at once and the same schema paid
+/// for it: a span written as two date keys reads as a thing with a key missing
+/// when only one end is known, and a key that can hold one person drops
+/// everybody else who was there.
+///
+/// **Zero is the beat that makes it a list.** A key holding none of something
+/// is a thing that had nobody along, which is different from a key nobody
+/// filled in — and a build treating an empty value as an absent key cannot say
+/// the difference.
+#[tokio::test]
+async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
+    let (mut server, store, _turn) = a_store("shapes").await;
+
+    store
+        .declare_kind(
+            "outing",
+            Origin::Declared,
+            vec![
+                Field::required("away", ValueType::DateRange),
+                Field {
+                    points_at: Some(EntityKind::PERSON),
+                    ..Field::listing("came_with", ValueType::Reference)
+                },
+            ],
+        )
+        .await
+        .expect("a caller declares a kind");
+    kinds::reload(&store).await.expect("the set is re-read");
+    let outing = EntityKind::from_token("outing").expect("the kind was just declared");
+
+    for who in [
+        EntityId::person("bart"),
+        EntityId::person("milhouse"),
+        EntityId::new(EntityKind::THING, "red-bike"),
+    ] {
+        added(&store, &who, who.slug()).await;
+    }
+    let day = EntityId::new(outing, "the-day-out");
+    added(&store, &day, "the day out").await;
+
+    // **The span is one value.** Two dates, one key, and the pair cannot come
+    // apart the way two keys can.
+    let record = store
+        .capture(NewFact {
+            provenance: Provenance::Testimony,
+            fields: [
+                ("away".to_string(), "2026-04-18/2026-04-25".to_string()),
+                ("came_with".to_string(), String::new()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(day.clone(), "a record", jiff::civil::date(2026, 4, 18))
+        })
+        .await
+        .expect("the record is written")
+        .written()
+        .expect("nothing blocked it");
+    assert_eq!(
+        record.fields.get("came_with").map(String::as_str),
+        Some(""),
+        "a list with nothing in it is a thing that had nobody along: {:?}",
+        record.fields,
+    );
+
+    // One, then many, through the same key. The handles are built rather than
+    // written out, so no fixture name enters this source as a literal.
+    let bart = EntityId::person("bart").to_string();
+    let milhouse = EntityId::person("milhouse").to_string();
+    let both = format!("{bart}, {milhouse}");
+    for wrote in [bart.as_str(), both.as_str()] {
+        let expected = wrote;
+        let edited = store
+            .update_fact(
+                &record.address(),
+                FactPatch {
+                    fields: [("came_with".to_string(), wrote.to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..FactPatch::default()
+                },
+            )
+            .await
+            .expect("a list key takes as many as it is given")
+            .written()
+            .expect("nothing blocked it");
+        assert_eq!(
+            edited.fields.get("came_with").map(String::as_str),
+            Some(expected),
+            "the items come back as they were written",
+        );
+    }
+
+    // **Every item is held to what the key points at**, or a list would be the
+    // way past the narrowing rather than a use of it.
+    let refused = store
+        .update_fact(
+            &record.address(),
+            FactPatch {
+                fields: [(
+                    "came_with".to_string(),
+                    format!("{bart}, {}", EntityId::new(EntityKind::THING, "red-bike")),
+                )]
+                .into_iter()
+                .collect(),
+                ..FactPatch::default()
+            },
+        )
+        .await
+        .expect_err("an item of the wrong kind is not a person who came along");
+    assert!(
+        refused.to_string().contains("came_with"),
+        "the refusal names the key: {refused}",
+    );
+
+    // A span that ends before it starts is two dates in the wrong slots.
+    let backwards = store
+        .update_fact(
+            &record.address(),
+            FactPatch {
+                fields: [("away".to_string(), "2026-04-25/2026-04-18".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..FactPatch::default()
+            },
+        )
+        .await
+        .expect_err("a span has to run forwards");
+    assert!(
+        backwards.to_string().contains("away"),
+        "the refusal names the key: {backwards}",
     );
 
     server.stop().await;

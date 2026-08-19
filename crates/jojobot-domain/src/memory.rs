@@ -1426,23 +1426,35 @@ pub fn referenced_by(
 ) -> Vec<EntityId> {
     fields
         .iter()
-        .filter(|(key, _)| {
-            declared.iter().any(|d| {
-                d.field(key)
-                    .is_some_and(|f| f.holds == types::ValueType::Reference)
-            })
+        .filter_map(|(key, value)| {
+            let field = declared
+                .iter()
+                .filter_map(|d| d.field(key))
+                .find(|f| f.holds == types::ValueType::Reference)?;
+            // **Every item, because a list of references is a list of links.** A
+            // key holding several handles that was read as one string would name
+            // a handle nobody wrote and let each real one past unchecked.
+            Some(field.items(value))
         })
-        .map(|(_, value)| EntityId(value.trim().to_string()))
+        .flatten()
+        .map(|item| EntityId(item.trim().to_string()))
         .filter(|id| id.kind().is_some())
         .collect()
 }
 
-/// **A write may not drop a thing below a type it already fits.**
+/// **A write may not drop a thing below its kind's required keys, and may not
+/// put in any declared key a value that key does not hold.**
 ///
-/// Strict is a **floor, not a ceiling**: what a type names has to survive, and
-/// anything else a caller wants to say is welcome. Adding a key is never
-/// refused, including a key no type mentions, and a record that fits no type at
-/// all is a first-class record.
+/// **Two independent rules, and collapsing them is the mistake this shape
+/// exists to avoid.** What a thing must HOLD is the required set — small on
+/// purpose, because a required key is a refusal waiting to happen. What a key
+/// may CONTAIN is checked every time the key is written, required or optional,
+/// because an optional key is welcome rather than unchecked.
+///
+/// Strict is a **floor, not a ceiling**: what a kind requires has to survive,
+/// and anything else a caller wants to say is welcome. Adding a key is never
+/// refused, including a key nothing mentions, and a record that answers no
+/// declaration at all is a first-class record.
 ///
 /// **It reads the RESULT, never the change** — the thing's fields as they will
 /// stand once the write lands, against the thing's fields as they stand now. A
@@ -1488,14 +1500,52 @@ pub fn guard_fit(
     // set never loaded still names one, and a guard that went quiet on an
     // unseeded process would stop refusing rather than say it could not tell.
     for declaration in declared.iter().filter(|d| d.name == kind) {
-        // Fitting means holding every key the type names, and holding it as
-        // declared. A thing that did not fit before has nothing this protects.
+        // **① What a key HOLDS is checked whenever the key is SET** — required
+        // or optional alike, and whether or not the thing meets its floor. The
+        // two properties are independent: "the colour has to be a colour" is
+        // not "every bike must have a colour".
+        //
+        // **Only what this write sets.** Asked of the whole result it would
+        // re-refuse a bad value already stored, so every repair to a messy
+        // thing would be measured against a rule the thing already breaks and
+        // the record could never be fixed. Asked behind the floor it would
+        // never fire on the write that first puts a value in a key, which is
+        // the write worth catching.
+        for field in &declaration.fields {
+            let Some(value) = after.get(&field.key) else {
+                continue;
+            };
+            if before.get(&field.key) == Some(value) {
+                continue;
+            }
+            if !field.accepts(value) {
+                let bad = types::Mistyped {
+                    key: field.key.clone(),
+                    declared: field.holds,
+                    points_at: field.points_at,
+                    value: value.clone(),
+                    required: field.required,
+                };
+                return Err(MemoryError::BreaksType {
+                    name: declaration.name.clone(),
+                    key: bad.key.clone(),
+                    wanted: bad.wanted(),
+                    value: bad.value,
+                });
+            }
+        }
+        // **② The floor, and it is the REQUIRED keys alone.** A thing that held
+        // every one of them may not lose one. An optional key goes freely: a
+        // thing without it is not a thing with something missing.
+        //
+        // A thing that did not meet its floor before has nothing this protects.
         if !declaration.matched_by(before).is_some_and(|m| m.complete()) {
             continue;
         }
         let lost: Vec<String> = declaration
             .fields
             .iter()
+            .filter(|f| f.required)
             .map(|f| f.key.clone())
             .filter(|key| !after.contains_key(key))
             .collect();
@@ -1503,19 +1553,6 @@ pub fn guard_fit(
             return Err(MemoryError::BreaksFit {
                 name: declaration.name.clone(),
                 keys: lost,
-            });
-        }
-        // Read off the result's own match rather than recomputed here, so what
-        // the guard refuses and what a read reports as mistyped are one answer.
-        if let Some(bad) = declaration
-            .matched_by(after)
-            .and_then(|m| m.mistyped.into_iter().next())
-        {
-            return Err(MemoryError::BreaksType {
-                name: declaration.name.clone(),
-                key: bad.key.clone(),
-                wanted: bad.wanted(),
-                value: bad.value,
             });
         }
     }

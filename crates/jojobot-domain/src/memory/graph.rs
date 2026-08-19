@@ -1649,7 +1649,7 @@ mod tests {
         let scanned = store();
         let declared = types::DeclaredType::new(
             "reply",
-            vec![types::Field::new("rsvp", types::ValueType::Text)],
+            vec![types::Field::required("rsvp", types::ValueType::Text)],
         );
         let found = resolve(
             &scanned,
@@ -1670,7 +1670,7 @@ mod tests {
 
         let unheld = types::DeclaredType::new(
             "shipment",
-            vec![types::Field::new("weight", types::ValueType::Number)],
+            vec![types::Field::required("weight", types::ValueType::Number)],
         );
         assert!(
             resolve(
@@ -1702,8 +1702,8 @@ mod tests {
         let declared = types::DeclaredType::new(
             "crate",
             vec![
-                types::Field::new("weight", types::ValueType::Number),
-                types::Field::new("arrives", types::ValueType::Date),
+                types::Field::required("weight", types::ValueType::Number),
+                types::Field::required("arrives", types::ValueType::Date),
             ],
         );
         // One key each, and neither record answers the type on its own.
@@ -1806,7 +1806,7 @@ mod tests {
     fn the_type_question_reads_what_the_thing_holds() {
         let declared = types::DeclaredType::new(
             "crate",
-            vec![types::Field::new("weight", types::ValueType::Number)],
+            vec![types::Field::required("weight", types::ValueType::Number)],
         );
         let weighed = |id: &str, weight: &str| Fact {
             fields: [("weight".to_string(), weight.to_string())]
@@ -2338,10 +2338,10 @@ mod tests {
         types::DeclaredType::new(
             "pet",
             vec![
-                types::Field::new("name", types::ValueType::Text),
-                types::Field::new("born", types::ValueType::Date),
-                types::Field::new("weight", types::ValueType::Number),
-                types::Field::new("owner", types::ValueType::Reference),
+                types::Field::required("name", types::ValueType::Text),
+                types::Field::required("born", types::ValueType::Date),
+                types::Field::required("weight", types::ValueType::Number),
+                types::Field::required("owner", types::ValueType::Reference),
             ],
         )
     }
@@ -2503,7 +2503,7 @@ mod tests {
         // value is identical and it is still not a link.
         let as_text = types::DeclaredType::new(
             "pet",
-            vec![types::Field::new("owner", types::ValueType::Text)],
+            vec![types::Field::required("owner", types::ValueType::Text)],
         );
         resolve(&kennel(), std::slice::from_ref(&as_text), &query)
             .expect_err("a key declared to hold text is not a relation");
@@ -2526,7 +2526,7 @@ mod tests {
     fn a_text_key_of_another_type_does_not_hide_a_declared_relation() {
         let shelf = types::DeclaredType::new(
             "book",
-            vec![types::Field::new("owner", types::ValueType::Text)],
+            vec![types::Field::required("owner", types::ValueType::Text)],
         );
         let walk = |declarations: &[types::DeclaredType]| {
             resolve(
@@ -2571,8 +2571,8 @@ mod tests {
         let trip = types::DeclaredType::new(
             "trip",
             vec![
-                types::Field::new("from", types::ValueType::Reference),
-                types::Field::new("to", types::ValueType::Reference),
+                types::Field::required("from", types::ValueType::Reference),
+                types::Field::required("to", types::ValueType::Reference),
             ],
         );
         let travelling = Fact {
@@ -2731,7 +2731,10 @@ mod tests {
     fn a_key_named_like_an_edge_shape_is_still_a_key() {
         let declared = types::DeclaredType::new(
             "posting",
-            vec![types::Field::new("location", types::ValueType::Reference)],
+            vec![types::Field::required(
+                "location",
+                types::ValueType::Reference,
+            )],
         );
         let by_key = Fact {
             fields: [("location".to_string(), "place:shelbyville".to_string())]

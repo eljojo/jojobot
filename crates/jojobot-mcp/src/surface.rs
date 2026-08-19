@@ -719,7 +719,7 @@ fn the_orientation_says_a_kind_holds_a_thing_and_a_type_does_not() {
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
     use std::collections::BTreeMap;
 
-    let pet = DeclaredType::new("pet", vec![Field::new("species", ValueType::Text)]);
+    let pet = DeclaredType::new("pet", vec![Field::required("species", ValueType::Text)]);
     let fitting: BTreeMap<String, String> = [("species".to_string(), "cat".to_string())]
         .into_iter()
         .collect();

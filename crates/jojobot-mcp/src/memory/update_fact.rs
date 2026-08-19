@@ -186,8 +186,8 @@ mod tests {
                 "thing",
                 jojobot_domain::memory::types::Origin::Shipped,
                 vec![
-                    Field::new("cost", ValueType::Number),
-                    Field::new("done_on", ValueType::Date),
+                    Field::required("cost", ValueType::Number),
+                    Field::required("done_on", ValueType::Date),
                 ],
             )
             .await

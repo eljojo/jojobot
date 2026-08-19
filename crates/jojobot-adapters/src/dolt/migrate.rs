@@ -283,6 +283,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0022_type_field_owner.sql"),
         leaves: Leaves::Column("type_field", "owner"),
     },
+    Migration {
+        version: "0023_type_field_required",
+        sql: include_str!("../../migrations/0023_type_field_required.sql"),
+        leaves: Leaves::Column("type_field", "required"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -672,6 +677,7 @@ mod tests {
         "0020_entity_crm_wider",
         "0021_kind",
         "0022_type_field_owner",
+        "0023_type_field_required",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

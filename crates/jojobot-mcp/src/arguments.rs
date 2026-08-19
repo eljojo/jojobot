@@ -455,13 +455,13 @@ mod tests {
                 "name": "warranty",
                 "fields": [
                     {"key": "expires", "holds": "date"},
-                    {"key": "cost", "holds": "number", "required": true, "unit": "eur"},
+                    {"key": "cost", "holds": "number", "scale": "1", "unit": "eur"},
                 ],
                 "sid": "any",
             }),
         )));
         assert!(
-            advice.contains("fields[1].required") && advice.contains("fields[1].unit"),
+            advice.contains("fields[1].scale") && advice.contains("fields[1].unit"),
             "the refusal names every argument inside the list, by path and by element: {advice}"
         );
         assert!(

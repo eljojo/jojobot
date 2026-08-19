@@ -3177,8 +3177,11 @@ pub mod contract {
             .declare_type(crate::memory::types::DeclaredType::new(
                 "contract-snacking",
                 vec![
-                    crate::memory::types::Field::summing("donuts"),
-                    crate::memory::types::Field::new("mood", crate::memory::types::ValueType::Text),
+                    crate::memory::types::Field::summing("donuts").needed(),
+                    crate::memory::types::Field::required(
+                        "mood",
+                        crate::memory::types::ValueType::Text,
+                    ),
                 ],
             ))
             .await
@@ -5092,10 +5095,10 @@ pub mod contract {
         let declared = DeclaredType::new(
             "contract-tenancy",
             vec![
-                Field::new("starts", ValueType::Date),
-                Field::new("rooms", ValueType::Number),
-                Field::new("building", ValueType::Reference),
-                Field::new("active", ValueType::Boolean),
+                Field::required("starts", ValueType::Date),
+                Field::required("rooms", ValueType::Number),
+                Field::required("building", ValueType::Reference),
+                Field::required("active", ValueType::Boolean),
             ],
         );
         let written = declare(store, declared.clone()).await;
@@ -5130,8 +5133,8 @@ pub mod contract {
             DeclaredType::new(
                 "contract-parcel",
                 vec![
-                    Field::new("weight", ValueType::Number),
-                    Field::new("sender", ValueType::Reference),
+                    Field::required("weight", ValueType::Number),
+                    Field::required("sender", ValueType::Reference),
                 ],
             ),
         )
@@ -5139,8 +5142,8 @@ pub mod contract {
         let second = DeclaredType::new(
             "contract-parcel",
             vec![
-                Field::new("weight", ValueType::Number),
-                Field::new("arrives", ValueType::Date),
+                Field::required("weight", ValueType::Number),
+                Field::required("arrives", ValueType::Date),
             ],
         );
         declare(store, second.clone()).await;
@@ -5193,7 +5196,10 @@ pub mod contract {
         // that declares nothing at all.
         declare(
             store,
-            DeclaredType::new("contract-not-empty", vec![Field::new("x", ValueType::Text)]),
+            DeclaredType::new(
+                "contract-not-empty",
+                vec![Field::required("x", ValueType::Text)],
+            ),
         )
         .await;
         assert_eq!(read_type(store, "contract-not-empty").await.fields.len(), 1);
@@ -5212,8 +5218,8 @@ pub mod contract {
         let shipped = DeclaredType::shipped(
             "contract-rota",
             vec![
-                Field::new("starts", ValueType::Date),
-                Field::new("cover", ValueType::Reference),
+                Field::required("starts", ValueType::Date),
+                Field::required("cover", ValueType::Reference),
             ],
         );
         declare(store, shipped.clone()).await;
@@ -5226,7 +5232,7 @@ pub mod contract {
         let refused = store
             .declare_type(DeclaredType::new(
                 "contract-rota",
-                vec![Field::new("starts", ValueType::Date)],
+                vec![Field::required("starts", ValueType::Date)],
             ))
             .await;
         assert!(
@@ -5246,12 +5252,14 @@ pub mod contract {
             store,
             DeclaredType::new(
                 "contract-shift",
-                vec![Field::new("starts", ValueType::Date)],
+                vec![Field::required("starts", ValueType::Date)],
             ),
         )
         .await;
-        let replaced =
-            DeclaredType::new("contract-shift", vec![Field::new("cover", ValueType::Text)]);
+        let replaced = DeclaredType::new(
+            "contract-shift",
+            vec![Field::required("cover", ValueType::Text)],
+        );
         declare(store, replaced.clone()).await;
         assert_eq!(
             read_type(store, "contract-shift").await,
@@ -5277,7 +5285,7 @@ pub mod contract {
             store,
             DeclaredType::new(
                 "contract-seating",
-                vec![Field::new("seats", ValueType::Text)],
+                vec![Field::required("seats", ValueType::Text)],
             ),
         )
         .await;
@@ -5285,7 +5293,7 @@ pub mod contract {
             store,
             DeclaredType::new(
                 "contract-booking",
-                vec![Field::new("seats", ValueType::Number)],
+                vec![Field::required("seats", ValueType::Number)],
             ),
         )
         .await;
@@ -5316,8 +5324,8 @@ pub mod contract {
             DeclaredType::new(
                 "contract-shipment",
                 vec![
-                    Field::new("weight", ValueType::Number),
-                    Field::new("arrives", ValueType::Date),
+                    Field::required("weight", ValueType::Number),
+                    Field::required("arrives", ValueType::Date),
                 ],
             ),
         )
@@ -5367,8 +5375,8 @@ pub mod contract {
             .declare_type(DeclaredType::new(
                 "contract-crate",
                 vec![
-                    Field::new("weight", ValueType::Number),
-                    Field::new("arrives", ValueType::Date),
+                    Field::required("weight", ValueType::Number),
+                    Field::required("arrives", ValueType::Date),
                 ],
             ))
             .await
@@ -5498,8 +5506,8 @@ pub mod contract {
             .declare_type(DeclaredType::new(
                 "contract-pallet",
                 vec![
-                    Field::new("stacked", ValueType::Number),
-                    Field::new("shipped_on", ValueType::Date),
+                    Field::required("stacked", ValueType::Number),
+                    Field::required("shipped_on", ValueType::Date),
                 ],
             ))
             .await
@@ -5614,7 +5622,7 @@ pub mod contract {
         let declared = store
             .declare_type(DeclaredType::new(
                 "contract-pallet",
-                vec![Field::new("arrives", ValueType::Date)],
+                vec![Field::required("arrives", ValueType::Date)],
             ))
             .await
             .expect("declaring should succeed");
@@ -6136,8 +6144,8 @@ pub mod contract {
                 .declare_type(DeclaredType::new(
                     "contract-holding",
                     vec![
-                        Field::new("keeper", holds),
-                        Field::new("since", ValueType::Date),
+                        Field::required("keeper", holds),
+                        Field::required("since", ValueType::Date),
                     ],
                 ))
                 .await
@@ -6232,9 +6240,9 @@ pub mod contract {
             .declare_type(DeclaredType::new(
                 "contract-stay",
                 vec![
-                    Field::pointing_at("venue", EntityKind::PLACE),
-                    Field::pointing_at("part_of", EntityKind::PROJECT),
-                    Field::new("booked_by", ValueType::Reference),
+                    Field::pointing_at("venue", EntityKind::PLACE).needed(),
+                    Field::pointing_at("part_of", EntityKind::PROJECT).needed(),
+                    Field::required("booked_by", ValueType::Reference),
                 ],
             ))
             .await
@@ -6290,8 +6298,8 @@ pub mod contract {
                 "work",
                 Origin::Shipped,
                 vec![
-                    Field::pointing_at("stay_venue", EntityKind::PLACE),
-                    Field::new("stay_nights", ValueType::Number),
+                    Field::pointing_at("stay_venue", EntityKind::PLACE).needed(),
+                    Field::required("stay_nights", ValueType::Number),
                 ],
             )
             .await
@@ -6461,7 +6469,7 @@ pub mod contract {
         store
             .declare_type(DeclaredType::new(
                 "contract-loan",
-                vec![Field::new("loaned_to", ValueType::Reference)],
+                vec![Field::required("loaned_to", ValueType::Reference)],
             ))
             .await
             .expect("declaring a type of my own is accepted");
@@ -6581,8 +6589,8 @@ pub mod contract {
                 "org",
                 Origin::Shipped,
                 vec![
-                    Field::new("cost", ValueType::Number),
-                    Field::new("done_on", ValueType::Date),
+                    Field::required("cost", ValueType::Number),
+                    Field::required("done_on", ValueType::Date),
                 ],
             )
             .await
@@ -6727,8 +6735,8 @@ pub mod contract {
                 "topic",
                 Origin::Shipped,
                 vec![
-                    Field::new("season", ValueType::Text),
-                    Field::new("pitch_fee", ValueType::Number),
+                    Field::required("season", ValueType::Text),
+                    Field::required("pitch_fee", ValueType::Number),
                 ],
             )
             .await
@@ -6821,8 +6829,8 @@ pub mod contract {
             .declare_type(DeclaredType::new(
                 "contract-vocabulary",
                 vec![
-                    Field::new("cost", ValueType::Number),
-                    Field::new("done_on", ValueType::Date),
+                    Field::required("cost", ValueType::Number),
+                    Field::required("done_on", ValueType::Date),
                 ],
             ))
             .await

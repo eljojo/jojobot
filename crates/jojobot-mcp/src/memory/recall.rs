@@ -1400,6 +1400,7 @@ mod tests {
                     key: "odometer".into(),
                     holds: Some("number".into()),
                     folds: None,
+                    required: false,
                 }],
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
@@ -1460,11 +1461,13 @@ mod tests {
                         key: "born".into(),
                         holds: Some("date".into()),
                         folds: None,
+                        required: false,
                     },
                     FieldArgs {
                         key: "owner".into(),
                         holds: Some("reference".into()),
                         folds: None,
+                        required: false,
                     },
                 ],
                 sid: Some(crate::harness::TEST_SID.into()),

@@ -107,8 +107,8 @@ async fn a_schema_that_is_not_a_kind_finds_the_gigs_among_the_events() {
             json!({
                 "name": "gig",
                 "fields": [
-                    { "key": "played", "holds": "text" },
-                    { "key": "went", "holds": "text" },
+                    { "key": "played", "holds": "text", "required": true },
+                    { "key": "went", "holds": "text", "required": true },
                 ],
             }),
         )

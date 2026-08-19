@@ -40,8 +40,8 @@ async fn a_declared_type_describes_a_thing_and_holds_it_to_nothing() {
             json!({
                 "name": "booking",
                 "fields": [
-                    { "key": "venue", "holds": "reference:place" },
-                    { "key": "seats", "holds": "number" },
+                    { "key": "venue", "holds": "reference:place", "required": true },
+                    { "key": "seats", "holds": "number", "required": true },
                 ],
             }),
         )

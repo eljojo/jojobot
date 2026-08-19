@@ -30,21 +30,33 @@ pub struct FieldArgs {
     /// and nothing will point that out, because matching is structural and a key
     /// means whatever the things carrying it mean by it.
     pub key: String,
-    /// What the value holds: `text`, `number`, `date`, `boolean`, or
-    /// `reference` (another entity's `kind:slug` handle, which is what makes it
-    /// walkable). Defaults to `text`, which holds anything — or to `number`
+    /// What the value holds: `text`, `number`, `date`, `date_range`, `boolean`,
+    /// or `reference` (another entity's `kind:slug` handle, which is what makes
+    /// it walkable). Defaults to `text`, which holds anything — or to `number`
     /// when you declare the key a counter, because a total of anything else is
     /// not a total.
+    ///
+    /// **A `date_range` is ONE value, not two keys**: two dates with a slash
+    /// between them, `2026-04-18/2026-04-25`. Two keys cannot say they belong
+    /// together, so a thing carrying a start and no end reads as a thing with a
+    /// key missing rather than as a span nobody finished.
+    ///
+    /// **`list:` in front means zero or more of it** — `list:text`, or
+    /// `list:reference:person` for the people who came along. Written as the
+    /// items separated by commas, so a thing that has none of something holds
+    /// an empty value rather than lacking the key. Reach for it whenever the
+    /// answer can be more than one thing: a key that can hold only one is how a
+    /// thing ends up described as less than what happened.
     ///
     /// **A reference can name the kind on the other end** — write
     /// `reference:place` and the key holds a place's handle and no other kind's.
     /// Plain `reference` holds a handle of any kind, so naming one narrows the
     /// key rather than describing it.
     ///
-    /// **What you say here is enforced on a thing that already fits this type.**
-    /// A value that does not hold it is refused, naming the key and what was
-    /// wanted; on a thing that fits no type nothing is refused and the mismatch
-    /// comes back flagged on the hit.
+    /// **What you say here describes; it does not gate.** A declared type
+    /// refuses no write at all — a value that does not hold what the key
+    /// declares comes back flagged on the hit, so a read shows the mistake
+    /// rather than a write being turned away.
     #[serde(default)]
     pub holds: Option<String>,
     /// **How the writes of this key come down to the one value it holds.**
@@ -63,6 +75,18 @@ pub struct FieldArgs {
     /// adds while another replaces and the value quietly means two things.
     #[serde(default)]
     pub folds: Option<String>,
+    /// **Whether a thing has to hold this key to be one of these at all.**
+    /// Defaults to false, and leave it there unless the key really is what
+    /// makes the thing what it is: the required keys are the ones a thing is
+    /// measured against, and **a required key is a refusal waiting to happen**.
+    ///
+    /// ⚠️ **This says nothing about what the key HOLDS.** A value is checked
+    /// against `holds` whenever the key is written, required or not — the two
+    /// are separate questions, and the useful one is usually "the colour has to
+    /// be a colour" rather than "everything must have a colour". An optional
+    /// key is welcome, never demanded, and a thing without it is complete.
+    #[serde(default)]
+    pub required: bool,
 }
 
 /// Arguments to `declare_type`.
@@ -144,7 +168,11 @@ impl Jojobot {
                     Field::of_token(&field.key, token).ok_or_else(|| why_no_field(token))?
                 }
             };
-            fields.push(Field { folds, ..declared });
+            fields.push(Field {
+                folds,
+                required: field.required,
+                ..declared
+            });
         }
 
         let declared = match self
@@ -184,7 +212,11 @@ impl Jojobot {
 /// kind's own answer is used where there is one, and it recites nothing this
 /// process does not hold (rule 213).
 fn why_no_field(token: &str) -> McpError {
-    if let Some((holds, kind)) = token.trim().split_once(':')
+    // **The list prefix comes off first**, because what is wrong with
+    // `list:reference:nonsense` is the kind, and a check reading the outermost
+    // half would report the list wrapper as the fault.
+    let held = token.trim().strip_prefix("list:").unwrap_or(token.trim());
+    if let Some((holds, kind)) = held.split_once(':')
         && holds.trim() == ValueType::Reference.as_token()
         && let Err(why) = kinds::resolve(kind.trim())
     {
@@ -192,9 +224,10 @@ fn why_no_field(token: &str) -> McpError {
     }
     McpError::invalid_params(
         format!(
-            "'{token}' is no value type: use text, number, date, boolean or reference — and a \
-             reference may name the kind it points at, as 'reference:place', using one of the \
-             kinds add_entity takes"
+            "'{token}' is no value type: use text, number, date, date_range, boolean or \
+             reference — and a reference may name the kind it points at, as 'reference:place', \
+             using one of the kinds add_entity takes. Put 'list:' in front of any of them for a \
+             key holding zero or more, as 'list:reference:person'"
         ),
         None,
     )
@@ -215,6 +248,7 @@ mod tests {
                     key: (*key).to_string(),
                     holds: None,
                     folds: None,
+                    required: false,
                 })
                 .collect(),
             sid: Some(TEST_SID.to_string()),
@@ -359,11 +393,13 @@ mod tests {
                             key: "venue".to_string(),
                             holds: Some("reference:place".to_string()),
                             folds: None,
+                            required: false,
                         },
                         FieldArgs {
                             key: "booked_by".to_string(),
                             holds: Some("reference".to_string()),
                             folds: None,
+                            required: false,
                         },
                     ],
                     sid: Some(TEST_SID.to_string()),
@@ -406,6 +442,7 @@ mod tests {
                     key: "venue".to_string(),
                     holds: Some(holds),
                     folds: None,
+                    required: false,
                 }],
                 sid: Some(TEST_SID.to_string()),
             }))

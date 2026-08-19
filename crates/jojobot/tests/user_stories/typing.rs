@@ -98,8 +98,8 @@ async fn a_type_declared_today_finds_records_written_before_it() {
             json!({
                 "name": "service",
                 "fields": [
-                    { "key": "serviced", "holds": "date" },
-                    { "key": "cost", "holds": "number" },
+                    { "key": "serviced", "holds": "date", "required": true },
+                    { "key": "cost", "holds": "number", "required": true },
                 ],
             }),
         )

@@ -52,6 +52,15 @@ pub enum ValueType {
     Number,
     /// A civil date, in the one spelling this project uses everywhere else.
     Date,
+    /// **A span, as ONE value**: two civil dates with a slash between them,
+    /// `2026-04-18/2026-04-25`.
+    ///
+    /// One key rather than two, because two keys cannot say they belong
+    /// together — a thing carrying a start and no end reads as a thing with a
+    /// key missing rather than as a span nobody finished, and every question
+    /// about the span has to know both key names. A date carries no slash, so
+    /// the spelling cannot be read two ways.
+    DateRange,
     /// Yes or no.
     Boolean,
     /// **Another entity, and a walkable edge rather than a string that looks
@@ -236,6 +245,7 @@ impl ValueType {
             ValueType::Text => "text",
             ValueType::Number => "number",
             ValueType::Date => "date",
+            ValueType::DateRange => "date_range",
             ValueType::Boolean => "boolean",
             ValueType::Reference => "reference",
         }
@@ -247,6 +257,7 @@ impl ValueType {
             "text" => Some(ValueType::Text),
             "number" => Some(ValueType::Number),
             "date" => Some(ValueType::Date),
+            "date_range" => Some(ValueType::DateRange),
             "boolean" => Some(ValueType::Boolean),
             "reference" => Some(ValueType::Reference),
             _ => None,
@@ -265,6 +276,22 @@ impl ValueType {
             ValueType::Number => value.parse::<f64>().is_ok(),
             ValueType::Boolean => matches!(value, "true" | "false"),
             ValueType::Date => value.parse::<jiff::civil::Date>().is_ok(),
+            // Both ends, in order. A range that ends before it starts is not a
+            // span somebody wrote down badly, it is two dates in the wrong
+            // slots, and storing it would make every question about the span
+            // answer nonsense.
+            ValueType::DateRange => match value.split_once('/') {
+                Some((from, to)) => {
+                    match (
+                        from.trim().parse::<jiff::civil::Date>(),
+                        to.trim().parse::<jiff::civil::Date>(),
+                    ) {
+                        (Ok(from), Ok(to)) => from <= to,
+                        _ => false,
+                    }
+                }
+                None => false,
+            },
             // A handle, which is what makes it walkable. The kind has to be one
             // this store knows, or it is a string with a colon in it.
             ValueType::Reference => EntityId(value.to_string()).kind().is_some(),
@@ -330,6 +357,33 @@ pub struct Field {
     /// How the writes of this key come down to one value. [`Fold::Newest`]
     /// unless the declaration says otherwise.
     pub folds: Fold,
+    /// **Whether a thing has to hold this key to be one of these at all.**
+    ///
+    /// The required keys are the minimum that makes a thing that thing, and
+    /// they are the only ones fitting is measured against. **An optional key is
+    /// welcome and never demanded**: a thing without it is complete, and
+    /// nothing about it is missing.
+    ///
+    /// **Optional is the default** (rule 9), and the reason is not tidiness: a
+    /// required key is a refusal waiting to happen, so a declaration says which
+    /// keys earn one rather than which keys are let off.
+    ///
+    /// **It says nothing about the VALUE.** What a key holds is checked
+    /// whenever the key is set, required or not — the two are independent, and
+    /// collapsing them is what turns "the colour has to be a colour" into "every
+    /// bike must have a colour".
+    pub required: bool,
+    /// **Whether this key holds a LIST — zero or more of what it declares.**
+    ///
+    /// Written as its items separated by commas, so `zero or more` includes
+    /// zero: an empty value is a list with nothing in it, which is a thing
+    /// having none of something rather than a key nobody filled.
+    ///
+    /// It is a shape on the key rather than a value type of its own, because
+    /// every question about the key — what it holds, what kind it points at,
+    /// whether a comparison is licensed — has the same answer for one of them
+    /// and for many.
+    pub list: bool,
 }
 
 impl Field {
@@ -339,7 +393,53 @@ impl Field {
             holds,
             points_at: None,
             folds: Fold::Newest,
+            required: false,
+            list: false,
         }
+    }
+
+    /// **A key a thing of this type has to hold.** The ordinary constructor
+    /// leaves a key optional, so the required set is what a declaration states
+    /// rather than what it forgets to exempt.
+    pub fn required(key: &str, holds: ValueType) -> Field {
+        Field {
+            required: true,
+            ..Field::new(key, holds)
+        }
+    }
+
+    /// **A key holding zero or more of what it declares.**
+    pub fn listing(key: &str, holds: ValueType) -> Field {
+        Field {
+            list: true,
+            ..Field::new(key, holds)
+        }
+    }
+
+    /// The same key, required — for the declarations built through a
+    /// constructor that already says something else about the key.
+    pub fn needed(self) -> Field {
+        Field {
+            required: true,
+            ..self
+        }
+    }
+
+    /// **The items a value carries under this key** — the value itself for an
+    /// ordinary key, and the comma-separated items for a list.
+    ///
+    /// An empty list value carries nothing, which is why this can be empty and
+    /// why a caller reading it back gets a thing that holds none of something
+    /// rather than a key nobody wrote.
+    pub fn items<'v>(&self, value: &'v str) -> Vec<&'v str> {
+        if !self.list {
+            return vec![value];
+        }
+        value
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .collect()
     }
 
     /// **A counter.** It holds a number because a total of anything else is not
@@ -368,6 +468,15 @@ impl Field {
     /// and a check that read the value type alone would call
     /// `pet:santas-little-helper` a good venue.
     pub fn accepts(&self, value: &str) -> bool {
+        // **Every item, and a list with nothing in it holds nothing badly.** A
+        // key declared to hold zero or more is answered by zero.
+        self.items(value)
+            .into_iter()
+            .all(|item| self.accepts_one(item))
+    }
+
+    /// One item of what this key holds — the whole value for an ordinary key.
+    fn accepts_one(&self, value: &str) -> bool {
         if !self.holds.holds(value) {
             return false;
         }
@@ -385,15 +494,29 @@ impl Field {
     /// store column and a served field that disagreed about the spelling would
     /// lose the kind on the first round trip.
     pub fn holds_token(&self) -> String {
-        match self.points_at {
+        let held = match self.points_at {
             Some(kind) => format!("{}:{}", self.holds.as_token(), kind.as_token()),
             None => self.holds.as_token().to_string(),
+        };
+        if self.list {
+            format!("list:{held}")
+        } else {
+            held
         }
     }
 
     /// The field a key and a declaration token name, or nothing when the token
     /// names no value type or no kind.
     pub fn of_token(key: &str, token: &str) -> Option<Field> {
+        // **A list wraps what it holds**, so the prefix comes off first and the
+        // rest is read exactly as an ordinary key's token is. That is what lets
+        // `list:reference:place` mean what both halves already mean.
+        if let Some(element) = token.trim().strip_prefix("list:") {
+            return Some(Field {
+                list: true,
+                ..Field::of_token(key, element)?
+            });
+        }
         match token.trim().split_once(':') {
             None => Some(Field::new(key, ValueType::of_token(token)?)),
             Some((holds, kind)) => {
@@ -439,6 +562,11 @@ pub struct Mistyped {
     /// What the record actually carries, so a reader can see the mistake
     /// rather than being told one happened.
     pub value: String,
+    /// Whether the key is one this type requires. A bad value in a required
+    /// key leaves the type unanswered; a bad value in an optional one is a
+    /// mistake worth reporting and does not decide whether the thing is one of
+    /// these.
+    pub required: bool,
 }
 
 impl Mistyped {
@@ -469,25 +597,35 @@ pub struct Match {
     pub held: Vec<String>,
     /// The keys it does not, by NAME. A count would leave the caller's next
     /// move — fill them, or ignore them — with nothing to act on.
+    ///
+    /// **Every declared key it lacks, required or not** — a reader asking what
+    /// a thing is missing wants the optional ones too, because that is what
+    /// says what could still be written down.
     pub lacking: Vec<String>,
+    /// The subset of `lacking` the type REQUIRES. **This is what completeness
+    /// is measured against**; the rest is a description of what else there is
+    /// room for.
+    pub lacking_required: Vec<String>,
     /// Keys that are there and hold something else — by name, by what the key
     /// wanted and by what is actually in it, so a reader sees the mistake.
     pub mistyped: Vec<Mistyped>,
 }
 
 impl Match {
-    /// **Every declared key is there and holds what it was declared to hold.**
+    /// **Every REQUIRED key is there and holds what it was declared to hold.**
     ///
-    /// Holding a key badly is not holding it. A key whose value breaks the
-    /// declaration leaves the type unanswered exactly as an absent key does,
-    /// so both lists have to be empty — a definition that read `lacking` alone
-    /// would call a thing a stay because the venue slot had a pet in it.
+    /// Holding a key badly is not holding it. A required key whose value breaks
+    /// the declaration leaves the type unanswered exactly as an absent one
+    /// does — a definition that read `lacking_required` alone would call a
+    /// thing a stay because the venue slot had a pet in it.
     ///
-    /// This is what makes the write guard possible rather than a second rule
-    /// beside it: [`super::guard_fit`] refuses a write that stops a thing
-    /// fitting, and the refusal over a bad value falls out of the definition.
+    /// **An optional key decides nothing here, held, absent or wrong.** That is
+    /// the whole of what optional means: it is welcome, it is never demanded,
+    /// and a thing without it is not a thing with something missing. What is in
+    /// it when it IS there is a separate question, asked on every write by
+    /// [`super::guard_fit`] and reported by `mistyped` either way.
     pub fn complete(&self) -> bool {
-        self.lacking.is_empty() && self.mistyped.is_empty()
+        self.lacking_required.is_empty() && !self.mistyped.iter().any(|m| m.required)
     }
 }
 
@@ -538,6 +676,8 @@ impl DeclaredType {
                     .map(|f| Field {
                         points_at: f.points_at,
                         folds: f.folds,
+                        required: f.required,
+                        list: f.list,
                         ..Field::new(&f.key, f.holds)
                     })
                     .collect(),
@@ -552,6 +692,7 @@ impl DeclaredType {
     pub fn matched_by(&self, record: &BTreeMap<String, String>) -> Option<Match> {
         let mut held = Vec::new();
         let mut lacking = Vec::new();
+        let mut lacking_required = Vec::new();
         let mut mistyped = Vec::new();
         for field in &self.fields {
             match record.get(&field.key) {
@@ -563,10 +704,16 @@ impl DeclaredType {
                             declared: field.holds,
                             points_at: field.points_at,
                             value: value.clone(),
+                            required: field.required,
                         });
                     }
                 }
-                None => lacking.push(field.key.clone()),
+                None => {
+                    lacking.push(field.key.clone());
+                    if field.required {
+                        lacking_required.push(field.key.clone());
+                    }
+                }
             }
         }
         if held.is_empty() {
@@ -575,6 +722,7 @@ impl DeclaredType {
         Some(Match {
             held,
             lacking,
+            lacking_required,
             mistyped,
         })
     }
@@ -706,9 +854,9 @@ mod tests {
         DeclaredType::new(
             "booking",
             vec![
-                Field::new("starts", ValueType::Date),
-                Field::new("seats", ValueType::Number),
-                Field::new("venue", ValueType::Reference),
+                Field::required("starts", ValueType::Date),
+                Field::required("seats", ValueType::Number),
+                Field::required("venue", ValueType::Reference),
             ],
         )
     }
@@ -854,7 +1002,7 @@ mod tests {
         // handle names is the thing being refused on, and the set is what
         // answers it.
         crate::memory::kinds::load_shipped();
-        let venue = Field::pointing_at("venue", EntityKind::PLACE);
+        let venue = Field::pointing_at("venue", EntityKind::PLACE).needed();
         assert!(
             venue.accepts("place:moes"),
             "the kind it was declared for is what it holds",
@@ -864,7 +1012,7 @@ mod tests {
             "a handle of another kind does not hold a key declared for places",
         );
         assert!(
-            Field::new("venue", ValueType::Reference).accepts("pet:santas-little-helper"),
+            Field::required("venue", ValueType::Reference).accepts("pet:santas-little-helper"),
             "a reference that named no kind is any handle, which is what makes \
              naming one a narrowing rather than the default",
         );
@@ -882,8 +1030,8 @@ mod tests {
         let stay = DeclaredType::new(
             "stay",
             vec![
-                Field::pointing_at("venue", EntityKind::PLACE),
-                Field::new("starts", ValueType::Date),
+                Field::pointing_at("venue", EntityKind::PLACE).needed(),
+                Field::required("starts", ValueType::Date),
             ],
         );
         let found = stay
@@ -918,10 +1066,20 @@ mod tests {
         // about something else, so the set is setup — and setup comes from
         // standing a store up, filled from what that store holds.
         let _booted = crate::memory::testing::InMemoryMemory::booted();
+        // **Required is not in the token and must not be**: it is a property of
+        // the key beside what the key holds, kept in its own column, so a
+        // fixture claiming it here would be asserting that the token carries
+        // something it does not.
         for field in [
             Field::new("starts", ValueType::Date),
             Field::new("venue", ValueType::Reference),
             Field::pointing_at("venue", EntityKind::PLACE),
+            Field::listing("came_with", ValueType::Reference),
+            Field {
+                points_at: Some(EntityKind::PLACE),
+                ..Field::listing("venues", ValueType::Reference)
+            },
+            Field::new("away", ValueType::DateRange),
         ] {
             assert_eq!(
                 Field::of_token(&field.key, &field.holds_token()).as_ref(),
@@ -931,7 +1089,9 @@ mod tests {
             );
         }
         assert_eq!(
-            Field::pointing_at("venue", EntityKind::PLACE).holds_token(),
+            Field::pointing_at("venue", EntityKind::PLACE)
+                .needed()
+                .holds_token(),
             "reference:place",
             "the spelling itself, since it is what a caller writes and a column keeps",
         );
@@ -945,7 +1105,7 @@ mod tests {
     #[test]
     fn two_types_may_name_one_key_and_mean_their_own_thing() {
         let seats_as_text =
-            DeclaredType::new("seating", vec![Field::new("seats", ValueType::Text)]);
+            DeclaredType::new("seating", vec![Field::required("seats", ValueType::Text)]);
         let loose = record(&[("seats", "a few")]);
         assert!(
             seats_as_text
@@ -991,7 +1151,7 @@ mod tests {
             "snacking",
             vec![Field {
                 folds: Fold::Sum,
-                ..Field::pointing_at("donuts", EntityKind::PLACE)
+                ..Field::pointing_at("donuts", EntityKind::PLACE).needed()
             }],
         ))
         .expect_err("a total of handles is not a total");
@@ -1005,12 +1165,12 @@ mod tests {
         // The two halves apart, each of which this refusal must not reach.
         validate_type(&DeclaredType::new(
             "stay",
-            vec![Field::pointing_at("venue", EntityKind::PLACE)],
+            vec![Field::pointing_at("venue", EntityKind::PLACE).needed()],
         ))
         .expect("a narrowed reference that folds newest is an ordinary key");
         validate_type(&DeclaredType::new(
             "snacking",
-            vec![Field::summing("donuts")],
+            vec![Field::summing("donuts").needed()],
         ))
         .expect("and a counter holding a number is what a counter is");
     }
@@ -1032,7 +1192,10 @@ mod tests {
     fn a_declared_key_is_bounded_where_a_written_key_is() {
         let refused = validate_type(&DeclaredType::new(
             "snacking",
-            vec![Field::new(&"k".repeat(MAX_KEY_CHARS + 1), ValueType::Text)],
+            vec![Field::required(
+                &"k".repeat(MAX_KEY_CHARS + 1),
+                ValueType::Text,
+            )],
         ))
         .expect_err("a declared key past the limit names a key no record may carry");
         let said = refused.to_string();
@@ -1043,7 +1206,7 @@ mod tests {
 
         validate_type(&DeclaredType::new(
             "snacking",
-            vec![Field::new(&"k".repeat(MAX_KEY_CHARS), ValueType::Text)],
+            vec![Field::required(&"k".repeat(MAX_KEY_CHARS), ValueType::Text)],
         ))
         .expect("a key at the limit is one a record may carry, so a type may name it");
     }

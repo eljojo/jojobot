@@ -1,0 +1,16 @@
+-- Whether a thing has to hold this key to be one of these at all.
+--
+-- Fitting was every key a declaration named, so a key nobody could leave out
+-- was the only kind of key there was. That made the required set as large as
+-- the declaration, and a required key is a refusal waiting to happen: a type
+-- describing what a thing MAY carry could not be written without demanding all
+-- of it.
+--
+-- The two properties are independent. What a key HOLDS is checked whenever the
+-- key is set, required or not, so an optional key is welcome rather than
+-- unchecked.
+--
+-- Required is the default for a row written before this column, because that is
+-- what those rows already meant: the unconfigured behaviour is the old
+-- behaviour. A declaration written since says which of its keys earn one.
+ALTER TABLE type_field ADD COLUMN required BOOLEAN NOT NULL DEFAULT TRUE;
