@@ -93,7 +93,8 @@ impl Jojobot {
                        again without brief reads it in full. NAME A BOT and the same answer also \
                        carries that identity: its charter (the orienting text — what this \
                        identity is, its hard lines, where its work lives), its rules as dated \
-                       claims each carrying its own provenance (testimony is settled, inference \
+                       claims each carrying its own provenance (testimony and observation are \
+                       settled, inference \
                        is a hypothesis — read them that way), and the per-state counts of the \
                        mailbox it owns. ANSWERING THE RESUME-OR-NEW OFFER? That answer carries \
                        no charter: only a boot that shipped one hands the offer back, so you \

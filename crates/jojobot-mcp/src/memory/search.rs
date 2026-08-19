@@ -34,7 +34,9 @@ pub struct SearchArgs {
     /// back as current truth.
     #[serde(default)]
     pub status: Option<String>,
-    /// `testimony` or `inference`.
+    /// `testimony`, `observation` or `inference` — keep only the claims backed
+    /// that way. `observation` is a claim an AI read out of a system of record,
+    /// and it names the system it was read from.
     #[serde(default)]
     pub provenance: Option<String>,
     /// Facts about this entity, as `kind:slug`.

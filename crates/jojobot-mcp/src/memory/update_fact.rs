@@ -22,7 +22,10 @@ pub struct UpdateFactArgs {
     /// it stays `active`, because that IS the current truth.
     #[serde(default)]
     pub status: Option<String>,
-    /// `testimony` or `inference`.
+    /// `testimony`, `observation` or `inference`. Moving a claim TO `testimony`
+    /// needs `confirmed_by_user` whichever value it held: a claim you read
+    /// somewhere is not a step towards the user having said it. An
+    /// `observation` must carry `read_from`, here as at capture.
     #[serde(default)]
     pub provenance: Option<String>,
     /// `settled` or `open`. **Moving a claim that is ALREADY open to settled
@@ -34,8 +37,8 @@ pub struct UpdateFactArgs {
     /// taken at its word, the way it is taken at its word about provenance.
     #[serde(default)]
     pub standing: Option<String>,
-    /// Required for two promotions of an EXISTING claim: inference → testimony,
-    /// and an open standing → settled. Set it only when the user has actually
+    /// Required for two promotions of an EXISTING claim: anything → testimony
+    /// (inference or observation alike), and an open standing → settled. Set it only when the user has actually
     /// confirmed the claim. Nothing else is gated on it — a fresh `capture`
     /// declares its provenance and its standing on honour.
     #[serde(default)]
@@ -99,9 +102,11 @@ impl Jojobot {
                        (content/details/status/provenance/standing). To record that something \
                        is NOT so, rewrite content to state the negative truth — that is an \
                        ordinary edit and the fact stays active; there is no negated status. \
-                       TWO MOVES NEED confirmed_by_user, and they are different: promoting \
-                       inference → testimony (who backs it), and settling a claim that is \
-                       already open (how sure anyone is). THIS IS HOW A HEDGE IS CONFIRMED — the \
+                       TWO MOVES NEED confirmed_by_user, and they are different: moving a \
+                       claim TO testimony (who backs it), from inference or from observation \
+                       alike — a claim you read in a system of record is not a step towards the \
+                       operator having said it — and settling a claim that is already open (how \
+                       sure anyone is). THIS IS HOW A HEDGE IS CONFIRMED — the \
                        operator hedged the claim and no longer does, so set standing settled \
                        and leave provenance alone; the claim was theirs from the start. \
                        Reopening is free. THE GATE IS ON PROMOTION, NOT ON ASSERTION: a fresh \

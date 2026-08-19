@@ -345,6 +345,64 @@ fn the_tool_surface_is_exactly_this_list() {
     );
 }
 
+/// **Every served place that teaches the provenance vocabulary teaches all
+/// three values.**
+///
+/// A session acts on what it is told, so text that still says a claim is either
+/// the operator's word or a guess does not merely go stale: it teaches a
+/// session to file a claim it read out of a system of record as one of the two
+/// wrong things.
+///
+/// **The corpus is the essay and every served description**, and a block
+/// counts when it names both of the older values — the vocabulary is what is
+/// being taught there, and a passage naming one of them in passing is not.
+///
+/// ⚠️ **It fails when the corpus comes back empty**, because a sweep over
+/// nothing reports success: the count of teaching blocks is asserted before
+/// they are read.
+#[test]
+fn every_served_place_that_teaches_provenance_names_all_three_values() {
+    let tools = Jojobot::tool_router().list_all();
+    let mut corpus: Vec<(String, String)> = vec![("the orientation".into(), ORIENTATION.into())];
+    for tool in &tools {
+        if let Some(described) = tool.description.as_deref() {
+            corpus.push((
+                format!("{}'s description", tool.name),
+                described.to_string(),
+            ));
+        }
+        // The arguments' own descriptions, which is where a caller reads what a
+        // value means before sending one.
+        let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
+        if let Some(properties) = schema["properties"].as_object() {
+            for (argument, described) in properties {
+                if let Some(prose) = described["description"].as_str() {
+                    corpus.push((
+                        format!("{}'s '{argument}' argument", tool.name),
+                        prose.to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    let teaching: Vec<&(String, String)> = corpus
+        .iter()
+        .filter(|(_, text)| text.contains("testimony") && text.contains("inference"))
+        .collect();
+    assert!(
+        teaching.len() >= 3,
+        "the sweep found {} places teaching the provenance vocabulary, which is too few to be          the surface — the corpus is not being read",
+        teaching.len(),
+    );
+    for (what, text) in teaching {
+        assert!(
+            text.contains("observation"),
+            "{what} teaches that a claim is testimony or inference and no third thing, so a              session reading it files a claim it read out of a system of record as one of the              two wrong ones",
+        );
+    }
+}
+
 /// **There is exactly one orientation verb, and this is written so a second
 /// one cannot satisfy it.**
 ///

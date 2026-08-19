@@ -25,8 +25,14 @@ pub struct CaptureArgs {
     /// Nuance, the why, merge notes — the description under the claim.
     #[serde(default)]
     pub details: Option<String>,
-    /// `testimony` (the user said it) or `inference` (derived). Defaults to
-    /// `inference`: anything not tied to the user's words is a hypothesis.
+    /// `testimony` (the user said it), `observation` (you read it in a system
+    /// of record) or `inference` (you derived it). Defaults to `inference`:
+    /// anything not tied to the user's words is a hypothesis.
+    ///
+    /// **`observation` must say where it was read** — the field `read_from`
+    /// naming the system, and `read_ref` for what was read there if you have
+    /// one. Without it the call is refused, because a claim that reads back
+    /// settled and cannot be gone back to is worse than one filed as a guess.
     #[serde(default)]
     pub provenance: Option<String>,
     /// `settled` or `open` — **how sure anyone is**, which is a different
