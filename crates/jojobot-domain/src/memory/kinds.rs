@@ -39,28 +39,55 @@ pub const SHIPPED: [&str; 11] = [
 /// keys only where the software knows the shape — where the thing exists
 /// BECAUSE the software has a use for it.
 ///
-/// **`rhythm` is the one, and its required set is two keys.** A loop is a name
-/// and the day it last ran; everything else is what somebody had to hand at the
-/// time. A required key is a refusal waiting to happen, and a loop nobody has
-/// written a cadence for is still a loop.
+/// **`rhythm` is the one, and it declares the WHOLE loop.** Every key the
+/// check-in verb writes and the overdue read reads is named here: the two the
+/// arithmetic needs, the policy that chooses between them, what the check-in
+/// found, and the note. A key the machinery uses and the kind does not name is
+/// a second vocabulary, and a session learns whichever it reads first.
+///
+/// **Its required set is two keys.** A loop is a name and the day somebody last
+/// looked at it; everything else is what they had to hand at the time. A
+/// required key is a refusal waiting to happen, and a loop nobody has written a
+/// cadence for is still a loop.
 pub fn keys_of(token: &str) -> Vec<super::types::Field> {
     use super::types::{Field, ValueType};
     match token {
         "rhythm" => vec![
             Field::required("name", ValueType::Text),
-            // **The day it last ran**, which is the only date a loop needs: the
-            // next one is a cadence after it, and a loop with no cadence is
-            // still a loop somebody looked at on a day.
-            Field::required("last_ran", ValueType::Date),
+            // **The day of the last check-in**, which is what "when did I last
+            // look at this" reads. It is not "the day it last ran": a check-in
+            // records what was found, and a refusal is not a run — a key by
+            // that name would be written by a skipped cycle and would say the
+            // loop ran on a day the record says it did not.
+            Field::required("last_check_in", ValueType::Date),
             // **The one thing to carry forward.** A loop that ran and left
             // something to remember is the ordinary case, not the exception.
             Field::new("note", ValueType::Text),
-            // **Days between one turn and the next.** Optional because not
-            // every loop has one — and it is here rather than dropped because
-            // a monthly bill pay needs it, whatever a survey of what has been
-            // written down finds. An absent column is not an absent
-            // requirement.
-            Field::new("cadence", ValueType::Number),
+            // **Days between one turn and the next**, and the unit is in the
+            // name on purpose: a cadence is always TIME. What a check-in
+            // measures — a distance, a reading, a count — is a field on the
+            // check-in rather than a unit of the schedule, and a bare
+            // `cadence` invites the schedule to grow one.
+            //
+            // Optional because not every loop has one, and here rather than
+            // dropped because a bill paid monthly needs it: an absent column
+            // is not an absent requirement.
+            Field::new("cadence_days", ValueType::Number),
+            // **Which date the next cycle counts from when a check-in is
+            // late** — the day it fell due, or the day the check-in happened.
+            // The two diverge exactly when a check-in is late, which is
+            // exactly when picking wrong stops being visible.
+            Field::new("advances_from", ValueType::Text),
+            // **The date this cycle counts from**, and the loop is next due a
+            // cadence after it. It is a second date rather than the same one
+            // because what separates the three outcomes is whether the cycle
+            // is consumed: a snooze moves this one nowhere while the check-in
+            // above still records the contact.
+            Field::new("counts_from", ValueType::Date),
+            // **What the last check-in found.** The three tokens the verb
+            // accepts are a closed vocabulary and this declaration cannot say
+            // so yet — there is no value type for one — so it says the widest
+            // true thing rather than a narrower false one.
             Field::new("outcome", ValueType::Text),
         ],
         _ => Vec::new(),

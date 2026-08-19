@@ -8,8 +8,9 @@
 //!
 //! **A rhythm is a KIND now, and its keys are its own.** Two of them are
 //! required and they are the two a loop cannot be one without: what it is
-//! called, and the day it last ran. Everything else — how often, what happened,
-//! the one thing to carry forward — is welcome and never demanded.
+//! called, and the day somebody last looked at it. Everything else — how often,
+//! what happened, the one thing to carry forward — is welcome and never
+//! demanded.
 //!
 //! **The plant is the beat that matters.** It is watered without anybody having
 //! decided how often, and jojobot takes it: a loop with a name and a date is a
@@ -53,7 +54,7 @@ async fn the_loops_a_person_actually_keeps() {
     s.event_with(
         "rhythm:water-the-fern",
         "watered it, the soil was dry again",
-        json!({ "name": "Water the fern", "last_ran": "2026-08-14" }),
+        json!({ "name": "Water the fern", "last_check_in": "2026-08-14" }),
         &[],
     )
     .await;
@@ -68,8 +69,8 @@ async fn the_loops_a_person_actually_keeps() {
         "paid it, same as every month",
         json!({
             "name": "Pay the jukebox lease",
-            "last_ran": "2026-08-01",
-            "cadence": "30",
+            "last_check_in": "2026-08-01",
+            "cadence_days": "30",
             "note": "the standing order covers it unless the amount changes",
         }),
         &[],
@@ -82,8 +83,8 @@ async fn the_loops_a_person_actually_keeps() {
         "swapped it, it was filthier than last time",
         json!({
             "name": "Swap the air filter",
-            "last_ran": "2026-07-19",
-            "cadence": "90",
+            "last_check_in": "2026-07-19",
+            "cadence_days": "90",
             "outcome": "swapped",
             "note": "the spare is the last one in the box",
         }),
@@ -98,9 +99,9 @@ async fn the_loops_a_person_actually_keeps() {
             json!({ "kind": "rhythm" }),
         )
         .await;
-    loops.says("\"last_ran\":\"2026-08-14\"");
-    loops.says("\"last_ran\":\"2026-08-01\"");
-    loops.says("\"cadence\":\"30\"");
+    loops.says("\"last_check_in\":\"2026-08-14\"");
+    loops.says("\"last_check_in\":\"2026-08-01\"");
+    loops.says("\"cadence_days\":\"30\"");
     // ⭐ **The carry-forward is the reason a note is a key.** A person coming
     // back to this loop needs the one thing they left themselves, and it is
     // beside the date rather than buried in a record.
@@ -117,8 +118,8 @@ async fn the_loops_a_person_actually_keeps() {
             json!({ "subject": "rhythm:water-the-fern" }),
         )
         .await;
-    ferns.says("\"last_ran\":\"2026-08-14\"");
-    ferns.never_says("cadence");
+    ferns.says("\"last_check_in\":\"2026-08-14\"");
+    ferns.never_says("cadence_days");
 
     // ── and what a loop IS may not be taken back off it ─────────────────────
     //

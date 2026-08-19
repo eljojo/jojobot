@@ -777,9 +777,10 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
 /// Taking the name back is what lets a loop be described by what it IS.
 ///
 /// **Two beats, and the second is the model change earning its keep.** A loop
-/// that holds its name and the day it last ran may not lose either. A loop that
-/// holds only its name is legal, complete and refused nothing — because the
-/// required set is two keys and everything else is what somebody had to hand.
+/// that holds its name and the day somebody last looked at it may not lose
+/// either. A loop that holds only its name is legal, complete and refused
+/// nothing — because the required set is two keys and everything else is what
+/// somebody had to hand.
 #[tokio::test]
 async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
     let (mut server, store, _turn) = a_store("rhythm-kind").await;
@@ -801,12 +802,14 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
             .collect::<Vec<_>>(),
         vec![
             ("name", true),
-            ("last_ran", true),
+            ("last_check_in", true),
             ("note", false),
-            ("cadence", false),
+            ("cadence_days", false),
+            ("advances_from", false),
+            ("counts_from", false),
             ("outcome", false),
         ],
-        "the required set is the name and the day it last ran: {held:?}",
+        "the required set is the name and the day somebody last looked: {held:?}",
     );
 
     // A loop is filed under whatever it is a loop ON.
@@ -829,7 +832,7 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
             provenance: Provenance::Testimony,
             fields: [
                 ("name".to_string(), "the loop that has run".to_string()),
-                ("last_ran".to_string(), "2026-05-02".to_string()),
+                ("last_check_in".to_string(), "2026-05-02".to_string()),
             ]
             .into_iter()
             .collect(),
@@ -844,14 +847,14 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
         .update_fact(
             &record.address(),
             FactPatch {
-                clear_fields: vec!["last_ran".to_string()],
+                clear_fields: vec!["last_check_in".to_string()],
                 ..FactPatch::default()
             },
         )
         .await
-        .expect_err("a loop that has run may not lose the day it ran");
+        .expect_err("a loop somebody has looked at may not lose the day they did");
     assert!(
-        refused.to_string().contains("rhythm") && refused.to_string().contains("last_ran"),
+        refused.to_string().contains("rhythm") && refused.to_string().contains("last_check_in"),
         "the refusal names the kind and the key: {refused}",
     );
 
@@ -880,6 +883,256 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
         .expect("a loop with only a name is a loop")
         .written()
         .expect("nothing blocked it");
+
+    server.stop().await;
+}
+
+/// **Every key the loop reads or writes is a key its kind declares.**
+///
+/// The kind spoke one set of words and the check-in verb spoke another, and
+/// both were live: a session learned whichever it read first, and the loop it
+/// wrote depended on which. Everything passed the whole time, which is what a
+/// schema drifting apart from its machinery looks like from outside.
+///
+/// **It is asked as a property rather than as two lists.** A case comparing
+/// one written-out set against another passes the day somebody updates both
+/// and says nothing about a third place; this asks the check-in what it writes
+/// and the store what the kind declares, so a key that appears in either
+/// without the other is caught wherever it came from.
+#[tokio::test]
+async fn every_key_a_check_in_writes_is_declared_by_the_rhythm_kind() {
+    let (mut server, store, _turn) = a_store("one-vocabulary").await;
+
+    let declared: Vec<String> = store
+        .declared_types()
+        .await
+        .expect("the roster reads")
+        .into_iter()
+        .find(|t| t.name == "rhythm")
+        .expect("the shipped kind carries its keys")
+        .fields
+        .iter()
+        .map(|f| f.key.clone())
+        .collect();
+
+    // A whole schedule, in the words the arithmetic uses. What a check-in
+    // writes is computed from these, so this is the reading half of the loop.
+    let holds: std::collections::BTreeMap<String, String> = [
+        ("cadence_days", "7"),
+        ("advances_from", "due_date"),
+        ("counts_from", "2026-05-02"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    for key in holds.keys() {
+        assert!(
+            declared.contains(key),
+            "the schedule is read off '{key}', and the kind does not declare it: {declared:?}",
+        );
+    }
+
+    // …and the writing half: every key the check-in puts back.
+    let wrote = jojobot_domain::attention::check_in(
+        &holds,
+        jojobot_domain::attention::Outcome::Ran,
+        jiff::civil::date(2026, 5, 9),
+    )
+    .expect("a whole schedule takes a check-in");
+    for key in wrote.keys() {
+        assert!(
+            declared.contains(key),
+            "a check-in writes '{key}', and the kind does not declare it: {declared:?}",
+        );
+    }
+
+    server.stop().await;
+}
+
+/// **An ordering on the schedule date is licensed, because the kind declares
+/// it.**
+///
+/// A comparison is licensed by what a key was DECLARED to hold: a key nobody
+/// declared keeps equality, and asking for an ordering on one is refused rather
+/// than quietly answered as equality — a caller who asked for an ordering and
+/// got equality would read the answer as an ordering.
+///
+/// **This is the hole the name-taking left.** The declarations for the keys the
+/// arithmetic runs on lived under a shipped TYPE called `rhythm`, and the
+/// migration that gave the kind its name deleted them — so every schedule key
+/// was declared by nothing, and *which loops count from before the first of
+/// June* was refused while the loop itself worked.
+///
+/// **The negative rides in the same read**, or this passes identically against
+/// a build that accepts every filter and returns everything.
+#[tokio::test]
+async fn an_ordering_on_the_schedule_date_is_licensed_by_the_kind() {
+    let (mut server, store, _turn) = a_store("ordering").await;
+
+    let owner = EntityId::new(EntityKind::THING, "handcart");
+    added(&store, &owner, "the thing the loops are on").await;
+    for (slug, counts_from) in [("descale", "2026-06-20"), ("deep-clean", "2026-05-02")] {
+        let loop_id = EntityId::new(EntityKind::RHYTHM, slug);
+        store
+            .add_entity(NewEntity {
+                boot: Boot::default(),
+                parent: Some(owner.clone()),
+                ..NewEntity::new(loop_id.clone(), slug, "a test")
+            })
+            .await
+            .expect("the entity is written")
+            .written()
+            .expect("nothing resembles it");
+        store
+            .capture(NewFact {
+                provenance: Provenance::Testimony,
+                fields: [
+                    ("name".to_string(), slug.to_string()),
+                    ("last_check_in".to_string(), counts_from.to_string()),
+                    ("counts_from".to_string(), counts_from.to_string()),
+                    ("cadence_days".to_string(), "30".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(loop_id, "a record", jiff::civil::date(2026, 6, 20))
+            })
+            .await
+            .expect("the record is written")
+            .written()
+            .expect("nothing blocked it");
+    }
+
+    let after_june = selected(
+        &store,
+        graph::Selection {
+            kind: Some(EntityKind::RHYTHM),
+            fields: vec![graph::FieldFilter {
+                key: "counts_from".to_string(),
+                value: Some("2026-06-01".to_string()),
+                compare: jojobot_domain::memory::types::Compare::After,
+                scope: graph::Scope::Thing,
+            }],
+            ..graph::Selection::default()
+        },
+    )
+    .await;
+    assert!(
+        after_june.contains(&EntityId::new(EntityKind::RHYTHM, "descale")),
+        "the loop counting from after the first of June is here: {after_june:?}",
+    );
+    assert!(
+        !after_june.contains(&EntityId::new(EntityKind::RHYTHM, "deep-clean")),
+        "…and the one counting from before it is not, which is what makes this an \
+         ordering rather than everything: {after_june:?}",
+    );
+
+    server.stop().await;
+}
+
+/// **Every key the kind REQUIRES is written by a path that runs.**
+///
+/// A required key nothing produces is a floor no thing can reach: it makes
+/// every loop permanently incomplete and every strict question empty, and
+/// nothing about it is visible from the declaration. The kind required a key by
+/// a name no engine path wrote, one commit before this one.
+///
+/// So this drives the loop the way a caller does — create it, describe it, check
+/// it in — and asks the store what the thing ends up holding.
+#[tokio::test]
+async fn the_required_keys_are_the_ones_the_loop_actually_writes() {
+    let (mut server, store, _turn) = a_store("writers").await;
+
+    let required: Vec<String> = store
+        .declared_types()
+        .await
+        .expect("the roster reads")
+        .into_iter()
+        .find(|t| t.name == "rhythm")
+        .expect("the shipped kind carries its keys")
+        .fields
+        .iter()
+        .filter(|f| f.required)
+        .map(|f| f.key.clone())
+        .collect();
+
+    let owner = EntityId::new(EntityKind::THING, "handcart");
+    added(&store, &owner, "the thing the loop is on").await;
+    let descale = EntityId::new(EntityKind::RHYTHM, "descale");
+    store
+        .add_entity(NewEntity {
+            boot: Boot::default(),
+            parent: Some(owner.clone()),
+            ..NewEntity::new(descale.clone(), "descale", "a test")
+        })
+        .await
+        .expect("the entity is written")
+        .written()
+        .expect("nothing resembles it");
+
+    // What a caller supplies when it sets the loop up…
+    let held: std::collections::BTreeMap<String, String> = [
+        ("name", "descale"),
+        ("cadence_days", "30"),
+        ("advances_from", "check_in_date"),
+        ("counts_from", "2026-05-02"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    // …and what the check-in computes on top of it.
+    let mut fields = held.clone();
+    fields.extend(
+        jojobot_domain::attention::check_in(
+            &held,
+            jojobot_domain::attention::Outcome::Ran,
+            jiff::civil::date(2026, 6, 1),
+        )
+        .expect("a whole schedule takes a check-in"),
+    );
+    store
+        .capture(NewFact {
+            provenance: Provenance::Testimony,
+            fields,
+            ..NewFact::about(descale.clone(), "a record", jiff::civil::date(2026, 6, 1))
+        })
+        .await
+        .expect("the record is written")
+        .written()
+        .expect("nothing blocked it");
+
+    let carried = selected(
+        &store,
+        graph::Selection {
+            subject: Some(descale.clone()),
+            ..graph::Selection::default()
+        },
+    )
+    .await;
+    assert_eq!(carried, vec![descale.clone()], "the loop is there at all");
+
+    let objects = graph::walk(
+        &store,
+        &graph::GraphQuery {
+            select: graph::Selection {
+                subject: Some(descale),
+                ..graph::Selection::default()
+            },
+            include: graph::Include {
+                facts: false,
+                prose: false,
+            },
+            ..graph::GraphQuery::default()
+        },
+    )
+    .await
+    .expect("a selection");
+    let fields = &objects.first().expect("the loop").fields;
+    for key in &required {
+        assert!(
+            fields.contains_key(key),
+            "the kind requires '{key}' and nothing on this path wrote it: {fields:?}",
+        );
+    }
 
     server.stop().await;
 }
