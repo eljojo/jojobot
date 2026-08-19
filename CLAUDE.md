@@ -148,11 +148,17 @@ Shipped and live:
   structural, and a key no type mentions is kept as written. **What a type asks for is a FLOOR:** once a
   thing carries every key a type names, a write that would take one away is
   refused, naming the type and the key. **Adding keys is never refused, and a
-  thing that answers no type is a first-class thing.** **The software ships its
-  own types — `rhythm` and `trip`, declared at every startup — and a shipped name
-  is closed to a caller's redeclaration**, so a type says where it came from and
-  a caller can tell the two apart before it collides with one. A walk carries its own
-  filters, and a key's declared value type licenses comparison on it —
+  thing that answers no type is a first-class thing.** **The software ships `trip`
+  as a type, declared at every startup, and a shipped name is closed to a
+  caller's redeclaration**, so a type says where it came from and a caller can
+  tell the two apart before it collides with one. ⚠️ **`rhythm` is no longer a
+  type. It is a shipped KIND and it declares every key its loop uses** — a name
+  and the day of the last check-in are required; the cadence in days, the day
+  the next cycle counts from, which of the two dates a late check-in advances
+  from, the outcome and a note are optional. **A loop is a thing in its own
+  right, so it carries its own events**, which keys folded onto another thing
+  cannot. A walk carries its own filters, and a key's declared value type
+  licenses comparison on it —
   before/after on a date, less/greater on a number, equals on anything.
   **A key filter asks about the THING by default** — its folded value, the same
   map the type question is asked of — and asks about one record only when a
