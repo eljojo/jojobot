@@ -145,9 +145,13 @@ Shipped and live:
   and the tolerant one is what a caller gets when they name neither. **A
   declaration does not gate what a thing may BE**: a thing is found by the keys
   it carries whether or not anybody declared the type, matching stays
-  structural, and a key no type mentions is kept as written. **What a type asks for is a FLOOR:** once a
-  thing carries every key a type names, a write that would take one away is
-  refused, naming the type and the key. **Adding keys is never refused, and a
+  structural, and a key no type mentions is kept as written. **What a declaration asks for is a FLOOR, and
+  the floor is its REQUIRED keys:** once a thing holds every required key, a
+  write that would take one away is refused, naming the declaration and the
+  key. **An optional key is welcome, never demanded, and never decides whether
+  a thing is complete.** **What a key HOLDS is checked whenever it is set,
+  required and optional alike** — so a value that is not what its key declared
+  does not count as holding it. **Adding keys is never refused, and a
   thing that answers no type is a first-class thing.** **The software ships `trip`
   as a type, declared at every startup, and a shipped name is closed to a
   caller's redeclaration**, so a type says where it came from and a caller can
