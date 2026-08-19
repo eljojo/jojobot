@@ -32,6 +32,41 @@ pub const SHIPPED: [&str; 11] = [
     "person", "project", "place", "event", "work", "thing", "org", "topic", "bot", "pet", "rhythm",
 ];
 
+/// **The keys a shipped kind carries**, and almost all of them carry none.
+///
+/// What a `person` or a `place` holds is not the software's to decide, and a
+/// kind that names no key is coherent: its identity is its row. A kind names
+/// keys only where the software knows the shape — where the thing exists
+/// BECAUSE the software has a use for it.
+///
+/// **`rhythm` is the one, and its required set is two keys.** A loop is a name
+/// and the day it last ran; everything else is what somebody had to hand at the
+/// time. A required key is a refusal waiting to happen, and a loop nobody has
+/// written a cadence for is still a loop.
+pub fn keys_of(token: &str) -> Vec<super::types::Field> {
+    use super::types::{Field, ValueType};
+    match token {
+        "rhythm" => vec![
+            Field::required("name", ValueType::Text),
+            // **The day it last ran**, which is the only date a loop needs: the
+            // next one is a cadence after it, and a loop with no cadence is
+            // still a loop somebody looked at on a day.
+            Field::required("last_ran", ValueType::Date),
+            // **The one thing to carry forward.** A loop that ran and left
+            // something to remember is the ordinary case, not the exception.
+            Field::new("note", ValueType::Text),
+            // **Days between one turn and the next.** Optional because not
+            // every loop has one — and it is here rather than dropped because
+            // a monthly bill pay needs it, whatever a survey of what has been
+            // written down finds. An absent column is not an absent
+            // requirement.
+            Field::new("cadence", ValueType::Number),
+            Field::new("outcome", ValueType::Text),
+        ],
+        _ => Vec::new(),
+    }
+}
+
 /// The set this process parses against. Empty until something loads it.
 fn loaded() -> &'static RwLock<BTreeSet<String>> {
     static LOADED: OnceLock<RwLock<BTreeSet<String>>> = OnceLock::new();
@@ -165,10 +200,7 @@ pub fn intern(token: &str) -> &'static str {
 pub async fn seed<M: super::Memory + ?Sized>(store: &M) -> Result<usize, super::MemoryError> {
     for token in SHIPPED {
         store
-            // **The shipped ten name no keys.** What a `person` or a `place`
-            // carries is not the software's to decide, and an empty kind is
-            // coherent: its identity is its row.
-            .declare_kind(token, super::types::Origin::Shipped, Vec::new())
+            .declare_kind(token, super::types::Origin::Shipped, keys_of(token))
             .await?;
     }
     let held = store.declared_kinds().await?;

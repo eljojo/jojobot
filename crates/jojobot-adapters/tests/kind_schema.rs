@@ -768,3 +768,118 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
 
     server.stop().await;
 }
+
+/// **The name `rhythm` is the KIND's, and the kind carries the keys.**
+///
+/// A shipped type held that name, and a kind's keys and a type's keys share one
+/// row-space under it — so the kind could name nothing while the type was
+/// there, and every `rhythm:` entity was held to a type nobody was offered.
+/// Taking the name back is what lets a loop be described by what it IS.
+///
+/// **Two beats, and the second is the model change earning its keep.** A loop
+/// that holds its name and the day it last ran may not lose either. A loop that
+/// holds only its name is legal, complete and refused nothing — because the
+/// required set is two keys and everything else is what somebody had to hand.
+#[tokio::test]
+async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
+    let (mut server, store, _turn) = a_store("rhythm-kind").await;
+
+    // The seed writes the kind's keys, and reading them back off the store is
+    // what says the name is the kind's: while the type held it, this
+    // declaration was refused.
+    let held = store
+        .declared_types()
+        .await
+        .expect("the roster reads")
+        .into_iter()
+        .find(|t| t.name == "rhythm")
+        .expect("the shipped kind carries its keys");
+    assert_eq!(
+        held.fields
+            .iter()
+            .map(|f| (f.key.as_str(), f.required))
+            .collect::<Vec<_>>(),
+        vec![
+            ("name", true),
+            ("last_ran", true),
+            ("note", false),
+            ("cadence", false),
+            ("outcome", false),
+        ],
+        "the required set is the name and the day it last ran: {held:?}",
+    );
+
+    // A loop is filed under whatever it is a loop ON.
+    let plant = EntityId::new(EntityKind::THING, "handcart");
+    added(&store, &plant, "the thing the loop is on").await;
+    let ran = EntityId::new(EntityKind::RHYTHM, "corner-stall");
+    store
+        .add_entity(NewEntity {
+            boot: Boot::default(),
+            parent: Some(plant.clone()),
+            ..NewEntity::new(ran.clone(), "the loop that has run", "a test")
+        })
+        .await
+        .expect("the entity is written")
+        .written()
+        .expect("nothing resembles it");
+
+    let record = store
+        .capture(NewFact {
+            provenance: Provenance::Testimony,
+            fields: [
+                ("name".to_string(), "the loop that has run".to_string()),
+                ("last_ran".to_string(), "2026-05-02".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(ran.clone(), "a record", jiff::civil::date(2026, 5, 2))
+        })
+        .await
+        .expect("the record is written")
+        .written()
+        .expect("nothing blocked it");
+
+    let refused = store
+        .update_fact(
+            &record.address(),
+            FactPatch {
+                clear_fields: vec!["last_ran".to_string()],
+                ..FactPatch::default()
+            },
+        )
+        .await
+        .expect_err("a loop that has run may not lose the day it ran");
+    assert!(
+        refused.to_string().contains("rhythm") && refused.to_string().contains("last_ran"),
+        "the refusal names the kind and the key: {refused}",
+    );
+
+    // **A loop with only a name is legal.** The optional keys are welcome and
+    // never demanded, so nothing here is refused and nothing is missing.
+    let bare = EntityId::new(EntityKind::RHYTHM, "holds-nothing");
+    store
+        .add_entity(NewEntity {
+            boot: Boot::default(),
+            parent: Some(plant.clone()),
+            ..NewEntity::new(bare.clone(), "the loop nobody has dated", "a test")
+        })
+        .await
+        .expect("the entity is written")
+        .written()
+        .expect("nothing resembles it");
+    store
+        .capture(NewFact {
+            provenance: Provenance::Testimony,
+            fields: [("name".to_string(), "water the plant".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bare.clone(), "a record", jiff::civil::date(2026, 5, 2))
+        })
+        .await
+        .expect("a loop with only a name is a loop")
+        .written()
+        .expect("nothing blocked it");
+
+    server.stop().await;
+}

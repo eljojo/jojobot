@@ -1,0 +1,12 @@
+-- The keys under the name `rhythm` belong to the KIND, not to a declared type.
+--
+-- A shipped type held that name, and a kind's keys and a type's keys share this
+-- table under one name. A guard refuses a declaration that would take the other
+-- half's rows, so the kind `rhythm` could never carry a key while the type held
+-- the name — and every `rhythm:` entity was governed by a type nobody was
+-- offered and nobody confirmed.
+--
+-- The type's rows go so the seed can write the kind's. Nothing is lost that a
+-- record holds: a type's rows describe keys, and the keys written on things
+-- stay exactly where they were written.
+DELETE FROM type_field WHERE type_name = 'rhythm' AND owner = 'type';

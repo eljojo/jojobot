@@ -13,9 +13,9 @@
 //! to learn a name was closed was to write over it and read the answer.
 //!
 //! **And the two type questions are answered here on one thing**, which is
-//! where the difference between them stops being a doc note. A rhythm nobody
-//! has run yet carries no `last_check_in`: it ANSWERS the type, with the gap
-//! named, and it does not FIT it.
+//! where the difference between them stops being a doc note. A trip somebody
+//! has planned only half of carries no dates: it ANSWERS the type, with the
+//! gaps named, and it does not FIT it.
 
 use serde_json::json;
 
@@ -30,6 +30,7 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
     s.add("thing:gravel-bike", "The Gravel Bike").await;
     s.add("thing:torque-wrench", "The Torque Wrench").await;
     s.add("event:trail-survey", "The Trail Survey").await;
+    s.add("event:winter-fest", "The Winter Fest").await;
     s.add("place:springfield", "Springfield").await;
     s.add("place:north-trail", "The North Trail").await;
 
@@ -76,54 +77,59 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
     )
     .await;
 
-    // ── the tolerant question: what is described like a rhythm ──────────────
+    // Half a trip: where from and where to, and nobody has picked the dates.
+    s.event_with(
+        "event:winter-fest",
+        "we are going, at some point",
+        json!({
+            "departs_from": "place:springfield",
+            "arrives_at": "place:north-trail",
+        }),
+        &[],
+    )
+    .await;
+
+    // ── the tolerant question: what is described like a trip ────────────────
     let described = s
-        .call("search", json!({ "answers_type": "rhythm", "limit": 50 }))
+        .call("search", json!({ "answers_type": "trip", "limit": 50 }))
         .await;
-    // The positive the strict answer below rests on: nobody declared `rhythm`
-    // on this instance and the question still works.
-    described.says("thing:gravel-bike");
+    // The positive the strict answer below rests on: nobody declared `trip` on
+    // this instance and the question still works.
+    described.says("event:trail-survey");
     described.says("\"complete\":true");
-    // ⭐ The rhythm that has never run comes back, saying what it lacks BY
-    // NAME — which is what a reader acts on. A count would leave them nothing
-    // to fill in.
-    described.says("thing:torque-wrench");
-    described.says("\"lacking\":[\"counts_from\",\"last_check_in\",\"outcome\"]");
+    // ⭐ The half-planned one comes back, saying what it lacks BY NAME — which
+    // is what a reader acts on. A count would leave them nothing to fill in.
+    described.says("event:winter-fest");
+    described.says("\"lacking\":[\"leaves_on\",\"returns_on\"]");
     // …and the negative in the same answer that just proved it is not empty:
-    // the trip shares no key with a rhythm, so it is not a weak match.
-    described.never_says("event:trail-survey");
+    // the bike shares no key with a trip, so it is not a weak match.
+    described.never_says("thing:gravel-bike");
 
     // ── the strict question, about the same two things ──────────────────────
     //
-    // ⭐ **The difference between the two, on one thing.** The wrench answered
-    // the type a moment ago and is not here, because a loop nobody has run does
-    // not FIT one. Which of the two questions you are asking is yours to
-    // choose, and the tolerant one is what you get when you name neither.
-    let are_rhythms = s
-        .call("search", json!({ "fits_type": "rhythm", "limit": 50 }))
-        .await;
-    are_rhythms.says("thing:gravel-bike");
-    are_rhythms.never_says("thing:torque-wrench");
-
-    // The trip fits its own type, whole, and the bikes are not trips — the
-    // negative that keeps "it fits" from meaning "everything came back".
+    // ⭐ **The difference between the two, on one thing.** The winter fest
+    // answered the type a moment ago and is not here, because a trip with no
+    // dates does not FIT one. Which of the two questions you are asking is
+    // yours to choose, and the tolerant one is what you get when you name
+    // neither.
     let are_trips = s
         .call("search", json!({ "fits_type": "trip", "limit": 50 }))
         .await;
     are_trips.says("event:trail-survey");
+    are_trips.never_says("event:winter-fest");
     are_trips.never_says("thing:gravel-bike");
 
-    // **And the check-in date is read off the KEY.** The fold takes the newest
-    // write of each key, so this one row answers "when did this last happen"
-    // without reading a single record back.
-    let quiet = s
+    // **And a key written on one thing over two sittings reads off the KEY.**
+    // The fold takes the newest write of each, so this one row answers without
+    // reading a single record back.
+    let planned = s
         .shape(
-            "the loops and when each was last run",
-            json!({ "answers_type": "rhythm" }),
+            "the trips and when each leaves",
+            json!({ "answers_type": "trip" }),
         )
         .await;
-    quiet.says("\"last_check_in\":\"2026-06-30\"");
-    quiet.says("\"cadence_days\":\"60\"");
+    planned.says("\"leaves_on\":\"2026-09-03\"");
+    planned.says("\"arrives_at\":\"place:north-trail\"");
 
     // ── a type of the session's own, beside the ones it was given ───────────
     let declared = s
@@ -143,7 +149,6 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
     // caller that cannot tell the two apart learns which names are closed by
     // being refused — the refusal springs rather than being avoidable.
     declared.says("\"name\":\"loan\",\"origin\":\"declared\"");
-    declared.says("\"name\":\"rhythm\",\"origin\":\"shipped\"");
     declared.says("\"name\":\"trip\",\"origin\":\"shipped\"");
 
     // ── and the name the software owns is closed ────────────────────────────
@@ -151,14 +156,14 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
         .refused(
             "declare_type",
             json!({
-                "name": "rhythm",
+                "name": "trip",
                 "fields": [{ "key": "cadence_km", "holds": "number" }],
             }),
         )
         .await;
     // It names the type it is about and the verb to call with a name of your
     // own, because re-sending this call will never work.
-    refused.says("rhythm");
+    refused.says("trip");
     refused.says("declare_type");
 
     // The write really was refused, and the vocabulary is read back rather than
@@ -172,14 +177,14 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
         .refused("search", json!({ "answers_type": "warranty" }))
         .await;
     listed.says("Types that do exist");
-    listed.says("rhythm");
+    listed.says("trip");
     // …and the keys under that name are the ones the software shipped: the
-    // wrench still lacks exactly the three it never wrote, and the key the
+    // half-planned trip still lacks exactly the two it never wrote, and the key the
     // refused call would have replaced them with is nowhere.
     let still = s
-        .call("search", json!({ "answers_type": "rhythm", "limit": 50 }))
+        .call("search", json!({ "answers_type": "trip", "limit": 50 }))
         .await;
-    still.says("\"lacking\":[\"counts_from\",\"last_check_in\",\"outcome\"]");
+    still.says("\"lacking\":[\"leaves_on\",\"returns_on\"]");
     still.never_says("cadence_km");
 
     s.wrap("used the vocabulary the software came with, and found its own name refused")

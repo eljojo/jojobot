@@ -41,6 +41,10 @@ mod gigs;
 mod handshake;
 #[path = "user_stories/investigating.rs"]
 mod investigating;
+/// The three loops a person actually keeps, and the one with no cadence.
+#[path = "user_stories/keeping_up.rs"]
+mod keeping_up;
+
 #[path = "user_stories/kitchensink.rs"]
 mod kitchensink;
 #[path = "user_stories/moving.rs"]

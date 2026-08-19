@@ -58,43 +58,6 @@ pub fn shipped_types() -> Vec<DeclaredType> {
         // quiet.** A cadence is always TIME: the time prompts the check, and
         // what the check measures is a field on the check-in rather than a
         // unit of the schedule. So there is no distance and no unit key.
-        DeclaredType::shipped(
-            "rhythm",
-            vec![
-                Field::required("cadence_days", ValueType::Number),
-                // Whether the next one is counted from the date it fell due or
-                // from the date it happened. **It has no default**, against the
-                // convention that everything works unconfigured (rule 9): the
-                // two answers are different enough that guessing one is worse
-                // than a rhythm that does not fit until somebody says.
-                Field::required("advances_from", ValueType::Text),
-                // **The date this cycle counts from**, and the rhythm is next
-                // due a cadence after it. It is the value the key above chose:
-                // one is the policy, this one is what the policy picked, and
-                // the overdue read is arithmetic over this pair.
-                //
-                // Declared a date so an ordering can be asked of it — which is
-                // what a declaration buys, and what lets a caller ask for the
-                // rhythms counting from before some day without the engine
-                // being asked first.
-                Field::required("counts_from", ValueType::Date),
-                // **What "when did this last happen" reads**, and the reason it
-                // is a key is the projection. A thing's fields are the newest
-                // write of each key by WRITE ORDER rather than by date, so the
-                // one dense row cannot answer this from the dates its records
-                // carry: getting it that way means reading the whole history
-                // and taking a maximum, which is the scan the projection
-                // exists to replace.
-                //
-                // A record may still be backdated, and a late check-in carries
-                // the day it happened in both places doing two different jobs:
-                // this key feeds the fold, the record's date feeds chronology.
-                // They agree because they are one value, and what keeps them
-                // from drifting is that this key is what gets read.
-                Field::required("last_check_in", ValueType::Date),
-                Field::required("outcome", ValueType::Text),
-            ],
-        ),
         // **When am I next away, and when was I last there.** The two places
         // are references rather than text, which is what makes a trip walkable
         // from either end.
@@ -250,23 +213,8 @@ mod tests {
             ensure_shipped_types(&memory)
                 .await
                 .expect("the store takes"),
-            2
+            1
         );
-
-        // **A cadence is time, never usage.** No unit key and no distance: what
-        // a check-in measures is a field on the check-in.
-        let rhythm = stored(&memory, "rhythm").await;
-        assert_eq!(
-            keys(&rhythm),
-            vec![
-                ("cadence_days", "number"),
-                ("advances_from", "text"),
-                ("counts_from", "date"),
-                ("last_check_in", "date"),
-                ("outcome", "text"),
-            ],
-        );
-        assert_eq!(rhythm.origin, Origin::Shipped);
 
         // The two places are references, which is what makes a trip walkable
         // from either end rather than a pair of strings.
@@ -294,11 +242,11 @@ mod tests {
     #[tokio::test]
     async fn a_later_build_moves_a_shipped_type_on_an_instance_already_running() {
         let (memory, _) = ports();
-        // What an older build shipped: the same name, one key short.
+        // What an older build shipped: the same name, three keys short.
         memory
             .declare_type(DeclaredType::shipped(
-                "rhythm",
-                vec![Field::new("cadence_days", ValueType::Number)],
+                "trip",
+                vec![Field::required("departs_from", ValueType::Reference)],
             ))
             .await
             .expect("the software declares its own types");
@@ -308,13 +256,12 @@ mod tests {
             .expect("the store takes");
 
         assert_eq!(
-            keys(&stored(&memory, "rhythm").await),
+            keys(&stored(&memory, "trip").await),
             vec![
-                ("cadence_days", "number"),
-                ("advances_from", "text"),
-                ("counts_from", "date"),
-                ("last_check_in", "date"),
-                ("outcome", "text"),
+                ("departs_from", "reference"),
+                ("arrives_at", "reference"),
+                ("leaves_on", "date"),
+                ("returns_on", "date"),
             ],
             "this build's keys reached an instance that was already running",
         );

@@ -90,15 +90,11 @@ enum Leaves {
     /// probe that can ask anything is one nothing constrains to asking about
     /// this migration.
     ///
-    /// **No migration has this shape yet**, and the tests are its only users:
-    /// a shape and its first user are separate changes, because the user
-    /// arrives with the feature that needs one.
+    /// **Its first user takes a name back**: the keys under `rhythm` belonged
+    /// to a declared type and belong to the kind, and the type's rows have to
+    /// go before the seed can write the kind's. That is rows changed and a
+    /// schema untouched, which is exactly the shape this answers for.
     ///
-    /// `expect` rather than `allow`, so the first migration to take this shape
-    /// makes the attribute itself a warning and the note comes off in the diff
-    /// that dates it. `not(test)` because the tests below DO construct it, so
-    /// under `cfg(test)` there is nothing to expect.
-    #[cfg_attr(not(test), expect(dead_code))]
     NoRows(&'static str, &'static str),
     /// The index this statement puts on the table.
     ///
@@ -287,6 +283,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: "0023_type_field_required",
         sql: include_str!("../../migrations/0023_type_field_required.sql"),
         leaves: Leaves::Column("type_field", "required"),
+    },
+    Migration {
+        version: "0024_rhythm_kind_takes_its_name",
+        sql: include_str!("../../migrations/0024_rhythm_kind_takes_its_name.sql"),
+        leaves: Leaves::NoRows("type_field", "type_name = 'rhythm' AND owner = 'type'"),
     },
 ];
 
@@ -678,6 +679,7 @@ mod tests {
         "0021_kind",
         "0022_type_field_owner",
         "0023_type_field_required",
+        "0024_rhythm_kind_takes_its_name",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped
