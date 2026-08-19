@@ -656,29 +656,72 @@ mod tests {
         );
     }
 
-    /// **The upgrade the ruling is about**: a new build moves the core and
-    /// leaves what the instance wrote exactly where it was.
+    /// **The answer carries whatever core THIS BUILD ships**, so an upgrade is
+    /// a new build and nothing else.
     ///
-    /// Composed rather than stored, so shipping a different core IS the
-    /// upgrade — there is nothing to migrate and no record to reconcile. This
-    /// asks the composition directly, because a case that could only observe it
-    /// through a boot would need two builds to run at once.
-    #[test]
-    fn a_new_core_moves_and_the_instances_own_text_does_not() {
+    /// **The core is asked of the software and never restated here.** A case
+    /// that quoted the text back would stay green on a build shipping a
+    /// different one — which is the upgrade it claims to be watching — and on a
+    /// build shipping none at all.
+    ///
+    /// Structural rather than a substring search: the answer **starts with**
+    /// exactly what `core_for` returns and **ends with** the instance's own
+    /// text. That is an equality against the live constant, so it tracks any
+    /// edit to the shipped wording rather than pinning a phrase somebody wrote.
+    ///
+    /// Then the upgrade itself, composed from the real core: a later build's
+    /// core replaces this one in what a caller reads, and the instance's text
+    /// is exactly where it was. **Nothing is migrated because nothing was
+    /// stored** — which the case above proves, and which is what makes this one
+    /// a statement about builds rather than about records.
+    #[tokio::test]
+    async fn the_answer_carries_whatever_core_this_build_ships() {
+        let jojobot = handler();
+        make_bot(&jojobot, "assistant").await;
+        let bot = EntityId("bot:assistant".to_string());
         let theirs = "This instance keeps the workshop rota.";
-        let before = super::super::charter::compose(Some("the core, as it was"), Some(theirs))
-            .expect("both halves compose");
-        let after = super::super::charter::compose(Some("the core, improved"), Some(theirs))
-            .expect("both halves compose");
 
-        assert!(before.contains("the core, as it was") && !before.contains("improved"));
+        // **Consulted, not quoted.** If the software ships no core, this is
+        // where the case stops — which is the whole point of asking.
+        let core =
+            super::charter::core_for(&bot).expect("the software ships a core for its own identity");
+
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "assistant".into(),
+                prose: theirs.into(),
+                sid: Some(TEST_SID.to_string()),
+            }))
+            .await
+            .expect("set_charter ok");
+        let served = boot(&jojobot, "assistant").await["identity"]["charter"]
+            .as_str()
+            .expect("the identity answers with a charter")
+            .to_string();
+
         assert!(
-            after.contains("the core, improved") && !after.contains("as it was"),
-            "the core moved with the build: {after}",
+            served.starts_with(core.trim()),
+            "the answer opens with the core this build ships, whatever it currently says — so \
+             changing the constant changes the answer and nothing has to be migrated: {served}",
         );
         assert!(
-            after.contains(theirs),
-            "…and what the instance wrote is untouched by that: {after}",
+            served.trim_end().ends_with(theirs),
+            "…and the instance's own text sits under it: {served}",
+        );
+
+        // **The upgrade, built from the core that is really shipping.** A later
+        // build says one more thing; what a caller reads moves with it, and
+        // what the instance wrote does not.
+        let improved = format!("{core}\n\nAND THE STANDING RULE THIS BUILD ADDED.");
+        let after = super::charter::compose(Some(&improved), Some(theirs))
+            .expect("a core and an instance's text compose");
+        assert!(
+            after.contains("AND THE STANDING RULE THIS BUILD ADDED."),
+            "the core a later build ships is what a caller reads: {after}",
+        );
+        assert!(
+            after.trim_end().ends_with(theirs),
+            "…and the upgrade left what the instance wrote exactly where it was: {after}",
         );
     }
 
