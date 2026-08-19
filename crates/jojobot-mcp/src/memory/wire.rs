@@ -128,10 +128,19 @@ pub(crate) fn declared_type_json(declared: &DeclaredType) -> serde_json::Value {
             // to tell "no set" from "a set with nothing in it" would be reading
             // a difference that cannot exist, because a set with no values is
             // refused at the declaration.
+            //
+            // **Whether the key is required, stated on every key**, for the
+            // same reason the fold is. Optional is the default, so absence and
+            // `false` would mean one thing — and a reader that had to infer it
+            // from a missing key could not tell an optional key from a build
+            // that does not have required keys at all. The narrowed set is the
+            // other spelling on purpose: there, null and an empty list would
+            // mean two different things, and only one of them can exist.
             .map(|f| serde_json::json!({
                 "key": f.key,
                 "holds": f.holds_token(),
                 "folds": f.folds.as_token(),
+                "required": f.required,
                 "one_of": f.one_of,
             }))
             .collect::<Vec<_>>(),

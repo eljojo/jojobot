@@ -630,6 +630,108 @@ mod tests {
             .expect("and a counter holding a number is what a counter is");
     }
 
+    /// **A declaration reads back complete enough to send again.**
+    ///
+    /// Two beats, and the second is the one that cannot pass by accident. The
+    /// first asks whether the answer says which keys are required, with a
+    /// required key and an optional one in the same read — a build that marked
+    /// every key one way passes half of it. The second takes what came back,
+    /// sends exactly that, and asserts the store holds the same declaration:
+    /// **a property that stays true as the declaration grows a property**,
+    /// where a beat naming today's fields goes stale the day one is added.
+    #[tokio::test]
+    async fn a_declaration_reads_back_as_what_would_declare_it_again() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+
+        let body = json_of(
+            &jojobot
+                .declare_type(Parameters(DeclareTypeArgs {
+                    name: "errand".to_string(),
+                    fields: vec![
+                        FieldArgs {
+                            key: "stage".to_string(),
+                            holds: None,
+                            folds: None,
+                            required: true,
+                            one_of: Some(vec!["draft".to_string(), "done".to_string()]),
+                        },
+                        FieldArgs {
+                            key: "spent".to_string(),
+                            holds: Some("number".to_string()),
+                            folds: Some("sum".to_string()),
+                            required: false,
+                            one_of: None,
+                        },
+                        FieldArgs {
+                            key: "venue".to_string(),
+                            holds: Some("reference:place".to_string()),
+                            folds: None,
+                            required: false,
+                            one_of: None,
+                        },
+                    ],
+                    sid: Some(TEST_SID.to_string()),
+                }))
+                .await
+                .expect("declare ok"),
+        );
+        let served = body["type"]["fields"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the answer carries the fields: {body}"))
+            .clone();
+        assert_eq!(
+            served[0]["required"],
+            serde_json::json!(true),
+            "the answer says which keys a thing has to hold: {body}",
+        );
+        assert_eq!(
+            served[1]["required"],
+            serde_json::json!(false),
+            "…and which it does not, in the same read: {body}",
+        );
+
+        // **The round trip.** Every field, read off the answer and sent
+        // straight back — nothing here names a property, so this goes on
+        // holding when the declaration grows one.
+        let sent_back: Vec<FieldArgs> = served
+            .iter()
+            .map(|f| FieldArgs {
+                key: f["key"].as_str().expect("a key").to_string(),
+                holds: f["holds"].as_str().map(str::to_string),
+                folds: f["folds"].as_str().map(str::to_string),
+                required: f["required"].as_bool().expect("required is stated"),
+                one_of: f["one_of"].as_array().map(|values| {
+                    values
+                        .iter()
+                        .map(|v| v.as_str().expect("a set value").to_string())
+                        .collect()
+                }),
+            })
+            .collect();
+        jojobot
+            .declare_type(Parameters(DeclareTypeArgs {
+                name: "errand".to_string(),
+                fields: sent_back,
+                sid: Some(TEST_SID.to_string()),
+            }))
+            .await
+            .expect("what came back is a declaration this verb takes");
+        assert_eq!(
+            stored(&jojobot, "errand").await,
+            DeclaredType {
+                name: "errand".to_string(),
+                origin: Origin::Declared,
+                fields: vec![
+                    Field::one_of("stage", ["draft", "done"]).needed(),
+                    Field::summing("spent"),
+                    Field::pointing_at("venue", EntityKind::PLACE),
+                ],
+            },
+            "sending the answer back says the same thing it said",
+        );
+    }
+
     /// **A kind nobody has is refused at the door**, and the refusal says what
     /// the token can be.
     ///
