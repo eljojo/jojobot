@@ -1371,6 +1371,24 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     if let Some(day) = patch.stale_after {
         fact.stale_after = Some(day);
     }
+    // **Asked of the claim as it will STAND, and last, so every way in is
+    // covered by one question.** A machine read names the system it was read
+    // from, and an edit can reach that state two ways: by moving the claim to
+    // `observation`, and by taking the source off one that is already there.
+    // Both leave the state [`validate_provenance_source`] exists to make
+    // unreachable, and a check on the patch alone would see only the first.
+    //
+    // **It runs here rather than at the verb** so that both stores and the
+    // double answer for it from one place. The guard was on `capture` alone,
+    // which is the path its author was in, and the edit path let a guess become
+    // a system read of a system nobody named — while the served description
+    // promised it could not.
+    //
+    // **A claim that already carries its source may be moved without naming it
+    // again.** What the rule protects is an attribution on the record, and
+    // asking the after-state is what makes that fall out rather than being a
+    // second case somebody has to remember.
+    validate_provenance_source(fact.provenance, &fact.fields)?;
     Ok(())
 }
 

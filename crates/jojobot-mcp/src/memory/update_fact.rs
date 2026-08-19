@@ -25,7 +25,10 @@ pub struct UpdateFactArgs {
     /// `testimony`, `observation` or `inference`. Moving a claim TO `testimony`
     /// needs `confirmed_by_user` whichever value it held: a claim you read
     /// somewhere is not a step towards the user having said it. An
-    /// `observation` must carry `read_from`, here as at capture.
+    /// `observation` must carry `read_from`, here as at capture — and **taking
+    /// the source off a claim that stays an observation is refused for the same
+    /// reason**, because both leave a machine read of a system nobody named.
+    /// A claim that already carries one does not have to name it again.
     #[serde(default)]
     pub provenance: Option<String>,
     /// `settled` or `open`. **Moving a claim that is ALREADY open to settled

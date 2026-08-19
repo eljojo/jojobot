@@ -1810,6 +1810,103 @@ pub mod contract {
             !softened.fields.contains_key("read_from"),
             "the source stayed on a claim that is no longer machine-read: {softened:?}",
         );
+
+        // **And the leg that reaches the same change the other way.** The rule
+        // is about what a claim IS, so it binds every path that can make one a
+        // machine read — not only the one that writes it first. A guard on
+        // capture alone lets a guess become a system read of a system nobody
+        // named, and the value outranks the honest guesses beside it.
+        let guessed = capture(
+            store,
+            NewFact::about(
+                subject.clone(),
+                "the balance looks settled",
+                date(2026, 8, 3),
+            ),
+        )
+        .await;
+        let hardened = store
+            .update_fact(
+                &guessed.address(),
+                FactPatch {
+                    provenance: Some(Provenance::Observation),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("a claim moved to a machine read with no source is refused");
+        assert!(
+            matches!(hardened, MemoryError::UnsourcedObservation),
+            "the refusal is about something else: {hardened:?}",
+        );
+        assert_eq!(
+            read_back(store, &subject, &guessed.id).await.provenance,
+            Provenance::Inference,
+            "the refused edit moved the claim anyway",
+        );
+
+        // The positive it rests on: the same move, naming the system. Without
+        // this the refusal passes on a store that turns every edit away.
+        let attributed = edit(
+            store,
+            &guessed.address(),
+            FactPatch {
+                provenance: Some(Provenance::Observation),
+                fields: [("read_from".to_string(), "the ledger app".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(attributed.provenance, Provenance::Observation);
+
+        // **A claim that already names its system may be moved without naming
+        // it again.** What the rule protects is an attribution ON THE RECORD,
+        // and this record has one — so the question is asked of the claim as it
+        // will stand, never of the patch alone.
+        let softened_again = edit(
+            store,
+            &attributed.address(),
+            FactPatch {
+                provenance: Some(Provenance::Inference),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(softened_again.provenance, Provenance::Inference);
+        let re_hardened = edit(
+            store,
+            &attributed.address(),
+            FactPatch {
+                provenance: Some(Provenance::Observation),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(
+            re_hardened.provenance,
+            Provenance::Observation,
+            "a claim carrying its source already does not have to name it twice",
+        );
+
+        // **And the same rule reached from the fields.** Taking the source off
+        // a claim that stays a machine read leaves exactly the state the rule
+        // forbids, so it is refused for the same reason.
+        let stripped = store
+            .update_fact(
+                &attributed.address(),
+                FactPatch {
+                    clear_fields: vec!["read_from".to_string()],
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("taking the source off a machine read is refused");
+        assert!(
+            matches!(stripped, MemoryError::UnsourcedObservation),
+            "the refusal is about something else: {stripped:?}",
+        );
     }
 
     pub async fn a_folded_value_says_who_backs_it<M: Memory>(store: &M) {
