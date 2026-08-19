@@ -1,0 +1,19 @@
+-- The named set a key holds one of, when the declaration names one.
+--
+-- A closed vocabulary is part of the declaration: the key holds text, and what
+-- narrows it is the values. A store that kept the key and dropped its set would
+-- narrow nothing, and every write outside the set would land.
+--
+-- It is a column of its own rather than part of the `holds` token. That token
+-- is a composition — the value type, and for a reference the kind after a
+-- colon, wrapped by `list:` — so a set packed into it would overload the colon
+-- that narrows and the comma that separates list items, and would need the
+-- column widened a second time.
+--
+-- The values are separated by commas, which is what separates the items of a
+-- list value, so the two spellings agree. A comma inside a value is refused at
+-- the declaration for that reason: no list of such a key could spell it.
+--
+-- NULL is a key narrowed to nothing, and it is what every row written before
+-- this column means.
+ALTER TABLE type_field ADD COLUMN one_of TEXT NULL;

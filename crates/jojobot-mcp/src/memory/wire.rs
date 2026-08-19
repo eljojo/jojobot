@@ -122,10 +122,17 @@ pub(crate) fn declared_type_json(declared: &DeclaredType) -> serde_json::Value {
             // Stated rather than left off when it is the default: a reader who
             // has to infer newest-wins from a missing token cannot tell it from
             // a build that does not have folds at all.
+            //
+            // **The set a key is narrowed to, when it has one.** Null rather
+            // than an empty list for a key nobody narrowed: a reader that had
+            // to tell "no set" from "a set with nothing in it" would be reading
+            // a difference that cannot exist, because a set with no values is
+            // refused at the declaration.
             .map(|f| serde_json::json!({
                 "key": f.key,
                 "holds": f.holds_token(),
                 "folds": f.folds.as_token(),
+                "one_of": f.one_of,
             }))
             .collect::<Vec<_>>(),
     })

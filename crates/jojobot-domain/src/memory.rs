@@ -1523,6 +1523,7 @@ pub fn guard_fit(
                     key: field.key.clone(),
                     declared: field.holds,
                     points_at: field.points_at,
+                    one_of: field.one_of.clone(),
                     value: value.clone(),
                     required: field.required,
                 };

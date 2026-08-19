@@ -84,11 +84,14 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             // is consumed: a snooze moves this one nowhere while the check-in
             // above still records the contact.
             Field::new("counts_from", ValueType::Date),
-            // **What the last check-in found.** The three tokens the verb
-            // accepts are a closed vocabulary and this declaration cannot say
-            // so yet — there is no value type for one — so it says the widest
-            // true thing rather than a narrower false one.
-            Field::new("outcome", ValueType::Text),
+            // **What the last check-in found**, and the set is the check-in's
+            // own vocabulary rather than a copy of it. A second list of the
+            // same three tokens is two vocabularies that drift, and a session
+            // learns whichever it reads first.
+            Field::one_of(
+                "outcome",
+                crate::attention::Outcome::ALL.map(crate::attention::Outcome::as_token),
+            ),
         ],
         _ => Vec::new(),
     }
@@ -270,4 +273,42 @@ pub fn all() -> Vec<String> {
         .iter()
         .cloned()
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::attention::Outcome;
+
+    /// **The loop's outcome key holds the check-in's own vocabulary, and there
+    /// is only one list of it.**
+    ///
+    /// Both halves, because each covers how the other passes on a build that is
+    /// wrong: every token the verb accepts is a value the key takes, and the key
+    /// takes nothing else. A declaration that had copied the three words would
+    /// pass today and fail the first time the verb learns a fourth — which is
+    /// the drift this asserts against, not the agreement it has right now.
+    #[test]
+    fn the_outcome_key_holds_the_check_ins_own_vocabulary() {
+        let outcome = keys_of("rhythm")
+            .into_iter()
+            .find(|f| f.key == crate::attention::OUTCOME)
+            .expect("the rhythm kind names the outcome key");
+        for token in Outcome::ALL {
+            assert!(
+                outcome.accepts(token.as_token()),
+                "the key takes {:?}, which is a word the check-in verb accepts",
+                token.as_token(),
+            );
+        }
+        assert_eq!(
+            outcome.one_of.as_deref().map(<[String]>::len),
+            Some(Outcome::ALL.len()),
+            "…and it names those and no others: {outcome:?}",
+        );
+        assert!(
+            !outcome.accepts("swapped"),
+            "a word the verb does not accept is not one the key holds either",
+        );
+    }
 }

@@ -87,6 +87,27 @@ pub struct FieldArgs {
     /// key is welcome, never demanded, and a thing without it is complete.
     #[serde(default)]
     pub required: bool,
+    /// **The named set this key holds one of** — a closed vocabulary, and a
+    /// write outside it is refused with the values named. Leave it off and the
+    /// key is narrowed to nothing, which is what nearly every key wants.
+    ///
+    /// Reach for it when the set really is small, known and finite: the three
+    /// states a task moves through, the two ways a thing can be paid for.
+    /// ⛔️ **Not a way to enumerate an open-ended set** — every colour, every
+    /// venue — because that is a list somebody then has to maintain, and it
+    /// goes stale the day a value it does not name is the true one. There, the
+    /// honest declaration is plain `text` and the values already in use are
+    /// readable.
+    ///
+    /// It narrows what the key holds rather than replacing it, exactly as
+    /// `reference:place` narrows a reference — so it works on a `list:` key
+    /// too, where every item has to be one of the values.
+    ///
+    /// Values are matched **whole, trimmed and case-sensitively**. A set with
+    /// no values, a value named twice, and a value carrying a comma are each
+    /// refused, because a comma is what separates the items of a list.
+    #[serde(default)]
+    pub one_of: Option<Vec<String>>,
 }
 
 /// Arguments to `declare_type`.
@@ -171,6 +192,14 @@ impl Jojobot {
             fields.push(Field {
                 folds,
                 required: field.required,
+                // **Trimmed here and refused in the domain.** What makes a set
+                // unsatisfiable — no values, a repeat, a comma — is one rule in
+                // one place, so this verb and any other writer get the same
+                // answer.
+                one_of: field
+                    .one_of
+                    .as_ref()
+                    .map(|values| values.iter().map(|v| v.trim().to_string()).collect()),
                 ..declared
             });
         }
@@ -249,6 +278,7 @@ mod tests {
                     holds: None,
                     folds: None,
                     required: false,
+                    one_of: None,
                 })
                 .collect(),
             sid: Some(TEST_SID.to_string()),
@@ -394,12 +424,14 @@ mod tests {
                             holds: Some("reference:place".to_string()),
                             folds: None,
                             required: false,
+                            one_of: None,
                         },
                         FieldArgs {
                             key: "booked_by".to_string(),
                             holds: Some("reference".to_string()),
                             folds: None,
                             required: false,
+                            one_of: None,
                         },
                     ],
                     sid: Some(TEST_SID.to_string()),
@@ -425,6 +457,116 @@ mod tests {
         assert_eq!(held.fields[1].points_at, None, "{held:?}");
     }
 
+    /// **A closed set crosses the served surface, survives the store, and is
+    /// served again.**
+    ///
+    /// Sent as a caller writes it, read back from the STORE rather than from
+    /// the answer to the call that wrote it, and then read off the served
+    /// declaration — because a set the verb parsed and the store dropped would
+    /// pass any beat that only looked at its own response.
+    ///
+    /// A plain text key is declared in the same type, so this cannot pass on a
+    /// build that narrows every key to something.
+    #[tokio::test]
+    async fn a_closed_set_crosses_the_surface_and_the_store_keeps_it() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+
+        let body = json_of(
+            &jojobot
+                .declare_type(Parameters(DeclareTypeArgs {
+                    name: "errand".to_string(),
+                    fields: vec![
+                        FieldArgs {
+                            key: "stage".to_string(),
+                            holds: None,
+                            folds: None,
+                            required: false,
+                            one_of: Some(vec![
+                                "draft".to_string(),
+                                "building".to_string(),
+                                "done".to_string(),
+                            ]),
+                        },
+                        FieldArgs {
+                            key: "note".to_string(),
+                            holds: None,
+                            folds: None,
+                            required: false,
+                            one_of: None,
+                        },
+                    ],
+                    sid: Some(TEST_SID.to_string()),
+                }))
+                .await
+                .expect("a key may be narrowed to a named set"),
+        );
+        assert_eq!(
+            body["type"]["fields"][0]["one_of"],
+            serde_json::json!(["draft", "building", "done"]),
+            "what a caller reads back is what it would send to say this again: {body}",
+        );
+        assert_eq!(
+            body["type"]["fields"][1]["one_of"],
+            serde_json::Value::Null,
+            "…and a key nobody narrowed says so rather than carrying an empty set: {body}",
+        );
+
+        let held = stored(&jojobot, "errand").await;
+        assert_eq!(
+            held.fields[0].one_of.as_deref(),
+            Some(["draft", "building", "done"].map(String::from).as_slice()),
+            "the store keeps the values: {held:?}",
+        );
+        assert_eq!(held.fields[1].one_of, None, "{held:?}");
+    }
+
+    /// **A set nothing can satisfy is refused at the door, and each refusal
+    /// says which mistake it was.**
+    ///
+    /// Paired with the same declaration and a good set, because a case sending
+    /// only bad ones passes on a build that refuses every closed set.
+    #[tokio::test]
+    async fn a_closed_set_that_cannot_be_satisfied_is_refused_at_the_door() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+        let declaring = |values: Vec<&str>| {
+            let values: Vec<String> = values.into_iter().map(str::to_string).collect();
+            jojobot.declare_type(Parameters(DeclareTypeArgs {
+                name: "errand".to_string(),
+                fields: vec![FieldArgs {
+                    key: "stage".to_string(),
+                    holds: None,
+                    folds: None,
+                    required: false,
+                    one_of: Some(values),
+                }],
+                sid: Some(TEST_SID.to_string()),
+            }))
+        };
+
+        for (sent, names) in [
+            (vec![], "no values"),
+            (vec!["draft", "draft"], "twice"),
+            (vec!["draft", "half, done"], "comma"),
+        ] {
+            let refused = json_of(
+                &declaring(sent.clone())
+                    .await
+                    .expect("a refusal is an answer rather than a failure"),
+            );
+            let said = refused.to_string();
+            assert!(
+                said.contains(names) && said.contains("stage"),
+                "the refusal names the key and which mistake it was: {said}",
+            );
+        }
+
+        declaring(vec!["draft", "building", "done"])
+            .await
+            .expect("…and a set of three plain values goes through the same door");
+    }
+
     /// **A kind nobody has is refused at the door**, and the refusal says what
     /// the token can be.
     ///
@@ -443,6 +585,7 @@ mod tests {
                     holds: Some(holds),
                     folds: None,
                     required: false,
+                    one_of: None,
                 }],
                 sid: Some(TEST_SID.to_string()),
             }))

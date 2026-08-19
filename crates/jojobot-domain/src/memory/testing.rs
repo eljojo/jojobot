@@ -6465,6 +6465,136 @@ pub mod contract {
     ///
     /// The real target is written in the same shape, so this cannot pass on a
     /// build that refuses every reference.
+    /// **A key declared to hold one of a named set refuses a value outside it,
+    /// and the set survives storage to say so.**
+    ///
+    /// A contract case rather than a unit one, and the storage is the reason:
+    /// the values are part of the declaration, so a store that keeps the key
+    /// and drops its set narrows nothing. Every beat below passes on such a
+    /// store except the refusal itself.
+    pub async fn a_closed_set_refuses_a_write_outside_it<M: Memory>(store: &M) {
+        // A shipped KIND, because what a write may put on a thing is its kind's
+        // question. A declared type describes and governs nothing.
+        store
+            .declare_kind(
+                "project",
+                Origin::Shipped,
+                vec![Field::one_of("project_stage", ["draft", "building", "done"]).needed()],
+            )
+            .await
+            .expect("a kind may narrow a key to a named set");
+
+        // ⓪ **The set came back off the store.** Read before anything is
+        // written, so a failure here is storage rather than the guard.
+        let held = store
+            .declared_types()
+            .await
+            .expect("the declarations read back");
+        let stage = held
+            .iter()
+            .find(|d| d.name == "project")
+            .and_then(|d| d.field("project_stage"))
+            .expect("the kind holds the key it declared");
+        assert_eq!(
+            stage.one_of.as_deref(),
+            Some(["draft", "building", "done"].map(String::from).as_slice()),
+            "the values are part of the declaration, so they survive storage",
+        );
+
+        // ① A member of the set lands.
+        let sketch = EntityId::new(EntityKind::PROJECT, "contract-the-sketchbook");
+        ensure(store, &sketch).await;
+        let opened = capture(
+            store,
+            NewFact {
+                fields: [("project_stage".to_string(), "draft".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(sketch.clone(), "started it", date(2026, 4, 18))
+            },
+        )
+        .await;
+
+        // ② A value outside the set is refused, and the refusal NAMES the
+        // values — `text` is what the key holds underneath and would tell a
+        // caller nothing about a value that is text.
+        let refused = store
+            .update_fact(
+                &opened.address(),
+                FactPatch {
+                    fields: [("project_stage".to_string(), "shipped".to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..Default::default()
+                },
+            )
+            .await;
+        let Err(MemoryError::BreaksType {
+            name,
+            key,
+            wanted,
+            value,
+        }) = &refused
+        else {
+            panic!("a value outside the set must be refused, got {refused:?}");
+        };
+        assert_eq!(name, "project", "the refusal names the kind");
+        assert_eq!(key, "project_stage", "…and the key");
+        for allowed in ["draft", "building", "done"] {
+            assert!(
+                wanted.contains(allowed),
+                "…and every value the caller may write: {wanted:?}",
+            );
+        }
+        assert_eq!(value, "shipped", "…and what was actually sent");
+
+        // ③ The record is exactly as it was: a refusal writes nothing.
+        assert_eq!(
+            read_back(store, &sketch, &opened.id)
+                .await
+                .fields
+                .get("project_stage")
+                .map(String::as_str),
+            Some("draft"),
+            "the refused write left the record alone",
+        );
+
+        // ④ **Another member lands on the same thing.** Without this the
+        // refusal above passes on a build that refuses every write to the key.
+        store
+            .update_fact(
+                &opened.address(),
+                FactPatch {
+                    fields: [("project_stage".to_string(), "building".to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("a value the set names is written")
+            .written()
+            .expect("…and the write lands");
+
+        // ⑤ **A thing below the floor is refused NOTHING.** It carries no key
+        // of this kind, so there is no fit to protect, and the same value the
+        // fitting thing was refused is taken as written. That is what keeps a
+        // messy record repairable.
+        let jotted = EntityId::new(EntityKind::EVENT, "contract-the-jotting");
+        ensure(store, &jotted).await;
+        store
+            .capture(NewFact {
+                fields: [("project_stage".to_string(), "shipped".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(jotted.clone(), "somewhere in it", date(2026, 4, 18))
+            })
+            .await
+            .expect("a thing with no fit to protect takes the value as written")
+            .written()
+            .expect("…and the write lands");
+    }
+
     pub async fn a_reference_must_name_an_entity_that_exists<M: Memory>(store: &M) {
         store
             .declare_type(DeclaredType::new(
@@ -7477,6 +7607,7 @@ pub mod contract {
         clearing_a_key_the_record_never_carried_changes_nothing(store).await;
         a_reference_keeps_the_kind_it_points_at(store).await;
         a_write_cannot_put_a_value_the_type_refuses(store).await;
+        a_closed_set_refuses_a_write_outside_it(store).await;
         a_reference_must_name_an_entity_that_exists(store).await;
         a_write_cannot_break_a_fit_that_already_exists(store).await;
         a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not(store).await;

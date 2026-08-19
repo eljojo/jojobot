@@ -1530,6 +1530,7 @@ mod tests {
                     holds: Some("number".into()),
                     folds: None,
                     required: false,
+                    one_of: None,
                 }],
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
@@ -1591,12 +1592,14 @@ mod tests {
                         holds: Some("date".into()),
                         folds: None,
                         required: false,
+                        one_of: None,
                     },
                     FieldArgs {
                         key: "owner".into(),
                         holds: Some("reference".into()),
                         folds: None,
                         required: false,
+                        one_of: None,
                     },
                 ],
                 sid: Some(crate::harness::TEST_SID.into()),

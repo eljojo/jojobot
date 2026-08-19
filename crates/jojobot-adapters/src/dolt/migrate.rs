@@ -289,6 +289,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0024_rhythm_kind_takes_its_name.sql"),
         leaves: Leaves::NoRows("type_field", "type_name = 'rhythm' AND owner = 'type'"),
     },
+    Migration {
+        version: "0025_type_field_one_of",
+        sql: include_str!("../../migrations/0025_type_field_one_of.sql"),
+        leaves: Leaves::Column("type_field", "one_of"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -680,6 +685,7 @@ mod tests {
         "0022_type_field_owner",
         "0023_type_field_required",
         "0024_rhythm_kind_takes_its_name",
+        "0025_type_field_one_of",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

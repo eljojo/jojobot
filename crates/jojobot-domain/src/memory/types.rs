@@ -384,6 +384,25 @@ pub struct Field {
     /// whether a comparison is licensed — has the same answer for one of them
     /// and for many.
     pub list: bool,
+    /// **The named set this key holds one of**, when the declaration names one.
+    ///
+    /// A closed vocabulary: the values are part of the declaration, and a write
+    /// outside them is refused. It is what a key wants when the set genuinely
+    /// is small, known and finite — and it is not the way to enumerate an
+    /// open-ended set, which is a list somebody then has to maintain.
+    ///
+    /// It sits here rather than inside [`ValueType`] for the reason
+    /// [`Field::points_at`] does: naming the values NARROWS what a key holds
+    /// rather than saying what kind of thing it holds. Every question about the
+    /// key — the comparison licence, the fold, what a list wraps — has the same
+    /// answer narrowed and unnarrowed. Keeping it out of the value type is also
+    /// what keeps that type a bare copyable enum.
+    ///
+    /// `None` is a key narrowed to nothing, and it is what a declaration that
+    /// says nothing means. `Some` of an empty set is a key nothing can ever be
+    /// written to, so [`validate_type`] refuses it rather than the shape making
+    /// it unsayable — one rule, in the one place both stores call.
+    pub one_of: Option<Vec<String>>,
 }
 
 impl Field {
@@ -395,6 +414,7 @@ impl Field {
             folds: Fold::Newest,
             required: false,
             list: false,
+            one_of: None,
         }
     }
 
@@ -460,6 +480,28 @@ impl Field {
         }
     }
 
+    /// **A key holding one of a named set**, and nothing else.
+    ///
+    /// It holds text, because a closed vocabulary is tokens: what narrows the
+    /// key is the set, and the value type under it stays the honest widest
+    /// answer. A set on a key holding something else is sayable and is nobody's
+    /// case yet.
+    pub fn one_of<I, S>(key: &str, values: I) -> Field
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        Field {
+            one_of: Some(
+                values
+                    .into_iter()
+                    .map(|v| v.as_ref().trim().to_string())
+                    .collect(),
+            ),
+            ..Field::new(key, ValueType::Text)
+        }
+    }
+
     /// **Whether a value holds what this key was declared to hold** — the value
     /// type, and for a reference the kind it points at.
     ///
@@ -478,6 +520,15 @@ impl Field {
     /// One item of what this key holds — the whole value for an ordinary key.
     fn accepts_one(&self, value: &str) -> bool {
         if !self.holds.holds(value) {
+            return false;
+        }
+        // **Whole, trimmed and case-sensitive**, the same comparison
+        // [`Compare::Equals`] makes. A set whose members differ only by case is
+        // a set somebody wrote badly, and folding the case here would hide that
+        // rather than help anybody.
+        if let Some(values) = &self.one_of
+            && !values.iter().any(|allowed| allowed == value.trim())
+        {
             return false;
         }
         match self.points_at {
@@ -503,6 +554,36 @@ impl Field {
         } else {
             held
         }
+    }
+
+    /// **The set as one store cell**, its values separated by commas, and
+    /// nothing for a key narrowed to nothing.
+    ///
+    /// The comma is what separates the items of a list value, so the two
+    /// spellings agree — and it is why [`validate_type`] refuses a value
+    /// carrying one. Paired with [`Field::one_of_from_cell`] for the reason
+    /// [`Field::holds_token`] is paired with [`Field::of_token`]: two halves
+    /// that disagreed about the spelling would lose the set on the first round
+    /// trip.
+    pub fn one_of_cell(&self) -> Option<String> {
+        self.one_of.as_ref().map(|values| values.join(","))
+    }
+
+    /// The set a stored cell names, and nothing for a cell that names none.
+    ///
+    /// **An empty cell reads as no set rather than as an empty one.** A set
+    /// with no values is refused at the declaration, so a cell holding one is
+    /// damage — and reading it as a narrowing to nothing would make every write
+    /// to that key impossible, where reading it as unnarrowed leaves the key
+    /// exactly as wide as a key nobody declared a set for.
+    pub fn one_of_from_cell(cell: Option<&str>) -> Option<Vec<String>> {
+        let values: Vec<String> = cell?
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect();
+        (!values.is_empty()).then_some(values)
     }
 
     /// The field a key and a declaration token name, or nothing when the token
@@ -559,6 +640,11 @@ pub struct Mistyped {
     /// `pet:santas-little-helper` under a key wanting a place needs the kind to
     /// see the mistake at all.
     pub points_at: Option<EntityKind>,
+    /// The values the key is narrowed to, when the declaration names a set.
+    /// Carried for the reason `points_at` is: a closed set holds text, so a
+    /// reader told the key wants text is looking at a value that IS text and
+    /// cannot see the mistake at all.
+    pub one_of: Option<Vec<String>>,
     /// What the record actually carries, so a reader can see the mistake
     /// rather than being told one happened.
     pub value: String,
@@ -574,6 +660,13 @@ impl Mistyped {
     /// `reference:place`. The same token `declare_type` takes, so a refusal
     /// tells a caller what to write by naming what was asked for.
     pub fn wanted(&self) -> String {
+        // **The set, when there is one, and never the value type under it.** A
+        // closed set holds text, so naming the value type here would tell a
+        // reader that text is the problem while the value in front of them is
+        // text — the values are the whole of what the key wants.
+        if let Some(values) = &self.one_of {
+            return format!("one of {}", values.join(", "));
+        }
         match self.points_at {
             Some(kind) => format!("{}:{}", self.declared.as_token(), kind.as_token()),
             None => self.declared.as_token().to_string(),
@@ -678,6 +771,10 @@ impl DeclaredType {
                         folds: f.folds,
                         required: f.required,
                         list: f.list,
+                        one_of: f
+                            .one_of
+                            .as_ref()
+                            .map(|values| values.iter().map(|v| v.trim().to_string()).collect()),
                         ..Field::new(&f.key, f.holds)
                     })
                     .collect(),
@@ -703,6 +800,7 @@ impl DeclaredType {
                             key: field.key.clone(),
                             declared: field.holds,
                             points_at: field.points_at,
+                            one_of: field.one_of.clone(),
                             value: value.clone(),
                             required: field.required,
                         });
@@ -789,6 +887,43 @@ pub fn validate_type(declared: &DeclaredType) -> Result<(), MemoryError> {
                 // `reference` alone would name a half they did not send.
                 field.holds_token(),
             )));
+        }
+        // **A closed set that nothing can satisfy is a declaration wrong about
+        // itself**, exactly as a counter holding prose is, and each mistake is
+        // named rather than sharing one complaint: a caller comparing its own
+        // input against a generic refusal has to work out which of these it
+        // made.
+        if let Some(values) = &field.one_of {
+            if values.is_empty() {
+                return Err(MemoryError::InvalidType(format!(
+                    "type '{}' declares the key '{}' one of a set with no values in it, and a key \
+                     narrowed to nothing is a key nothing can ever be written to",
+                    declared.name, field.key,
+                )));
+            }
+            let mut named: Vec<&str> = Vec::new();
+            for value in values {
+                label("set value", value)?;
+                // **A comma cannot live in a member.** It is what separates one
+                // item from the next in a list value, so a member carrying one
+                // is a member no list of this key could ever spell — and a set
+                // narrows a list exactly as it narrows a single value.
+                if value.contains(',') {
+                    return Err(MemoryError::InvalidType(format!(
+                        "type '{}' names '{}' in the set for the key '{}', and a value in a set \
+                         may not carry a comma: a comma separates the items of a list, so no list \
+                         of this key could spell it",
+                        declared.name, value, field.key,
+                    )));
+                }
+                if named.contains(&value.as_str()) {
+                    return Err(MemoryError::InvalidType(format!(
+                        "type '{}' names '{}' twice in the set for the key '{}'",
+                        declared.name, value, field.key,
+                    )));
+                }
+                named.push(value);
+            }
         }
         seen.push(&field.key);
     }
@@ -986,6 +1121,132 @@ mod tests {
         // Text holds anything, which is the honest answer for prose and the
         // reason it is the one type that can never be mistyped.
         assert!(ValueType::Text.holds("next tuesday"));
+    }
+
+    /// **A key declared to hold one of a named set takes those values and no
+    /// others.**
+    ///
+    /// Three beats, and the third is what makes the first two mean anything: a
+    /// member is accepted, a non-member is not, and the SAME non-member is
+    /// accepted by an unnarrowed text key. Without the third this passes
+    /// identically on a build where a closed set refuses everything.
+    #[test]
+    fn a_closed_set_takes_its_own_values_and_no_others() {
+        let outcome = Field::one_of("outcome", ["ran", "skipped", "snoozed"]);
+        for member in ["ran", "skipped", "snoozed"] {
+            assert!(outcome.accepts(member), "the set names {member:?}");
+        }
+        assert!(
+            !outcome.accepts("done"),
+            "'done' is not one of the values the declaration names",
+        );
+        assert!(
+            Field::new("outcome", ValueType::Text).accepts("done"),
+            "…and the refusal is the SET talking, not text: an unnarrowed key takes it",
+        );
+    }
+
+    /// **A closed set narrows a list the same way it narrows one value.**
+    ///
+    /// The list prefix wraps what a key holds, and a set is on the key, so
+    /// every item is measured against it. Paired with a list whose items are
+    /// all members, because a build that refused every list would pass the
+    /// negative alone.
+    #[test]
+    fn a_closed_set_narrows_every_item_of_a_list() {
+        let outcome = Field {
+            list: true,
+            ..Field::one_of("outcome", ["ran", "skipped", "snoozed"])
+        };
+        assert!(
+            outcome.accepts("ran, snoozed"),
+            "every item is one the set names",
+        );
+        assert!(
+            !outcome.accepts("ran, done"),
+            "one item outside the set is enough to refuse the value",
+        );
+    }
+
+    /// **A value outside the set is flagged on a read, and the flag names the
+    /// values.**
+    ///
+    /// Reading refuses nothing, so the record comes back — and a reader that
+    /// has to go and fix it needs the allowed values rather than the word
+    /// `text`, which is what the key holds underneath and says nothing about
+    /// what is wrong.
+    #[test]
+    fn a_value_outside_the_set_is_flagged_and_names_what_was_allowed() {
+        let check_in = DeclaredType::new(
+            "check_in",
+            vec![Field::one_of("outcome", ["ran", "skipped", "snoozed"]).needed()],
+        );
+        let found = check_in
+            .matched_by(&record(&[("outcome", "done")]))
+            .expect("the record carries the key");
+        assert!(
+            !found.complete(),
+            "holding a key badly is not holding it: {found:?}",
+        );
+        assert_eq!(found.mistyped.len(), 1, "{found:?}");
+        let wanted = found.mistyped[0].wanted();
+        for value in ["ran", "skipped", "snoozed"] {
+            assert!(
+                wanted.contains(value),
+                "the reader is told what it may write: {wanted:?}",
+            );
+        }
+
+        // The positive it rests on: a member of the set completes the type.
+        assert!(
+            check_in
+                .matched_by(&record(&[("outcome", "snoozed")]))
+                .expect("the record carries the key")
+                .complete(),
+        );
+    }
+
+    /// **A declaration with a set nothing can satisfy is refused, and the
+    /// refusal says which mistake it was.**
+    ///
+    /// Three mistakes with three answers, because a caller comparing its own
+    /// input against one generic complaint has to work out which of them it
+    /// made. A set with no values is a key nothing can ever be written to; a
+    /// value named twice is a caller error the store should not keep; a value
+    /// carrying a comma cannot survive the list shape, where a comma is what
+    /// separates one item from the next.
+    #[test]
+    fn a_closed_set_that_cannot_be_satisfied_is_refused_by_its_own_name() {
+        let declaring = |field: Field| {
+            validate_type(&DeclaredType::new("check_in", vec![field]))
+                .expect_err("this declaration is refused")
+                .to_string()
+        };
+
+        let empty = declaring(Field::one_of("outcome", Vec::<String>::new()));
+        assert!(
+            empty.contains("outcome") && empty.contains("no values"),
+            "the refusal names the empty set: {empty:?}",
+        );
+
+        let twice = declaring(Field::one_of("outcome", ["ran", "skipped", "ran"]));
+        assert!(
+            twice.contains("outcome") && twice.contains("ran") && twice.contains("twice"),
+            "the refusal names the repeated value: {twice:?}",
+        );
+
+        let comma = declaring(Field::one_of("outcome", ["ran", "did not, quite"]));
+        assert!(
+            comma.contains("outcome") && comma.contains("comma"),
+            "the refusal names the separator the value collides with: {comma:?}",
+        );
+
+        // The positive all three rest on: the same declaration, a good set.
+        validate_type(&DeclaredType::new(
+            "check_in",
+            vec![Field::one_of("outcome", ["ran", "skipped", "snoozed"])],
+        ))
+        .expect("a set of three plain values is a declaration a store can keep");
     }
 
     /// **A declared reference names the kind it points at, and a handle of

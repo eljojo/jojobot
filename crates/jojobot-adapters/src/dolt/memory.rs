@@ -384,7 +384,7 @@ impl DoltMemory {
     /// may already have moved.
     async fn types_in(tx: &mut Transaction<'_, MySql>) -> Result<Vec<DeclaredType>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT type_name, key_name, holds, folds, origin, required FROM type_field
+            "SELECT type_name, key_name, holds, folds, origin, required, one_of FROM type_field
              ORDER BY type_name, ordinal",
         )
         .fetch_all(&mut **tx)
@@ -1051,8 +1051,8 @@ impl Memory for DoltMemory {
             .map_err(store)?;
         for (ordinal, field) in declared.fields.iter().enumerate() {
             sqlx::query(
-                "INSERT INTO type_field (type_name, key_name, ordinal, holds, folds, origin, owner, required)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO type_field (type_name, key_name, ordinal, holds, folds, origin, owner, required, one_of)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&declared.name)
             .bind(&field.key)
@@ -1062,6 +1062,7 @@ impl Memory for DoltMemory {
             .bind(declared.origin.as_token())
             .bind(KEYS_OF_A_TYPE)
             .bind(field.required)
+            .bind(field.one_of_cell())
             .execute(&mut *tx)
             .await
             .map_err(store)?;
@@ -1078,7 +1079,7 @@ impl Memory for DoltMemory {
     /// quietly shrink a type and report the key as one no record carries.
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT type_name, key_name, holds, folds, origin, required FROM type_field
+            "SELECT type_name, key_name, holds, folds, origin, required, one_of FROM type_field
              ORDER BY type_name, ordinal",
         )
         .fetch_all(&self.pool)
@@ -1143,8 +1144,8 @@ impl Memory for DoltMemory {
                 .map_err(store)?;
             for (ordinal, field) in declared.fields.iter().enumerate() {
                 sqlx::query(
-                    "INSERT INTO type_field (type_name, key_name, ordinal, holds, folds, origin, owner, required)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO type_field (type_name, key_name, ordinal, holds, folds, origin, owner, required, one_of)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(token)
                 .bind(&field.key)
@@ -1154,6 +1155,7 @@ impl Memory for DoltMemory {
                 .bind(origin.as_token())
                 .bind(KEYS_OF_A_KIND)
                 .bind(field.required)
+                .bind(field.one_of_cell())
                 .execute(&mut *tx)
                 .await
                 .map_err(store)?;
@@ -1236,6 +1238,7 @@ fn gather_types(rows: &[sqlx::mysql::MySqlRow]) -> Vec<DeclaredType> {
         let field = Field {
             folds: Fold::of_token(&row.get::<String, _>("folds")).unwrap_or_default(),
             required: row.get::<bool, _>("required"),
+            one_of: Field::one_of_from_cell(row.get::<Option<String>, _>("one_of").as_deref()),
             ..Field::of_token(&key, &row.get::<String, _>("holds"))
                 .unwrap_or_else(|| Field::new(&key, ValueType::Text))
         };

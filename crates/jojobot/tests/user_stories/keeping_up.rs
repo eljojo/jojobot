@@ -78,6 +78,11 @@ async fn the_loops_a_person_actually_keeps() {
     .await;
 
     // ── ③ the housework: what happened, carried forward ─────────────────────
+    //
+    // ⭐ **The outcome is one of three words, and the story is what happened.**
+    // A loop either ran, or was skipped with the cycle moving on anyway, or was
+    // snoozed with nothing moving. What was actually swapped and how filthy it
+    // was is the claim and the note; the key says which of the three this was.
     s.event_with(
         "rhythm:swap-the-air-filter",
         "swapped it, it was filthier than last time",
@@ -85,9 +90,42 @@ async fn the_loops_a_person_actually_keeps() {
             "name": "Swap the air filter",
             "last_check_in": "2026-07-19",
             "cadence_days": "90",
-            "outcome": "swapped",
+            "outcome": "ran",
             "note": "the spare is the last one in the box",
         }),
+        &[],
+    )
+    .await;
+
+    // ── writing the loop's own word into that key is turned back ────────────
+    //
+    // **The refusal names the three, which is what makes it a way forward** — a
+    // caller told only that the value is wrong has to go and find the
+    // vocabulary, and there is nowhere obvious to look. This is the plain write
+    // path rather than the check-in verb: the verb has always parsed its own
+    // token, and what is new is that the KEY holds the vocabulary, so a write
+    // that never goes near the verb is held to it too.
+    let refused = s
+        .refused(
+            "capture",
+            json!({
+                "subject": "rhythm:swap-the-air-filter",
+                "content": "swapped it again",
+                "provenance": "testimony",
+                "fields": { "outcome": "swapped" },
+            }),
+        )
+        .await;
+    refused.says("ran");
+    refused.says("skipped");
+    refused.says("snoozed");
+
+    // …and the same write with a word the key names goes through, so the
+    // refusal above is the SET talking rather than a key nobody may write.
+    s.event_with(
+        "rhythm:swap-the-air-filter",
+        "let it go this cycle, the spare is spoken for",
+        json!({ "outcome": "skipped" }),
         &[],
     )
     .await;
