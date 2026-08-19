@@ -62,6 +62,30 @@ impl Jojobot {
             return Ok(refused);
         }
         let bot = bot_id(&args.bot)?;
+        // **The core is not a caller's to store, and the round trip is how it
+        // gets stored anyway.** A caller that reads the composed charter and
+        // sends it back writes the build's own words into the instance's layer,
+        // where they never move again — a shipped default quietly turned into a
+        // frozen customisation, by a caller doing what this description used to
+        // tell it to.
+        //
+        // **Refused rather than trimmed** (rule 68): silently cutting somebody's
+        // prose down to the half we wanted would store something they did not
+        // write, and they would never learn which half we kept.
+        if let Some(core) = crate::orientation::charter::core_for(&bot)
+            && carries(&args.prose, core)
+        {
+            return Ok(blocked_body(
+                &bot,
+                &[],
+                "Nothing was written. This charter carries the core the build ships, which \
+                 means it is the composed text a read hands back rather than this instance's \
+                 own half. Storing it would freeze the build's words as this instance's. Send \
+                 the part below the divider — what this instance has written for itself — or \
+                 nothing at all if it has none."
+                    .to_string(),
+            ));
+        }
         let stored = match self.memory.set_prose(&bot, &args.prose).await {
             Ok(stored) => stored,
             Err(e) => return memory_declined("set_charter", e),
@@ -85,10 +109,149 @@ impl Jojobot {
     }
 }
 
+/// **Does this prose carry that core?** Compared on the core's first paragraph
+/// rather than the whole of it, so a caller sending back a charter it read
+/// through a client that rewrapped the text is still caught.
+///
+/// A paragraph is long enough that nobody writes it by accident, which is what
+/// keeps this from refusing a charter that merely agrees with the core.
+fn carries(prose: &str, core: &str) -> bool {
+    let Some(opening) = core.trim().split("\n\n").next() else {
+        return false;
+    };
+    let opening = opening.trim();
+    !opening.is_empty() && prose.contains(opening)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::harness::*;
+
+    /// **The shipped identity's charter is two layers, and this call reaches
+    /// one of them.**
+    ///
+    /// The core is carried by the build and composed on the way out; what a
+    /// caller writes is the instance's own half. **The description used to
+    /// promise this call replaced the whole thing**, and a caller believing it
+    /// does the round trip below: read the charter, send it back.
+    ///
+    /// 🚨 **That is the silent one.** It stores the build's own words as the
+    /// instance's, where they stop moving when the software does — a shipped
+    /// default quietly converted into a frozen customisation, by a caller doing
+    /// what the surface told it to.
+    #[tokio::test]
+    async fn sending_the_composed_charter_back_does_not_store_the_core() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        make_bot(&jojobot, "assistant").await;
+
+        // What a caller reads: the core, and nothing of its own yet.
+        let composed = charter_of(&jojobot, &sid).await;
+        // The needle is the core's own words, in the case the core writes
+        // them: a lowercase reading of it matches nothing and passes on a build
+        // that ships no core at all.
+        assert!(
+            composed.contains("GROUND TRUTH"),
+            "the shipped identity reads back with the core it ships: {composed}",
+        );
+
+        // **The round trip a caller believing the old promise makes.**
+        let sent = jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "assistant".into(),
+                prose: composed.clone(),
+                sid: Some(sid.clone()),
+            }))
+            .await
+            .expect("set_charter answers");
+        let body = json_of(&sent);
+        // **Refused, and it has to be.** The instance layer cannot both hold
+        // what was sent and keep the core out of the store — those are the same
+        // bytes. So the only answer that does not freeze the build's words is
+        // to refuse, and the refusal says which half to send instead (rule 68).
+        assert_eq!(
+            body["status"], "blocked",
+            "the composed text was stored, so the core is now this instance's: {body}",
+        );
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .is_some_and(|advice| !advice.is_empty()),
+            "the refusal leaves the caller nowhere to go: {body}",
+        );
+
+        // **What the store kept.** The instance's own layer must not hold the
+        // core: the core is composed, and a copy of it in the store is a copy
+        // that stops moving when the build does.
+        let kept = jojobot
+            .memory
+            .scan_entity(&EntityId("bot:assistant".into()))
+            .await
+            .expect("the store answers")
+            .map(|doc| doc.prose)
+            .unwrap_or_default();
+        assert!(
+            !kept.contains("GROUND TRUTH"),
+            "the core rode into the store on a caller's round trip, where it is frozen: {kept}",
+        );
+
+        // **And the read is unchanged**: the core still arrives, once.
+        let after = charter_of(&jojobot, &sid).await;
+        assert_eq!(
+            after, composed,
+            "the answer moved on a call that wrote nothing: {after}",
+        );
+
+        // **The positive the refusal rests on: this instance's OWN half is
+        // stored exactly as before.** Without it, the case passes against a
+        // build that refuses every charter for the shipped identity.
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "assistant".into(),
+                prose: "This instance keeps the workshop rota.".into(),
+                sid: Some(sid.clone()),
+            }))
+            .await
+            .expect("set_charter answers");
+        let kept = jojobot
+            .memory
+            .scan_entity(&EntityId("bot:assistant".into()))
+            .await
+            .expect("the store answers")
+            .map(|doc| doc.prose)
+            .unwrap_or_default();
+        assert_eq!(
+            kept.trim(),
+            "This instance keeps the workshop rota.",
+            "the instance's own half is not what the store kept",
+        );
+        assert!(
+            charter_of(&jojobot, &sid).await.contains("GROUND TRUTH"),
+            "…and the core is still composed on top of it",
+        );
+    }
+
+    /// The charter the shipped identity reads back with, off the door.
+    async fn charter_of(jojobot: &Jojobot, sid: &str) -> String {
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(crate::orientation::OrientArgs {
+                    bot: Some("assistant".into()),
+                    brief: Some(true),
+                    skill: None,
+                    resume: None,
+                    timezone: None,
+                    sid: Some(sid.to_string()),
+                }))
+                .await
+                .expect("the door answers"),
+        );
+        booted["identity"]["charter"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    }
 
     /// `set_charter` writes the orienting prose and reads it back — and it is
     /// the same text a boot hands over, so what an operator writes is what a
