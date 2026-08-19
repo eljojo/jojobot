@@ -17,10 +17,15 @@
 //!
 //! # What it deliberately does NOT do
 //!
-//! It does not write a charter. What this identity is TOLD to be is a separate
-//! question with the operator's name on it, and a shipped charter would put a
-//! voice they have not approved into every future instance. The bot exists, it
-//! can be booted as, and it can write. That is all.
+//! It does not write a charter, and the identity still has one. **The core
+//! ships in the binary and is composed into what a caller reads** — see
+//! [`crate::orientation::charter`] — so what an instance writes for itself is
+//! the only charter text in the store.
+//!
+//! Writing the core here would freeze an instance on the build that seeded it:
+//! a later version improves the core and no existing instance would ever see
+//! it. The bot exists, it can be booted as, it can write, and it can say what
+//! it is for.
 //!
 //! It writes no record of either type, and nothing here computes anything from
 //! one. A vocabulary is what a writer fills in; what to do about a rhythm that
