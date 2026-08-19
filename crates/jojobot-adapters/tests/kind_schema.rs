@@ -1136,3 +1136,86 @@ async fn the_required_keys_are_the_ones_the_loop_actually_writes() {
 
     server.stop().await;
 }
+
+/// **A caller's type named after a kind governs nothing, and that is the fix.**
+///
+/// The two halves share one table and are told apart by an owner column, and
+/// the read feeding the write path filtered on neither: it returned both halves
+/// as one list, and the fit guard selects a declaration whose NAME matches the
+/// thing's kind. **So a type named `place` was the kind `place`'s schema as far
+/// as every write to every place was concerned** — a gate over a shipped kind,
+/// made with no new verb and with no verb to undo it.
+///
+/// ⚠️ **The declaration itself stays legal.** A caller's schema named after a
+/// kind is a capability this suite already protects one case above: a boot must
+/// not destroy it. So the collision is not refused — **the halves are kept
+/// apart, and the kind's keys reach the guard as the kind's.**
+///
+/// **The tooth this proves is the value-type one, on an ordinary write with no
+/// floor involved** — the wide blast radius, and the one a fix aimed at fitting
+/// would walk past.
+#[tokio::test]
+async fn a_type_named_after_a_kind_does_not_gate_that_kinds_writes() {
+    let (mut server, store, _turn) = a_store("type-shadows-kind").await;
+
+    let moes = EntityId::new(EntityKind::PLACE, "moes");
+    added(&store, &moes, "Moe's").await;
+
+    store
+        .declare_type(DeclaredType::new(
+            "place",
+            vec![Field::required("postcode", ValueType::Number)],
+        ))
+        .await
+        .expect("a caller's schema may be named after a kind — see the boot case above");
+
+    // **The write the shadow refused.** A place carrying a postcode that is no
+    // number is an ordinary claim: nothing a caller declared governs it, and
+    // this write reached the store refused before the halves were kept apart.
+    store
+        .capture(NewFact {
+            fields: [("postcode".to_string(), "SW1A".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                moes.clone(),
+                "the postcode is SW1A",
+                jiff::civil::date(2026, 8, 19),
+            )
+        })
+        .await
+        .expect("an ordinary write to a place is not governed by a caller's type")
+        .written()
+        .expect("the guard let it through");
+
+    // **The positive the negative rests on: a kind's OWN keys still govern.**
+    // Without this half, the case passes against a build whose fit guard reads
+    // nothing at all and lets every write through.
+    store
+        .declare_kind(
+            "barrowful",
+            Origin::Declared,
+            vec![Field::required("weight", ValueType::Number)],
+        )
+        .await
+        .expect("a caller declares a kind that names a key");
+    kinds::reload(&store).await.expect("the set is re-read");
+    let barrowful = EntityKind::from_token("barrowful").expect("the kind was just declared");
+    let one = EntityId::new(barrowful, "the-heavy-one");
+    added(&store, &one, "The Heavy One").await;
+    let refused = store
+        .capture(NewFact {
+            fields: [("weight".to_string(), "quite a lot".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(one, "it weighs a fair bit", jiff::civil::date(2026, 8, 19))
+        })
+        .await
+        .expect_err("a kind's own key still holds a write to what it says");
+    assert!(
+        refused.to_string().contains("weight"),
+        "the kind's own key stopped governing its things: {refused}",
+    );
+
+    server.stop().await;
+}

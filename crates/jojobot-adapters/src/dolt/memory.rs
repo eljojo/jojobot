@@ -415,6 +415,33 @@ impl DoltMemory {
         Ok(gather_types(&rows))
     }
 
+    /// **The keys a KIND names, read as the kind's own.**
+    ///
+    /// The two halves share one table and are told apart by an owner column.
+    /// [`Self::types_in`] reads both, which is right for the fold — how a key
+    /// folds is declared by whoever declared it — and wrong for the fit guard,
+    /// which selects a declaration whose NAME matches the thing's kind. Handed
+    /// the mixed list, that guard read a caller's type named `place` as the
+    /// kind `place`'s schema and gated every write to every place with it.
+    ///
+    /// **So the kind's keys arrive as the kind's**, rather than being found by
+    /// name in a list holding both halves.
+    async fn kind_keys_in(
+        tx: &mut Transaction<'_, MySql>,
+        kind: &str,
+    ) -> Result<Vec<DeclaredType>, MemoryError> {
+        let rows = sqlx::query(
+            "SELECT type_name, key_name, holds, folds, origin, required, one_of FROM type_field
+             WHERE type_name = ? AND owner = ? ORDER BY ordinal",
+        )
+        .bind(kind)
+        .bind(KEYS_OF_A_KIND)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        Ok(gather_types(&rows))
+    }
+
     /// The addresses a page already holds, which is what a fact miss carries so
     /// a caller can see what it might have meant.
     async fn addresses_in(
@@ -788,11 +815,15 @@ impl Memory for DoltMemory {
         // in both stores.
         let held = Self::writes_on(&mut tx, &stored.home).await?;
         let declared = Self::types_in(&mut tx).await?;
+        // **The fold reads both halves and the guard reads one.** How a key
+        // folds is declared by whoever declared it; what governs a thing is its
+        // own kind, and nothing else.
+        let governs = Self::kind_keys_in(&mut tx, stored.home.kind_token()).await?;
         guard_fit(
             stored.home.kind_token(),
             &folded_fields(&held, &declared),
             &stood_after_capture(&held, &stored, &declared),
-            &declared,
+            &governs,
         )?;
         Self::write_fact(&mut tx, &stored).await?;
         // Every key this record carries is a write of its own, appended to the
@@ -975,11 +1006,12 @@ impl Memory for DoltMemory {
         // its records stay repairable. One function, called from both stores.
         let held = Self::writes_on(&mut tx, &fact.home).await?;
         let declared = Self::types_in(&mut tx).await?;
+        let governs = Self::kind_keys_in(&mut tx, fact.home.kind_token()).await?;
         guard_fit(
             fact.home.kind_token(),
             &folded_fields(&held, &declared),
             &stood_after(&held, &fact, &patch, &carried, &declared),
-            &declared,
+            &governs,
         )?;
         Self::write_fact(&mut tx, &fact).await?;
         // **The edit appends.** The record reads back changed — that is the
