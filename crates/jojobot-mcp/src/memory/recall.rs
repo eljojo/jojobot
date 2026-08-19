@@ -880,21 +880,37 @@ impl Jojobot {
                 .map(|((o, held), backing)| {
                     let mut rendered = object_json(o, include);
                     rendered["held"] = held;
-                    if let Some(backing) = backing {
-                        rendered["fields_backing"] = backing
-                            .iter()
-                            .map(|(key, from)| {
-                                (
-                                    key.clone(),
-                                    serde_json::json!({
-                                        "claim": from.fact.as_str(),
-                                        "provenance": from.provenance.as_token(),
-                                        "standing": from.standing.as_token(),
-                                    }),
-                                )
-                            })
-                            .collect::<serde_json::Map<_, _>>()
-                            .into();
+                    match backing {
+                        Some(backing) => {
+                            rendered["fields_backing"] = backing
+                                .iter()
+                                .map(|(key, from)| {
+                                    (
+                                        key.clone(),
+                                        serde_json::json!({
+                                            "claim": from.fact.as_str(),
+                                            "provenance": from.provenance.as_token(),
+                                            "standing": from.standing.as_token(),
+                                        }),
+                                    )
+                                })
+                                .collect::<serde_json::Map<_, _>>()
+                                .into();
+                        }
+                        // **A value arriving bare must not read as one nobody
+                        // stands behind.** The backing is a second read and is
+                        // left out unless asked for, so the answer says it
+                        // exists and names the call that returns it — an
+                        // omission a reader cannot see is the one it will get
+                        // wrong. Only where there are values to stand behind.
+                        None if !o.fields.is_empty() => {
+                            rendered["fields_backing_note"] = serde_json::json!(
+                                "who backs each of these values is not in this answer: recall \
+                                 again with backing: true and every key names the claim its \
+                                 value came from, with that claim's provenance and standing"
+                            );
+                        }
+                        None => {}
                     }
                     rendered
                 })
@@ -1097,9 +1113,17 @@ mod tests {
             "the value the user stated reads as a guess: {object}",
         );
 
-        // **The value nobody asks about is not decorated either**: a read that
-        // did not ask carries no backing at all, so this stays a cost a caller
-        // takes on deliberately.
+        // **The answer that asked does not also carry the pointer**, which is
+        // what stops the check below passing against a build that names the
+        // call on every answer whether or not it left anything out.
+        assert!(
+            object["fields_backing_note"].is_null(),
+            "the answer carrying the backing also tells the caller how to get it: {object}",
+        );
+
+        // **A read that did not ask carries no backing — and says so.** A value
+        // arriving bare would otherwise read as one nobody stands behind, which
+        // is a different answer from one nobody asked about.
         let plain = jojobot
             .recall(Parameters(RecallArgs {
                 sid: Some(sid),
@@ -1108,9 +1132,16 @@ mod tests {
             }))
             .await
             .expect("the read answers");
+        let object = json_of(&plain)["objects"][0].clone();
         assert!(
-            json_of(&plain)["objects"][0]["fields_backing"].is_null(),
-            "a read that asked for no backing was given some anyway",
+            object["fields_backing"].is_null(),
+            "a read that asked for no backing was given some anyway: {object}",
+        );
+        assert!(
+            object["fields_backing_note"]
+                .as_str()
+                .is_some_and(|note| note.contains("backing")),
+            "the answer leaves the backing out and does not say it exists: {object}",
         );
     }
 
