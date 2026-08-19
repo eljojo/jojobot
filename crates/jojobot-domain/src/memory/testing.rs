@@ -1641,6 +1641,28 @@ pub mod contract {
             cleared.stale_after, None,
             "a claim nobody has to look at again still carries a day",
         );
+
+        // **A retraction is a record in its own right**, so it is taken in at
+        // the moment it is written — and the record it takes back keeps the
+        // moment IT was taken in, because a retraction says a claim should not
+        // have been recorded, never that it arrived later than it did.
+        let taken_back = store
+            .retract(
+                &watched.address(),
+                Some("written in error"),
+                date(2026, 8, 2),
+            )
+            .await
+            .expect("the retraction lands");
+        assert!(
+            taken_back.record.inserted_at.is_some(),
+            "the account of a retraction carries no stamp: {:?}",
+            taken_back.record,
+        );
+        assert_eq!(
+            taken_back.retracted.inserted_at, watched.inserted_at,
+            "taking a claim back re-stamped it with the moment somebody took it back",
+        );
     }
 
     pub async fn referring_to_answers_from_the_far_end<M: Memory>(store: &M) {
@@ -4822,6 +4844,68 @@ pub mod contract {
     /// Every fact hit carries the **whole row** — its address and its provenance
     /// included. The address is what an edit needs; the provenance is what keeps a
     /// guess from being read as something the user said.
+    /// **A record found through the index carries both clocks and the day it
+    /// stays good.**
+    ///
+    /// The index keeps a record as JSON and builds the hit back from it, so it
+    /// is a second storage path with a second chance to drop a value — and a
+    /// read-back inside either store cannot see it, because both halves of that
+    /// comparison come from the same construction.
+    ///
+    /// **The negative is paired here on purpose.** A record that made no
+    /// promise about how long it stays good comes back with none, so this
+    /// cannot pass on a build that fills the field in on the way through.
+    pub async fn a_hit_carries_the_clocks_the_store_kept<M: Memory, S: Search>(
+        store: &M,
+        search: &S,
+    ) {
+        let subject = EntityId::person("contract-penny");
+        let watched = capture(
+            store,
+            NewFact {
+                stale_after: Some(date(2026, 11, 30)),
+                ..NewFact::about(subject.clone(), "rides a penny farthing", date(2026, 7, 1))
+            },
+        )
+        .await;
+        capture(
+            store,
+            NewFact::about(subject.clone(), "owns a penny whistle", date(2026, 7, 1)),
+        )
+        .await;
+
+        let hits = found(search, SearchQuery::text("penny")).await;
+        let facts = fact_hits(&hits);
+        let hit = |needle: &str| {
+            (*facts
+                .iter()
+                .find(|f| f.content.contains(needle))
+                .unwrap_or_else(|| panic!("the record saying {needle} must come back: {hits:?}")))
+            .clone()
+        };
+
+        let carried = hit("farthing");
+        assert_eq!(
+            carried.stale_after,
+            Some(date(2026, 11, 30)),
+            "the day this reading stays good did not survive the index",
+        );
+        assert_eq!(
+            carried.inserted_at, watched.inserted_at,
+            "the moment the store took the record in did not survive the index",
+        );
+        assert!(
+            carried.inserted_at.is_some(),
+            "the store kept no stamp at all, so the check above compares two absences",
+        );
+
+        let ordinary = hit("whistle");
+        assert_eq!(
+            ordinary.stale_after, None,
+            "a record that made no promise came back carrying one",
+        );
+    }
+
     pub async fn search_fact_hits_carry_an_address_and_provenance<M: Memory, S: Search>(
         store: &M,
         search: &S,
@@ -5910,6 +5994,7 @@ pub mod contract {
 
         search_finds_a_fact_captured_moments_ago(store, search).await;
         search_fact_hits_carry_an_address_and_provenance(store, search).await;
+        a_hit_carries_the_clocks_the_store_kept(store, search).await;
         search_excludes_superseded_by_default_and_lists_it_on_request(store, search).await;
         search_excludes_a_retracted_record_by_default(store, search).await;
         search_answers_ask_across_by_kind_and_edge(store, search).await;
