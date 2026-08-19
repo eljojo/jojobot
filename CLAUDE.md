@@ -255,9 +255,17 @@ Shipped and live:
 > untouched — read-back happens server-side, so a body that did not survive
 > storage is still an error rather than a success with mangled bytes.
 - **M4** — Bots: the `bot` entity kind — an AI identity is handle ·
-  charter (its doc's prose, written through `set_charter`) · rules (plain
-  facts, so each carries its own provenance) · memory · one owned mailbox,
-  opened with the bot in the same act and named for its handle.
+  charter · rules (plain facts, so each carries its own provenance) ·
+  memory · one owned mailbox, opened with the bot in the same act and named
+  for its handle. **A charter has two layers, and neither is a copy of the
+  other**: the core the build ships for the identity the software ships, and
+  the instance's own prose written through `set_charter`. They are composed
+  in the read, core first, and the instance's text narrows rather than
+  repeals it. **So a bot nobody has written for still answers with the
+  core**, while every other bot's charter is its written prose alone. The
+  core is never a stored record — upgrading it is shipping a new build,
+  with nothing to migrate and no instance frozen on the version that made
+  it.
   **`start_here` is the one orienting door** — the same verb with or without
   a bot: world-model and snapshot always, plus the identity when a bot is
   named. The door itself **mints no identity**: an unknown bot name comes back
