@@ -302,7 +302,7 @@ async fn the_no_change_check_needs_a_boundary_and_needs_mail_to_be_there() {
     );
 }
 
-/// **Phase 10 — the cold reader picked up what was left, both ways.**
+/// **Phase 13 — the cold reader picked up what was left, both ways.**
 ///
 /// The suite's own table calls this phase assertable and names what it leaves:
 /// the run wrapped, and the message an earlier phase posted now processed with
@@ -323,7 +323,7 @@ async fn the_cold_reader_check_needs_something_to_have_been_picked_up() {
                 .expect("the suite has expectations");
         let one = all
             .into_iter()
-            .find(|e| e.name().starts_with("Phase 10"))
+            .find(|e| e.name().starts_with("Phase 13"))
             .expect("the phase 10 expectation");
         one.check(&seen).await
     }
@@ -355,8 +355,8 @@ async fn the_cold_reader_check_needs_something_to_have_been_picked_up() {
     let nothing_left = judge_across(
         &surface,
         vec![
-            reading(&bare, "", "Phase 10 — the reader"),
-            reading(&bare, "", "Phase 11 — the ending"),
+            reading(&bare, "", "Phase 13 — the reader"),
+            reading(&bare, "", "Phase 14 — the ending"),
         ],
     )
     .await;
@@ -393,8 +393,8 @@ async fn the_cold_reader_check_needs_something_to_have_been_picked_up() {
     let untouched = judge_across(
         &surface,
         vec![
-            reading(&waiting, "", "Phase 10 — the reader"),
-            reading(&waiting, "", "Phase 11 — the ending"),
+            reading(&waiting, "", "Phase 13 — the reader"),
+            reading(&waiting, "", "Phase 14 — the ending"),
         ],
     )
     .await;
@@ -431,8 +431,8 @@ async fn the_cold_reader_check_needs_something_to_have_been_picked_up() {
     let picked_up = judge_across(
         &surface,
         vec![
-            reading(&waiting, "", "Phase 10 — the reader"),
-            reading(&handled, "", "Phase 11 — the ending"),
+            reading(&waiting, "", "Phase 13 — the reader"),
+            reading(&handled, "", "Phase 14 — the ending"),
         ],
     )
     .await;
@@ -520,11 +520,11 @@ async fn the_session_checks_need_a_run_that_actually_grew() {
         wrote.saying,
     );
 
-    // Phase 9 leaves the run OPEN, so a board offering nothing back fails it
+    // Phase 12 leaves the run OPEN, so a board offering nothing back fails it
     // however much was written earlier.
     let closed = judge_across(
-        vec![reading(&grown, "Phase 9"), reading(&empty, "Phase 10")],
-        "Phase 9",
+        vec![reading(&grown, "Phase 12"), reading(&empty, "Phase 13")],
+        "Phase 12",
     )
     .await;
     assert!(
@@ -533,11 +533,11 @@ async fn the_session_checks_need_a_run_that_actually_grew() {
         closed.saying,
     );
 
-    // Phase 11 is an absence, and it must refuse an empty ending rather than
+    // Phase 14 is an absence, and it must refuse an empty ending rather than
     // read it as "the run is gone".
     let nothing_at_the_end = judge_across(
-        vec![reading(&grown, "Phase 10"), reading(&empty, "the end")],
-        "Phase 11",
+        vec![reading(&grown, "Phase 13"), reading(&empty, "the end")],
+        "Phase 14",
     )
     .await;
     assert!(
@@ -547,7 +547,7 @@ async fn the_session_checks_need_a_run_that_actually_grew() {
     );
 }
 
-/// **Phase 10 relates the two sides of its boundary, or it holds on the wrong
+/// **Phase 13 relates the two sides of its boundary, or it holds on the wrong
 /// room.**
 ///
 /// The claim is that the message an earlier phase left was the one picked up.
@@ -618,14 +618,14 @@ async fn the_cold_reader_check_refuses_a_room_where_a_different_message_was_reti
 
     let boundaries = vec![
         Boundary {
-            before: "Phase 10 — the reader".to_string(),
+            before: "Phase 13 — the reader".to_string(),
             mail: waiting,
             world: String::new(),
             board: String::new(),
             runs_offered: 0,
         },
         Boundary {
-            before: "Phase 11 — the ending".to_string(),
+            before: "Phase 14 — the ending".to_string(),
             mail: afterwards,
             world: String::new(),
             board: String::new(),
@@ -639,7 +639,7 @@ async fn the_cold_reader_check_refuses_a_room_where_a_different_message_was_reti
     let all = expectations::for_playbook(expectations::COLD_SESSION_SUITE).expect("expectations");
     let one = all
         .into_iter()
-        .find(|e| e.name().starts_with("Phase 10"))
+        .find(|e| e.name().starts_with("Phase 13"))
         .expect("the phase 10 expectation");
     let outcome = one.check(&seen).await;
     assert!(
@@ -649,7 +649,7 @@ async fn the_cold_reader_check_refuses_a_room_where_a_different_message_was_reti
     );
 }
 
-/// **Phase 10 names the message it means, or the furniture answers for it.**
+/// **Phase 13 names the message it means, or the furniture answers for it.**
 ///
 /// When the cold session arrives, the room a run really builds has TWO
 /// unfinished messages in that box: the one the room was furnished with, and
@@ -722,14 +722,14 @@ async fn the_cold_reader_check_is_not_satisfied_by_retiring_the_furniture() {
     let boundaries = |after: &str| {
         vec![
             Boundary {
-                before: "Phase 10 — the reader".to_string(),
+                before: "Phase 13 — the reader".to_string(),
                 mail: waiting.clone(),
                 world: String::new(),
                 board: String::new(),
                 runs_offered: 0,
             },
             Boundary {
-                before: "Phase 11 — the ending".to_string(),
+                before: "Phase 14 — the ending".to_string(),
                 mail: after.to_string(),
                 world: String::new(),
                 board: String::new(),
@@ -747,7 +747,7 @@ async fn the_cold_reader_check_is_not_satisfied_by_retiring_the_furniture() {
             expectations::for_playbook(expectations::COLD_SESSION_SUITE).expect("expectations");
         let one = all
             .into_iter()
-            .find(|e| e.name().starts_with("Phase 10"))
+            .find(|e| e.name().starts_with("Phase 13"))
             .expect("the phase 10 expectation");
         one.check(&seen).await
     };
@@ -838,5 +838,187 @@ async fn the_no_change_check_can_hold_on_the_room_the_suite_is_seeded_with() {
         outcome.held,
         "a phase that left the seeded mail where it was did not hold: {}",
         outcome.saying,
+    );
+}
+
+/// **Phase 9, and the trap is the loop with NO cadence.**
+///
+/// Three rooms: nothing written, only the scheduled loop, and both. The middle
+/// one is the point — a build that demanded every key its kind names would
+/// leave exactly that room, and a check reading only the scheduled loop would
+/// call it a pass.
+#[tokio::test]
+async fn the_loop_check_needs_the_loop_that_has_no_cadence() {
+    let (_room, surface, sid) = room().await;
+
+    let nothing = judge(&surface, "Phase 9").await;
+    assert!(
+        !nothing.held,
+        "a room where the phase wrote nothing must fail: {}",
+        nothing.saying,
+    );
+
+    as_the_agent(
+        &surface,
+        &sid,
+        "add_entity",
+        json!({"kind": "thing", "handle": "smoke-kettle", "name": "The Kettle",
+               "source": "user-named"}),
+    )
+    .await;
+    for loop_handle in ["smoke-descale", "smoke-filter"] {
+        as_the_agent(
+            &surface,
+            &sid,
+            "add_entity",
+            json!({"kind": "rhythm", "handle": loop_handle, "name": loop_handle,
+                   "parent": "thing:smoke-kettle", "source": "user-named"}),
+        )
+        .await;
+    }
+    // Only the scheduled one, with its check-in.
+    as_the_agent(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "rhythm:smoke-filter", "content": "the loop, set up",
+               "provenance": "testimony",
+               "fields": {"name": "Filter", "last_check_in": "2026-07-01",
+                          "counts_from": "2026-07-01", "advances_from": "due_date",
+                          "cadence_days": "90", "outcome": "ran"}}),
+    )
+    .await;
+    let only_scheduled = judge(&surface, "Phase 9").await;
+    assert!(
+        !only_scheduled.held,
+        "the loop nobody set a frequency for is part of what the phase leaves: {}",
+        only_scheduled.saying,
+    );
+
+    as_the_agent(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "rhythm:smoke-descale", "content": "looked at it",
+               "provenance": "testimony",
+               "fields": {"name": "Descale", "last_check_in": "2026-07-01"}}),
+    )
+    .await;
+    let both = judge(&surface, "Phase 9").await;
+    assert!(
+        both.held,
+        "with both loops there the check holds: {}",
+        both.saying,
+    );
+}
+
+/// **Phase 11 counts DISTINCT days, so one day is not two.**
+///
+/// The room a build with a zone of its own would leave — two claims, both
+/// stamped the same — has to fail, or the check passes on the defect it exists
+/// to find. Paired with the room where the two days differ.
+#[tokio::test]
+async fn the_frame_check_fails_when_both_claims_landed_on_one_day() {
+    let (_room, surface, sid) = room().await;
+    as_the_agent(
+        &surface,
+        &sid,
+        "add_entity",
+        json!({"kind": "person", "handle": "smoke-alpha", "name": "Alpha",
+               "source": "user-named"}),
+    )
+    .await;
+
+    let claim = async |day: &str, what: &str| {
+        as_the_agent(
+            &surface,
+            &sid,
+            "capture",
+            json!({"subject": "person:smoke-alpha", "content": what, "date": day}),
+        )
+        .await
+    };
+    claim("2026-08-19", "the first one").await;
+    let one_day = judge(&surface, "Phase 11").await;
+    assert!(
+        !one_day.held,
+        "one claim is one day, and one day is not the difference the phase measures: {}",
+        one_day.saying,
+    );
+
+    claim("2026-08-19", "another, the same day").await;
+    let same_day = judge(&surface, "Phase 11").await;
+    assert!(
+        !same_day.held,
+        "two claims on ONE day is the room a server with its own zone leaves, and it must \
+         fail: {}",
+        same_day.saying,
+    );
+
+    claim("2026-08-20", "and one from the other side of the line").await;
+    let two_days = judge(&surface, "Phase 11").await;
+    assert!(
+        two_days.held,
+        "two distinct days is what the caller's own frame leaves: {}",
+        two_days.saying,
+    );
+}
+
+/// **Phase 10 holds only once a thing FITS the type**, not once the type
+/// exists.
+///
+/// Three rooms, and the middle one is the trap: a declaration with nothing
+/// written under it is a caller who declared a vocabulary and never used it,
+/// which is a phase that stopped halfway rather than one that worked.
+#[tokio::test]
+async fn the_vocabulary_check_needs_a_thing_that_fits_the_type() {
+    let (_room, surface, sid) = room().await;
+
+    let nothing = judge(&surface, "Phase 10").await;
+    assert!(
+        !nothing.held,
+        "a room with no such type must fail: {}",
+        nothing.saying,
+    );
+
+    as_the_agent(
+        &surface,
+        &sid,
+        "declare_type",
+        json!({"name": "smoke-errand", "fields": [
+            {"key": "smoke_stage", "required": true, "one_of": ["draft", "done"]},
+            {"key": "smoke_note"}
+        ]}),
+    )
+    .await;
+    let declared_only = judge(&surface, "Phase 10").await;
+    assert!(
+        !declared_only.held,
+        "a vocabulary nobody wrote anything under is half a phase: {}",
+        declared_only.saying,
+    );
+
+    as_the_agent(
+        &surface,
+        &sid,
+        "add_entity",
+        json!({"kind": "thing", "handle": "smoke-the-errand", "name": "The Errand",
+               "source": "user-named"}),
+    )
+    .await;
+    as_the_agent(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:smoke-the-errand", "content": "started it",
+               "provenance": "testimony",
+               "fields": {"smoke_stage": "draft", "smoke_note": "the one that fits"}}),
+    )
+    .await;
+    let fitting = judge(&surface, "Phase 10").await;
+    assert!(
+        fitting.held,
+        "a thing carrying the required key with a value the set names fits: {}",
+        fitting.saying,
     );
 }

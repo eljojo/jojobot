@@ -229,7 +229,7 @@ travel. This failed wholesale in production once, on two clients at once.
 
 ## Phase 8 — writes
 
-**Session: continues phase 7.** What this phase leaves is what phase 10 has to
+**Session: continues phase 7.** What this phase leaves is what phase 13 has to
 find without being told where to look, so leave it as you would leave it for
 somebody else.
 
@@ -266,19 +266,101 @@ somebody else.
 >     Report the five mail verbs you did find, and what you concluded from the
 >     absence.
 
-## Phase 9 — stopping without finishing
+## Phase 9 — the loop that has gone quiet
 
-**Session: continues phase 8.** Deliberately does NOT wrap: phase 10 needs a
+**Session: continues phase 8.** A recurring thing the operator keeps, recorded
+and then asked about. What makes this a scenario rather than a verb list is the
+last step: the answer is only worth having because a loop that has NOT fallen
+due sits in the same instance and stays out of it.
+
+> 48. `add_entity` for a thing with handle `smoke-kettle`, then `add_entity`
+>     for a `rhythm` with handle `smoke-descale`, under that thing as its
+>     parent. Report what happened if you tried to make the loop without a
+>     parent, and whether the surface told you a loop needs one.
+> 49. Record what the loop is: its name, and the day it was last looked at.
+>     Use `2026-07-01`. **Do not give it a cadence.** Report whether the write
+>     was taken — a loop nobody has decided the frequency of is still a loop,
+>     and a surface demanding one would have lost this.
+> 50. Now add a second loop, `smoke-filter`, under the same thing, and give it
+>     a cadence of 90 days counting from `2026-07-01`.
+> 51. Record a check-in on `smoke-filter`, saying what it found. Report which
+>     words the surface accepted for what a check-in found, how you learnt
+>     which they were, and what happened when you tried one of your own —
+>     **try `swapped`.** Report whether the refusal told you what you may
+>     write.
+> 52. Ask what has gone quiet **as of `2026-11-01`**. Expected: the loop with
+>     a cadence, and not the one without. Report both halves — which came back
+>     AND which did not — and say whether you could tell why the second was
+>     left out.
+> 53. Ask the same question as of `2026-07-02`. Expected: neither. Report
+>     whether the same instance gave you a different answer for a different
+>     day, and whether anything told you the day was yours to choose.
+
+## Phase 10 — a vocabulary of your own
+
+**Session: continues phase 9.** The operator keeps track of something the
+software has never heard of, and wants the same words used every time.
+
+> 54. Declare a type of your own called `smoke-errand`, with two keys: one the
+>     thing must hold, and one it may. Give one of them a small closed set of
+>     values it may take. Report how you worked out that a key could be held to
+>     a set at all.
+> 55. Read the declaration back. Expected: for every key, what it holds, how it
+>     folds, whether it is required, and the set where there is one. **Send
+>     exactly what came back, unchanged, as a second declaration.** Report FAIL
+>     if the answer is not something the same verb accepts — a declaration you
+>     cannot restate is one you cannot copy or move.
+> 56. Write a thing that carries those keys, with a value the set names.
+>     Expected: taken.
+> 57. Write again with a value the set does NOT name. Expected: blocked,
+>     **naming the values you may write.** Report the exact refusal, and report
+>     FAIL if it told you only that the value was wrong.
+> 58. Declare a type whose key is narrowed to a set with nothing in it.
+>     Expected: refused, saying what is wrong with it. Report whether you could
+>     tell what to change.
+> 59. Add a key nobody declared to the thing from step 56. Expected: taken —
+>     a declaration is a floor and not a fence. Report whether anything told
+>     you that before you tried.
+
+## Phase 11 — the day it is where you are
+
+**Session: continues phase 10.** Everything day-grained is answered in the
+frame the session supplies, and the point of this phase is whether a session
+learns that before it gets a date wrong.
+
+> 60. From what you have read so far, say **whether you can tell the server
+>     which day it is for you**, and where you learnt it. **Answer before
+>     looking for the argument.** If you cannot, that is the finding and it is
+>     worth more than a right answer.
+> 61. Boot as `assistant` again, resuming the run you are in, and tell it you
+>     are working in `Pacific/Kiritimati`.
+> 62. `capture` a claim about `smoke-alpha` **with no date on it**. Report the
+>     day it came back stamped with.
+> 63. Boot again, resuming the same run, saying you are working in
+>     `Etc/GMT+12` instead. Capture another undated claim about `smoke-alpha`
+>     and report the day THAT one came back stamped with.
+> 64. The two days are different, and the same instance stamped both. **Say
+>     whether that reads to you as a fault or as intended**, and say what in
+>     the surface told you which. Report FAIL if nothing did — a session that
+>     reads it as a fault will start correcting dates, and a corrected right
+>     date is a wrong one.
+> 65. Tell it you are working in `Nowhere/Atall`. Expected: refused, saying
+>     what a zone name looks like. Report whether it refused before or after
+>     starting anything.
+
+## Phase 12 — stopping without finishing
+
+**Session: continues phase 11.** Deliberately does NOT wrap: phase 13 needs a
 run left open, which is the ordinary case rather than a failure.
 
-> 48. You are stopping, and the work is not done. Journal one entry for
+> 66. You are stopping, and the work is not done. Journal one entry for
 >     whoever picks this up: where you got to, what you already ruled out, and
 >     the exact next step. Set what you are working on to something a later
 >     session could recognise.
-> 49. Do **not** wrap this session. Report what you would have expected to
+> 67. Do **not** wrap this session. Report what you would have expected to
 >     happen if you had.
 
-## Phase 10 — the reader who was not here
+## Phase 13 — the reader who was not here
 
 **Session: fresh.** No memory of any earlier phase. **This is the product
 claim**: a later session finds what an earlier one left, without being told
@@ -295,30 +377,30 @@ where to look. Nothing in this block names a verb on purpose.
 >
 > Boot as the bot `assistant`. Then:
 >
-> 50. **Before anything else, report what the boot offered you** about work
+> 68. **Before anything else, report what the boot offered you** about work
 >     already in flight, and whether you could tell from it what the earlier
 >     run had been doing. Take that earlier run rather than starting a new one.
-> 51. Read what that run recorded. Report whether somebody with none of its
+> 69. Read what that run recorded. Report whether somebody with none of its
 >     context — you — could tell what it had done and what to do next, and name
 >     the part that was missing if any was.
-> 52. **Somebody left something for you, and it may not be the only thing
+> 70. **Somebody left something for you, and it may not be the only thing
 >     waiting.** Find what is there and act on it: take delivery, and mark each
 >     one handled with a note saying what you did. Report how you found them and
 >     whether anything told you they were waiting.
-> 53. **Find out what this server knows about `smoke-alpha`.** Report what you
+> 71. **Find out what this server knows about `smoke-alpha`.** Report what you
 >     found, how you found it, and whether the claim read as something somebody
 >     confirmed or as something an AI worked out.
-> 54. Now finish the run properly, with a closing story written for somebody
+> 72. Now finish the run properly, with a closing story written for somebody
 >     who was not here.
-> 55. Try to add one more entry to the run you just finished. Report what
+> 73. Try to add one more entry to the run you just finished. Report what
 >     happened.
-> 56. Ask the server about the handle you have been carrying, and read that
+> 74. Ask the server about the handle you have been carrying, and read that
 >     answer beside step 55. Say whether the two together could leave a session
 >     believing it can still write. Report FAIL if they could — the handle and
 >     the run are different things, and a caller has to be able to tell which
 >     one ended.
 
-## Phase 11 — the ending, from cold
+## Phase 14 — the ending, from cold
 
 **Session: fresh.** No memory of any earlier phase.
 
@@ -328,12 +410,17 @@ where to look. Nothing in this block names a verb on purpose.
 > where data is STORED, and any error arriving as a raw failure rather than a
 > refusal naming a way forward.
 >
-> 57. Boot as the bot `assistant`. Expected: a fresh run, and the run that was
+> 75. Boot as the bot `assistant`. Expected: a fresh run, and the run that was
 >     finished earlier is **not** offered back to you. Report what you were
 >     offered.
-> 58. Report everything this instance now holds that looks like it was made by
+> 76. Report everything this instance now holds that looks like it was made by
 >     a test rather than by a person, and say how you can tell. You have no
 >     stake in the answer being tidy.
+> 77. **Now say which of those you could remove, and how.** Expected: none of
+>     them, because nothing over this surface deletes. Report FAIL if you
+>     believe you found a way — and report FAIL if you could not tell either
+>     way, because a session that thinks it might be able to delete will
+>     eventually try.
 
 ---
 
@@ -398,9 +485,12 @@ exists only in the model's answer, by design.
 | 6 · the session record | **assertable** | One run for `assistant` with two entries, the second carrying the amended text and the first unchanged, plus jojobot's own beats. |
 | 7 · mail, read-only | **assertable, as no-change** | Every mailbox in the same state as before the phase. This is the phase whose whole claim is that nothing moved. |
 | 8 · writes | **assertable, richest** | `person:smoke-alpha` with exactly one active fact, carrying the rewritten wording and `inference` provenance. No `person:smoke-alfa`. `bot:smoke-gamma` with its charter and a mailbox named for it. Two messages in the `assistant` box, both `new`: the one the room was furnished with and the one step 45 posts. |
-| 9 · stopping | **assertable** | The run still open — not wrapped — with a further entry and a focus. |
-| 10 · the reader | **assertable** | The run from phases 2–9 now `wrapped`, its final entry carrying the focus; the message step 45 posted now `processed` with a note — the furniture sits beside it and what the reader does with that is not pinned; a second run for `assistant`. Steps 50, 51 and 53 are runner-reported on top of that. |
-| 11 · the ending | **assertable** | A third run for `assistant`, and the wrapped one still wrapped. |
+| 9 · the loop | **assertable** | `thing:smoke-kettle` with two `rhythm` children. `rhythm:smoke-descale` carrying a name and a last check-in and NO cadence — the loop nobody set a frequency for, which a build demanding one would have lost. `rhythm:smoke-filter` carrying a cadence and a schedule the check-in moved. No record anywhere carrying `swapped` under the check-in's own key. |
+| 10 · the vocabulary | **assertable** | A caller's type named `smoke-errand`, present twice over — declared, then declared again from its own read-back — and holding the same keys both times. One thing carrying its keys with a value the set names, and a key no type declared. No thing carrying the value the set refused. |
+| 11 · the frame | **assertable** | The run for `assistant` carrying a zone, and two claims on `person:smoke-alpha` stamped with two different days. Steps 60 and 64 are runner-reported on top of that, and they are the ones that matter. |
+| 12 · stopping | **assertable** | The run still open — not wrapped — with a further entry and a focus. |
+| 13 · the reader | **assertable** | The run from phases 2–9 now `wrapped`, its final entry carrying the focus; the message step 45 posted now `processed` with a note — the furniture sits beside it and what the reader does with that is not pinned; a second run for `assistant`. Steps 68, 69 and 71 are runner-reported on top of that. |
+| 14 · the ending | **assertable** | A third run for `assistant`, and the wrapped one still wrapped. Everything every earlier phase left is still there: step 77 asks the model to find a way to remove it, and the room is what says it found none. |
 
 **The trap in this table.** Phases 2 and 7 are assertable only as absence or
 as no-change, and an absence passes on a run where nothing happened at all.

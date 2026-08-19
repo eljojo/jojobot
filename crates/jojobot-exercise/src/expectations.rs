@@ -36,6 +36,9 @@ pub fn for_playbook(source: &str) -> Option<Vec<Box<dyn Expectation>>> {
         Box::new(ReadingMovedNoMail),
         Box::new(TheWritesLanded),
         Box::new(TheSessionKeptItsOwnRecord),
+        Box::new(TheLoopIsOnTheRecord),
+        Box::new(TheVocabularyGovernsAThing),
+        Box::new(TheFrameStampedTwoDays),
         Box::new(TheRunWasLeftOpen),
         Box::new(TheHandoffWasPickedUp),
         Box::new(TheWrappedRunIsNotOfferedBack),
@@ -351,6 +354,241 @@ fn offered(board: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// **Phase 9 — the loop that has gone quiet.**
+///
+/// Three things the phase leaves, and the third is an absence that needs the
+/// other two beside it: a loop nobody set a frequency for, a loop with one, and
+/// nothing anywhere carrying the word the check-in's own key refuses.
+///
+/// **The loop with no cadence is the load-bearing one.** A build that demanded
+/// every key its kind names would have dropped that write, and the room would
+/// simply be missing it — which is indistinguishable from an agent that never
+/// got there unless the other loop is checked in the same breath.
+struct TheLoopIsOnTheRecord;
+
+#[async_trait::async_trait]
+impl Expectation for TheLoopIsOnTheRecord {
+    fn name(&self) -> &str {
+        "Phase 9 — both loops are on the record, cadence or no cadence"
+    }
+
+    async fn check(&self, seen: &Observed<'_>) -> Outcome {
+        let mut short = Vec::new();
+
+        let bare = seen
+            .room
+            .call("recall", json!({"subject": "rhythm:smoke-descale"}))
+            .await;
+        if bare.contains("\"status\":\"blocked\"") {
+            return missed(
+                self.name(),
+                format!("rhythm:smoke-descale was never created: {bare}"),
+            );
+        }
+        if !bare.contains("last_check_in") {
+            short.push("the loop with no cadence carries no last check-in either".to_string());
+        }
+        // The whole point of that loop: it was taken WITHOUT one.
+        if bare.contains("cadence_days") {
+            short.push(
+                "the loop meant to have no cadence carries one, so nothing here says a loop \
+                 without one is takeable"
+                    .to_string(),
+            );
+        }
+
+        let scheduled = seen
+            .room
+            .call("recall", json!({"subject": "rhythm:smoke-filter"}))
+            .await;
+        if !scheduled.contains("cadence_days") {
+            short.push(
+                "the loop with a cadence carries none, so the pair proves nothing".to_string(),
+            );
+        }
+        // The check-in's key holds one of a named set. A record carrying the
+        // word the phase deliberately tried is a refusal that did not happen.
+        if scheduled.contains("swapped") {
+            short.push(
+                "a record carries 'swapped' under the check-in's key, so the closed set let it \
+                 through"
+                    .to_string(),
+            );
+        }
+        if !scheduled.contains("outcome") {
+            short.push("no check-in was recorded on the scheduled loop".to_string());
+        }
+
+        if short.is_empty() {
+            held(
+                self.name(),
+                "the loop nobody set a frequency for and the loop with one are both there, and \
+                 nothing carries a word the check-in's key does not name",
+            )
+        } else {
+            missed(self.name(), short.join("; "))
+        }
+    }
+}
+
+/// **Phase 10 — a vocabulary of your own.**
+///
+/// The declaration is proved by USING it: a read that selects the things
+/// fitting `smoke-errand` can only answer if the type was declared and the
+/// thing carries its required keys. That is one read for two claims, and
+/// neither can pass without the other.
+///
+/// **The absence needs its positive, as always here**: nothing carries the
+/// value the set refused, checked beside a thing that carries a value it names.
+struct TheVocabularyGovernsAThing;
+
+#[async_trait::async_trait]
+impl Expectation for TheVocabularyGovernsAThing {
+    fn name(&self) -> &str {
+        "Phase 10 — a caller's own type is declared and something fits it"
+    }
+
+    async fn check(&self, seen: &Observed<'_>) -> Outcome {
+        // **Selected BY the type**, which is the read that cannot answer unless
+        // the declaration is there. The tolerant selector is the one a caller
+        // gets by default, and it reports what each thing lacks — so this asks
+        // it and then reads the gaps, rather than asking a stricter question
+        // and losing the reason for a miss.
+        let answering = seen
+            .room
+            .call(
+                "recall",
+                json!({"kind": "thing", "answers_type": "smoke-errand"}),
+            )
+            .await;
+        if answering.contains("\"status\":\"blocked\"") {
+            return missed(
+                self.name(),
+                format!("the type could not be selected by, so it was never declared: {answering}"),
+            );
+        }
+        if answering.contains("\"count\":0") {
+            return missed(
+                self.name(),
+                "the type is declarable but nothing in the room answers it, so no thing was \
+                 written under the vocabulary"
+                    .to_string(),
+            );
+        }
+        // Answering is not fitting. A thing short of a required key is a phase
+        // that wrote something and not the thing the phase asked for.
+        if !answering.contains("\"complete\":true") {
+            return missed(
+                self.name(),
+                format!(
+                    "something answers the type and nothing holds every key it requires: \
+                     {answering}"
+                ),
+            );
+        }
+        // The refusal the phase provokes must have left nothing behind. Read
+        // over everything rather than the fitting set: a thing the refused
+        // write created would not fit, which is exactly where it would hide.
+        let everything = seen
+            .room
+            .call("search", json!({"query": "smoke-errand"}))
+            .await;
+        if everything.contains("smoke-not-a-stage") {
+            return missed(
+                self.name(),
+                "a value the set does not name was written anyway".to_string(),
+            );
+        }
+        held(
+            self.name(),
+            "a caller's own type governs a thing that holds every key it requires, and the value \
+             its set refused is nowhere",
+        )
+    }
+}
+
+/// **Phase 11 — the day it is where you are.**
+///
+/// Two undated claims on one subject, written minutes apart by one run, coming
+/// back stamped with two different days. **That can only happen if the frame
+/// came from the caller**: a server with a zone of its own stamps both the
+/// same, and so does a build that ignores the argument.
+///
+/// It counts DISTINCT dates rather than naming either, because which two days
+/// they are depends on when the run happened, and a check that named them would
+/// have to be rewritten every time the calendar moved.
+struct TheFrameStampedTwoDays;
+
+#[async_trait::async_trait]
+impl Expectation for TheFrameStampedTwoDays {
+    fn name(&self) -> &str {
+        "Phase 11 — two undated claims came back on two different days"
+    }
+
+    async fn check(&self, seen: &Observed<'_>) -> Outcome {
+        let recalled = seen
+            .room
+            .call(
+                "recall",
+                json!({"subject": "person:smoke-alpha", "facts": true}),
+            )
+            .await;
+        let Ok(body) = serde_json::from_str::<serde_json::Value>(&recalled) else {
+            return missed(
+                self.name(),
+                format!("the subject could not be read back: {recalled}"),
+            );
+        };
+        let mut days: Vec<String> = Vec::new();
+        collect_dates(&body, &mut days);
+        days.sort();
+        days.dedup();
+        if days.len() < 2 {
+            return missed(
+                self.name(),
+                format!(
+                    "the claims on person:smoke-alpha carry {} distinct day(s) — {:?} — so \
+                     nothing here says the frame came from the caller",
+                    days.len(),
+                    days,
+                ),
+            );
+        }
+        held(
+            self.name(),
+            format!(
+                "one run stamped undated claims with {} different days: {days:?}",
+                days.len()
+            ),
+        )
+    }
+}
+
+/// Every `date` a read answered with, wherever it sits in the shape.
+///
+/// Walked rather than indexed: the answer nests, and a check reaching for one
+/// path would go quiet the day the shape gained a level — which reads as a pass.
+fn collect_dates(value: &serde_json::Value, into: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (key, held) in fields {
+                if key == "date"
+                    && let Some(day) = held.as_str()
+                {
+                    into.push(day.to_string());
+                }
+                collect_dates(held, into);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_dates(item, into);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// **Phase 6 — the session's own record.**
 ///
 /// A run has to have accrued a chronology by the end of this phase. It is read
@@ -413,7 +651,7 @@ impl Expectation for TheSessionKeptItsOwnRecord {
     }
 }
 
-/// **Phase 9 — stopping without finishing.**
+/// **Phase 12 — stopping without finishing.**
 ///
 /// The phase deliberately does NOT wrap, because a later phase has to be
 /// offered the open run. So what must be true is that the run is still there to
@@ -423,11 +661,11 @@ struct TheRunWasLeftOpen;
 #[async_trait::async_trait]
 impl Expectation for TheRunWasLeftOpen {
     fn name(&self) -> &str {
-        "Phase 9 — the run was left open for whoever came next"
+        "Phase 12 — the run was left open for whoever came next"
     }
 
     async fn check(&self, seen: &Observed<'_>) -> Outcome {
-        let Some((before, after)) = seen.across("Phase 9") else {
+        let Some((before, after)) = seen.across("Phase 12") else {
             return missed(
                 self.name(),
                 "the run recorded no boundary for this phase, so nothing was compared",
@@ -454,7 +692,7 @@ impl Expectation for TheRunWasLeftOpen {
     }
 }
 
-/// **Phase 10 — the reader who was not here.**
+/// **Phase 13 — the reader who was not here.**
 ///
 /// The phase the whole suite exists for: a session arrives cold, is told a task
 /// rather than a tool, and has to find what an earlier one left. What that
@@ -474,11 +712,11 @@ struct TheHandoffWasPickedUp;
 #[async_trait::async_trait]
 impl Expectation for TheHandoffWasPickedUp {
     fn name(&self) -> &str {
-        "Phase 10 — what an earlier run left was picked up"
+        "Phase 13 — what an earlier run left was picked up"
     }
 
     async fn check(&self, seen: &Observed<'_>) -> Outcome {
-        let Some((before, after)) = seen.across("Phase 10") else {
+        let Some((before, after)) = seen.across("Phase 13") else {
             return missed(
                 self.name(),
                 "the run recorded no boundary for this phase, so nothing was compared",
@@ -566,7 +804,7 @@ fn messages(reading: &str) -> Vec<serde_json::Value> {
         .unwrap_or_default()
 }
 
-/// **Phase 11 — the ending, from cold.**
+/// **Phase 14 — the ending, from cold.**
 ///
 /// A wrapped run is terminal and is not offered back, so what is checkable is
 /// that the run a cold session finished is gone from the offer.
@@ -580,14 +818,14 @@ struct TheWrappedRunIsNotOfferedBack;
 #[async_trait::async_trait]
 impl Expectation for TheWrappedRunIsNotOfferedBack {
     fn name(&self) -> &str {
-        "Phase 11 — the wrapped run is not offered back, and newer ones are"
+        "Phase 14 — the wrapped run is not offered back, and newer ones are"
     }
 
     async fn check(&self, seen: &Observed<'_>) -> Outcome {
         let Some(open_before) = seen
             .boundaries
             .iter()
-            .find(|b| b.before.starts_with("Phase 10"))
+            .find(|b| b.before.starts_with("Phase 13"))
             .map(|b| offered(&b.board))
         else {
             return missed(
