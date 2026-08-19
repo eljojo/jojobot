@@ -10,8 +10,18 @@ use super::*;
 pub struct SetCharterArgs {
     /// The bot whose charter this is: its bare slug, or its full handle.
     pub bot: String,
-    /// The charter itself. Prose: paragraphs are fine. It **replaces** whatever
-    /// charter the bot had, so send the whole thing, not an addition.
+    /// The charter itself. Prose: paragraphs are fine.
+    ///
+    /// **For a bot somebody stood up, this replaces what that bot had** — send
+    /// the whole thing, not an addition.
+    ///
+    /// **For the identity the software ships, it replaces that instance's own
+    /// layer and nothing else.** That identity reads back as two layers: the
+    /// core the build carries, which no call reaches, and the text written
+    /// here, which narrows it. **So send your own half rather than the whole
+    /// answer you just read** — a caller that sends the composed text back
+    /// stores the build's own words as the instance's, and they stop moving
+    /// when the software does.
     pub prose: String,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
@@ -26,7 +36,13 @@ impl Jojobot {
     #[tool(
         description = "Write a bot's charter: the orienting text start_here hands a session that \
                        boots as this bot — what this identity is, its hard lines, where its work \
-                       lives. Replaces the whole charter rather than adding to it. \
+                       lives. IT REPLACES RATHER THAN ADDS — but what it replaces depends on \
+                       the bot. For one somebody stood up it is the whole charter, so send the \
+                       whole thing. For the identity the software ships it is that instance's \
+                       OWN layer: the core the build carries is composed in on the way out and \
+                       no call writes it, so send your half rather than the composed text you \
+                       read, or the build's words become the instance's and stop moving when \
+                       the software does. \
                        IT ANSWERS WITH A RECEIPT, NOT THE CHARTER: the bot it landed on, how \
                        many bytes were stored — compare it with what you sent and you learn \
                        the store trimmed it — and the opening line, so you can tell which \
