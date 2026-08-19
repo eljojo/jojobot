@@ -149,20 +149,35 @@ async fn a_session_records_a_claim_with_its_source_unprompted() {
         .says("\"provenance\":\"testimony\"")
         .says("\"standing\":\"open\"");
 
-    // GAP — and a session with only the boot would not have written it that
-    // way. The essay teaches the provenance pair and never teaches the second
-    // field, so the shape it offers for "nobody is sure of this" is
-    // `inference` — which answers who backs the claim, and answers it wrongly:
-    // the operator did. Recording the hedge honestly needs a field the
-    // orientation never mentions.
-    //   s.essay().teaches("standing").await;
+    // **The gap is closed and this is what closed it.** A session with only
+    // the boot used to have one shape for "nobody is sure of this" — the
+    // provenance `inference` — which answers who backs the claim, and answers
+    // it wrongly when the operator is the one musing. The essay now teaches
+    // the second field, so the honest pair is reachable from the boot alone.
     //
     // The needle is `settled`, not `standing`: the field's own value token,
     // which the essay has no other use for, where the field's name is also
     // ordinary English and appears in three unrelated sentences.
+    // The needle is the value as a caller SENDS it, backticked — not the bare
+    // word, which the prose around it contains as a substring of "unsettled"
+    // and which would go on passing with the vocabulary gone.
     assert!(
-        !essay.contains("settled"),
-        "the essay now teaches the second field — flip this assertion, the gap is closed: {essay}"
+        essay.contains("`settled`"),
+        "the essay teaches no way to say nobody is sure, so a session records the operator's \
+         own musing as a derivation: {essay}"
+    );
+    // **And the vocabulary alone is not the deliverable.** A definition says
+    // what the field is; what nobody reaches for on their own is the PAIRING —
+    // the operator's word, undecided — so an example has to show them together.
+    // Pinned to a worked example's own line, because the vocabulary sentence
+    // names both words too and would satisfy a check over the whole essay.
+    assert!(
+        essay
+            .lines()
+            .filter(|line| line.trim_start().starts_with("- *"))
+            .any(|line| line.contains("testimony") && line.contains("standing")),
+        "no worked example shows the operator's own word held open, so the pairing stays \
+         something a session has to invent: {essay}"
     );
 
     s.wrap("recorded the hedge, using a field the boot never taught")
