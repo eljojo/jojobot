@@ -463,6 +463,16 @@ pub struct FactPatch {
     /// A key that is not on the record is not an error. The patch says what
     /// the record must not carry afterwards, and it does not.
     pub clear_fields: Vec<String>,
+    /// **A new day to look again on** — see [`Fact::stale_after`]. It is the
+    /// caller's judgement about how long a reading stays trustworthy, so a
+    /// caller may move it; the stamp that says when jojobot took the record in
+    /// is the store's and is not here.
+    pub stale_after: Option<Date>,
+    /// **Take the day off**, leaving a claim that makes no promise about how
+    /// long it stays good. Its own flag rather than an empty value in
+    /// [`FactPatch::stale_after`], for the reason `clear_fields` is its own
+    /// list: leaving it alone and taking it off are two different edits.
+    pub clear_stale_after: bool,
     /// The user's explicit confirmation, required to promote a claim to
     /// testimony AND to settle one that is open. jojobot infers freely; it
     /// never blesses on its own, on either axis.
@@ -862,6 +872,17 @@ fn is_slug_byte(b: u8) -> bool {
     b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'
 }
 
+impl Fact {
+    /// **Has this claim gone past the day somebody said to look again?**
+    ///
+    /// `false` when nobody set one. **Absence means no promise was made** —
+    /// not that the claim is fresh, and not that it is stale. Reading it as
+    /// stale would make every record in the store suspect.
+    pub fn is_stale(&self, as_of: Date) -> bool {
+        self.stale_after.is_some_and(|day| day < as_of)
+    }
+}
+
 /// Validate an entity id before it is written anywhere. Ids are **structured**
 /// (`kind:slug`, slug `[a-z0-9-]+`), never free text — so an adversarial
 /// subject can neither forge markdown nor invent a kind. This is the primary
@@ -1258,6 +1279,14 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     }
     for (key, value) in &patch.fields {
         fact.fields.insert(key.trim().to_string(), value.clone());
+    }
+    // **Cleared before set, for the reason the keys are.** A caller that names
+    // both meant the day it named.
+    if patch.clear_stale_after {
+        fact.stale_after = None;
+    }
+    if let Some(day) = patch.stale_after {
+        fact.stale_after = Some(day);
     }
     Ok(())
 }
@@ -1677,6 +1706,9 @@ pub struct NewFact {
     /// The claim this one was derived from, if any — see [`Fact::derived_from`].
     /// Written atomically with the fact, exactly as an edge is.
     pub derived_from: Option<FactAddress>,
+    /// **When somebody should look at this again** — see [`Fact::stale_after`].
+    /// Optional, and most claims never carry one.
+    pub stale_after: Option<Date>,
 }
 
 impl NewFact {
@@ -1695,6 +1727,7 @@ impl NewFact {
             fields: BTreeMap::new(),
             refs: Vec::new(),
             derived_from: None,
+            stale_after: None,
         }
     }
 }
@@ -1739,6 +1772,21 @@ pub struct Fact {
     /// nobody observed, which is the one property this stamp exists to make
     /// unforgeable.
     pub inserted_at: Option<jiff::Timestamp>,
+    /// **The day after which this reading stops being good**, if anybody said.
+    ///
+    /// **A fact about our KNOWLEDGE, not about the world.** A pass that runs
+    /// out on a date is a claim about the world and belongs in the claim; this
+    /// says how long a reading stays good. Nothing outside jojobot knows this
+    /// date, which is the test that decides where it lives.
+    ///
+    /// **Past it, the claim does not stop being true — it stops being
+    /// trusted**, and a read says so. `None` is not freshness and not
+    /// staleness: it is a claim that **made no promise** about how long it
+    /// stays good.
+    ///
+    /// **Nothing fires on it.** No sweep, no job, no reminder: a claim past its
+    /// day says so when somebody reads it, and that is the whole behaviour.
+    pub stale_after: Option<Date>,
     /// The typed edge this fact draws, if any. Read tolerantly: a cell the reader
     /// can't parse costs the edge, never the fact.
     pub edge: Option<Edge>,

@@ -498,6 +498,7 @@ impl Memory for InMemoryMemory {
             // it empty would let every case above it pass on a build where the
             // real store's stamp never happens.
             inserted_at: Some(jiff::Timestamp::now()),
+            stale_after: fact.stale_after,
         };
         // **A new record's keys land on the thing too** — the same guard the
         // edit path runs, because a thing's fields are every write on it
@@ -758,6 +759,7 @@ impl Memory for InMemoryMemory {
             refs: account.refs,
             derived_from: account.derived_from,
             inserted_at: Some(jiff::Timestamp::now()),
+            stale_after: None,
         };
         let retracted = Fact {
             status: FactStatus::Retracted,
@@ -1210,6 +1212,7 @@ pub mod contract {
                 .collect(),
             refs: vec![subject.clone()],
             derived_from: Some(source.clone()),
+            stale_after: None,
         };
         let captured = capture(store, new).await;
         assert_eq!(captured.subject, subject);
@@ -1602,6 +1605,41 @@ pub mod contract {
         assert_eq!(
             edited.inserted_at, backfilled.inserted_at,
             "an edit re-stamped the record with the moment somebody corrected it",
+        );
+
+        // **The day somebody set to look again survives storage**, and comes
+        // off when an edit says so. It is the caller's judgement, unlike the
+        // stamp above, so a caller may move it and remove it.
+        let watched = capture(
+            store,
+            NewFact {
+                stale_after: Some(date(2026, 12, 1)),
+                ..NewFact::about(
+                    subject.clone(),
+                    "the rate is fixed for now",
+                    date(2026, 8, 1),
+                )
+            },
+        )
+        .await;
+        assert_eq!(watched.stale_after, Some(date(2026, 12, 1)));
+        assert_eq!(
+            read_back(store, &subject, &watched.id).await.stale_after,
+            Some(date(2026, 12, 1)),
+            "the day did not survive the store",
+        );
+        let cleared = edit(
+            store,
+            &watched.address(),
+            FactPatch {
+                clear_stale_after: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(
+            cleared.stale_after, None,
+            "a claim nobody has to look at again still carries a day",
         );
     }
 

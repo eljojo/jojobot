@@ -1,0 +1,17 @@
+-- The day after which a reading stops being good.
+--
+-- **A fact about our knowledge rather than about the world.** A pass that runs
+-- out on a date is a claim about the world and belongs in the claim itself;
+-- this says how long a reading stays good, and nothing outside jojobot knows
+-- it. That question — does anybody out there know this date — is what decides
+-- which of the two a date is.
+--
+-- Past it a claim does not stop being true: it stops being trusted, and a read
+-- says so. **Nothing fires on this column.** There is no sweep and no job, so a
+-- reader who sees a stale claim must not conclude that anybody is coming to
+-- check it.
+--
+-- NULL is a claim that made no promise about how long it stays good. It is not
+-- fresh and it is not stale, and reading the absence as an assurance is the
+-- mistake this column exists to make impossible.
+ALTER TABLE fact ADD COLUMN stale_after VARCHAR(16) NULL;

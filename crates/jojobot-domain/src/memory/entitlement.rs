@@ -214,6 +214,7 @@ mod tests {
             fields,
             refs: Vec::new(),
             inserted_at: None,
+            stale_after: None,
         }
     }
 

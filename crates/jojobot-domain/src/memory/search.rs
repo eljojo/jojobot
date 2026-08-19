@@ -806,6 +806,7 @@ mod tests {
             refs: Vec::new(),
             derived_from: None,
             inserted_at: None,
+            stale_after: None,
         };
 
         let doc = DocScan {
@@ -881,6 +882,7 @@ mod tests {
             refs: Vec::new(),
             derived_from: None,
             inserted_at: None,
+            stale_after: None,
         };
         let doc = DocScan {
             doc_id: "doc-1".into(),

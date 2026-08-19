@@ -110,6 +110,17 @@ pub struct CaptureArgs {
     /// is short of, and nothing is written.
     #[serde(default)]
     pub check_in: Option<String>,
+    /// **The day after which this reading stops being good**, `YYYY-MM-DD`.
+    /// Optional, and most claims never carry one.
+    ///
+    /// It is a fact about jojobot's knowledge rather than about the world: a
+    /// pass that runs out on a date is a claim about the world and belongs in
+    /// the content. Past the day a read SAYS SO — **the claim does not stop
+    /// being true, it stops being trusted** — and **nothing else happens**: no
+    /// sweep, no reminder, nobody is coming to check it. **A claim carrying no
+    /// day made no promise**, which is neither fresh nor stale.
+    #[serde(default)]
+    pub stale_after: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -322,6 +333,11 @@ impl Jojobot {
                 .map(|r| EntityId::person(r.trim()))
                 .collect(),
             derived_from,
+            stale_after: args
+                .stale_after
+                .as_deref()
+                .map(|day| parse_date(Some(day)))
+                .transpose()?,
         };
         // Routed through the declined path rather than straight to the mapper:
         // a fact the validators refuse is a caller mistake, and it comes back

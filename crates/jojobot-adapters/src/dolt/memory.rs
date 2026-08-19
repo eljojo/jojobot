@@ -310,8 +310,8 @@ impl DoltMemory {
         sqlx::query(
             "REPLACE INTO fact (entity, id, content, details, provenance, standing, status,
                                 date, edge_shape, edge_object, derived_from, derived_from_id,
-                                inserted_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                inserted_at, stale_after)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
@@ -330,6 +330,7 @@ impl DoltMemory {
         // this store took the record in: an edit that stamped again would say
         // jojobot learned the claim when somebody corrected its wording.
         .bind(fact.inserted_at.map(|at| at.to_string()))
+        .bind(fact.stale_after.map(|day| day.to_string()))
         .execute(&mut **tx)
         .await
         .map_err(store)?;
@@ -426,7 +427,8 @@ fn written_keys(fact: &Fact) -> Vec<(String, Option<String>)> {
 /// The columns a fact reads back from, in one place so every read takes the
 /// same ones.
 const FACT_COLUMNS: &str = "entity, id, content, details, provenance, standing, status, date, \
-                            edge_shape, edge_object, derived_from, derived_from_id, inserted_at";
+                            edge_shape, edge_object, derived_from, derived_from_id, inserted_at, \
+                            stale_after";
 
 /// A store failure, in the domain's own words. **The server's account never
 /// crosses** — no SQL, no table names, no product (rule 53); it goes to the log
@@ -565,6 +567,13 @@ fn fact_from(
             .try_get::<Option<String>, _>("inserted_at")
             .map_err(store)?
             .and_then(|stamp| stamp.parse().ok()),
+        // A day nothing can read is a day nobody set: the claim is ordinary
+        // rather than stale, which is the safe branch for a value that only
+        // ever makes a reader distrust something.
+        stale_after: row
+            .try_get::<Option<String>, _>("stale_after")
+            .map_err(store)?
+            .and_then(|day| day.parse().ok()),
     })
 }
 
@@ -745,6 +754,7 @@ impl Memory for DoltMemory {
             // record is taken in is this one, and a caller that could name it
             // could claim jojobot knew something before it did.
             inserted_at: Some(jiff::Timestamp::now()),
+            stale_after: fact.stale_after,
         };
         // **A new record's keys land on the thing too**, so the same guard the
         // edit path runs applies here: a write may not drop a thing below a
@@ -969,6 +979,7 @@ impl Memory for DoltMemory {
             derived_from: account.derived_from,
             // A retraction is a record in its own right, taken in now.
             inserted_at: Some(jiff::Timestamp::now()),
+            stale_after: None,
         };
         let retracted = Fact {
             status: FactStatus::Retracted,

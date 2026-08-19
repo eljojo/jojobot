@@ -304,6 +304,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0027_fact_inserted_at.sql"),
         leaves: Leaves::Column("fact", "inserted_at"),
     },
+    Migration {
+        version: "0028_fact_stale_after",
+        sql: include_str!("../../migrations/0028_fact_stale_after.sql"),
+        leaves: Leaves::Column("fact", "stale_after"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -698,6 +703,7 @@ mod tests {
         "0025_type_field_one_of",
         "0026_session_timezone",
         "0027_fact_inserted_at",
+        "0028_fact_stale_after",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

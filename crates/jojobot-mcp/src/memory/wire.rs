@@ -16,7 +16,21 @@ use super::*;
 /// place. **Input grammar is unaffected:** ids and kind tokens stay lowercase
 /// `kind:slug` on the way in.
 pub(crate) fn fact_json(fact: &Fact) -> serde_json::Value {
-    serde_json::json!({
+    fact_json_as_of(fact, today())
+}
+
+/// **Today, read once here.** The staleness of a claim is a question about a
+/// day, and the renderer is where that day arrives — the domain reads no clock.
+fn today() -> jiff::civil::Date {
+    jiff::Timestamp::now()
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .date()
+}
+
+/// One record on the wire, as of a day — which is what decides whether it says
+/// it wants looking at.
+pub(crate) fn fact_json_as_of(fact: &Fact, as_of: jiff::civil::Date) -> serde_json::Value {
+    let mut rendered = serde_json::json!({
         "address": fact.address().to_string(),
         "subject": fact.subject.as_str(),
         "content": fact.content,
@@ -35,6 +49,11 @@ pub(crate) fn fact_json(fact: &Fact) -> serde_json::Value {
         // deciding how old a claim is needs the second one — with `null`
         // meaning a record from before the store kept it, never "just now".
         "inserted_at": fact.inserted_at.map(|at| at.to_string()),
+        // **The day this reading stops being good**, when its writer set one.
+        // `null` is not freshness and not staleness: it is a claim that made no
+        // promise, and reading absence as an assurance is the mistake this pair
+        // of keys exists to prevent.
+        "stale_after": fact.stale_after.map(|day| day.to_string()),
         "edge": fact.edge.as_ref().map(edge_json),
         // **The record's fields, flat on the record.** They are not a
         // sub-object about some other kind of thing: they are what this record
@@ -50,7 +69,19 @@ pub(crate) fn fact_json(fact: &Fact) -> serde_json::Value {
         // Same rule: most claims are not derived from another claim, and a
         // reader must not have to branch on a missing key to learn that.
         "derived_from": fact.derived_from.as_ref().map(|a| a.to_string()),
-    })
+    });
+    // **Only when the day has passed, and only when somebody set one.** A key
+    // that said `false` on every ordinary claim would spend a reader's
+    // attention saying nothing, and absence must not read as staleness.
+    if fact.is_stale(as_of) {
+        rendered["stale"] = serde_json::json!(true);
+        rendered["stale_note"] = serde_json::json!(
+            "this reading is past the day its writer said it stays good. It is not false — it is \
+             unverified, and NOTHING IS COMING TO CHECK IT: no sweep and no reminder. Confirm it \
+             before acting on it"
+        );
+    }
+    rendered
 }
 
 /// **The receipt for a record somebody just wrote**: the same record with the

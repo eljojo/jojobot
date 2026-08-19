@@ -60,6 +60,19 @@ pub struct UpdateFactArgs {
     /// different edits.
     #[serde(default)]
     pub clear_fields: Option<Vec<String>>,
+    /// **The day after which this reading stops being good**, `YYYY-MM-DD`.
+    ///
+    /// It is a fact about jojobot's knowledge rather than about the world: a
+    /// pass that runs out on a date is a claim about the world and belongs in
+    /// the content. Past this day a read SAYS SO and **nothing else happens** —
+    /// no sweep, no reminder, nobody is coming to check it.
+    #[serde(default)]
+    pub stale_after: Option<String>,
+    /// **Take the day off**, leaving a claim that makes no promise about how
+    /// long it stays good. Its own flag, because leaving it alone and removing
+    /// it are two different edits.
+    #[serde(default)]
+    pub clear_stale_after: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -117,6 +130,12 @@ impl Jojobot {
             confirmed_by_user: args.confirmed_by_user.unwrap_or(false),
             fields: args.fields.unwrap_or_default(),
             clear_fields: args.clear_fields.unwrap_or_default(),
+            stale_after: args
+                .stale_after
+                .as_deref()
+                .map(|day| parse_date(Some(day)))
+                .transpose()?,
+            clear_stale_after: args.clear_stale_after.unwrap_or(false),
             edge: match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
                 Ok(edge) => edge,
                 Err(refused) => return Ok(refused),

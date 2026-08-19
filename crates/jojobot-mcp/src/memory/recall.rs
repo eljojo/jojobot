@@ -962,6 +962,95 @@ mod tests {
         assert!(
             !said.contains("person:alpha"),
             "a kind no carrier speaks for owes nothing, whatever it holds: {said}",
+    }
+
+    /// **A claim past the day somebody set says so when it is read.**
+    ///
+    /// It is not false and nothing here says it is: it is unverified, and a
+    /// reader is told to confirm it before acting. **Nothing fires** — no
+    /// sweep, no reminder; the claim says it when somebody looks.
+    ///
+    /// Three claims, because the negative alone proves nothing: one past its
+    /// day, one still inside it, and one nobody set a day on. ⚠️ **The second
+    /// and third are what stop this passing on a build that marks everything
+    /// stale, and on one that reads absence as staleness.**
+    #[tokio::test]
+    async fn a_claim_past_the_day_it_stays_good_says_so_and_the_others_read_clean() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        async fn claim(jojobot: &Jojobot, sid: &str, content: &str, stale_after: Option<&str>) {
+            capture_ok(
+                jojobot,
+                CaptureArgs {
+                    sid: Some(sid.to_string()),
+                    stale_after: stale_after.map(str::to_string),
+                    ..capture_args("person:alpha", content)
+                },
+            )
+            .await;
+        }
+        claim(
+            &jojobot,
+            &sid,
+            "the rent is 900 a month",
+            Some("2020-01-01"),
+        )
+        .await;
+        claim(
+            &jojobot,
+            &sid,
+            "the lease runs to the summer",
+            Some("2099-01-01"),
+        )
+        .await;
+        claim(&jojobot, &sid, "she keeps a spare key under the pot", None).await;
+
+        let read = jojobot
+            .recall(Parameters(RecallArgs {
+                sid: Some(sid.clone()),
+                ..of("person:alpha")
+            }))
+            .await
+            .expect("the read answers");
+        let facts = json_of(&read)["objects"][0]["facts"].clone();
+        let of_claim = |needle: &str| {
+            facts
+                .as_array()
+                .expect("the records")
+                .iter()
+                .find(|fact| fact["content"].as_str().is_some_and(|c| c.contains(needle)))
+                .unwrap_or_else(|| panic!("no record saying {needle}: {facts}"))
+                .clone()
+        };
+
+        let stale = of_claim("rent");
+        assert!(
+            stale["stale"] == serde_json::json!(true) && stale["stale_note"].is_string(),
+            "a claim past its day does not say so: {stale}",
+        );
+        assert_eq!(
+            stale["stale_after"], "2020-01-01",
+            "the day itself does not come back: {stale}",
+        );
+
+        let fresh = of_claim("lease");
+        assert!(
+            fresh["stale"].is_null(),
+            "a claim inside its window is reported as wanting a look: {fresh}",
+        );
+        assert_eq!(fresh["stale_after"], "2099-01-01");
+
+        // **Absence is not staleness.** Most claims never need looking at
+        // again, and a build that read a missing day as a passed one would make
+        // every record in the store suspect.
+        let ordinary = of_claim("spare key");
+        assert!(
+            ordinary["stale"].is_null(),
+            "a claim nobody set a day on is reported as wanting a look: {ordinary}",
+        );
+        assert!(
+            ordinary["stale_after"].is_null(),
+            "a claim nobody set a day on came back carrying one: {ordinary}",
         );
     }
 

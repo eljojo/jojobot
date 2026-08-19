@@ -112,6 +112,7 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
         refs: None,
         check_in: None,
         sid: Some(crate::harness::TEST_SID.into()),
+        stale_after: None,
     }
 }
 
@@ -151,6 +152,8 @@ pub(crate) fn update_args(address: &str) -> UpdateFactArgs {
         confirmed_by_user: None,
         shape: None,
         object: None,
+        stale_after: None,
+        clear_stale_after: None,
         sid: Some(crate::harness::TEST_SID.into()),
     }
 }

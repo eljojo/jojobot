@@ -1401,6 +1401,7 @@ mod tests {
             refs: Vec::new(),
             derived_from: None,
             inserted_at: None,
+            stale_after: None,
         }
     }
 
