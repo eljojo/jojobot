@@ -70,14 +70,47 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
     pulled
         .says("holds a full pass for the whole run")
         .says("person:milhouse")
-        .says("\"standing\":\"live\"")
+        .says("\"liveness\":\"live\"")
         .says("\"provenance\":\"testimony\"");
+
+    // ── the hedge the operator wrote, and it must survive the block ────────
+    //
+    // ⭐ **A pass somebody THINKS they have is not a pass they have.** The
+    // operator said it and said he was unsure, and both halves are recorded —
+    // so a session reading this block to tell him he is covered has to be able
+    // to see the second one. A dropped hedge turns musing into a fact at the
+    // exact moment somebody acts on it.
+    let unsure = story.session().await;
+    unsure.add("person:nelson", "Nelson").await;
+    unsure
+        .hedged_with(
+            "person:nelson",
+            "thinks he still has a pass from last year",
+            json!({ "admits": "event:winter-fest", "tier": "full" }),
+        )
+        .await;
+    unsure
+        .wrap("wrote down the one he was not sure about")
+        .await;
+
+    let with_the_hedge = story.session().await.recall("event:winter-fest").await;
+    // **Both keys, on the same object, in one read.** They answer different
+    // questions — how sure the operator was, and whether the pass is in force
+    // on the day — and asserting either alone passes on a build that still
+    // carries one word for both.
+    with_the_hedge
+        .says("thinks he still has a pass")
+        .says("\"standing\":\"open\"")
+        .says("\"liveness\":\"live\"");
+    // …and the claim nobody hedged says so under the same key, so this cannot
+    // pass on a build that marks everything open.
+    with_the_hedge.says("\"standing\":\"settled\"");
 
     // The one that ran out is here and says so, rather than being dropped or
     // being served as though it still worked.
     pulled
         .says("held a day pass")
-        .says("\"standing\":\"lapsed\"");
+        .says("\"liveness\":\"lapsed\"");
 
     // ── and the one that was taken back ────────────────────────────────────
     // **A pass somebody withdrew must not read as one they hold.** The block

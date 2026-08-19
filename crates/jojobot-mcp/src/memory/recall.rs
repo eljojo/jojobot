@@ -371,13 +371,29 @@ fn held_item(held: &entitlement::Held<'_>) -> serde_json::Value {
     let field = |key: &str| held.fact.fields.get(key).cloned();
     let mut item = serde_json::json!({
         "holder": held.fact.subject.to_string(),
-        "standing": match held.standing {
+        // **Whether this record is in force on the day asked about**, which is
+        // a different question from how sure anybody was — and it is spelled
+        // differently for that reason. The two shared the word `standing` and
+        // arrived in one body, so a reader had no way to tell which question an
+        // answer was answering.
+        //
+        // `related` is not a weaker `live`: it is the answer that nothing
+        // admits anybody at all, and this record points at the thing through
+        // some other declared key. Said here because inferring that from the
+        // token is how a reader gets it wrong.
+        "liveness": match held.standing {
             entitlement::Standing::Live => "live",
             entitlement::Standing::Lapsed => "lapsed",
             entitlement::Standing::Related => "related",
         },
         "claim": held.fact.content,
         "provenance": held.fact.provenance.as_token(),
+        // **How sure the operator was, which this block used to drop.** A pass
+        // somebody THINKS they hold and one they confirmed are the same
+        // sentence otherwise — and this block is what a session reads to tell
+        // them they are covered, so a lost hedge becomes a fact at the moment
+        // somebody acts on it.
+        "standing": held.fact.standing.as_token(),
         "address": held.fact.address().to_string(),
     });
     for key in [
@@ -633,9 +649,12 @@ impl Jojobot {
                        block naming the records that point at it, best first — what admits \
                        somebody to it and is good on the day, then what admits them and has \
                        lapsed, and, only when nothing admits anybody at all, whatever else \
-                       points here through a declared key. Each one says who holds it, how it \
-                       stands, and what backs it, because a claim somebody made and a claim an \
-                       assistant worked out are not the same claim to act on. It says nothing \
+                       points here through a declared key. Each one says who holds it, whether \
+                       it is in force on the day (liveness: live, lapsed, or related when \
+                       nothing admits anybody at all), what backs it, and HOW SURE THE OPERATOR \
+                       WAS (standing) — because a claim somebody made and a claim an assistant \
+                       worked out are not the same claim to act on, and neither are a pass \
+                       somebody confirmed and one they only think they hold. It says nothing \
                        about whether anybody may go: that is a judgement and jojobot makes \
                        none. Nothing pointing here at all and nothing gating it are different \
                        answers and the block says which. It is bounded, and when it does not \

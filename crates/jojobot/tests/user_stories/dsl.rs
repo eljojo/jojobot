@@ -825,6 +825,25 @@ impl Session {
         address_of(&body)
     }
 
+    /// **A hedge that also carries keys.** Same two halves as [`Session::hedged`]
+    /// — testimony for who said it, `open` for how sure they were — for a claim
+    /// that is also a record of something, which `hedged` cannot write because
+    /// it takes no fields.
+    pub async fn hedged_with(&self, subject: &str, content: &str, fields: Value) -> String {
+        let body = self
+            .write(
+                &format!("a hedged record about {subject}"),
+                "capture",
+                json!({
+                    "subject": subject, "content": content,
+                    "provenance": "testimony", "standing": "open",
+                    "fields": fields,
+                }),
+            )
+            .await;
+        address_of(&body)
+    }
+
     /// The operator confirms a claim that was standing as a hypothesis, and it
     /// becomes settled. Promotion is gated on exactly this — `confirmed_by_user`
     /// is refused unless it is true, so nothing can promote itself.
