@@ -1739,6 +1739,38 @@ pub mod contract {
                 .is_empty(),
             "a key that was pointed somewhere else still points here",
         );
+
+        // **Every status comes back, retracted included**, because this read
+        // serves history as often as current truth. **A reader of current truth
+        // has to filter for itself**, and it can only do that if the store says
+        // what state each record is in rather than deciding for it.
+        let withdrawn = capture(
+            store,
+            NewFact {
+                fields: [("admits".to_string(), gate.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(bystander.clone(), "was given a pass", date(2026, 8, 1))
+            },
+        )
+        .await;
+        store
+            .retract(&withdrawn.address(), Some("never issued"), date(2026, 8, 2))
+            .await
+            .expect("the retraction lands");
+        let after = store
+            .referring_to(&gate)
+            .await
+            .expect("a store answers who points here");
+        let taken_back = after
+            .iter()
+            .find(|fact| fact.id == withdrawn.id)
+            .unwrap_or_else(|| panic!("the withdrawn record is not in the answer: {after:?}"));
+        assert_eq!(
+            taken_back.status,
+            FactStatus::Retracted,
+            "the answer hides what state a record is in, so no reader above can filter on it",
+        );
     }
 
     pub async fn a_child_names_its_parent_and_reads_back<M: Memory>(store: &M) {

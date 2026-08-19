@@ -79,6 +79,27 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
         .says("held a day pass")
         .says("\"standing\":\"lapsed\"");
 
+    // ── and the one that was taken back ────────────────────────────────────
+    // **A pass somebody withdrew must not read as one they hold.** The block
+    // arrives unasked on every read, so a claim the operator took back would
+    // otherwise tell every later session that they are covered — which costs
+    // far more than saying nothing.
+    let withdrawn = later
+        .event_with(
+            "person:bart",
+            "was promised a pass by the organisers",
+            json!({ "admits": "event:winter-fest", "tier": "guest" }),
+            &[],
+        )
+        .await;
+    later
+        .retract(&withdrawn, "the organisers never issued it")
+        .await;
+    let after = later.recall("event:winter-fest").await;
+    after
+        .says("holds a full pass for the whole run")
+        .never_says("was promised a pass by the organisers");
+
     // ── and the other silence, which is a different answer ──────────────────
     let nothing = later.recall("place:moes").await;
     nothing

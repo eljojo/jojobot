@@ -108,6 +108,7 @@ pub fn ranked<'a>(
 ) -> Vec<Held<'a>> {
     let admitting: Vec<Held<'a>> = facts
         .iter()
+        .filter(|fact| stands(fact))
         .filter(|fact| points_at(fact, ADMITS, target))
         .map(|fact| Held {
             fact,
@@ -121,6 +122,7 @@ pub fn ranked<'a>(
     let mut held = if admitting.is_empty() && widen == Widen::WhenEmpty {
         facts
             .iter()
+            .filter(|fact| stands(fact))
             .filter(|fact| {
                 keys.iter()
                     .any(|key| key != ADMITS && points_at(fact, key, target))
@@ -141,6 +143,17 @@ pub fn ranked<'a>(
             .then_with(|| a.fact.id.0.cmp(&b.fact.id.0))
     });
     held
+}
+
+/// **Does this record still stand?**
+///
+/// The read behind this answers with records of every status, because it serves
+/// history as often as current truth. **This is a reader of current truth**, so
+/// a claim somebody took back or replaced is not something anybody holds — and
+/// of everything this ranking can get wrong, telling somebody they are covered
+/// when the record was withdrawn is the one that costs most.
+fn stands(fact: &Fact) -> bool {
+    fact.status == crate::memory::FactStatus::Active
 }
 
 /// Testimony sorts before inference, and this is the number that says so.
@@ -275,6 +288,54 @@ mod tests {
                 ("f1", Standing::Lapsed),
             ],
             "live first, testimony ahead of inference, and the lapsed one kept"
+        );
+    }
+
+    /// **A claim that was taken back does not get anybody in.**
+    ///
+    /// The read this ranking is fed answers with records of every status,
+    /// superseded included, because it serves history as often as current
+    /// truth. **So the filtering is this function's job**, and a claim somebody
+    /// retracted arriving as an entitlement they hold is the one failure that
+    /// costs more than saying nothing: a reader told they are covered acts on
+    /// it.
+    ///
+    /// **The active claim in the same read is what makes this mean anything.**
+    /// Without it the case passes against a ranking that returns nothing at
+    /// all.
+    #[test]
+    fn a_retracted_or_superseded_claim_is_not_something_anybody_holds() {
+        let target = EntityId("event:winter-fest".into());
+        let with_status = |id: &str, holder: &str, status: FactStatus| Fact {
+            status,
+            ..holding(
+                id,
+                holder,
+                ADMITS,
+                "event:winter-fest",
+                (None, None),
+                Provenance::Testimony,
+            )
+        };
+        let facts = vec![
+            with_status("f1", "person:milhouse", FactStatus::Retracted),
+            with_status("f2", "person:otto", FactStatus::Superseded),
+            with_status("f3", "person:bart", FactStatus::Active),
+        ];
+
+        assert_eq!(
+            ranked(
+                &facts,
+                &target,
+                date(2026, 8, 19),
+                &keys(),
+                Widen::WhenEmpty
+            )
+            .iter()
+            .map(|held| (held.fact.id.0.as_str(), held.standing))
+            .collect::<Vec<_>>(),
+            vec![("f3", Standing::Live)],
+            "a claim nobody took back is what somebody holds, and the other two are not",
         );
     }
 
