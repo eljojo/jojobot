@@ -105,8 +105,10 @@ enum Leaves {
     /// rather than a suggestion, so this is not a shape a schema can be vague
     /// about.
     ///
-    /// No migration has this shape yet either — see [`Leaves::NoRows`].
-    #[cfg_attr(not(test), expect(dead_code))]
+    /// **The lineage walk is what made this shape real**: a claim's pointer at
+    /// its source is a column pair the store had to select on, and the index
+    /// over that pair is the first migration here that leaves an index rather
+    /// than a table or a column.
     Index(&'static str, &'static str),
     /// The type this statement leaves that column declared as — the shape of a
     /// statement that changes a column rather than adding one.
@@ -308,6 +310,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: "0028_fact_stale_after",
         sql: include_str!("../../migrations/0028_fact_stale_after.sql"),
         leaves: Leaves::Column("fact", "stale_after"),
+    },
+    Migration {
+        version: "0029_fact_by_source",
+        sql: include_str!("../../migrations/0029_fact_by_source.sql"),
+        leaves: Leaves::Index("fact", "by_source"),
     },
 ];
 
@@ -704,6 +711,7 @@ mod tests {
         "0026_session_timezone",
         "0027_fact_inserted_at",
         "0028_fact_stale_after",
+        "0029_fact_by_source",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

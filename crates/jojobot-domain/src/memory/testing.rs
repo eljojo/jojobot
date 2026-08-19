@@ -674,6 +674,22 @@ impl Memory for InMemoryMemory {
         // rewrites it, because that is what decides which of the patch's clears
         // is a write and which names a key this record never had.
         let carried = edited.fields.clone();
+        // A source named by an edit faces the capture rule: a link at a claim
+        // nobody wrote reads as evidence and leads nowhere.
+        if let Some(source) = &patch.derived_from
+            && !facts
+                .iter()
+                .any(|f| f.home == source.home && f.id == source.local)
+        {
+            return Err(MemoryError::UnknownFact {
+                attempted: source.to_string(),
+                nearest: facts
+                    .iter()
+                    .filter(|f| f.home == source.home)
+                    .map(|f| f.address().to_string())
+                    .collect(),
+            });
+        }
         apply_fact_patch(&mut edited, &patch)?;
         // **The thing's fields as they will stand, against the thing's fields
         // as they stand now** — the same guard the real store runs, so the two
@@ -1662,6 +1678,97 @@ pub mod contract {
         assert_eq!(
             taken_back.retracted.inserted_at, watched.inserted_at,
             "taking a claim back re-stamped it with the moment somebody took it back",
+        );
+    }
+
+    /// **Lineage, walked from the source's end.**
+    ///
+    /// A claim names what it was worked out from; this is the question nobody
+    /// could ask — **what was built on this** — and it is asked the moment a
+    /// claim is taken back.
+    ///
+    /// Three legs, and the second two are what make the first mean anything: a
+    /// claim derived from this one is found · a claim about the same subject
+    /// that was derived from nothing is NOT found there · and **a claim that
+    /// stops resting on it stops being found**, which no test that only adds
+    /// records can catch.
+    pub async fn a_claims_lineage_is_walkable_from_its_source<M: Memory>(store: &M) {
+        let subject = EntityId::new(EntityKind::PERSON, "contract-lineage");
+        add(
+            store,
+            NewEntity::new(subject.clone(), "Contract Lineage", "contract-fixture"),
+        )
+        .await;
+        let source = capture(
+            store,
+            NewFact::about(
+                subject.clone(),
+                "the ferry moved to the north pier",
+                date(2026, 4, 1),
+            ),
+        )
+        .await;
+        let other = capture(
+            store,
+            NewFact::about(
+                subject.clone(),
+                "the bridge is closed on Sundays",
+                date(2026, 4, 1),
+            ),
+        )
+        .await;
+        let built = capture(
+            store,
+            NewFact {
+                derived_from: Some(source.address()),
+                ..NewFact::about(
+                    subject.clone(),
+                    "so the crossing is longer",
+                    date(2026, 4, 2),
+                )
+            },
+        )
+        .await;
+
+        let standing_on = |address: FactAddress| async move {
+            store
+                .built_on(&address)
+                .await
+                .expect("a store answers what was built on a claim")
+                .into_iter()
+                .map(|fact| fact.address().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            standing_on(source.address()).await,
+            vec![built.address().to_string()],
+            "the claim built on this one is not found from its source's end",
+        );
+        assert!(
+            standing_on(other.address()).await.is_empty(),
+            "a claim nobody built on answers with the claims built on something else",
+        );
+
+        // **The leg that only a change can prove.** Point the derived claim at
+        // the other source and it must leave the first one's answer — a walk
+        // that read the pointer once and never again would keep it there.
+        edit(
+            store,
+            &built.address(),
+            FactPatch {
+                derived_from: Some(other.address()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(
+            standing_on(source.address()).await.is_empty(),
+            "a claim that stopped resting on this one is still found under it",
+        );
+        assert_eq!(
+            standing_on(other.address()).await,
+            vec![built.address().to_string()],
+            "…and it is not found under the source it now names",
         );
     }
 
@@ -7859,6 +7966,7 @@ pub mod contract {
         every_kind_holds_facts(store).await;
 
         a_claim_carries_when_it_was_taken_in(store).await;
+        a_claims_lineage_is_walkable_from_its_source(store).await;
         referring_to_answers_from_the_far_end(store).await;
         a_child_names_its_parent_and_reads_back(store).await;
         children_are_handles_and_one_level_deep(store).await;

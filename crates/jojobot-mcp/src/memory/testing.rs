@@ -136,6 +136,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
         history_most: None,
         values: None,
         values_most: None,
+        built_on: None,
     }
 }
 
@@ -154,6 +155,8 @@ pub(crate) fn update_args(address: &str) -> UpdateFactArgs {
         object: None,
         stale_after: None,
         clear_stale_after: None,
+        derived_from: None,
+        clear_derived_from: None,
         sid: Some(crate::harness::TEST_SID.into()),
     }
 }

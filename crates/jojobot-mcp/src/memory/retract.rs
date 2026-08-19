@@ -67,6 +67,14 @@ impl Jojobot {
             Ok(taken_back) => taken_back,
             Err(e) => return memory_declined("retract", e),
         };
+        // **What was built on it, said at the moment it is taken back.** That
+        // is when the question is asked and it is the moment a caller can still
+        // act on the answer — nothing here changes those claims, because what
+        // to do about a claim resting on a withdrawn one is a judgement.
+        let standing_on = match self.memory.built_on(&address).await {
+            Ok(standing_on) => standing_on,
+            Err(e) => return memory_declined("retract", e),
+        };
         self.beat("retract", &address.to_string(), args.sid.as_deref())
             .await;
         json_result(&serde_json::json!({
@@ -75,6 +83,18 @@ impl Jojobot {
             // account alone would not prove the mark landed.
             "retracted": fact_json(&taken_back.retracted),
             "retraction": fact_json(&taken_back.record),
+            // **Empty is the ordinary case and it is still here**, so a caller
+            // reads "nothing rests on this" rather than inferring it from a
+            // missing key.
+            "built_on_this": standing_on
+                .iter()
+                .map(|fact| serde_json::json!({
+                    "address": fact.address().to_string(),
+                    "subject": fact.subject.as_str(),
+                    "content": fact.content,
+                    "status": fact.status.as_token(),
+                }))
+                .collect::<Vec<_>>(),
         }))
     }
 }
@@ -83,6 +103,86 @@ impl Jojobot {
 mod tests {
     use super::*;
     use crate::harness::*;
+
+    /// **Taking a claim back says what was built on it.**
+    ///
+    /// That question is asked at exactly this moment and had no answer at all:
+    /// the pointer runs from a claim to its source and nothing could follow it
+    /// the other way. **Nothing here changes those claims** — what to do about
+    /// a claim resting on a withdrawn one is a judgement, and jojobot makes
+    /// none — but a caller cannot make it without being told they exist.
+    ///
+    /// **Paired with a retraction that rests under nothing**, which must come
+    /// back with an empty list rather than with the other claim: without that
+    /// half this passes against a build that names every claim in the store.
+    #[tokio::test]
+    async fn taking_a_claim_back_names_what_was_built_on_it() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        let source = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                ..capture_args("person:alpha", "the ferry moved to the north pier")
+            },
+        )
+        .await;
+        let unrelated = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                ..capture_args("person:alpha", "the bridge is closed on Sundays")
+            },
+        )
+        .await;
+        let built = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                derived_from: Some(address_of(&source)),
+                ..capture_args("person:alpha", "so the crossing is longer")
+            },
+        )
+        .await;
+
+        let taken_back = jojobot
+            .retract(Parameters(RetractArgs {
+                address: address_of(&source),
+                reason: Some("the ferry moved back".into()),
+                sid: Some(sid.clone()),
+            }))
+            .await
+            .expect("the retraction lands");
+        let body = json_of(&taken_back);
+        assert_eq!(
+            body["built_on_this"]
+                .as_array()
+                .expect("the claims standing on it")
+                .iter()
+                .map(|claim| claim["address"].as_str().expect("an address"))
+                .collect::<Vec<_>>(),
+            vec![address_of(&built)],
+            "taking a claim back does not say what was built on it: {body}",
+        );
+
+        // The other retraction: nothing rests on it, and the answer says so
+        // rather than leaving the caller to infer it from a missing key.
+        let alone = jojobot
+            .retract(Parameters(RetractArgs {
+                address: address_of(&unrelated),
+                reason: Some("it reopened".into()),
+                sid: Some(sid),
+            }))
+            .await
+            .expect("the retraction lands");
+        let body = json_of(&alone);
+        assert_eq!(
+            body["built_on_this"].as_array().map(Vec::len),
+            Some(0),
+            "a claim nothing rests on names claims anyway: {body}",
+        );
+    }
+
     use crate::memory::testing::*;
 
     /// Capture a record and hand back its address.

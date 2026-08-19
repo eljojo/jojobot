@@ -1,0 +1,12 @@
+-- Walk a claim's lineage from the other end.
+--
+-- A claim may name the one claim it was worked out from, and the row has held
+-- that pointer since the table was made. Nothing could ask the question the
+-- other way: which claims were built on this one. So taking a claim back
+-- reached nothing standing on it, and a reader could not tell whether anything
+-- was.
+--
+-- The pointer is two columns, the source's home and its local id, so the index
+-- is over the pair: a partial index on the home alone would answer "something
+-- in that page" and make the reader filter what the store can select.
+CREATE INDEX by_source ON fact (derived_from, derived_from_id);

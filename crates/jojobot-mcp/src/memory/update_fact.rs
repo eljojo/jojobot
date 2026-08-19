@@ -73,6 +73,18 @@ pub struct UpdateFactArgs {
     /// it are two different edits.
     #[serde(default)]
     pub clear_stale_after: Option<bool>,
+    /// **The claim this one was worked out from**, as its address
+    /// `kind:slug#local-id`.
+    ///
+    /// **Lineage is learned late**, so it is set here as well as at capture: a
+    /// claim is often written before anybody notices what it rests on. The
+    /// named claim must exist.
+    #[serde(default)]
+    pub derived_from: Option<String>,
+    /// **Take the lineage pointer off.** Its own flag, because leaving it alone
+    /// and removing it are two different edits.
+    #[serde(default)]
+    pub clear_derived_from: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -136,6 +148,12 @@ impl Jojobot {
                 .map(|day| parse_date(Some(day)))
                 .transpose()?,
             clear_stale_after: args.clear_stale_after.unwrap_or(false),
+            derived_from: args
+                .derived_from
+                .as_deref()
+                .map(|address| FactAddress::parse(address).map_err(memory_error))
+                .transpose()?,
+            clear_derived_from: args.clear_derived_from.unwrap_or(false),
             edge: match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
                 Ok(edge) => edge,
                 Err(refused) => return Ok(refused),

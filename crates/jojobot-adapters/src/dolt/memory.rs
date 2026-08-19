@@ -914,6 +914,25 @@ impl Memory for DoltMemory {
         // patch rewrites it, because that is what decides which of the patch's
         // clears is a write and which names a key this record never had.
         let carried = fact.fields.clone();
+        // **A source named by an EDIT faces the rule a source named at capture
+        // faces.** Lineage is learned late, so it is set here too — and a
+        // pointer at a claim nobody wrote would be a link that reads as
+        // evidence and leads nowhere.
+        if let Some(source) = &patch.derived_from {
+            let index = Self::index(&mut tx).await?;
+            if !index.iter().any(|e| e.id == source.home) {
+                return Err(MemoryError::UnknownEntity {
+                    attempted: source.home.to_string(),
+                    nearest: guard::screen(&source.home, &[], &index),
+                });
+            }
+            if Self::read_fact(&mut tx, source).await?.is_none() {
+                return Err(MemoryError::UnknownFact {
+                    attempted: source.to_string(),
+                    nearest: Self::addresses_in(&mut tx, &source.home).await?,
+                });
+            }
+        }
         apply_fact_patch(&mut fact, &patch)?;
         // **The thing's fields as they will stand, against the thing's fields
         // as they stand now.** A write may not drop a thing below a type it
@@ -993,6 +1012,29 @@ impl Memory for DoltMemory {
         Self::append_writes(&mut tx, &record.home, &record.id, written_keys(&record)).await?;
         tx.commit().await.map_err(store)?;
         Ok(Retraction { retracted, record })
+    }
+
+    /// **Selected on the pointer, because the store has an index for it.** The
+    /// default reads every entity's records to answer this; the pair of columns
+    /// the pointer lives in carries an index, so the claims standing on one
+    /// claim are a query.
+    async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
+        validate_subject(&source.home)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let rows = sqlx::query(&format!(
+            "SELECT {FACT_COLUMNS} FROM fact WHERE derived_from = ? AND derived_from_id = ? \
+             ORDER BY entity, id"
+        ))
+        .bind(source.home.as_str())
+        .bind(source.local.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        // **Assembled by the one reader every other read here uses**, so a
+        // claim reached through its lineage is the same record a recall gives.
+        let standing_on = Self::assemble(&mut tx, &rows).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(standing_on)
     }
 
     /// **Targeted, because the default reads every entity.** A field write

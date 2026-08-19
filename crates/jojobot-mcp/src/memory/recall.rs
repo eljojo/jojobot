@@ -195,6 +195,15 @@ pub struct RecallArgs {
     /// you reach the far end — deliberately, rather than by surprise.
     #[serde(default)]
     pub history_most: Option<u32>,
+    /// **The claims worked out from one claim**, by its address
+    /// `kind:slug#local-id` — lineage walked from the source's end.
+    ///
+    /// A claim names what it rests on; this asks the other way, which is the
+    /// question somebody has the moment a claim is taken back. **Records of
+    /// every status come back**, because a claim that was itself withdrawn is
+    /// part of the answer to *what did we build on this*.
+    #[serde(default)]
+    pub built_on: Option<String>,
     /// **The values already recorded under one key**, across the objects this
     /// call selected, each with how many of them hold it — most used first.
     ///
@@ -803,8 +812,26 @@ impl Jojobot {
                 widen,
             ));
         }
+        // **Lineage, when the call asked for it.** It is a claim-level question
+        // rather than an object-level one, so it rides beside the objects
+        // rather than inside them.
+        let standing_on = match &args.built_on {
+            None => None,
+            Some(address) => {
+                let source = FactAddress::parse(address).map_err(memory_error)?;
+                match self.memory.built_on(&source).await {
+                    Ok(claims) => Some(serde_json::json!({
+                        "source": source.to_string(),
+                        "count": claims.len(),
+                        "claims": claims.iter().map(fact_json).collect::<Vec<_>>(),
+                    })),
+                    Err(e) => return memory_declined("recall", e),
+                }
+            }
+        };
         let body = serde_json::json!({
             "count": found.len(),
+            "built_on": standing_on,
             // **What the selected things already hold under one key**, when the
             // call named one. It is a read of the store and never a rule: a
             // caller picks a value that is in use, or writes one that is not,
@@ -853,6 +880,7 @@ mod tests {
             history_most: None,
             values: None,
             values_most: None,
+            built_on: None,
         }
     }
 
@@ -2283,6 +2311,7 @@ mod tests {
             history_most: None,
             values: None,
             values_most: None,
+            built_on: None,
         }
     }
 }

@@ -463,6 +463,21 @@ pub struct FactPatch {
     /// A key that is not on the record is not an error. The patch says what
     /// the record must not carry afterwards, and it does not.
     pub clear_fields: Vec<String>,
+    /// **The claim this one was worked out from** — see
+    /// [`Fact::derived_from`].
+    ///
+    /// **An edit can set it, because lineage is learned late.** A claim is
+    /// often written before anybody notices what it rests on, and this rail
+    /// fixes the source in place rather than appending a correction beside it:
+    /// a pointer that could only be set at capture would decay into a graph
+    /// that is right about the claims somebody happened to understand first.
+    ///
+    /// The named claim must exist, exactly as it must at capture.
+    pub derived_from: Option<FactAddress>,
+    /// **Take the lineage pointer off**, leaving a claim that rests on nothing
+    /// recorded. Its own flag rather than an empty value, for the reason the
+    /// cleared keys are their own list.
+    pub clear_derived_from: bool,
     /// **A new day to look again on** — see [`Fact::stale_after`]. It is the
     /// caller's judgement about how long a reading stays trustworthy, so a
     /// caller may move it; the stamp that says when jojobot took the record in
@@ -1284,6 +1299,13 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     // both meant the day it named.
     if patch.clear_stale_after {
         fact.stale_after = None;
+    }
+    // **Cleared before set**, the same order every other pair here uses.
+    if patch.clear_derived_from {
+        fact.derived_from = None;
+    }
+    if let Some(source) = &patch.derived_from {
+        fact.derived_from = Some(source.clone());
     }
     if let Some(day) = patch.stale_after {
         fact.stale_after = Some(day);
@@ -2429,6 +2451,35 @@ pub trait Memory: Send + Sync {
 
     /// Every entity jojobot knows, optionally filtered to one kind.
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError>;
+    /// **Which claims were worked out from this one** — lineage, walked from
+    /// the source's end.
+    ///
+    /// A claim names the one claim it came from, and that pointer could only be
+    /// followed downward: from a claim to what it rests on. This is the other
+    /// direction, and it is the question somebody asks the moment a claim is
+    /// taken back — **what did we build on this** — which had no answer at all.
+    ///
+    /// **Records of every status, retracted included**, exactly as the other
+    /// reads on this port answer: a reader deciding what is true now filters
+    /// for itself, and a reader asking what rested on a withdrawn claim needs
+    /// the withdrawn ones most.
+    ///
+    /// Defaulted off [`list_entities`](Memory::list_entities) and
+    /// [`recall`](Memory::recall): an adapter that can select on the pointer
+    /// overrides it, and one that cannot is still correct.
+    async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
+        validate_subject(&source.home)?;
+        let mut standing_on = Vec::new();
+        for entity in self.list_entities(None).await? {
+            for fact in self.recall(&entity.id).await? {
+                if fact.derived_from.as_ref() == Some(source) {
+                    standing_on.push(fact);
+                }
+            }
+        }
+        Ok(standing_on)
+    }
+
     /// **Which records point at this thing through a field**, whatever key
     /// they used.
     ///
