@@ -67,6 +67,21 @@ pub(crate) fn handler() -> Jojobot {
     )
 }
 
+/// **A handler told which carriers answer for a due moment** — how a test puts
+/// a carrier the read has never seen in front of it.
+pub(crate) fn handler_carrying(
+    carriers: Vec<Box<dyn jojobot_domain::attention::Carrier>>,
+) -> Jojobot {
+    Jojobot::carrying(
+        Arc::new(InMemoryMemory::booted()),
+        Arc::new(SpySearch::default()),
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(InMemorySessions::new()),
+        seeded_registry(),
+        carriers,
+    )
+}
+
 /// A handler whose search port is a spy the test keeps a handle on.
 pub(crate) fn handler_with(spy: Arc<SpySearch>) -> Jojobot {
     Jojobot::new(

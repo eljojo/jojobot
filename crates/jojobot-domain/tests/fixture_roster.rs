@@ -181,6 +181,8 @@ const ROSTER: &[&str] = &[
     "thing:upsilon",
     "topic:widgets",
     "work:first-mix",
+    "work:phi",
+    "work:sigma",
 ];
 
 /// Every file in the workspace that can carry a handle.

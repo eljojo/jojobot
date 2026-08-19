@@ -124,6 +124,18 @@ pub struct Jojobot {
     /// and most clients open a fresh one per tool call, so a registry living
     /// here alone would forget each handle the moment it handed it out.
     registry: Arc<sid::SessionRegistry>,
+    /// **The carriers the owed read asks when a thing falls due.**
+    ///
+    /// Held here rather than built inside the read, for one reason: a read that
+    /// makes its own list can only ever be asked about the carriers this build
+    /// ships, so nothing can show that a carrier it has never seen appears in
+    /// its answer untouched. **That demonstration is the only difference
+    /// between a general read and one that looks general.**
+    ///
+    /// It is a field and not a registry: the narrowest thing that lets a caller
+    /// hand the read a carrier is a list it was given, and a plug-in mechanism
+    /// would be machinery guarding a case nobody has.
+    carriers: Arc<Vec<Box<dyn jojobot_domain::attention::Carrier>>>,
 }
 
 /// **The verbs still living in this file.** Every context that has moved out
@@ -157,6 +169,29 @@ impl Jojobot {
         sessions: Arc<dyn Sessions>,
         registry: Arc<sid::SessionRegistry>,
     ) -> Self {
+        Self::carrying(
+            memory,
+            search,
+            mailboxes,
+            sessions,
+            registry,
+            jojobot_domain::attention::shipped(),
+        )
+    }
+
+    /// The same handler, told which carriers answer for a due moment.
+    ///
+    /// [`Jojobot::new`] is this with the ones the software ships, which is what
+    /// production wants. A caller passing its own is how a carrier the read has
+    /// never seen gets in front of it.
+    pub fn carrying(
+        memory: Arc<dyn Memory>,
+        search: Arc<dyn Search>,
+        mailboxes: Arc<dyn Mailboxes>,
+        sessions: Arc<dyn Sessions>,
+        registry: Arc<sid::SessionRegistry>,
+        carriers: Vec<Box<dyn jojobot_domain::attention::Carrier>>,
+    ) -> Self {
         Self {
             tool_router: Self::tool_router(),
             memory,
@@ -164,7 +199,16 @@ impl Jojobot {
             mailboxes,
             sessions,
             registry,
+            carriers: Arc::new(carriers),
         }
+    }
+
+    /// What this handler asks when it needs to know if something is owed.
+    pub(crate) fn carriers(&self) -> Vec<&dyn jojobot_domain::attention::Carrier> {
+        self.carriers
+            .iter()
+            .map(std::convert::AsRef::as_ref)
+            .collect()
     }
 
     // ── sessions ────────────────────────────────────────────────────────────

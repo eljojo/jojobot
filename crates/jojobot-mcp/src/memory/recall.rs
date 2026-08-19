@@ -594,9 +594,7 @@ impl Jojobot {
             // this line growing a branch — and a kind no carrier speaks for
             // owes nothing, which is what keeps a person out of an answer about
             // what is late.
-            let carriers = attention::shipped();
-            let asked: Vec<&dyn attention::Carrier> =
-                carriers.iter().map(std::convert::AsRef::as_ref).collect();
+            let asked = self.carriers();
             found.retain(|object| {
                 attention::owed(&asked, object.entity.id.kind_token(), &object.fields)
                     .owed_on(as_of)
@@ -641,6 +639,115 @@ mod tests {
             history: None,
             history_most: None,
         }
+    }
+
+    /// **A carrier the read has never seen appears in the same answer, and the
+    /// read does not change.**
+    ///
+    /// This is the only thing that tells a general read from one that looks
+    /// general. The shape alone proves nothing: a read that asks a list it
+    /// built itself has exactly the same code as one that asks a list it was
+    /// given, and only a carrier from outside can say which it is.
+    ///
+    /// **The stub lives here and nowhere else.** Nothing in the software ships
+    /// it, nothing registers it, and the read has no branch for its kind — it
+    /// is handed to the handler and turns up in the answer.
+    ///
+    /// **Paired with the negative in the same read**: a thing of a kind NO
+    /// carrier speaks for stays out, or this passes against a read that keeps
+    /// everything.
+    #[tokio::test]
+    async fn a_carrier_the_read_never_heard_of_answers_in_the_same_read() {
+        /// A promise falls due on the day it says it does. Two lines of
+        /// arithmetic that share nothing with a loop's.
+        struct Promises;
+
+        impl attention::Carrier for Promises {
+            fn kind(&self) -> &str {
+                "work"
+            }
+
+            fn due(&self, fields: &std::collections::BTreeMap<String, String>) -> attention::Due {
+                match fields.get("promised_for").map(|held| held.trim().parse()) {
+                    Some(Ok(day)) => attention::Due::On(day),
+                    Some(Err(_)) => attention::Due::Unreadable,
+                    None => attention::Due::Never,
+                }
+            }
+        }
+
+        let mut carriers = attention::shipped();
+        carriers.push(Box::new(Promises));
+        let jojobot = crate::harness::handler_carrying(carriers);
+        let sid = writing_as(&jojobot);
+
+        // The stub's kind, one owed and one not — the whole answer turns on the
+        // carrier's own arithmetic, which the read has never read.
+        for (slug, promised_for) in [("phi", "2026-08-01"), ("sigma", "2026-09-30")] {
+            ensure(&jojobot, &format!("work:{slug}")).await;
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    sid: Some(sid.clone()),
+                    fields: Some(
+                        [("promised_for".to_string(), promised_for.to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args(&format!("work:{slug}"), "a promise")
+                },
+            )
+            .await;
+        }
+        // And a thing of a kind nothing speaks for, carrying the same key.
+        ensure(&jojobot, "person:alpha").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                fields: Some(
+                    [("promised_for".to_string(), "2026-08-01".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("person:alpha", "a person is never late")
+            },
+        )
+        .await;
+
+        let owed = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    sid: Some(sid),
+                    // **One selection reaching both kinds**, which is what makes
+                    // this the SAME answer rather than two reads compared.
+                    fields: Some(vec![KeyFilterArgs {
+                        key: "promised_for".into(),
+                        value: None,
+                        compare: None,
+                        scope: None,
+                    }]),
+                    overdue: Some(OverdueArgs {
+                        as_of: Some("2026-08-19".into()),
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let said = owed.to_string();
+        assert!(
+            said.contains("work:phi"),
+            "the stub carrier's own due moment reached the answer: {said}",
+        );
+        assert!(
+            !said.contains("work:sigma"),
+            "…and its arithmetic decided, rather than everything of that kind coming back: {said}",
+        );
+        assert!(
+            !said.contains("person:alpha"),
+            "a kind no carrier speaks for owes nothing, whatever it holds: {said}",
+        );
     }
 
     /// A rhythm under something, holding a whole schedule.
