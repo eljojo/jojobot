@@ -194,20 +194,30 @@ pub struct RecallArgs {
     /// you reach the far end — deliberately, rather than by surprise.
     #[serde(default)]
     pub history_most: Option<u32>,
-    /// **Keep only the rhythms that have gone quiet**, as of a date.
+    /// **Keep only what is OWED as of a date** — what has a due moment that
+    /// day has reached.
     ///
-    /// A rhythm is next due a cadence after the date its cycle counts from, and
-    /// this keeps the ones that day has reached. It OFFERS and never acts:
-    /// arithmetic on a declared cadence and a recorded date, never a judgement
-    /// that something should run.
+    /// It OFFERS and never acts: arithmetic on what a thing holds and the day
+    /// you name, never a judgement that something should happen. **It reads a
+    /// clock never** — the day is yours to give, so *what is owed as of next
+    /// Friday* is the same question asked about a different day.
     ///
-    /// **A rhythm whose schedule cannot be read comes back overdue**, carrying
-    /// its fields so you can see which key it is short of. That is deliberate:
-    /// a half-built loop that surfaced at no read ever would never be heard
-    /// from again.
+    /// **What falls due, and when, is the KIND's own answer.** A loop is next
+    /// due a cadence after the date its cycle counts from; another sort of owed
+    /// thing computes its moment its own way, and this filter compares the
+    /// moment rather than computing it.
     ///
-    /// Pair it with `kind: "rhythm"`. It keeps objects of any kind that carry a
-    /// schedule, because matching here is structural like everywhere else.
+    /// **A kind that owes nothing is absent**, whatever it holds — a person is
+    /// never late, because nothing computes a due moment for a person.
+    ///
+    /// **A thing that carries none of what its kind falls due on is absent
+    /// too**: a loop nobody has put a schedule on made no promise to be late
+    /// against.
+    ///
+    /// **But a thing whose due moment cannot be READ comes back owed**,
+    /// carrying its fields so you can see which key it is short of. That is
+    /// deliberate: a half-built loop that surfaced at no read ever would never
+    /// be heard from again.
     #[serde(default)]
     pub overdue: Option<OverdueArgs>,
     /// Which edges to walk. Omit to walk none, and the answer is flat.
@@ -578,7 +588,19 @@ impl Jojobot {
         // record that set it up carries the cadence, and each check-in since
         // carries what it found.
         if let Some(as_of) = as_of {
-            found.retain(|object| attention::overdue(&object.fields, as_of));
+            // **The read compares a moment to a day and computes none of them.**
+            // Which moment a thing falls due at is its carrier's answer, so a
+            // second sort of owed thing lands by answering here rather than by
+            // this line growing a branch — and a kind no carrier speaks for
+            // owes nothing, which is what keeps a person out of an answer about
+            // what is late.
+            let carriers = attention::shipped();
+            let asked: Vec<&dyn attention::Carrier> =
+                carriers.iter().map(std::convert::AsRef::as_ref).collect();
+            found.retain(|object| {
+                attention::owed(&asked, object.entity.id.kind_token(), &object.fields)
+                    .owed_on(as_of)
+            });
         }
         let body = serde_json::json!({
             "count": found.len(),

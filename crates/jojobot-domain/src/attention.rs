@@ -292,18 +292,98 @@ fn read<T>(
     parse(held).ok_or_else(|| refuse(Some(held)))
 }
 
-/// **Has this rhythm gone quiet as of `as_of`.**
+/// **When one of these falls due, as this carrier computes it.**
 ///
-/// A rhythm whose schedule cannot be read is overdue. That is the loud answer
-/// rather than the tidy one, and it is deliberate: the alternative is a rhythm
-/// that carries half a schedule, surfaces at no boot ever, and is never heard
-/// from again — the silent failure this whole module is written against. It
-/// comes back with its fields, so a caller can see which key it is short of.
-pub fn overdue(fields: &BTreeMap<String, String>, as_of: Date) -> bool {
-    match schedule_of(fields) {
-        Ok(schedule) => schedule.overdue_on(as_of),
-        Err(_) => true,
+/// Three answers rather than two, and the third is the whole reason this is not
+/// a boolean. A thing that carries no due moment at all is not late — it is
+/// simply not that sort of thing, or not yet. A thing whose carrier says it
+/// SHOULD have one and cannot compute it is late and loud, because the
+/// alternative is a half-built loop that surfaces at no read ever and is never
+/// heard from again.
+///
+/// **A boolean collapses the first two into one answer** and that is exactly
+/// the defect this replaces: an overdue check that returned true whenever it
+/// could not read a schedule marked every person, place and project overdue,
+/// since none of them has a schedule to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Due {
+    /// **Nothing here falls due.** The thing carries none of what this carrier
+    /// computes a due moment from, so there is nothing to be late about.
+    Never,
+    /// The day it fell or falls due.
+    On(Date),
+    /// **It should have a due moment and cannot say what it is.** Late, loudly,
+    /// and it comes back carrying its fields so a reader can see which key it
+    /// is short of.
+    Unreadable,
+}
+
+impl Due {
+    /// **Has this moment passed, as of the day the read was asked about.**
+    pub fn owed_on(self, as_of: Date) -> bool {
+        match self {
+            Due::Never => false,
+            Due::On(day) => day <= as_of,
+            Due::Unreadable => true,
+        }
     }
+}
+
+/// **How a KIND of thing says when one of its things falls due.**
+///
+/// The read asks what is owed and compares a moment to a day; it never knows
+/// how any particular sort of thing computes that moment. A loop's is its
+/// schedule; the next carrier's will be something else, and it lands by
+/// answering here rather than by the read growing a branch.
+pub trait Carrier: Send + Sync {
+    /// The kind token whose things this computes for.
+    fn kind(&self) -> &str;
+    /// When this thing falls due, read off what it holds.
+    fn due(&self, fields: &BTreeMap<String, String>) -> Due;
+}
+
+/// **The loop carrier**: a rhythm falls due a cadence after the date its cycle
+/// counts from.
+pub struct Rhythms;
+
+impl Carrier for Rhythms {
+    fn kind(&self) -> &str {
+        "rhythm"
+    }
+
+    /// **A loop carrying none of the schedule is not late.** It is a loop
+    /// somebody wrote down and has not put a schedule on — the fern, watered
+    /// when it looks dry — and nagging it would be inventing a promise nobody
+    /// made. A loop carrying SOME of the schedule is the half-built one, and
+    /// that is the case the loud answer exists for.
+    fn due(&self, fields: &BTreeMap<String, String>) -> Due {
+        let carries = [CADENCE_DAYS, ADVANCES_FROM, COUNTS_FROM]
+            .iter()
+            .filter(|key| fields.contains_key(**key))
+            .count();
+        if carries == 0 {
+            return Due::Never;
+        }
+        match schedule_of(fields) {
+            Ok(schedule) => Due::On(schedule.due_on()),
+            Err(_) => Due::Unreadable,
+        }
+    }
+}
+
+/// **What is owed, over any carrier.** The read hands the object's kind and its
+/// folded fields; a kind no carrier answers for owes nothing.
+pub fn owed(carriers: &[&dyn Carrier], kind: &str, fields: &BTreeMap<String, String>) -> Due {
+    carriers
+        .iter()
+        .find(|carrier| carrier.kind() == kind)
+        .map(|carrier| carrier.due(fields))
+        .unwrap_or(Due::Never)
+}
+
+/// The carriers this build ships.
+pub fn shipped() -> Vec<Box<dyn Carrier>> {
+    vec![Box::new(Rhythms)]
 }
 
 /// **What a check-in writes**, given what the rhythm holds now.
@@ -360,9 +440,18 @@ mod tests {
         let schedule = schedule_of(&fields).expect("a whole schedule reads");
         assert_eq!(schedule.due_on(), date(2026, 8, 8));
 
-        assert!(!overdue(&fields, date(2026, 8, 7)), "the day before is not");
-        assert!(overdue(&fields, date(2026, 8, 8)), "the day itself is");
-        assert!(overdue(&fields, date(2026, 8, 20)), "and every day after");
+        assert!(
+            !Rhythms.due(&fields).owed_on(date(2026, 8, 7)),
+            "the day before is not"
+        );
+        assert!(
+            Rhythms.due(&fields).owed_on(date(2026, 8, 8)),
+            "the day itself is"
+        );
+        assert!(
+            Rhythms.due(&fields).owed_on(date(2026, 8, 20)),
+            "and every day after"
+        );
     }
 
     /// **The two choices part company on a late check-in, and only then.**
@@ -404,7 +493,7 @@ mod tests {
     fn advancing_from_a_long_past_due_date_leaves_the_rhythm_still_overdue() {
         let fields = weekly(date(2026, 5, 1), AdvancesFrom::DueDate);
         let today = date(2026, 8, 18);
-        assert!(overdue(&fields, today), "it starts overdue");
+        assert!(Rhythms.due(&fields).owed_on(today), "it starts overdue");
 
         let moved = schedule_of(&fields)
             .expect("a whole schedule reads")
@@ -488,16 +577,59 @@ mod tests {
 
         // And an unreadable schedule is loud rather than quiet: it surfaces as
         // overdue instead of vanishing from every answer for ever.
-        assert!(overdue(&fields, date(2026, 8, 10)));
+        assert!(Rhythms.due(&fields).owed_on(date(2026, 8, 10)));
     }
 
-    /// **A rhythm nobody has scheduled is overdue.** The first thing a caller
-    /// does with a new rhythm is create it, and the record that gives it a
-    /// cadence is a separate write — so between the two it holds nothing. The
-    /// loud answer is what gets it finished; the tidy one is a rhythm nobody
-    /// ever hears from.
+    /// **A loop carrying none of a schedule is not late, and one carrying half
+    /// of it is.**
+    ///
+    /// The two used to be one answer and that is what marked every person,
+    /// place and project overdue: a check that said "late" whenever it could
+    /// not read a schedule said it loudest about things that have none.
+    ///
+    /// **The distinction is what the loop CARRIES, not what it is.** A loop
+    /// somebody wrote down and has not put a schedule on is the fern — watered
+    /// when it looks dry — and nagging it invents a promise nobody made. A loop
+    /// carrying a cadence and no date is the half-built one, and the loud
+    /// answer is what gets it finished.
+    ///
+    /// Both in one case, because either alone passes against a build that
+    /// answers the same for everything.
     #[test]
-    fn a_rhythm_holding_nothing_is_overdue_rather_than_invisible() {
-        assert!(overdue(&BTreeMap::new(), date(2026, 8, 18)));
+    fn a_loop_with_no_schedule_is_not_late_and_half_a_schedule_is() {
+        assert_eq!(
+            Rhythms.due(&BTreeMap::new()),
+            Due::Never,
+            "a loop nobody has scheduled owes nothing",
+        );
+        let half: BTreeMap<String, String> = [(CADENCE_DAYS.to_string(), "7".to_string())]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            Rhythms.due(&half),
+            Due::Unreadable,
+            "a loop carrying part of a schedule cannot say when it is due, and says so",
+        );
+        assert!(Rhythms.due(&half).owed_on(date(2026, 8, 18)));
+    }
+
+    /// **A kind no carrier speaks for owes nothing**, which is the defect this
+    /// whole shape replaces: a person has no schedule to read, and a check that
+    /// read "cannot compute" as "late" marked every one of them.
+    #[test]
+    fn a_kind_with_no_carrier_owes_nothing() {
+        let carriers: Vec<Box<dyn Carrier>> = shipped();
+        let asked: Vec<&dyn Carrier> = carriers.iter().map(AsRef::as_ref).collect();
+        assert_eq!(
+            owed(&asked, "person", &BTreeMap::new()),
+            Due::Never,
+            "nobody computes a due moment for a person",
+        );
+        // The positive in the same read: the carrier that IS there answers.
+        let whole = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        assert!(
+            matches!(owed(&asked, "rhythm", &whole), Due::On(_)),
+            "and the loop carrier does compute one",
+        );
     }
 }
