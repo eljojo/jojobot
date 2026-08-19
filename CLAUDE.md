@@ -101,7 +101,14 @@ Shipped and live:
 
 - **M0** — skeleton: MCP over streamable HTTP behind OAuth2 resource-server auth.
 - **M1** — Memory: typed entities (`kind:slug` handles) + dated facts with
-  provenance (testimony vs inference); the write guard (nothing is created as
+  provenance — the operator said it, an agent read it in a named system of
+  record, or an agent worked it out, and a machine read is **refused unless it
+  names the system**. A claim carries **three dates**: the day it is true of,
+  the moment jojobot took it in, and optionally the day its reading stops
+  being good. A derived claim names what it was worked out from, and that
+  pointer is **walkable both ways** — from a claim to its source, and from a
+  source to everything built on it — settable by an edit, and never pointing
+  at a claim that was taken back; the write guard (nothing is created as
   a side effect; near-misses come back blocked-with-candidates); read-back on
   every write, taken server-side — a write that did not survive storage is an
   error rather than a success with mangled bytes, and the caller gets the
@@ -154,10 +161,10 @@ Shipped and live:
   a thing is complete.** **What a key HOLDS is checked whenever it is set,
   required and optional alike** — so a value that is not what its key declared
   does not count as holding it. **Adding keys is never refused, and a
-  thing that answers no type is a first-class thing.** **The software ships `trip`
-  as a type, declared at every startup, and a shipped name is closed to a
-  caller's redeclaration**, so a type says where it came from and a caller can
-  tell the two apart before it collides with one. ⚠️ **`rhythm` is no longer a
+  thing that answers no type is a first-class thing.** **The software ships two
+  types of its own — `entitlement` and `trip` — declared at every startup, and a
+  shipped name is closed to a caller's redeclaration**, so a type says where it
+  came from and a caller can tell the two apart before it collides with one. ⚠️ **`rhythm` is no longer a
   type. It is a shipped KIND and it declares every key its loop uses** — a name
   and the day of the last check-in are required; the cadence in days, the day
   the next cycle counts from, which of the two dates a late check-in advances
