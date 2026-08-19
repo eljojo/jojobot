@@ -41,8 +41,9 @@ impl Jojobot {
                        whole thing. For the identity the software ships it is that instance's \
                        OWN layer: the core the build carries is composed in on the way out and \
                        no call writes it, so send your half rather than the composed text you \
-                       read, or the build's words become the instance's and stop moving when \
-                       the software does. \
+                       read. A charter carrying the core comes back status: blocked and \
+                       nothing is written — storing it would freeze the build's words as this \
+                       instance's, where they stop moving when the software does. \
                        IT ANSWERS WITH A RECEIPT, NOT THE CHARTER: the bot it landed on, how \
                        many bytes were stored — compare it with what you sent and you learn \
                        the store trimmed it — and the opening line, so you can tell which \
@@ -110,8 +111,14 @@ impl Jojobot {
 }
 
 /// **Does this prose carry that core?** Compared on the core's first paragraph
-/// rather than the whole of it, so a caller sending back a charter it read
-/// through a client that rewrapped the text is still caught.
+/// rather than the whole of it, so a client that changed what sits BETWEEN the
+/// paragraphs — the blank lines, a divider, anything appended after — does not
+/// hide the round trip.
+///
+/// ⚠️ **It is a plain substring match, so it does NOT survive a client that
+/// rewraps WITHIN that paragraph.** Such a caller gets the old behaviour and
+/// the core lands in the store. That is the bound of this check and it is not
+/// a promise to catch every shape of the mistake.
 ///
 /// A paragraph is long enough that nobody writes it by accident, which is what
 /// keeps this from refusing a charter that merely agrees with the core.
