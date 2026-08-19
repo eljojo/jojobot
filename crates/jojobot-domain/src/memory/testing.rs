@@ -272,6 +272,8 @@ impl InMemoryMemory {
                     value: w.value.clone(),
                     fact: w.fact.clone(),
                     status: carried.status,
+                    provenance: carried.provenance,
+                    standing: carried.standing,
                 })
             })
             .collect()
@@ -598,6 +600,8 @@ impl Memory for InMemoryMemory {
                     fact: carried.address(),
                     date: carried.date,
                     status: carried.status,
+                    provenance: carried.provenance,
+                    standing: carried.standing,
                 })
             })
             .collect())
@@ -1702,6 +1706,103 @@ pub mod contract {
     /// that was derived from nothing is NOT found there · and **a claim that
     /// stops resting on it stops being found**, which no test that only adds
     /// records can catch.
+    /// **A folded value says which claim it came from and who backs it.**
+    ///
+    /// The same string arrives whether the user said it this morning or an
+    /// assistant guessed it two years ago, and a reader that cannot tell them
+    /// apart has to treat both alike. **Under the default fold exactly one
+    /// write wins**, so the honest answer is that claim's own certainty.
+    ///
+    /// Three legs. The winning write's certainty is reported · the loser's is
+    /// NOT, which is what stops this passing on a build that reports whatever
+    /// it finds first · and **the answer changes when the winning write
+    /// changes**, which no test that only adds one claim can reach.
+    pub async fn a_folded_value_says_who_backs_it<M: Memory>(store: &M) {
+        let subject = EntityId::new(EntityKind::PERSON, "contract-backing");
+        add(
+            store,
+            NewEntity::new(subject.clone(), "Contract Backing", "contract-fixture"),
+        )
+        .await;
+
+        // A guess first, then the user's own word: the newest write wins, and
+        // it is the one whose certainty the answer must carry.
+        capture(
+            store,
+            NewFact {
+                provenance: Provenance::Inference,
+                fields: [("rent".to_string(), "900".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    subject.clone(),
+                    "worked it out from the listing",
+                    date(2026, 5, 1),
+                )
+            },
+        )
+        .await;
+        let stated = capture(
+            store,
+            NewFact {
+                provenance: Provenance::Testimony,
+                standing: Some(Standing::Settled),
+                fields: [("rent".to_string(), "950".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    subject.clone(),
+                    "he said what the rent is",
+                    date(2026, 6, 1),
+                )
+            },
+        )
+        .await;
+
+        let backing = |entity: EntityId| async move {
+            store
+                .backing(&entity)
+                .await
+                .expect("a store says what backs a folded value")
+        };
+        let held = backing(subject.clone()).await;
+        let rent = held
+            .get("rent")
+            .unwrap_or_else(|| panic!("the folded value says nothing about its claim: {held:?}"));
+        assert_eq!(rent.fact, stated.id, "the backing names the losing claim");
+        assert_eq!(
+            (rent.provenance, rent.standing),
+            (Provenance::Testimony, Standing::Settled),
+            "the value the user stated reads as a guess, or the other way about",
+        );
+
+        // **The leg only a change reaches.** A later guess wins the key, and the
+        // certainty reported moves with it — a build that read the claim once
+        // would go on reporting testimony for a value nobody stated.
+        capture(
+            store,
+            NewFact {
+                provenance: Provenance::Inference,
+                fields: [("rent".to_string(), "975".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    subject.clone(),
+                    "the listing went up again",
+                    date(2026, 7, 1),
+                )
+            },
+        )
+        .await;
+        let held = backing(subject.clone()).await;
+        let rent = held.get("rent").expect("the key is still held");
+        assert_eq!(
+            (rent.provenance, rent.standing),
+            (Provenance::Inference, Standing::Open),
+            "the certainty did not move with the write that won: {held:?}",
+        );
+    }
+
     pub async fn a_claims_lineage_is_walkable_from_its_source<M: Memory>(store: &M) {
         let subject = EntityId::new(EntityKind::PERSON, "contract-lineage");
         add(
@@ -8026,6 +8127,7 @@ pub mod contract {
 
         a_claim_carries_when_it_was_taken_in(store).await;
         a_claims_lineage_is_walkable_from_its_source(store).await;
+        a_folded_value_says_who_backs_it(store).await;
         referring_to_answers_from_the_far_end(store).await;
         a_child_names_its_parent_and_reads_back(store).await;
         children_are_handles_and_one_level_deep(store).await;

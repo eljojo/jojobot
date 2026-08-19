@@ -195,6 +195,16 @@ pub struct RecallArgs {
     /// you reach the far end — deliberately, rather than by surprise.
     #[serde(default)]
     pub history_most: Option<u32>,
+    /// **Where each folded value came from**, and who backs it: the claim whose
+    /// write won the key, its provenance and its standing.
+    ///
+    /// **Off by default because it is a second read of each object**, and most
+    /// reads want the value rather than its pedigree. Ask for it when you are
+    /// about to act on a value, or when you need to know whether the user said
+    /// it. A key whose writes are summed has no single winning claim and is not
+    /// here.
+    #[serde(default)]
+    pub backing: Option<bool>,
     /// **The claims worked out from one claim**, by its address
     /// `kind:slug#local-id` — lineage walked from the source's end.
     ///
@@ -433,6 +443,12 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
                 "record": write.fact.to_string(),
                 "date": write.date.to_string(),
                 "status": write.status.as_token(),
+                // **Who backed the claim this write arrived in, and how sure
+                // anyone was.** A value the user stated and one an assistant
+                // worked out are the same string, and a reader that cannot see
+                // the difference has to treat both alike.
+                "provenance": write.provenance.as_token(),
+                "standing": write.standing.as_token(),
             });
             if let Some(fields) = rendered.as_object_mut() {
                 match &write.value {
@@ -596,7 +612,13 @@ impl Jojobot {
                        the key alone asks it of everything carrying the key. A key nobody has \
                        written comes back with nothing in use rather than as a refusal, and a \
                        long list is cut to its most used twenty with values_most to reach the \
-                       rest. WHAT SOMEBODY HOLDS COMES BACK UNASKED: every object carries a held \
+                       rest. BACKING answers who stands behind each value: name it and every \
+                       object also carries, per key, the claim whose write won that key and \
+                       that claim's own provenance and standing — because a value the user \
+                       stated and one an assistant worked out are the same string otherwise. It \
+                       is off by default because it is a second read; ask for it when you are \
+                       about to act on a value. A key whose writes are summed has no single \
+                       winning claim and is not there. WHAT SOMEBODY HOLDS COMES BACK UNASKED: every object carries a held \
                        block naming the records that point at it, best first — what admits \
                        somebody to it and is good on the day, then what admits them and has \
                        lapsed, and, only when nothing admits anybody at all, whatever else \
@@ -794,6 +816,15 @@ impl Jojobot {
         // **The context a reader did not ask for, and the whole point of the
         // card.** A session that pulls a thing is told who holds what that
         // gets them in, ranked, without knowing there was anything to ask.
+        let mut backing = Vec::with_capacity(found.len());
+        if args.backing.unwrap_or(false) {
+            for object in &found {
+                match self.memory.backing(&object.entity.id).await {
+                    Ok(held) => backing.push(Some(held)),
+                    Err(e) => return memory_declined("recall", e),
+                }
+            }
+        }
         let mut held = Vec::with_capacity(found.len());
         for object in &found {
             let pointing = match self.memory.referring_to(&object.entity.id).await {
@@ -845,9 +876,26 @@ impl Jojobot {
             "objects": found
                 .iter()
                 .zip(held)
-                .map(|(o, held)| {
+                .zip(backing.into_iter().chain(std::iter::repeat(None)))
+                .map(|((o, held), backing)| {
                     let mut rendered = object_json(o, include);
                     rendered["held"] = held;
+                    if let Some(backing) = backing {
+                        rendered["fields_backing"] = backing
+                            .iter()
+                            .map(|(key, from)| {
+                                (
+                                    key.clone(),
+                                    serde_json::json!({
+                                        "claim": from.fact.as_str(),
+                                        "provenance": from.provenance.as_token(),
+                                        "standing": from.standing.as_token(),
+                                    }),
+                                )
+                            })
+                            .collect::<serde_json::Map<_, _>>()
+                            .into();
+                    }
                     rendered
                 })
                 .collect::<Vec<_>>(),
@@ -881,6 +929,7 @@ mod tests {
             values: None,
             values_most: None,
             built_on: None,
+            backing: None,
         }
     }
 
@@ -990,6 +1039,79 @@ mod tests {
         assert!(
             !said.contains("person:alpha"),
             "a kind no carrier speaks for owes nothing, whatever it holds: {said}",
+        );
+    }
+
+    /// **A read can ask who backs each value it is about to act on.**
+    ///
+    /// Two writes to one key — a guess, then the user's own word — and the
+    /// answer names the certainty of the one that WON. **The loser's is not
+    /// reported**, which is what stops this passing against a build that hands
+    /// back whichever claim it met first.
+    #[tokio::test]
+    async fn a_read_can_ask_who_backs_the_value_it_is_about_to_act_on() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        async fn wrote(jojobot: &Jojobot, sid: &str, content: &str, rent: &str, testimony: bool) {
+            capture_ok(
+                jojobot,
+                CaptureArgs {
+                    sid: Some(sid.to_string()),
+                    provenance: Some(if testimony { "testimony" } else { "inference" }.into()),
+                    fields: Some(
+                        [("rent".to_string(), rent.to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args("person:alpha", content)
+                },
+            )
+            .await;
+        }
+        wrote(
+            &jojobot,
+            &sid,
+            "worked it out from the listing",
+            "900",
+            false,
+        )
+        .await;
+        wrote(&jojobot, &sid, "he said what the rent is", "950", true).await;
+
+        let read = jojobot
+            .recall(Parameters(RecallArgs {
+                sid: Some(sid.clone()),
+                backing: Some(true),
+                facts: None,
+                ..of("person:alpha")
+            }))
+            .await
+            .expect("the read answers");
+        let object = json_of(&read)["objects"][0].clone();
+        assert_eq!(
+            object["fields"]["rent"], "950",
+            "the newest write is not the value: {object}"
+        );
+        assert_eq!(
+            object["fields_backing"]["rent"]["provenance"], "testimony",
+            "the value the user stated reads as a guess: {object}",
+        );
+
+        // **The value nobody asks about is not decorated either**: a read that
+        // did not ask carries no backing at all, so this stays a cost a caller
+        // takes on deliberately.
+        let plain = jojobot
+            .recall(Parameters(RecallArgs {
+                sid: Some(sid),
+                facts: None,
+                ..of("person:alpha")
+            }))
+            .await
+            .expect("the read answers");
+        assert!(
+            json_of(&plain)["objects"][0]["fields_backing"].is_null(),
+            "a read that asked for no backing was given some anyway",
+        );
     }
 
     /// **A claim past the day somebody set says so when it is read.**
@@ -2312,6 +2434,7 @@ mod tests {
             values: None,
             values_most: None,
             built_on: None,
+            backing: None,
         }
     }
 }

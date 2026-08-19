@@ -145,7 +145,7 @@ impl Jojobot {
             stale_after: args
                 .stale_after
                 .as_deref()
-                .map(|day| parse_date(Some(day)))
+                .map(|day| parse_date(Some(day), &self.zone_for(args.sid.as_deref())))
                 .transpose()?,
             clear_stale_after: args.clear_stale_after.unwrap_or(false),
             derived_from: args

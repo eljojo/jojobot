@@ -1407,6 +1407,8 @@ pub fn stood_after(
             value,
             fact: edited.id.clone(),
             status: edited.status,
+            provenance: edited.provenance,
+            standing: edited.standing,
         });
     }
     folded_fields(&next, declared)
@@ -1448,6 +1450,8 @@ pub fn stood_after_capture(
             value: Some(value.clone()),
             fact: captured.id.clone(),
             status: captured.status,
+            provenance: captured.provenance,
+            standing: captured.standing,
         });
     }
     folded_fields(&next, declared)
@@ -1908,6 +1912,76 @@ pub struct KeyWrite {
     pub fact: FactId,
     /// The status of the record that carried it.
     pub status: FactStatus,
+    /// **Who backs the record that carried it.** A value the user stated and a
+    /// value an assistant worked out are different answers, and a fold that
+    /// dropped this handed both back identically.
+    pub provenance: Provenance,
+    /// **How sure anyone was of that record**, the other axis. Both travel with
+    /// the write because the write is what a folded value comes from.
+    pub standing: Standing,
+}
+
+/// **Where a folded value came from, and who stands behind it.**
+///
+/// A value arrives as a string, and until now that was all it arrived as: a
+/// value the user stated this morning and one an assistant guessed two years
+/// ago read identically. **Under the default fold exactly one write wins**, so
+/// the honest answer is that one claim's own certainty — its address, who backs
+/// it, and how sure anyone was.
+///
+/// **Nothing here is a score and nothing is combined.** A key whose writes are
+/// summed has no single winning write, so it has no backing to report and does
+/// not appear: a number derived from several claims with different backings
+/// would be a confidence somebody invented.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldBacking {
+    /// The record whose write is the value being read.
+    pub fact: FactId,
+    /// Who backs that record.
+    pub provenance: Provenance,
+    /// How sure anyone was of it.
+    pub standing: Standing,
+}
+
+/// **Which write each folded value came from**, over the same rows and by the
+/// same rule [`folded_fields`] uses.
+///
+/// One function of the writes, so the value and its backing cannot come to
+/// disagree about which write won. **A summing key is absent rather than
+/// guessed at** — see [`FieldBacking`].
+pub fn folded_backing(
+    writes: &[KeyWrite],
+    declared: &[types::DeclaredType],
+) -> BTreeMap<String, FieldBacking> {
+    let mut standing: Vec<&KeyWrite> = writes
+        .iter()
+        .filter(|w| w.status == FactStatus::Active && !reserved_key(&w.key))
+        .collect();
+    standing.sort_by(|a, b| a.key.cmp(&b.key).then(a.ordinal.cmp(&b.ordinal)));
+    let mut backing = BTreeMap::new();
+    for write in standing {
+        if types::fold_of(&write.key, declared) != types::Fold::Newest {
+            backing.remove(&write.key);
+            continue;
+        }
+        match &write.value {
+            // A clear is a write, and it takes the backing off with the value.
+            None => {
+                backing.remove(&write.key);
+            }
+            Some(_) => {
+                backing.insert(
+                    write.key.clone(),
+                    FieldBacking {
+                        fact: write.fact.clone(),
+                        provenance: write.provenance,
+                        standing: write.standing,
+                    },
+                );
+            }
+        }
+    }
+    backing
 }
 
 /// **A thing's fields: the newest write of each key on it.**
@@ -2170,6 +2244,11 @@ pub struct FieldWrite {
     /// happened, so it is reported rather than dropped — and reported as
     /// retracted, so a count can leave it out.
     pub status: FactStatus,
+    /// **Who backs the record it came from**, so a reader of a key's history
+    /// can tell a value somebody stated from one somebody guessed.
+    pub provenance: Provenance,
+    /// **How sure anyone was of that record.**
+    pub standing: Standing,
 }
 
 /// **What a retraction leaves behind: two rows, and both come back.**
@@ -2471,6 +2550,46 @@ pub trait Memory: Send + Sync {
 
     /// Every entity jojobot knows, optionally filtered to one kind.
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError>;
+    /// **Where each folded value came from, and who backs it.**
+    ///
+    /// [`fields`](Memory::fields) says what a thing holds; this says which
+    /// claim each of those values came from and what that claim's own
+    /// certainty is. **A value the user stated and a value an assistant worked
+    /// out arrive as the same string**, and until a reader can see the
+    /// difference it has to treat both the same way.
+    ///
+    /// A key whose writes are summed is absent: no single write wins it, so
+    /// there is no claim whose certainty is the answer — see [`FieldBacking`].
+    ///
+    /// Defaulted off [`fields`](Memory::fields) and
+    /// [`history`](Memory::history), which between them hold everything this
+    /// needs: an adapter that can read the writes in one go overrides it.
+    async fn backing(
+        &self,
+        entity: &EntityId,
+    ) -> Result<BTreeMap<String, FieldBacking>, MemoryError> {
+        let mut backing = BTreeMap::new();
+        for key in self.fields(entity).await?.into_keys() {
+            let writes = self.history(entity, &key).await?;
+            // The newest write that still stands is the one the fold kept.
+            if let Some(write) = writes
+                .iter()
+                .rev()
+                .find(|w| w.status == FactStatus::Active && w.value.is_some())
+            {
+                backing.insert(
+                    key,
+                    FieldBacking {
+                        fact: write.fact.local.clone(),
+                        provenance: write.provenance,
+                        standing: write.standing,
+                    },
+                );
+            }
+        }
+        Ok(backing)
+    }
+
     /// **Which claims were worked out from this one** — lineage, walked from
     /// the source's end.
     ///
@@ -2786,6 +2905,8 @@ mod tests {
     /// One write of a key, at the place in that key's history it took.
     fn wrote(key: &str, ordinal: u64, value: Option<&str>) -> KeyWrite {
         KeyWrite {
+            provenance: Provenance::Inference,
+            standing: Standing::Open,
             key: key.to_string(),
             ordinal,
             value: value.map(str::to_string),

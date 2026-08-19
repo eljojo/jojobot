@@ -336,7 +336,7 @@ impl Jojobot {
             stale_after: args
                 .stale_after
                 .as_deref()
-                .map(|day| parse_date(Some(day)))
+                .map(|day| parse_date(Some(day), &self.zone_for(args.sid.as_deref())))
                 .transpose()?,
         };
         // Routed through the declined path rather than straight to the mapper:

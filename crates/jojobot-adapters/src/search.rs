@@ -2340,6 +2340,8 @@ mod tests {
                     value: Some(value.clone()),
                     fact: fact.id.clone(),
                     status: fact.status,
+                    provenance: fact.provenance,
+                    standing: fact.standing,
                 });
             }
         }

@@ -210,7 +210,8 @@ impl DoltMemory {
         entity: &EntityId,
     ) -> Result<Vec<KeyWrite>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT w.`key`, w.ordinal, w.value, w.fact_id, f.status FROM field_write w
+            "SELECT w.`key`, w.ordinal, w.value, w.fact_id, f.status, f.provenance, f.standing
+             FROM field_write w
              JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
              WHERE w.entity = ?",
         )
@@ -229,6 +230,20 @@ impl DoltMemory {
                 // the same reason: a token this build does not know must not
                 // make a thing unreadable.
                 status: FactStatus::from_token(&row.try_get::<String, _>("status").map_err(store)?),
+                // **Who backs the claim this write came from**, off the row the
+                // status already comes from: a folded value that dropped this
+                // handed back the user's own word and an assistant's guess in
+                // the same shape.
+                provenance: Provenance::from_token(
+                    &row.try_get::<String, _>("provenance").map_err(store)?,
+                ),
+                standing: Standing::parse(
+                    row.try_get::<Option<String>, _>("standing")
+                        .map_err(store)?
+                        .as_deref()
+                        .unwrap_or(""),
+                    Provenance::from_token(&row.try_get::<String, _>("provenance").map_err(store)?),
+                ),
             });
         }
         Ok(writes)
@@ -859,6 +874,8 @@ impl Memory for DoltMemory {
                 fact: fact.address(),
                 date: fact.date,
                 status: fact.status,
+                provenance: fact.provenance,
+                standing: fact.standing,
             });
         }
         Ok(history)
@@ -1029,6 +1046,23 @@ impl Memory for DoltMemory {
         Self::append_writes(&mut tx, &record.home, &record.id, written_keys(&record)).await?;
         tx.commit().await.map_err(store)?;
         Ok(Retraction { retracted, record })
+    }
+
+    /// **One read of the writes, folded by the domain's own rule.** The default
+    /// asks for each key's history in turn; this store keeps every write on a
+    /// thing in one table and reads them together, then hands them to the same
+    /// function that decides what the thing holds — so the value and its
+    /// backing cannot disagree about which write won.
+    async fn backing(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::BTreeMap<String, jojobot_domain::memory::FieldBacking>, MemoryError>
+    {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let writes = Self::writes_on(&mut tx, entity).await?;
+        let declared = Self::types_in(&mut tx).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(jojobot_domain::memory::folded_backing(&writes, &declared))
     }
 
     /// **Selected on the pointer, because the store has an index for it.** The
