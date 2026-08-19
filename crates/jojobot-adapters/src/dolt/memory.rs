@@ -966,6 +966,40 @@ impl Memory for DoltMemory {
         Ok(Retraction { retracted, record })
     }
 
+    /// **Targeted, because the default reads every entity.** A field write
+    /// keeps its value in a row of its own, so the holders are one query away:
+    /// the entities with a write whose value is this handle. Only those are
+    /// read back, rather than the whole index.
+    ///
+    /// The rows say which entities to read and nothing more. Which of their
+    /// records still carry the handle is decided from the records themselves,
+    /// so a key that was written and later overwritten does not come back as a
+    /// pointer that is no longer there.
+    async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        validate_subject(target)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let rows = sqlx::query("SELECT DISTINCT entity FROM field_write WHERE value = ?")
+            .bind(target.as_str())
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?;
+        let mut pointing = Vec::new();
+        for row in rows {
+            let holder = EntityId(row.try_get::<String, _>("entity").map_err(store)?);
+            for fact in Self::facts_of(&mut tx, &holder).await? {
+                if fact
+                    .fields
+                    .values()
+                    .any(|value| value.trim() == target.as_str())
+                {
+                    pointing.push(fact);
+                }
+            }
+        }
+        tx.commit().await.map_err(store)?;
+        Ok(pointing)
+    }
+
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
         validate_subject(entity)?;
         validate_prose(prose)?;

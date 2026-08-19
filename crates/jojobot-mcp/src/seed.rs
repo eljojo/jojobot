@@ -63,6 +63,33 @@ pub fn shipped_types() -> Vec<DeclaredType> {
         // quiet.** A cadence is always TIME: the time prompts the check, and
         // what the check measures is a field on the check-in rather than a
         // unit of the schedule. So there is no distance and no unit key.
+        // **What somebody holds that gets them in.** It is a record about the
+        // HOLDER, pointing at the thing it admits to: whether a thing offers a
+        // tier at all is a claim about that thing and lives there, and holding
+        // one is a claim about a person with its own provenance and its own
+        // window. Collapsing the two gives a record that reads correct and
+        // answers neither question.
+        //
+        // **`admits` names no kind on purpose, and it must stay that way.** A
+        // declared reference may name the kind it points at; this one declines,
+        // so what a pass gets you into can be an event today and something else
+        // later without the declaration being rewritten. That openness is a
+        // decision somebody took, not an omission to tighten.
+        //
+        // **Only `admits` is required, and that is the model rather than
+        // leniency**: a record is an entitlement because it admits somebody to
+        // something. The window is optional because a record with no dates is
+        // live rather than expired — an entitlement nobody dated — and the tier
+        // is a free label the values-in-use read answers for.
+        DeclaredType::shipped(
+            "entitlement",
+            vec![
+                Field::required("admits", ValueType::Reference),
+                Field::new("valid_from", ValueType::Date),
+                Field::new("valid_until", ValueType::Date),
+                Field::new("tier", ValueType::Text),
+            ],
+        ),
         // **When am I next away, and when was I last there.** The two places
         // are references rather than text, which is what makes a trip walkable
         // from either end.
@@ -218,7 +245,32 @@ mod tests {
             ensure_shipped_types(&memory)
                 .await
                 .expect("the store takes"),
-            1
+            2
+        );
+
+        // **`admits` holds a reference and names no kind**, so what a pass gets
+        // somebody into is not fixed to one kind of thing. The two dates are
+        // the window, and a record carrying neither is live.
+        let entitlement = stored(&memory, "entitlement").await;
+        assert_eq!(
+            keys(&entitlement),
+            vec![
+                ("admits", "reference"),
+                ("valid_from", "date"),
+                ("valid_until", "date"),
+                ("tier", "text"),
+            ],
+        );
+        assert_eq!(entitlement.origin, Origin::Shipped);
+        assert!(
+            entitlement
+                .fields
+                .iter()
+                .find(|f| f.key == "admits")
+                .expect("the key it walks on")
+                .points_at
+                .is_none(),
+            "the reference names a kind, which closes a question somebody left open: {entitlement:?}",
         );
 
         // The two places are references, which is what makes a trip walkable

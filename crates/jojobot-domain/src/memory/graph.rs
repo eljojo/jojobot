@@ -523,7 +523,13 @@ fn relation_key<'a>(name: &str, declarations: &'a [types::DeclaredType]) -> Opti
 }
 
 /// **Every relation these declarations make followable**, in name order — what
-/// a caller who named one that is not there gets offered instead.
+/// a caller who named one that is not there gets offered instead, and what a
+/// reader of who-points-here asks about.
+pub fn reference_keys(declarations: &[types::DeclaredType]) -> Vec<String> {
+    relation_names(declarations)
+}
+
+/// **Every relation these declarations make followable**, in name order.
 fn relation_names(declarations: &[types::DeclaredType]) -> Vec<String> {
     let mut found: Vec<String> = declarations
         .iter()

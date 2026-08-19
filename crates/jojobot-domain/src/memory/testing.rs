@@ -1497,6 +1497,94 @@ pub mod contract {
 
     /// **An entity can name a parent, and it survives the read path.** A root
     /// names none, which is what most entities are.
+    /// **Who points here, read from the far end.**
+    ///
+    /// A reference key makes a value a link, and a store has to answer that
+    /// link from the thing it points AT — otherwise the only way to find the
+    /// records naming something is to read every record there is.
+    ///
+    /// Every store answers the same three ways: a record naming the handle
+    /// comes back whatever key it used, a record naming something else does
+    /// not, and a key that was overwritten stops pointing. **The third is what
+    /// separates reading the writes from reading the records**: the write row
+    /// that named the old target is still in the store, and the record no
+    /// longer carries it.
+    pub async fn referring_to_answers_from_the_far_end<M: Memory>(store: &M) {
+        let gate = EntityId::new(EntityKind::EVENT, "contract-winter-fest");
+        let other = EntityId::new(EntityKind::EVENT, "contract-leaving-party");
+        let holder = EntityId::new(EntityKind::PERSON, "contract-milhouse");
+        let bystander = EntityId::new(EntityKind::PERSON, "contract-otto");
+        for (id, name) in [
+            (&gate, "Contract Winter Fest"),
+            (&other, "Contract Leaving Party"),
+            (&holder, "Contract Milhouse"),
+            (&bystander, "Contract Otto"),
+        ] {
+            add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+        }
+
+        let held = capture(
+            store,
+            NewFact {
+                fields: [("admits".to_string(), gate.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(holder.clone(), "holds a full pass", date(2026, 8, 1))
+            },
+        )
+        .await;
+        capture(
+            store,
+            NewFact {
+                fields: [("admits".to_string(), other.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    bystander.clone(),
+                    "holds a pass to the other one",
+                    date(2026, 8, 1),
+                )
+            },
+        )
+        .await;
+
+        let pointing = store
+            .referring_to(&gate)
+            .await
+            .expect("a store answers who points here");
+        assert_eq!(
+            pointing
+                .iter()
+                .map(|fact| fact.address().to_string())
+                .collect::<Vec<_>>(),
+            vec![held.address().to_string()],
+            "the record naming this handle comes back, and the one naming another does not",
+        );
+
+        // **A key pointed elsewhere stops pointing here.** The write that named
+        // the gate is still in the store; the record is not carrying it any
+        // more, and that is what the answer follows.
+        edit(
+            store,
+            &held.address(),
+            FactPatch {
+                fields: [("admits".to_string(), other.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(
+            store
+                .referring_to(&gate)
+                .await
+                .expect("a store answers who points here")
+                .is_empty(),
+            "a key that was pointed somewhere else still points here",
+        );
+    }
+
     pub async fn a_child_names_its_parent_and_reads_back<M: Memory>(store: &M) {
         let parent = EntityId::new(EntityKind::PROJECT, "contract-monorail");
         let child = EntityId::new(EntityKind::PROJECT, "contract-monorail-funding");
@@ -7519,6 +7607,7 @@ pub mod contract {
 
         every_kind_holds_facts(store).await;
 
+        referring_to_answers_from_the_far_end(store).await;
         a_child_names_its_parent_and_reads_back(store).await;
         children_are_handles_and_one_level_deep(store).await;
         a_write_that_rewrites_a_child_leaves_it_where_it_was(store).await;

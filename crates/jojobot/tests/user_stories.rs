@@ -35,6 +35,8 @@ mod curveball;
 mod degraded;
 #[path = "user_stories/dsl.rs"]
 mod dsl;
+#[path = "user_stories/entitlements.rs"]
+mod entitlements;
 #[path = "user_stories/gigs.rs"]
 mod gigs;
 #[path = "user_stories/handshake.rs"]

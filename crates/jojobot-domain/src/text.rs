@@ -240,14 +240,40 @@ impl Capped {
             spent += cost;
             taken += 1;
         }
-        Kept {
-            kept: &all[all.len() - taken..],
-            omitted: all.len() - taken,
+        Kept::of(&all[all.len() - taken..], all.len() - taken)
+    }
+}
+
+impl Capped {
+    /// The **best-ranked** end of `all` that fits this budget, sized by `size`.
+    ///
+    /// The head rather than the tail: this is for a collection somebody has
+    /// already ordered by what matters most, where the first item is the one a
+    /// reader needs and the last is the one they can do without. The same
+    /// whole-items rule holds — one item over the whole budget is still served
+    /// whole, because half a record says something its writer did not.
+    pub fn head<'a, T>(&self, all: &'a [T], size: impl Fn(&T) -> usize) -> Kept<'a, T> {
+        let mut spent = 0usize;
+        let mut taken = 0usize;
+        for item in all {
+            let cost = size(item);
+            if taken > 0 && spent + cost > self.budget {
+                break;
+            }
+            spent += cost;
+            taken += 1;
         }
+        Kept::of(&all[..taken], all.len() - taken)
     }
 }
 
 impl<'a, T> Kept<'a, T> {
+    /// **The only way to build one**, so a renderer cannot serve a collection
+    /// without passing through a cap.
+    fn of(kept: &'a [T], omitted: usize) -> Self {
+        Kept { kept, omitted }
+    }
+
     /// What the response carries, in the collection's own order.
     pub fn kept(&self) -> &'a [T] {
         self.kept
@@ -272,6 +298,16 @@ impl<'a, T> Kept<'a, T> {
 /// resuming run reads before it starts working. The record itself is untouched
 /// and `entry_count` still states its whole length.
 pub const SESSION_CHRONOLOGY: Capped = Capped { budget: 12_000 };
+
+/// **What a read of a thing carries about who holds what, unasked.**
+///
+/// It is spent on context nobody asked for, so it is small on purpose: a
+/// rendered entitlement runs to a couple of hundred characters, which makes
+/// this roughly a dozen of them — enough for every real gate, and short enough
+/// that a read of an ordinary thing does not become an essay about it. The
+/// answer says how many did not fit and which call returns them, so the bound
+/// costs a reader information rather than access.
+pub const HELD_CONTEXT: Capped = Capped { budget: 2_000 };
 
 /// **One named case, and the goldens are its floor.** The store respells
 /// underscore-emphasis as asterisk-emphasis: `_under_` comes back

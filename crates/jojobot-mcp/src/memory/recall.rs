@@ -10,7 +10,8 @@
 use jojobot_domain::attention;
 
 use super::*;
-use jojobot_domain::memory::graph;
+use jojobot_domain::memory::{entitlement, graph};
+use jojobot_domain::text;
 
 /// One key filter of a `recall` — a key, and optionally the value it holds.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -286,6 +287,93 @@ fn key_filters(args: &[KeyFilterArgs]) -> Result<Vec<graph::FieldFilter>, McpErr
         .collect()
 }
 
+/// **What is held that points at one thing, ranked and inside a budget.**
+///
+/// The read is targeted — the store answers who points at a handle without
+/// reading every entity — and the ranking is the domain's, so what a reader is
+/// told first is a claim with its own cases rather than an accident of how this
+/// query was written.
+fn held_json(
+    held: &[entitlement::Held<'_>],
+    as_of: jiff::civil::Date,
+    widen: entitlement::Widen,
+) -> serde_json::Value {
+    let rendered: Vec<serde_json::Value> = held.iter().map(held_item).collect();
+    let kept = text::HELD_CONTEXT.head(&rendered, |item| item.to_string().chars().count());
+    let mut body = serde_json::json!({
+        "as_of": as_of.to_string(),
+        "count": held.len(),
+        "left_out": kept.omitted(),
+        "items": kept.kept(),
+    });
+    // **The two silences are different answers.** Nothing points here at all,
+    // and nothing gets anybody in but other things point here, are what a
+    // reader acts on differently — and the failure this whole read exists to
+    // end was a silence nobody could tell apart from an absence.
+    let note = if held.is_empty() && widen == entitlement::Widen::Never {
+        // **Empty here is a choice this call made**, and saying "nothing points
+        // at this" would be a claim nobody checked.
+        Some(
+            "nothing here admits anybody. What else points here is not in this answer because \
+             this call walks links of its own: recall the handle on its own to see it",
+        )
+    } else if held.is_empty() {
+        Some(
+            "nothing points at this, so there is nothing anybody holds for it and nothing else \
+             naming it",
+        )
+    } else if held
+        .iter()
+        .all(|h| h.standing == entitlement::Standing::Related)
+    {
+        Some(
+            "nothing here admits anybody: these records name this thing through some other \
+             declared key, which is what you get when nothing gates it",
+        )
+    } else if kept.omitted() > 0 {
+        Some(
+            "the rest did not fit this answer's budget: recall this handle with follow \
+             {relation: \"admits\", direction: \"in\"} for all of them",
+        )
+    } else {
+        None
+    };
+    if let Some(note) = note {
+        body["note"] = note.into();
+    }
+    body
+}
+
+/// One record that points here, with what a reader acts on: who holds it, how
+/// it stands, and **what backs it** — a pass somebody said they hold and one an
+/// assistant inferred are not the same claim, and the consequence of reading
+/// the second as the first is somebody turned away at a door.
+fn held_item(held: &entitlement::Held<'_>) -> serde_json::Value {
+    let field = |key: &str| held.fact.fields.get(key).cloned();
+    let mut item = serde_json::json!({
+        "holder": held.fact.subject.to_string(),
+        "standing": match held.standing {
+            entitlement::Standing::Live => "live",
+            entitlement::Standing::Lapsed => "lapsed",
+            entitlement::Standing::Related => "related",
+        },
+        "claim": held.fact.content,
+        "provenance": held.fact.provenance.as_token(),
+        "address": held.fact.address().to_string(),
+    });
+    for key in [
+        entitlement::ADMITS,
+        entitlement::VALID_FROM,
+        entitlement::VALID_UNTIL,
+        "tier",
+    ] {
+        if let Some(value) = field(key) {
+            item[key] = value.into();
+        }
+    }
+    item
+}
+
 /// **The values one key already holds, on the wire.**
 ///
 /// `distinct` is how many there are and `left_out` how many this answer does
@@ -499,7 +587,17 @@ impl Jojobot {
                        the key alone asks it of everything carrying the key. A key nobody has \
                        written comes back with nothing in use rather than as a refusal, and a \
                        long list is cut to its most used twenty with values_most to reach the \
-                       rest. WHICH EDGES: follow {shape, direction, depth}, and \
+                       rest. WHAT SOMEBODY HOLDS COMES BACK UNASKED: every object carries a held \
+                       block naming the records that point at it, best first — what admits \
+                       somebody to it and is good on the day, then what admits them and has \
+                       lapsed, and, only when nothing admits anybody at all, whatever else \
+                       points here through a declared key. Each one says who holds it, how it \
+                       stands, and what backs it, because a claim somebody made and a claim an \
+                       assistant worked out are not the same claim to act on. It says nothing \
+                       about whether anybody may go: that is a judgement and jojobot makes \
+                       none. Nothing pointing here at all and nothing gating it are different \
+                       answers and the block says which. It is bounded, and when it does not \
+                       fit it names the walk that returns the rest. WHICH EDGES: follow {shape, direction, depth}, and \
                        THE ANSWER NESTS — a walked object carries the objects it reached, each \
                        carrying its own. NARROW A WALK WITH follow.fits_type, which is the \
                        stricter half of the pair: answers_type selects objects carrying SOME of \
@@ -621,6 +719,18 @@ impl Jojobot {
                 &self.zone_for(args.sid.as_deref()),
             )?),
         };
+        // **The one clock read, taken here whether or not a question named a
+        // day.** What is held is asked as of a day like everything else, so a
+        // call that named one for `overdue` asks about the same day here, and
+        // the answer says which day it used either way.
+        let today = parse_date(None, &self.zone_for(args.sid.as_deref()))?;
+        // Every key some declaration made a reference — what makes a value a
+        // link. Read once, here, so the ranking stays a function of what it is
+        // handed.
+        let keys = match self.memory.declared_types().await {
+            Ok(declared) => graph::reference_keys(&declared),
+            Err(e) => return memory_declined("recall", e),
+        };
         // The same window the writes behind a key get, for the same reason: a
         // key with a thousand spellings would otherwise bury the caller who
         // asked one narrow question.
@@ -672,6 +782,27 @@ impl Jojobot {
                     .owed_on(as_of)
             });
         }
+        // **The context a reader did not ask for, and the whole point of the
+        // card.** A session that pulls a thing is told who holds what that
+        // gets them in, ranked, without knowing there was anything to ask.
+        let mut held = Vec::with_capacity(found.len());
+        for object in &found {
+            let pointing = match self.memory.referring_to(&object.entity.id).await {
+                Ok(pointing) => pointing,
+                Err(e) => return memory_declined("recall", e),
+            };
+            let day = as_of.unwrap_or(today);
+            let widen = if query.follow.is_some() {
+                entitlement::Widen::Never
+            } else {
+                entitlement::Widen::WhenEmpty
+            };
+            held.push(held_json(
+                &entitlement::ranked(&pointing, &object.entity.id, day, &keys, widen),
+                day,
+                widen,
+            ));
+        }
         let body = serde_json::json!({
             "count": found.len(),
             // **What the selected things already hold under one key**, when the
@@ -686,7 +817,12 @@ impl Jojobot {
             "overdue_as_of": as_of.map(|d| d.to_string()),
             "objects": found
                 .iter()
-                .map(|o| object_json(o, include))
+                .zip(held)
+                .map(|(o, held)| {
+                    let mut rendered = object_json(o, include);
+                    rendered["held"] = held;
+                    rendered
+                })
                 .collect::<Vec<_>>(),
         });
         json_result(&body)

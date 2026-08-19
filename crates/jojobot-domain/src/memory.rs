@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
+pub mod entitlement;
 pub mod graph;
 pub mod guard;
 pub mod kinds;
@@ -2364,6 +2365,39 @@ pub trait Memory: Send + Sync {
 
     /// Every entity jojobot knows, optionally filtered to one kind.
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError>;
+    /// **Which records point at this thing through a field**, whatever key
+    /// they used.
+    ///
+    /// A reference key makes a value a link, and this is that link read from
+    /// the far end: given a handle, the records elsewhere carrying it. The
+    /// caller decides what the keys MEAN — this only says which records name
+    /// it — so a reader after entitlements and a reader after anything else
+    /// ask the same question and sort the answer themselves.
+    ///
+    /// **Records of every status**, superseded included, exactly as `recall`
+    /// answers: a caller reading who points here is reading history as often
+    /// as current truth.
+    ///
+    /// Defaulted off [`list_entities`](Memory::list_entities) and
+    /// [`recall`](Memory::recall), like [`children`](Memory::children): an
+    /// adapter that can find the holders without reading every entity
+    /// overrides it, and one that cannot is still correct.
+    async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        validate_subject(target)?;
+        let mut pointing = Vec::new();
+        for entity in self.list_entities(None).await? {
+            for fact in self.recall(&entity.id).await? {
+                if fact
+                    .fields
+                    .values()
+                    .any(|value| value.trim() == target.as_str())
+                {
+                    pointing.push(fact);
+                }
+            }
+        }
+        Ok(pointing)
+    }
 
     /// The entities sitting directly under `parent` — **their handles, and
     /// nothing else.**
