@@ -1662,6 +1662,7 @@ mod tests {
             fields: Default::default(),
             refs: Vec::new(),
             derived_from: None,
+            inserted_at: None,
         };
         let alpha = Entity {
             id: EntityId::person("alpha"),

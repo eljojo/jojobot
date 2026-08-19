@@ -29,6 +29,12 @@ pub(crate) fn fact_json(fact: &Fact) -> serde_json::Value {
         "standing": fact.standing.as_token(),
         "status": fact.status.as_token(),
         "date": fact.date.to_string(),
+        // **The other clock, and it is not the one above.** `date` says when
+        // the claim is true OF; this says when jojobot took the record in. They
+        // disagree on every backfill and on every booking, and a reader
+        // deciding how old a claim is needs the second one — with `null`
+        // meaning a record from before the store kept it, never "just now".
+        "inserted_at": fact.inserted_at.map(|at| at.to_string()),
         "edge": fact.edge.as_ref().map(edge_json),
         // **The record's fields, flat on the record.** They are not a
         // sub-object about some other kind of thing: they are what this record

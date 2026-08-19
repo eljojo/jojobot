@@ -2391,6 +2391,7 @@ mod tests {
             fields: Default::default(),
             refs: Vec::new(),
             derived_from: None,
+            inserted_at: None,
         }
     }
 
@@ -4320,6 +4321,7 @@ mod tests {
                 fields: fact.fields,
                 refs: fact.refs,
                 derived_from: fact.derived_from,
+                inserted_at: None,
             };
             // A store that took a write says what the thing holds afterwards.
             doc.fields.extend(

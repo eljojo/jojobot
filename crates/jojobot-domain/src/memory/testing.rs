@@ -494,6 +494,10 @@ impl Memory for InMemoryMemory {
             fields: fact.fields,
             refs: fact.refs,
             derived_from: fact.derived_from,
+            // **A store stamps this, so the double does too.** A fake that left
+            // it empty would let every case above it pass on a build where the
+            // real store's stamp never happens.
+            inserted_at: Some(jiff::Timestamp::now()),
         };
         // **A new record's keys land on the thing too** — the same guard the
         // edit path runs, because a thing's fields are every write on it
@@ -753,6 +757,7 @@ impl Memory for InMemoryMemory {
             fields: account.fields,
             refs: account.refs,
             derived_from: account.derived_from,
+            inserted_at: Some(jiff::Timestamp::now()),
         };
         let retracted = Fact {
             status: FactStatus::Retracted,
@@ -1509,6 +1514,97 @@ pub mod contract {
     /// separates reading the writes from reading the records**: the write row
     /// that named the old target is still in the store, and the record no
     /// longer carries it.
+    /// **The two clocks, and they are allowed to disagree.**
+    ///
+    /// A claim's date says when it is TRUE OF. The stamp says when this store
+    /// took it in. Neither is checked against the other, because both
+    /// disagreements are ordinary: a booking is true of a day that has not
+    /// arrived, and a backfill carries years of records that are true of days
+    /// long past and land this morning.
+    ///
+    /// **The store writes the stamp.** Nothing above it can, which is what
+    /// makes *jojobot knew this then* something nobody can claim after the
+    /// fact.
+    pub async fn a_claim_carries_when_it_was_taken_in<M: Memory>(store: &M) {
+        let subject = EntityId::new(EntityKind::PERSON, "contract-clocks");
+        add(
+            store,
+            NewEntity::new(subject.clone(), "Contract Clocks", "contract-fixture"),
+        )
+        .await;
+
+        let before = jiff::Timestamp::now();
+        // True of a day long past, taken in now: the backfill.
+        let backfilled = capture(
+            store,
+            NewFact::about(subject.clone(), "moved here", date(2022, 3, 1)),
+        )
+        .await;
+        // True of a day that has not arrived, taken in now: the booking.
+        let booked = capture(
+            store,
+            NewFact::about(subject.clone(), "flies out", date(2027, 6, 12)),
+        )
+        .await;
+        let after = jiff::Timestamp::now();
+
+        for (what, fact, held) in [
+            ("the backfilled claim", &backfilled, date(2022, 3, 1)),
+            ("the booking", &booked, date(2027, 6, 12)),
+        ] {
+            assert_eq!(fact.date, held, "{what} lost the day it is true of");
+            let stamp = fact
+                .inserted_at
+                .unwrap_or_else(|| panic!("{what} came back with no stamp: {fact:?}"));
+            assert!(
+                before <= stamp && stamp <= after,
+                "{what} was stamped outside the call that wrote it: {stamp}",
+            );
+        }
+
+        // **Read back, because a stamp the write invented and the store did not
+        // keep is not a stamp.**
+        let held = store
+            .recall(&subject)
+            .await
+            .expect("the claims read back")
+            .into_iter()
+            .map(|fact| (fact.content, fact.date, fact.inserted_at))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            held,
+            vec![
+                (
+                    "moved here".to_string(),
+                    date(2022, 3, 1),
+                    backfilled.inserted_at
+                ),
+                (
+                    "flies out".to_string(),
+                    date(2027, 6, 12),
+                    booked.inserted_at
+                ),
+            ],
+            "a read gives back both clocks, unchanged",
+        );
+
+        // **An edit does not re-stamp.** Correcting a claim's wording is not
+        // the moment this store learned it.
+        let edited = edit(
+            store,
+            &backfilled.address(),
+            FactPatch {
+                content: Some("moved here in the spring".to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(
+            edited.inserted_at, backfilled.inserted_at,
+            "an edit re-stamped the record with the moment somebody corrected it",
+        );
+    }
+
     pub async fn referring_to_answers_from_the_far_end<M: Memory>(store: &M) {
         let gate = EntityId::new(EntityKind::EVENT, "contract-winter-fest");
         let other = EntityId::new(EntityKind::EVENT, "contract-leaving-party");
@@ -7607,6 +7703,7 @@ pub mod contract {
 
         every_kind_holds_facts(store).await;
 
+        a_claim_carries_when_it_was_taken_in(store).await;
         referring_to_answers_from_the_far_end(store).await;
         a_child_names_its_parent_and_reads_back(store).await;
         children_are_handles_and_one_level_deep(store).await;

@@ -1400,6 +1400,7 @@ mod tests {
             fields: Default::default(),
             refs: Vec::new(),
             derived_from: None,
+            inserted_at: None,
         }
     }
 

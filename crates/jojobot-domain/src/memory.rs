@@ -1721,8 +1721,24 @@ pub struct Fact {
     pub standing: Standing,
     /// Lifecycle state.
     pub status: FactStatus,
-    /// The fact's own freshness stamp.
+    /// The fact's own freshness stamp — **when the claim is true OF**, which
+    /// is not when anybody learned it. See [`Fact::inserted_at`] for the other
+    /// clock.
     pub date: Date,
+    /// **When jojobot took this record in.** Written by the store, never by a
+    /// caller, and never edited afterwards.
+    ///
+    /// **The two clocks are allowed to disagree, and that is the point rather
+    /// than an edge case.** A booking is true of a day that has not happened
+    /// yet; a backfill carries years of records that are true of days long
+    /// past and arrive this morning. Neither is checked against the other,
+    /// because both are ordinary.
+    ///
+    /// **`None` is a record from before this was recorded**, and it stays
+    /// `None`: filling it in would claim jojobot learned something at a moment
+    /// nobody observed, which is the one property this stamp exists to make
+    /// unforgeable.
+    pub inserted_at: Option<jiff::Timestamp>,
     /// The typed edge this fact draws, if any. Read tolerantly: a cell the reader
     /// can't parse costs the edge, never the fact.
     pub edge: Option<Edge>,

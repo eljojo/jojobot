@@ -299,6 +299,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0026_session_timezone.sql"),
         leaves: Leaves::Column("session", "timezone"),
     },
+    Migration {
+        version: "0027_fact_inserted_at",
+        sql: include_str!("../../migrations/0027_fact_inserted_at.sql"),
+        leaves: Leaves::Column("fact", "inserted_at"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -692,6 +697,7 @@ mod tests {
         "0024_rhythm_kind_takes_its_name",
         "0025_type_field_one_of",
         "0026_session_timezone",
+        "0027_fact_inserted_at",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

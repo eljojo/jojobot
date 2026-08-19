@@ -330,6 +330,43 @@ mod tests {
         );
     }
 
+    /// **A caller cannot say when jojobot learned something.**
+    ///
+    /// The stamp on a record is the store's: it says when this server took the
+    /// claim in, and a caller that could name it could claim jojobot knew
+    /// something before it did. That is the one property the stamp exists to
+    /// make unforgeable, so the surface does not implement the argument at all
+    /// and the refusal names it.
+    ///
+    /// **Paired with the clock a caller DOES own** — `date` says when the claim
+    /// is true of, and a backfill naming a day in 2022 goes through. Without
+    /// that half this passes against a build that refuses both, which would
+    /// take the backfill with it.
+    #[tokio::test]
+    async fn a_caller_cannot_stamp_when_jojobot_learned_a_claim() {
+        let jojobot = handler();
+        let with = |key: &str, value: &str| {
+            serde_json::json!({
+                "subject": "person:alpha", "content": "moved here",
+                key: value, "sid": "any",
+            })
+        };
+        assert!(
+            advice(jojobot.unimplemented_arguments(&call(
+                "capture",
+                with("inserted_at", "2019-01-01T00:00:00Z")
+            )))
+            .contains("inserted_at"),
+            "a caller naming the store's own stamp is refused, and the refusal names it"
+        );
+        assert!(
+            jojobot
+                .unimplemented_arguments(&call("capture", with("date", "2022-03-01")))
+                .is_none(),
+            "…and the clock the caller does own still takes a day long past"
+        );
+    }
+
     /// **The old name for a record's fields is refused, and the new one is
     /// taken** — the pair that says a rename happened rather than an alias.
     ///

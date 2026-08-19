@@ -1,0 +1,19 @@
+-- When jojobot took a claim in, as opposed to when the claim is true of.
+--
+-- A claim's `date` says when it is TRUE OF, which is the only clock this store
+-- had. So a claim written months ago and one written this morning read the
+-- same, and a stored value and a value somebody should have looked up live had
+-- the same shape.
+--
+-- **The two are allowed to disagree, and nothing here checks one against the
+-- other.** A booking is true of a day that has not arrived; a backfill carries
+-- years of records that are true of days long past and arrive this morning.
+-- Both are ordinary.
+--
+-- **NULL is a row written before this column existed**, and it stays NULL. A
+-- backfilled value would say jojobot learned something at a moment nobody
+-- observed, which is the one property this column exists to make unforgeable.
+--
+-- Text, like every other stamp here: the store keeps what it was handed rather
+-- than reformatting a record on its way through.
+ALTER TABLE fact ADD COLUMN inserted_at VARCHAR(40) NULL;

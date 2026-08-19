@@ -213,6 +213,7 @@ mod tests {
             derived_from: None,
             fields,
             refs: Vec::new(),
+            inserted_at: None,
         }
     }
 
