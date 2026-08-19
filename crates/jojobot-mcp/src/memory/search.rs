@@ -121,7 +121,7 @@ pub struct SearchArgs {
 /// or by fact address — so nothing was lost by pulling it and a standing leak
 /// was closed. Internally the id is still what orders a hit list; that is the
 /// index's business (`jojobot_adapters::search::tiebreak`) and it stops there.
-fn hit_json(hit: &Hit) -> serde_json::Value {
+fn hit_json(hit: &Hit, as_of: jiff::civil::Date) -> serde_json::Value {
     match hit {
         Hit::Entity {
             entity,
@@ -148,7 +148,7 @@ fn hit_json(hit: &Hit) -> serde_json::Value {
             subject,
             home,
         } => {
-            let mut body = fact_json(fact);
+            let mut body = fact_json(fact, as_of);
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("hit".into(), "fact".into());
                 obj.insert("about".into(), entity_ref_json(subject));
@@ -602,11 +602,19 @@ impl Jojobot {
             Ok(hits) => hits,
             Err(e) => return memory_declined("search", e),
         };
+        // **The day this answer is read against**, in the zone of the run that
+        // asked: whether a claim has passed the day it stays good is a question
+        // about a day, and two runs in two zones answer it differently for one
+        // stored claim.
+        let as_of = parse_date(None, &self.zone_for(args.sid.as_deref()))?;
         let body = serde_json::json!({
             "count": hits.len(),
             "memory": memory_coverage(self.search.memory_coverage()),
             "mail": mail_coverage(&query, self.search.mail_coverage()),
-            "results": hits.iter().map(hit_json).collect::<Vec<_>>(),
+            "results": hits
+                .iter()
+                .map(|hit| hit_json(hit, as_of))
+                .collect::<Vec<_>>(),
         });
         json_result(&body)
     }

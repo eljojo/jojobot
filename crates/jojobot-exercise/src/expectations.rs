@@ -470,7 +470,14 @@ impl Expectation for TheVocabularyGovernsAThing {
                 format!("the type could not be selected by, so it was never declared: {answering}"),
             );
         }
-        if answering.contains("\"count\":0") {
+        // **The answer's OWN count, read rather than grepped.** A body carries
+        // more than one `count` — an object's entitlement block has its own —
+        // so a substring reads whichever came first and calls the room empty
+        // while the thing is sitting in it.
+        let counted = serde_json::from_str::<serde_json::Value>(&answering)
+            .ok()
+            .and_then(|body| body["count"].as_u64());
+        if counted == Some(0) {
             return missed(
                 self.name(),
                 "the type is declarable but nothing in the room answers it, so no thing was \

@@ -73,7 +73,22 @@ impl Jojobot {
         // claiming the identity is missing.
         let identity = match (bot, &index) {
             (None, _) | (_, Err(_)) => serde_json::Value::Null,
-            (Some(bot), Ok(index)) => match self.identity(index, bot, resume.is_some()).await? {
+            (Some(bot), Ok(index)) => match self
+                .identity(
+                    index,
+                    bot,
+                    resume.is_some(),
+                    // The door validated this run's zone a moment ago; a
+                    // rule's own staleness is read in it like every other day.
+                    parse_date(
+                        None,
+                        &timezone
+                            .and_then(|name| jiff::tz::TimeZone::get(name).ok())
+                            .unwrap_or(jiff::tz::TimeZone::UTC),
+                    )?,
+                )
+                .await?
+            {
                 Ok(identity) => identity,
                 // A name that is no bot: the guards' own shape, so one
                 // client-side branch handles every "jojobot declined" answer —

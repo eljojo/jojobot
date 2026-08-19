@@ -82,6 +82,7 @@ impl Jojobot {
         index: &[Entity],
         bot: &EntityId,
         answering_an_offer: bool,
+        as_of: jiff::civil::Date,
     ) -> Result<Result<serde_json::Value, Vec<EntityMatch>>, McpError> {
         let Some(entity) = index.iter().find(|e| &e.id == bot) else {
             return Ok(Err(guard::screen(bot, &[], index)));
@@ -118,7 +119,10 @@ impl Jojobot {
             // bot nobody has written a charter for. A reader left to tell
             // withheld from absent would report the absence.
             "charter_elided": answering_an_offer,
-            "rules": rules.iter().map(fact_json).collect::<Vec<_>>(),
+            "rules": rules
+                .iter()
+                .map(|rule| fact_json(rule, as_of))
+                .collect::<Vec<_>>(),
             "owned_mailbox": self.owned_mailbox(&entity.id).await?,
         });
         if answering_an_offer && let Some(obj) = body.as_object_mut() {

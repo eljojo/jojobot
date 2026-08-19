@@ -484,7 +484,11 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
 /// `facts` and `prose` are missing when the caller declined them, rather than
 /// rendered empty, so nothing has to tell an empty page from a page nobody
 /// wanted.
-fn object_json(object: &graph::Object, include: graph::Include) -> serde_json::Value {
+fn object_json(
+    object: &graph::Object,
+    include: graph::Include,
+    as_of: jiff::civil::Date,
+) -> serde_json::Value {
     let mut body = entity_json(&object.entity);
     let Some(fields) = body.as_object_mut() else {
         return body;
@@ -506,7 +510,14 @@ fn object_json(object: &graph::Object, include: graph::Include) -> serde_json::V
     // `facts` key says both "you did not ask for them" and "there is nothing
     // recorded here", and a reader who has to infer which will infer wrong.
     if include.facts {
-        fields.insert("facts".into(), object.facts.iter().map(fact_json).collect());
+        fields.insert(
+            "facts".into(),
+            object
+                .facts
+                .iter()
+                .map(|fact| fact_json(fact, as_of))
+                .collect(),
+        );
     } else if object.facts_held > 0 {
         fields.insert(
             "records".into(),
@@ -555,7 +566,7 @@ fn object_json(object: &graph::Object, include: graph::Include) -> serde_json::V
         object
             .connected
             .iter()
-            .map(|o| object_json(o, include))
+            .map(|o| object_json(o, include, as_of))
             .collect(),
     );
     // **Eliding is never silent.** An empty `connected` otherwise means both
@@ -854,7 +865,10 @@ impl Jojobot {
                     Ok(claims) => Some(serde_json::json!({
                         "source": source.to_string(),
                         "count": claims.len(),
-                        "claims": claims.iter().map(fact_json).collect::<Vec<_>>(),
+                        "claims": claims
+                            .iter()
+                            .map(|fact| fact_json(fact, today))
+                            .collect::<Vec<_>>(),
                     })),
                     Err(e) => return memory_declined("recall", e),
                 }
@@ -878,7 +892,7 @@ impl Jojobot {
                 .zip(held)
                 .zip(backing.into_iter().chain(std::iter::repeat(None)))
                 .map(|((o, held), backing)| {
-                    let mut rendered = object_json(o, include);
+                    let mut rendered = object_json(o, include, today);
                     rendered["held"] = held;
                     match backing {
                         Some(backing) => {
@@ -1142,6 +1156,74 @@ mod tests {
                 .as_str()
                 .is_some_and(|note| note.contains("backing")),
             "the answer leaves the backing out and does not say it exists: {object}",
+        );
+    }
+
+    /// **Two runs in two zones disagree about whether a reading has gone
+    /// stale, and both are right.**
+    ///
+    /// Whether a claim has passed the day its writer said it stays good is a
+    /// question about a DAY, and which day it is belongs to the run asking.
+    /// The marker read a clock in UTC, so a run west of it was told a claim was
+    /// stale while its own calendar still said the day had not arrived.
+    ///
+    /// **One stored claim, read twice.** The day it stays good is the one the
+    /// eastern run has already passed and the western one has not, so the two
+    /// answers must differ — **and the pair is what proves it: a build reading
+    /// one clock answers both reads the same, whichever clock it reads.**
+    #[tokio::test]
+    async fn two_runs_in_two_zones_disagree_about_a_stale_reading() {
+        let jojobot = handler();
+        make_bot(&jojobot, "otto").await;
+        ensure(&jojobot, "person:alpha").await;
+
+        // Twenty-six hours apart, the widest the map goes, so their days never
+        // coincide. Both answer `new`: a bot may have several runs at once,
+        // which is what lets one case hold two of them in two zones.
+        let behind = booted_in(&jojobot, "otto", "Etc/GMT+12", Some("new")).await;
+        let ahead = booted_in(&jojobot, "otto", "Pacific/Kiritimati", Some("new")).await;
+
+        // The claim stays good until the day it is in the EASTERN run — which
+        // that run has reached and the western one has not.
+        let day_in = |zone: &str| {
+            jiff::Timestamp::now()
+                .to_zoned(jiff::tz::TimeZone::get(zone).expect("a zone"))
+                .date()
+        };
+        let stays_good_until = day_in("Etc/GMT+12");
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(behind.clone()),
+                stale_after: Some(stays_good_until.to_string()),
+                ..capture_args("person:alpha", "the rent is 900 a month")
+            },
+        )
+        .await;
+        assert_ne!(
+            day_in("Etc/GMT+12"),
+            day_in("Pacific/Kiritimati"),
+            "the two zones share a day, so this case can prove nothing today",
+        );
+
+        let read_by = async |sid: &str| {
+            let read = jojobot
+                .recall(Parameters(RecallArgs {
+                    sid: Some(sid.to_string()),
+                    ..of("person:alpha")
+                }))
+                .await
+                .expect("the read answers");
+            json_of(&read)["objects"][0]["facts"][0]["stale"].clone()
+        };
+
+        assert!(
+            read_by(&ahead).await == serde_json::json!(true),
+            "the run whose day is past the one the claim stays good for reads it as fresh",
+        );
+        assert!(
+            read_by(&behind).await.is_null(),
+            "the run whose day has not reached it yet is told the reading has gone stale",
         );
     }
 

@@ -176,7 +176,10 @@ impl Jojobot {
                     args.sid.as_deref(),
                 )
                 .await;
-                json_result(&fact_receipt_json(&fact))
+                json_result(&fact_receipt_json(
+                    &fact,
+                    parse_date(None, &self.zone_for(args.sid.as_deref()))?,
+                ))
             }
             Guarded::Blocked {
                 attempted,

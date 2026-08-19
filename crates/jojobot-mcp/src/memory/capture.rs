@@ -377,7 +377,7 @@ impl Jojobot {
             Guarded::Written(fact) => {
                 self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
                     .await;
-                json_result(&fact_receipt_json(&fact))
+                json_result(&fact_receipt_json(&fact, date))
             }
             Guarded::Blocked {
                 attempted,

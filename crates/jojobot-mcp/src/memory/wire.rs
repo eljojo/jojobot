@@ -15,21 +15,12 @@ use super::*;
 /// response vocabulary (schema.org names, § Vocabulary) lives in exactly one
 /// place. **Input grammar is unaffected:** ids and kind tokens stay lowercase
 /// `kind:slug` on the way in.
-pub(crate) fn fact_json(fact: &Fact) -> serde_json::Value {
-    fact_json_as_of(fact, today())
-}
-
-/// **Today, read once here.** The staleness of a claim is a question about a
-/// day, and the renderer is where that day arrives — the domain reads no clock.
-fn today() -> jiff::civil::Date {
-    jiff::Timestamp::now()
-        .to_zoned(jiff::tz::TimeZone::UTC)
-        .date()
-}
-
-/// One record on the wire, as of a day — which is what decides whether it says
-/// it wants looking at.
-pub(crate) fn fact_json_as_of(fact: &Fact, as_of: jiff::civil::Date) -> serde_json::Value {
+/// **The day is handed in, never read here.** Whether a claim has passed the
+/// day its writer said it stays good is a question about a day, and which day
+/// that is belongs to the RUN asking: two runs in two zones disagree about
+/// today for the same stored claim, and both are right. The renderer reads no
+/// clock, exactly as the domain reads none.
+pub(crate) fn fact_json(fact: &Fact, as_of: jiff::civil::Date) -> serde_json::Value {
     let mut rendered = serde_json::json!({
         "address": fact.address().to_string(),
         "subject": fact.subject.as_str(),
@@ -97,10 +88,10 @@ pub(crate) fn fact_json_as_of(fact: &Fact, as_of: jiff::civil::Date) -> serde_js
 /// cannot be edited. The subject as it was qualified. The date, the provenance
 /// and the standing — a caller that named none of those learns here what was
 /// recorded, which is not an echo but the only way it finds out.
-pub(crate) fn fact_receipt_json(fact: &Fact) -> serde_json::Value {
+pub(crate) fn fact_receipt_json(fact: &Fact, as_of: jiff::civil::Date) -> serde_json::Value {
     const HOW: &str = "you wrote this claim. recall the subject to read it back, with its \
                        records and their addresses.";
-    let mut body = fact_json(fact);
+    let mut body = fact_json(fact, as_of);
     elide_prose(&mut body, "content", &fact.content, HOW);
     if let Some(details) = &fact.details {
         elide_prose(&mut body, "details", details, HOW);
