@@ -2347,6 +2347,26 @@ pub enum MemoryError {
         /// What the write guard found nearby.
         nearest: Vec<guard::EntityMatch>,
     },
+    /// **The claim this one would rest on was taken back.**
+    ///
+    /// Not a missing source — the claim is there, and it is there precisely
+    /// because a retraction is a state rather than a deletion. **What it cannot
+    /// be is evidence.** A lineage pointer reads as *this is what I worked it
+    /// out from*, and pointing it at a claim the store has withdrawn writes a
+    /// citation nobody can act on: a later reader sees a claim resting on
+    /// something that was disowned before it was written.
+    ///
+    /// **The way forward keeps the claim and drops the citation** (rule 68):
+    /// capture it with no source, or name the claim that replaced the
+    /// withdrawn one. Nothing about the claim itself is refused.
+    #[error(
+        "'{attempted}' was taken back, so it cannot be what a claim was worked out from: write \
+         the claim with no source, or name the claim that replaced it"
+    )]
+    SourceRetracted {
+        /// The address of the withdrawn claim that was named.
+        attempted: String,
+    },
     /// **The addressed row is already retracted, and that is the state the
     /// caller was asking for.**
     ///

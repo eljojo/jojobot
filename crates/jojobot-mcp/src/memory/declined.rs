@@ -173,6 +173,17 @@ pub(crate) fn memory_declined(
                  so now as a new record."
             ),
         )),
+        // **The claim is real and it is withdrawn**, so this is neither a
+        // missing source nor a malformed call: the way forward keeps the claim
+        // and drops the citation (rule 68).
+        MemoryError::SourceRetracted { .. } => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. The claim you meant to write is fine — send it again \
+                 with no source, or naming the claim that replaced the withdrawn one."
+            ),
+        )),
         MemoryError::NotRetractable { attempted, why } => Ok(blocked_body(
             &EntityId(attempted.clone()),
             &[],
@@ -310,6 +321,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NotRetractable { .. }
+        | MemoryError::SourceRetracted { .. }
         | MemoryError::AlreadyRetracted { .. }
         | MemoryError::UnconfirmedPromotion
         | MemoryError::UnconfirmedSettling => McpError::invalid_params(e.to_string(), None),

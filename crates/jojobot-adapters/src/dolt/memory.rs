@@ -726,11 +726,20 @@ impl Memory for DoltMemory {
                     nearest: guard::screen(&source.home, &[], &index),
                 });
             }
-            if Self::read_fact(&mut tx, source).await?.is_none() {
-                return Err(MemoryError::UnknownFact {
-                    attempted: source.to_string(),
-                    nearest: Self::addresses_in(&mut tx, &source.home).await?,
-                });
+            match Self::read_fact(&mut tx, source).await? {
+                None => {
+                    return Err(MemoryError::UnknownFact {
+                        attempted: source.to_string(),
+                        nearest: Self::addresses_in(&mut tx, &source.home).await?,
+                    });
+                }
+                // A withdrawn claim is still there and is no longer evidence.
+                Some(held) if held.status == FactStatus::Retracted => {
+                    return Err(MemoryError::SourceRetracted {
+                        attempted: source.to_string(),
+                    });
+                }
+                Some(_) => {}
             }
         }
 
@@ -926,11 +935,19 @@ impl Memory for DoltMemory {
                     nearest: guard::screen(&source.home, &[], &index),
                 });
             }
-            if Self::read_fact(&mut tx, source).await?.is_none() {
-                return Err(MemoryError::UnknownFact {
-                    attempted: source.to_string(),
-                    nearest: Self::addresses_in(&mut tx, &source.home).await?,
-                });
+            match Self::read_fact(&mut tx, source).await? {
+                None => {
+                    return Err(MemoryError::UnknownFact {
+                        attempted: source.to_string(),
+                        nearest: Self::addresses_in(&mut tx, &source.home).await?,
+                    });
+                }
+                Some(held) if held.status == FactStatus::Retracted => {
+                    return Err(MemoryError::SourceRetracted {
+                        attempted: source.to_string(),
+                    });
+                }
+                Some(_) => {}
             }
         }
         apply_fact_patch(&mut fact, &patch)?;

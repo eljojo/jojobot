@@ -471,6 +471,16 @@ impl Memory for InMemoryMemory {
                 });
             }
         }
+        // A withdrawn claim is still there, and it is no longer evidence.
+        if let Some(source) = &fact.derived_from
+            && facts.iter().any(|f| {
+                f.home == source.home && f.id == source.local && f.status == FactStatus::Retracted
+            })
+        {
+            return Err(MemoryError::SourceRetracted {
+                attempted: source.to_string(),
+            });
+        }
         let home = fact.subject.clone();
         let existing: Vec<&Fact> = facts.iter().filter(|f| f.home == home).collect();
         let id = FactId(format!("f{}", existing.len() + 1));
@@ -1770,6 +1780,55 @@ pub mod contract {
             vec![built.address().to_string()],
             "…and it is not found under the source it now names",
         );
+
+        // **A claim that was taken back cannot be what another claim rests
+        // on.** It is still there — retraction is a state, not a deletion — so
+        // this is not the missing-source refusal: it is the same claim, no
+        // longer able to serve as evidence.
+        let withdrawn = capture(
+            store,
+            NewFact::about(subject.clone(), "the pier is open again", date(2026, 4, 3)),
+        )
+        .await;
+        store
+            .retract(
+                &withdrawn.address(),
+                Some("misread the notice"),
+                date(2026, 4, 4),
+            )
+            .await
+            .expect("the retraction lands");
+        let refused = store
+            .capture(NewFact {
+                derived_from: Some(withdrawn.address()),
+                ..NewFact::about(
+                    subject.clone(),
+                    "so the crossing is short again",
+                    date(2026, 4, 5),
+                )
+            })
+            .await
+            .expect_err("a claim resting on a withdrawn one is refused");
+        assert!(
+            matches!(refused, MemoryError::SourceRetracted { .. }),
+            "a claim was allowed to rest on one that had been taken back: {refused:?}",
+        );
+
+        // **The positive it depends on**: the same claim goes through when it
+        // names a source that still stands. Without this, the refusal above
+        // passes against a store that refuses every lineage pointer.
+        capture(
+            store,
+            NewFact {
+                derived_from: Some(other.address()),
+                ..NewFact::about(
+                    subject.clone(),
+                    "so the timetable changed",
+                    date(2026, 4, 5),
+                )
+            },
+        )
+        .await;
     }
 
     pub async fn referring_to_answers_from_the_far_end<M: Memory>(store: &M) {
