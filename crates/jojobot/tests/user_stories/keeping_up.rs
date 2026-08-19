@@ -120,6 +120,35 @@ async fn the_loops_a_person_actually_keeps() {
     refused.says("skipped");
     refused.says("snoozed");
 
+    // ── and the same holds for which date a late cycle counts from ─────────
+    //
+    // ⚠️ **Free text here was the expensive kind.** The arithmetic reads two
+    // words; anything else was stored silently and could not be read, so the
+    // loop came back overdue every single day — a nag nobody asked for, from a
+    // typo nothing reported.
+    let policy = s
+        .refused(
+            "capture",
+            json!({
+                "subject": "rhythm:swap-the-air-filter",
+                "content": "counts from whenever, I suppose",
+                "provenance": "testimony",
+                "fields": { "advances_from": "whenever" },
+            }),
+        )
+        .await;
+    policy.says("due_date");
+    policy.says("check_in_date");
+
+    // …and one of the two the arithmetic reads goes through.
+    s.event_with(
+        "rhythm:swap-the-air-filter",
+        "it counts from the day it fell due",
+        json!({ "advances_from": "due_date" }),
+        &[],
+    )
+    .await;
+
     // …and the same write with a word the key names goes through, so the
     // refusal above is the SET talking rather than a key nobody may write.
     s.event_with(

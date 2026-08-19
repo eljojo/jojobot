@@ -77,7 +77,17 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             // late** — the day it fell due, or the day the check-in happened.
             // The two diverge exactly when a check-in is late, which is
             // exactly when picking wrong stops being visible.
-            Field::new("advances_from", ValueType::Text),
+            //
+            // **The set is the arithmetic's own vocabulary rather than a copy
+            // of it**, for the reason the outcome key below reads its own: a
+            // second list of the same tokens is two vocabularies that drift.
+            // Free text here cost more than elsewhere — a mistyped value stored
+            // silently is a value the arithmetic cannot read, and the loop then
+            // reads overdue every day.
+            Field::one_of(
+                "advances_from",
+                crate::attention::AdvancesFrom::ALL.map(crate::attention::AdvancesFrom::as_token),
+            ),
             // **The date this cycle counts from**, and the loop is next due a
             // cadence after it. It is a second date rather than the same one
             // because what separates the three outcomes is whether the cycle
@@ -279,6 +289,40 @@ pub fn all() -> Vec<String> {
 mod tests {
     use super::*;
     use crate::attention::Outcome;
+
+    /// **The key choosing which date a late cycle counts from holds the two
+    /// tokens the arithmetic accepts, and there is only one list of them.**
+    ///
+    /// Free text here is worse than free text elsewhere: a mistyped value is
+    /// stored silently, the arithmetic cannot read it, and the loop then reads
+    /// overdue every day — a nag nobody asked for, from a typo nothing
+    /// reported.
+    ///
+    /// Both halves, for the reason the outcome case has both: every token the
+    /// policy accepts is a value the key takes, and the key takes nothing else.
+    #[test]
+    fn the_schedule_policy_key_holds_the_two_choices_the_arithmetic_reads() {
+        let advances = keys_of("rhythm")
+            .into_iter()
+            .find(|f| f.key == crate::attention::ADVANCES_FROM)
+            .expect("the rhythm kind names the policy key");
+        for choice in crate::attention::AdvancesFrom::ALL {
+            assert!(
+                advances.accepts(choice.as_token()),
+                "the key takes {:?}, which the arithmetic reads",
+                choice.as_token(),
+            );
+        }
+        assert_eq!(
+            advances.one_of.as_deref().map(<[String]>::len),
+            Some(crate::attention::AdvancesFrom::ALL.len()),
+            "…and it names those and no others: {advances:?}",
+        );
+        assert!(
+            !advances.accepts("whenever"),
+            "a value the arithmetic cannot read is not one the key holds either",
+        );
+    }
 
     /// **The loop's outcome key holds the check-in's own vocabulary, and there
     /// is only one list of it.**
