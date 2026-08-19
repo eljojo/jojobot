@@ -145,8 +145,10 @@ Shipped and live:
   and the tolerant one is what a caller gets when they name neither. **A
   declaration does not gate what a thing may BE**: a thing is found by the keys
   it carries whether or not anybody declared the type, matching stays
-  structural, and a key no type mentions is kept as written. **What a declaration asks for is a FLOOR, and
-  the floor is its REQUIRED keys:** once a thing holds every required key, a
+  structural, and a key no type mentions is kept as written. **A key may also be narrowed to ONE OF A NAMED
+  SET, checked on the write, and a declaration that leaves a key nothing it
+  could ever hold is refused when it is declared.** **What a declaration asks
+  for is a FLOOR, and the floor is its REQUIRED keys:** once a thing holds every required key, a
   write that would take one away is refused, naming the declaration and the
   key. **An optional key is welcome, never demanded, and never decides whether
   a thing is complete.** **What a key HOLDS is checked whenever it is set,

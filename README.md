@@ -144,7 +144,7 @@ Two consequences worth stating outright, because they surprise people:
 
 | tool | what a caller is doing |
 |---|---|
-| `start_here` | Coming online: getting the world model, the skills that exist by name and when-to-use, a live snapshot of what exists, and — when naming an identity — that identity's rules, mailbox counts, a session handle, and its charter on a first boot but not on a resume. Naming a skill returns that one procedure. The one door; there is deliberately no second. |
+| `start_here` | Coming online: getting the world model, the skills that exist by name and when-to-use, a live snapshot of what exists, and — when naming an identity — that identity's rules, mailbox counts, a session handle, and its charter on a first boot but not on a resume. Naming a skill returns that one procedure. **A run may name its TIMEZONE here, and everything day-grained resolves against it** — a run that names none is answered in UTC, said rather than applied silently. The one door; there is deliberately no second. |
 | `ping` | Checking jojobot is reachable at all, and which build answered. Identity, build, time, nothing else. |
 
 **Memory — recording and reading what is known**
