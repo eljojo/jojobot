@@ -567,6 +567,69 @@ mod tests {
             .expect("…and a set of three plain values goes through the same door");
     }
 
+    /// **A caller can send the three narrowing properties together, and a
+    /// combination nothing could satisfy is refused at the door.**
+    ///
+    /// The domain owns the question; what this pins is that the verb builds a
+    /// field carrying all three, so the combination is expressible through the
+    /// surface at all. Both refusals are paired with the same declaration
+    /// minus one property, which is the whole difference between them.
+    #[tokio::test]
+    async fn a_declaration_no_value_could_satisfy_is_refused_at_the_door() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+        let declaring = |holds: Option<&str>, folds: Option<&str>, values: Vec<&str>| {
+            let holds = holds.map(str::to_string);
+            let folds = folds.map(str::to_string);
+            let one_of = (!values.is_empty())
+                .then(|| values.into_iter().map(str::to_string).collect::<Vec<_>>());
+            jojobot.declare_type(Parameters(DeclareTypeArgs {
+                name: "snacking".to_string(),
+                fields: vec![FieldArgs {
+                    key: "donuts".to_string(),
+                    holds,
+                    folds,
+                    required: false,
+                    one_of,
+                }],
+                sid: Some(TEST_SID.to_string()),
+            }))
+        };
+
+        // A set naming nothing the key holds.
+        let said = json_of(
+            &declaring(Some("number"), None, vec!["cherry", "plain"])
+                .await
+                .expect("an answer"),
+        )
+        .to_string();
+        assert!(
+            said.contains("donuts") && said.contains("number"),
+            "the refusal names the key and the half that rules the set out: {said}",
+        );
+
+        // A counter narrowed to a set: the total is any number, the set is not.
+        let said = json_of(
+            &declaring(Some("number"), Some("sum"), vec!["1", "2"])
+                .await
+                .expect("an answer"),
+        )
+        .to_string();
+        assert!(
+            said.contains("donuts") && said.contains("total"),
+            "…and a counter is read as a total, which a set cannot hold: {said}",
+        );
+
+        // The same declaration minus one property, twice — without these the
+        // two above pass on a build that refuses every set and every counter.
+        declaring(Some("number"), None, vec!["1", "2"])
+            .await
+            .expect("a narrowed key that folds newest is ordinary");
+        declaring(Some("number"), Some("sum"), vec![])
+            .await
+            .expect("and a counter holding a number is what a counter is");
+    }
+
     /// **A kind nobody has is refused at the door**, and the refusal says what
     /// the token can be.
     ///

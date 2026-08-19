@@ -826,6 +826,71 @@ impl DeclaredType {
     }
 }
 
+/// **Can any value ever satisfy this key**, and when none can, which pair of
+/// the key's own properties rules everything out.
+///
+/// **One question, not a list of the mistakes somebody thought of.** A check
+/// that enumerates today's instances fires only on today's instances (rule
+/// 106), and a declaration nothing can satisfy is one defect however it is
+/// reached. Two properties narrow what may be WRITTEN — what the key holds, and
+/// the set when it has one — and the fold decides what the key is READ as. Ask
+/// whether those leave anything, and the cases fall out of the question rather
+/// than the question being assembled from the cases.
+///
+/// **What it does NOT ask is how a set is spelled.** A value named twice and a
+/// value carrying a comma are refused elsewhere, and neither makes the key
+/// unwritable: the first means what it would mean without the repeat, and the
+/// second only collides with the list separator.
+///
+/// **A set with one value the key can hold is satisfiable**, whatever else is
+/// in it. The other values are values nobody can write, which is a caller's
+/// mistake and not a key nobody can write to — and refusing them would be the
+/// enumeration this question replaced.
+fn unsatisfiable(field: &Field) -> Option<String> {
+    // ① **What may be written.** The set is the whole of what the key takes, so
+    // a set holding no value the key's own type accepts leaves nothing — and a
+    // set with no values at all is that same emptiness reached sooner.
+    if let Some(values) = &field.one_of {
+        if values.is_empty() {
+            return Some(format!(
+                "the key '{}' is narrowed to a set with no values in it, so there is nothing it \
+                 could be written with",
+                field.key,
+            ));
+        }
+        if !values.iter().any(|value| field.holds.holds(value)) {
+            return Some(format!(
+                "the key '{}' holds {} and its set names no value that is one",
+                field.key,
+                field.holds_token(),
+            ));
+        }
+    }
+    // ② **What it is read as.** A counter comes back as the total of its
+    // writes, so the key has to be able to hold that total — which is any
+    // number at all, however few the writes were.
+    if field.folds == Fold::Sum {
+        if field.one_of.is_some() {
+            return Some(format!(
+                "the key '{}' is a counter, so it reads back as the total of its writes, and a \
+                 total is any number at all — a set names the values it names",
+                field.key,
+            ));
+        }
+        if field.holds != ValueType::Number {
+            return Some(format!(
+                // The whole declared token, narrowing included: a key sent as
+                // `reference:place` is refused over what the caller wrote, and
+                // `reference` alone would name a half they did not send.
+                "the key '{}' is a counter and holds {}, and a total of those is not one",
+                field.key,
+                field.holds_token(),
+            ));
+        }
+    }
+    None
+}
+
 /// **Is this declaration one a store can keep.**
 ///
 /// A name and its keys are short labels, so a malformed one is refused rather
@@ -836,12 +901,11 @@ impl DeclaredType {
 /// it is a type nobody can query by, and it would have to be configured into
 /// usefulness before it did anything.
 ///
-/// **A key that sums holds a number**, which is the other thing refused here
-/// and is refused for the same reason: a total of dates or of prose is not a
-/// total, so a declaration asking for one is wrong about itself. **A reference
-/// narrowed to a kind is one of those**, so a key that both points at a kind
-/// and sums is refused by the same rule — the narrowing is on a reference, and
-/// a reference is not a number.
+/// **A key nothing could ever satisfy is the other thing refused here**, and it
+/// is [`unsatisfiable`] that asks it — one question over the properties that
+/// narrow a key, rather than a list of the ways a declaration can contradict
+/// itself. A counter holding prose, a counter narrowed to a set, and a set
+/// holding no value its own key accepts are all answers to it.
 ///
 /// Everything refused here is about the DECLARATION rather than about anything
 /// answering it. No record is checked on this path, and nothing here stops a
@@ -876,38 +940,16 @@ pub fn validate_type(declared: &DeclaredType) -> Result<(), MemoryError> {
                 declared.name, field.key
             )));
         }
-        if field.folds == Fold::Sum && field.holds != ValueType::Number {
-            return Err(MemoryError::InvalidType(format!(
-                "type '{}' declares the key '{}' a counter and says it holds a {}. A counter adds \
-                 its writes up, so it holds a number",
-                declared.name,
-                field.key,
-                // The whole declared token, narrowing included: a key sent as
-                // `reference:place` is refused over what the caller wrote, and
-                // `reference` alone would name a half they did not send.
-                field.holds_token(),
-            )));
-        }
-        // **A closed set that nothing can satisfy is a declaration wrong about
-        // itself**, exactly as a counter holding prose is, and each mistake is
-        // named rather than sharing one complaint: a caller comparing its own
-        // input against a generic refusal has to work out which of these it
-        // made.
+        // **How a set is SPELLED**, which is a different question from whether
+        // anything can satisfy the key: a repeated value and a value carrying a
+        // comma both leave the key perfectly writable. They are refused because
+        // the store should not keep a caller's mistake, and because a comma is
+        // what separates the items of a list, so no list of that key could ever
+        // spell such a value.
         if let Some(values) = &field.one_of {
-            if values.is_empty() {
-                return Err(MemoryError::InvalidType(format!(
-                    "type '{}' declares the key '{}' one of a set with no values in it, and a key \
-                     narrowed to nothing is a key nothing can ever be written to",
-                    declared.name, field.key,
-                )));
-            }
             let mut named: Vec<&str> = Vec::new();
             for value in values {
                 label("set value", value)?;
-                // **A comma cannot live in a member.** It is what separates one
-                // item from the next in a list value, so a member carrying one
-                // is a member no list of this key could ever spell — and a set
-                // narrows a list exactly as it narrows a single value.
                 if value.contains(',') {
                     return Err(MemoryError::InvalidType(format!(
                         "type '{}' names '{}' in the set for the key '{}', and a value in a set \
@@ -924,6 +966,14 @@ pub fn validate_type(declared: &DeclaredType) -> Result<(), MemoryError> {
                 }
                 named.push(value);
             }
+        }
+        // **And the one question about whether the key can hold anything at
+        // all.**
+        if let Some(why) = unsatisfiable(field) {
+            return Err(MemoryError::InvalidType(format!(
+                "type '{}' declares a key nothing could satisfy: {why}",
+                declared.name,
+            )));
         }
         seen.push(&field.key);
     }
@@ -1247,6 +1297,82 @@ mod tests {
             vec![Field::one_of("outcome", ["ran", "skipped", "snoozed"])],
         ))
         .expect("a set of three plain values is a declaration a store can keep");
+    }
+
+    /// **A declaration nothing could ever satisfy is refused, whichever pair of
+    /// its own properties rules everything out.**
+    ///
+    /// One question rather than a list of mistakes: a key is narrowed by what
+    /// it HOLDS and by its SET, and what it is READ as is decided by its fold.
+    /// The cases below are what falls out of asking whether those leave
+    /// anything — they are not the check's structure, and a fifth pair of
+    /// properties would be caught by the same question.
+    ///
+    /// **Each refusal is paired with the declaration it differs from by one
+    /// property**, because a case sending only bad declarations passes on a
+    /// build that refuses every declaration.
+    #[test]
+    fn a_declaration_no_value_could_satisfy_is_refused() {
+        let declaring = |field: Field| validate_type(&DeclaredType::new("snacking", vec![field]));
+        let refused = |field: Field| {
+            declaring(field)
+                .expect_err("no value could satisfy this key")
+                .to_string()
+        };
+
+        // ① The set is empty, so it names no value at all.
+        let said = refused(Field::one_of("flavour", Vec::<String>::new()));
+        assert!(
+            said.contains("flavour") && said.contains("no values"),
+            "{said}",
+        );
+
+        // ② The set names values, and the key holds something none of them is.
+        let said = refused(Field {
+            one_of: Some(vec!["cherry".to_string(), "plain".to_string()]),
+            ..Field::new("flavour", ValueType::Number)
+        });
+        assert!(
+            said.contains("flavour") && said.contains("number"),
+            "the refusal names the key and the half that rules the set out: {said}",
+        );
+        // …and one value the key CAN hold is enough, because the key is
+        // writable then. The dead value is a value nobody can write, not a
+        // declaration nothing can satisfy.
+        declaring(Field {
+            one_of: Some(vec!["4".to_string(), "cherry".to_string()]),
+            ..Field::new("flavour", ValueType::Number)
+        })
+        .expect("one value the key holds is a key somebody can write to");
+
+        // ③ A counter is read as the total of its writes, which is any number
+        // at all, and a set holds only the values it names.
+        let said = refused(Field {
+            folds: Fold::Sum,
+            one_of: Some(vec!["1".to_string(), "2".to_string()]),
+            ..Field::new("donuts", ValueType::Number)
+        });
+        assert!(
+            said.contains("donuts") && said.contains("total"),
+            "the refusal names the key and what a counter is read as: {said}",
+        );
+        // The same key without the set is what a counter is.
+        declaring(Field::summing("donuts")).expect("a counter holding a number is a counter");
+        // …and the same set without the counter is an ordinary narrowed key.
+        declaring(Field {
+            one_of: Some(vec!["1".to_string(), "2".to_string()]),
+            ..Field::new("donuts", ValueType::Number)
+        })
+        .expect("a narrowed key that folds newest is ordinary");
+
+        // ④ A counter over a key that holds something a total is not. The
+        // oldest of these, and it is the same question: what the fold produces
+        // has to be something the key can hold.
+        let said = refused(Field {
+            folds: Fold::Sum,
+            ..Field::new("visits", ValueType::Date)
+        });
+        assert!(said.contains("visits") && said.contains("date"), "{said}");
     }
 
     /// **A declared reference names the kind it points at, and a handle of
