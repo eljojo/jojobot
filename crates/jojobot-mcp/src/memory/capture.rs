@@ -377,7 +377,16 @@ impl Jojobot {
             Guarded::Written(fact) => {
                 self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
                     .await;
-                json_result(&fact_receipt_json(&fact, date))
+                // **As of the day the RUN is asking about, never the day the
+                // claim is about** (rule 222). `date` above is what the claim
+                // is true OF, which is a different question from whether its
+                // reading still stands today — and the read that follows this
+                // write answers as of today, so a receipt answering as of the
+                // claim's day contradicts it inside one session.
+                json_result(&fact_receipt_json(
+                    &fact,
+                    parse_date(None, &self.zone_for(args.sid.as_deref()))?,
+                ))
             }
             Guarded::Blocked {
                 attempted,
@@ -782,6 +791,58 @@ mod tests {
     /// it. Gated, "the fields of a thing" means "the fields somebody opted
     /// in", which is a biased sample — and every read that groups a thing's
     /// records computes over that sample.
+    /// **The receipt reads the day the RUN is asking about, not the day the
+    /// claim is about.**
+    ///
+    /// Which day it is belongs to the caller (rule 222). A claim carries the
+    /// day it is true OF, and that is a different question: a reading taken in
+    /// January and recorded now is about January, and whether it is still good
+    /// is asked as of today.
+    ///
+    /// **Both halves in one run, because the disagreement is the defect.** A
+    /// receipt that answers as of the claim's own date says a reading is fine,
+    /// and the very next read of the same record in the same session says it is
+    /// stale. Nothing else in the answer changes, so a caller has no way to see
+    /// which of the two it should believe.
+    #[tokio::test]
+    async fn a_backdated_claim_is_receipted_as_of_today() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:alpha").await;
+        let receipt = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    date: Some("2026-01-10".into()),
+                    stale_after: Some("2026-01-20".into()),
+                    ..capture_args("person:alpha", "the rate the bank quoted")
+                }))
+                .await
+                .expect("capture ok"),
+        );
+        assert_eq!(
+            receipt["stale_after"], "2026-01-20",
+            "the day the writer set is on the receipt: {receipt}",
+        );
+        assert_eq!(
+            receipt["stale"],
+            serde_json::json!(true),
+            "the receipt read the claim's own day, so a reading past its day came back fine: \
+             {receipt}",
+        );
+
+        // The same record, read back in the same run: a caller meeting two
+        // answers has no way to tell which one this session believes.
+        let read = json_of(
+            &jojobot
+                .recall(Parameters(recall_args("person:alpha")))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            read["objects"][0]["facts"][0]["stale"], receipt["stale"],
+            "the receipt and the read disagree about the same record in one run: {read}",
+        );
+    }
+
     /// **A capture is answered with a receipt, not with the record.**
     ///
     /// The content, the details and the fields are what the caller sent in
