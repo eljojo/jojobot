@@ -365,13 +365,18 @@ pub struct Field {
     /// nothing about it is missing.
     ///
     /// **Optional is the default** (rule 9), and the reason is not tidiness: a
-    /// required key is a refusal waiting to happen, so a declaration says which
-    /// keys earn one rather than which keys are let off.
+    /// required key on a KIND is a refusal waiting to happen, so a declaration
+    /// says which keys earn one rather than which keys are let off.
     ///
-    /// **It says nothing about the VALUE.** What a key holds is checked
-    /// whenever the key is set, required or not — the two are independent, and
-    /// collapsing them is what turns "the colour has to be a colour" into "every
-    /// bike must have a colour".
+    /// **It says nothing about the VALUE.** The two are independent, and
+    /// collapsing them is what turns "the colour has to be a colour" into
+    /// "every bike must have a colour".
+    ///
+    /// ⚠️ **Which of the two a declaration ENFORCES is its owner's question.**
+    /// A kind's key is checked whenever it is set and its required set is a
+    /// floor a write may not break ([`super::guard_fit`]); a type a caller
+    /// declared governs no write at all, and both properties are read by
+    /// whoever asks how a thing answers it.
     pub required: bool,
     /// **Whether this key holds a LIST — zero or more of what it declares.**
     ///
@@ -736,8 +741,8 @@ impl Match {
     /// **An optional key decides nothing here, held, absent or wrong.** That is
     /// the whole of what optional means: it is welcome, it is never demanded,
     /// and a thing without it is not a thing with something missing. What is in
-    /// it when it IS there is a separate question, asked whenever the key is
-    /// written and reported by `mistyped` either way.
+    /// it when it IS there is a separate question, checked on the write where
+    /// the key belongs to a KIND and reported by `mistyped` either way.
     pub fn meets_the_floor(&self) -> bool {
         self.lacking_required.is_empty() && !self.mistyped.iter().any(|m| m.required)
     }

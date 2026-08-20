@@ -78,18 +78,31 @@ pub struct FieldArgs {
     /// **Whether a thing has to hold this key to be one of these at all.**
     /// Defaults to false, and leave it there unless the key really is what
     /// makes the thing what it is: the required keys are the ones a thing is
-    /// measured against, and **a required key is a refusal waiting to happen**.
+    /// measured against by the reader who asks *which of these ARE one of
+    /// these*.
     ///
-    /// ⚠️ **This says nothing about what the key HOLDS.** A value is checked
-    /// against `holds` whenever the key is written, required or not — the two
-    /// are separate questions, and the useful one is usually "the colour has to
-    /// be a colour" rather than "everything must have a colour". An optional
-    /// key is welcome, never demanded, and a thing without it is complete.
+    /// ⚠️ **This says nothing about what the key HOLDS.** The two are separate
+    /// questions, and the useful one is usually "the colour has to be a colour"
+    /// rather than "everything must have a colour". An optional key is welcome,
+    /// never demanded, and a thing without it is complete.
+    ///
+    /// ⚠️ **And a type you declare here holds no write to either answer.** On a
+    /// KIND's key, a value is checked against `holds` whenever the key is
+    /// written, and a required key a write would take away is refused — which
+    /// is why a required key on a kind is a refusal waiting to happen. Here it
+    /// is the vocabulary a reader asks with.
     #[serde(default)]
     pub required: bool,
-    /// **The named set this key holds one of** — a closed vocabulary, and a
-    /// write outside it is refused with the values named. Leave it off and the
-    /// key is narrowed to nothing, which is what nearly every key wants.
+    /// **The named set this key holds one of** — a closed vocabulary.
+    ///
+    /// ⚠️ **What that buys depends on who declared the key.** On a KIND's key,
+    /// a write outside the set is refused with the values named. **A type you
+    /// declare here refuses no write**: the set is what a reader is told about
+    /// a value that does not match, so a thing carrying one comes back in an
+    /// `answers_type` read with that key reported and the values named.
+    ///
+    /// Leave it off and the key is narrowed to nothing, which is what nearly
+    /// every key wants.
     ///
     /// Reach for it when the set really is small, known and finite: the three
     /// states a task moves through, the two ways a thing can be paid for.

@@ -1596,13 +1596,16 @@ pub fn referenced_by(
 }
 
 /// **A write may not drop a thing below its kind's required keys, and may not
-/// put in any declared key a value that key does not hold.**
+/// put in any key that kind declared a value the key does not hold.**
 ///
 /// **Two independent rules, and collapsing them is the mistake this shape
 /// exists to avoid.** What a thing must HOLD is the required set — small on
 /// purpose, because a required key is a refusal waiting to happen. What a key
 /// may CONTAIN is checked every time the key is written, required or optional,
 /// because an optional key is welcome rather than unchecked.
+///
+/// **Both are the KIND's, and a type a caller declared is neither.** A type is
+/// the vocabulary a reader asks with; it holds no write to anything.
 ///
 /// Strict is a **floor, not a ceiling**: what a kind requires has to survive,
 /// and anything else a caller wants to say is welcome. Adding a key is never
