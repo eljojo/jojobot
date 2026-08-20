@@ -35,6 +35,45 @@ amount of careful reading gets a session past that.
 COMPUTATION, not a recall.** That is the difference between a room that tests
 the surface and one that tests reading comprehension.
 
+## For whoever builds the next room
+
+Two rules, both learnt here, both cheaper to read than to rediscover.
+
+### Apply the range test BEFORE choosing the goal
+
+Ask what the terminal question needs, and build the room only if the answer is
+one of these:
+
+* **A computation jojobot does and a reader cannot** — due-ness from a cadence
+  and an anchor, a total folded from every write of a key, a comparison across
+  more records than anybody will read. This room is the first kind.
+* **State the store owns and no session could have written down** — where a
+  message you sent got to, what somebody else's box has done with it. No
+  sentence anywhere holds it, because the session that would have written it
+  was not there when it changed.
+
+**And do not build the room if the answer is a value that can be read out of a
+sentence.** A cold session reads *"the year's tally for 2026 — 4100 km"* as
+easily out of prose as out of a key, so a room built on recall passes a session
+that stored everything badly. Say so before building rather than after.
+
+### Every room carries TWO kinds of case, and they are named apart
+
+* **The checks discriminate.** A furnished room nobody worked in, the obvious
+  route, another route to the same end state, and the room somebody worked
+  entirely in prose. These prove a check can fail and can hold.
+* **The room is solvable.** The terminal question, asked through the served
+  surface after a first phase done properly, returning exactly the answer the
+  room is built around.
+
+**The second one is not optional and it is not covered by the first.** A room
+whose own arithmetic is wrong — a cadence that never falls due by the named
+day, an anchor a day out — is unreachable by every session that will ever enter
+it, and **every case of the first kind still passes**. The failure surfaces on a
+paid run, reads as a product defect, and costs money to find. A room can be
+perfectly discriminating and still be impossible, and from the free suite the
+two look identical.
+
 ## The identity rule — binding, and the same as every room's
 
 **The model boots as the shipped `assistant` and stays there.** No charter is
