@@ -733,6 +733,20 @@ impl Memory for InMemoryMemory {
                     .collect(),
             });
         }
+        // **And the withdrawn-source rule, for the same reason.** An edit that
+        // points a claim at a claim somebody took back leaves the store in the
+        // state a capture is refused for, so a check on the capture path alone
+        // is a rule with a way around it — and the edit is the way a session
+        // records where a claim came from after writing it.
+        if let Some(source) = &patch.derived_from
+            && facts.iter().any(|f| {
+                f.home == source.home && f.id == source.local && f.status == FactStatus::Retracted
+            })
+        {
+            return Err(MemoryError::SourceRetracted {
+                attempted: source.to_string(),
+            });
+        }
         apply_fact_patch(&mut edited, &patch)?;
         // **The thing's fields as they will stand, against the thing's fields
         // as they stand now** — the same guard the real store runs, so the two
@@ -2258,9 +2272,37 @@ pub mod contract {
             "a claim was allowed to rest on one that had been taken back: {refused:?}",
         );
 
+        // **The same rule reached by an EDIT.** A pointer set on a claim that
+        // already exists lands the store in the identical state a capture
+        // would, so a check on one path alone leaves the other one open — and
+        // the edit is the path a session takes when it works out where a claim
+        // came from after writing it.
+        let refused = store
+            .update_fact(
+                &built.address(),
+                FactPatch {
+                    derived_from: Some(withdrawn.address()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("an edit may not point a claim at a withdrawn one either");
+        assert!(
+            matches!(refused, MemoryError::SourceRetracted { .. }),
+            "an edit was allowed to rest a claim on one that had been taken back: {refused:?}",
+        );
+        assert_eq!(
+            read_back(store, &subject, &built.id)
+                .await
+                .derived_from
+                .map(|a| a.to_string()),
+            Some(other.address().to_string()),
+            "…and the refused edit left the pointer where it was",
+        );
+
         // **The positive it depends on**: the same claim goes through when it
-        // names a source that still stands. Without this, the refusal above
-        // passes against a store that refuses every lineage pointer.
+        // names a source that still stands. Without this, the refusals above
+        // pass against a store that refuses every lineage pointer.
         capture(
             store,
             NewFact {
