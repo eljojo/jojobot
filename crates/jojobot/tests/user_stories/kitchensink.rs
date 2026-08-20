@@ -363,10 +363,22 @@ async fn nothing_on_the_surface_goes_unexercised() {
         .await
         .says("rhythms");
 
+    // **The positive it rests on, in the same read.** A door that had stopped
+    // serving procedures altogether would refuse that name too, and the
+    // refusal above would look exactly like this one.
+    s.call("start_here", json!({"skill": "rhythms"}))
+        .await
+        .says("\"body\"");
+
     // A search that narrows nothing is refused rather than answered with
     // everything or with a cheerful empty list, and the refusal names what was
     // missing.
     s.refused("search", json!({})).await.says("query");
+
+    // **And a search that does narrow still answers**, which is what says the
+    // refusal above is about the missing question rather than about search
+    // being broken.
+    s.find("Homer").await.says("person:homer");
 
     // ── the run that has been told, and the verbs that are not there ────────
 
@@ -402,6 +414,31 @@ async fn nothing_on_the_surface_goes_unexercised() {
 
     s.wrap("what the surface answers when it is asked for what it does not have")
         .await;
+
+    // ── the run that was told, and the run that was left open ───────────────
+    //
+    // **A wrapped run stops being offered back.** Beat by beat this is the
+    // neighbour of the refusal above and NOT the same claim: a run that had
+    // stopped taking entries while still being offered would pass everything
+    // else here, and every later session would be handed a run whose story was
+    // already told.
+    let told = story.session().await;
+    let told_sid = told.sid().to_string();
+    told.journal("did the thing, and said so").await;
+    told.wrap("the work is over and this is the story of it").await;
+
+    // The positive it rests on: a run somebody left open in the same instance,
+    // which must still be offered. Without it, "the wrapped one is not offered"
+    // passes on a build that offers nothing at all.
+    let left_open = story.session().await;
+    let open_sid = left_open.sid().to_string();
+    left_open
+        .journal("stopping here, and whoever picks this up starts from this line")
+        .await;
+
+    let offered = story.call("start_here", json!({"bot": "otto"})).await.0;
+    offered.says(&open_sid);
+    offered.never_says(&told_sid);
 
     story.finish().await;
 }
