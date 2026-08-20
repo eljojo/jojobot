@@ -196,14 +196,13 @@ pub(crate) fn answers_json(found: &jojobot_domain::memory::types::Match) -> serd
             .iter()
             .map(|m| serde_json::json!({
                 "key": m.key,
-                // The narrowing rides in the same token the declaration used,
-                // because `reference` alone says nothing about what is wrong
-                // with a value that is a perfectly good handle of some other
-                // kind.
-                "declared": match m.points_at {
-                    Some(kind) => format!("{}:{}", m.declared.as_token(), kind.as_token()),
-                    None => m.declared.as_token().to_string(),
-                },
+                // **What the key wanted, from the declaration's own
+                // spelling.** One function answers this for every narrowing
+                // there is, and the refusal a write gets uses the same one: a
+                // reader told `reference` learns nothing about what is wrong
+                // with a perfectly good handle of another kind, and a reader
+                // told `text` about a key narrowed to a set is looking at text.
+                "declared": m.wanted(),
                 "value": m.value,
             }))
             .collect::<Vec<_>>(),

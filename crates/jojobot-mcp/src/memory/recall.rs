@@ -2243,6 +2243,73 @@ mod tests {
         );
     }
 
+    /// **What a mistyped key WANTED is what the declaration says, including a
+    /// narrowed set.**
+    ///
+    /// A key narrowed to a named set holds text, because a closed vocabulary is
+    /// tokens — so a payload that reports the value type reports that text is
+    /// what the key wanted, in front of a caller looking at text. The values
+    /// are the whole of what the key wants, and there is one function that says
+    /// so.
+    ///
+    /// Both halves, because either alone passes on a wrong build: the set is
+    /// named, and the bare value type is NOT what the answer says it wanted.
+    #[tokio::test]
+    async fn a_narrowed_key_reports_the_set_it_wanted() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:alpha").await;
+        jojobot
+            .declare_type(Parameters(DeclareTypeArgs {
+                name: "shift".into(),
+                fields: vec![FieldArgs {
+                    key: "worked".into(),
+                    holds: None,
+                    folds: None,
+                    required: false,
+                    one_of: Some(vec!["early".into(), "late".into()]),
+                }],
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("declaring a type is accepted");
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("worked".to_string(), "overnight".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("person:alpha", "took a shift nobody named")
+            },
+        )
+        .await;
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    answers_type: Some("shift".into()),
+                    facts: Some(false),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let mistyped = &body["objects"][0]["answers"]["mistyped"][0];
+        let declared = mistyped["declared"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the key that holds something else is reported: {body}"));
+        assert!(
+            declared.contains("early") && declared.contains("late"),
+            "the answer names the value type and not the set, so a caller reading it writes \
+             another value the key does not hold: {body}",
+        );
+        assert_eq!(
+            mistyped["value"], "overnight",
+            "…and what is actually in the key: {body}",
+        );
+    }
+
     /// **A colleague reads the whole charter of the identity the software
     /// ships, and stays nobody.**
     ///
