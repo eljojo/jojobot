@@ -1837,7 +1837,7 @@ pub struct NewFact {
 
 impl NewFact {
     /// A fact about `subject` with default provenance (inference) and active
-    /// status — the common shape this slice captures.
+    /// status — the common shape a capture takes.
     pub fn about(subject: EntityId, content: impl Into<String>, date: Date) -> Self {
         NewFact {
             subject,

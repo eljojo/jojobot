@@ -838,9 +838,9 @@ impl FullTextIndex {
     ///
     /// **Eviction keys on the store's doc id**, looked up in the entity mirror,
     /// because that is what the postings were written under. Deleting by the
-    /// handle instead matched nothing in the real store, where a doc id is an
-    /// Outline UUID: the page was deleted in the wiki and every hit it ever had
-    /// went on being served from the last scan, indefinitely.
+    /// handle matches nothing in a store whose doc id is not the handle: the
+    /// page goes from the store and every hit it ever had goes on being served
+    /// from the last scan, indefinitely.
     pub fn forget(&self, entity: &EntityId) -> Result<(), MemoryError> {
         let doc_id = self
             .docs
@@ -3665,9 +3665,9 @@ mod tests {
     /// nothing to act on.
     ///
     /// The pair here is hits-and-coverage in one read. An implementation that
-    /// answered with nothing and reported itself partial would satisfy the
-    /// coverage assertion alone, and it would be a worse store than the one
-    /// this fixes.
+    /// answers with nothing and reports itself partial satisfies the coverage
+    /// assertion alone, and it is a worse store than one that serves what it
+    /// can reach.
     #[tokio::test]
     async fn coverage_stops_claiming_loaded_when_the_read_cannot_reach_the_store() {
         let inner = a_store_of_two();
@@ -5070,10 +5070,10 @@ mod tests {
 
     /// The **other** counter, on the same path. A subject retyped onto a handle
     /// that EXISTS orphans nothing, so the orphan reporter has nothing to say
-    /// about it — which is exactly the disguise the Cosme split brain wore. Both
-    /// counters have to survive a write, not just a boot scan; only the boot
-    /// scan was pinned, so dropping the foreign one from the write path left the
-    /// whole suite green.
+    /// about it — which is the disguise a split brain wears. Both counters have
+    /// to survive a write rather than only a boot scan: pinned on the boot scan
+    /// alone, dropping the foreign one from the write path leaves the whole
+    /// suite green.
     #[tokio::test]
     async fn a_write_re_reads_its_doc_and_counts_the_foreign_subjects_it_finds() {
         let logged = log_sink();
@@ -5137,10 +5137,10 @@ mod tests {
     }
 
     /// **A row about another live entity is counted too** — the consistency check
-    /// the orphan counter cannot make. The Cosme incident wore exactly this
-    /// shape: a hand edit retyped a subject cell into a handle that *exists*, so
-    /// nothing was orphaned and every read went on working, while the entity
-    /// quietly became readable under one id and writable under another.
+    /// the orphan counter cannot make. A hand edit that retypes a subject cell
+    /// into a handle that *exists* orphans nothing and leaves every read
+    /// working, while the entity is quietly readable under one id and writable
+    /// under another.
     ///
     /// Legitimate as often as not — a fact about one entity is frequently
     /// written on another's page — so this is a signal, never a fault: counted,
@@ -5998,12 +5998,10 @@ mod tests {
     /// an invariant with a test on it: every payload value that is an entity
     /// handle is walkable, and every value that is not is not.
     ///
-    /// **Whatever its key**, which is the half that is invisible today. `ref` is
-    /// the unnamed member of a family; when types land, `mechanic=person:x` is
-    /// the same link with the key doing the annotating. Nothing in this slice
-    /// has a named field, so a projection keyed on the literal word `ref` would
-    /// pass every test here and silently drop every named reference the day the
-    /// first type ships.
+    /// **Whatever its key.** `ref` is the unnamed member of a family, and
+    /// `mechanic=person:x` is the same link with the key doing the annotating.
+    /// A projection keyed on the literal word `ref` passes every test written
+    /// against unnamed references and silently drops every named one.
     #[tokio::test]
     async fn every_payload_value_that_is_a_handle_is_walkable_and_nothing_else_is() {
         let event = Fact {

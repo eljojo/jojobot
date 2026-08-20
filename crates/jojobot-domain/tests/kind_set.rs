@@ -25,9 +25,9 @@ fn in_turn() -> std::sync::MutexGuard<'static, ()> {
 /// A build where the set ships as nothing has two ways to look healthy. One:
 /// the set stays empty and everything is refused — loud, and caught by the
 /// shipped token below. Two: the lookup quietly falls back to the compiled
-/// list, which passes every test written against the ten and changes nothing
-/// at all — **caught only by a token that is NOT one of the ten**, because a
-/// fallback has no way to know one, and by a shipped token that was not
+/// list, which passes every test written against the shipped kinds and changes
+/// nothing at all — **caught only by a token that is NOT one of them**, because
+/// a fallback has no way to know one, and by a shipped token that was not
 /// loaded, which is the same discriminator from the other side.
 #[test]
 fn a_loaded_kind_is_known_and_the_compiled_list_cannot_answer_for_it() {
@@ -45,14 +45,14 @@ fn a_loaded_kind_is_known_and_the_compiled_list_cannot_answer_for_it() {
     assert!(
         !kinds::known("pet"),
         "a shipped kind that was NOT loaded is unknown, which is what says this answer \
-         comes from the set rather than from the list it replaces",
+         comes from the set rather than from the compiled list beside it",
     );
 
     // **Through the parse a handle really takes**, not only the set's own
     // question. A fallback to the compiled list can live in `from_token`
     // rather than in the set, and an assertion that never calls it would not
     // notice: `pet` is compiled and NOT loaded here, so a parse that answers
-    // for it is answering from the list this change replaces.
+    // for it is answering from the compiled list.
     assert_eq!(
         EntityId::new(EntityKind::PERSON, "alpha").kind(),
         Some(EntityKind::PERSON),
@@ -145,15 +145,15 @@ fn the_seed_writes_before_it_reads() {
 /// **Standing a store up is not booting a process, and only one of the two
 /// fills the set.**
 ///
-/// The double's constructor used to load the set as a side effect of being
-/// built, so every case in a binary got the set from whichever case happened to
-/// build a fake first. That is the hazard this whole file exists for, one layer
-/// down: a case could be green because of another case.
+/// A double whose constructor loads the set as a side effect of being built
+/// gives every case in a binary the set from whichever case happened to build a
+/// fake first. That is the hazard this whole file exists for, one layer down: a
+/// case is then green because of another case.
 ///
 /// **Both halves, and the negative alone proves nothing.** Standing a store up
 /// and finding the set still empty is satisfied by a build where nothing ever
-/// loads it; booting one and finding a handle parses is satisfied by the old
-/// build that loaded on construction. Together they say which step did it.
+/// loads it; booting one and finding a handle parses is satisfied by a build
+/// that loads on construction. Together they say which step did it.
 ///
 /// It drives the future on a runtime of its own rather than being an async
 /// test, for the reason the seed case above does: the turn is a plain lock and

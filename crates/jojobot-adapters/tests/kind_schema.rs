@@ -26,8 +26,8 @@ use jojobot_domain::memory::{
 async fn a_kinds_keys_are_a_schema_and_the_two_questions_differ() {
     let (mut server, store, _turn) = a_store("schema").await;
 
-    // **Declared by a caller**, because the shipped ten name no keys and adding
-    // one to them is not this slice's to do.
+    // **Declared by a caller**, so the case owns the keys it asserts on rather
+    // than resting on what a shipped kind happens to name.
     store
         .declare_kind(
             "stall",

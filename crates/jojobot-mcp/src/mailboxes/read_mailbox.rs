@@ -217,10 +217,9 @@ impl Jojobot {
         };
         // **Counting returns before the delivery path is entered at all.** Not
         // "deliver, then render less" — that would move every message out of
-        // `new` and hand the caller work it only wanted to weigh, which is the
-        // one way this change could be worse than the verb it retires. The
-        // counts are read off the listing `my_box` already walked; nothing else
-        // is called.
+        // `new` and hand the caller work it only wanted to weigh, which is
+        // worse than having no way to poll at all. The counts are read off the
+        // listing `my_box` already walked; nothing else is called.
         if args.counts_only.unwrap_or(false) {
             return json_result(&counted_json(&mine));
         }

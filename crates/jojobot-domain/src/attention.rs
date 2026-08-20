@@ -613,9 +613,9 @@ mod tests {
         assert!(Rhythms.due(&half).owed_on(date(2026, 8, 18)));
     }
 
-    /// **A kind no carrier speaks for owes nothing**, which is the defect this
-    /// whole shape replaces: a person has no schedule to read, and a check that
-    /// read "cannot compute" as "late" marked every one of them.
+    /// **A kind no carrier speaks for owes nothing**, which is what this whole
+    /// shape is for: a person has no schedule to read, and a check that reads
+    /// "cannot compute" as "late" marks every one of them.
     #[test]
     fn a_kind_with_no_carrier_owes_nothing() {
         let carriers: Vec<Box<dyn Carrier>> = shipped();

@@ -4392,7 +4392,8 @@ pub mod contract {
         );
 
         // …and the ordinary keys beside it are untouched, `type` and `ref`
-        // included: those were the previous grammar's words, not the record's.
+        // included: those words belong to the edge grammar, not to a record's
+        // own fields.
         let landed = capture(
             store,
             NewFact {
