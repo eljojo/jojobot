@@ -104,7 +104,19 @@ impl Jojobot {
             &mut body,
             "charter",
             &stored,
-            "you wrote this charter. start_here with this bot returns it in full.",
+            // **The route a caller may actually take.** This named `start_here`
+            // with the bot, which is how a session BOOTS as that bot — so the
+            // receipt for a write proposed the one act the rules refuse,
+            // reading another identity's data by becoming it. `recall` reads
+            // the page and mints nothing.
+            //
+            // **It says what you wrote rather than the charter**, because on an
+            // identity the software ships a charter is two layers and this call
+            // writes one of them: `recall` returns the instance's own text, and
+            // promising the whole would be wrong on exactly the identity a
+            // fresh instance arrives holding.
+            "you wrote this charter. recall this bot with prose: true returns what you wrote \
+             here, in full.",
         );
         json_result(&body)
     }
@@ -134,6 +146,7 @@ fn carries(prose: &str, core: &str) -> bool {
 mod tests {
     use super::*;
     use crate::harness::*;
+    use crate::memory::testing::recall_args;
 
     /// **The shipped identity's charter is two layers, and this call reaches
     /// one of them.**
@@ -299,11 +312,44 @@ mod tests {
                 .is_some_and(|head| head.starts_with("Holds the plan")),
             "…and enough to recognize which charter landed: {written}"
         );
+        let how = written["how_to_read"]
+            .as_str()
+            .unwrap_or_else(|| panic!("eliding is never silent: {written}"))
+            .to_string();
         assert!(
-            written["how_to_read"]
-                .as_str()
-                .is_some_and(|how| how.contains("start_here")),
+            how.contains("recall"),
             "eliding is never silent — the answer names the call that returns it: {written}"
+        );
+
+        // **The route the answer names is WALKED, not trusted.** A receipt that
+        // sends a caller somewhere is only as good as what it finds there, and
+        // a string nobody followed is how the last one shipped naming a call
+        // the rules forbid.
+        let followed = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    prose: Some(true),
+                    sid: Some(TEST_SID.to_string()),
+                    ..recall_args("bot:gamma")
+                }))
+                .await
+                .expect("the call the answer names is one a caller may make"),
+        );
+        assert_eq!(
+            followed["objects"][0]["prose"], "Holds the plan. Does not implement.",
+            "following what the receipt says returns the charter in full: {followed}",
+        );
+        // 🚨 **And it boots nobody.** This is the property rather than the
+        // sentence: a route that hands back a session handle is a route that
+        // made the caller somebody, and reading another bot's data by becoming
+        // it is the one act the rules refuse. Asserted over the WHOLE answer,
+        // because a handle anywhere in it is a handle a caller will use — and
+        // this stays true against a build that names some other booting verb,
+        // where grepping for the absence of one word would not.
+        assert!(
+            !followed.to_string().contains("\"sid\""),
+            "the route the receipt names hands back a session handle, so following it makes the \
+             caller somebody: {followed}"
         );
         // **The write still landed whole**, which is the half the receipt must
         // not cost: a boot reads back every byte, trimmed as the store trims.
