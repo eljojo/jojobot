@@ -266,10 +266,14 @@ Shipped and live:
   memory · one owned mailbox, opened with the bot in the same act and named
   for its handle. **A charter has two layers, and neither is a copy of the
   other**: the core the build ships for the identity the software ships, and
-  the instance's own prose written through `set_charter`. They are composed
-  in the read, core first, and the instance's text narrows rather than
-  repeals it. **So a bot nobody has written for still answers with the
-  core**, while every other bot's charter is its written prose alone. The
+  the instance's own prose written through `set_charter`. Two reads compose
+  them, core first, and the instance's text narrows rather than repeals it:
+  the boot door, for the identity a session holds, and `recall` with
+  `charter`, for a colleague's — that one mints no session and hands back no
+  handle, which is what makes a directory read possible without booting as
+  the bot it belongs to. **So a bot nobody has written for still answers
+  with the core**, while every other bot's charter is its written prose
+  alone. The
   core is never a stored record — upgrading it is shipping a new build,
   with nothing to migrate and no instance frozen on the version that made
   it. **A write carrying the core is refused rather than trimmed**, because
