@@ -22,7 +22,7 @@ use crate::run::{Expectation, Observed, Outcome};
 use crate::surface::Seed;
 
 /// The document this room is driven by.
-pub const LOOP_ROOM: &str = "LOOP-ROOM.md";
+pub const LOOP_ROOM: &str = "rooms/loop.md";
 
 /// The three things a loop hangs under. The fern is furnished with its loop
 /// already keeping properly: it is the vocabulary the occupant can find, and

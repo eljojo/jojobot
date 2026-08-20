@@ -20,7 +20,7 @@ use crate::run::{Expectation, Observed, Outcome};
 use crate::surface::Seed;
 
 /// The document this room is driven by.
-pub const BIKE_ROOM: &str = "BIKE-ROOM.md";
+pub const BIKE_ROOM: &str = "rooms/bike.md";
 
 /// The bike the operator rides, and the one in the basement. The second is not
 /// decoration: without a bike whose cover has run out, "what is still under

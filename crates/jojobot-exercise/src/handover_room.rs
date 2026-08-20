@@ -24,7 +24,7 @@ use crate::run::{Expectation, Observed, Outcome};
 use crate::surface::Seed;
 
 /// The document this room is driven by.
-pub const HANDOVER_ROOM: &str = "HANDOVER-ROOM.md";
+pub const HANDOVER_ROOM: &str = "rooms/handover.md";
 
 /// The identity a fresh instance ships with, and the one the occupant wears.
 const OCCUPANT: &str = "bot:assistant";

@@ -17,9 +17,7 @@ use serde_json::{Value, json};
 
 /// The document a run is driven by, read from the root of the workspace.
 fn room_document() -> Playbook {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(expectations::HANDOVER_ROOM);
+    let path = expectations::room_document(expectations::HANDOVER_ROOM);
     Playbook::read(&path).unwrap_or_else(|e| panic!("the shipped room must read: {e:#}"))
 }
 

@@ -20,10 +20,7 @@ use jojobot_exercise::playbook::Playbook;
 fn shipped() -> Vec<(&'static str, Playbook)> {
     expectations::shipped_rooms()
         .map(|name| {
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../..")
-                .join(name);
-            let read = Playbook::read(&path)
+            let read = Playbook::read(&expectations::room_document(name))
                 .unwrap_or_else(|e| panic!("the shipped room {name} must read: {e:#}"));
             (name, read)
         })

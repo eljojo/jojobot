@@ -2,7 +2,7 @@
 
 **A second identity, and whether the operator's assistant can tell what became
 of the work.** Two phases, the second with no memory of the first — the
-standard shape, and the reason it is standard is in `LOOP-ROOM.md`.
+standard shape, and the reason it is standard is in `loop.md`.
 
 ## The goal
 

@@ -52,6 +52,16 @@ const ROOMS: [Room; 4] = [
     ),
 ];
 
+/// **Where a shipped room's document is on disk.**
+///
+/// Resolved from THIS CRATE rather than from wherever a caller happened to
+/// stand: the documents sit beside the code that reads them, and a path built
+/// from the working directory works only for whoever runs it from the right
+/// one. The binary takes a path from its caller, and everything else asks here.
+pub fn room_document(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(name)
+}
+
 /// The documents this build ships, by name — what a caller may point a run at.
 pub fn shipped_rooms() -> impl Iterator<Item = &'static str> {
     ROOMS.iter().map(|(document, _, _)| *document)

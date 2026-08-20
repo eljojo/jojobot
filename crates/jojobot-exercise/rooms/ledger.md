@@ -2,7 +2,7 @@
 
 **The words the operator uses, and the ones nobody agreed to.** Two phases, the
 second with no memory of the first — the standard shape, and the reason it is
-standard is written down in `LOOP-ROOM.md`.
+standard is written down in `loop.md`.
 
 ## The goal
 

@@ -29,7 +29,7 @@ use crate::run::{Expectation, Observed, Outcome};
 use crate::surface::Seed;
 
 /// The document this room is driven by.
-pub const LEDGER_ROOM: &str = "LEDGER-ROOM.md";
+pub const LEDGER_ROOM: &str = "rooms/ledger.md";
 
 /// The things whose current word is one of the operator's, and which nothing
 /// in this room should touch.
