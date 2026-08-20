@@ -75,9 +75,9 @@ ask which of them are still owing.
 From now on there are three words for where a job has got to, and no others: \
 invoiced, paid, waived.
 
-Two from last week to put on. The floor pump was serviced, thirty five, and I \
-paid on the spot. The bike has a new chain, sixty, and they have invoiced me \
-for that one.
+Two to put on, both done on 2026-08-11. The floor pump was serviced, thirty \
+five, and I paid on the spot. The bike has a new chain, sixty, and they have \
+invoiced me for that one.
 
 Leave it so whoever comes next can pick it up.";
 
