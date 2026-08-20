@@ -1336,6 +1336,97 @@ fn says(sentence: &str, marker: &str) -> bool {
     }
 }
 
+/// **What a kind requires is read off the kinds, and the served text has to
+/// agree with it.**
+///
+/// A kind may name keys the things of that kind must keep, and the floor rule
+/// refuses a write that would drop one. Whether any shipped kind does that is a
+/// fact about the kind table, so this case reads the table rather than a
+/// sentence somebody wrote about it: **a claim stating what is true today is a
+/// claim nothing re-checks**, and this is the re-check.
+///
+/// **The failure it exists for is not a missing sentence, it is permission.** A
+/// session reading that nothing is held to anything plans writes on that basis
+/// and meets the refusal on the first loop it edits.
+///
+/// **Both halves, in one read.** The absence of the false claim passes
+/// identically against a build serving no text at all, so the corpus is
+/// asserted first and the required keys are asserted by name. The names are
+/// derived from the kinds, so a kind that gains a required key fails this until
+/// the text a session reads names it. **A key is looked for the way the essay
+/// writes one, in backticks**, because a key called `name` is an ordinary
+/// English word and a bare substring finds it in any sentence.
+#[test]
+fn no_agent_facing_text_says_a_kind_holds_a_thing_to_nothing() {
+    use jojobot_domain::memory::kinds;
+
+    // **Read off the kinds, never written down here.** Each shipped kind with
+    // the keys its things have to keep.
+    let holding: Vec<(&str, Vec<String>)> = kinds::SHIPPED
+        .iter()
+        .map(|token| {
+            let required: Vec<String> = kinds::keys_of(token)
+                .into_iter()
+                .filter(|field| field.required)
+                .map(|field| field.key)
+                .collect();
+            (*token, required)
+        })
+        .filter(|(_, required)| !required.is_empty())
+        .collect();
+
+    let served = everything_served();
+    assert!(
+        !served.is_empty(),
+        "nothing was gathered, so the sweep below reads no text at all and passes on an empty          corpus"
+    );
+
+    // A sentence about kinds that says the floor is empty. The markers are the
+    // claim rather than one wording of it: what makes such a sentence wrong is
+    // that it tells a caller no kind holds anything.
+    const EMPTY_FLOOR: &[&str] = &["names any key", "held to anything", "holds nothing to"];
+    let mut claiming: Vec<String> = Vec::new();
+    for (what, text) in &served {
+        for sentence in sentences(text) {
+            if !mentions(&sentence, "kind") {
+                continue;
+            }
+            for marker in EMPTY_FLOOR {
+                if says(&sentence, marker) {
+                    claiming.push(format!("{what} says {marker:?} of a kind"));
+                }
+            }
+        }
+    }
+    assert!(
+        holding.is_empty() || claiming.is_empty(),
+        "the kinds hold things to keys ({holding:?}) and agent-facing text says they hold them          to nothing. A session reads that as permission and plans a write the floor rule          refuses:
+  {}",
+        claiming.join("
+  "),
+    );
+
+    // …and the true claim in its place: the essay a fresh session reads names
+    // every key it can be refused for losing.
+    let (_, essay) = served
+        .iter()
+        .find(|(what, _)| what == "the orientation essay")
+        .expect("the essay a fresh session reads is in the corpus");
+    let unsaid: Vec<String> = holding
+        .iter()
+        .flat_map(|(token, required)| {
+            required
+                .iter()
+                .filter(|key| !essay.contains(&format!("`{key}`")))
+                .map(move |key| format!("{token}.{key}"))
+        })
+        .collect();
+    assert!(
+        unsaid.is_empty(),
+        "the essay teaches the floor rule and does not name the keys it holds a thing to, so a          session learns the rule and cannot learn what it applies to: {unsaid:?}"
+    );
+}
+
 /// **A thing's fields are its WRITES, and the served text says so.**
 ///
 /// The fold is over every write on a thing, the newest write of each key

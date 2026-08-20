@@ -1627,9 +1627,11 @@ pub fn referenced_by(
 /// nothing offered and nothing confirmed — a thing on which somebody wrote a
 /// kind's five keys would be governed by a kind it is not.
 ///
-/// **A kind that names no keys governs nothing**, which is every shipped kind
-/// today, so today this refuses nothing. That is the floor being empty rather
-/// than absent: it fills when a kind carries keys.
+/// **A kind that names no keys governs nothing**, and most shipped kinds name
+/// none. The loop kind names two required keys, so what this refuses is a write
+/// that would take `name` or `last_check_in` off a rhythm. The floor of a kind
+/// that names nothing is empty rather than absent: it fills when that kind
+/// carries keys.
 ///
 /// **A key is lost two ways, and both are refused.** Taking the key off is one.
 /// Putting a value in it that the key does not hold is the other, because
