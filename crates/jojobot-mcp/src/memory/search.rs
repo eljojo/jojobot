@@ -114,13 +114,12 @@ pub struct SearchArgs {
 /// enrichment is strictly additive: `subject` is still the same handle string
 /// here as in `recall`, so one record has one spelling across every verb.
 ///
-/// **What a hit does NOT carry is the id of the thing it was stored in.** Both
-/// entity and prose hits shipped one, and it was the only place on the whole
-/// surface where a caller could learn that entities have documents at all. It
-/// is not an address a caller can use — every verb here is addressed by handle
-/// or by fact address — so nothing was lost by pulling it and a standing leak
-/// was closed. Internally the id is still what orders a hit list; that is the
-/// index's business (`jojobot_adapters::search::tiebreak`) and it stops there.
+/// **What a hit does NOT carry is the id of the thing it was stored in.** A hit
+/// carrying one is the only place on the whole surface where a caller could
+/// learn that entities have documents at all, and it is not an address a caller
+/// can use: every verb here is addressed by handle or by fact address.
+/// Internally the id is what orders a hit list; that is the index's business
+/// (`jojobot_adapters::search::tiebreak`) and it stops there.
 fn hit_json(hit: &Hit, as_of: jiff::civil::Date) -> serde_json::Value {
     match hit {
         Hit::Entity {

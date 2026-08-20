@@ -438,11 +438,11 @@ mod tests {
 
     /// **A schedule jojobot worked out is not something the user said.**
     ///
-    /// A check-in computes the dates the next cycle counts from, and those keys
-    /// were merged into the caller's own record — so a record captured as
-    /// testimony made a date nobody uttered read back as the user's word.
-    /// **A folded value is read with the certainty of the claim that carried
-    /// it**, so that was permanent and invisible.
+    /// A check-in computes the dates the next cycle counts from. Merged into
+    /// the caller's own record, those keys make a record captured as testimony
+    /// read a date nobody uttered back as the user's word. **A folded value is
+    /// read with the certainty of the claim that carried it**, so that is
+    /// permanent and invisible.
     ///
     /// **Paired with an ordinary capture in the same case**: testimony stays
     /// testimony when nothing was computed, so this cannot pass against a build
@@ -779,9 +779,9 @@ mod tests {
     ///
     /// A record's fields ARE the thing it describes, so the write that puts a
     /// key on a record cannot be gated on the writer also naming a class for
-    /// it. While it was gated, "the fields of a thing" meant "the fields
-    /// somebody opted in", which is a biased sample — and every read that
-    /// groups a thing's records computes over that sample.
+    /// it. Gated, "the fields of a thing" means "the fields somebody opted
+    /// in", which is a biased sample — and every read that groups a thing's
+    /// records computes over that sample.
     /// **A capture is answered with a receipt, not with the record.**
     ///
     /// The content, the details and the fields are what the caller sent in
@@ -792,8 +792,8 @@ mod tests {
     ///
     /// **What must survive is everything the caller could not know**, and the
     /// defaulted values are the sharp part: a caller that omitted `provenance`,
-    /// `standing` or `date` learns here what was recorded, and there is a case
-    /// in this file because `standing` once vanished silently. The address is
+    /// `standing` or `date` learns here what was recorded, and a defaulted
+    /// value that never reaches the receipt vanishes silently. The address is
     /// the other half — without it the record cannot be edited, and a receipt
     /// that costs a caller the address has broken the verb.
     #[tokio::test]

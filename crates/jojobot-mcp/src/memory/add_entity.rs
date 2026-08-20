@@ -177,10 +177,10 @@ impl Jojobot {
             aliases: args.aliases.unwrap_or_default(),
             source: args.source,
             crm: args.crm,
-            // **Where a thing sits is the caller's to say.** The tree shipped
-            // in the domain and stopped at the door, which left every write
-            // through this verb a root — so a kind that requires a parent had
-            // no reachable way to be created at all.
+            // **Where a thing sits is the caller's to say.** A tree the domain
+            // holds and the door does not carry makes every write through this
+            // verb a root, so a kind that requires a parent has no reachable
+            // way to be created at all.
             parent: args.parent.as_deref().map(EntityId::person),
             boot: parse_boot(args.boot.as_deref())?,
             override_token: args.override_token.clone(),

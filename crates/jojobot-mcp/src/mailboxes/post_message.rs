@@ -206,11 +206,11 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<PostMessageArgs>,
     ) -> Result<CallToolResult, McpError> {
-        // **The sender is derived, never declared.** It was a free-text field
-        // recorded exactly as claimed, which made every "who left this?" answer
-        // only as good as the caller's honesty and their memory of what they
-        // called themselves last time. The handle says who is asking, so the
-        // handle says who sent it.
+        // **The sender is derived, never declared.** A free-text field recorded
+        // exactly as claimed makes every "who left this?" answer only as good
+        // as the caller's honesty and their memory of what they called
+        // themselves last time. The handle says who is asking, so the handle
+        // says who sent it.
         let caller = match self.identified(Some(&args.sid)) {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
