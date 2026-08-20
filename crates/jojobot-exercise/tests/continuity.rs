@@ -7,7 +7,7 @@
 //! on the board that a continuing phase had no reason to start — and never a
 //! reading of what the agent said.
 
-use jojobot_exercise::run::{Boundary, Results, Said};
+use jojobot_exercise::run::{Boundary, Outcome, Results, Said};
 
 fn boundary(runs: usize) -> Boundary {
     Boundary {
@@ -30,10 +30,19 @@ fn said(phase: &str, ran: bool, continuing: bool) -> Said {
 }
 
 fn run(transcript: Vec<Said>, offered: &[usize]) -> Results {
+    run_with(transcript, offered, Vec::new())
+}
+
+/// **A run carrying the outcomes it was given.**
+///
+/// A case about a HARNESS failure needs the expectations to have HELD, or the
+/// verdict is false for a different reason — an empty outcome list is itself a
+/// failure — and the assertion proves nothing.
+fn run_with(transcript: Vec<Said>, offered: &[usize], outcomes: Vec<Outcome>) -> Results {
     Results {
         playbook: "trivial".into(),
         model: "sonnet".into(),
-        outcomes: Vec::new(),
+        outcomes,
         transcript,
         uncovered: Vec::new(),
         boundaries: offered.iter().map(|n| boundary(*n)).collect(),
@@ -115,7 +124,12 @@ fn a_run_that_kept_its_continuity_reports_none() {
 fn a_phase_that_skipped_its_steps_is_a_harness_failure() {
     let asked = "48. Add the thing.\n49. Record what it is.\n50. Add another.\n51. Check it in.\n52. Ask what is quiet.\n53. Ask again for another day.";
 
-    let skipped = run(
+    let held_outcome = || Outcome {
+        name: "a check that held".into(),
+        held: true,
+        saying: "it held".into(),
+    };
+    let skipped = run_with(
         vec![Said {
             phase: "Phase 9 — the loop that has gone quiet".into(),
             prompt: asked.into(),
@@ -126,6 +140,7 @@ fn a_phase_that_skipped_its_steps_is_a_harness_failure() {
             continuing: false,
         }],
         &[1, 1],
+        vec![held_outcome()],
     );
     assert_eq!(
         skipped.steps_unanswered().len(),
@@ -138,13 +153,25 @@ fn a_phase_that_skipped_its_steps_is_a_harness_failure() {
         "the run passed while five sixths of a phase went unmeasured",
     );
 
-    let answered = run(vec![Said {
-        phase: "Phase 9 — the loop that has gone quiet".into(),
-        prompt: asked.into(),
-        output: "48. added it. 49. recorded it. 50. added the second. 51. checked it in. 52. asked. 53. asked again.".into(),
-        ran: true,
-        continuing: false,
-    }], &[1, 1]);
+    let answered = run_with(
+        vec![Said {
+            phase: "Phase 9 — the loop that has gone quiet".into(),
+            prompt: asked.into(),
+            output: "48. added it. 49. recorded it. 50. added the second. 51. checked it in. 52. asked. 53. asked again."
+                .into(),
+            ran: true,
+            continuing: false,
+        }],
+        &[1, 1],
+        vec![held_outcome()],
+    );
+    // **The positive the verdict above rests on**: the same run with every step
+    // answered passes, so that failure turned on the unanswered steps rather
+    // than on a fixture that could never pass anything.
+    assert!(
+        answered.held(),
+        "a run that answered every step and held every check did not pass",
+    );
     assert!(
         answered.steps_unanswered().is_empty(),
         "a phase that answered every step was called a harness failure: {:?}",
