@@ -334,15 +334,33 @@ pub async fn go(
         } else {
             conversation.carried()
         };
-        let worked = agent
-            .work(room.endpoint(), &conversation, &phase.prompt)
-            .await
-            .with_context(|| format!("driving the phase {:?}", phase.name))?;
+        // **Delivered as the phase says, one message at a time.** A phase that
+        // asks what the agent EXPECTS before it says what happens is split
+        // there, so the answer is given before the reveal arrives — those are
+        // the steps that measure what the surface let somebody believe, and
+        // arriving together made a wrong prediction impossible to record.
+        let mut output = String::new();
+        let mut ran = true;
+        for delivery in &phase.deliveries {
+            let worked = agent
+                .work(room.endpoint(), &conversation, delivery)
+                .await
+                .with_context(|| format!("driving the phase {:?}", phase.name))?;
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(&worked.output);
+            ran &= worked.ran;
+            // Every delivery after the first carries the one before it on, or
+            // the answer to the prediction is not in the room when the reveal
+            // lands.
+            conversation = conversation.carried();
+        }
         transcript.push(Said {
             phase: phase.name.clone(),
             prompt: phase.prompt.clone(),
-            output: worked.output,
-            ran: worked.ran,
+            output,
+            ran,
             continuing: !(at == 0 || phase.fresh_session),
         });
         // Taken after every phase and named for the one that comes next, so a

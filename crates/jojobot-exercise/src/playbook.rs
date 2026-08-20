@@ -33,6 +33,19 @@ const PHASE: &str = "## Phase ";
 const MARKER: &str = "**Session:";
 const FRESH: &str = "fresh";
 
+/// **A line that ends one delivery and starts the next**, inside a phase.
+///
+/// A phase used to arrive as one message, so a step asking what the agent
+/// EXPECTS was read alongside the step that says what happens — the answer
+/// printed under its own question. The phases that turn on a prediction are
+/// exactly the ones that measure what the surface let somebody believe, and
+/// they could not record a wrong one.
+///
+/// **An explicit marker rather than prose the parser sniffs for.** Which step
+/// must be answered before the next is read is the author's decision, and a
+/// reader of the document can see where the breaks are.
+const BREAK: &str = "---- answer before reading on ----";
+
 /// One beat of a run: what to say, and whether to say it to a session that
 /// remembers the phase before it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,8 +53,16 @@ pub struct Phase {
     /// What this phase is called — the heading, whole, so a report and the
     /// document name a phase the same way.
     pub name: String,
-    /// The block addressed to the model, with the quoting taken off.
+    /// The block addressed to the model, with the quoting taken off — every
+    /// delivery of it, joined, which is what a report shows and what the steps
+    /// are counted off.
     pub prompt: String,
+    /// **What the model is told, in order, one message each.**
+    ///
+    /// Usually one. A phase that asks for a prediction before it reveals the
+    /// answer is delivered in two or more, and the model answers each before
+    /// the next arrives — see [`BREAK`].
+    pub deliveries: Vec<String>,
     /// Whether this phase starts a session of its own.
     pub fresh_session: bool,
 }
@@ -74,6 +95,7 @@ impl Playbook {
                     phases.push(Phase {
                         name: heading.trim().to_string(),
                         prompt: String::new(),
+                        deliveries: Vec::new(),
                         fresh_session: false,
                     });
                 }
@@ -98,6 +120,18 @@ impl Playbook {
         }
         for phase in &mut phases {
             phase.prompt = phase.prompt.trim().to_string();
+            // **Split where the author put a break, and nowhere else.** A phase
+            // with none is one delivery, which is every phase that reveals
+            // nothing to a step above it.
+            phase.deliveries = phase
+                .prompt
+                .split(BREAK)
+                .map(|part| part.trim().to_string())
+                .filter(|part| !part.is_empty())
+                .collect();
+            // The joined text is what a report shows and what the step count
+            // reads, so the marker itself does not survive into either.
+            phase.prompt = phase.deliveries.join("\n");
         }
         anyhow::ensure!(
             !phases.is_empty(),

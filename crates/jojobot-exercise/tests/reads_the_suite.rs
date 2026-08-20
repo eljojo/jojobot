@@ -70,3 +70,56 @@ fn the_shipped_suite_spans_more_than_one_session() {
         "every phase starts fresh, so nothing measures a session carrying on",
     );
 }
+
+/// **A phase that asks for a prediction is delivered in more than one message.**
+///
+/// The whole phase used to arrive at once, so a step asking what the agent
+/// EXPECTS sat above the step that says what happens — the answer printed
+/// under its own question. Those steps are the ones that measure what the
+/// surface let somebody believe, and a wrong prediction was impossible to
+/// record.
+///
+/// Paired with the phases that reveal nothing: they stay one delivery, so this
+/// cannot pass against a parser that splits everything.
+#[test]
+fn a_phase_that_asks_for_a_prediction_is_delivered_in_parts() {
+    let suite = suite();
+
+    let split: Vec<&str> = suite
+        .phases
+        .iter()
+        .filter(|phase| phase.deliveries.len() > 1)
+        .map(|phase| phase.name.as_str())
+        .collect();
+    assert!(
+        split.len() >= 3,
+        "the phases that ask for a prediction arrive whole, so the answer is printed under the \
+         question: {split:?}",
+    );
+
+    for phase in &suite.phases {
+        // **The break is a delivery boundary and nothing else.** A marker left
+        // in the text would be read by the model as an instruction.
+        assert!(
+            !phase.prompt.contains("answer before reading on"),
+            "the delivery marker reached the model as prose: {}",
+            phase.name,
+        );
+        assert!(
+            phase.deliveries.iter().all(|part| !part.trim().is_empty()),
+            "a phase carries an empty delivery, so the agent is sent nothing: {}",
+            phase.name,
+        );
+    }
+
+    let whole: Vec<&str> = suite
+        .phases
+        .iter()
+        .filter(|phase| phase.deliveries.len() == 1)
+        .map(|phase| phase.name.as_str())
+        .collect();
+    assert!(
+        !whole.is_empty(),
+        "every phase was split, so the break marks nothing in particular",
+    );
+}

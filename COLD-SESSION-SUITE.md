@@ -95,6 +95,8 @@ phase below is marked one way or the other in the last section.
 >    how the system works, plus a snapshot of what exists, and **no session
 >    handle** — you have not said who you are. Report whether it hands you a
 >    handle it should not.
+> ---- answer before reading on ----
+>
 > 3. From that answer alone, and without calling anything else, write down:
 >    every verb you believe you are allowed to call, how you would get an
 >    identity, and what you think this server is for. **This is the
@@ -327,6 +329,8 @@ asks for the prediction before the answer.
 >     Expected: taken.
 > 57. **Before you try it, say what you expect**, in one line: if you now write
 >     a value the set does NOT name, is it refused or is it kept?
+> ---- answer before reading on ----
+>
 > 58. Now write it. **Expected: it is KEPT.** A type you declared DESCRIBES —
 >     it tells a writer what belongs in a key and it turns no write away.
 >     Report whether that is what you predicted in step 57, and say so plainly
@@ -358,6 +362,8 @@ learns that before it gets a date wrong.
 >     which day it is for you**, and where you learnt it. **Answer before
 >     looking for the argument.** If you cannot, that is the finding and it is
 >     worth more than a right answer.
+> ---- answer before reading on ----
+>
 > 64. `add_entity` for a person with handle `smoke-beta`, then boot as
 >     `assistant` again, resuming the run you are in, and tell it you are
 >     working in `Pacific/Kiritimati`. **The claims below go on `smoke-beta`

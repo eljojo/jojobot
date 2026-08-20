@@ -184,6 +184,26 @@ impl Seed {
             arguments["sid"] = json!(sid);
             room.must(verb, arguments).await?;
         }
+        // **The furnishing wraps its own run.** Everything above is written
+        // through a session, and a session nobody closed is offered to the next
+        // boot and lingers in every count of what is open — so a check asking
+        // whether a WRAPPED run stops being offered found this one still there
+        // and reported the product had failed. It failed on every run, whatever
+        // jojobot did.
+        //
+        // **Wrapped rather than excluded by id.** The room should look like a
+        // room somebody left tidy; an exception list is a rule the next reader
+        // has to know about, and this one had already sent a paid run's
+        // diagnosis to the wrong place once.
+        room.must(
+            "wrap_session",
+            json!({
+                "sid": sid,
+                "story": "Furnished the room for a run: the records and mail a phase needs \
+                          before it starts.",
+            }),
+        )
+        .await?;
         Ok(())
     }
 }
