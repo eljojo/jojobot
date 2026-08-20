@@ -1174,12 +1174,12 @@ pub mod contract {
 
     /// **A `derived_from` names a claim, and the claim has to be there.**
     ///
-    /// The surface teaches that everything a write names must already exist.
-    /// That was true of entities — a subject, an edge's object, an event's
-    /// refs — and not of claims: this field took any well-formed address and
-    /// nothing looked. A link to a claim that never existed is a citation to
-    /// nothing, and the reader it fails is a later session following the
-    /// provenance chain, which is the whole reason the field is there.
+    /// The surface teaches that everything a write names must already exist,
+    /// and a claim is named as surely as an entity is. A field that takes any
+    /// well-formed address without looking makes a link to a claim that never
+    /// existed — a citation to nothing, and the reader it fails is a later
+    /// session following the provenance chain, which is the whole reason the
+    /// field is there.
     ///
     /// Both halves, in one read. The refusal alone passes on a store whose
     /// capture is simply broken; the acceptance alone passes on the store that
@@ -3175,10 +3175,10 @@ pub mod contract {
     /// `active` — because "does NOT play the theremin" IS the current truth
     /// about this entity, and the reader must find it on a plain default read.
     ///
-    /// The alternative — a `negated` flag beside the disproved claim — was the
-    /// "was wrong, see flag" anti-pattern: it left two versions on the page for
-    /// the reader to adjudicate, and hid the correction from every default
-    /// search, which is precisely where it needed to be.
+    /// The alternative — a `negated` flag beside the disproved claim — is the
+    /// "was wrong, see flag" shape: it leaves two versions on the page for the
+    /// reader to adjudicate, and hides the correction from every default
+    /// search, which is precisely where it is needed.
     pub async fn a_refutation_is_an_ordinary_content_edit<M: Memory>(store: &M) {
         let subject = EntityId::person("contract-refutable");
         let captured = capture(
@@ -3272,8 +3272,8 @@ pub mod contract {
     /// **A hedge round-trips as itself.** The claim the second field exists
     /// for: the operator says something and says they are not sure of it, so
     /// `testimony` (they back it) and `open` (they are not sure) are both true
-    /// and both stored. Before this there was one field for two questions and a
-    /// session had to pick which one to be wrong about.
+    /// and both stored. One field for the two questions makes a session pick
+    /// which of them to be wrong about.
     pub async fn a_hedged_claim_round_trips<M: Memory>(store: &M) {
         let subject = EntityId::person("contract-hedged-word");
         let captured = capture(
@@ -4225,8 +4225,8 @@ pub mod contract {
     ///
     /// **The read-back guard cannot catch this one**, which is why it needs a
     /// spec of its own. Read-back compares what came back against what the
-    /// adapter *believed* it stored, and both halves were missing the fields
-    /// in the same way — so a lossy write passed its own invariant. The
+    /// adapter *believed* it stored, so a write that drops the fields on both
+    /// halves passes its own invariant. The
     /// comparison a dropped field cannot survive is against the CALLER's
     /// record, and this is the only place that comparison is made.
     pub async fn a_records_fields_survive_capture<M: Memory>(store: &M) {
@@ -4308,7 +4308,7 @@ pub mod contract {
     /// mentions is brought into being — or waved through unrecognized — as a
     /// side effect of mentioning it. A store that screened the subject and the
     /// edge object but not the refs would make the open hatch the one door on
-    /// this surface where naming a stranger was free, and the hatch is ungated
+    /// this surface where naming a stranger is free, and the hatch is ungated
     /// on its TYPE precisely so that everything else about it stays strict.
     ///
     /// And it takes the whole write with it: a record is one write, so a ref
@@ -4476,9 +4476,8 @@ pub mod contract {
     /// **A retraction with no reason still records the act, and says the
     /// reason is missing rather than inventing one.**
     ///
-    /// The reason became optional when the requirement was cut, and a row
-    /// still has to carry content — so the absent case writes a sentence
-    /// either way. The risk it leaves behind is that the sentence is jojobot's
+    /// The reason is optional and a row still has to carry content, so the
+    /// absent case writes a sentence either way. The risk it leaves behind is that the sentence is jojobot's
     /// and not a caller's: it must state only what happened and that nobody
     /// said why, because a plausible-sounding reason here would be
     /// indistinguishable later from one somebody actually gave.
@@ -5045,11 +5044,10 @@ pub mod contract {
         assert_eq!(landed.edge.map(|e| e.object), Some(stranger));
     }
 
-    /// The same gate on an **edge attached later**. `capture` has had this spec
-    /// since the gate was built; `update_fact` had the code and no spec, so
-    /// deleting the check from its path left the whole suite green — and the
-    /// hole would have been exactly the interesting one: an edge realized after
-    /// the fact is the day-to-day way edges get drawn.
+    /// The same gate on an **edge attached later**. A path carrying the code
+    /// and no spec is one where deleting the check leaves the whole suite
+    /// green, and the hole is exactly the interesting one: an edge realized
+    /// after the fact is the day-to-day way edges get drawn.
     pub async fn update_fact_requires_an_existing_edge_object<M: Memory>(store: &M) {
         let subject = EntityId::person("contract-late-edge");
         let captured = capture(

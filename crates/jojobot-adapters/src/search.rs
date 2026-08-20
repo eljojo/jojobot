@@ -1411,9 +1411,9 @@ impl FullTextIndex {
         // what it got rather than a bare list.
         //
         // **Applied to every hit, whichever half it arrived on.** A pin is
-        // selected by the text alone, so a type filter that only reached the
-        // ranked half was defeated by any caller who also typed a name — and
-        // handed back a thing that does not fit with no answer on it to say so.
+        // selected by the text alone, so a type filter reaching the ranked half
+        // alone is defeated by any caller who also types a name, and hands back
+        // a thing that does not fit with no answer on it to say so.
         let mut governed = |hit: &mut Hit| match query.typed() {
             Some((declared, strictly)) => {
                 answer_with(declared, hit, &mirror) && (!strictly || whole(hit))
@@ -1624,10 +1624,10 @@ fn store_err(e: impl std::fmt::Display) -> MemoryError {
 /// split-brain tell a hand edit leaves behind.
 ///
 /// **Never a failure, never a drop.** The rows stay indexed and reachable
-/// through their home; the only thing wrong with them before was that nobody
-/// could tell. Surfacing the quarantine to the caller is later work — being able
-/// to see it at all is the floor, and a scan that quietly normalizes a
-/// corruption is how the corruption becomes permanent.
+/// through their home; what is wrong with them is that nobody can tell.
+/// Surfacing the quarantine to the caller is later work — being able to see it
+/// at all is the floor, and a scan that quietly normalizes a corruption is how
+/// the corruption becomes permanent.
 fn report_orphans(doc: &DocScan, known: &std::collections::HashSet<EntityId>) {
     let orphans = search::orphan_subjects(doc, known);
     if orphans.is_empty() {
@@ -1648,10 +1648,10 @@ fn report_orphans(doc: &DocScan, known: &std::collections::HashSet<EntityId>) {
 /// the consistency check [`report_orphans`] cannot make, because these subjects
 /// name entities that **exist**.
 ///
-/// This is the shape the split brain actually arrived in: a retyped subject cell
-/// landing on another live handle, so nothing was orphaned, every read went on
-/// working, and the entity ended up readable under one id and writable under the
-/// other. It is also, routinely, nothing at all — a fact about one entity written
+/// This is the shape a split brain arrives in: a retyped subject cell landing on
+/// another live handle, so nothing is orphaned, every read goes on working, and
+/// the entity is readable under one id and writable under the other. It is also,
+/// routinely, nothing at all — a fact about one entity written
 /// on another's page is ordinary. Hence a count and a line, never a verdict.
 fn report_foreign_subjects(doc: &DocScan, known: &std::collections::HashSet<EntityId>) {
     let foreign = search::foreign_subjects(doc, known);
@@ -1755,7 +1755,7 @@ impl IndexedMemory {
     ///
     /// **A failure here is not the write failing.** The store took the write and
     /// read it back; what could not be done is re-reading the page to refresh a
-    /// projection of it. Failing the verb for that told the caller nothing was
+    /// projection of it. Failing the verb for that tells the caller nothing was
     /// written and to try again, and a caller who obeys records the same thing
     /// twice.
     ///
