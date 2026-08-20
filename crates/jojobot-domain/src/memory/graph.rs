@@ -511,14 +511,24 @@ impl GraphQuery {
 /// calling the key text bury another type's reference — and which came first is
 /// the store's alphabetical ordering, not anything the caller said.
 fn relation_key<'a>(name: &str, declarations: &'a [types::DeclaredType]) -> Option<&'a str> {
+    relation_field(name, declarations).map(|f| f.key.as_str())
+}
+
+/// **The declared key itself**, for a walk that has to read the cell the way
+/// the declaration says it is written.
+///
+/// A key declared to hold a LIST holds its items separated by commas, and only
+/// the declaration says so. A walk holding the key's NAME alone reads a
+/// two-item cell as one handle nobody has.
+fn relation_field<'a>(
+    name: &str,
+    declarations: &'a [types::DeclaredType],
+) -> Option<&'a types::Field> {
     let name = name.trim();
-    declarations
-        .iter()
-        .find_map(|d| {
-            d.field(name)
-                .filter(|f| f.holds == types::ValueType::Reference)
-        })
-        .map(|f| f.key.as_str())
+    declarations.iter().find_map(|d| {
+        d.field(name)
+            .filter(|f| f.holds == types::ValueType::Reference)
+    })
 }
 
 /// **Every relation these declarations make followable**, in name order — what
@@ -1201,20 +1211,35 @@ impl<'a> Ctx<'a> {
         // It stays because the refusal and the lookup are in different
         // functions, and an empty walk is the right answer if they ever
         // disagree. Nothing downstream depends on it.
-        let Some(key) = relation_key(name, self.declarations) else {
+        let Some(field) = relation_field(name, self.declarations) else {
             return Vec::new();
         };
+        let key = field.key.as_str();
         let link = || Link::Relation(key.to_string());
+        // **Each item, the way the declaration says the cell is written.** An
+        // ordinary key carries one handle and a list carries several; asking
+        // the field is what tells the two apart, and it is the same accessor
+        // the write guard screens each handle through (rule 217).
         match direction {
             Direction::Out => from
                 .iter()
                 .filter_map(|f| f.fields.get(key))
-                .map(|handle| (link(), direction, EntityId(handle.trim().to_string())))
+                .flat_map(|cell| {
+                    field
+                        .items(cell)
+                        .into_iter()
+                        .map(|handle| (link(), direction, EntityId(handle.to_string())))
+                        .collect::<Vec<_>>()
+                })
                 .collect(),
             Direction::In => self
                 .all
                 .iter()
-                .filter(|f| f.fields.get(key).is_some_and(|v| v.trim() == id.as_str()))
+                .filter(|f| {
+                    f.fields
+                        .get(key)
+                        .is_some_and(|cell| field.items(cell).contains(&id.as_str()))
+                })
                 .map(|f| (link(), direction, f.subject.clone()))
                 .collect(),
         }
@@ -2467,6 +2492,91 @@ mod tests {
     ///
     /// One name and two directions: out of the pet, `owner` reaches the person;
     /// in to the person, `owner` reaches the records naming them. Nobody
+    /// **A key declared to hold a LIST of references walks to every one of
+    /// them, both ways.**
+    ///
+    /// A list cell holds its items separated by commas, and the declaration is
+    /// what says the cell is a list — the same declaration the write guard
+    /// screens each item through. Read as one handle, a two-item cell is a
+    /// handle nobody has: the outbound walk reaches nothing and the inbound
+    /// walk matches nothing, with no error and no flag on either.
+    ///
+    /// **A one-item list is indistinguishable from an ordinary reference**, so
+    /// nothing shows until a second handle is recorded — which is the case a
+    /// list exists for (rule 217).
+    ///
+    /// Both directions, because they read the cell in different ways and either
+    /// can be right while the other is wrong.
+    #[test]
+    fn a_list_of_references_walks_to_every_handle_in_it() {
+        let declarations = vec![types::DeclaredType::new(
+            "outing",
+            vec![types::Field::listing(
+                "came_along",
+                types::ValueType::Reference,
+            )],
+        )];
+        let scanned = vec![
+            doc(entity("person:bart", "Bart"), "Bart's page.", Vec::new()),
+            doc(
+                entity("person:milhouse", "Milhouse"),
+                "The other one.",
+                Vec::new(),
+            ),
+            doc(
+                entity("event:winter-fest", "Winter Fest"),
+                "The outing's page.",
+                vec![Fact {
+                    fields: [(
+                        "came_along".to_string(),
+                        "person:bart, person:milhouse".to_string(),
+                    )]
+                    .into_iter()
+                    .collect(),
+                    ..fact("event:winter-fest", "f1", "who came along")
+                }],
+            ),
+        ];
+        let walk = |from: &str, direction: Direction| {
+            resolve(
+                &scanned,
+                &declarations,
+                &GraphQuery {
+                    select: Selection {
+                        subject: Some(EntityId(from.into())),
+                        ..Selection::default()
+                    },
+                    include: Include {
+                        facts: false,
+                        prose: false,
+                    },
+                    follow: Some(Follow {
+                        along: Along::Relation("came_along".into()),
+                        direction: Some(direction),
+                        ..Follow::hop()
+                    }),
+                    history: None,
+                },
+            )
+            .expect("a declared relation is followable")
+        };
+
+        let out = walk("event:winter-fest", Direction::Out);
+        assert_eq!(
+            handles(&out[0].connected),
+            vec!["person:bart", "person:milhouse"],
+            "a list cell read as one handle reaches nobody: {out:?}",
+        );
+
+        let back = walk("person:milhouse", Direction::In);
+        assert_eq!(
+            handles(&back[0].connected),
+            vec!["event:winter-fest"],
+            "the second name in the cell is not the whole cell, so an equality on the cell \
+             finds nothing: {back:?}",
+        );
+    }
+
     /// declares an inverse, because there is nothing to declare — the same key
     /// walked the other way is the other question.
     #[test]
