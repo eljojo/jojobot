@@ -261,8 +261,9 @@ make check             # the DONE bar: formatted, green, clippy-clean — all fr
 # A third tier, deliberately apart from `make check` and never run by it: it
 # drives a real model through a playbook against an instance it spawns and
 # throws away, and it costs money. It needs the agent CLI on your PATH; this
-# repo does not provision one.
-make paid
+# repo does not provision one. The playbook is a parameter and there is more
+# than one; the target refuses to guess and exits without it.
+make paid PLAYBOOK=BIKE-ROOM.md
 
 # Everything jojobot holds is rows in a SQL store the server starts and
 # supervises — mail, sessions, entities, facts and prose alike — so it needs

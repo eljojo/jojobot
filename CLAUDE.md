@@ -417,10 +417,13 @@ name roles and never an operator.
 - **And a third bar, which neither of the first two can reach: whether a session
   that was told nothing FINDS the capability.** A story is written by somebody
   who already knows the answer, so it can only prove a capability is reachable —
-  never that it was reached. `COLD-SESSION-SUITE.md` is the script a real model
-  is driven through against a throwaway instance, and its assertions are over
-  what the model LEFT in the store, never over what it said. It is in addition
-  to the stories, never instead of them.
+  never that it was reached. A **playbook** is what a real model is driven
+  through against a throwaway instance, and its assertions are over what the
+  model LEFT in the store, never over what it said. `make paid` takes the
+  playbook as a parameter. `COLD-SESSION-SUITE.md` walks a numbered script;
+  `BIKE-ROOM.md` gives one goal in the operator's voice and a one-line entry,
+  and leaves the agent to find the door, the box and the route. It is in
+  addition to the stories, never instead of them.
 - **Commits: one per coherent problem.** A milestone lands as a handful of
   commits — never one per file or checklist item, never dozens. **A fix and
   the test that proves it are ONE problem**, however a task listed them.
