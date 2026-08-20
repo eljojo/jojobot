@@ -9,10 +9,14 @@ use super::*;
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddEntityArgs {
     /// One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-    /// `topic`, `bot`, `pet`, `rhythm`.
+    /// `topic`, `bot`, `pet`, `rhythm`, `machine`.
     ///
     /// **A pet is a `pet` and not a `thing`.** `thing` is a named possession —
-    /// a bike, a machine — and a companion animal is not one.
+    /// a bike, a hand tool — and a companion animal is not one.
+    ///
+    /// **A computer is a `machine` and not a `thing` either**, and the kind
+    /// names the object rather than a role: a guest running on another machine
+    /// is a `machine`, and so is the one it runs on.
     ///
     /// **A `rhythm` is a recurring loop** — a thing that comes round on a
     /// cadence — and it is the one kind that REQUIRES a `parent`: the parent

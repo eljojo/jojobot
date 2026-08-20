@@ -20,20 +20,31 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // ── session 1 · the fleet, and what an earlier run believed ─────────────
     let s = story.session().await;
 
-    // GAP — there is no kind for a machine. A host goes in as a `thing`,
-    // alongside the bike pump and the folding chairs, so listing things gives
-    // back no fleet and nothing marks these four as the same sort of object.
-    //   s.add("host:sigma", "Sigma").await;
-    s.refused(
-        "add_entity",
-        json!({"kind": "host", "handle": "sigma", "name": "Sigma", "source": "user-named"}),
-    )
-    .await
-    .says("host");
-    for host in ["thing:sigma", "thing:tau", "thing:upsilon", "thing:phi"] {
-        s.add(host, host.split_once(':').expect("kind:slug").1)
+    // **A machine is a kind of its own**, so the four are the same sort of
+    // object rather than four possessions filed beside the bike pump. The kind
+    // names the OBJECT and not a role it plays: two of these four turn out to
+    // be guests running on the other two, and a guest is still a machine.
+    for machine in [
+        "machine:sigma",
+        "machine:tau",
+        "machine:upsilon",
+        "machine:phi",
+    ] {
+        s.add(machine, machine.split_once(':').expect("kind:slug").1)
             .await;
     }
+
+    // The possession that makes the listing mean something: without it, "the
+    // listing gave back the fleet" and "the listing gave back everything" are
+    // one answer.
+    s.add("thing:floor-pump", "The Floor Pump").await;
+    s.list("machine")
+        .await
+        .says("machine:sigma")
+        .says("machine:tau")
+        .says("machine:upsilon")
+        .says("machine:phi")
+        .never_says("thing:floor-pump");
 
     // The hypothesis this investigation inherits — and HOW it was reached rides
     // with it, under a key of its own, because every record carries fields.
@@ -43,7 +54,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .call(
             "capture",
             json!({
-                "subject": "thing:sigma",
+                "subject": "machine:sigma",
                 "content": "hangs seem to track bursty load",
                 "provenance": "inference",
                 "fields": {"method": "correlation over three samples"},
@@ -55,7 +66,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // The hunch beside it, reached from nothing in particular. It is what makes
     // the read below mean anything: without a claim carrying no method, "the
     // method is on the record" and "everything says method" are one answer.
-    let rack = s.guess("thing:sigma", "phi may share sigma's rack").await;
+    let rack = s.guess("machine:sigma", "phi may share sigma's rack").await;
 
     // GAP — and `provenance` says the same word for both. It answers who backs
     // a claim, so a hunch drawn from correlated samples and one drawn from
@@ -63,7 +74,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // it is this session's invention, agreed with nobody and asked for by no
     // read. What is stored is not what is served.
     //   s.unbacked().weighing("method").await;
-    let inherited = s.recall("thing:sigma").await;
+    let inherited = s.recall("machine:sigma").await;
     inherited
         .claim(&bursty)
         .says("correlation over three samples")
@@ -104,7 +115,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     let s = story.session().await;
 
     s.event(
-        "thing:sigma",
+        "machine:sigma",
         "stopped responding, and came back on a power cycle",
     )
     .await;
@@ -113,7 +124,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // and how long it lasted, as values rather than as a sentence.
     let outage = s
         .event_with(
-            "thing:tau",
+            "machine:tau",
             "stopped responding",
             json!({"occurred_at": "2026-08-04T02:14:00Z", "down_seconds": "38"}),
             &[],
@@ -124,7 +135,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // difference between an outage and a blink, and it is the whole reason
     // anybody asks the question below.
     s.event_with(
-        "thing:phi",
+        "machine:phi",
         "stopped responding",
         json!({"occurred_at": "2026-08-04T02:41:00Z", "down_seconds": "4"}),
         &[],
@@ -153,31 +164,31 @@ async fn an_investigation_keeps_what_it_ruled_out() {
             json!({ "fields": [{ "key": "down_seconds", "compare": "greater", "value": "30" }] }),
         )
         .await;
-    long.says("thing:tau");
+    long.says("machine:tau");
     // Both negatives, because either alone would be satisfied by an empty
     // answer: the host whose outage is on the record and too short, and the
     // host whose outage carries no such key at all.
-    long.never_says("thing:phi");
-    long.never_says("thing:sigma");
+    long.never_says("machine:phi");
+    long.never_says("machine:sigma");
 
     // The diagnosis was the bits, so a paraphrase is not re-checkable: the
     // literal status word and the command that produced it are typed fields on
     // the reading, and `refs` names the host they came off.
     let reading = s
         .event_with(
-            "thing:sigma",
+            "machine:sigma",
             "machine-check status word decoded to two flags",
             json!({"ran": "mcelog --client", "got": "0xB200000000010A"}),
-            &["thing:sigma"],
+            &["machine:sigma"],
         )
         .await;
 
-    s.recall("thing:sigma")
+    s.recall("machine:sigma")
         .await
         .claim(&reading)
         .says("0xB200000000010A")
         .says("mcelog --client");
-    s.recall("thing:tau").await.claim(&outage).says("38");
+    s.recall("machine:tau").await.claim(&outage).says("38");
 
     s.wrap("recorded the outage and the reading").await;
 
@@ -191,7 +202,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // removed — the record keeps its address and reads as retracted.
     s.retract(&reading, "the status word was read off a different host")
         .await;
-    s.recall("thing:sigma")
+    s.recall("machine:sigma")
         .await
         .says("stopped responding")
         .says("retracted");
@@ -211,7 +222,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
 
     let deliberate = s
         .guess_from(
-            "thing:tau",
+            "machine:tau",
             "its reset was a deliberate reboot, since the kernel changed across the boot",
             &bursty,
         )
@@ -236,7 +247,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         }),
     )
     .await;
-    s.recall("thing:tau")
+    s.recall("machine:tau")
         .await
         .claim(&deliberate)
         .says("NOT a deliberate reboot")
@@ -265,9 +276,9 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         "not the watchdog — its log is empty across the window",
         "not a shared kernel bug — the hosts run different generations",
     ] {
-        s.fact("thing:sigma", ruled_out).await;
+        s.fact("machine:sigma", ruled_out).await;
     }
-    s.recall("thing:sigma")
+    s.recall("machine:sigma")
         .await
         .says("not memory")
         .says("not mains power")
@@ -279,7 +290,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // investigator to read them before proposing a test. The most expensive
     // mistake in this work is re-running an experiment somebody already ran,
     // and the record makes it available rather than preventing it.
-    //   s.excluded("thing:sigma", "memory", by: "the machine-check flags").await;
+    //   s.excluded("machine:sigma", "memory", by: "the machine-check flags").await;
 
     s.wrap("wrote down what it is not").await;
 
@@ -292,7 +303,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .call(
             "capture",
             json!({
-                "subject": "thing:upsilon",
+                "subject": "machine:upsilon",
                 "content": "running the previous kernel, with the new one staged for next boot",
                 "provenance": "testimony",
                 "fields": {"stale_after": "2026-08-05"},
@@ -300,15 +311,17 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         )
         .await
         .field("address");
-    s.recall("thing:upsilon").await.says("staged for next boot");
+    s.recall("machine:upsilon")
+        .await
+        .says("staged for next boot");
 
     // GAP — and nothing honours it. The date is a value like any other: it is
     // stored, it is comparable, and no read consults it, so the claim comes
     // back active and current long after the day it named. A session reading a
     // month-old kernel state and acting on it is worse off than one that knew
     // nothing, and the record it read said so in a key nobody asks about.
-    //   s.recall("thing:upsilon").says("stale since 2026-08-05").await;
-    s.recall("thing:upsilon")
+    //   s.recall("machine:upsilon").says("stale since 2026-08-05").await;
+    s.recall("machine:upsilon")
         .await
         .claim(&kernel)
         .says("2026-08-05")
@@ -321,8 +334,8 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     let s = story.session().await;
 
     // Per subject, each host's own record is intact and readable.
-    s.recall("thing:sigma").await.says("stopped responding");
-    s.recall("thing:tau").await.says("deliberate reboot");
+    s.recall("machine:sigma").await.says("stopped responding");
+    s.recall("machine:tau").await.says("deliberate reboot");
 
     // GAP — a window over DAYS is a read now: two filters on one key declared
     // to hold a date, after one day and before another, both holding on one
@@ -354,22 +367,22 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // `membership` at an org and `attendance` at an event, so a link between
     // two machines can only be the untyped one.
     s.fact_about(
-        "thing:upsilon",
+        "machine:upsilon",
         "runs as a guest on another host",
         "connection",
-        "thing:sigma",
+        "machine:sigma",
     )
     .await;
 
     // The edge is walkable, and its meaning is nowhere: "runs on", "is stored
     // on" and "is near" are one edge here. The wire name says so.
-    s.recall("thing:upsilon")
+    s.recall("machine:upsilon")
         .await
         .says("\"type\":\"relatedTo\"")
-        .says("\"object\":\"thing:sigma\"");
-    s.through("connection", "thing:sigma", "thing")
+        .says("\"object\":\"machine:sigma\"");
+    s.through("connection", "machine:sigma", "machine")
         .await
-        .says("thing:upsilon");
+        .says("machine:upsilon");
 
     // GAP — so the walk by SHAPE proves the two hosts are linked and cannot
     // say that one going down takes the other with it, which is the entire
@@ -379,7 +392,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // either end, and the guest is then distinguishable from a host that is
     // merely near. The residual is the narrow one — the name lives on a KEY of
     // the record, never on the edge, and the five shapes stay closed.
-    //   s.fact_about("thing:upsilon", "…", "runs-on", "thing:sigma").await;
+    //   s.fact_about("machine:upsilon", "…", "runs-on", "machine:sigma").await;
     s.has_no_verb("depends_on", &["capture", "search"]).await;
 
     // A decision that constrains future work.
@@ -411,7 +424,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     .await
     .says("\"holds\":\"reference:project\"");
     s.event_with(
-        "thing:sigma",
+        "machine:sigma",
         "counted against the build it happened on",
         json!({ "part_of": "project:jojobot-server" }),
         &[],
@@ -419,7 +432,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     .await;
     // It survived the round trip as written, which a narrowing that did not fit
     // its column could not do.
-    s.recall("thing:sigma")
+    s.recall("machine:sigma")
         .await
         .says("\"part_of\":\"project:jojobot-server\"");
 

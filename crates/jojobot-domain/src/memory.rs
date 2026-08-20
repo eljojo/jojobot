@@ -61,7 +61,12 @@ impl EntityKind {
     pub const EVENT: EntityKind = EntityKind("event");
     /// A creative/media artifact with its own identity: sets, albums, posts.
     pub const WORK: EntityKind = EntityKind("work");
-    /// A named possession or device with a history: bikes, plants, machines.
+    /// A named possession with a history: bikes, plants, tools.
+    ///
+    /// **A computer is a [`MACHINE`](EntityKind::MACHINE).** The two kinds
+    /// divide by the question asked of them: a fleet asks which of its members
+    /// stopped in the night, and an answer carrying the bike pump answers
+    /// nobody.
     pub const THING: EntityKind = EntityKind("thing");
     /// Clubs, venues-as-institutions, labels, schools, vendors.
     pub const ORG: EntityKind = EntityKind("org");
@@ -92,11 +97,24 @@ impl EntityKind {
     /// parent says whose job the loop is, and a rhythm nobody owns is a
     /// modelling failure rather than a valid shape.
     pub const RHYTHM: EntityKind = EntityKind("rhythm");
+    /// A computer: a server, a laptop, a router, a virtual guest on another.
+    ///
+    /// **The kind names the OBJECT and not a role it plays.** `host` and
+    /// `server` are both roles one machine takes over another or for someone,
+    /// and a fleet holds machines that take neither: a guest running on
+    /// another machine is not a host, and a machine that serves nothing is
+    /// still in the fleet. So the noun is the one that stays true of every
+    /// member, and which machine hosts which is a link between two of them.
+    ///
+    /// **Not a `thing`.** `thing` is a named possession, and the question a
+    /// fleet asks — which of these stopped in the night — reads back nothing
+    /// when the answer arrives mixed with the bike pump.
+    pub const MACHINE: EntityKind = EntityKind("machine");
 
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 11] = [
+    pub const ALL: [EntityKind; 12] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -108,6 +126,7 @@ impl EntityKind {
         EntityKind::BOT,
         EntityKind::PET,
         EntityKind::RHYTHM,
+        EntityKind::MACHINE,
     ];
 
     /// A kind from a token this crate already holds for the life of the
@@ -3219,6 +3238,7 @@ mod tests {
             (EntityKind::BOT, "bot"),
             (EntityKind::PET, "pet"),
             (EntityKind::RHYTHM, "rhythm"),
+            (EntityKind::MACHINE, "machine"),
         ];
         for (kind, token) in all {
             assert_eq!(kind.as_token(), token);

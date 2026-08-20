@@ -326,6 +326,7 @@ mod tests {
             (EntityKind::BOT, "bot", "SoftwareApplication"),
             (EntityKind::PET, "pet", "Pet"),
             (EntityKind::RHYTHM, "rhythm", "Rhythm"),
+            (EntityKind::MACHINE, "machine", "Machine"),
         ];
         assert_eq!(
             table.len(),
