@@ -292,6 +292,33 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     .says("bot:delta")
     .says("codec work");
 
+    // **And the identity the software SHIPS reads whole through the same
+    // door.** Its charter is two layers — the core this build carries and
+    // whatever the instance has written under it — and only the second is
+    // stored, so the roster read above shows a fraction of it with nothing
+    // saying so. Asking for the charter composes both.
+    //
+    // This is what a directory is for, and the route matters as much as the
+    // answer: reading a colleague by booting as it is the one act the rules
+    // refuse, so the whole charter is readable without becoming anybody. The
+    // session here is otto's throughout.
+    let whole = s
+        .shape(
+            "what the shipped identity is for, whole",
+            json!({"subject": "bot:assistant", "charter": true, "facts": false}),
+        )
+        .await;
+    whole.says("THEIR WORD IS GROUND TRUTH");
+    // The page that asked for the stored half instead is told what it is
+    // missing, since a fraction of a charter reads exactly like all of one.
+    s.shape(
+        "the shipped identity's own layer",
+        json!({"subject": "bot:assistant", "prose": true, "facts": false}),
+    )
+    .await
+    .says("charter_note")
+    .never_says("THEIR WORD IS GROUND TRUTH");
+
     // Where the coordinator's own mail got to is readable without taking
     // delivery of anything, and the search finds work filed for somebody else
     // — once it asks for mail. A bare search is about the operator's life and

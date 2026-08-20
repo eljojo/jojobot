@@ -167,8 +167,31 @@ pub struct RecallArgs {
     /// Whether each object's **prose** comes back — the human half of its page,
     /// whole. Off by default, because a page is bigger than a claim and shipping
     /// every one of them unasked is a cost the caller cannot decline.
+    ///
+    /// **For a bot this is the instance's own layer**, which is what somebody
+    /// wrote and what `set_charter` replaces. Ask for `charter` instead to read
+    /// what that identity actually answers with.
     #[serde(default)]
     pub prose: Option<bool>,
+    /// **A bot's charter, whole** — what that identity answers with, composed
+    /// for reading: the core this build ships for the identity it ships, and
+    /// under it the instance's own text, which narrows the core and never
+    /// repeals it.
+    ///
+    /// **This is how you read a colleague.** Booting as another bot would make
+    /// you it, and that is the one act the rules refuse, so the whole charter
+    /// is readable here — no session is created and no handle comes back.
+    ///
+    /// ⚠️ **What comes back is composed rather than stored, which is why it is
+    /// a key of its own.** `prose` is the page the store holds, and it is what
+    /// `set_charter` writes; sending this composed text back would store the
+    /// build's own words as the instance's, where they stop moving when the
+    /// software does.
+    ///
+    /// A bot the software does not ship composes nothing and answers with what
+    /// somebody wrote. Objects that are not bots carry no charter at all.
+    #[serde(default)]
+    pub charter: Option<bool>,
     /// **The writes behind one key, oldest first** — name the key, and each
     /// object comes back carrying every write of it, with the record each one
     /// arrived in and that record's date.
@@ -494,6 +517,54 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
     body
 }
 
+/// **The charter a bot answers with**, composed on the way out, and the note
+/// that says so to a reader who asked for the page instead.
+///
+/// The core is carried by the build rather than by the store, so it is composed
+/// here and never anywhere a caller could write it. That is what makes an
+/// upgrade free: a new build moves the core and touches nothing anybody wrote.
+///
+/// **Two things a reader cannot infer, so both are said.** A caller that asked
+/// for the charter and not the page gets the page taken back out — it is inside
+/// what they were given, and shipping it twice is a cost they did not ask for.
+/// A caller that asked for the page of a bot the build ships a core for is told
+/// the core is not in it and which call returns the whole thing: that reader is
+/// looking at part of a charter with nothing saying so.
+fn charter_json(
+    rendered: &mut serde_json::Value,
+    object: &graph::Object,
+    want_charter: bool,
+    asked_prose: bool,
+) {
+    if object.entity.id.kind() != Some(EntityKind::BOT) {
+        return;
+    }
+    let core = crate::orientation::charter::core_for(&object.entity.id);
+    let Some(fields) = rendered.as_object_mut() else {
+        return;
+    };
+    if !want_charter {
+        if core.is_some() && asked_prose {
+            fields.insert(
+                "charter_note".into(),
+                "this is the instance's own layer, and the charter this identity answers with                  also carries the core the build ships: recall again with charter: true for the                  whole of it"
+                    .into(),
+            );
+        }
+        return;
+    }
+    fields.insert(
+        "charter".into(),
+        match crate::orientation::charter::compose(core, object.prose.as_deref()) {
+            Some(charter) => charter.into(),
+            None => serde_json::Value::Null,
+        },
+    );
+    if !asked_prose {
+        fields.remove("prose");
+    }
+}
+
 /// One object on the wire, and everything it reached.
 ///
 /// **Absence means "not asked for"** on both halves that can be turned off:
@@ -620,7 +691,11 @@ impl Jojobot {
                        length. Ask for facts when you need a claim's own wording, its \
                        provenance, or the address that edits it, and the answer says how many \
                        records it left out when you did not. Then prose, off by default, which is the human half of the \
-                       object's page, whole; and history, which names ONE KEY and brings back \
+                       object's page, whole; charter, which is how you read a COLLEAGUE — a \
+                       bot's charter whole, the core this build ships composed with that \
+                       instance's own text, and no session is made and no handle comes back, \
+                       because booting as another bot to read it is the one act the rules \
+                       refuse; and history, which names ONE KEY and brings back \
                        every write of it, oldest first. A read is current truth — one value per \
                        key, the newest write — and history is the other question the same data \
                        answers: every time that key was written, with the record each write \
@@ -798,9 +873,17 @@ impl Jojobot {
         let most_values = args
             .values_most
             .map_or(graph::WRITES_SHOWN, |most| most as usize);
+        // **A charter is read out of the page it narrows**, so asking for one
+        // asks the walk for prose whether or not the caller wanted the stored
+        // half. What the caller asked for is what is SHIPPED: the composed
+        // charter replaces the page rather than arriving beside it, because a
+        // reader who did not ask for the page would otherwise be sent the same
+        // text twice.
+        let want_charter = args.charter.unwrap_or(false);
+        let asked_prose = args.prose.unwrap_or(false);
         let include = graph::Include {
             facts: args.facts.unwrap_or(false),
-            prose: args.prose.unwrap_or(false),
+            prose: asked_prose || want_charter,
         };
         let query = graph::GraphQuery {
             select: graph::Selection {
@@ -912,6 +995,7 @@ impl Jojobot {
                 .zip(backing.into_iter().chain(std::iter::repeat(None)))
                 .map(|((o, held), backing)| {
                     let mut rendered = object_json(o, include, today);
+                    charter_json(&mut rendered, o, want_charter, asked_prose);
                     rendered["held"] = held;
                     match backing {
                         Some(backing) => {
@@ -970,6 +1054,7 @@ mod tests {
             fields: None,
             facts: Some(true),
             prose: None,
+            charter: None,
             follow: None,
             overdue: None,
             sid: None,
@@ -2159,6 +2244,161 @@ mod tests {
         );
     }
 
+    /// **A colleague reads the whole charter of the identity the software
+    /// ships, and stays nobody.**
+    ///
+    /// A charter has two layers and only one of them is stored: the core the
+    /// build carries, and the instance's own text under it. The stored half is
+    /// what `prose` returns, and for the shipped identity it is the smaller
+    /// half — so a reader with only that route reads a fraction of a charter
+    /// with nothing saying so, and the whole of it was reachable only by
+    /// booting as that bot, which is the one act the rules refuse.
+    ///
+    /// **Both layers asserted, and the core against the constant rather than a
+    /// quoted phrase**, so the case tracks an edit to the shipped wording where
+    /// a needle would go green on a build that reworded it.
+    ///
+    /// 🚨 **And it boots nobody.** That is the property rather than the
+    /// sentence: a route that hands back a session handle has made the caller
+    /// somebody. Asserted over the WHOLE answer, because a handle anywhere in
+    /// it is a handle a caller will use.
+    #[tokio::test]
+    async fn a_charter_reads_whole_without_booting_as_the_bot_it_belongs_to() {
+        let jojobot = handler();
+        jojobot
+            .add_entity(Parameters(add_args("bot", "assistant", "Assistant")))
+            .await
+            .expect("the shipped identity is an entity like any other");
+        let own = "Keeps the household ledger. Never writes to it on a Sunday.";
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "assistant".into(),
+                prose: own.into(),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    charter: Some(true),
+                    facts: Some(false),
+                    ..of("bot:assistant")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let read = body["objects"][0]["charter"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the composed charter comes back: {body}"))
+            .to_string();
+        assert!(
+            read.starts_with(crate::orientation::charter::ASSISTANT.trim()),
+            "the core the build ships opens it: {read}",
+        );
+        assert!(
+            read.ends_with(own),
+            "…and the instance's own layer closes it: {read}",
+        );
+        assert!(
+            !body.to_string().contains("\"sid\""),
+            "this route hands back a session handle, so reading a colleague made the caller \
+             somebody: {body}",
+        );
+
+        // **The page is not shipped beside the charter it is inside.** The
+        // caller asked for one of them.
+        assert!(
+            body["objects"][0].get("prose").is_none(),
+            "the stored half rides inside the composed answer, so sending it again is a cost \
+             nobody asked for: {body}",
+        );
+
+        // **And the reader who asked for the page is told what is missing from
+        // it**, since a fraction of a charter reads exactly like all of one.
+        let page = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    prose: Some(true),
+                    facts: Some(false),
+                    ..of("bot:assistant")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            page["objects"][0]["prose"], own,
+            "the page is what the store holds, unchanged: {page}",
+        );
+        assert!(
+            page["objects"][0]["charter_note"].is_string(),
+            "a page that is half a charter says so, and names the call that returns the rest: \
+             {page}",
+        );
+    }
+
+    /// **A bot nobody has written for still answers with the core**, and a bot
+    /// the software does not ship answers with what somebody wrote.
+    ///
+    /// The two halves of the same rule, and either alone passes on a build that
+    /// is wrong. Without the first, composition could be doing nothing at all
+    /// and the case above would still pass off the written half. Without the
+    /// second, the core could be pasted onto every identity there is.
+    #[tokio::test]
+    async fn an_unwritten_shipped_identity_answers_with_the_core_and_a_callers_bot_does_not() {
+        let jojobot = handler();
+        for (handle, name) in [("assistant", "Assistant"), ("gamma", "Gamma")] {
+            jojobot
+                .add_entity(Parameters(add_args("bot", handle, name)))
+                .await
+                .expect("add_entity ok");
+        }
+        let own = "Holds the plan. Does not implement.";
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "gamma".into(),
+                prose: own.into(),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("bot".into()),
+                    charter: Some(true),
+                    facts: Some(false),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let objects = body["objects"].as_array().expect("a list of objects");
+        let shipped = objects
+            .iter()
+            .find(|o| o["id"] == "bot:assistant")
+            .unwrap_or_else(|| panic!("the shipped identity is in a query for its kind: {body}"));
+        assert_eq!(
+            shipped["charter"],
+            crate::orientation::charter::ASSISTANT.trim(),
+            "an identity nobody has written for answers with the core alone: {shipped}",
+        );
+        let theirs = objects
+            .iter()
+            .find(|o| o["id"] == "bot:gamma")
+            .unwrap_or_else(|| panic!("the caller's own bot is here too: {body}"));
+        assert_eq!(
+            theirs["charter"], own,
+            "a bot the software does not ship composes nothing: {theirs}",
+        );
+        assert!(
+            theirs.get("charter_note").is_none(),
+            "…and there is no core it is missing, so nothing says there is: {theirs}",
+        );
+    }
+
     /// **A key's value selects, and the walk nests** — the two halves this
     /// verb grew, through the surface a caller uses.
     #[tokio::test]
@@ -2558,6 +2798,7 @@ mod tests {
             fields: None,
             facts: None,
             prose: None,
+            charter: None,
             follow: None,
             overdue: None,
             sid: None,

@@ -129,6 +129,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
         fields: None,
         facts: Some(true),
         prose: None,
+        charter: None,
         follow: None,
         overdue: None,
         sid: None,
