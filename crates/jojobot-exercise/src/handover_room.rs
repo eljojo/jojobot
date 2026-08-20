@@ -300,10 +300,57 @@ impl Expectation for WhatBecameOfItIsOnTheRecord {
 /// Whether a read says the number, as a figure or as the word. **Both, because
 /// which one somebody writes is not what this room measures** — and a figure
 /// alone would fail a session that wrote a sentence.
+///
+/// ⚠️ **Asked of what the SESSION wrote, never of the whole answer.** A read
+/// carries the day a claim is about, the moment the store took it in and the
+/// address that edits it, and those carry digits nobody chose: a nanosecond
+/// stamp holds almost any figure, and a run's own date holds one for a third of
+/// the year. Over the whole payload this lock opens on a room where the session
+/// wrote something and answered nothing (rule 117).
 fn said_the_count(read: &str, count: usize) -> bool {
     const WORDS: [&str; 4] = ["zero", "one", "two", "three"];
-    let said = read.to_lowercase();
-    said.contains(&count.to_string()) || WORDS.get(count).is_some_and(|word| said.contains(word))
+    let figure = count.to_string();
+    let word = WORDS.get(count);
+    authored(read).iter().any(|said| {
+        let said = said.to_lowercase();
+        said.contains(&figure) || word.is_some_and(|word| said.contains(word))
+    })
+}
+
+/// **Everything on this read that a session chose the words of**: what each
+/// thing holds, and each claim's own sentence, note and keys.
+///
+/// A payload this cannot parse says nothing, so the lock reads nothing and
+/// misses. That is the safe direction for a gate: a lock that cannot read the
+/// answer must not report one.
+fn authored(read: &str) -> Vec<String> {
+    let Ok(body) = serde_json::from_str::<Value>(read) else {
+        return Vec::new();
+    };
+    let mut said = Vec::new();
+    for object in body["objects"].as_array().into_iter().flatten() {
+        written_values(&object["fields"], &mut said);
+        for fact in object["facts"].as_array().into_iter().flatten() {
+            for wording in ["content", "details"] {
+                if let Some(text) = fact[wording].as_str() {
+                    said.push(text.to_string());
+                }
+            }
+            written_values(&fact["fields"], &mut said);
+        }
+    }
+    said
+}
+
+/// The values of a key/value bag, which are the caller's own words. The KEYS
+/// are the caller's too, and they are left out: a key called `pile_of_3` is a
+/// name for the question rather than an answer to it.
+fn written_values(fields: &Value, said: &mut Vec<String>) {
+    for value in fields.as_object().into_iter().flatten().map(|(_, v)| v) {
+        if let Some(text) = value.as_str() {
+            said.push(text.to_string());
+        }
+    }
 }
 
 /// The colleague's handle — whichever bot is not the one that ships.

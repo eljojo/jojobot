@@ -275,6 +275,52 @@ async fn the_terminal_lock_fails_when_the_cold_phase_did_nothing() {
     );
 }
 
+/// **The terminal lock reads what the session wrote, never what the store
+/// stamped.**
+///
+/// The lock asks whether the count is on the colleague. A read of that
+/// colleague carries more than the session's own words: the day each claim is
+/// about, the moment the store took it in, and the address that edits it. Those
+/// carry digits nobody chose, so a lock that searches the whole payload opens
+/// on a room where the cold session wrote a claim and never answered the
+/// question — and, on a run whose date carries the digit, on a room where it
+/// wrote nothing at all.
+///
+/// **This is a room a real session could leave**: it looked, it wrote
+/// something onto the colleague, and what it wrote does not say how much of the
+/// pile is waiting. The lock is the last gate before a deploy, so it has to
+/// tell that room from the one that answered.
+#[tokio::test]
+async fn the_terminal_lock_ignores_a_number_the_store_stamped() {
+    let (_room, surface, sid) = furnished().await;
+    worked_the_first_phase(&surface, &sid).await;
+
+    // The claim says nothing about the count. Its DATE carries the digit, and
+    // the date is the store's cell rather than the session's answer.
+    as_the_occupant(
+        &surface,
+        &sid,
+        "capture",
+        json!({
+            "subject": "bot:gamma",
+            "content": "had a look at what the second assistant is carrying",
+            "provenance": "inference",
+            "date": "2026-07-03",
+        }),
+    )
+    .await;
+
+    let outcomes = judge_all(&surface).await;
+    let held: Vec<bool> = outcomes.iter().map(|o| o.held).collect();
+    assert_eq!(
+        held,
+        vec![true, true, true, false],
+        "the terminal lock opened on a digit the store stamped, so a session that never \
+         answered the question passed the last gate: {}",
+        saying(&outcomes),
+    );
+}
+
 /// **The pile handed over as one message is a different end state**, and the
 /// lock that counts must say so: a colleague left one thing to finish rather
 /// than three has been handed the pile in a shape nobody can work separately.
