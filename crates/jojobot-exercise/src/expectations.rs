@@ -27,6 +27,7 @@ use crate::surface::Seed;
 pub const COLD_SESSION_SUITE: &str = "COLD-SESSION-SUITE.md";
 
 pub use crate::bike_room::BIKE_ROOM;
+pub use crate::handover_room::HANDOVER_ROOM;
 pub use crate::ledger_room::LEDGER_ROOM;
 pub use crate::loop_room::LOOP_ROOM;
 
@@ -40,6 +41,9 @@ pub fn for_playbook(source: &str) -> Option<Vec<Box<dyn Expectation>>> {
     }
     if source.ends_with(LEDGER_ROOM) {
         return Some(crate::ledger_room::expectations());
+    }
+    if source.ends_with(HANDOVER_ROOM) {
+        return Some(crate::handover_room::expectations());
     }
     if !source.ends_with(COLD_SESSION_SUITE) {
         return None;
@@ -80,6 +84,9 @@ pub fn seed_for(source: &str) -> anyhow::Result<Seed> {
     }
     if source.ends_with(LEDGER_ROOM) {
         return crate::ledger_room::seed();
+    }
+    if source.ends_with(HANDOVER_ROOM) {
+        return crate::handover_room::seed();
     }
     if !source.ends_with(COLD_SESSION_SUITE) {
         return Ok(Seed::new());

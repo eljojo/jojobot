@@ -21,6 +21,7 @@
 pub mod agent;
 pub mod bike_room;
 pub mod expectations;
+pub mod handover_room;
 pub mod ledger_room;
 pub mod loop_room;
 pub mod playbook;
