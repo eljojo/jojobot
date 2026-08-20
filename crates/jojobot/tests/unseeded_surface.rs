@@ -69,7 +69,7 @@ async fn an_unseeded_surface_says_so_and_recites_no_kinds() {
     let (listed, declared) = verbs_that_name_a_kind(addr).await;
     // **Both verbs, because they are two resolutions.** One takes the kind as
     // its own argument; the other takes a token with a kind inside it, and
-    // that one used to fail as though the caller's value type were wrong.
+    // that one can fail as though the caller's value type were wrong.
     for said in [&listed, &declared] {
         assert!(
             said.contains("never loaded"),

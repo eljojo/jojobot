@@ -168,10 +168,10 @@ mod tests {
         path.split('/').filter(|s| !s.is_empty()).count()
     }
 
-    /// **An ancestry deeper than the depth limit that used to sit behind the
-    /// cycle check.** That limit only ever fired here — on a real chain, whose
-    /// path it cut to its last handles and then served as the canonical one: a
-    /// URL, and a heading, stating an ancestry the record does not have.
+    /// **An ancestry deeper than any depth limit a cycle check would carry.**
+    /// Such a limit fires only here — on a real chain, whose path it cuts to
+    /// its last handles and then serves as the canonical one: a URL, and a
+    /// heading, stating an ancestry the record does not have.
     #[test]
     fn a_deep_ancestry_keeps_every_handle() {
         let deep = line(70, false);

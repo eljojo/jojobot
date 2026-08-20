@@ -363,11 +363,11 @@ fn collision(handle: &EntityId, matches: &[EntityMatch]) -> Collision {
 /// entities cannot share a handle, so that case is re-slug-or-confirm, always
 /// (rule 61).
 ///
-/// A boolean used to do this job and it asserted nothing — a caller could send
-/// it on a first call, having seen no refusal at all, which made the override
-/// available to exactly the callers it was meant to slow down. A token is
-/// unguessable and specific to one collision, so passing it back is evidence
-/// the caller read what it is overriding.
+/// A boolean asserts nothing here: a caller can send one on a first call,
+/// having seen no refusal at all, which puts the override in the hands of
+/// exactly the callers it is meant to slow down. A token is unguessable and
+/// specific to one collision, so passing it back is evidence the caller read
+/// what it is overriding.
 pub fn decide(
     handle: &EntityId,
     labels: &[&str],
