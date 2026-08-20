@@ -96,7 +96,17 @@ fn missed(name: &str, saying: impl Into<String>) -> Outcome {
     }
 }
 
-/// **Phase 2 — the identity you arrive holding.**
+/// **Phase 2, steps 7 and 8 — the door minted no identity.**
+///
+/// ⚠️ **It covers those two steps and no others, and the name says so.** The
+/// phase also asks, at step 5, what the charter told the agent it is for —
+/// **a judgement with no side effect anywhere**, so nothing here can measure
+/// it. A check named for the phase while asserting one of its steps reports
+/// PASS over a question nobody answered, which is how the shipped charter went
+/// through a whole paid run with nothing recording what it taught.
+///
+/// **A phase can have a check for one claim and none for another**, and the
+/// suite says which is which where the steps are written.
 ///
 /// The phase asks the agent to boot a name that is no bot, and the claim is
 /// that the door mints nothing. So what must be true afterwards is an absence:
@@ -111,7 +121,7 @@ struct TheRosterIsUntouched;
 #[async_trait::async_trait]
 impl Expectation for TheRosterIsUntouched {
     fn name(&self) -> &str {
-        "Phase 2 — the door minted no identity"
+        "Phase 2 — the door minted no identity (steps 7 and 8)"
     }
 
     async fn check(&self, seen: &Observed<'_>) -> Outcome {

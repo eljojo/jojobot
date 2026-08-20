@@ -115,6 +115,11 @@ phase below is marked one way or the other in the last section.
 >    you now know you are expected to do. Report FAIL if the charter left you
 >    unable to answer either — you are the identity this instance ships with,
 >    and being unable to say what it is for is the finding.
+>
+>    **No machine check covers this step, and none can**: understanding a
+>    charter leaves nothing in the store to read. **A person reads your answer
+>    to it.** The check named for this phase covers steps 7 and 8 — that the
+>    door minted nothing — and says so in its own name.
 > 6. **This is the only identity you use.** Do not boot as another bot at any
 >    point, including one you create later.
 > 7. Call `start_here` naming a bot that certainly does not exist — use

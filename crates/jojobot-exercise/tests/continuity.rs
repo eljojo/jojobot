@@ -98,3 +98,75 @@ fn a_run_that_kept_its_continuity_reports_none() {
         kept.lost_continuity(),
     );
 }
+
+/// **A phase that answered one step of six is a harness failure, not a pass.**
+///
+/// The run that paid for this wrote "Summary 48–53: PASS" after answering step
+/// 53 alone. Five steps went unmeasured and the results read clean, because
+/// nothing required an answer per step — and the phase's own check failed for
+/// a reason nobody could settle from the transcript.
+///
+/// **Structural: it asks whether the answer names the step**, never what it
+/// says about it. So a rephrasing passes and a silence does not.
+///
+/// Paired with the run that answered every step, which must stay clean —
+/// without it this passes against a check that calls every run a failure.
+#[test]
+fn a_phase_that_skipped_its_steps_is_a_harness_failure() {
+    let asked = "48. Add the thing.\n49. Record what it is.\n50. Add another.\n51. Check it in.\n52. Ask what is quiet.\n53. Ask again for another day.";
+
+    let skipped = run(
+        vec![Said {
+            phase: "Phase 9 — the loop that has gone quiet".into(),
+            prompt: asked.into(),
+            // The shape the paid run produced: one step answered, the rest
+            // swept into a range nobody wrote out.
+            output: "53. neither came back. Summary 48-53: PASS".into(),
+            ran: true,
+            continuing: false,
+        }],
+        &[1, 1],
+    );
+    assert_eq!(
+        skipped.steps_unanswered().len(),
+        1,
+        "a phase that answered one step of six reported clean: {:?}",
+        skipped.steps_unanswered(),
+    );
+    assert!(
+        !skipped.held(),
+        "the run passed while five sixths of a phase went unmeasured",
+    );
+
+    let answered = run(vec![Said {
+        phase: "Phase 9 — the loop that has gone quiet".into(),
+        prompt: asked.into(),
+        output: "48. added it. 49. recorded it. 50. added the second. 51. checked it in. 52. asked. 53. asked again.".into(),
+        ran: true,
+        continuing: false,
+    }], &[1, 1]);
+    assert!(
+        answered.steps_unanswered().is_empty(),
+        "a phase that answered every step was called a harness failure: {:?}",
+        answered.steps_unanswered(),
+    );
+
+    // **The neighbouring number must not answer for it.** `5` is not named by
+    // `53`, which is the shape the paid run actually produced.
+    let neighbour = run(
+        vec![Said {
+            phase: "Phase 2 — the identity you arrive holding".into(),
+            prompt: "5. Say what the charter told you.".into(),
+            output: "53. the loop with a cadence came back".into(),
+            ran: true,
+            continuing: false,
+        }],
+        &[1, 1],
+    );
+    assert_eq!(
+        neighbour.steps_unanswered().len(),
+        1,
+        "a longer number answered for the step it contains: {:?}",
+        neighbour.steps_unanswered(),
+    );
+}

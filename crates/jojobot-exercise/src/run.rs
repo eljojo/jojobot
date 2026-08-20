@@ -167,11 +167,49 @@ impl Results {
         lost
     }
 
+    /// **Steps the agent was asked and did not answer.**
+    ///
+    /// A phase is a numbered list of steps and each one asks for something
+    /// reported. A run that answers step 53 and writes "48–53: PASS" has
+    /// reported a verdict on five steps nobody took, and the transcript cannot
+    /// be read to settle what happened in them.
+    ///
+    /// **Structural, not a reading of the prose.** It asks whether the answer
+    /// names the step at all — the number the playbook itself uses — and never
+    /// what the answer says about it. A rephrasing passes; a silence does not.
+    ///
+    /// **A harness failure rather than a product verdict.** Nothing here says
+    /// jojobot behaved badly: it says the run did not measure what it was sent
+    /// to measure, which is the more expensive failure of the two because it
+    /// reads as a pass.
+    pub fn steps_unanswered(&self) -> Vec<String> {
+        let mut missing = Vec::new();
+        for said in &self.transcript {
+            if !said.ran {
+                continue;
+            }
+            let unanswered: Vec<String> = steps_of(&said.prompt)
+                .into_iter()
+                .filter(|step| !names_step(&said.output, step))
+                .collect();
+            if !unanswered.is_empty() {
+                missing.push(format!(
+                    "{} — asked {} steps and answered none of {}",
+                    said.phase,
+                    steps_of(&said.prompt).len(),
+                    unanswered.join(", "),
+                ));
+            }
+        }
+        missing
+    }
+
     /// Everything held, something happened, and no phase quietly lost its
     /// memory on the way.
     pub fn held(&self) -> bool {
         self.the_room_changed()
             && self.lost_continuity().is_empty()
+            && self.steps_unanswered().is_empty()
             && !self.outcomes.is_empty()
             && self.outcomes.iter().all(|outcome| outcome.held)
     }
@@ -207,6 +245,12 @@ impl Results {
                  transcript, and the phases that measure continuity are meaningless without it."
             );
         }
+        for unanswered in self.steps_unanswered() {
+            println!(
+                "  [ HARNESS ] {unanswered}. The run did not measure what it was sent to \
+                 measure, which reads as a pass unless it is said here."
+            );
+        }
         for phase in &self.uncovered {
             println!(
                 "  [ no check ] {phase} — what this phase measures lives in the agent's answer, \
@@ -214,6 +258,47 @@ impl Results {
             );
         }
     }
+}
+
+/// **The step numbers a phase asks about**, read off the playbook's own list.
+///
+/// A step is a line whose first token is a number and a dot, which is the shape
+/// the document writes them in. Nothing here interprets what the step asks.
+fn steps_of(prompt: &str) -> Vec<String> {
+    prompt
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            let (number, rest) = line.split_once('.')?;
+            (!number.is_empty()
+                && number.chars().all(|c| c.is_ascii_digit())
+                && rest.starts_with(' '))
+            .then(|| number.to_string())
+        })
+        .collect()
+}
+
+/// **Does this answer name that step?** The number, as a number rather than as
+/// part of a longer one — `5` must not be satisfied by `53`.
+///
+/// A range counts: an answer that writes `48-53` has named both ends, and the
+/// steps between them are what this cannot see. That is deliberate — the check
+/// is for a step nobody mentioned at all, and a run that summarised a range is
+/// caught by the ends it did not write rather than by parsing its arithmetic.
+fn names_step(output: &str, step: &str) -> bool {
+    let mut from = 0;
+    while let Some(at) = output[from..].find(step) {
+        let at = from + at;
+        let before = output[..at].chars().next_back();
+        let after = output[at + step.len()..].chars().next();
+        let bounded = !before.is_some_and(|c| c.is_ascii_digit())
+            && !after.is_some_and(|c| c.is_ascii_digit());
+        if bounded {
+            return true;
+        }
+        from = at + step.len();
+    }
+    false
 }
 
 /// **The whole run.**
