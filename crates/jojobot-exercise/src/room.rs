@@ -24,6 +24,14 @@ use std::process::Stdio;
 
 use anyhow::{Context, Result};
 
+/// **How many times a room is spawned before its failure is reported.**
+///
+/// A port this process tested and let go can be taken before the child binds
+/// it, so the first attempt failing says nothing about the room. A real failure
+/// — no binary, a server that cannot start — fails every attempt and is
+/// reported with the count in it.
+const ATTEMPTS: usize = 3;
+
 /// How long a room is given to answer before the run gives up. The store is a
 /// child process the server brings up and migrates first, so this is minutes of
 /// patience rather than seconds — and a run that waits forever on a server that
@@ -64,16 +72,50 @@ impl Room {
         Room::spawn(binary, DeathSignal::Skip).await
     }
 
-    /// Bring a server up in a room of its own and wait until it answers.
+    /// **Bring a server up, and try again when the port was taken from under
+    /// it.**
+    ///
+    /// A port cannot be reserved for a child process that binds it itself: this
+    /// process can test a port and hold the listener until the moment it spawns,
+    /// and between that moment and the child's own bind the port belongs to
+    /// whoever asks. **The window is real and cannot be closed from here** —
+    /// closing it would mean handing the child a listener it did not open,
+    /// which is not how the server takes its port.
+    ///
+    /// So a collision is made recoverable instead of rare. A server that exits
+    /// before it serves is spawned again on fresh ports, and only a room that
+    /// fails every attempt is an error — which is what a real failure, a binary
+    /// that cannot start, still is. **The flake this replaces failed two cases
+    /// every few full runs, and a suite that fails intermittently gets read as
+    /// a regression by whoever meets it next.**
     async fn spawn(binary: &Path, signal: DeathSignal) -> Result<Room> {
         anyhow::ensure!(
             binary.is_file(),
             "no jojobot binary at {} — build the workspace first",
             binary.display(),
         );
+        let mut last = None;
+        for _ in 0..ATTEMPTS {
+            match Room::spawn_once(binary, &signal).await {
+                Ok(room) => return Ok(room),
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last
+            .unwrap_or_else(|| anyhow::anyhow!("no attempt was made"))
+            .context(format!(
+                "the room did not come up in {ATTEMPTS} attempts, each on ports of its own"
+            )))
+    }
+
+    /// One attempt: fresh ports, a fresh directory, one spawn.
+    async fn spawn_once(binary: &Path, signal: &DeathSignal) -> Result<Room> {
         let dir = scratch()?;
-        let served = free_port()?;
-        let store = free_port()?;
+        // **Held until the spawn, then let go.** Nothing else in this process
+        // can take these numbers while the command is being built, which is
+        // the half of the window that is ours to close.
+        let (served, served_held) = free_port()?;
+        let (store, store_held) = free_port()?;
         let endpoint = format!("http://127.0.0.1:{served}/mcp");
 
         // **Two conditions, not one.** The server refuses to start with no
@@ -94,6 +136,8 @@ impl Room {
         if let DeathSignal::Ask = signal {
             die_with_this_run(&mut spawning);
         }
+        drop(served_held);
+        drop(store_held);
         let server = spawning
             .spawn()
             .with_context(|| format!("spawning {}", binary.display()))?;
@@ -509,13 +553,16 @@ fn names_a_room(dir: &str) -> bool {
 /// matter, and two rooms on one port means one run reading another run's store.
 /// The store suite learned this and wrote it down; this is the same answer,
 /// because it is the same problem.
-fn free_port() -> Result<u16> {
+fn free_port() -> Result<(u16, std::net::TcpListener)> {
     static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
     for _ in 0..20_000 {
         let slot = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let port = port_at(starting_slot(), slot);
-        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
-            return Ok(port);
+        // **The listener comes back with the number.** Releasing it here left
+        // the port free for the whole time the caller spent getting ready to
+        // spawn; the caller holds it until the last moment instead.
+        if let Ok(held) = std::net::TcpListener::bind(("127.0.0.1", port)) {
+            return Ok((port, held));
         }
     }
     anyhow::bail!("no free loopback port in the range a room uses")

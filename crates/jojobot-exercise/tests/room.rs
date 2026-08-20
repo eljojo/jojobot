@@ -154,3 +154,47 @@ async fn a_seed_furnishes_the_room_and_never_coaches_the_occupant() {
     );
     surface.finish().await;
 }
+
+/// **A room that cannot come up is reported after every attempt, not the
+/// first.**
+///
+/// A port this process tested and let go can be taken before the child binds
+/// it, so one failed spawn says nothing about the room and is tried again. What
+/// must not change is what a REAL failure looks like: a binary that exits
+/// immediately fails every attempt, and the error says how many were made
+/// rather than reading like a single unlucky one.
+///
+/// **The retry itself is what this holds.** A build that gave up on the first
+/// failure reports the same underlying error without the count, so the count is
+/// the assertion.
+#[tokio::test]
+async fn a_server_that_cannot_start_is_reported_after_every_attempt() {
+    // **Written here rather than found on the machine.** `/bin/false` is not on
+    // every system this runs on, and a case that skips when it is missing is a
+    // case that asserts nothing while reading green.
+    let never_serves = std::env::temp_dir().join("jojobot-room-never-serves");
+    std::fs::write(&never_serves, "#!/bin/sh\nexit 1\n").expect("a binary on disk");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&never_serves, std::fs::Permissions::from_mode(0o755))
+            .expect("it can be run");
+    }
+
+    let said = match Room::open(&never_serves).await {
+        Ok(_) => panic!("a binary that exits immediately served a room"),
+        Err(failed) => format!("{failed:#}"),
+    };
+    let _ = std::fs::remove_file(&never_serves);
+
+    assert!(
+        said.contains("3 attempts"),
+        "the failure does not say the room was tried more than once: {said}",
+    );
+    // The positive it rests on: the underlying reason is still in the answer,
+    // so a retry that swallowed what went wrong would not pass this.
+    assert!(
+        said.contains("before it served"),
+        "the failure no longer says what happened to the server: {said}",
+    );
+}
