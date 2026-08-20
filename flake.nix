@@ -55,7 +55,18 @@
           # the suite without it failed every one of those tests, which is the
           # build saying the toolchain is short rather than the code being
           # wrong.
-          nativeCheckInputs = [ dolt ];
+          # **The zone database, for the same reason.** jojobot resolves IANA
+          # zone names — a run says which zone it works in — and jiff reads
+          # them from a directory on disk. A deployed host has one at
+          # `/etc/zoneinfo`; the build sandbox has nothing at any of the paths
+          # jiff looks in, so the suite that reads a real zone fails there and
+          # nowhere else. `TZDIR` names the store path directly, which is the
+          # one lookup that does not depend on the sandbox's filesystem.
+          nativeCheckInputs = [
+            dolt
+            pkgs.tzdata
+          ];
+          TZDIR = "${pkgs.tzdata}/share/zoneinfo";
           # What `ping` reports as the running build. This has to come from
           # here: the build sandbox has no `.git` — src is a store path — so
           # the build script's git fallback cannot fire, and the deployed
