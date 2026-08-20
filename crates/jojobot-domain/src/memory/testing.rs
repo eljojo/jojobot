@@ -6450,12 +6450,17 @@ pub mod contract {
         store: &M,
         search: &S,
     ) {
+        // **Declared the way a caller declares one.** A key is optional unless
+        // somebody says otherwise, and the surface tells callers to leave it
+        // that way — so a type whose every key is required is a shape almost no
+        // caller produces, and a strict question proved only against that shape
+        // is proved against nothing anybody asks.
         let declared = store
             .declare_type(DeclaredType::new(
                 "contract-pallet",
                 vec![
-                    Field::required("stacked", ValueType::Number),
-                    Field::required("shipped_on", ValueType::Date),
+                    Field::new("stacked", ValueType::Number),
+                    Field::new("shipped_on", ValueType::Date),
                 ],
             ))
             .await
@@ -7839,6 +7844,13 @@ pub mod contract {
                 vec![
                     Field::required("cost", ValueType::Number),
                     Field::required("done_on", ValueType::Date),
+                    // **Optional, and never written on the thing below.** The
+                    // floor is the REQUIRED keys, so a thing holding those two
+                    // is at it whether or not this one is there. A guard
+                    // measured against every key a kind names would decide that
+                    // thing fits nothing and stop protecting it — which is the
+                    // failure the refusal below catches.
+                    Field::new("note", ValueType::Text),
                 ],
             )
             .await
@@ -7846,8 +7858,11 @@ pub mod contract {
         // a shipped kind is used rather than a new one, and `thing`
         // is left keyless for the case below that asks the other half.
 
-        // A thing that fits: both keys, over two sittings, because that is how
-        // things get written down.
+        // A thing that fits: both REQUIRED keys, over two sittings, because
+        // that is how things get written down. **It never holds the optional
+        // one**, which is what makes the refusal below answer for the floor: a
+        // guard measured against every key a kind names would decide this thing
+        // fits nothing and let the required key go.
         let whole = EntityId::new(EntityKind::ORG, "contract-fitting-thing");
         let costed = capture(
             store,

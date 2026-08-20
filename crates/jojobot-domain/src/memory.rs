@@ -1695,7 +1695,10 @@ pub fn guard_fit(
         // thing without it is not a thing with something missing.
         //
         // A thing that did not meet its floor before has nothing this protects.
-        if !declaration.matched_by(before).is_some_and(|m| m.complete()) {
+        if !declaration
+            .matched_by(before)
+            .is_some_and(|m| m.meets_the_floor())
+        {
             continue;
         }
         let lost: Vec<String> = declaration

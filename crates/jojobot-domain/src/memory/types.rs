@@ -705,19 +705,40 @@ pub struct Match {
 }
 
 impl Match {
-    /// **Every REQUIRED key is there and holds what it was declared to hold.**
+    /// **Every key the type names is there and holds what it was declared to
+    /// hold** — the question a READER asks.
     ///
-    /// Holding a key badly is not holding it. A required key whose value breaks
-    /// the declaration leaves the type unanswered exactly as an absent one
-    /// does — a definition that read `lacking_required` alone would call a
-    /// thing a stay because the venue slot had a pet in it.
+    /// *Which of these ARE deliveries* is this one, and *which of these are
+    /// described like a delivery* is the tolerant question beside it, which
+    /// keeps a thing and names its gaps. A reader picks; nothing here refuses
+    /// anything.
+    ///
+    /// Holding a key badly is not holding it, so a value that breaks its
+    /// declaration leaves the thing short exactly as an absent key does.
+    ///
+    /// ⚠️ **This is NOT the floor a write is held to** — see
+    /// [`Match::meets_the_floor`]. The two questions differ on the optional
+    /// keys, and a type a caller declared has no required keys unless the
+    /// caller said so: measured by the floor, such a type is answered by
+    /// anything carrying one of its keys, and the strict question becomes the
+    /// tolerant one.
+    pub fn complete(&self) -> bool {
+        self.lacking.is_empty() && self.mistyped.is_empty()
+    }
+
+    /// **Every REQUIRED key is there and holds what it was declared to hold** —
+    /// the question a WRITE is held to (rule 214).
+    ///
+    /// The required set is the minimum that makes a thing that thing, so this
+    /// is what a write may not take away: once a thing meets the floor, a write
+    /// that would drop it below is refused. See [`super::guard_fit`].
     ///
     /// **An optional key decides nothing here, held, absent or wrong.** That is
     /// the whole of what optional means: it is welcome, it is never demanded,
     /// and a thing without it is not a thing with something missing. What is in
-    /// it when it IS there is a separate question, asked on every write by
-    /// [`super::guard_fit`] and reported by `mistyped` either way.
-    pub fn complete(&self) -> bool {
+    /// it when it IS there is a separate question, asked whenever the key is
+    /// written and reported by `mistyped` either way.
+    pub fn meets_the_floor(&self) -> bool {
         self.lacking_required.is_empty() && !self.mistyped.iter().any(|m| m.required)
     }
 }
