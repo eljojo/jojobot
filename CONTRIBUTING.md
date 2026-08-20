@@ -77,9 +77,9 @@ There is a third bar above this one, and stories cannot reach it. A story is
 written by somebody who already knows the answer, so it proves a capability is
 reachable and never that it was reached. A playbook is what a real model is
 driven through against a throwaway instance, and what it asserts is what the
-model left in the store rather than anything it said. There is more than one:
-`COLD-SESSION-SUITE.md` walks a numbered script, and `BIKE-ROOM.md` gives one
-goal and a one-line entry, leaving the agent to find the route. They run under
+model left in the store rather than anything it said. The playbooks are rooms
+and they live in `crates/jojobot-exercise/rooms/`. A room gives one goal and a
+one-line entry, and leaves the agent to find the route. They run under
 `make paid PLAYBOOK=<path>`, which costs money and which `make check` never
 invokes.
 

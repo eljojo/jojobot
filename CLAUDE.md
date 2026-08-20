@@ -424,10 +424,10 @@ roles and never an operator.
   never that it was reached. A **playbook** is what a real model is driven
   through against a throwaway instance, and its assertions are over what the
   model LEFT in the store, never over what it said. `make paid` takes the
-  playbook as a parameter. `COLD-SESSION-SUITE.md` walks a numbered script;
-  `BIKE-ROOM.md` gives one goal in the operator's voice and a one-line entry,
-  and leaves the agent to find the door, the box and the route. It is in
-  addition to the stories, never instead of them.
+  playbook as a parameter, and the playbooks are **rooms**, in
+  `crates/jojobot-exercise/rooms/`. A room gives one goal in the operator's
+  voice and a one-line entry, then leaves the agent to find the door, the box
+  and the route. It is in addition to the stories, never instead of them.
 - **Commits: one per coherent problem.** A milestone lands as a handful of
   commits — never one per file or checklist item, never dozens. **A fix and
   the test that proves it are ONE problem**, however a task listed them.

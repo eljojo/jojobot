@@ -263,7 +263,7 @@ make check             # the DONE bar: formatted, green, clippy-clean — all fr
 # throws away, and it costs money. It needs the agent CLI on your PATH; this
 # repo does not provision one. The playbook is a parameter and there is more
 # than one; the target refuses to guess and exits without it.
-make paid PLAYBOOK=BIKE-ROOM.md
+make paid PLAYBOOK=crates/jojobot-exercise/rooms/bike.md
 
 # Everything jojobot holds is rows in a SQL store the server starts and
 # supervises — mail, sessions, entities, facts and prose alike — so it needs
