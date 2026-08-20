@@ -439,9 +439,9 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
 
     // **The advertised schema text is the only spec the caller ever reads**, and
     // it is what an AI plans against. A description that promises screening the
-    // server no longer does — or omits a gate it now has — is a bug with no
-    // stack trace: the caller writes a call that cannot succeed and has no way
-    // to know why. Pinned here, two lines above the flow it describes.
+    // server does not do — or omits a gate it has — is a bug with no stack
+    // trace: the caller writes a call that cannot succeed and has no way to
+    // know why. Pinned here, two lines above the flow it describes.
     let capture_doc = tools
         .iter()
         .find(|t| t.name == "capture")
@@ -457,8 +457,8 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
          exist: {capture_doc}"
     );
 
-    // **The boot comes first, because a write with nobody behind it no longer
-    // lands.** Every real client does exactly this: walk through the door,
+    // **The boot comes first, because a write with nobody behind it does not
+    // land.** Every real client does exactly this: walk through the door,
     // then carry the sid. The identity is the one every jojobot arrives with,
     // which is what makes the gate shippable rather than a bootstrap trap.
     let booted = client
@@ -533,8 +533,8 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
         !captured.contains("\"isError\":true"),
         "capture must succeed: {captured}"
     );
-    // A blocked write is a *successful* result now, so isError alone no longer
-    // catches one — the body is what says whether anything was written.
+    // A blocked write is a *successful* result, so isError alone does not catch
+    // one — the body is what says whether anything was written.
     assert!(
         !captured.contains("\"status\":\"blocked\""),
         "capture must not have been blocked: {captured}"

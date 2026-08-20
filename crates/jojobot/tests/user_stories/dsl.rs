@@ -925,8 +925,8 @@ impl Session {
     }
 
     /// Rewrite a claim in place AND re-point its edge — for the case where
-    /// what changed is not just the wording but which thing the claim now
-    /// traces to, so the edge does not go on naming what used to be true.
+    /// what changed is not just the wording but which thing the claim traces
+    /// to, so the edge does not go on naming a thing the claim has left.
     /// Rewrite the record's own fields: set the keys named, take away the keys
     /// listed. Every other key on the record is left where it is.
     pub async fn correct_fields(&self, address: &str, set: Value, clear: &[&str]) {

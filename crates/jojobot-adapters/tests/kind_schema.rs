@@ -524,11 +524,10 @@ async fn a_kind_and_a_schema_cannot_take_each_others_keys() {
 
 /// **A required key is a floor; an optional key is checked and never demanded.**
 ///
-/// Two independent properties, and the whole slice is that they stopped being
-/// one. Fitting used to be every key a declaration named, so declaring what a
-/// thing MAY carry was impossible without demanding all of it — which is how a
-/// schema ends up shaped by what the type system can carry rather than by what
-/// somebody keeps.
+/// Two independent properties, and one answer for both cannot state either. If
+/// fitting is every key a declaration names, declaring what a thing MAY carry
+/// demands all of it — which is how a schema ends up shaped by what the type
+/// system can carry rather than by what somebody keeps.
 ///
 /// **Three beats, and the third is the one that matters.** A missing optional
 /// key is served; a missing required key is refused; and an optional key

@@ -1,10 +1,10 @@
-//! "I am in New York. Why does jojobot think my evening is tomorrow?"
+//! "I am in New York. My evening is not tomorrow."
 //!
-//! **Because it used to.** Every day-grained answer was resolved in UTC, so a
-//! claim captured at nine in the evening was stamped with the next day, and a
-//! recurring loop fell due up to a day early. Nothing in the surface said so
-//! and nothing could be configured, which is the shape of a fault an agent
-//! works around rather than reports.
+//! **Because a day-grained answer has to be resolved in some zone.** Resolved
+//! in UTC, a claim captured at nine in the evening is stamped with the next
+//! day, and a recurring loop falls due up to a day early. A surface that says
+//! nothing about which zone it used, and offers no way to set one, produces the
+//! shape of fault an agent works around rather than reports.
 //!
 //! **The session supplies the frame.** A run says which zone it works in when
 //! it boots, and jojobot never assumes one. That is the rule the overdue read

@@ -495,13 +495,12 @@ impl GraphQuery {
 /// it.
 ///
 /// **A declaration establishes the key IS a relation, and does nothing else
-/// here.** It used to also scope the reverse walk to one type, under the name
-/// `type.key`. That scope could never exclude anything: the walked key is by
-/// construction one of the type's keys, and answering a type takes only ONE of
-/// them, so whatever the walk reached answered the type. The name spelled the
-/// narrowing as part of the relation, and both are gone. What narrows a walk
-/// now is [`Follow::fits_type`], asked beside it and answered on the stricter
-/// question of whether the thing holds EVERY key.
+/// here.** Scoping the reverse walk to one type, under a name like `type.key`,
+/// excludes nothing: the walked key is by construction one of the type's keys,
+/// and answering a type takes only ONE of them, so whatever the walk reaches
+/// answers the type. What narrows a walk is [`Follow::fits_type`], asked beside
+/// it and answered on the stricter question of whether the thing holds EVERY
+/// key.
 ///
 /// **Nothing is inferred.** A value that looks like a handle under a key nobody
 /// declared is a string that looks like a handle.
@@ -1996,7 +1995,7 @@ mod tests {
     ///
     /// The load-bearing half is that a reached object brings ITS facts, not
     /// the root's — a walk that returned bare handles would leave the caller
-    /// asking again per guest, which is the two-call shape this replaces.
+    /// asking again per guest, which is two calls for one question.
     #[test]
     fn a_reached_object_brings_its_own_facts() {
         let found = resolve(
@@ -2696,13 +2695,13 @@ mod tests {
     /// The inbound walk reaches every record pointing here through that key,
     /// whatever else each record is. The bike's repair record carries `owner`
     /// and is reached — which is what the walk was asked for, and is why the
-    /// name no longer claims to be about pets.
+    /// name claims nothing about pets.
     ///
-    /// **This is the case the old code could not have failed.** The reverse
-    /// walk used to also require the record to answer the declared type, under
-    /// the name `pet.owner`. That could never exclude anything: the walked key
-    /// is one of the type's keys, and holding one key is what answering a type
-    /// means. So the check is gone, and so is the name that advertised it.
+    /// **A reverse walk that also required the record to answer the declared
+    /// type, under a name like `pet.owner`, could not fail this case.** That
+    /// check excludes nothing: the walked key is one of the type's keys, and
+    /// holding one key is what answering a type means. So there is no such
+    /// check, and no name advertising one.
     #[test]
     fn a_relation_is_scoped_by_its_key_and_the_direction_chooses_the_way() {
         let scanned = kennel();
@@ -2760,9 +2759,10 @@ mod tests {
                 .is_empty(),
         );
 
-        // The qualified name is gone, and the refusal offers the key instead.
+        // A qualified name is no relation, and the refusal offers the key
+        // instead.
         let refused = walk("person:bart", "pet.owner", Direction::In)
-            .expect_err("`type.key` is no longer a relation name");
+            .expect_err("`type.key` is no relation name");
         match refused {
             MemoryError::InvalidQuery(why) => assert!(
                 why.contains("owner"),

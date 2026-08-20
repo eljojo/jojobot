@@ -1623,10 +1623,10 @@ pub fn referenced_by(
 /// handle — so what may be taken off a `pet:` is what the kind `pet` names.
 /// **A declared type governs no write.** A type is the vocabulary a caller asks
 /// WITH: it says which things answer a shape, and answering a shape is not the
-/// same act as being held to one. Governing by resemblance instead made any
-/// thing that structurally completed any declaration in the store subject to
-/// it, with nothing offered and nothing confirmed — a thing on which somebody
-/// wrote a kind's five keys was governed by a kind it is not.
+/// same act as being held to one. Governing by resemblance would make any thing
+/// that structurally completes any declaration in the store subject to it, with
+/// nothing offered and nothing confirmed — a thing on which somebody wrote a
+/// kind's five keys would be governed by a kind it is not.
 ///
 /// **A kind that names no keys governs nothing**, which is every shipped kind
 /// today, so today this refuses nothing. That is the floor being empty rather

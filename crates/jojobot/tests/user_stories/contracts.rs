@@ -6,9 +6,9 @@
 //! lacks. Answering a shape is not the same act as being held to one, and
 //! nothing a caller declares gates a write.
 //!
-//! **The narrowing is what the declaration is FOR.** A reference used to mean
-//! "a handle of some kind jojobot knows", so a key meant for a venue was
-//! satisfied by a pet. Saying `reference:place` is what lets the declaration
+//! **The narrowing is what the declaration is FOR.** A reference that names no
+//! kind means "a handle of some kind jojobot knows", so a key meant for a venue
+//! is satisfied by a pet. Saying `reference:place` is what lets the declaration
 //! say which kind belongs on the other end — and the answer reports the value
 //! that does not, rather than turning the write away.
 //!

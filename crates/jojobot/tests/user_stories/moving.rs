@@ -101,8 +101,8 @@ async fn moving_abroad() {
     // GAP — and the EDGE is only as good as the claim's wording. Nothing says
     // this shape means "inside" rather than "near" or "flies to", so a walk by
     // shape finds the pair and a reader still reads each sentence to learn
-    // what the link was. Naming the link is no longer out of reach: a key
-    // declared to hold a reference is a relation the query walks both ways, so
+    // what the link was. Naming the link is within reach: a key declared to
+    // hold a reference is a relation the query walks both ways, so
     // an `inside` key says what `location` cannot. The residual is the narrow
     // one — the name lives on a KEY of the record and never on the edge, and
     // the five shapes stay a closed vocabulary.

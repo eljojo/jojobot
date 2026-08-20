@@ -301,10 +301,10 @@ fn read<T>(
 /// alternative is a half-built loop that surfaces at no read ever and is never
 /// heard from again.
 ///
-/// **A boolean collapses the first two into one answer** and that is exactly
-/// the defect this replaces: an overdue check that returned true whenever it
-/// could not read a schedule marked every person, place and project overdue,
-/// since none of them has a schedule to read.
+/// **A boolean collapses the first two into one answer**, which is the defect
+/// this shape exists to avoid: an overdue check that returns true whenever it
+/// cannot read a schedule marks every person, place and project overdue, since
+/// none of them has a schedule to read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Due {
     /// **Nothing here falls due.** The thing carries none of what this carrier
@@ -583,9 +583,9 @@ mod tests {
     /// **A loop carrying none of a schedule is not late, and one carrying half
     /// of it is.**
     ///
-    /// The two used to be one answer and that is what marked every person,
-    /// place and project overdue: a check that said "late" whenever it could
-    /// not read a schedule said it loudest about things that have none.
+    /// One answer for the two marks every person, place and project overdue: a
+    /// check that says "late" whenever it cannot read a schedule says it
+    /// loudest about the things that have none.
     ///
     /// **The distinction is what the loop CARRIES, not what it is.** A loop
     /// somebody wrote down and has not put a schedule on is the fern — watered

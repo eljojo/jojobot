@@ -94,7 +94,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         .says("\"standing\":\"open\"");
 
     // And nothing was smuggled into free text to carry the hedge: it is a
-    // field, so the note is empty on the claim that used to need one.
+    // field, so the note is empty on the claim that carries one.
     read.claim(&hedged)
         .says("\"details\":null")
         .never_says("was not sure");

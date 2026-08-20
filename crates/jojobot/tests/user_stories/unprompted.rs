@@ -149,11 +149,10 @@ async fn a_session_records_a_claim_with_its_source_unprompted() {
         .says("\"provenance\":\"testimony\"")
         .says("\"standing\":\"open\"");
 
-    // **The gap is closed and this is what closed it.** A session with only
-    // the boot used to have one shape for "nobody is sure of this" — the
-    // provenance `inference` — which answers who backs the claim, and answers
-    // it wrongly when the operator is the one musing. The essay now teaches
-    // the second field, so the honest pair is reachable from the boot alone.
+    // **The essay teaches the second field, so the honest pair is reachable
+    // from the boot alone.** With one shape for "nobody is sure of this" — the
+    // provenance `inference` — a session answers who backs the claim, and
+    // answers it wrongly when the operator is the one musing.
     //
     // The needle is `settled`, not `standing`: the field's own value token,
     // which the essay has no other use for, where the field's name is also

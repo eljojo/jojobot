@@ -3371,10 +3371,11 @@ pub mod contract {
 
     /// **Settling is the user's move, and it leaves provenance alone.**
     ///
-    /// This is the half the story found by accident: promotion used to "work"
-    /// only because a hedge had been mis-stored as inference, so there was a
-    /// provenance to promote. Stored honestly, the claim is testimony from the
-    /// start — and there must still be something for confirmation to close.
+    /// A hedge the operator wrote is testimony from the start, so there is no
+    /// provenance for a confirmation to promote. What confirmation closes is
+    /// the standing, and there must still be something for it to close. A
+    /// promotion that "works" here is one reading a hedge stored as inference,
+    /// which is a claim mis-stored rather than a claim settled.
     pub async fn settling_a_hedge_needs_confirmation_and_keeps_its_provenance<M: Memory>(
         store: &M,
     ) {
@@ -6331,9 +6332,9 @@ pub mod contract {
     /// reports the gaps.**
     ///
     /// Which question a reader is asking is the reader's choice, and `recall`
-    /// has let them make it for a while. Both halves in one case: strict alone
-    /// passes on a build that returns nothing, and tolerant alone passes on the
-    /// build this replaces.
+    /// is what lets them make it. Both halves in one case: strict alone passes
+    /// on a build that returns nothing, and tolerant alone passes on a build
+    /// that never asked the strict question.
     ///
     /// **The tolerant one is what a caller naming neither gets.** A thing
     /// arriving with its gaps named can neither hide nor overclaim; a thing

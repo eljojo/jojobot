@@ -127,7 +127,7 @@ async fn throwing_a_birthday_party() {
     )
     .await
     .says("relation");
-    // What is no longer missing is telling them apart AT ALL. A key does that:
+    // Telling them apart AT ALL is not what is missing. A key does that:
     // a declared `partner: reference` holding Maude's handle is a relation the
     // query walks in both directions, the same mechanism the pets story walks
     // `owner` by, and a person is as good a thing to point at as any other. So

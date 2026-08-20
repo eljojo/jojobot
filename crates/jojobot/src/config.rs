@@ -136,10 +136,10 @@ impl Config {
             }
         }
 
-        // The UI is a public client and PKCE is what protects it, so a secret is
-        // no longer read anywhere. Refusing beats ignoring: an operator who left
-        // one in an environment file would otherwise keep deploying a credential
-        // in the belief it authenticates something.
+        // The UI is a public client and PKCE is what protects it, so no secret
+        // is read anywhere. Refusing beats ignoring: an operator who left one in
+        // an environment file would otherwise keep deploying a credential in the
+        // belief it authenticates something.
         if raw.ui_client_secret_set {
             anyhow::bail!(
                 "JOJOBOT_UI_CLIENT_SECRET is set but the browser UI is a public client — its \
@@ -456,9 +456,9 @@ mod tests {
 
     #[test]
     fn refuses_a_client_secret_the_login_cannot_use() {
-        // The secret is gone from the flow. A variable that no longer does
-        // anything must not be quietly ignored: left in an environment file it
-        // would go on being deployed as if it authenticated something.
+        // The login sends no secret. A variable that does nothing must not be
+        // quietly ignored: left in an environment file it would go on being
+        // deployed as if it authenticated something.
         let raw = RawEnv {
             ui_client_secret_set: true,
             ..raw_ui(

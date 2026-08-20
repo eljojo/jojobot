@@ -128,10 +128,10 @@ pub fn decide_create(
 /// `bot:worker-2`'s box beside `bot:worker-1`'s for a resemblance somebody has
 /// already answered for.
 ///
-/// This is what used to need an override flag on the internal path — jojobot
-/// setting the boolean on its own guard, which is the hole the flag was. It is
-/// a rule now rather than a permission: the name either IS the owner's handle
-/// or it is not, and nothing a caller sends changes which.
+/// It is a rule rather than a permission: the name either IS the owner's handle
+/// or it is not, and nothing a caller sends changes which. An override flag on
+/// the internal path — jojobot setting the boolean on its own guard — would be
+/// a hole in the guard rather than an answer to this.
 pub fn decide_create_for(
     name: &MailboxName,
     owner_slug: Option<&str>,

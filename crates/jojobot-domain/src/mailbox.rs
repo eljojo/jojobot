@@ -310,9 +310,9 @@ fn blank_is_absent(text: Option<&str>) -> Option<String> {
 /// deliberately the whole surface.
 ///
 /// A box is created FOR somebody, so the mail context has to answer one
-/// question about the entity world: does this handle resolve. When both
-/// contexts sat in one store an adapter answered it by reading the index it
-/// already had. They no longer do, so the question needs a name — this one.
+/// question about the entity world: does this handle resolve. The two contexts
+/// sit in stores of their own, so no adapter can answer it by reading an index
+/// it already has. The question needs a name, and this is it.
 ///
 /// **It is not the Memory port with a smaller name.** It cannot fetch a fact, a
 /// kind, an edge or a record; it answers existence and hands back what Memory's

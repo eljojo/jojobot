@@ -194,14 +194,13 @@ const ROSTER: &[&str] = &[
 
 /// Every file in the workspace that can carry a handle.
 ///
-/// **`.rs` is not the whole of it any more, and the day it stopped being was
-/// the day a fixture was recorded from a live store into the repo.** Those
-/// files are text, they carry handles by construction, and a gate that only
-/// reads source would have watched the leak vector this project has been
-/// burned by three times move into a file class it does not open. The
-/// recorder points at a disposable collection and writes its own entities —
-/// which is exactly the kind of reasoning that is true until somebody records
-/// against something else.
+/// **`.rs` is not the whole of it: a fixture recorded from a live store lands
+/// in the repository as data.** Those files are text and they carry handles by
+/// construction, so a gate that reads source alone lets the leak vector this
+/// project has been burned by three times move into a file class it never
+/// opens. The recorder points at a disposable collection and writes its own
+/// entities — which is exactly the kind of reasoning that is true until
+/// somebody records against something else.
 fn scanned_sources(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).expect("readable source dir") {
         let path = entry.expect("readable dir entry").path();
@@ -580,7 +579,8 @@ fn the_gate_still_reads_sources_under_crates() {
 ///
 /// It also means the list stops being readable as evidence. "These are the
 /// fictional names this repo contains" is a claim somebody can check; "these
-/// are the fictional names this repo contains, plus some it used to" is not.
+/// are the fictional names this repo contains, plus some that are free" is
+/// not.
 #[test]
 fn the_roster_carries_no_name_the_workspace_has_stopped_using() {
     let files = scanned_files(&workspace_root());
@@ -670,8 +670,8 @@ fn the_gate_reads_a_named_character_and_an_unnamed_role_apart() {
          // It is the surface he reads himself.\nfn b() {}\n",
     );
     // **A contraction hides the pronoun from a boundary rule that lets an
-    // apostrophe close a word**, and this file's own doc comment used to say
-    // that was intended. It is the same breach with two characters after it.
+    // apostrophe close a word.** It is the same breach with two characters
+    // after it.
     scratch.write(
         "crates/shortened.rs",
         "// The listing is the one page nobody else opens.\n\

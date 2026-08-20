@@ -96,9 +96,9 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // rendering of them. Both are `testimony`, and the difference is the whole
     // value of a receipt: a session asking why it was built this way needs to
     // know whether it is reading the operator or somebody's summary. Keeping
-    // the quote is no longer a matter of hoping nobody tidies the claim — the
-    // words go under a key of their own on a typed record, which a rewrite of
-    // the claim does not reach. What stays missing is the distinction itself:
+    // the quote does not depend on nobody tidying the claim — the words go
+    // under a key of their own on a typed record, which a rewrite of the claim
+    // does not reach. What stays missing is the distinction itself:
     // the key is a convention this session invented, provenance still has one
     // value for both, and no read treats the field as more than a value.
     //   s.quoted("project:jojobot-server", verbatim: "…").await;
@@ -274,9 +274,9 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     .await;
 
     // **The roster, with what each one is for, in one call.** The coordinator
-    // is handing work to two implementers now and has to know who is who —
-    // and reading what an identity is for used to mean booting AS it, one at a
-    // time, which is the wrong act for a question.
+    // is handing work to two implementers and has to know who is who. Reading
+    // what an identity is for by booting AS it, one at a time, is the wrong act
+    // for a question.
     //
     // Nothing in the question names a charter. It asks for objects of a kind
     // and for their prose, and a charter IS a bot's prose, so this falls out

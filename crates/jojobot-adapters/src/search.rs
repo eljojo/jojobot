@@ -347,8 +347,8 @@ pub struct FullTextIndex {
     ///
     /// **Stamped in [`mark_seq`](Self::mark_seq) and cleared by comparison**,
     /// exactly as [`memory_refresh_failed_at`](Self::memory_refresh_failed_at)
-    /// is: a board read already in flight when another failed used to land
-    /// afterwards and clear a failure its own snapshot predates.
+    /// is: without it, a board read already in flight when another fails lands
+    /// afterwards and clears a failure its own snapshot predates.
     mail_refresh_failed_at: std::sync::atomic::AtomicU64,
     /// The runs these postings were written from — the session half's mirror,
     /// and the same thing [`docs`](Self::docs) and [`messages`](Self::messages)
@@ -3434,9 +3434,9 @@ mod tests {
 
         let store = Arc::new(IndexedMemory::new(inner).expect("index opens"));
         // An index nobody has filled yet still answers from the store, because
-        // the read takes its own scan. This used to assert the opposite — that
-        // nothing is searchable until the boot scan runs — which was a statement
-        // about the projection rather than about what the store holds.
+        // the read takes its own scan. "Nothing is searchable until the boot
+        // scan runs" is a statement about the projection rather than about what
+        // the store holds.
         assert_eq!(
             store
                 .search_via_port(&SearchQuery::text("before"))
@@ -4622,11 +4622,10 @@ mod tests {
     /// **A write the store took is not failed by the projection behind it.**
     ///
     /// The re-index re-reads the doc AFTER the store has committed, so a
-    /// transient fault on that read used to fail the whole verb — and the
-    /// sentence a caller got said nothing was written and told them to try
-    /// again. They try again, and the fact is recorded twice. The store is the
-    /// truth; an index that could not refresh is a stale projection, not a
-    /// failed write.
+    /// transient fault on that read must not fail the whole verb. A caller told
+    /// nothing was written tries again, and the fact is recorded twice. The
+    /// store is the truth; an index that could not refresh is a stale
+    /// projection, not a failed write.
     #[tokio::test]
     async fn a_write_the_store_took_is_not_failed_by_a_refresh_that_could_not_run() {
         let inner = one_page();
