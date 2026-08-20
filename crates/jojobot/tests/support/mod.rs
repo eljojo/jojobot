@@ -361,6 +361,21 @@ pub fn request_meta(revision: &str) -> serde_json::Value {
     })
 }
 
+/// **The body a call answered with, from wherever the agreed revision puts
+/// it.** From `2026-07-28` on it is `structuredContent`, an object the caller
+/// reads directly; below that it is a text block holding the same JSON as a
+/// string. A caller that took the revision jojobot offered rather than choosing
+/// one reads whichever arrived.
+pub fn tool_body(result: &serde_json::Value) -> serde_json::Value {
+    if result["structuredContent"].is_object() {
+        return result["structuredContent"].clone();
+    }
+    let text = result["content"][0]["text"]
+        .as_str()
+        .expect("a call answers with a body");
+    serde_json::from_str(text).expect("the body is JSON")
+}
+
 /// The JSON-RPC error carried by an event stream.
 pub fn event_stream_error(body: &str) -> serde_json::Value {
     let message = event_stream_message(body);

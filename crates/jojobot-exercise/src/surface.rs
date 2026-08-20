@@ -48,11 +48,22 @@ impl Surface {
             request = request.with_arguments(object.clone());
         }
         match self.client.call_tool(request).await {
+            // **The body rides where the agreed revision reads it**: structured
+            // from `2026-07-28`, a text block below it. This client agrees to
+            // whatever the SDK's newest is, so which one arrives is the SDK's
+            // choice rather than this file's, and reading only one of the two
+            // would end every room the day that default moves.
             Ok(result) => result
-                .content
-                .first()
-                .and_then(|block| block.as_text())
-                .map(|text| text.text.clone())
+                .structured_content
+                .as_ref()
+                .map(ToString::to_string)
+                .or_else(|| {
+                    result
+                        .content
+                        .first()
+                        .and_then(|block| block.as_text())
+                        .map(|text| text.text.clone())
+                })
                 .unwrap_or_else(|| serde_json::to_string(&result).unwrap_or_default()),
             Err(e) => json!({"transport_error": e.to_string()}).to_string(),
         }

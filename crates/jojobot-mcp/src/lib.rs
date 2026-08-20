@@ -349,14 +349,21 @@ impl ServerHandler for Jojobot {
             .and_then(|args| args.get("sid"))
             .and_then(|sid| sid.as_str())
             .map(str::to_string);
+        // Read before dispatch for the same reason `sid` is: dispatch takes the
+        // context. Where the body rides is the agreed revision's to decide, and
+        // deciding it here rather than in each verb is what makes it true of
+        // every verb, including the next one somebody writes.
+        let structured = context
+            .protocol_version()
+            .is_some_and(|revision| revision >= ProtocolVersion::V_2026_07_28);
         if let Some(refused) = self.unimplemented_arguments(&request) {
             let mut answered: CallToolResponse = refused.into();
-            self.add_status_bar(&mut answered, sid.as_deref()).await;
+            self.finish(&mut answered, sid.as_deref(), structured).await;
             return Ok(answered);
         }
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         let mut answered = self.tool_router.call(call).await?;
-        self.add_status_bar(&mut answered, sid.as_deref()).await;
+        self.finish(&mut answered, sid.as_deref(), structured).await;
         Ok(answered)
     }
 

@@ -707,6 +707,46 @@ mod surface_changed {
     }
 }
 
+/// **A request as a client on `revision` makes it.** The method it calls, and
+/// the verb a call names, ride as headers so a middle box can route without
+/// reading the body (SEP-2243); the request states its own version, identity
+/// and capabilities in `_meta` (SEP-2575). From the 2026-07-28 revision on,
+/// jojobot refuses a request that leaves any of them out.
+fn over(
+    http: &reqwest::Client,
+    url: &str,
+    revision: &str,
+    session: Option<&str>,
+    id: u32,
+    method: &str,
+    mut params: serde_json::Value,
+) -> reqwest::RequestBuilder {
+    let name = params["name"].as_str().map(str::to_string);
+    params["_meta"] = request_meta(revision);
+    let mut asking = http
+        .post(url)
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-protocol-version", revision.to_string())
+        .header("mcp-method", method.to_string())
+        .body(
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": method,
+                "params": params,
+            })
+            .to_string(),
+        );
+    if let Some(name) = name {
+        asking = asking.header("mcp-name", name);
+    }
+    if let Some(session) = session {
+        asking = asking.header("mcp-session-id", session.to_string());
+    }
+    asking
+}
+
 /// A revision from after the newest one this build serves. It is not a name the
 /// SDK knows, because there is no such name yet: the case under test is a
 /// client that arrives speaking something newer than jojobot, which is what
@@ -793,35 +833,14 @@ async fn the_newest_revision_is_served_whole_and_not_merely_agreed() {
         "a client asking for the newest revision must be answered with it"
     );
 
-    let meta = request_meta(&agreed);
-    // A call names the verb in a header too, for the same routing reason.
-    let over = |method: &str, name: Option<&str>, body: String| {
-        let mut asking = http
-            .post(&url)
-            .header("content-type", "application/json")
-            .header("accept", "application/json, text/event-stream")
-            .header("mcp-protocol-version", agreed.clone())
-            .header("mcp-method", method.to_string())
-            .body(body);
-        if let Some(name) = name {
-            asking = asking.header("mcp-name", name.to_string());
-        }
-        if let Some(session) = &session {
-            asking = asking.header("mcp-session-id", session.clone());
-        }
-        asking
-    };
-
     let listed = over(
+        &http,
+        &url,
+        &agreed,
+        session.as_deref(),
+        2,
         "tools/list",
-        None,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": { "_meta": meta },
-        })
-        .to_string(),
+        serde_json::json!({}),
     )
     .send()
     .await
@@ -851,23 +870,117 @@ async fn the_newest_revision_is_served_whole_and_not_merely_agreed() {
     );
 
     let pinged = over(
+        &http,
+        &url,
+        &agreed,
+        session.as_deref(),
+        3,
         "tools/call",
-        Some("ping"),
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": { "name": "ping", "arguments": {}, "_meta": meta },
-        })
-        .to_string(),
+        serde_json::json!({ "name": "ping", "arguments": {} }),
     )
     .send()
     .await
     .unwrap();
     let answered = event_stream_result(&pinged.text().await.unwrap());
+    // Which half of the answer the body rides in is this revision's own
+    // question, and `the_body_rides_where_the_agreed_revision_reads_it` is
+    // where it is asked. Here it only has to arrive.
     assert!(
-        answered["content"][0]["text"].is_string(),
+        answered["structuredContent"].is_object() || answered["content"][0]["text"].is_string(),
         "a verb called over the agreed revision must answer with a body: {answered}",
+    );
+
+    ct.cancel();
+}
+
+/// **One body, in the place the agreed revision reads it.**
+///
+/// Every verb answers with a JSON body. Where that body rides is the one thing
+/// that changes with the revision: a client old enough to know only content
+/// blocks gets it as text, and a client on the revision that has
+/// `structuredContent` gets it there — as a JSON object it can read, rather
+/// than a string it has to parse.
+///
+/// **It is never sent twice.** The spec permits both, and both is what most
+/// servers do; here it would mean every answer on the wire carrying its whole
+/// body a second time, for a reader that already has it. What a caller
+/// demonstrably holds is not shipped back to them, and a duplicate is the
+/// clearest case of that rule there is.
+#[tokio::test]
+async fn the_body_rides_where_the_agreed_revision_reads_it() {
+    let (addr, ct) = spawn_server(no_auth_state).await;
+    let url = format!("http://{addr}/mcp");
+    let http = reqwest::Client::new();
+
+    // ── the newest revision: the body is structured, and only structured ────
+    let (session, opened) = open_with(&http, &url, "2026-07-28").await;
+    assert_eq!(
+        event_stream_result(&opened)["protocolVersion"],
+        "2026-07-28",
+        "this case is about a client that agreed the newest revision"
+    );
+    let answered = event_stream_result(
+        &over(
+            &http,
+            &url,
+            "2026-07-28",
+            session.as_deref(),
+            2,
+            "tools/call",
+            serde_json::json!({ "name": "ping", "arguments": {} }),
+        )
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap(),
+    );
+    assert!(
+        answered["structuredContent"]["server"].is_string(),
+        "this revision reads the body as an object, not as a string: {answered}",
+    );
+    assert!(
+        answered["content"].as_array().is_none_or(Vec::is_empty),
+        "the body a client already holds must not ride twice: {answered}",
+    );
+
+    // ── an older revision: the body is text, exactly as it always was ───────
+    let (session, opened) = open_with(&http, &url, "2025-11-25").await;
+    assert_eq!(
+        event_stream_result(&opened)["protocolVersion"],
+        "2025-11-25",
+        "…and this case is about a client that has no structured content"
+    );
+    let mut asking = http
+        .post(&url)
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-protocol-version", "2025-11-25")
+        .body(
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": { "name": "ping", "arguments": {} },
+            })
+            .to_string(),
+        );
+    if let Some(session) = &session {
+        asking = asking.header("mcp-session-id", session.clone());
+    }
+    let answered = event_stream_result(&asking.send().await.unwrap().text().await.unwrap());
+    let text = answered["content"][0]["text"]
+        .as_str()
+        .expect("a client without structured content is answered with a text block");
+    assert!(
+        serde_json::from_str::<serde_json::Value>(text)
+            .is_ok_and(|body| body["server"].is_string()),
+        "the text block carries the whole body: {answered}",
+    );
+    assert!(
+        answered["structuredContent"].is_null(),
+        "a client that never agreed to structured content is not sent any: {answered}",
     );
 
     ct.cancel();

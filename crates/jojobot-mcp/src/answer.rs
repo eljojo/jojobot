@@ -61,3 +61,58 @@ pub(crate) fn json_result(body: &serde_json::Value) -> Result<CallToolResult, Mc
         body.to_string(),
     )]))
 }
+
+/// **Move the body to where the agreed revision reads it.**
+///
+/// Every verb writes one JSON body into a text block, which is the only place
+/// a client older than `2026-07-28` can read it. That revision added
+/// `structuredContent`, where the same body arrives as an object rather than
+/// as a string the caller has to parse.
+///
+/// **The body moves rather than being copied.** The spec permits a server to
+/// send both, and most do; here it would put the whole body on the wire twice
+/// for a reader that has it already. Nothing else this surface does ships a
+/// caller what it demonstrably holds, and a duplicate of the answer is the
+/// plainest case of that.
+///
+/// **An answer this cannot read is left exactly as the verb wrote it**, for the
+/// reason the status bar leaves one alone: rewriting a body it does not
+/// understand is worse than not touching it.
+pub(crate) fn structure(answered: &mut CallToolResponse) {
+    // Only a completed call carries a body. The other responses are the
+    // protocol asking the client for something.
+    let CallToolResponse::Complete(result) = answered else {
+        return;
+    };
+    let Some(found) = result.content.iter().position(|block| {
+        block.as_text().is_some_and(|text| {
+            serde_json::from_str::<serde_json::Value>(&text.text).is_ok_and(|body| body.is_object())
+        })
+    }) else {
+        return;
+    };
+    let block = result.content.remove(found);
+    let text = block.as_text().expect("the block just matched as text");
+    result.structured_content = serde_json::from_str(&text.text).ok();
+}
+
+impl Jojobot {
+    /// **The last two things that happen to every answer, in the one order
+    /// that works.** The status bar is written into the body, so it has to be
+    /// added while the body is still where the verb put it; moving the body to
+    /// `structuredContent` first would leave the bar with nothing to ride on.
+    ///
+    /// They are one call so that order is not a thing a caller can get wrong,
+    /// and so a verb added tomorrow gets both by doing nothing.
+    pub(crate) async fn finish(
+        &self,
+        answered: &mut CallToolResponse,
+        sid: Option<&str>,
+        structured: bool,
+    ) {
+        self.add_status_bar(answered, sid).await;
+        if structured {
+            structure(answered);
+        }
+    }
+}

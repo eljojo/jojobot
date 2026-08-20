@@ -21,7 +21,7 @@
 use serde_json::json;
 
 use super::dsl::Story;
-use crate::support::{event_stream_error, event_stream_result, open_with, request_meta};
+use crate::support::{event_stream_error, event_stream_result, open_with, request_meta, tool_body};
 
 /// A revision this server does not serve. It is newer than any revision that
 /// exists, because jojobot serves every revision that does: the case is a
@@ -104,11 +104,7 @@ async fn a_client_speaking_a_revision_jojobot_cannot_serve_is_told_what_it_can()
         "a session must open over the revision jojobot itself offered: {}",
         booted.status()
     );
-    let text = event_stream_result(&booted.text().await.expect("a body"))["content"][0]["text"]
-        .as_str()
-        .expect("the boot answers with a body")
-        .to_string();
-    let door_said: serde_json::Value = serde_json::from_str(&text).expect("the boot answers json");
+    let door_said = tool_body(&event_stream_result(&booted.text().await.expect("a body")));
     assert_eq!(
         door_said["identity"]["bot"]["id"], "bot:otto",
         "the client that could not connect is now booted as itself: {door_said}"
