@@ -325,5 +325,83 @@ async fn nothing_on_the_surface_goes_unexercised() {
 
     s.wrap("the sender's own view of its outgoing mail").await;
 
+    // ── the door, asked for something that is not there ─────────────────────
+    //
+    // **These are the answers a cold session meets when it guesses wrong**, and
+    // each of them is the difference between a surface that teaches and one
+    // that breaks. They have no natural persona: nobody sets out to name a bot
+    // that does not exist. They are here because the alternative is that the
+    // only end-to-end coverage of them is a playbook a person has to pay to
+    // run.
+
+    // A boot that names nobody orients and starts nothing. The answer carries
+    // the world; what it must NOT carry is a handle, because a caller with no
+    // identity has nothing to write with.
+    let (oriented, no_handle) = story.call("start_here", json!({})).await;
+    oriented.says("\"snapshot\"").says("\"skills\"");
+    assert!(
+        no_handle.is_none(),
+        "an anonymous boot handed back a session handle: {}",
+        oriented.raw(),
+    );
+
+    let s = story.session().await;
+
+    // A name that is no bot is an answer with the roster on it, not an error
+    // and not an identity. Both halves: the refusal names a bot that does
+    // exist, and the listing afterwards does not carry the name that was asked
+    // for.
+    s.refused("start_here", json!({"bot": "zzz-nobody"}))
+        .await
+        .says("bot:otto");
+    s.list("bot").await.never_says("zzz-nobody");
+
+    // A skill that is no skill is refused by the same door, naming one that is
+    // real — so a session that guessed a procedure's name learns the ones it
+    // could have asked for.
+    s.refused("start_here", json!({"skill": "zzz-not-a-skill"}))
+        .await
+        .says("rhythms");
+
+    // A search that narrows nothing is refused rather than answered with
+    // everything or with a cheerful empty list, and the refusal names what was
+    // missing.
+    s.refused("search", json!({})).await.says("query");
+
+    // ── the run that has been told, and the verbs that are not there ────────
+
+    // A wrapped run is the last word: its story is told, and an entry after it
+    // is refused rather than appended somewhere nobody reads. The positive it
+    // rests on is the write before it, which the same session made into the
+    // same run.
+    s.journal("about to stop, and the record says so").await;
+    s.call("wrap_session", json!({"story": "said what happened"}))
+        .await
+        .says("said what happened");
+    s.refused("journal", json!({"entry": "one more, after the end"}))
+        .await;
+
+    let s = story.session().await;
+
+    // **Nothing over this surface deletes.** Named as a class rather than as
+    // three guesses: a session that believes it might be able to remove
+    // something will eventually try, and what it meets has to be the absence of
+    // the whole family.
+    s.has_no_verb_containing("delete", &["add_entity", "retract"])
+        .await;
+    s.has_no_verb_containing("remove", &["update_fact", "mark_processed"])
+        .await;
+
+    // And no verb opens a mailbox. A box arrives with the bot that owns it, in
+    // the one act — so the way to a new box is a new identity, and standing one
+    // up to file a note is not a move anybody makes on their own.
+    for asked in ["create_mailbox", "open_mailbox", "add_mailbox"] {
+        s.has_no_verb(asked, &["post_message", "read_mailbox"])
+            .await;
+    }
+
+    s.wrap("what the surface answers when it is asked for what it does not have")
+        .await;
+
     story.finish().await;
 }

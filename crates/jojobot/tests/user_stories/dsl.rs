@@ -631,6 +631,29 @@ impl Session {
         );
     }
 
+    /// **The same tripwire, for a CLASS of verb rather than one name.**
+    ///
+    /// Some claims are about a whole family: nothing on this surface deletes.
+    /// Naming three verbs that do not exist proves nothing about a fourth, so
+    /// this asserts that no served verb carries the word at all. The positive
+    /// half is the same one: the list arrived and carries the verbs the story
+    /// just used.
+    pub async fn has_no_verb_containing(&self, needle: &str, alongside: &[&str]) {
+        let listed = self.client.list_tools(None).await.expect("the verb list");
+        let names: Vec<&str> = listed.tools.iter().map(|t| t.name.as_ref()).collect();
+        for known in alongside {
+            assert!(
+                names.contains(known),
+                "the verb list must carry {known:?} — without it this proves nothing: {names:?}"
+            );
+        }
+        let carrying: Vec<&&str> = names.iter().filter(|name| name.contains(needle)).collect();
+        assert!(
+            carrying.is_empty(),
+            "jojobot now serves a verb whose name says {needle:?}: {carrying:?}"
+        );
+    }
+
     /// **The tripwire for a gap whose capability will arrive as an ARGUMENT.**
     ///
     /// [`has_no_verb`] cannot hold one of these. A verb has to earn its place
