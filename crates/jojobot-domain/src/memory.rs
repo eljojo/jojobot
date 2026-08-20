@@ -2679,8 +2679,17 @@ pub trait Memory: Send + Sync {
         &self,
         entity: &EntityId,
     ) -> Result<BTreeMap<String, FieldBacking>, MemoryError> {
+        // **A key is only backed by one claim when one write wins it.** The
+        // declarations say which keys those are, so they are read here rather
+        // than assumed: a key whose writes are added together is every write at
+        // once, and naming one of them would attach a certainty nobody stated
+        // to a number nobody wrote.
+        let declared = self.declared_types().await?;
         let mut backing = BTreeMap::new();
         for key in self.fields(entity).await?.into_keys() {
+            if types::fold_of(&key, &declared) != types::Fold::Newest {
+                continue;
+            }
             let writes = self.history(entity, &key).await?;
             // The newest write that still stands is the one the fold kept.
             if let Some(write) = writes

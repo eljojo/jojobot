@@ -1834,6 +1834,32 @@ impl Memory for IndexedMemory {
         self.inner.fields(entity).await
     }
 
+    /// **Straight through, and it does not touch the index.** Which claim
+    /// backs each folded value is read off the writes, which the store keeps
+    /// and the projection does not.
+    ///
+    /// **A decorator that leaves this to the trait default serves the default
+    /// in production**, whatever the store underneath it implements — so the
+    /// three reads below forward for the same reason `fields` does.
+    async fn backing(
+        &self,
+        entity: &EntityId,
+    ) -> Result<BTreeMap<String, jojobot_domain::memory::FieldBacking>, MemoryError> {
+        self.inner.backing(entity).await
+    }
+
+    /// **Straight through, and it does not touch the index.** Lineage is a
+    /// pointer between two records, which the store selects on.
+    async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
+        self.inner.built_on(source).await
+    }
+
+    /// **Straight through, and it does not touch the index.** Which records
+    /// name a handle in a field is a read of the store's own rows.
+    async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        self.inner.referring_to(target).await
+    }
+
     async fn update_fact(
         &self,
         address: &FactAddress,
@@ -4419,6 +4445,184 @@ mod tests {
         ) -> Result<Retraction, MemoryError> {
             unimplemented!("this double only scans")
         }
+    }
+
+    /// **A store that answers the three reads itself, and nothing else.**
+    ///
+    /// Every method the trait can default is left `unimplemented!` on purpose:
+    /// a decorator that does not forward falls through to a default, and each
+    /// default reads `fields`, `history`, `list_entities` or `recall` to build
+    /// its answer. So a fall-through here panics naming the method it reached
+    /// for, rather than quietly returning the empty answer an unwritten store
+    /// would give.
+    struct Delegated;
+
+    impl Delegated {
+        /// A word no default can produce: the defaults read rows, and this
+        /// store has none.
+        const MARKER: &'static str = "forwarded";
+
+        fn marked() -> Fact {
+            Fact {
+                id: jojobot_domain::memory::FactId("f1".into()),
+                home: EntityId::person("alpha"),
+                subject: EntityId::person("alpha"),
+                content: Self::MARKER.into(),
+                details: None,
+                provenance: Provenance::Testimony,
+                standing: jojobot_domain::memory::Standing::Settled,
+                status: FactStatus::Active,
+                date: date(2026, 7, 1),
+                edge: None,
+                fields: Default::default(),
+                refs: Vec::new(),
+                derived_from: None,
+                inserted_at: None,
+                stale_after: None,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Memory for Delegated {
+        async fn backing(
+            &self,
+            _: &EntityId,
+        ) -> Result<BTreeMap<String, jojobot_domain::memory::FieldBacking>, MemoryError> {
+            Ok([(
+                Delegated::MARKER.to_string(),
+                jojobot_domain::memory::FieldBacking {
+                    fact: jojobot_domain::memory::FactId("f1".into()),
+                    provenance: Provenance::Testimony,
+                    standing: jojobot_domain::memory::Standing::Settled,
+                },
+            )]
+            .into_iter()
+            .collect())
+        }
+        async fn built_on(&self, _: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
+            Ok(vec![Delegated::marked()])
+        }
+        async fn referring_to(&self, _: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+            Ok(vec![Delegated::marked()])
+        }
+
+        async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
+            Ok(Vec::new())
+        }
+        async fn scan_entity(&self, _: &EntityId) -> Result<Option<DocScan>, MemoryError> {
+            Ok(None)
+        }
+        async fn add_entity(&self, _: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
+        async fn list_entities(&self, _: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
+            unimplemented!("a default walked every entity, so this read was not forwarded")
+        }
+        async fn update_entity(
+            &self,
+            _: &EntityId,
+            _: EntityPatch,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
+        async fn capture(&self, _: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
+        async fn recall(&self, _: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+            unimplemented!("a default read a page, so this read was not forwarded")
+        }
+        async fn history(&self, _: &EntityId, _: &str) -> Result<Vec<FieldWrite>, MemoryError> {
+            unimplemented!("a default read a key's writes, so this read was not forwarded")
+        }
+        async fn fields(&self, _: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
+            unimplemented!("a default read the folded fields, so this read was not forwarded")
+        }
+        async fn update_fact(
+            &self,
+            _: &FactAddress,
+            _: FactPatch,
+        ) -> Result<Guarded<Fact>, MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
+        async fn retract(
+            &self,
+            _: &FactAddress,
+            _: Option<&str>,
+            _: Date,
+        ) -> Result<Retraction, MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
+        async fn set_prose(&self, _: &EntityId, _: &str) -> Result<String, MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
+        async fn declare_type(&self, _: DeclaredType) -> Result<DeclaredType, MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
+        async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
+            unimplemented!("a default read the declarations, so this read was not forwarded")
+        }
+        async fn declare_kind(
+            &self,
+            _: &str,
+            _: jojobot_domain::memory::types::Origin,
+            _: Vec<jojobot_domain::memory::types::Field>,
+        ) -> Result<(), MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
+        async fn declared_kinds(
+            &self,
+        ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
+    }
+
+    /// **The decorator forwards the reads a store answers for itself.**
+    ///
+    /// The server wraps the store in this decorator and serves the wrapper, so
+    /// a method the wrapper does not implement is a method production never
+    /// runs — whatever the store underneath it does. That is invisible from
+    /// every other case, because a default and an override that agree on their
+    /// answer are indistinguishable by their answer.
+    ///
+    /// So the store here answers with a word no default can produce, and every
+    /// method a default would read from panics naming itself.
+    #[tokio::test]
+    async fn the_decorator_forwards_the_reads_the_store_answers_for_itself() {
+        let indexed = IndexedMemory::new(Arc::new(Delegated)).expect("index opens");
+        let alpha = EntityId::person("alpha");
+
+        let backed = Memory::backing(&indexed, &alpha)
+            .await
+            .expect("the store answers");
+        assert!(
+            backed.contains_key(Delegated::MARKER),
+            "the decorator answered for itself instead of asking the store: {backed:?}",
+        );
+
+        let standing_on = Memory::built_on(
+            &indexed,
+            &FactAddress {
+                home: alpha.clone(),
+                local: jojobot_domain::memory::FactId("f1".into()),
+            },
+        )
+        .await
+        .expect("the store answers");
+        assert_eq!(
+            standing_on.first().map(|f| f.content.as_str()),
+            Some(Delegated::MARKER),
+            "lineage came from somewhere other than the store: {standing_on:?}",
+        );
+
+        let pointing = Memory::referring_to(&indexed, &alpha)
+            .await
+            .expect("the store answers");
+        assert_eq!(
+            pointing.first().map(|f| f.content.as_str()),
+            Some(Delegated::MARKER),
+            "the records pointing here came from somewhere other than the store: {pointing:?}",
+        );
     }
 
     /// One page with one entity on it, for the tests that turn on what the

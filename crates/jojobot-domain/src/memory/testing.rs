@@ -2038,6 +2038,114 @@ pub mod contract {
         );
     }
 
+    /// **A summed key has no backing, because no single write won it.**
+    ///
+    /// [`FieldBacking`] answers which claim a folded value came from and how
+    /// sure that claim was. A key whose writes are added together has no such
+    /// claim: the value is every write at once, so naming one of them attaches
+    /// a provenance and a standing that nobody stated to a number nobody wrote.
+    /// **That is a claim the store invents**, which is the one thing it must
+    /// never do.
+    ///
+    /// **Three halves, and each covers a way the other two pass on a wrong
+    /// build.** The total says the key really is summed, or the case is about
+    /// an ordinary key. The absent backing is the claim. The key beside it,
+    /// folded the ordinary way, still reports its claim — without it the case
+    /// passes against a store that reports no backing at all.
+    ///
+    /// The three writes carry three certainties, so a build that names one of
+    /// them cannot name a right answer by accident.
+    pub async fn a_summed_key_has_no_backing_to_report<M: Memory>(store: &M) {
+        use crate::memory::types::{DeclaredType, Field, Fold, ValueType};
+        let subject = EntityId::new(EntityKind::PERSON, "contract-tallied");
+        add(
+            store,
+            NewEntity::new(subject.clone(), "Contract Tallied", "contract-fixture"),
+        )
+        .await;
+        store
+            .declare_type(DeclaredType::new(
+                "contract-tallying",
+                vec![
+                    Field::summing("laps_swum").needed(),
+                    Field::required("pool", ValueType::Text),
+                ],
+            ))
+            .await
+            .expect("declaring a type should succeed");
+        assert_eq!(
+            store
+                .declared_types()
+                .await
+                .expect("the roster reads")
+                .iter()
+                .find(|t| t.name == "contract-tallying")
+                .and_then(|t| t.field("laps_swum"))
+                .map(|f| f.folds),
+            Some(Fold::Sum),
+            "the fold survives the store, or nothing below is about a counter",
+        );
+
+        for (nth, (provenance, standing)) in [
+            (Provenance::Testimony, Standing::Settled),
+            (Provenance::Inference, Standing::Open),
+            (Provenance::Observation, Standing::Settled),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut fields: std::collections::BTreeMap<String, String> = [
+                ("laps_swum".to_string(), "1".to_string()),
+                ("pool".to_string(), "the lido".to_string()),
+            ]
+            .into_iter()
+            .collect();
+            // A machine read names where it was read, whatever else it carries.
+            if provenance == Provenance::Observation {
+                fields.insert("read_from".to_string(), "the lane counter".to_string());
+            }
+            capture(
+                store,
+                NewFact {
+                    provenance,
+                    standing: Some(standing),
+                    fields,
+                    ..NewFact::about(
+                        subject.clone(),
+                        format!("a lap, number {}", nth + 1),
+                        date(2026, 7, 1),
+                    )
+                },
+            )
+            .await;
+        }
+
+        let held = store
+            .fields(&subject)
+            .await
+            .expect("a store says what a thing holds");
+        assert_eq!(
+            held.get("laps_swum").map(String::as_str),
+            Some("3"),
+            "the writes are added together, or this case is not about a counter: {held:?}",
+        );
+
+        let backing = store
+            .backing(&subject)
+            .await
+            .expect("a store says what backs a folded value");
+        assert!(
+            !backing.contains_key("laps_swum"),
+            "a summed value names one claim as its backing, so a number nobody wrote carries a \
+             certainty nobody stated: {backing:?}",
+        );
+        assert!(
+            backing.contains_key("pool"),
+            "…and the key folded the ordinary way still reports its claim, or this case would \
+             pass against a store that reports no backing at all: {backing:?}",
+        );
+    }
+
     pub async fn a_claims_lineage_is_walkable_from_its_source<M: Memory>(store: &M) {
         let subject = EntityId::new(EntityKind::PERSON, "contract-lineage");
         add(
@@ -8532,6 +8640,7 @@ pub mod contract {
         a_claim_carries_when_it_was_taken_in(store).await;
         a_claims_lineage_is_walkable_from_its_source(store).await;
         a_folded_value_says_who_backs_it(store).await;
+        a_summed_key_has_no_backing_to_report(store).await;
         a_machine_read_claim_names_what_it_was_read_from(store).await;
         referring_to_answers_from_the_far_end(store).await;
         a_child_names_its_parent_and_reads_back(store).await;
