@@ -151,13 +151,43 @@ impl Seed {
         Ok(self)
     }
 
+    /// Record something about a thing **as values under keys**, which is what
+    /// a question later asks about.
+    ///
+    /// A room that has accumulated is furnished with records rather than with
+    /// sentences alone: the year's distance, the day a job was done, the day a
+    /// cover runs out. It is the same refusal as [`Seed::fact`] — a record on
+    /// an identity is coaching — and the same one call, so the keys a room
+    /// already uses are keys the occupant can find and reuse.
+    pub fn record(mut self, subject: &str, content: &str, fields: Value) -> Result<Seed> {
+        anyhow::ensure!(
+            !subject.starts_with("bot:"),
+            "a seed may not write a record onto an identity — a rule written for a run measures \
+             itself",
+        );
+        self.writes.push((
+            "capture".to_string(),
+            json!({
+                "subject": subject, "content": content,
+                "provenance": "testimony", "fields": fields,
+            }),
+        ));
+        Ok(self)
+    }
+
     /// Leave a message waiting in a bot's box, from the shipped identity.
     ///
-    /// **Furniture, and it has to read as furniture.** Everything else a seed
-    /// writes is inert to a model until it goes looking; a message is prose
-    /// that lands in front of it. So the body says what is in the world and
-    /// never what to do about it — a seed that told the occupant anything would
-    /// make its own run pass and prove nothing.
+    /// **The one piece of furniture that speaks.** Everything else a seed
+    /// writes is inert until a model goes looking; a message is prose that
+    /// lands in front of it, and a room whose goal arrives by mail puts the
+    /// whole task here.
+    ///
+    /// **So the line is what it says, not that it says anything.** A body may
+    /// carry the WORK — what happened, what the operator wants — because that
+    /// is what a session is for. It may not carry the METHOD: no verb, no
+    /// argument, no hint about where anything is stored, and no word that a
+    /// test is running. A seed that named a verb would make its own run pass,
+    /// and the transcript would read like a product that teaches itself.
     pub fn message(mut self, to: &str, subject: &str, body: &str) -> Seed {
         self.writes.push((
             "post_message".to_string(),
