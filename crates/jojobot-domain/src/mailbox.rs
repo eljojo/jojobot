@@ -276,10 +276,9 @@ pub const NOTES_BUDGET: usize = text::OUTCOME_NOTES.budget;
 /// record longer than [`NOTES_BUDGET`] is **cut to fit rather than refused**.
 ///
 /// The crash contract asks a consumer to write down what happened, including a
-/// failure. A cap that rejected the whole call made the ask and the answer
-/// contradict each other: the message stayed unprocessed, so the cap cost
-/// exactly the record it was policing. That is not hypothetical — it happened
-/// to a caller in production, which is why this is a cut.
+/// failure. A cap that rejects the whole call makes the ask and the answer
+/// contradict each other: the message stays unprocessed, so the cap costs
+/// exactly the record it is policing. That is why this is a cut.
 ///
 /// The cut **says so** with a trailing ellipsis, because notes that quietly
 /// stop mid-sentence read as a consumer who trailed off rather than a store

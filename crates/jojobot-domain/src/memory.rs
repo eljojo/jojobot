@@ -1398,10 +1398,9 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     // unreachable, and a check on the patch alone would see only the first.
     //
     // **It runs here rather than at the verb** so that both stores and the
-    // double answer for it from one place. The guard was on `capture` alone,
-    // which is the path its author was in, and the edit path let a guess become
-    // a system read of a system nobody named — while the served description
-    // promised it could not.
+    // double answer for it from one place. A guard on `capture` alone leaves
+    // the edit path free to turn a guess into a system read of a system nobody
+    // named, while the served description promises it cannot.
     //
     // **A claim that already carries its source may be moved without naming it
     // again.** What the rule protects is an attribution on the record, and
@@ -2021,7 +2020,7 @@ pub struct KeyWrite {
 
 /// **Where a folded value came from, and who stands behind it.**
 ///
-/// A value arrives as a string, and until now that was all it arrived as: a
+/// A value arrives as a string, and a string is all it carries on its own: a
 /// value the user stated this morning and one an assistant guessed two years
 /// ago read identically. **Under the default fold exactly one write wins**, so
 /// the honest answer is that one claim's own certainty — its address, who backs
@@ -3027,11 +3026,11 @@ mod tests {
 
     /// **A field key has a length, and the domain is what says so.**
     ///
-    /// The column holding a key is 191 characters and a caller could write
-    /// more, so the store was the thing deciding where a key stopped working:
-    /// a short key round-tripped and a long one came back as a store failure,
-    /// which is a caller mistake wearing a broken-server answer (rules 9 and
-    /// 68).
+    /// The column holding a key is 191 characters and a caller can write more,
+    /// so without a limit here the store is the thing deciding where a key
+    /// stops working: a short key round-trips and a long one comes back as a
+    /// store failure, which is a caller mistake wearing a broken-server answer
+    /// (rules 9 and 68).
     ///
     /// **Both ends in one case.** A limit that refused everything would pass a
     /// check that only sent the long key, and a limit that refused nothing
