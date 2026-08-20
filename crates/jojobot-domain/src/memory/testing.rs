@@ -920,6 +920,20 @@ impl Memory for InMemoryMemory {
                 .find(|t| t.name == declared.name)
                 .map(|t| t.origin),
         )?;
+        // **Neither half writes over the other's keys**, and this is the same
+        // line `keys_of_kind` holds from the other side: the two share this
+        // place and the name alone cannot say which of them wrote a row.
+        if self
+            .kind_keys
+            .lock()
+            .expect("fake mutex poisoned")
+            .contains(&declared.name)
+        {
+            return Err(MemoryError::InvalidEntity(format!(
+                "'{}' already names a kind, and its keys are not this declaration's to replace",
+                declared.name
+            )));
+        }
         // Replaced whole, the way the real store replaces the rows sharing the
         // name: a type is the keys it names now.
         held.retain(|t| t.name != declared.name);
@@ -7100,6 +7114,95 @@ pub mod contract {
         );
     }
 
+    /// **Neither half may write over the other's keys.**
+    ///
+    /// A kind's keys and a type's keys live in one place, so the name alone
+    /// cannot say which of the two wrote a row. Sharing the place is the model
+    /// working — a kind IS a schema — and taking the other side's keys is not:
+    /// a declaration that silently replaced them would move a kind's floor
+    /// from a verb nobody called.
+    ///
+    /// **Both directions, because the two are separate checks and either can
+    /// go missing on its own.**
+    ///
+    /// **The narrow reach is the point rather than a limitation.** It needs a
+    /// kind whose keys a CALLER declared: on a kind the software ships, the
+    /// origin check refuses the caller first, in both stores. So this is the
+    /// one door where the two halves can reach each other at all.
+    ///
+    /// A contract case because a store answering this differently from the
+    /// double is what a case belonging to either alone cannot see.
+    pub async fn neither_half_writes_over_the_others_keys<M: Memory>(store: &M) {
+        // ① A type may not take a kind's keys over.
+        store
+            .declare_kind(
+                "handcart",
+                Origin::Declared,
+                vec![Field::required("load", ValueType::Number)],
+            )
+            .await
+            .expect("a caller declares a kind that names a key");
+        let refused = store
+            .declare_type(DeclaredType::new(
+                "handcart",
+                vec![Field::required("colour", ValueType::Text)],
+            ))
+            .await
+            .expect_err("a type may not write over the keys of a kind of that name");
+        assert!(
+            matches!(refused, MemoryError::InvalidEntity(_)),
+            "the declaration is what is wrong, not the store: {refused:?}",
+        );
+
+        // **…and the kind's keys are where they were.** Without this the case
+        // passes against a store that refuses the declaration and replaces the
+        // keys anyway.
+        let held = store
+            .declared_types()
+            .await
+            .expect("the roster reads")
+            .into_iter()
+            .find(|t| t.name == "handcart")
+            .expect("the kind's keys are still held under its name");
+        assert!(
+            held.field("load").is_some() && held.field("colour").is_none(),
+            "the kind kept its own keys and took none of the type's: {held:?}",
+        );
+
+        // ② And a kind may not take a type's keys over, which is the same rule
+        // read from the other side.
+        store
+            .declare_type(DeclaredType::new(
+                "contract-cartload",
+                vec![Field::required("weighed_on", ValueType::Date)],
+            ))
+            .await
+            .expect("a caller declares a type of their own");
+        let refused = store
+            .declare_kind(
+                "contract-cartload",
+                Origin::Declared,
+                vec![Field::required("load", ValueType::Number)],
+            )
+            .await
+            .expect_err("a kind may not write over the keys of a type of that name");
+        assert!(
+            matches!(refused, MemoryError::InvalidEntity(_)),
+            "the declaration is what is wrong, not the store: {refused:?}",
+        );
+        let held = store
+            .declared_types()
+            .await
+            .expect("the roster reads")
+            .into_iter()
+            .find(|t| t.name == "contract-cartload")
+            .expect("the type's keys are still held under its name");
+        assert!(
+            held.field("weighed_on").is_some() && held.field("load").is_none(),
+            "the type kept its own keys and took none of the kind's: {held:?}",
+        );
+    }
+
     /// **A caller's type named after a kind governs nothing, and the kind's
     /// own keys still govern everything.**
     ///
@@ -8520,6 +8623,7 @@ pub mod contract {
         a_reference_keeps_the_kind_it_points_at(store).await;
         a_write_cannot_put_a_value_the_type_refuses(store).await;
         a_type_named_after_a_kind_does_not_gate_that_kinds_writes(store).await;
+        neither_half_writes_over_the_others_keys(store).await;
         a_closed_set_refuses_a_write_outside_it(store).await;
         a_reference_must_name_an_entity_that_exists(store).await;
         a_write_cannot_break_a_fit_that_already_exists(store).await;
