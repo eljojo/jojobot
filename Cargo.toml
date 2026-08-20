@@ -28,22 +28,22 @@ tower-http = { version = "0.7", features = ["trace"] }
 tokio-util = "0.7"
 
 # --- MCP SDK (isolated behind the jojobot-mcp adapter; the domain never imports it) ---
-# Pinned to the 3.0 beta by choice; rmcp ships breaking majors, so it stays
-# behind the adapter and the domain never imports it.
-rmcp = { version = "=3.0.0-beta.1", features = [
+# rmcp ships breaking majors, so it stays behind the adapter and the domain
+# never imports it. The requirement is the 3.1 stable line, which admits
+# patches; the exact pin the 3.0 betas needed is gone with them.
+rmcp = { version = "3.1", features = [
     "server",
     "macros",
     "transport-streamable-http-server",
     "schemars",
 ] }
-# **Pinned separately, because rmcp does not pin it.** rmcp's own requirement on
-# its macro crate is `3.0.0-beta.1` without the `=`, which admits beta.4 — and
-# beta.4's `#[tool_handler]` generates a `get_info` that does not typecheck
-# against beta.1's `ServerHandler`. Only the lockfile was holding the two in
-# step, so a `cargo update` broke the build with an error that reads as a macro
-# bug rather than a resolution one. It is a direct dependency solely so this `=`
-# can exist; nothing in the workspace imports it by name.
-rmcp-macros = "=3.0.0-beta.1"
+# **Named separately, because rmcp does not pin it.** rmcp requires its macro
+# crate with a caret, so the two can drift apart in resolution: a `#[tool_handler]`
+# from one version generates a `get_info` that must typecheck against the other
+# version's `ServerHandler`. This requirement holds the macro crate on the same
+# 3.1 line as rmcp itself. It is a direct dependency solely to carry that
+# requirement; nothing in the workspace imports it by name.
+rmcp-macros = "3.1"
 schemars = "1"
 
 # --- serialization ---
