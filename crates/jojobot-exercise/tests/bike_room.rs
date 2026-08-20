@@ -144,6 +144,17 @@ fn the_room_is_one_phase_delivered_whole() {
             entry.prompt,
         );
     }
+    // **The entry may name the identity and never the box.** Which bot to be is
+    // not what this room measures; finding the mail is, and an entry that says
+    // where the work is waiting trades the first lock for a green run.
+    let said = entry.prompt.to_lowercase();
+    for pointed in ["mail", "box", "message", "waiting"] {
+        assert!(
+            !said.contains(pointed),
+            "the entry points the occupant at its mail, so the first lock opens itself: {:?}",
+            entry.prompt,
+        );
+    }
 }
 
 /// **Expectations are registered for this room, and a room nobody wrote any

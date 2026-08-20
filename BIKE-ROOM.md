@@ -31,9 +31,12 @@ written for it, by the furniture or by anything else, and no hand-authored
 orientation of any kind reaches it. A room that handed the occupant a bespoke
 charter would measure the charter somebody wrote for the test.
 
-The entry line does not name that identity either. Which bot to be is the
-first thing the door offers, and whether a session takes the offer is part of
-what this room measures.
+**The entry line names that identity, and nothing else.** It did not, once:
+the line was `start jojobot`, and a model read it as *boot as a bot called
+jojobot* — the product and a bot are addressed the same way, so the line parses
+both ways and a run died on the ambiguity in one turn. The identity was never
+what this room measures. **The box is**, and the entry still names no box, no
+verb and no store.
 
 ## The goal
 
@@ -98,7 +101,7 @@ stand on lock 1, and none of them stands on each other.
 **Session: fresh.** The occupant arrives with no memory of anything and no
 context but the line below.
 
-> start jojobot
+> start jojobot as assistant
 
 ## What this room cannot measure
 
