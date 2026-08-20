@@ -21,6 +21,7 @@
 pub mod agent;
 pub mod bike_room;
 pub mod expectations;
+pub mod loop_room;
 pub mod playbook;
 pub mod room;
 pub mod run;

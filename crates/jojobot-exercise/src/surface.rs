@@ -136,6 +136,25 @@ impl Seed {
         Ok(self)
     }
 
+    /// Put a thing in the world **under another one**. A kind that requires a
+    /// parent — a recurring loop, which is somebody's job rather than a thing
+    /// on its own — cannot be furnished any other way.
+    pub fn child(mut self, parent: &str, kind: &str, handle: &str, name: &str) -> Result<Seed> {
+        anyhow::ensure!(
+            kind != "bot",
+            "a seed may furnish the room and may not create the identity that occupies it — \
+             the shipped `assistant` is what a run must meet",
+        );
+        self.writes.push((
+            "add_entity".to_string(),
+            json!({
+                "kind": kind, "handle": handle, "name": name,
+                "source": "the room", "parent": parent,
+            }),
+        ));
+        Ok(self)
+    }
+
     /// Record something about a thing in the world. A claim about a bot is
     /// refused for the same reason: a rule on an identity is coaching.
     pub fn fact(mut self, subject: &str, content: &str, provenance: &str) -> Result<Seed> {

@@ -27,11 +27,15 @@ use crate::surface::Seed;
 pub const COLD_SESSION_SUITE: &str = "COLD-SESSION-SUITE.md";
 
 pub use crate::bike_room::BIKE_ROOM;
+pub use crate::loop_room::LOOP_ROOM;
 
 /// The expectations for a playbook, or nothing when none are written.
 pub fn for_playbook(source: &str) -> Option<Vec<Box<dyn Expectation>>> {
     if source.ends_with(BIKE_ROOM) {
         return Some(crate::bike_room::expectations());
+    }
+    if source.ends_with(LOOP_ROOM) {
+        return Some(crate::loop_room::expectations());
     }
     if !source.ends_with(COLD_SESSION_SUITE) {
         return None;
@@ -66,6 +70,9 @@ pub fn for_playbook(source: &str) -> Option<Vec<Box<dyn Expectation>>> {
 pub fn seed_for(source: &str) -> anyhow::Result<Seed> {
     if source.ends_with(BIKE_ROOM) {
         return crate::bike_room::seed();
+    }
+    if source.ends_with(LOOP_ROOM) {
+        return crate::loop_room::seed();
     }
     if !source.ends_with(COLD_SESSION_SUITE) {
         return Ok(Seed::new());
