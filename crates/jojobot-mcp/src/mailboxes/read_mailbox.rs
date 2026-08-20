@@ -44,9 +44,9 @@ enum NoBox {
     /// A world that is down. jojobot does not know, which is not the same as
     /// "you own none" and must never be rendered as it.
     Unknowable,
-    /// A bot with no box. **Not a normal state any more** — a box opens with
-    /// its bot — so this is a broken identity rather than an incomplete one,
-    /// and it takes a person rather than a verb.
+    /// A bot with no box. **Not a state a bot reaches by any route** — a box
+    /// opens with its bot — so this is a broken identity rather than an
+    /// incomplete one, and it takes a person rather than a verb.
     Broken,
     /// A bot with more than one box. One box per bot is settled, so this is
     /// damage too — and the opposite repair from [`NoBox::Broken`]: no boot

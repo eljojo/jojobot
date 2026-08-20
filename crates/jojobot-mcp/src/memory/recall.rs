@@ -1932,10 +1932,10 @@ mod tests {
 
     /// **The records are off unless the call asks**, and the fields are not.
     ///
-    /// The default itself, which every other case here now states explicitly —
-    /// so a build that quietly went back to shipping every claim would pass
-    /// all of them and fail this one. It reads a plain call, the one an agent
-    /// makes when it knows nothing about arguments.
+    /// The default itself, which every other case here states explicitly — so
+    /// a build that quietly shipped every claim would pass all of them and fail
+    /// this one. It reads a plain call, the one an agent makes when it knows
+    /// nothing about arguments.
     #[tokio::test]
     async fn a_plain_recall_ships_the_fields_and_not_the_records() {
         let jojobot = handler();
@@ -2106,11 +2106,11 @@ mod tests {
         assert_eq!(claim["details"], "changed jobs in July", "{read}");
     }
 
-    /// **An unknown handle is a miss at the wire too.** The production smoke
-    /// test asked for a nonexistent person and was told "reads fine, no facts"
-    /// — the same answer an empty page gives, so a caller can never repair a
-    /// bad handle. The miss now comes back as an error naming the handle and
-    /// its near candidates, while an empty-but-real entity still reads fine.
+    /// **An unknown handle is a miss at the wire too.** A read of a
+    /// nonexistent person answered with "reads fine, no facts" is the same
+    /// answer an empty page gives, so a caller can never repair a bad handle.
+    /// The miss comes back naming the handle and its near candidates, while an
+    /// empty-but-real entity reads fine.
     #[tokio::test]
     async fn recall_of_an_unknown_entity_is_a_miss_with_candidates() {
         let jojobot = handler();
