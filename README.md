@@ -27,8 +27,8 @@ never runs inference of its own — the assistant is the only mind.
 > `subject` and an `in_reply_to` link to what it answers, `read_message` taking
 > delivery of one without draining its box, and `list_sent` showing a sender
 > where their own mail got to without moving any of it. **What a caller already
-> has is not shipped back**: the two verbs that echoed a body now answer with a
-> receipt, a poll can ask for news only, and orientation can be skipped by a
+> has is not shipped back**: a write verb answers with a receipt rather than the
+> body it was given, a poll can ask for news only, and orientation can be skipped by a
 > session that has read it — always with a marker saying what was left out and
 > how to get it. **A queue belongs to whoever drains it**: a box is named and
 > counted to the bot that owns it, and every other bot comes back as a handle
@@ -344,7 +344,7 @@ service, no credentials, and no external instance a deployment has to keep alive
 alongside it.
 
 ⚠️ *Upgrading a server that has never carried.* **A store that has not taken its
-records in can no longer be given them: the code that moved them is gone, and
+records in cannot be given them: this build carries no code that moves them, and
 nothing will tell you.** A server upgraded straight past that point starts
 cleanly on an empty schema and answers as though it knows nothing — there is no
 error, because the thing that would have noticed is what was removed. **An

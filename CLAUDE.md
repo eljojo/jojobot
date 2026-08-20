@@ -164,8 +164,8 @@ Shipped and live:
   thing that answers no type is a first-class thing.** **The software ships two
   types of its own — `entitlement` and `trip` — declared at every startup, and a
   shipped name is closed to a caller's redeclaration**, so a type says where it
-  came from and a caller can tell the two apart before it collides with one. ⚠️ **`rhythm` is no longer a
-  type. It is a shipped KIND and it declares every key its loop uses** — a name
+  came from and a caller can tell the two apart before it collides with one. **`rhythm` is a shipped
+  KIND and it declares every key its loop uses** — a name
   and the day of the last check-in are required; the cadence in days, the day
   the next cycle counts from, which of the two dates a late check-in advances
   from, the outcome and a note are optional. **A loop is a thing in its own
@@ -225,9 +225,9 @@ Shipped and live:
   a verb of its own once — the surface grows by packing flexibility onto the
   verbs that exist, not by adding verbs.
 
-> **Delivery-awareness: serve the difference.** `seen_before` was the first
-> instance; the rule now runs across the surface. What a caller demonstrably
-> already has is not shipped back to them. **A write verb answers with a
+> **Delivery-awareness: serve the difference.** The rule runs across the whole
+> surface, and `seen_before` on a delivery is one instance of it. What a caller
+> demonstrably already has is not shipped back to them. **A write verb answers with a
 > receipt, and the prose its author just sent is the one thing it leaves
 > out** — `capture`, `update_fact`, `journal`, `amend_journal`,
 > `wrap_session`, `set_charter`, `post_message` and `mark_processed` all
@@ -403,8 +403,8 @@ scheduled, on the work-queue board.
 
 **Layering: engine + bot.** The engine (this repo) is user-agnostic code; a
 bot and its rules are *data* in the user's own store. Nothing about any
-particular person is compiled in — and that now includes the skills, which
-name roles and never an operator.
+particular person is compiled in. The skills obey the same line: they name
+roles and never an operator.
 
 ## Engineering rules (non-negotiable)
 
