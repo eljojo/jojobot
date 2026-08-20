@@ -425,7 +425,8 @@ async fn nothing_on_the_surface_goes_unexercised() {
     let told = story.session().await;
     let told_sid = told.sid().to_string();
     told.journal("did the thing, and said so").await;
-    told.wrap("the work is over and this is the story of it").await;
+    told.wrap("the work is over and this is the story of it")
+        .await;
 
     // The positive it rests on: a run somebody left open in the same instance,
     // which must still be offered. Without it, "the wrapped one is not offered"
