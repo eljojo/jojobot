@@ -156,8 +156,8 @@ mod tests {
     #[tokio::test]
     async fn read_message_delivers_one_and_leaves_the_box_alone() {
         let jojobot = mailbox_handler();
-        // The box's own drainer, because taking delivery is now something only
-        // it can do — see `a_message_in_somebody_elses_box_is_not_delivered_by_id`.
+        // The box's own drainer, because taking delivery is something only it
+        // can do — see `a_message_in_somebody_elses_box_is_not_delivered_by_id`.
         let reader = owning(&jojobot, "inbox").await;
         let wanted = send(&jojobot, "inbox", "epsilon", "the one worth reading").await;
         send(&jojobot, "inbox", "sigma", "the rest of the box").await;

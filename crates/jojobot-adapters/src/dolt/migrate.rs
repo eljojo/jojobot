@@ -1502,17 +1502,17 @@ mod tests {
     }
 
     /// **A set that fails part-way RESUMES.** This is what one statement per
-    /// file buys, and it was impossible before.
+    /// file buys.
     ///
-    /// A failure used to leave the schema half a version with nothing recorded:
-    /// the tables created before the failing statement were committed anyway,
-    /// so the retry hit one of them and failed again, for ever, naming a file
-    /// and saying nothing about the tables underneath it. A person had to work
-    /// out by hand which had landed.
+    /// A runner that records a whole set at once leaves the schema half a
+    /// version with nothing recorded: the tables created before the failing
+    /// statement are committed anyway, so the retry hits one of them and fails
+    /// again, for ever, naming a file and saying nothing about the tables
+    /// underneath it. A person then works out by hand which had landed.
     ///
-    /// Now a failure stops at a file boundary. Everything before it is applied
-    /// AND recorded, the failing one is neither, and clearing the obstruction
-    /// lets the next run carry on from exactly where it stopped.
+    /// A failure stops at a file boundary instead. Everything before it is
+    /// applied AND recorded, the failing one is neither, and clearing the
+    /// obstruction lets the next run carry on from exactly where it stopped.
     #[tokio::test]
     async fn a_set_that_fails_part_way_resumes_where_it_stopped() {
         let scratch = Scratch::new("migrate-resume");

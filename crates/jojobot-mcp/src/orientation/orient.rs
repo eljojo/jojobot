@@ -747,13 +747,13 @@ mod tests {
         assert_eq!(counts_for(&identified)["yours"], true);
     }
 
-    /// **Both halves of the door make the same promise, so both keep it.** `orient` says
-    /// orientation lands even when a world is down — and `start_here` did,
-    /// while the identified half hard-errored the moment a bot owned a box, which made
-    /// every box-owning identity unbootable over an outage in the *other*
-    /// world. The charter and the rules are in Memory and were right there.
+    /// **Both halves of the door make the same promise, so both keep it.**
+    /// Orientation lands even when a world is down. An identified half that
+    /// hard-errors the moment a bot owns a box makes every box-owning identity
+    /// unbootable over an outage in the *other* world, while the charter and
+    /// the rules sit in Memory and are right there.
     ///
-    /// Now the mailbox half degrades on its own, the same way the snapshot's
+    /// So the mailbox half degrades on its own, the same way the snapshot's
     /// does: the boot lands, the identity is whole, and the one thing jojobot
     /// cannot answer says so instead of guessing.
     #[tokio::test]

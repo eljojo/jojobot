@@ -47,10 +47,10 @@ async fn a_counter_adds_its_writes_up_and_still_lists_them() {
         .await;
     declared.says("\"folds\":\"sum\"");
     declared.says("\"holds\":\"number\"");
-    // The other key says what every key said before there was a choice, so the
-    // answer never leaves a reader to infer which keys are counters. **A key
-    // declaring neither a fold nor a kind reads back as it always did** — text,
-    // newest — which is what says neither half moved the default.
+    // The other key says what a key with no choice on it says, so the answer
+    // never leaves a reader to infer which keys are counters. **A key declaring
+    // neither a fold nor a kind reads back as text and newest**, which is what
+    // says neither half moved the default.
     declared.says("\"folds\":\"newest\"");
     declared.says("\"holds\":\"text\"");
 

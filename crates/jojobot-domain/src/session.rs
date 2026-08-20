@@ -830,9 +830,9 @@ mod tests {
     }
 
     /// **The sweep reads a clock it is handed, so its answer is a function of
-    /// its arguments.** This is what the descent bought: the boot's whole
-    /// board decision — what to close, what is live, what to offer — is now
-    /// decidable at a chosen instant, with no handler and no wall clock.
+    /// its arguments.** The boot's whole board decision — what to close, what
+    /// is live, what to offer — is decidable at a chosen instant, with no
+    /// handler and no wall clock.
     /// A full beat's worth of examples, all from the fictional roster — exactly
     /// [`BEAT_EXAMPLES`] of them, so the cap is exercised by the constant
     /// rather than by a number written twice.

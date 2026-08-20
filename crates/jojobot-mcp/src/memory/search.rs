@@ -299,7 +299,7 @@ impl MailExcluded {
                 ..SearchQuery::default()
             },
             // These two ask for mail, or they never reach their own reason:
-            // not-asked answers first, and it is now the default.
+            // not-asked answers first, and it is the default.
             MailExcluded::FactScoped => SearchQuery {
                 status: Some(FactStatus::Active),
                 ..asking_for_mail()

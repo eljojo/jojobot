@@ -1,16 +1,16 @@
 //! "We don't send a message to the pm mailbox. We send it to the pm."
 //!
 //! A bot has exactly one box, so its name carries no addressing power its
-//! handle does not — and a caller had to learn that a colleague keeps their
-//! mail somewhere named after them, a correspondence nothing enforced.
+//! handle does not. A surface that asks for the box makes a caller learn that a
+//! colleague keeps their mail somewhere named after them — a correspondence
+//! nothing enforces.
 //!
-//! Reading was already addressed by identity: `read_mailbox` takes no box name,
-//! because the session handle says whose box it is. Only writing still asked
-//! for a container. This is that asymmetry closed.
+//! Both halves are addressed by identity: `read_mailbox` takes no box name
+//! because the session handle says whose box it is, and `post_message` takes
+//! the colleague rather than the container.
 //!
-//! The guard survives the move and gets better at its job: a mistyped
-//! colleague comes back with the colleague you meant, from a directory you
-//! already have.
+//! The guard is better at its job for it: a mistyped colleague comes back with
+//! the colleague you meant, from a directory you already have.
 
 use serde_json::json;
 
@@ -50,7 +50,7 @@ async fn you_write_to_a_colleague_and_never_to_their_container() {
 
     // ── it really reached them, which is the only proof that matters ────────
     //
-    // epsilon opens its own box — with no box name, because reading was always
+    // epsilon opens its own box — with no box name, because reading is
     // addressed by identity — and both messages are there.
     let epsilon = story.as_bot("bot:epsilon").await;
     let theirs = epsilon.drain().await;
