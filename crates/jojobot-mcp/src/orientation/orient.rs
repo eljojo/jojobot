@@ -107,17 +107,17 @@ impl Jojobot {
         // which to believe. It is still exactly ONE read; it just happens once
         // the repair this boot performs has landed.
         //
-        // **The snapshot is scoped the same way the listing is.** It was the
-        // other place a boot met per-state counts for every box on the server,
-        // and it posed the same question the own-box norm then has to answer in
-        // prose: is that unread one mine? An anonymous `start_here` owns
-        // nothing, which is exactly right for a caller that only posts.
+        // **The snapshot is scoped the same way the listing is.** Per-state
+        // counts for every box on the server pose the question the own-box rule
+        // then has to answer in prose: is that unread one mine? An anonymous
+        // `start_here` owns nothing, which is exactly right for a caller that
+        // only posts.
         //
-        // **Mail hangs off the bot that owns it, and is no longer a population
+        // **Mail hangs off the bot that owns it rather than being a population
         // of its own.** A box belongs to exactly one bot and is not a peer of
-        // it, so a boot that listed boxes beside bots asked a caller to hold
-        // two directories and the correspondence between them. Addressing is by
-        // handle now; a box name is not something anybody needs.
+        // it, so a boot that listed boxes beside bots would ask a caller to
+        // hold two directories and the correspondence between them. Addressing
+        // is by handle; a box name is not something anybody needs.
         let listed = self.mailboxes.list_mailboxes().await;
         let mail = match &listed {
             // **When there is no roster to hang mail on, mail answers for

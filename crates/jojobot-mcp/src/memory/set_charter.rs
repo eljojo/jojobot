@@ -67,8 +67,7 @@ impl Jojobot {
         // gets stored anyway.** A caller that reads the composed charter and
         // sends it back writes the build's own words into the instance's layer,
         // where they never move again — a shipped default quietly turned into a
-        // frozen customisation, by a caller doing what this description used to
-        // tell it to.
+        // frozen customisation, by a caller sending back what it just read.
         //
         // **Refused rather than trimmed** (rule 68): silently cutting somebody's
         // prose down to the half we wanted would store something they did not
@@ -152,9 +151,9 @@ mod tests {
     /// one of them.**
     ///
     /// The core is carried by the build and composed on the way out; what a
-    /// caller writes is the instance's own half. **The description used to
-    /// promise this call replaced the whole thing**, and a caller believing it
-    /// does the round trip below: read the charter, send it back.
+    /// caller writes is the instance's own half. **A description promising this
+    /// call replaces the whole thing** invites the round trip below: read the
+    /// charter, send it back.
     ///
     /// 🚨 **That is the silent one.** It stores the build's own words as the
     /// instance's, where they stop moving when the software does — a shipped

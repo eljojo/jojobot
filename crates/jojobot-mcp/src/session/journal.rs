@@ -454,7 +454,7 @@ mod tests {
         );
         assert!(
             !on_told.contains("Journal"),
-            "…and never a shared Journal, which no longer exists: {on_told}"
+            "…and never a shared Journal, which is not a thing here: {on_told}"
         );
         assert!(
             on_told.contains("new session"),

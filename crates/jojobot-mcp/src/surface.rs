@@ -168,11 +168,11 @@ fn shipped_half(text: &str) -> String {
 /// **The walker reads to the end of a file, past a test item and out the other
 /// side.**
 ///
-/// It used to CUT a file at the first `#[cfg(test)]` that was not a `mod NAME;`
-/// declaration — an attribute on a plain function counted — so
-/// `memory/search.rs` was read to line 280 of 1767 and every sweep built on
-/// this walker was blind past that point. **Nothing was wrong with the sweeps;
-/// they were reading a fraction of the crate and saying so nowhere.**
+/// A walker that CUT a file at the first `#[cfg(test)]` — counting an
+/// attribute on a plain function as one — reads `memory/search.rs` to line 280
+/// of 1767, and every sweep built on it is blind past that point. **Nothing is
+/// wrong with those sweeps; they read a fraction of the crate and say so
+/// nowhere.**
 ///
 /// **The fixture is the shape that caused it**: a test-annotated function in
 /// the middle of a file with shipped code after it. Both ends are asserted —
@@ -235,14 +235,13 @@ fn shipped_source() -> String {
 
 /// **Every kind the store accepts is a kind the surface lists.**
 ///
-/// The surface listed eight and the enum has nine: `bot` was accepted and
-/// undocumented, so a caller reading it believed an identity had to be made
-/// some other way — and there is no other way, because nothing about a bot is
-/// compiled in.
+/// A kind the store accepts and the surface does not list is a kind a caller
+/// reads as one an entity cannot be given. For `bot` that is the whole of how
+/// an identity is made, because nothing about a bot is compiled in.
 ///
 /// **The list lives in ONE place**, the `kind` argument, which is what makes
-/// this checkable at all: the description used to carry a second copy, and two
-/// copies of one list is how the first one goes stale unnoticed. This pins the
+/// this checkable at all: a second copy in the verb description is how the
+/// first one goes stale unnoticed. This pins the
 /// surviving one against the enum, so a kind added to the store cannot be
 /// missing from the only place a caller is told about it.
 ///
@@ -466,10 +465,9 @@ fn there_is_exactly_one_orientation_verb() {
 ///
 /// A description that promises an error for a miss is worse than one that
 /// says nothing: a client written against it branches on the wrong thing
-/// and handles the answer exactly wrong. The unification rider fixed four
-/// of these descriptions and missed `set_charter`, which went on promising
-/// "an error naming the nearest handles" while the code returned blocked —
-/// so the whole class is pinned here rather than one more instance of it.
+/// and handles the answer exactly wrong. The whole class is pinned here
+/// rather than one verb at a time, because a description drifts from the
+/// answer it describes one verb at a time.
 #[test]
 fn the_verbs_whose_misses_are_blocked_all_say_so() {
     let tools = Jojobot::tool_router().list_all();
@@ -497,7 +495,7 @@ fn the_verbs_whose_misses_are_blocked_all_say_so() {
         );
         assert!(
             !description.contains("is an error"),
-            "{name} still promises an error for a miss it no longer errors on: {description}"
+            "{name} promises an error for a miss it answers as blocked: {description}"
         );
     }
 }
@@ -603,14 +601,13 @@ fn the_session_verbs_are_described_by_the_one_address_they_take() {
 
 /// **Nothing agent-facing tells a caller to declare who it is.**
 ///
-/// `sender` left `PostMessageArgs` when it became derived from the `sid`,
-/// and three texts went on describing it. Since the argument gate — see
-/// [`crate::arguments`] — such a sentence no longer costs a lie, it costs
-/// the call: `sender` is a top-level argument `post_message` does not
-/// implement, so a caller following the sentence gets `blocked` before
-/// dispatch and the message it meant to leave is never written. The text is
-/// what breaks the call, and the refusal contradicting the surface's own
-/// words is the caller's only clue.
+/// `sender` is derived from the `sid`, so no verb takes it as an argument.
+/// With the argument gate — see [`crate::arguments`] — a text naming it costs
+/// the call rather than only the truth: a caller following the sentence sends
+/// a top-level argument `post_message` does not implement, gets `blocked`
+/// before dispatch, and the message it meant to leave is never written. The
+/// text is what breaks the call, and the refusal contradicting the surface's
+/// own words is the caller's only clue.
 ///
 /// **Asserted as absence of the token, not as a list of today's
 /// sentences.** The essay and `post_message` have no honest use for the
@@ -758,19 +755,17 @@ fn the_orientation_teaches_the_two_endings_and_the_own_box_norm() {
 /// **A KIND holds a thing to its keys and a declared TYPE holds it to nothing,
 /// and the essay is where a session learns which.**
 ///
-/// The essay taught that a write below a type a thing already fits is blocked.
-/// That was the guard governing by resemblance: any thing that structurally
-/// completed any declaration anybody had made became subject to it, with
-/// nothing offered and nothing switched on. What governs is the thing's own
-/// kind. Every session reads this text at boot and plans against it, so a
-/// session holding the old sentence expects a refusal that no longer comes and
-/// avoids a write nothing would have stopped.
+/// What governs a write is the thing's own KIND. A text saying a declared type
+/// blocks a write describes a guard that governs by resemblance: every thing
+/// structurally completing any declaration anybody has made becomes subject to
+/// it, with nothing offered and nothing switched on. Every session reads this
+/// essay at boot and plans against it, so that sentence makes a session expect
+/// a refusal that does not come and avoid a write nothing would have stopped.
 ///
 /// **Both halves, or either is worthless**: the mechanism is exercised through
 /// the guard every adapter runs, and the essay is read for what it says about
-/// it. Prose pinned against no mechanism goes stale the same way this sentence
-/// did — and a mechanism half that only asserted a refusal would pass on a
-/// build where a type still governs.
+/// it. Prose pinned against no mechanism goes stale, and a mechanism half that
+/// only asserted a refusal would pass on a build where a type still governs.
 #[test]
 fn the_orientation_says_a_kind_holds_a_thing_and_a_type_does_not() {
     use jojobot_domain::memory::guard_fit;
@@ -1268,7 +1263,7 @@ fn no_agent_facing_text_teaches_the_store() {
     // **The one legitimate use, allowlisted by name and by reason.** The word
     // survives in one place: `crm-card` as an example SOURCE value, which is a
     // label the operator's own records carry rather than a grammar jojobot
-    // enforces. `crm` itself no longer teaches a grammar — the task layer
+    // enforces. `crm` itself teaches no grammar — the task layer
     // decides how it addresses things
     // (`jojobot_domain::memory::validate_crm`). The rule is that no text
     // teaches JOJOBOT'S store; blanking the word here would turn a true
@@ -1344,18 +1339,17 @@ fn says(sentence: &str, marker: &str) -> bool {
 /// **A thing's fields are its WRITES, and the served text says so.**
 ///
 /// The fold is over every write on a thing, the newest write of each key
-/// winning, and a write that takes a key off takes it off the thing. The text
-/// used to say a thing's fields were the fields of every RECORD about it,
-/// folded together — the union of its records' keys — and that sentence
-/// describes a different store. An agent reading it concludes that clearing a
-/// key on one record leaves the key alive from another, and plans a write on
-/// that basis. The shipped contract says which system exists: two records
+/// winning, and a write that takes a key off takes it off the thing. A text
+/// saying a thing's fields are the fields of every RECORD about it, folded
+/// together — the union of its records' keys — describes a different store. An
+/// agent reading that concludes that clearing a key on one record leaves the
+/// key alive from another, and plans a write on that basis. The shipped contract says which system exists: two records
 /// projecting `{chain_wear: 9}` and `{}`, and the thing does not hold the key
 /// (`a_cleared_key_is_not_resurrected_by_an_older_record`).
 ///
 /// `no_agent_facing_text_teaches_the_store` cannot reach this one. That guard
 /// sweeps for retired WORDS, and every word in the false sentence is current —
-/// what was retired here is the claim.
+/// what is wrong here is the claim.
 #[test]
 fn no_agent_facing_text_folds_the_records() {
     // A sentence that names a thing's records AND one of these is saying the

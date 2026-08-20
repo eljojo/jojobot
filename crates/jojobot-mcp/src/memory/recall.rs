@@ -411,9 +411,8 @@ fn held_item(held: &entitlement::Held<'_>) -> serde_json::Value {
         },
         "claim": held.fact.content,
         "provenance": held.fact.provenance.as_token(),
-        // **How sure the operator was, which this block used to drop.** A pass
-        // somebody THINKS they hold and one they confirmed are the same
-        // sentence otherwise — and this block is what a session reads to tell
+        // **How sure the operator was.** A pass somebody THINKS they hold and
+        // one they confirmed are the same sentence otherwise — and this block is what a session reads to tell
         // them they are covered, so a lost hedge becomes a fact at the moment
         // somebody acts on it.
         "standing": held.fact.standing.as_token(),
@@ -1856,7 +1855,7 @@ mod tests {
     /// The whole point of the read: a caller asking what a thing HOLDS gets one
     /// value per key rather than every claim ever made about it. Both halves,
     /// because a row that is always there and records that are always there is
-    /// the build this replaces.
+    /// a build where the caller was charged for both.
     #[tokio::test]
     async fn recall_answers_with_the_folded_row_and_names_what_it_left_out() {
         let jojobot = handler();

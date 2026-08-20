@@ -680,7 +680,7 @@ mod tests {
         }
         assert!(
             !note.contains("answers_type"),
-            "a type filter no longer reaches this reason, so naming it here would send a \
+            "a type filter does not reach this reason, so naming it here would send a \
              caller looking for a narrowing that is not theirs: {note}"
         );
 
