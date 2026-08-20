@@ -272,7 +272,10 @@ Shipped and live:
   core**, while every other bot's charter is its written prose alone. The
   core is never a stored record — upgrading it is shipping a new build,
   with nothing to migrate and no instance frozen on the version that made
-  it.
+  it. **A write carrying the core is refused rather than trimmed**, because
+  a caller that reads the composed charter and sends it back would store
+  the build's words as the instance's, where they stop moving when the
+  software does.
   **`start_here` is the one orienting door** — the same verb with or without
   a bot: world-model and snapshot always, plus the identity when a bot is
   named. The door itself **mints no identity**: an unknown bot name comes back
