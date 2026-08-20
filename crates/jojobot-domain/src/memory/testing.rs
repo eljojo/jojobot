@@ -161,6 +161,30 @@ impl InMemoryMemory {
         Ok(())
     }
 
+    /// **The keys a KIND names, read as the kind's own.**
+    ///
+    /// The two halves share one place and are told apart by who declared them.
+    /// [`Self::declarations`] reads both, which is right for the fold — how a
+    /// key folds is declared by whoever declared it — and wrong for the fit
+    /// guard, which selects a declaration whose NAME matches the thing's kind.
+    /// Handed the mixed list, that guard reads a caller's type named `place` as
+    /// the kind `place`'s schema and gates every write to every place with it.
+    ///
+    /// **The real store filters on its owner column here, so this filters on
+    /// the same fact.** A double that hands the guard more than the store does
+    /// accepts writes the store refuses, and every case written against it is
+    /// blind to that class until it lands.
+    fn kind_keys_of(&self, kind: &str) -> Vec<crate::memory::types::DeclaredType> {
+        // types before kind_keys, the order `keys_of_kind` takes them in.
+        let types = self.types.lock().expect("fake mutex poisoned");
+        let owned = self.kind_keys.lock().expect("fake mutex poisoned");
+        types
+            .iter()
+            .filter(|held| held.name == kind && owned.contains(&held.name))
+            .cloned()
+            .collect()
+    }
+
     /// Put an entity in the store without the write guard seeing it — **the
     /// only way to stage a record the port refuses to write.**
     ///
@@ -519,11 +543,15 @@ impl Memory for InMemoryMemory {
         // one adapter and not the other cannot ship.
         let writes = self.writes_on(&stored.home, &facts);
         let declared = self.types.lock().expect("fake mutex poisoned").clone();
+        // **The fold reads both halves and the guard reads one.** How a key
+        // folds is declared by whoever declared it; what governs a thing is its
+        // own kind, and nothing else.
+        let governs = self.kind_keys_of(stored.home.kind_token());
         super::guard_fit(
             stored.home.kind_token(),
             &super::folded_fields(&writes, &declared),
             &super::stood_after_capture(&writes, &stored, &declared),
-            &declared,
+            &governs,
         )?;
         // **The claim is kept without its fields and the fields are kept as
         // writes.** One body of data, projected on the way out.
@@ -714,7 +742,8 @@ impl Memory for InMemoryMemory {
         let declared = self.declarations();
         let before = super::folded_fields(&writes, &declared);
         let after = super::stood_after(&writes, &edited, &patch, &carried, &declared);
-        super::guard_fit(home.kind_token(), &before, &after, &declared)?;
+        let governs = self.kind_keys_of(home.kind_token());
+        super::guard_fit(home.kind_token(), &before, &after, &governs)?;
         let id = fact.id.clone();
         for held in facts.iter_mut() {
             if held.home == home && held.id == id {
@@ -7071,6 +7100,86 @@ pub mod contract {
         );
     }
 
+    /// **A caller's type named after a kind governs nothing, and the kind's
+    /// own keys still govern everything.**
+    ///
+    /// A kind's keys and a type's keys live in one place and are told apart by
+    /// who declared them. The fit guard selects a declaration whose NAME
+    /// matches the thing's kind, so a guard handed both halves as one list
+    /// reads a caller's type named `place` as the kind `place`'s schema — a
+    /// gate over a shipped kind, made with no new verb and with no verb to
+    /// undo it.
+    ///
+    /// **The declaration itself stays legal.** A caller's schema may be named
+    /// after a kind, and a restart must not destroy it. What is wrong is the
+    /// lookup, so the halves are kept apart and the kind's keys reach the
+    /// guard as the kind's.
+    ///
+    /// **A contract case because the two stores answered this differently.**
+    /// One read the halves apart and the other did not, and a case belonging
+    /// to either alone is a case that cannot see the difference. The tooth is
+    /// the value-type one on an ordinary write with no floor involved, which
+    /// is the widest blast radius and the one a fix aimed at fitting walks
+    /// past.
+    pub async fn a_type_named_after_a_kind_does_not_gate_that_kinds_writes<M: Memory>(store: &M) {
+        // A shipped kind that names no key, so what governs a place here can
+        // only be the caller's type below.
+        let moes = EntityId::new(EntityKind::PLACE, "contract-tavern");
+        ensure(store, &moes).await;
+        store
+            .declare_type(DeclaredType::new(
+                "place",
+                vec![Field::required("shadow_postcode", ValueType::Number)],
+            ))
+            .await
+            .expect("a caller's schema may be named after a kind");
+
+        // **The write the shadow refused.** A place carrying a postcode that is
+        // no number is an ordinary claim: nothing a caller declared governs it.
+        capture(
+            store,
+            NewFact {
+                fields: [("shadow_postcode".to_string(), "SW1A".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(moes.clone(), "the postcode is SW1A", date(2026, 8, 19))
+            },
+        )
+        .await;
+
+        // **The positive the negative rests on: a kind's OWN key still holds a
+        // write to what it says.** Without this half the case passes against a
+        // build whose fit guard reads nothing at all and lets everything
+        // through.
+        //
+        // A shipped kind is used rather than a new one, for the reason the
+        // cases above give: declaring a new kind fills the set this process
+        // parses against.
+        store
+            .declare_kind(
+                "pet",
+                Origin::Shipped,
+                vec![Field::required("pet_weight", ValueType::Number)],
+            )
+            .await
+            .expect("a kind may name the keys its things keep");
+        let helper = EntityId::new(EntityKind::PET, "contract-the-heavy-one");
+        ensure(store, &helper).await;
+        let refused = store
+            .capture(NewFact {
+                fields: [("pet_weight".to_string(), "quite a lot".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(helper, "it weighs a fair bit", date(2026, 8, 19))
+            })
+            .await;
+        let Err(MemoryError::BreaksType { name, key, .. }) = &refused else {
+            panic!("a kind's own key must hold a write to what it says, got {refused:?}");
+        };
+        assert_eq!(name, "pet", "the refusal names the kind");
+        assert_eq!(key, "pet_weight", "…and the key it wrote badly");
+    }
+
     /// **A write cannot put a value on a thing that its type refuses — and
     /// the same write against a thing that fits nothing is allowed.**
     ///
@@ -8410,6 +8519,7 @@ pub mod contract {
         clearing_a_key_the_record_never_carried_changes_nothing(store).await;
         a_reference_keeps_the_kind_it_points_at(store).await;
         a_write_cannot_put_a_value_the_type_refuses(store).await;
+        a_type_named_after_a_kind_does_not_gate_that_kinds_writes(store).await;
         a_closed_set_refuses_a_write_outside_it(store).await;
         a_reference_must_name_an_entity_that_exists(store).await;
         a_write_cannot_break_a_fit_that_already_exists(store).await;
