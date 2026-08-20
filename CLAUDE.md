@@ -153,11 +153,13 @@ Shipped and live:
   declaration does not gate what a thing may BE**: a thing is found by the keys
   it carries whether or not anybody declared the type, matching stays
   structural, and a key no type mentions is kept as written. **A key may also be narrowed to ONE OF A NAMED
-  SET, checked on the write, and a declaration that leaves a key nothing it
-  could ever hold is refused when it is declared.** **What a declaration asks
-  for is a FLOOR, and the floor is its REQUIRED keys:** once a thing holds every required key, a
-  write that would take one away is refused, naming the declaration and the
-  key. **An optional key is welcome, never demanded, and never decides whether
+  SET, and a declaration that leaves a key nothing it could ever hold is
+  refused when it is declared.** ⛔️ **A declared type refuses no write. It is
+  the QUERY vocabulary — how a caller asks which things answer a shape — and
+  the KIND is what governs what may be written.** **What a KIND asks for is a
+  FLOOR, and the floor is its REQUIRED keys:** once a thing holds every
+  required key of its kind, a write that would take one away is refused,
+  naming the kind and the key, and a narrowed key is checked on that write. **An optional key is welcome, never demanded, and never decides whether
   a thing is complete.** **What a key HOLDS is checked whenever it is set,
   required and optional alike** — so a value that is not what its key declared
   does not count as holding it. **Adding keys is never refused, and a
