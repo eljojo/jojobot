@@ -1633,13 +1633,19 @@ pub fn referenced_by(
 /// that names nothing is empty rather than absent: it fills when that kind
 /// carries keys.
 ///
-/// **A key is lost two ways, and both are refused.** Taking the key off is one.
-/// Putting a value in it that the key does not hold is the other, because
-/// holding a key badly is not holding it — so a thing whose venue slot has a
-/// pet in it has stopped being a stay just as surely as one with no venue slot.
-/// Both fall out of the one definition of fitting
-/// ([`types::Match::complete`]) rather than being two rules that could come to
-/// disagree.
+/// **A key is lost three ways, and this refuses two of them.** Taking the key
+/// off is one. Putting a value in it that the key does not hold is the other,
+/// because holding a key badly is not holding it — so a thing whose venue slot
+/// has a pet in it has stopped being a stay just as surely as one with no venue
+/// slot. Both fall out of the one definition of the floor
+/// ([`types::Match::meets_the_floor`]) rather than being two rules that could
+/// come to disagree.
+///
+/// **The third is a retraction, and it is served on purpose.** Taking a record
+/// back is one-way and deliberate, and it says the record should never have
+/// been written; a store that refused one because a type would lose a key would
+/// make a claim somebody wants taken back impossible to take back. Guard the
+/// ordinary writes, never the deliberate ones.
 ///
 /// The refusal names the type and the key, because those are what a caller
 /// needs to decide what to do; the value refusal also names what the key wanted
