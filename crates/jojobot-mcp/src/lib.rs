@@ -144,10 +144,11 @@ pub struct Jojobot {
 #[tool_router(router = core_router, vis = "pub(crate)")]
 impl Jojobot {
     /// **The newest protocol revision jojobot serves in full**, and the cap on
-    /// what a handshake will agree to. It is not the newest revision the SDK
-    /// can name: this SDK answers a `2026-07-28` client without the fields
-    /// that revision requires on a list result.
-    const NEWEST_SERVED: ProtocolVersion = ProtocolVersion::V_2025_11_25;
+    /// what a handshake will agree to. It is the newest revision the SDK can
+    /// name, because the SDK now emits the fields `2026-07-28` requires on a
+    /// list result. It is a separate constant from the SDK's own newest so
+    /// that what jojobot agrees to speak stays a decision this code makes.
+    const NEWEST_SERVED: ProtocolVersion = ProtocolVersion::V_2026_07_28;
 
     /// The whole surface: this file's verbs, plus every context's.
     ///
@@ -401,11 +402,12 @@ impl ServerHandler for Jojobot {
     ///
     /// A handshake is a promise about the shape of everything after it: the
     /// client reads every later answer against the revision the two of them
-    /// agreed. The `2026-07-28` revision makes `ttlMs` and `cacheScope`
-    /// mandatory on a tool list (SEP-2549) and this SDK emits neither, so a
-    /// client that agreed it discards the WHOLE list and reports the server
-    /// connected while holding no verbs at all. That looks nothing like an
-    /// outage from the inside and matches no runbook.
+    /// agreed. A revision jojobot agrees to but does not serve in full costs
+    /// the client the whole answer, not one field of it: a tool list missing a
+    /// field its revision makes mandatory is discarded entire, and the client
+    /// reports the server connected while holding no verbs at all. That looks
+    /// nothing like an outage from the inside and matches no runbook. So the
+    /// cap is what jojobot serves, never what it can name.
     ///
     /// **The answer is a refusal naming what jojobot does serve, not a quieter
     /// version number.** Answering with an older revision was tried and it does
@@ -416,6 +418,8 @@ impl ServerHandler for Jojobot {
     /// supported list, which is what a client needs to open again.
     ///
     /// **Raise the cap when the SDK serves the newer revision, never before.**
+    /// What the current cap requires of a served answer is pinned by
+    /// `the_newest_revision_is_served_whole_and_not_merely_agreed`.
     fn initialize(
         &self,
         request: InitializeRequestParams,

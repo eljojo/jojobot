@@ -21,12 +21,13 @@
 use serde_json::json;
 
 use super::dsl::Story;
-use crate::support::{event_stream_error, event_stream_result, open_with};
+use crate::support::{event_stream_error, event_stream_result, open_with, request_meta};
 
-/// A revision this server does not serve. It is real rather than invented: it
-/// makes fields required on a tool list that jojobot does not send, so agreeing
-/// to it would mean promising a payload jojobot cannot write.
-const TOO_NEW: &str = "2026-07-28";
+/// A revision this server does not serve. It is newer than any revision that
+/// exists, because jojobot serves every revision that does: the case is a
+/// client speaking something this build has never heard of, which is what every
+/// client eventually does.
+const TOO_NEW: &str = "2099-01-01";
 
 #[tokio::test]
 async fn a_client_speaking_a_revision_jojobot_cannot_serve_is_told_what_it_can() {
@@ -79,12 +80,18 @@ async fn a_client_speaking_a_revision_jojobot_cannot_serve_is_told_what_it_can()
         .header("content-type", "application/json")
         .header("accept", "application/json, text/event-stream")
         .header("mcp-protocol-version", newest.clone())
+        .header("mcp-method", "tools/call")
+        .header("mcp-name", "start_here")
         .body(
             json!({
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "tools/call",
-                "params": { "name": "start_here", "arguments": { "bot": "otto", "brief": true } },
+                "params": {
+                    "name": "start_here",
+                    "arguments": { "bot": "otto", "brief": true },
+                    "_meta": request_meta(&newest),
+                },
             })
             .to_string(),
         );

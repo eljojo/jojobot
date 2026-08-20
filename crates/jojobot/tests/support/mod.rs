@@ -342,6 +342,25 @@ pub async fn open_with(
     (session, opened.text().await.unwrap())
 }
 
+/// **What a request carries from the 2026-07-28 revision on** (SEP-2575): its
+/// own version, identity and capabilities, so it stands alone whether or not a
+/// handshake happened. jojobot refuses a request on that revision without them,
+/// so a test client that left them out would prove the revision unserved rather
+/// than served.
+///
+/// The method, and the verb a call names, ride as headers instead (SEP-2243) so
+/// a middle box can route without reading the body.
+pub fn request_meta(revision: &str) -> serde_json::Value {
+    serde_json::json!({
+        "io.modelcontextprotocol/protocolVersion": revision,
+        "io.modelcontextprotocol/clientInfo": {
+            "name": "jojobot-test-client",
+            "version": "0.0.1",
+        },
+        "io.modelcontextprotocol/clientCapabilities": {},
+    })
+}
+
 /// The JSON-RPC error carried by an event stream.
 pub fn event_stream_error(body: &str) -> serde_json::Value {
     let message = event_stream_message(body);

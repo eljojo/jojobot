@@ -18,7 +18,7 @@ use jojobot_domain::session::Sessions;
 use tokio_util::sync::CancellationToken;
 
 mod support;
-use support::{event_stream_error, event_stream_result, open_with};
+use support::{event_stream_error, event_stream_result, open_with, request_meta};
 
 /// The Memory and Search ports for the transport/auth tests, which never call the
 /// domain verbs — the in-memory double behind the real index, which is the same
@@ -707,6 +707,12 @@ mod surface_changed {
     }
 }
 
+/// A revision from after the newest one this build serves. It is not a name the
+/// SDK knows, because there is no such name yet: the case under test is a
+/// client that arrives speaking something newer than jojobot, which is what
+/// every client eventually does.
+const BEYOND: &str = "2099-01-01";
+
 /// **jojobot serves the revision it agrees to speak, and refuses the ones it
 /// does not.**
 ///
@@ -715,13 +721,12 @@ mod surface_changed {
 /// missing a field that revision makes mandatory is discarded whole. A client
 /// in that state holds no tool list at all: it reports the server connected and
 /// has no memory rail and no mailbox, which looks nothing like an outage from
-/// the inside.
+/// the inside. So a revision jojobot does not serve in full is refused at the
+/// handshake, with the list of the ones it does, and the client opens again on
+/// one of those.
 ///
-/// The 2026-07-28 revision makes `ttlMs` and `cacheScope` required on
-/// `tools/list` (SEP-2549), and this server emits neither. So the handshake is
-/// refused with the list of revisions jojobot does serve, the client opens
-/// again on one of them, and the payload is then held to what THAT revision
-/// requires — which keeps this case true the day the fields do ship.
+/// What the agreed revision then requires of the payload is
+/// `the_newest_revision_is_served_whole_and_not_merely_agreed`.
 ///
 /// It goes over raw HTTP rather than through the typed client, because the
 /// typed client deserializes into this SDK's own structs and a field the SDK
@@ -732,7 +737,7 @@ async fn a_revision_jojobot_cannot_serve_is_refused_with_the_ones_it_can() {
     let url = format!("http://{addr}/mcp");
     let http = reqwest::Client::new();
 
-    let refused = event_stream_error(&open_with(&http, &url, "2026-07-28").await.1);
+    let refused = event_stream_error(&open_with(&http, &url, BEYOND).await.1);
     let served: Vec<String> = refused["data"]["supported"]
         .as_array()
         .expect("a refusal names the revisions this server does serve")
@@ -740,15 +745,14 @@ async fn a_revision_jojobot_cannot_serve_is_refused_with_the_ones_it_can() {
         .map(|v| v.as_str().expect("a revision is a string").to_string())
         .collect();
     assert!(
-        !served.iter().any(|v| v.as_str() >= "2026-07-28"),
+        !served.iter().any(|v| v.as_str() >= BEYOND),
         "a revision this server cannot serve must not be offered back: {served:?}",
     );
 
     // The client opens again on the newest revision it was offered, which is
     // what a real one does with that refusal.
     let newest = served.iter().max().expect("at least one revision").clone();
-    let (session, opened) = open_with(&http, &url, &newest).await;
-    let agreed = event_stream_result(&opened)["protocolVersion"]
+    let agreed = event_stream_result(&open_with(&http, &url, &newest).await.1)["protocolVersion"]
         .as_str()
         .expect("the handshake names the revision the two of us will speak")
         .to_string();
@@ -757,23 +761,78 @@ async fn a_revision_jojobot_cannot_serve_is_refused_with_the_ones_it_can() {
         "the second handshake agrees what it was offered"
     );
 
-    let mut asking = http
-        .post(&url)
-        .header("content-type", "application/json")
-        .header("accept", "application/json, text/event-stream")
-        .header("mcp-protocol-version", agreed.clone())
-        .header("mcp-method", "tools/list")
-        .body(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#);
-    if let Some(session) = &session {
-        asking = asking.header("mcp-session-id", session.clone());
-    }
-    let listed = asking.send().await.unwrap();
-    assert!(
-        listed.status().is_success(),
-        "the list a client asks for over the agreed revision must be served: {}",
-        listed.status(),
+    ct.cancel();
+}
+
+/// **The newest revision jojobot knows is one it serves whole.**
+///
+/// The cap in `NEWEST_SERVED` exists because a client reads every answer after
+/// the handshake against the revision the two of them agreed, and a result
+/// missing a field that revision makes mandatory is discarded whole. So the
+/// test of "jojobot serves 2026-07-28" is not that the handshake succeeds: it
+/// is that the answers carry what that revision demands. `tools/list` under it
+/// must carry `ttlMs` and `cacheScope` (SEP-2549), and a call over it must come
+/// back with a body.
+///
+/// It goes over raw HTTP for the same reason the refusal beside it does: a
+/// typed client deserializes into this SDK's own structs, so a field the SDK
+/// does not know is a field no assertion could see.
+#[tokio::test]
+async fn the_newest_revision_is_served_whole_and_not_merely_agreed() {
+    let (addr, ct) = spawn_server(no_auth_state).await;
+    let url = format!("http://{addr}/mcp");
+    let http = reqwest::Client::new();
+
+    let (session, opened) = open_with(&http, &url, "2026-07-28").await;
+    let agreed = event_stream_result(&opened)["protocolVersion"]
+        .as_str()
+        .expect("the handshake names the revision the two of us will speak")
+        .to_string();
+    assert_eq!(
+        agreed, "2026-07-28",
+        "a client asking for the newest revision must be answered with it"
     );
-    let result = event_stream_result(&listed.text().await.unwrap());
+
+    let meta = request_meta(&agreed);
+    // A call names the verb in a header too, for the same routing reason.
+    let over = |method: &str, name: Option<&str>, body: String| {
+        let mut asking = http
+            .post(&url)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-protocol-version", agreed.clone())
+            .header("mcp-method", method.to_string())
+            .body(body);
+        if let Some(name) = name {
+            asking = asking.header("mcp-name", name.to_string());
+        }
+        if let Some(session) = &session {
+            asking = asking.header("mcp-session-id", session.clone());
+        }
+        asking
+    };
+
+    let listed = over(
+        "tools/list",
+        None,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": { "_meta": meta },
+        })
+        .to_string(),
+    )
+    .send()
+    .await
+    .unwrap();
+    let status = listed.status();
+    let body = listed.text().await.unwrap();
+    assert!(
+        status.is_success(),
+        "the list a client asks for over the agreed revision must be served: {status} {body}",
+    );
+    let result = event_stream_result(&body);
     assert!(
         !result["tools"]
             .as_array()
@@ -781,17 +840,35 @@ async fn a_revision_jojobot_cannot_serve_is_refused_with_the_ones_it_can() {
             .is_empty(),
         "the server must advertise its tools: {result}",
     );
-    if agreed.as_str() >= "2026-07-28" {
-        assert!(
-            result["ttlMs"].is_number(),
-            "the agreed revision {agreed} requires ttlMs on a tool list, and a client throws the \
-             whole list away without it: {result}",
-        );
-        assert!(
-            matches!(result["cacheScope"].as_str(), Some("public" | "private")),
-            "the agreed revision {agreed} requires cacheScope to be public or private: {result}",
-        );
-    }
+    assert!(
+        result["ttlMs"].is_number(),
+        "this revision requires ttlMs on a tool list, and a client throws the whole list away \
+         without it: {result}",
+    );
+    assert!(
+        matches!(result["cacheScope"].as_str(), Some("public" | "private")),
+        "this revision requires cacheScope to be public or private: {result}",
+    );
+
+    let pinged = over(
+        "tools/call",
+        Some("ping"),
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": { "name": "ping", "arguments": {}, "_meta": meta },
+        })
+        .to_string(),
+    )
+    .send()
+    .await
+    .unwrap();
+    let answered = event_stream_result(&pinged.text().await.unwrap());
+    assert!(
+        answered["content"][0]["text"].is_string(),
+        "a verb called over the agreed revision must answer with a body: {answered}",
+    );
 
     ct.cancel();
 }
@@ -885,7 +962,7 @@ async fn the_handshake_names_jojobot_and_agrees_with_what_ping_reports() {
 
 /// **The same refusal at the other door.**
 ///
-/// A revision from 2026-07-28 carries its own version on the request, so a
+/// From the 2026-07-28 revision on, a request carries its own version, so a
 /// caller can ask for a tool list with no handshake behind it at all. That door
 /// has to hold the same line as the handshake — otherwise the revision jojobot
 /// refuses to agree to is served anyway, to the caller who never asked.
@@ -896,12 +973,25 @@ async fn a_request_declaring_a_revision_jojobot_cannot_serve_is_refused_too() {
         .post(format!("http://{addr}/mcp"))
         .header("content-type", "application/json")
         .header("accept", "application/json, text/event-stream")
-        .header("mcp-protocol-version", "2026-07-28")
+        .header("mcp-protocol-version", BEYOND)
         .header("mcp-method", "tools/list")
         // The revision carries its own version, client info and capabilities on
         // every request (SEP-2575), which is what makes a handshake optional.
         .body(
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"jojobot-test-client","version":"0.0.1"},"io.modelcontextprotocol/clientCapabilities":{}}}}"#,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+                "params": { "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": BEYOND,
+                    "io.modelcontextprotocol/clientInfo": {
+                        "name": "jojobot-test-client",
+                        "version": "0.0.1",
+                    },
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                }},
+            })
+            .to_string(),
         )
         .send()
         .await
@@ -909,7 +999,7 @@ async fn a_request_declaring_a_revision_jojobot_cannot_serve_is_refused_too() {
 
     let refused = event_stream_error(&listed.text().await.unwrap());
     assert_eq!(
-        refused["data"]["requested"], "2026-07-28",
+        refused["data"]["requested"], BEYOND,
         "the refusal names the revision that was asked for: {refused}",
     );
     assert!(
@@ -917,7 +1007,7 @@ async fn a_request_declaring_a_revision_jojobot_cannot_serve_is_refused_too() {
             .as_array()
             .expect("a refusal names the revisions this server does serve")
             .iter()
-            .any(|v| v.as_str().is_some_and(|v| v >= "2026-07-28")),
+            .any(|v| v.as_str().is_some_and(|v| v >= BEYOND)),
         "a revision this server cannot serve must not be offered back: {refused}",
     );
 
