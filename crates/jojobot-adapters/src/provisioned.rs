@@ -230,11 +230,35 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     async fn children(&self, parent: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.inner.children(parent).await
     }
+    /// **A supplied record is not the caller's to rename.**
+    ///
+    /// It is refused the way creating one under that handle is refused, and for
+    /// the same reason: the handle is taken, by a record the build supplies.
+    ///
+    /// ⚠️ **The failure this closes is a guard that could not see what the
+    /// build supplies** (rule 234). The inner store holds no row for the
+    /// handle, so it answered that the handle names nothing — and offered no
+    /// candidates, which says nothing even resembles it. **Every other read
+    /// returns the record.** A caller met "there is no such thing" from one
+    /// path and the record itself from every other, with no way to tell which
+    /// was lying.
     async fn update_entity(
         &self,
         handle: &EntityId,
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
+        if let Some((supplied, _)) = self.provisions.record_for(handle) {
+            return Ok(Guarded::Blocked {
+                attempted: handle.clone(),
+                candidates: vec![guard::EntityMatch {
+                    handle: supplied.id.clone(),
+                    kind: supplied.kind,
+                    name: supplied.name.clone(),
+                    source: supplied.source.clone(),
+                    reason: guard::MatchReason::ExactHandle,
+                }],
+            });
+        }
         self.inner.update_entity(handle, patch).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -464,6 +488,80 @@ mod tests {
         assert!(
             read.contains("files the weekly note"),
             "…while what the operator wrote is exactly where they left it: {read}",
+        );
+    }
+
+    /// **Renaming a supplied record is refused the way creating one is, and
+    /// the refusal says the record is there.**
+    ///
+    /// `add_entity` on a supplied handle comes back blocked, naming the
+    /// collision. `update_entity` reached the inner store, which holds no row
+    /// for that handle and answered that the handle names nothing — so one path
+    /// resolved the record, one blocked on it, and a third could not see it.
+    /// **A caller was told a thing does not exist while every read returns it**,
+    /// and the candidates offered came from an index the record is not in.
+    ///
+    /// **Both halves in one read.** The supplied record is refused with the
+    /// collision named, and the identical call on a STORED entity still
+    /// renames it — without the second, a decorator that blocked every rename
+    /// would pass the first.
+    #[tokio::test]
+    async fn renaming_a_supplied_record_is_blocked_and_a_stored_one_still_renames() {
+        let store = InMemoryMemory::booted();
+        store
+            .add_entity(jojobot_domain::memory::NewEntity::new(
+                EntityId("view:my-week".into()),
+                "The week",
+                "the operator",
+            ))
+            .await
+            .expect("the operator's own view is created")
+            .written()
+            .expect("an empty board blocks nothing");
+        let over = Provisioned::new(store, Provisions::new(vec![shipped_record("loops")]));
+
+        let renamed = over
+            .update_entity(
+                &EntityId("view:loops".into()),
+                jojobot_domain::memory::EntityPatch {
+                    name: Some("Mine now".into()),
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        match renamed {
+            Ok(jojobot_domain::memory::Guarded::Blocked {
+                attempted,
+                candidates,
+            }) => {
+                assert_eq!(attempted, EntityId("view:loops".into()));
+                assert!(
+                    candidates
+                        .iter()
+                        .any(|c| c.handle == EntityId("view:loops".into())),
+                    "the refusal names the record it collided with: {candidates:?}",
+                );
+            }
+            other => panic!(
+                "a supplied record is there, so renaming it is a refusal that names it — \
+                 not an answer that it does not exist: {other:?}"
+            ),
+        }
+
+        let stored = over
+            .update_entity(
+                &EntityId("view:my-week".into()),
+                jojobot_domain::memory::EntityPatch {
+                    name: Some("The week ahead".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("the operator's own record is theirs to rename");
+        assert!(
+            matches!(stored, jojobot_domain::memory::Guarded::Written(ref e) if e.name == "The week ahead"),
+            "…and a stored record still renames exactly as it did: {stored:?}",
         );
     }
 
