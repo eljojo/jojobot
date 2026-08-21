@@ -21,11 +21,16 @@ use jojobot_domain::memory::owned::Provision;
 use jojobot_domain::memory::{Entity, EntityId, EntityKind};
 
 /// One shipped view: its handle, what a reader calls it, and its query.
-fn view(slug: &str, name: &str, keys: &[(&str, &str)]) -> Provision {
-    let id = EntityId::new(EntityKind::VIEW, slug);
+///
+/// **The handle is written whole rather than assembled from a kind and a bare
+/// slug.** The bright-line gate reads handle-shaped text, so a slug passed on
+/// its own is a name no gate compares against the fictional roster (rule 164).
+/// Writing the handle puts the shipped record inside a check that already runs
+/// (rule 45).
+fn view(handle: &str, name: &str, keys: &[(&str, &str)]) -> Provision {
     Provision::record(
         Entity {
-            id: id.clone(),
+            id: EntityId(handle.to_string()),
             kind: EntityKind::VIEW,
             name: name.to_string(),
             aliases: Vec::new(),
@@ -47,7 +52,7 @@ pub fn provisions() -> Vec<Provision> {
         // done — which is a key a rhythm holds, so selecting the kind answers
         // it without asking for anything else.
         view(
-            "loops",
+            "view:loops",
             "The Loops",
             &[("selects", "rhythm"), ("shows", "facts")],
         ),
@@ -55,7 +60,7 @@ pub fn provisions() -> Vec<Provision> {
         // each is for, which is the charter — so a bot asking who else is here
         // reads it as a question rather than as a verb of its own (rule 139).
         view(
-            "colleagues",
+            "view:colleagues",
             "The Colleagues",
             &[("selects", "bot"), ("shows", "charter")],
         ),

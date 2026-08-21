@@ -41,18 +41,22 @@ fn kinds() -> Vec<&'static str> {
 
 /// The complete allowlist. Keep it sorted; keep it fictional.
 ///
-/// **`bot:assistant` is the one entry that is not a fixture**, and it is here
-/// deliberately rather than by drift. It is the default identity jojobot ships
-/// with — engine material, naming a ROLE the way the orientation essay names
-/// "the operator". It identifies nobody's instance and nobody's life, which is
-/// the line this file exists to hold. Every other name here is fictional and
-/// must stay that way.
+/// **Some entries are engine material rather than fixtures**, and they are
+/// here deliberately rather than by drift: `bot:assistant`, the default
+/// identity jojobot ships with, and the views the build supplies. Each names a
+/// ROLE or a question the way the orientation essay names "the operator", and
+/// each identifies nobody's instance and nobody's life, which is the line this
+/// file exists to hold. **That is what a shipped name has to earn to sit
+/// here**, and the review that adds one asks it. Every other name here is
+/// fictional and must stay that way.
 const ROSTER: &[&str] = &[
     "bot:assistant",
-    // The view a story declares to stand beside the ones the software ships.
-    // **The shipped views are not here and do not need to be**: this scan reads
-    // handle-shaped text, and the build names them by kind and slug separately,
-    // so no `view:` literal for them exists to read.
+    // The views: the two the software ships, and the two a story declares to
+    // stand beside them. **A shipped record names itself by its handle**, so
+    // this scan reads it on the same terms as every other name — a slug handed
+    // to a constructor on its own would carry no handle for the scan to find.
+    "view:colleagues",
+    "view:loops",
     "view:my-loops",
     "view:my-people",
     "bot:delta",
