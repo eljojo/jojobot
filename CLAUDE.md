@@ -177,7 +177,13 @@ Shipped and live:
   the row: a row the binary owns records its origin as shipped, and the guard
   reads that column rather than any list of protected names** — so a row added to
   the build is protected by being written, and no list can go stale. A caller
-  never supplies that origin; only in-process code can. **`rhythm` is a shipped
+  never supplies that origin; only in-process code can. **AND THE GENERAL FORM,
+  which is bigger than any one capability: a guard that consults the store to
+  decide something must see what the build SUPPLIES as well.** A read that
+  resolves supplied records while the guard beside it reads only stored ones is
+  the two halves disagreeing about what exists — and the guard is the half that
+  fails silently, letting a caller take a name the build already uses. **This
+  holds for one guard today and nothing yet enforces the rest.** **`rhythm` is a shipped
   KIND and it declares every key its loop uses** — a name
   and the day of the last check-in are required; the cadence in days, the day
   the next cycle counts from, which of the two dates a late check-in advances
