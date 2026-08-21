@@ -15,6 +15,11 @@ use jojobot_exercise::run::{Boundary, Observed, Outcome};
 use jojobot_exercise::surface::Surface;
 use serde_json::{Value, json};
 
+/// **The lock this file's cases name**, at the position its document writes it.
+/// The name is this file's: what is pinned is the order, so a sentence
+/// rewritten in the room does not break a case here.
+const COLLEAGUE: usize = 1;
+
 /// The document a run is driven by, read from the root of the workspace.
 fn room_document() -> Playbook {
     let path = expectations::room_document(expectations::HANDOVER_ROOM);
@@ -353,7 +358,7 @@ async fn the_counting_lock_fails_when_the_pile_arrived_as_one_message() {
 
     let outcomes = judge_all(&surface).await;
     assert!(
-        outcomes[1].held,
+        outcomes[COLLEAGUE].held,
         "the colleague stands, so the count is what is being measured here: {}",
         saying(&outcomes),
     );
@@ -402,6 +407,59 @@ async fn the_locks_fail_when_the_pile_was_written_down_instead_of_handed_over() 
         vec![true, true, false, false],
         "the colleague stands and nothing was handed to it: {}",
         saying(&outcomes),
+    );
+}
+
+/// 🚨 **A run that stood up more than one colleague is refused.**
+///
+/// The brief asks for a second assistant. It does not ask for a habit of
+/// making them, and an identity is not a thing to mint on the way past: a box
+/// opens with every bot, so a run that made three left three boxes nobody
+/// asked for and a pile split across them.
+///
+/// **The branch that refuses this had never been exercised by anything.** It
+/// is also the half that stopped this lock becoming a query — the counting
+/// assertion has no upper bound, so nothing in a document can say "and only
+/// one" — which makes it the half most worth watching work.
+///
+/// **Both readings in one case.** The one-colleague room still holds the same
+/// lock, because a branch that refused every count would satisfy the refusal
+/// on its own and prove nothing.
+#[tokio::test]
+async fn a_second_colleague_is_refused_and_one_colleague_still_holds() {
+    let (_room, surface, sid) = furnished().await;
+    worked_the_first_phase(&surface, &sid).await;
+
+    // One colleague: the lock the whole room turns on holds.
+    let one = judge_all(&surface).await;
+    assert!(
+        one[COLLEAGUE].held,
+        "the room a run worked properly failed the colleague lock, so the refusal below would \
+         hold for a reason that has nothing to do with counting: {}",
+        saying(&one),
+    );
+
+    // A second identity nobody asked for, made the same way as the first.
+    as_the_occupant(
+        &surface,
+        &sid,
+        "add_entity",
+        json!({"kind": "bot", "handle": "delta", "name": "Delta", "source": "the operator"}),
+    )
+    .await;
+
+    let two = judge_all(&surface).await;
+    assert!(
+        !two[COLLEAGUE].held,
+        "a run that stood up two colleagues where the brief asked for one held the lock: {}",
+        saying(&two),
+    );
+    // The sentence a reader gets has to say what happened, or the failure is a
+    // boolean somebody has to open the room to understand.
+    assert!(
+        two[COLLEAGUE].saying.contains('2'),
+        "the failure does not say how many identities were made: {}",
+        two[COLLEAGUE].saying,
     );
 }
 
