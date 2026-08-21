@@ -23,7 +23,6 @@ pub mod checks;
 pub mod expectations;
 pub mod handover_room;
 pub mod lock;
-pub mod loop_room;
 pub mod playbook;
 pub mod room;
 pub mod run;

@@ -202,11 +202,15 @@ fn the_room_is_two_phases_and_the_second_has_no_memory() {
 /// still gets none.
 #[test]
 fn the_room_has_expectations_of_its_own() {
-    let checks = expectations::for_playbook(&format!("a/b/{}", expectations::LOOP_ROOM))
-        .expect("the room has expectations");
-    assert!(
-        (3..=4).contains(&checks.len()),
-        "the room asserts on {} intermediate(s), and the shape is three or four",
+    // **Named as the registry ships it.** This room has no Rust half, so its
+    // locks come out of its document and a name that reaches no document
+    // reaches no locks.
+    let checks =
+        expectations::for_playbook(expectations::LOOP_ROOM).expect("the room has expectations");
+    assert_eq!(
+        checks.len(),
+        5,
+        "the room's document carries five locks: {}",
         checks.len(),
     );
     assert!(
@@ -286,7 +290,7 @@ async fn the_terminal_lock_fails_when_the_cold_phase_did_nothing() {
     let held: Vec<bool> = outcomes.iter().map(|o| o.held).collect();
     assert_eq!(
         held,
-        vec![true, true, true, false],
+        vec![true, true, true, true, false],
         "the first phase's locks hold and the terminal one does not: {}",
         saying(&outcomes),
     );
@@ -330,7 +334,7 @@ async fn the_locks_fail_on_a_room_written_in_prose() {
     let held: Vec<bool> = outcomes.iter().map(|o| o.held).collect();
     assert_eq!(
         held,
-        vec![true, false, false, false],
+        vec![true, false, false, false, false],
         "the box was opened and nothing else can be reached: {}",
         saying(&outcomes),
     );

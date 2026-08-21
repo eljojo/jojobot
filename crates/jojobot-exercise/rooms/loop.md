@@ -94,34 +94,26 @@ wrapped, so the room looks like one somebody left tidy.
 * **The brief**, waiting in the `assistant` box: two more things the operator
   keeps, one with a frequency and one deliberately without.
 
-**The words live in `crates/jojobot-exercise/src/loop_room.rs`, once.**
+```world
+entity  thing:kettle | The Kettle
+entity  thing:the-air-filter | The Air Filter
+entity  thing:the-fern | The Fern
 
-## The locks
+# The teacher and the control. It shows what a kept loop looks like, and it is
+# one of the two that must be left alone at the end.
+child   thing:the-fern | rhythm:water-the-fern | Water the fern
+record  rhythm:water-the-fern | {"name": "Water the fern", "last_check_in": "2026-08-01", "cadence_days": "90", "counts_from": "2026-08-01", "advances_from": "due_date"} | water it every ninety days, and it survives being forgotten
 
-Each is asserted on store state, and each holds for a route nobody predicted.
-**The occupant names its own loops**, so nothing here pins a handle it chose:
-the loops are found by the things they hang under, which is furniture.
+# The work and none of the method: no key, no verb, and no place anything is
+# kept. An indented line continues the one above it.
+message assistant | the things I keep having to do | The fern is already on here and that one works the way I want. Two more things to keep the same way.
 
-1. **The brief left the box.** The message waiting for `assistant` is no longer
-   `new`, whichever verb took delivery. The positive it rests on is that the
-   brief is on the board at all.
-2. **Both jobs stand as loops**, one under the kettle and one under the air
-   filter. A session that wrote two sentences has recorded the same words and
-   left nothing that can fall due.
-3. **Each loop carries its own schedule, or none, and the day it was last
-   done.** The load-bearing half is an absence: **the loop the operator keeps
-   no schedule for was taken anyway**, with no cadence invented for it. The
-   kettle's day is read off the key's own history, because the last lock moves
-   what that key holds now.
-4. **The loop that had gone quiet is the one that moved.** As of the day the
-   operator names, exactly one of the three has fallen due: the fern is not due
-   for another month, the filter has no schedule and so can never be late, and
-   the kettle went past its day in August. Both halves — the quiet one moved,
-   and the two that were not due are exactly where they were.
+    The kettle needs descaling every sixty days. I last did it on 2026-06-15.
 
-**Lock 4 measures phase 1.** It is asserted after the cold phase because that is
-where a badly shaped write finally costs something, and it is the only lock here
-that reading carefully cannot rescue.
+    The air filter I swap when it looks bad, so there is no schedule for that one at all. The last swap was 2026-09-20.
+
+    Leave it so whoever comes next can pick it up.
+```
 
 ## Phase 1 — the room
 
@@ -130,6 +122,42 @@ context but the line below.
 
 > start jojobot as assistant
 
+```locks
+# Reaching for Rust here says the assertion vocabulary cannot correlate a
+# message's subject with that message's state.
+check   the_brief_left_the_box
+say     the brief is still sitting new in the box, so the occupant never learnt what the work is
+
+# Both jobs stand as loops, one under each thing. A session that wrote two
+# sentences has recorded the same words and left nothing that can fall due.
+#
+# **The occupant names its own loops**, so nothing here pins a handle it chose:
+# a loop is found by the thing it hangs under, which is furniture. The fern's
+# loop is the positive — an answer that lost everything cannot read as two
+# loops missing.
+list_entities {"kind": "rhythm"}
+carries "parent":"thing:kettle"
+carries "parent":"thing:the-air-filter"
+carries "parent":"thing:the-fern"
+say     one of the two jobs the brief named does not stand as a loop under the thing it belongs to
+
+# The scheduled loop carries its frequency and the day the brief gave it. It is
+# SELECTED by the frequency, which the cold phase does not touch, and its day is
+# read off the key's own HISTORY, because the cold phase moves what it holds now.
+recall {"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "60"}], "history": "last_check_in"}
+carries "parent":"thing:kettle"
+carries "value":"2026-06-15"
+say     no loop with a sixty-day frequency hangs under the kettle carrying the day the brief gave it
+
+# 🚨 The load-bearing half, and it is an absence: the loop the operator keeps NO
+# schedule for was taken anyway, with no frequency invented for it. A surface
+# that demanded one would have lost that loop entirely.
+recall {"kind": "rhythm", "fields": [{"key": "last_check_in", "value": "2026-09-20"}]}
+carries "parent":"thing:the-air-filter"
+lacks   cadence_days
+say     the loop the operator keeps no schedule for was given one, which nobody said — or it is not under the filter at all
+```
+
 ## Phase 2 — the day the question is asked
 
 **Session: fresh.** No memory of phase 1 — deliberately, and it is the whole
@@ -137,6 +165,21 @@ instrument. Everything this phase needs, the phase before it had to leave
 behind.
 
 > start jojobot as assistant — as of 1 October 2026 one of the things I keep on there had gone quiet, and I have just done that one, so put it on the record
+
+```locks
+# The terminal lock, and the reason the room has a cold phase. As of the day the
+# operator names, exactly one of the three has fallen due: the fern is not due
+# for another month, the filter has no schedule and so can never be late, and
+# the kettle went past its day in August.
+#
+# All three loops in one answer, each read by what it HOLDS now. A session that
+# checked everything in did not answer the question, it painted the wall.
+recall {"kind": "rhythm"}
+carries "last_check_in":"2026-09-20"
+carries "last_check_in":"2026-08-01"
+lacks   "last_check_in":"2026-06-15"
+say     the cold session moved a loop that was not due, or left the one that was where it stood
+```
 
 ## What this room cannot measure
 

@@ -15,7 +15,9 @@ use crate::run::Expectation;
 use crate::surface::Seed;
 
 pub use crate::handover_room::HANDOVER_ROOM;
-pub use crate::loop_room::LOOP_ROOM;
+
+/// **The loop room**, converted: its world and its locks are in its document.
+pub const LOOP_ROOM: &str = "rooms/loop.md";
 
 /// **The bike room**, converted: its world and its locks are in its document,
 /// and the two claims no query expresses are named checks.
@@ -47,10 +49,7 @@ type Room = (&'static str, Option<InRust>);
 /// is only what a room that has not been converted still falls back to.
 const ROOMS: [Room; 5] = [
     (BIKE_ROOM, None),
-    (
-        LOOP_ROOM,
-        Some((crate::loop_room::expectations, crate::loop_room::seed)),
-    ),
+    (LOOP_ROOM, None),
     (LEDGER_ROOM, None),
     (YEAR_ROOM, None),
     (
