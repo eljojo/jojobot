@@ -191,6 +191,9 @@ mod tests {
             {
                 unimplemented!("the owner index only reads the index")
             }
+            async fn reclaim_kind(&self, _: &str) -> Result<(), MemoryError> {
+                unimplemented!("the owner index only reads the index")
+            }
             async fn update_entity(
                 &self,
                 _: &EntityId,

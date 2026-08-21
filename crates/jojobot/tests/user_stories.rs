@@ -79,5 +79,8 @@ mod unprompted;
 mod unsourced;
 #[path = "user_stories/unsure.rs"]
 mod unsure;
+/// An upgrade takes back the rows the binary owns and no longer ships.
+#[path = "user_stories/upgrading.rs"]
+mod upgrading;
 #[path = "user_stories/vocabulary.rs"]
 mod vocabulary;

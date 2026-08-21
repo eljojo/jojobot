@@ -1354,6 +1354,35 @@ impl Memory for DoltMemory {
         Ok(())
     }
 
+    async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+        // **One transaction**, for the reason declaring one is: a kind whose
+        // row went and whose keys stayed would leave key rows describing a
+        // kind nothing can be.
+        let mut tx = self.pool.begin().await.map_err(store)?;
+
+        // **The origin decides, and it is read off the row.** A token naming a
+        // kind the operator declared reaches the same statements and matches
+        // nothing, so what a caller wrote cannot be taken by this path however
+        // its name got here.
+        let removed = sqlx::query("DELETE FROM kind WHERE token = ? AND origin = ?")
+            .bind(token)
+            .bind(Origin::Shipped.as_token())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?
+            .rows_affected();
+        if removed > 0 {
+            sqlx::query("DELETE FROM type_field WHERE type_name = ? AND owner = ?")
+                .bind(token)
+                .bind(KEYS_OF_A_KIND)
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
+        }
+        tx.commit().await.map_err(store)?;
+        Ok(())
+    }
+
     async fn declared_kinds(&self) -> Result<Vec<(String, Origin)>, MemoryError> {
         let rows: Vec<(String, String)> =
             sqlx::query_as("SELECT token, origin FROM kind ORDER BY token")

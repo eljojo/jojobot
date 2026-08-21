@@ -987,6 +987,33 @@ impl Memory for InMemoryMemory {
     ) -> Result<Vec<(String, crate::memory::types::Origin)>, MemoryError> {
         Ok(self.kinds.lock().unwrap().clone())
     }
+
+    async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+        use crate::memory::types::Origin;
+        let mut kinds = self.kinds.lock().unwrap();
+        // **The origin decides**, exactly as the row's column decides in the
+        // real store: a kind the operator declared is not this path's to take,
+        // whatever name it is handed.
+        let owned = kinds
+            .iter()
+            .any(|(held, origin)| held == token && *origin == Origin::Shipped);
+        if !owned {
+            return Ok(());
+        }
+        kinds.retain(|(held, _)| held != token);
+        drop(kinds);
+        // The keys go with the row, so a name shipped again later starts from
+        // nothing rather than inheriting keys it never declared.
+        self.kind_keys
+            .lock()
+            .expect("fake mutex poisoned")
+            .remove(token);
+        self.types
+            .lock()
+            .expect("fake mutex poisoned")
+            .retain(|t| t.name != token);
+        Ok(())
+    }
 }
 
 /// The behavioural contract every [`Memory`] adapter must satisfy. Each function
@@ -6971,6 +6998,61 @@ pub mod contract {
         );
     }
 
+    /// **A row the binary owns is reconciled on every boot, never upserted.**
+    ///
+    /// The seed writes what this build ships. What it could not do was take
+    /// back what an OLDER build shipped: a kind dropped from the set sat on
+    /// every upgraded instance for ever, and nothing on the row said it was
+    /// the software's rather than the operator's.
+    ///
+    /// **Three answers out of ONE read**, because each covers how the other
+    /// two pass on a build that is wrong. The reclaimed row alone passes on a
+    /// build that empties the table. The surviving caller's row alone passes
+    /// on a build that removes nothing. The shipped set alone passes on a
+    /// build that has never heard of an older one.
+    ///
+    /// Only a store can answer this: the set a process parses against is
+    /// loaded from these rows, and the double keeps whatever it is handed.
+    pub async fn an_owned_kind_this_build_dropped_is_reclaimed<M: Memory>(store: &M) {
+        // **What an older build shipped and this one does not.** The origin is
+        // the whole marker: nothing else on the row says who wrote it.
+        store
+            .declare_kind("zeta", Origin::Shipped, Vec::new())
+            .await
+            .expect("an older build declares its own kinds");
+        // **A caller's row of the same shape**, which reconciling must not
+        // touch. Same table, same columns, one column different.
+        store
+            .declare_kind("eta", Origin::Declared, Vec::new())
+            .await
+            .expect("a caller declares a kind of their own");
+
+        crate::memory::kinds::seed(store)
+            .await
+            .expect("the kinds are reconciled");
+
+        let held = store.declared_kinds().await.expect("the kinds read back");
+        assert!(
+            !held.iter().any(|(token, _)| token == "zeta"),
+            "the build stopped shipping 'zeta', so the instance stops holding it: {held:?}",
+        );
+        assert_eq!(
+            held.iter()
+                .find(|(token, _)| token == "eta")
+                .map(|(_, origin)| *origin),
+            Some(Origin::Declared),
+            "…and the row the caller wrote is exactly where they left it: {held:?}",
+        );
+        for shipped in crate::memory::kinds::SHIPPED {
+            assert!(
+                held.iter()
+                    .any(|(token, origin)| token == shipped && *origin == Origin::Shipped),
+                "…and this build's own set is whole, so reconciling removed \
+                 what left the set and nothing else: {held:?}",
+            );
+        }
+    }
+
     pub async fn a_trip_records_who_came_and_answers_from_either_end<M: Memory>(store: &M) {
         let away = EntityId::new(EntityKind::EVENT, "contract-long-weekend");
         let home = EntityId::new(EntityKind::PLACE, "contract-harbour-end");
@@ -8780,6 +8862,7 @@ pub mod contract {
         a_declared_reference_key_is_walkable_against_the_store(store).await;
         a_trip_records_who_came_and_answers_from_either_end(store).await;
         the_kinds_are_rows_and_a_shipped_one_is_closed(store).await;
+        an_owned_kind_this_build_dropped_is_reclaimed(store).await;
         a_pet_is_its_own_kind_in_the_store(store).await;
         a_rhythm_is_refused_without_a_parent(store).await;
         a_thing_reads_back_as_its_fields_folded(store).await;

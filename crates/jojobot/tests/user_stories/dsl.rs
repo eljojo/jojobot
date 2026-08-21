@@ -138,6 +138,10 @@ impl jojobot_domain::memory::Memory for Blindable {
         self.inner.declared_kinds().await
     }
 
+    async fn reclaim_kind(&self, token: &str) -> Result<(), jojobot_domain::memory::MemoryError> {
+        self.inner.reclaim_kind(token).await
+    }
+
     async fn update_entity(
         &self,
         handle: &jojobot_domain::memory::EntityId,
@@ -225,6 +229,29 @@ impl Story {
     /// `bot` carries its kind prefix, for the same reason `add` does.
     pub async fn begin(bot: &str) -> Self {
         Self::serve(bot, Arc::new(InMemoryMemory::booted())).await
+    }
+
+    /// **Serve a jojobot on an instance an older build left behind** — a store
+    /// already holding a kind the software shipped once and this build does
+    /// not.
+    ///
+    /// The row goes into the STORE rather than through a verb, because that is
+    /// how this state really arises: a previous binary wrote it, and what a
+    /// story asks is what the next boot does about it. The store is loaded
+    /// before it serves, so the retired kind is one this process could parse
+    /// until the boot reconciles it away.
+    pub async fn begin_on_an_instance_an_older_build_left(bot: &str, retired: &str) -> Self {
+        let store = InMemoryMemory::new();
+        jojobot_domain::memory::Memory::declare_kind(
+            &store,
+            retired,
+            jojobot_domain::memory::types::Origin::Shipped,
+            Vec::new(),
+        )
+        .await
+        .expect("an older build declared its own kinds");
+        store.boot();
+        Self::serve(bot, Arc::new(store)).await
     }
 
     async fn serve(bot: &str, store: Arc<dyn jojobot_domain::memory::Memory>) -> Self {

@@ -1934,6 +1934,12 @@ impl Memory for IndexedMemory {
     ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
         self.inner.declared_kinds().await
     }
+
+    // A kind is a row rather than a document, so reclaiming one touches no
+    // projection: the index holds entities, facts and prose.
+    async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+        self.inner.reclaim_kind(token).await
+    }
 }
 
 /// **Does this THING answer the type, and if so, say how — on the hit.**
@@ -4388,6 +4394,10 @@ mod tests {
             unimplemented!("this double only scans")
         }
 
+        async fn reclaim_kind(&self, _: &str) -> Result<(), MemoryError> {
+            unimplemented!("this double only scans")
+        }
+
         async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
             unimplemented!("this double only scans")
         }
@@ -4573,6 +4583,9 @@ mod tests {
         async fn declared_kinds(
             &self,
         ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
+        async fn reclaim_kind(&self, _: &str) -> Result<(), MemoryError> {
             unimplemented!("this double answers the three reads a store owns")
         }
     }

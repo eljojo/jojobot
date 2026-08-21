@@ -26,6 +26,7 @@ pub mod entitlement;
 pub mod graph;
 pub mod guard;
 pub mod kinds;
+pub mod owned;
 pub mod search;
 pub mod types;
 
@@ -3019,6 +3020,26 @@ pub trait Memory: Send + Sync {
         origin: types::Origin,
         fields: Vec<types::Field>,
     ) -> Result<(), MemoryError>;
+
+    /// **Take back an owned row this build no longer ships** — see
+    /// [`owned`](super::memory::owned) for what an owned row is and why a boot
+    /// reconciles rather than upserts.
+    ///
+    /// **It removes a kind ONLY when the store holds it as
+    /// [`Shipped`](types::Origin::Shipped)**, and the store reads that off the
+    /// row rather than trusting the caller of this method. A token naming a
+    /// caller's kind, or naming nothing, changes nothing and is not an error:
+    /// what the operator declared is not this verb's to take, and saying so in
+    /// the storage layer is what makes the composition property hold however
+    /// the name got here.
+    ///
+    /// The kind's keys go with the row. A key row left behind would describe a
+    /// kind nothing can be, and the next build to ship that name again would
+    /// inherit keys it never declared.
+    ///
+    /// **No served verb reaches this** (rule 60). It runs at startup, over
+    /// rows the software wrote about itself.
+    async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError>;
 
     /// **Every kind the store holds**, with where each came from.
     ///

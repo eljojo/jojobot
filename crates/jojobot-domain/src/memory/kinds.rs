@@ -223,7 +223,7 @@ pub fn intern(token: &str) -> &'static str {
     held
 }
 
-/// **Write the kinds this build ships, then load what the store holds.**
+/// **Reconcile the kinds this build ships, then load what the store holds.**
 ///
 /// **The order is the point, and it is write-then-read rather than read.** A
 /// seed that read first could not tell an instance whose kinds are missing
@@ -231,10 +231,19 @@ pub fn intern(token: &str) -> &'static str {
 /// believes in and the store does not hold. Writing first makes those the same
 /// instance.
 ///
+/// **[`SHIPPED`] is authoritative, so this is a reconcile and not an upsert**
+/// (rule 234). Writing alone reaches an instance with what a later build ADDS
+/// and nothing else: a kind an older build shipped and this one dropped would
+/// sit on every upgraded instance for ever, indistinguishable from one the
+/// operator declared. So what the store holds as the software's and this build
+/// does not ship is taken back — see [`owned`](super::owned) for the marker
+/// that tells those two rows apart.
+///
 /// **What is loaded is the store's answer**, not the list above it: a kind a
 /// caller declared is parsed by this process, and a shipped kind the store
 /// somehow lost stops being parsed rather than being kept alive by the code
-/// that just wrote it.
+/// that just wrote it. The second read is taken only when reclaiming changed
+/// something, and it is a read of the store for the same reason the first is.
 ///
 /// It lives here rather than beside the boot because the contract cases need
 /// the same two steps, and a second copy of them is where the two would drift.
@@ -244,7 +253,17 @@ pub async fn seed<M: super::Memory + ?Sized>(store: &M) -> Result<usize, super::
             .declare_kind(token, super::types::Origin::Shipped, keys_of(token))
             .await?;
     }
-    let held = store.declared_kinds().await?;
+    let mut held = store.declared_kinds().await?;
+    let stale = super::owned::reclaimed(
+        held.iter().map(|(token, origin)| (token.as_str(), *origin)),
+        SHIPPED,
+    );
+    if !stale.is_empty() {
+        for token in &stale {
+            store.reclaim_kind(token).await?;
+        }
+        held = store.declared_kinds().await?;
+    }
     load(held.iter().map(|(token, _)| token.clone()));
     Ok(held.len())
 }
