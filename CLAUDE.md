@@ -121,8 +121,13 @@ Shipped and live:
   claim laundres it into one.
 - **The graph query** — `recall` is the precise lookup and `search` is the
   breadth. `recall` selects objects (a handle · a kind · a declared type · a
-  key and its value), says what of each comes back (facts · prose · one key's
-  history), and walks to a depth in either direction. **Two kinds of link:** an **edge**, followed
+  key and its value · **the name of a VIEW, which fills the rest of the call in
+  from that view's own keys**), says what of each comes back (facts · prose ·
+  one key's history), and walks to a depth in either direction. **A view is a
+  record of kind `view`, so the one the operator declares and the one the build
+  supplies are the same shape and nothing branches on which.** **The build
+  supplies a charter and two views**, assembled in one place — a capability
+  ships data by adding an entry there, with no table, migration or verb. **Two kinds of link:** an **edge**, followed
   by one of the five shapes; and a **relation**, a key some type declared to
   hold a reference, followed by that key's own name. **A relation is
   key-scoped** — it reaches everything using that key, so *which of those are
