@@ -28,6 +28,50 @@
 //! project repeats more than any other and the one a tired author breaks, so
 //! the parser holds it rather than whoever is awake.
 //!
+//! # 🚨 A lock carries no session, and that is what a lock IS
+//!
+//! **A lock's query goes to the room with no `sid`**, so it can ask only the
+//! verbs that need no identity. `read_mailbox` opens the box of whoever is
+//! asking, and a lock is nobody.
+//!
+//! **This is deliberate rather than a gap to close.** A lock observes the state
+//! a phase left behind. The moment it carries an identity it becomes a
+//! participant, and what it can see starts to depend on whose identity the
+//! harness pretended to be — which is the harness coaching the occupant by
+//! another route.
+//!
+//! **The identity-free path is usually there.** To assert about mail, read the
+//! board rather than a box:
+//!
+//! ```text
+//! search  {"query": "*", "include_mail": true, "limit": 200}
+//! carries the subject the room posted
+//! lacks   "state":"new"
+//! say     the brief is still sitting new in the box, so nobody took delivery
+//! ```
+//!
+//! **A state that no identity-free verb can reach is a finding about the
+//! surface**, not a gap in the harness. Report it rather than working around
+//! it.
+//!
+//! # ⚠️ Name the key, always
+//!
+//! An assertion is a substring of the answer as text, so **`carries 35` matches
+//! the digits inside a timestamp** and holds for a reason that has nothing to
+//! do with what it claims. Write `carries "cost":"35"`. The lock is then
+//! checking the value under the key it means, which is also the stronger claim.
+//!
+//! # ⚠️ One lock per object
+//!
+//! A substring says a value is somewhere in the answer. **It cannot say which
+//! object is holding it.** A read of every thing plus `carries paid` holds on a
+//! room where the job that said `paid` was painted over and another job
+//! supplied the word. Select the one object — `recall {"subject": …}` — when
+//! the claim is about that object.
+//!
+//! Correlating two fields inside one answer would make this a query language,
+//! which is what the assertion vocabulary refuses to become.
+//!
 //! # The hatch, and it is counted
 //!
 //! A lock may name a Rust check instead of a query. **The run reports how many

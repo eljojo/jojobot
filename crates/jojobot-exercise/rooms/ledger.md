@@ -72,17 +72,16 @@ message assistant | the jobs I pay for, and the words I want on them | I have be
 > start jojobot as assistant
 
 ```locks
-# A lock carries no session, so it can ask only the verbs that need no
-# identity. `read_mailbox` opens the box of whoever is asking, and there is
-# nobody here — so the board is read through `search` instead.
+# A lock carries no session, so the board is read rather than a box. The rule
+# and its reason live in the format's own text.
 search {"query": "*", "include_mail": true, "limit": 200}
 carries the jobs I pay for, and the words I want on them
 lacks   "state":"new"
 say     the brief is still sitting new in the box, so nobody took delivery of it
 
-# The keys are named in the assertion, not just the values. The room keeps its
-# jobs under two keys and tells the occupant neither; a job written under a key
-# of somebody's own invention is a job the operator's question never reaches.
+# The room keeps its jobs under two keys and tells the occupant neither: a job
+# written under a key of somebody's own invention is a job the operator's
+# question never reaches. So the assertion names the key as well as the value.
 recall {"subject": "thing:floor-pump"}
 carries "cost":"35"
 carries "settled":"paid"
@@ -110,10 +109,8 @@ recall {"subject": "thing:the-air-filter"}
 carries "settled":"invoiced"
 say     the air filter still carries the word nobody agreed to, or its job lost its word altogether
 
-# The positive the two above rest on, and it is one lock per thing because a
-# lock reads one answer as text: it can say a word is in there and it cannot
-# say which thing is holding it. A session that painted every job the same word
-# leaves no word nobody agreed to and has answered nothing.
+# The positive the two above rest on. A session that painted every job the same
+# word leaves no word nobody agreed to and has answered nothing.
 recall {"subject": "thing:jukebox"}
 carries "settled":"paid"
 say     the jukebox's job no longer says paid, so a word that was already right was painted over
