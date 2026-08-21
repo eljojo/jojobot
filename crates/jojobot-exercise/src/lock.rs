@@ -220,6 +220,13 @@ impl crate::run::Expectation for Lock {
         &self.name
     }
 
+    fn hatch(&self) -> Option<&str> {
+        match &self.asks {
+            Asks::Check(named) => Some(named.as_str()),
+            Asks::Query { .. } => None,
+        }
+    }
+
     async fn check(&self, seen: &crate::run::Observed<'_>) -> crate::run::Outcome {
         let Asks::Query { verb, args } = &self.asks else {
             // **A named check is not run here.** It is Rust somebody wrote, it
@@ -289,21 +296,6 @@ impl crate::run::Expectation for Lock {
             saying: self.say.clone(),
         }
     }
-}
-
-/// **How many locks reached for Rust, and which.**
-///
-/// Reported by the run because an escape nobody counts is an escape everybody
-/// takes. Each one names something jojobot's query surface cannot say, which is
-/// a finding about the surface rather than a gap in the harness.
-pub fn hatches(locks: &[Lock]) -> Vec<&str> {
-    locks
-        .iter()
-        .filter_map(|lock| match &lock.asks {
-            Asks::Check(named) => Some(named.as_str()),
-            Asks::Query { .. } => None,
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -416,7 +408,8 @@ mod tests {
              ```\n",
         )
         .expect("both read");
-        assert_eq!(hatches(&read), vec!["the_cost_reads_as_a_number"]);
+        let taken: Vec<Option<&str>> = read.iter().map(crate::run::Expectation::hatch).collect();
+        assert_eq!(taken, vec![Some("the_cost_reads_as_a_number"), None]);
     }
 
     /// **A lock is keyed to the phase it is written under.**

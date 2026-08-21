@@ -46,6 +46,7 @@ fn run_with(transcript: Vec<Said>, offered: &[usize], outcomes: Vec<Outcome>) ->
         outcomes,
         transcript,
         uncovered: Vec::new(),
+        hatches: Vec::new(),
         boundaries: offered.iter().map(|n| boundary(*n)).collect(),
         before: "before".into(),
         after: "after".into(),

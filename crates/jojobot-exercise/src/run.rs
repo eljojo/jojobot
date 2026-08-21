@@ -35,6 +35,19 @@ pub struct Outcome {
 /// left something, and that the something is observable through the surface.
 #[async_trait::async_trait]
 pub trait Expectation: Send + Sync {
+    /// **The Rust check this reached for, when it reached for one.**
+    ///
+    /// A lock may name a check instead of asking jojobot a question. The run
+    /// counts those and names them, because an escape nobody counts is an
+    /// escape everybody takes — and each one is a specific thing the query
+    /// surface cannot say, which is a finding rather than a footnote.
+    ///
+    /// A check written in Rust in the first place is not an escape from
+    /// anything, so the default is none.
+    fn hatch(&self) -> Option<&str> {
+        None
+    }
+
     fn name(&self) -> &str;
     async fn check(&self, seen: &Observed<'_>) -> Outcome;
 }
@@ -106,6 +119,9 @@ pub struct Results {
     /// **Phases nobody wrote an expectation for.** Named in the results, so a
     /// phase with no check reads as uncovered and never as passed.
     pub uncovered: Vec<String>,
+    /// **The Rust checks the room's locks reached for.** Named in the results
+    /// so a reader sees what did not fit rather than assuming everything did.
+    pub hatches: Vec<String>,
     /// What the door offered at each phase boundary, oldest first.
     pub boundaries: Vec<Boundary>,
     /// What the room held before the agent touched it, and after.
@@ -362,6 +378,26 @@ impl Results {
                  so a person reads it above. It is NOT passed."
             );
         }
+        // **Said either way.** A run that took no escape and a run that never
+        // prints the line read the same to somebody who does not know the line
+        // exists.
+        match self.hatches.len() {
+            0 => {
+                let _ = writeln!(
+                    out,
+                    "\n  [ hatches ] no lock reached for Rust: every check here asked jojobot a \
+                     question."
+                );
+            }
+            how_many => {
+                let _ = writeln!(
+                    out,
+                    "\n  [ hatches ] {how_many} lock(s) reached for Rust rather than asking \
+                     jojobot: {}. Each one is something the query surface cannot say.",
+                    self.hatches.join(", "),
+                );
+            }
+        }
         out
     }
 }
@@ -511,6 +547,7 @@ pub async fn go(
     }
 
     let uncovered = uncovered_phases(playbook, expectations);
+    let hatches = hatches_taken(expectations);
 
     let results = Results {
         playbook: playbook.source.clone(),
@@ -518,6 +555,7 @@ pub async fn go(
         outcomes,
         transcript,
         uncovered,
+        hatches,
         boundaries,
         before,
         after,
@@ -542,6 +580,18 @@ pub fn uncovered_phases(
         .iter()
         .filter(|phase| !phase_is_covered(&phase.name, &named))
         .map(|phase| phase.name.clone())
+        .collect()
+}
+
+/// **The Rust checks a room's locks reached for**, in the order they are
+/// written.
+///
+/// One place counts them, so what a run reports and what a test asserts cannot
+/// disagree about what an escape is.
+pub fn hatches_taken(expectations: &[Box<dyn Expectation>]) -> Vec<String> {
+    expectations
+        .iter()
+        .filter_map(|check| check.hatch().map(str::to_string))
         .collect()
 }
 
@@ -631,10 +681,42 @@ mod tests {
                 })
                 .collect(),
             uncovered: Vec::new(),
+            hatches: Vec::new(),
             boundaries: Vec::new(),
             before: String::new(),
             after: String::new(),
         }
+    }
+
+    /// **A run says how many locks reached for Rust, and which.**
+    ///
+    /// An escape nobody counts is an escape everybody takes, and each one names
+    /// something jojobot's query surface cannot say — which is a finding rather
+    /// than a footnote.
+    ///
+    /// **Both halves.** A run that took none says so, because silence and "no
+    /// escape was taken" read the same to somebody who does not know the line
+    /// is ever printed.
+    #[test]
+    fn a_run_says_which_locks_reached_for_rust_and_a_run_that_took_none_says_that() {
+        let mut took = ran(&["Phase 1 — the room"]);
+        took.hatches = vec!["the_cost_reads_as_a_number".into()];
+        let said = took.rendered();
+        assert!(
+            said.contains("the_cost_reads_as_a_number") && said.contains(" 1 "),
+            "the run does not name the escape it took, or say how many: {said}",
+        );
+
+        let none = ran(&["Phase 1 — the room"]).rendered();
+        assert!(
+            none.contains("no lock"),
+            "a run that took no escape says nothing, so a reader cannot tell it from a run that \
+             never prints the line: {none}",
+        );
+        assert!(
+            !none.contains("the_cost_reads_as_a_number"),
+            "a run that took no escape named one anyway: {none}",
+        );
     }
 
     /// **The run outlives the process, whole and from the beginning.**
