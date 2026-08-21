@@ -1308,11 +1308,11 @@ impl Memory for DoltMemory {
             .fetch_optional(&mut *tx)
             .await
             .map_err(store)?;
-        if held.as_deref() == Some(Origin::Shipped.as_token()) && origin == Origin::Declared {
-            return Err(MemoryError::InvalidEntity(format!(
-                "'{token}' is a kind the software ships, and a caller cannot redeclare one"
-            )));
-        }
+        jojobot_domain::memory::types::guard_kind_replacement(
+            token,
+            origin,
+            held.as_deref().and_then(Origin::of_token),
+        )?;
         sqlx::query("REPLACE INTO kind (token, origin) VALUES (?, ?)")
             .bind(token)
             .bind(origin.as_token())

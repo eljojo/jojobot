@@ -1030,6 +1030,38 @@ pub fn guard_replacement(incoming: &DeclaredType, held: Option<Origin>) -> Resul
     Ok(())
 }
 
+/// **May this declaration be written over the kind the store holds under that
+/// token** — the same question [`guard_replacement`] asks of a type, asked of
+/// a kind.
+///
+/// It is one function both stores call, for the reason the type's guard is:
+/// a rule each of them re-implemented is a rule they eventually disagree
+/// about, and the disagreement would show up as the real store letting a
+/// caller take a kind the fake kept closed.
+///
+/// **The refusal names what the caller can do instead.** A bare no on a write
+/// that will never land however often it is sent costs more than the mistake
+/// it reports: nothing the caller puts in this call reaches a kind the
+/// software owns, and what they can do is declare under a token of their own.
+///
+/// `held` is the origin the store has under this token now, or nothing when
+/// the token is free.
+pub fn guard_kind_replacement(
+    token: &str,
+    incoming: Origin,
+    held: Option<Origin>,
+) -> Result<(), MemoryError> {
+    if incoming == Origin::Declared && held == Some(Origin::Shipped) {
+        return Err(MemoryError::InvalidEntity(format!(
+            "'{token}' is a kind the software ships, and a caller cannot redeclare one: \
+             sending this again will not change the answer, because changing a kind the \
+             software owns is a change to the software. Declare a kind under a token of \
+             your own instead, and that one is yours to reshape"
+        )));
+    }
+    Ok(())
+}
+
 /// One plain label: a name or a key. Both are stored as one cell and read back
 /// as one token, so a control character or a backtick in either is refused at
 /// the door.

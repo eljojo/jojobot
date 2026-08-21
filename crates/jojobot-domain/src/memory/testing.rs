@@ -965,14 +965,9 @@ impl Memory for InMemoryMemory {
         origin: crate::memory::types::Origin,
         fields: Vec<crate::memory::types::Field>,
     ) -> Result<(), MemoryError> {
-        use crate::memory::types::Origin;
         let mut kinds = self.kinds.lock().unwrap();
         if let Some((held, held_origin)) = kinds.iter_mut().find(|(held, _)| held == token) {
-            if *held_origin == Origin::Shipped && origin == Origin::Declared {
-                return Err(MemoryError::InvalidEntity(format!(
-                    "'{held}' is a kind the software ships, and a caller cannot redeclare one"
-                )));
-            }
+            crate::memory::types::guard_kind_replacement(held, origin, Some(*held_origin))?;
             *held_origin = origin;
             drop(kinds);
             return self.keys_of_kind(token, origin, fields);
@@ -6985,16 +6980,32 @@ pub mod contract {
             matches!(refused, MemoryError::InvalidEntity(_)),
             "the refusal says what is wrong rather than failing the store: {refused:?}",
         );
+        // **The caller's own layer, and the same write lands in it.** A kind
+        // of their own is theirs to declare, which is what the refusal above
+        // is a refusal to do somewhere else rather than a refusal to do at
+        // all.
+        store
+            .declare_kind("theta", Origin::Declared, Vec::new())
+            .await
+            .expect("a caller declares a kind of their own");
+
+        // **Both answers out of ONE read.** The refusal alone passes on a
+        // store that refuses every declaration there is; the caller's own row
+        // alone passes on a store that refuses nothing.
+        let held = store.declared_kinds().await.expect("the kinds read back");
         assert_eq!(
-            store
-                .declared_kinds()
-                .await
-                .expect("the kinds read back")
-                .into_iter()
+            held.iter()
                 .find(|(token, _)| token == "person")
-                .map(|(_, origin)| origin),
+                .map(|(_, origin)| *origin),
             Some(Origin::Shipped),
-            "…and the row it refused to take over is untouched",
+            "the row it refused to take over is untouched: {held:?}",
+        );
+        assert_eq!(
+            held.iter()
+                .find(|(token, _)| token == "theta")
+                .map(|(_, origin)| *origin),
+            Some(Origin::Declared),
+            "…and the same write under a name of the caller's own landed: {held:?}",
         );
     }
 
