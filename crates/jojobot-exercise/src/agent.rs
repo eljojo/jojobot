@@ -104,6 +104,59 @@ pub struct Agent {
     cwd: std::path::PathBuf,
 }
 
+/// **How long one delivery may take before the run stops waiting for it.**
+///
+/// A model answering a hard phase takes minutes, so this is generous. It is
+/// finite because the alternative is not: the call had no deadline at all, and
+/// at two phases a hang is a person noticing while at fifteen it is a paid run
+/// that produces nothing and never ends.
+///
+/// **Stopping a phase is not failing the run.** The phase is recorded as
+/// unanswered and the next one goes ahead, because a run that got twelve
+/// phases in is worth more than one that got none.
+const PHASE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// **Run an invocation, or stop it when the deadline passes.**
+///
+/// `None` means the deadline passed and the process was killed. Separate from
+/// [`Agent::work`] because the agent CLI is not on PATH in a test and a
+/// deadline that has never been watched expire is not a deadline.
+async fn within(
+    invocation: &Invocation,
+    deadline: std::time::Duration,
+) -> Result<Option<std::process::Output>> {
+    // **Piped, because the transcript is the point.** `output()` did this for
+    // us; a spawn does not, and inherited streams send the agent's answer to
+    // whoever is watching and nowhere else — which is the very thing the
+    // transcript work exists to stop.
+    let child = invocation
+        .command()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        // **Killed when this call gives up on it, rather than orphaned.** A
+        // process nobody is waiting for still holds its share of the room and
+        // still costs money; `wait_with_output` takes the child, so dropping it
+        // on the deadline is what has to do the killing.
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| {
+            format!(
+                "running {} — the agent CLI is the operator's own tool, the same one they are \
+                 already logged in to, and this project neither ships nor installs it: it has to \
+             be on PATH before a run starts",
+                invocation.program,
+            )
+        })?;
+    match tokio::time::timeout(deadline, child.wait_with_output()).await {
+        Ok(done) => Ok(Some(done.with_context(|| {
+            format!("waiting for {} to finish", invocation.program)
+        })?)),
+        // The child is dropped here, and it was spawned to die when that
+        // happens.
+        Err(_) => Ok(None),
+    }
+}
+
 impl Agent {
     pub fn new(model: &str) -> Agent {
         Agent {
@@ -184,14 +237,19 @@ impl Agent {
                 invocation.cwd.display(),
             )
         })?;
-        let done = invocation.command().output().await.with_context(|| {
-            format!(
-                "running {} — the agent CLI is the operator's own tool, the same one they are \
-                 already logged in to, and this project neither ships nor installs it: it has to \
-                 be on PATH before a run starts",
-                invocation.program,
-            )
-        })?;
+        let Some(done) = within(&invocation, PHASE_DEADLINE).await? else {
+            // **A phase that never answers is a result, not a hang.** The run
+            // goes on to the next phase and the transcript says what happened
+            // here — the alternative is a paid run that produces nothing and
+            // never ends, which is what this deadline exists to prevent.
+            return Ok(Worked {
+                output: format!(
+                    "[the agent did not answer within {} seconds and was stopped]",
+                    PHASE_DEADLINE.as_secs(),
+                ),
+                ran: false,
+            });
+        };
         let mut said = String::from_utf8_lossy(&done.stdout).to_string();
         if !done.status.success() {
             said.push_str(&format!(
@@ -247,6 +305,57 @@ fn uuid() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An invocation of a program that is really on PATH, so a deadline can be
+    /// watched expire rather than reasoned about.
+    fn running(program: &str, args: &[&str]) -> Invocation {
+        Invocation {
+            program: program.to_string(),
+            args: args.iter().map(|a| (*a).to_string()).collect(),
+            cwd: std::env::temp_dir(),
+        }
+    }
+
+    /// **A phase that never answers is stopped, and one that answers is not.**
+    ///
+    /// The call had no deadline at all. At two phases a hang is a person
+    /// noticing; at fifteen it is a paid run that produces nothing and never
+    /// ends.
+    ///
+    /// **Both halves in one case.** Without the second, a deadline that killed
+    /// everything would pass — and that is worse than no deadline, because it
+    /// would end every phase of every run.
+    #[tokio::test]
+    async fn a_phase_that_never_answers_is_stopped_and_one_that_answers_is_not() {
+        let waited = std::time::Instant::now();
+        let stopped = within(
+            &running("sleep", &["120"]),
+            std::time::Duration::from_millis(150),
+        )
+        .await
+        .expect("stopping a phase is a result, not an error");
+        assert!(
+            stopped.is_none(),
+            "a phase past its deadline comes back stopped",
+        );
+        assert!(
+            waited.elapsed() < std::time::Duration::from_secs(30),
+            "…and the run did not wait for it: {:?}",
+            waited.elapsed(),
+        );
+
+        let answered = within(
+            &running("echo", &["the phase answered"]),
+            std::time::Duration::from_secs(30),
+        )
+        .await
+        .expect("a phase that answers runs")
+        .expect("…and is not stopped");
+        assert!(
+            String::from_utf8_lossy(&answered.stdout).contains("the phase answered"),
+            "…and what it said is what comes back",
+        );
+    }
 
     fn flag_after(invocation: &Invocation, flag: &str) -> Option<String> {
         let at = invocation.args.iter().position(|a| a == flag)?;
