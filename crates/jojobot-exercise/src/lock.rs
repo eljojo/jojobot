@@ -176,6 +176,103 @@ fn one(lines: &[String]) -> Result<Lock> {
     Ok(Lock { asks, expects, say })
 }
 
+/// **A lock, as the thing a run checks.**
+///
+/// The adapter is the whole of what turns a document into a check: the query
+/// goes to the room exactly as written, the assertions read the answer, and the
+/// authored sentence is what a reader sees.
+#[async_trait::async_trait]
+impl crate::run::Expectation for Lock {
+    fn name(&self) -> &str {
+        &self.say
+    }
+
+    async fn check(&self, seen: &crate::run::Observed<'_>) -> crate::run::Outcome {
+        let Asks::Query { verb, args } = &self.asks else {
+            // **A named check is not run here.** It is Rust somebody wrote, it
+            // is counted where the run reports, and a lock that reached this
+            // point without one is a room naming a check that does not exist.
+            return crate::run::Outcome {
+                name: self.say.clone(),
+                held: false,
+                saying: format!(
+                    "this lock names a check nobody wrote: {}",
+                    match &self.asks {
+                        Asks::Check(named) => named.as_str(),
+                        Asks::Query { .. } => unreachable!(),
+                    },
+                ),
+            };
+        };
+        let args: serde_json::Value = match serde_json::from_str(args) {
+            Ok(args) => args,
+            Err(e) => {
+                return crate::run::Outcome {
+                    name: self.say.clone(),
+                    held: false,
+                    saying: format!("this lock's query is not json: {e}"),
+                };
+            }
+        };
+        let answer = seen.room.call(verb, args).await;
+        let short = |what: &str| -> String {
+            // **The answer, cut but never summarised.** A reader needs enough
+            // to see what came back instead; the whole of a two-hundred-hit
+            // read buries the sentence that matters.
+            let head: String = what.chars().take(600).collect();
+            match what.chars().count() > 600 {
+                true => format!("{head}… [{} characters in all]", what.chars().count()),
+                false => head,
+            }
+        };
+        for expect in &self.expects {
+            let missed = match expect {
+                Expect::Carries(text) if !answer.contains(text.as_str()) => {
+                    Some(format!("{text:?} is not in what came back"))
+                }
+                Expect::Lacks(text) if answer.contains(text.as_str()) => {
+                    Some(format!("{text:?} is in what came back and should not be"))
+                }
+                Expect::AtLeast(how_many, text) => {
+                    let found = answer.matches(text.as_str()).count();
+                    match found < *how_many {
+                        true => Some(format!("{text:?} came back {found} times, not {how_many}")),
+                        false => None,
+                    }
+                }
+                Expect::Carries(_) | Expect::Lacks(_) => None,
+            };
+            if let Some(missed) = missed {
+                return crate::run::Outcome {
+                    name: self.say.clone(),
+                    held: false,
+                    saying: format!("{}: {missed}. What came back: {}", self.say, short(&answer)),
+                };
+            }
+        }
+        crate::run::Outcome {
+            name: self.say.clone(),
+            held: true,
+            saying: self.say.clone(),
+        }
+    }
+}
+
+/// **How many locks reached for Rust, and which.**
+///
+/// Reported by the run because an escape nobody counts is an escape everybody
+/// takes. Each one names something jojobot's query surface cannot say, which is
+/// a finding about the surface rather than a gap in the harness.
+pub fn hatches(locks: &[Lock]) -> Vec<&str> {
+    locks
+        .iter()
+        .filter_map(|lock| match &lock.asks {
+            Asks::Check(named) => Some(named.as_str()),
+            Asks::Query { .. } => None,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,6 +363,27 @@ mod tests {
             read[0].asks,
             Asks::Check("the_cost_reads_as_a_number".into())
         );
+    }
+
+    /// **The run can say how many locks reached for Rust, and which.**
+    ///
+    /// Both halves: the hatch is named, and a lock that asked a query is not
+    /// counted as one. Without the second, a counter that named everything
+    /// would pass and the number would mean nothing.
+    #[test]
+    fn the_hatches_are_countable_and_a_query_is_not_one() {
+        let read = read(
+            "```locks\n\
+             check   the_cost_reads_as_a_number\n\
+             say     what the pump cost did not normalise\n\
+             \n\
+             recall {\"kind\": \"person\"}\n\
+             carries person:milhouse\n\
+             say     milhouse is gone\n\
+             ```\n",
+        )
+        .expect("both read");
+        assert_eq!(hatches(&read), vec!["the_cost_reads_as_a_number"]);
     }
 
     /// **Blank lines separate locks**, so a phase carrying three is three.
