@@ -106,7 +106,13 @@ fn locks_in(source: &str) -> Option<Vec<Box<dyn Expectation>>> {
         Ok(locks) => Some(
             locks
                 .into_iter()
-                .map(|lock| Box::new(lock) as Box<dyn Expectation>)
+                .map(|mut lock| {
+                    // **The hatch, given its Rust.** A lock asking a query
+                    // needs nothing; a lock naming a check the build does not
+                    // ship stays unresolved and fails saying which name.
+                    lock.resolve(&named_check);
+                    Box::new(lock) as Box<dyn Expectation>
+                })
                 .collect(),
         ),
         // **Refused loudly rather than silently ignored.** A malformed lock is
@@ -114,6 +120,19 @@ fn locks_in(source: &str) -> Option<Vec<Box<dyn Expectation>>> {
         // over the checks that happened to parse.
         Err(e) => panic!("the locks in {source} cannot be read: {e:#}"),
     }
+}
+
+/// **Every Rust check this build ships, by the name a document calls it.**
+///
+/// A hatch is a claim jojobot's query surface cannot say, so each entry here
+/// names a specific limit of that surface rather than a convenience. **The run
+/// counts and prints the ones a room took**, and a room that cannot reach zero
+/// is telling you something.
+fn named_check(name: &str) -> Option<Box<dyn crate::run::Checks>> {
+    crate::checks::CHECKS
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, make)| make())
 }
 
 /// **What a room is furnished with before its occupant arrives**, and an empty

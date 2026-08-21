@@ -100,7 +100,6 @@ pub enum Expect {
 }
 
 /// One lock.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lock {
     pub asks: Asks,
     pub expects: Vec<Expect>,
@@ -115,6 +114,35 @@ pub struct Lock {
     /// reader carries it rather than asking for it a second time in the
     /// sentence. A lock under no heading is its sentence alone.
     pub name: String,
+    /// **The Rust behind a named check**, once somebody has resolved it.
+    ///
+    /// A lock read out of a document carries none: reading a document and
+    /// knowing which checks a build ships are different jobs, and the reader
+    /// does not do the second.
+    hatch: Option<Box<dyn crate::run::Checks>>,
+}
+
+impl std::fmt::Debug for Lock {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("Lock")
+            .field("asks", &self.asks)
+            .field("expects", &self.expects)
+            .field("say", &self.say)
+            .field("name", &self.name)
+            .field("resolved", &self.hatch.is_some())
+            .finish()
+    }
+}
+
+impl Lock {
+    /// **Give this lock the Rust it names**, when it names one.
+    ///
+    /// A lock asking a query is left alone: it needs nothing but the room.
+    pub fn resolve(&mut self, hatches: &crate::run::Hatches) {
+        if let Asks::Check(named) = &self.asks {
+            self.hatch = hatches(named);
+        }
+    }
 }
 
 const OPENS: &str = "```locks";
@@ -250,6 +278,7 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
         expects,
         say,
         name,
+        hatch: None,
     })
 }
 
@@ -273,19 +302,30 @@ impl crate::run::Expectation for Lock {
 
     async fn check(&self, seen: &crate::run::Observed<'_>) -> crate::run::Outcome {
         let Asks::Query { verb, args } = &self.asks else {
-            // **A named check is not run here.** It is Rust somebody wrote, it
-            // is counted where the run reports, and a lock that reached this
-            // point without one is a room naming a check that does not exist.
-            return crate::run::Outcome {
-                name: self.name.clone(),
-                held: false,
-                saying: format!(
-                    "this lock names a check nobody wrote: {}",
-                    match &self.asks {
-                        Asks::Check(named) => named.as_str(),
-                        Asks::Query { .. } => unreachable!(),
-                    },
-                ),
+            let Asks::Check(named) = &self.asks else {
+                unreachable!("a lock asks a query or names a check")
+            };
+            // **The hatch, run.** The check answers the verdict and this lock
+            // answers with its own sentence, so a reader gets the prose
+            // somebody wrote about the room with what the check found after it.
+            let Some(hatch) = &self.hatch else {
+                return crate::run::Outcome {
+                    name: self.name.clone(),
+                    held: false,
+                    saying: format!("this lock names a check nobody wrote: {named}"),
+                };
+            };
+            return match hatch.run(seen).await {
+                Ok(()) => crate::run::Outcome {
+                    name: self.name.clone(),
+                    held: true,
+                    saying: self.say.clone(),
+                },
+                Err(found) => crate::run::Outcome {
+                    name: self.name.clone(),
+                    held: false,
+                    saying: format!("{}: {found}", self.say),
+                },
             };
         };
         let args: serde_json::Value = match serde_json::from_str(args) {
@@ -345,6 +385,7 @@ impl crate::run::Expectation for Lock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::run::Expectation;
 
     /// **A lock is a query, an assertion and a sentence**, and the query is
     /// jojobot's own vocabulary with nothing translated.
@@ -510,6 +551,99 @@ mod tests {
         assert_eq!(
             unkeyed[0].name, "the jukebox is gone",
             "a lock under no phase heading was given a key nothing in the document says",
+        );
+    }
+
+    /// **A named check runs the Rust somebody wrote for it, and the lock keeps
+    /// its own sentence.**
+    ///
+    /// The hatch is for the claims no query expresses. What it must NOT do is
+    /// take the authored sentence with it: a reader gets the sentence somebody
+    /// wrote about this room, and the check contributes only the verdict and
+    /// what it found.
+    ///
+    /// **Both halves.** A check that holds and one that does not, because a
+    /// resolver that reported one verdict for everything would pass on either
+    /// alone.
+    #[tokio::test]
+    async fn a_named_check_supplies_the_verdict_and_the_lock_supplies_the_sentence() {
+        let room =
+            crate::room::Room::open(&crate::room::server_binary().expect("a jojobot binary"))
+                .await
+                .expect("a room");
+        let surface = crate::surface::Surface::connect(room.endpoint())
+            .await
+            .expect("a client");
+        let boundaries: Vec<crate::run::Boundary> = Vec::new();
+        let seen = crate::run::Observed {
+            room: &surface,
+            boundaries: &boundaries,
+        };
+
+        let document = "```locks\n\
+             check   a_check_that_holds\n\
+             say     the thing the room is about did not happen\n\
+             \n\
+             check   a_check_that_misses\n\
+             say     the other thing the room is about did not happen\n\
+             ```\n";
+        let mut locks = read(document).expect("both read");
+        for lock in &mut locks {
+            lock.resolve(&|named| match named {
+                "a_check_that_holds" => Some(crate::run::checked(|_| Box::pin(async { Ok(()) }))),
+                "a_check_that_misses" => Some(crate::run::checked(|_| {
+                    Box::pin(async { Err("the pump says nothing".to_string()) })
+                })),
+                _ => None,
+            });
+        }
+
+        let held = locks[0].check(&seen).await;
+        assert!(held.held, "a check that holds was reported as missing");
+        assert_eq!(
+            held.name, "the thing the room is about did not happen",
+            "the check took the authored sentence with it",
+        );
+
+        let missed = locks[1].check(&seen).await;
+        assert!(!missed.held, "a check that misses was reported as holding");
+        assert!(
+            missed.saying.contains("the other thing the room is about")
+                && missed.saying.contains("the pump says nothing"),
+            "a reader gets the sentence and what the check found: {}",
+            missed.saying,
+        );
+    }
+
+    /// **A lock naming a check nobody wrote still fails**, and says so.
+    #[tokio::test]
+    async fn a_lock_naming_a_check_nobody_wrote_fails_rather_than_holding() {
+        let room =
+            crate::room::Room::open(&crate::room::server_binary().expect("a jojobot binary"))
+                .await
+                .expect("a room");
+        let surface = crate::surface::Surface::connect(room.endpoint())
+            .await
+            .expect("a client");
+        let boundaries: Vec<crate::run::Boundary> = Vec::new();
+        let seen = crate::run::Observed {
+            room: &surface,
+            boundaries: &boundaries,
+        };
+        let mut locks = read(
+            "```locks\n\
+             check   nobody_wrote_this\n\
+             say     something about the room\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        locks[0].resolve(&|_| None);
+        let outcome = locks[0].check(&seen).await;
+        assert!(!outcome.held);
+        assert!(
+            outcome.saying.contains("nobody_wrote_this"),
+            "the failure does not name the check that is missing: {}",
+            outcome.saying,
         );
     }
 

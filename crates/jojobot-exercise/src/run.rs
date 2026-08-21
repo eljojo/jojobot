@@ -570,6 +570,42 @@ pub async fn go(
     Ok(results)
 }
 
+/// **What a named Rust check answers**: nothing when the claim holds, and the
+/// reason when it does not.
+///
+/// It supplies the VERDICT and never the sentence. A reader gets the prose
+/// somebody wrote about the room, with what the check found after it — the
+/// hatch is for a claim no query expresses, not for a second place to write
+/// sentences.
+pub type Verdict<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>>;
+
+/// A Rust check a room's document may name instead of a query.
+pub trait Checks: Send + Sync {
+    fn run<'a>(&'a self, seen: &'a Observed<'a>) -> Verdict<'a>;
+}
+
+/// Wrap a plain function as a named check.
+pub fn checked<F>(run: F) -> Box<dyn Checks>
+where
+    F: for<'a> Fn(&'a Observed<'a>) -> Verdict<'a> + Send + Sync + 'static,
+{
+    struct Wrapped<F>(F);
+    impl<F> Checks for Wrapped<F>
+    where
+        F: for<'a> Fn(&'a Observed<'a>) -> Verdict<'a> + Send + Sync,
+    {
+        fn run<'a>(&'a self, seen: &'a Observed<'a>) -> Verdict<'a> {
+            (self.0)(seen)
+        }
+    }
+    Box::new(Wrapped(run))
+}
+
+/// **Where a room's named checks come from.** A name nobody wrote resolves to
+/// nothing, and the lock that named it fails saying so.
+pub type Hatches = dyn Fn(&str) -> Option<Box<dyn Checks>> + Send + Sync;
+
 /// **The assertion every dated sitting gets, generated rather than authored.**
 ///
 /// A run acting out a year is fiction inside the test: jojobot learns nothing

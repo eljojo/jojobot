@@ -20,6 +20,7 @@
 
 pub mod agent;
 pub mod bike_room;
+pub mod checks;
 pub mod expectations;
 pub mod handover_room;
 pub mod lock;
