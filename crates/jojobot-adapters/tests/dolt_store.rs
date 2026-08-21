@@ -249,6 +249,85 @@ async fn the_real_store_keeps_the_operators_half_and_not_the_builds() {
     store.stop().await;
 }
 
+/// **A record the build ships is in no table of the real store**, and it still
+/// answers the reads a stored one answers.
+///
+/// The same claim as the case above, for the other shape a provision takes, and
+/// the same reason for asking it of a real store: the whole design rests on the
+/// build's data never being written down. **Three answers** — the record
+/// answers, the store holds no row for it, and a row the operator really wrote
+/// is there beside it. Without the third, a store that had lost everything
+/// would pass.
+#[tokio::test]
+async fn a_record_the_build_ships_is_in_no_table_of_the_real_store() {
+    let scratch = Scratch::new("supplied");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("supplied")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let shipped = EntityId::new(jojobot_domain::memory::EntityKind::VIEW, "loops");
+    let theirs = EntityId::new(jojobot_domain::memory::EntityKind::VIEW, "my-people");
+    let bare = DoltMemory::open(pool.clone());
+    bare.add_entity(jojobot_domain::memory::NewEntity::new(
+        theirs.clone(),
+        "My People",
+        "user-named",
+    ))
+    .await
+    .expect("the operator declares their own")
+    .written()
+    .expect("an empty board blocks nothing");
+
+    let served = Provisioned::new(
+        bare,
+        Provisions::new(vec![jojobot_domain::memory::owned::Provision::record(
+            jojobot_domain::memory::Entity {
+                id: shipped.clone(),
+                kind: jojobot_domain::memory::EntityKind::VIEW,
+                name: "The Loops".into(),
+                aliases: Vec::new(),
+                source: "jojobot".into(),
+                crm: None,
+                parent: None,
+                boot: Default::default(),
+            },
+            std::collections::BTreeMap::from([("selects".to_string(), "rhythm".to_string())]),
+        )]),
+    );
+
+    // ① The shipped record answers, over the real store.
+    assert_eq!(
+        served
+            .fields(&shipped)
+            .await
+            .expect("the keys read")
+            .get("selects"),
+        Some(&"rhythm".to_string()),
+    );
+    // ② …and the store has no row for it.
+    let rows: Vec<String> = sqlx::query_scalar("SELECT id FROM entity WHERE kind = 'view'")
+        .fetch_all(&pool)
+        .await
+        .expect("the table reads");
+    assert!(
+        !rows.contains(&shipped.to_string()),
+        "the build's record was written down, so this instance is frozen on this build: {rows:?}",
+    );
+    // ③ …while the one the operator declared is a row like any other.
+    assert!(
+        rows.contains(&theirs.to_string()),
+        "the operator's own record is in the table: {rows:?}",
+    );
+
+    store.stop().await;
+}
+
 /// **An owner index that answers for the contract's roster and nothing else.**
 ///
 /// Strict on purpose. A resolver that says yes to everything makes
