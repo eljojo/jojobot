@@ -198,7 +198,7 @@ async fn the_real_store_keeps_the_operators_half_and_not_the_builds() {
     booted(&pool).await;
 
     const SHIPPED: &str = "You answer in one line unless asked otherwise.";
-    let bot = EntityId::new(jojobot_domain::memory::EntityKind::BOT, "gamma");
+    let bot = EntityId("bot:gamma".into());
     let bare = DoltMemory::open(pool.clone());
     bare.add_entity(jojobot_domain::memory::NewEntity::new(
         bot.clone(),
@@ -271,8 +271,8 @@ async fn a_record_the_build_ships_is_in_no_table_of_the_real_store() {
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
 
-    let shipped = EntityId::new(jojobot_domain::memory::EntityKind::VIEW, "loops");
-    let theirs = EntityId::new(jojobot_domain::memory::EntityKind::VIEW, "my-people");
+    let shipped = EntityId("view:loops".into());
+    let theirs = EntityId("view:my-people".into());
     let bare = DoltMemory::open(pool.clone());
     bare.add_entity(jojobot_domain::memory::NewEntity::new(
         theirs.clone(),

@@ -306,7 +306,7 @@ mod tests {
     const CORE: &str = "You answer in one line unless asked otherwise.";
 
     async fn provisioned() -> (Provisioned<InMemoryMemory>, EntityId) {
-        let bot = EntityId::new(EntityKind::BOT, "gamma");
+        let bot = EntityId("bot:gamma".into());
         let store = InMemoryMemory::booted();
         store
             .add_entity(NewEntity::new(bot.clone(), "Gamma", "jojobot"))
@@ -366,7 +366,7 @@ mod tests {
     #[tokio::test]
     async fn an_entity_the_build_supplies_nothing_for_reads_exactly_what_was_stored() {
         let (store, _) = provisioned().await;
-        let other = EntityId::new(EntityKind::BOT, "delta");
+        let other = EntityId("bot:delta".into());
         store
             .add_entity(NewEntity::new(other.clone(), "Delta", "jojobot"))
             .await
@@ -497,7 +497,7 @@ mod tests {
     async fn a_record_the_build_ships_answers_like_a_stored_one_and_is_stored_nowhere() {
         let store = InMemoryMemory::booted();
         let over = Provisioned::new(store, Provisions::new(vec![shipped_record("loops")]));
-        let id = EntityId::new(EntityKind::VIEW, "loops");
+        let id = EntityId("view:loops".into());
 
         assert!(
             over.list_entities(Some(EntityKind::VIEW))
@@ -556,7 +556,7 @@ mod tests {
     #[tokio::test]
     async fn a_record_the_build_stops_shipping_goes_and_the_operators_stays() {
         let store = InMemoryMemory::booted();
-        let theirs = EntityId::new(EntityKind::VIEW, "my-week");
+        let theirs = EntityId("view:my-week".into());
         store
             .add_entity(NewEntity::new(theirs.clone(), "My Week", "user-named"))
             .await
@@ -570,9 +570,7 @@ mod tests {
             .await
             .expect("the listing reads");
         assert!(
-            !listed
-                .iter()
-                .any(|e| e.id == EntityId::new(EntityKind::VIEW, "loops")),
+            !listed.iter().any(|e| e.id == EntityId("view:loops".into())),
             "the build stopped shipping it, so the instance stops holding it: {listed:?}",
         );
         assert!(

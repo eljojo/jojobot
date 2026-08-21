@@ -579,7 +579,7 @@ mod tests {
         jojobot
             .memory
             .add_entity(NewEntity {
-                id: EntityId::new(EntityKind::BOT, "gamma"),
+                id: EntityId("bot:gamma".into()),
                 name: "gamma".into(),
                 aliases: Vec::new(),
                 source: "user-named".into(),
@@ -671,7 +671,7 @@ mod tests {
             .await
             .expect("list ok")
             .into_iter()
-            .filter(|b| b.owner == EntityId::new(EntityKind::BOT, "gamma"))
+            .filter(|b| b.owner == EntityId("bot:gamma".into()))
             .collect();
         assert_eq!(held.len(), 2, "the fixture holds two boxes for one bot");
         assert_eq!(

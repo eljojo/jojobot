@@ -682,7 +682,7 @@ mod tests {
                 ..Default::default()
             },
             SearchQuery {
-                subject: Some(EntityId::person("alpha")),
+                subject: Some(EntityId::person("person:alpha")),
                 ..Default::default()
             },
             SearchQuery {
@@ -738,7 +738,7 @@ mod tests {
         let impossible = SearchQuery {
             edge: Some(EdgeFilter {
                 shape: Some(EdgeShape::Location),
-                object: EntityId::person("alpha"),
+                object: EntityId::person("person:alpha"),
             }),
             ..Default::default()
         };
@@ -750,7 +750,7 @@ mod tests {
         let any_shape = SearchQuery {
             edge: Some(EdgeFilter {
                 shape: None,
-                object: EntityId::person("alpha"),
+                object: EntityId::person("person:alpha"),
             }),
             ..Default::default()
         };
@@ -759,7 +759,7 @@ mod tests {
         let open = SearchQuery {
             edge: Some(EdgeFilter {
                 shape: Some(EdgeShape::About),
-                object: EntityId::person("alpha"),
+                object: EntityId::person("person:alpha"),
             }),
             ..Default::default()
         };
@@ -793,7 +793,7 @@ mod tests {
         };
         let row = |id: &str, subject: &str| Fact {
             id: FactId(id.into()),
-            home: EntityId::person("alpha"),
+            home: EntityId::person("person:alpha"),
             subject: EntityId(subject.into()),
             content: "a claim".into(),
             details: None,
@@ -822,18 +822,21 @@ mod tests {
             ],
             fields: Default::default(),
         };
-        let known: HashSet<EntityId> = [EntityId::person("alpha"), EntityId::person("beta")]
-            .into_iter()
-            .collect();
+        let known: HashSet<EntityId> = [
+            EntityId::person("person:alpha"),
+            EntityId::person("person:beta"),
+        ]
+        .into_iter()
+        .collect();
 
         assert_eq!(
             orphan_subjects(&doc, &known),
-            vec![EntityId::person("alphaa")],
+            vec![EntityId::person("person:alphaa")],
             "only the subject naming no entity, and only once"
         );
         assert_eq!(
             known_entities(std::slice::from_ref(&doc)),
-            [EntityId::person("alpha")]
+            [EntityId::person("person:alpha")]
                 .into_iter()
                 .collect::<HashSet<_>>(),
             "a scan's known set is the entities its docs declare"
@@ -869,7 +872,7 @@ mod tests {
         };
         let row = |id: &str, subject: &str| Fact {
             id: FactId(id.into()),
-            home: EntityId::person("alpha"),
+            home: EntityId::person("person:alpha"),
             subject: EntityId(subject.into()),
             content: "a claim".into(),
             details: None,
@@ -897,18 +900,21 @@ mod tests {
             ],
             fields: Default::default(),
         };
-        let known: HashSet<EntityId> = [EntityId::person("alpha"), EntityId::person("beta")]
-            .into_iter()
-            .collect();
+        let known: HashSet<EntityId> = [
+            EntityId::person("person:alpha"),
+            EntityId::person("person:beta"),
+        ]
+        .into_iter()
+        .collect();
 
         assert_eq!(
             foreign_subjects(&doc, &known),
-            vec![EntityId::person("beta")],
+            vec![EntityId::person("person:beta")],
             "only the subject naming another live entity, and only once"
         );
         assert_eq!(
             orphan_subjects(&doc, &known),
-            vec![EntityId::person("alphaa")],
+            vec![EntityId::person("person:alphaa")],
             "the two counters must not swallow each other's case"
         );
 

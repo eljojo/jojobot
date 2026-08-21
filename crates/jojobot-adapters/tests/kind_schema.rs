@@ -42,7 +42,7 @@ async fn a_kinds_keys_are_a_schema_and_the_two_questions_differ() {
 
     let stall = EntityKind::from_token("stall").expect("the kind was just declared");
     let mine = EntityId::new(stall, "corner-stall");
-    let other = EntityId::new(EntityKind::THING, "handcart");
+    let other = EntityId("thing:handcart".into());
     for (id, what) in [(&mine, "the stall on the corner"), (&other, "a cart")] {
         store
             .add_entity(NewEntity {
@@ -664,9 +664,9 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
     let outing = EntityKind::from_token("outing").expect("the kind was just declared");
 
     for who in [
-        EntityId::person("bart"),
-        EntityId::person("milhouse"),
-        EntityId::new(EntityKind::THING, "red-bike"),
+        EntityId::person("person:bart"),
+        EntityId::person("person:milhouse"),
+        EntityId("thing:red-bike".into()),
     ] {
         added(&store, &who, who.slug()).await;
     }
@@ -699,8 +699,8 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
 
     // One, then many, through the same key. The handles are built rather than
     // written out, so no fixture name enters this source as a literal.
-    let bart = EntityId::person("bart").to_string();
-    let milhouse = EntityId::person("milhouse").to_string();
+    let bart = EntityId::person("person:bart").to_string();
+    let milhouse = EntityId::person("person:milhouse").to_string();
     let both = format!("{bart}, {milhouse}");
     for wrote in [bart.as_str(), both.as_str()] {
         let expected = wrote;
@@ -733,7 +733,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
             FactPatch {
                 fields: [(
                     "came_with".to_string(),
-                    format!("{bart}, {}", EntityId::new(EntityKind::THING, "red-bike")),
+                    format!("{bart}, {}", EntityId("thing:red-bike".into())),
                 )]
                 .into_iter()
                 .collect(),
@@ -812,9 +812,9 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
     );
 
     // A loop is filed under whatever it is a loop ON.
-    let plant = EntityId::new(EntityKind::THING, "handcart");
+    let plant = EntityId("thing:handcart".into());
     added(&store, &plant, "the thing the loop is on").await;
-    let ran = EntityId::new(EntityKind::RHYTHM, "corner-stall");
+    let ran = EntityId("rhythm:corner-stall".into());
     store
         .add_entity(NewEntity {
             boot: Boot::default(),
@@ -859,7 +859,7 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
 
     // **A loop with only a name is legal.** The optional keys are welcome and
     // never demanded, so nothing here is refused and nothing is missing.
-    let bare = EntityId::new(EntityKind::RHYTHM, "holds-nothing");
+    let bare = EntityId("rhythm:holds-nothing".into());
     store
         .add_entity(NewEntity {
             boot: Boot::default(),
@@ -968,7 +968,7 @@ async fn every_key_a_check_in_writes_is_declared_by_the_rhythm_kind() {
 async fn an_ordering_on_the_schedule_date_is_licensed_by_the_kind() {
     let (mut server, store, _turn) = a_store("ordering").await;
 
-    let owner = EntityId::new(EntityKind::THING, "handcart");
+    let owner = EntityId("thing:handcart".into());
     added(&store, &owner, "the thing the loops are on").await;
     for (slug, counts_from) in [("descale", "2026-06-20"), ("deep-clean", "2026-05-02")] {
         let loop_id = EntityId::new(EntityKind::RHYTHM, slug);
@@ -1016,11 +1016,11 @@ async fn an_ordering_on_the_schedule_date_is_licensed_by_the_kind() {
     )
     .await;
     assert!(
-        after_june.contains(&EntityId::new(EntityKind::RHYTHM, "descale")),
+        after_june.contains(&EntityId("rhythm:descale".into())),
         "the loop counting from after the first of June is here: {after_june:?}",
     );
     assert!(
-        !after_june.contains(&EntityId::new(EntityKind::RHYTHM, "deep-clean")),
+        !after_june.contains(&EntityId("rhythm:deep-clean".into())),
         "…and the one counting from before it is not, which is what makes this an \
          ordering rather than everything: {after_june:?}",
     );
@@ -1054,9 +1054,9 @@ async fn the_required_keys_are_the_ones_the_loop_actually_writes() {
         .map(|f| f.key.clone())
         .collect();
 
-    let owner = EntityId::new(EntityKind::THING, "handcart");
+    let owner = EntityId("thing:handcart".into());
     added(&store, &owner, "the thing the loop is on").await;
-    let descale = EntityId::new(EntityKind::RHYTHM, "descale");
+    let descale = EntityId("rhythm:descale".into());
     store
         .add_entity(NewEntity {
             boot: Boot::default(),
@@ -1157,7 +1157,7 @@ async fn the_required_keys_are_the_ones_the_loop_actually_writes() {
 async fn a_type_named_after_a_kind_does_not_gate_that_kinds_writes() {
     let (mut server, store, _turn) = a_store("type-shadows-kind").await;
 
-    let moes = EntityId::new(EntityKind::PLACE, "moes");
+    let moes = EntityId("place:moes".into());
     added(&store, &moes, "Moe's").await;
 
     store

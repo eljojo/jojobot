@@ -1198,7 +1198,7 @@ pub mod contract {
 
     /// The core invariant: a captured fact is returned by a later recall.
     pub async fn capture_reads_back<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-readback");
+        let subject = EntityId::person("person:contract-readback");
         let captured = capture(
             store,
             NewFact::about(subject.clone(), "drinks oat milk", date(2026, 7, 24)),
@@ -1221,7 +1221,7 @@ pub mod contract {
     /// capture is simply broken; the acceptance alone passes on the store that
     /// checked nothing.
     pub async fn derived_from_must_name_a_fact_that_exists<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-derived");
+        let subject = EntityId::person("person:contract-derived");
         let source = capture(
             store,
             NewFact::about(subject.clone(), "said the ferry moved", date(2026, 4, 1)),
@@ -1294,7 +1294,7 @@ pub mod contract {
     /// `derived_from` included, since it is a fact field like any other and
     /// this is the one test that pins ALL of them at once.
     pub async fn preserves_all_fields<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-fields");
+        let subject = EntityId::person("person:contract-fields");
         // A claim that is really there: `derived_from` names one, and naming
         // one that does not exist is refused rather than stored.
         let source = capture(
@@ -1342,7 +1342,7 @@ pub mod contract {
     /// A raw pipe in content survives the round-trip (it must be escaped in the
     /// table, not split into extra cells) — byte-identical.
     pub async fn pipe_in_content_round_trips<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-pipe");
+        let subject = EntityId::person("person:contract-pipe");
         let captured = capture(
             store,
             NewFact {
@@ -1366,7 +1366,7 @@ pub mod contract {
     /// about STORAGE: a fake keeping bytes verbatim answers yes whatever the
     /// codec does, and only the real store can say the escape holds.
     pub async fn a_backslash_in_content_round_trips<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-backslash");
+        let subject = EntityId::person("person:contract-backslash");
         let captured = capture(
             store,
             NewFact {
@@ -1395,7 +1395,7 @@ pub mod contract {
     /// the collision that dropped/corrupted facts when provenance was folded
     /// into content. Testimony must come back testimony, inference inference.
     pub async fn both_provenances_survive<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-provenance");
+        let subject = EntityId::person("person:contract-provenance");
         let testi = capture(
             store,
             NewFact {
@@ -1430,7 +1430,7 @@ pub mod contract {
     /// Edge whitespace is not significant: capture normalizes it, and the
     /// returned fact is byte-identical to what recall reads back.
     pub async fn edge_whitespace_is_normalized<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-whitespace");
+        let subject = EntityId::person("person:contract-whitespace");
         let captured = capture(
             store,
             NewFact::about(subject.clone(), "   likes espresso   ", date(2026, 7, 24)),
@@ -1446,7 +1446,7 @@ pub mod contract {
 
     /// Two distinct captures are both recallable, each under its own id.
     pub async fn multiple_facts_all_recallable<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-multi");
+        let subject = EntityId::person("person:contract-multi");
         let a = capture(
             store,
             NewFact::about(subject.clone(), "plays go", date(2026, 7, 1)),
@@ -1468,8 +1468,8 @@ pub mod contract {
     /// Facts about one entity never leak into another's recall — each subject's
     /// facts are isolated (a per-entity doc, in the real adapter).
     pub async fn subjects_are_isolated<M: Memory>(store: &M) {
-        let solo = EntityId::person("contract-solo");
-        let duet = EntityId::person("contract-duet");
+        let solo = EntityId::person("person:contract-solo");
+        let duet = EntityId::person("person:contract-duet");
         capture(
             store,
             NewFact::about(solo.clone(), "solo fact", date(2026, 7, 1)),
@@ -1529,7 +1529,7 @@ pub mod contract {
     /// An entity that EXISTS with no facts still recalls empty, and nothing is
     /// created either way.
     pub async fn recall_unknown_is_a_miss_not_an_empty_page<M: Memory>(store: &M) {
-        let never = EntityId::person("contract-never-captured");
+        let never = EntityId::person("person:contract-never-captured");
         let err = store
             .recall(&never)
             .await
@@ -1542,9 +1542,9 @@ pub mod contract {
         }
 
         // A typo'd handle explains itself: the miss carries its neighbour.
-        let real = EntityId::person("contract-orient");
+        let real = EntityId::person("person:contract-orient");
         ensure(store, &real).await;
-        let typo = EntityId::person("contract-orjent");
+        let typo = EntityId::person("person:contract-orjent");
         let err = store
             .recall(&typo)
             .await
@@ -1591,7 +1591,7 @@ pub mod contract {
     /// `add_entity` writes an entity of any kind, and the read path returns it
     /// with every frontmatter field intact.
     pub async fn add_entity_reads_back<M: Memory>(store: &M) {
-        let id = EntityId::new(EntityKind::PROJECT, "contract-atlas");
+        let id = EntityId("project:contract-atlas".into());
         let added = add(
             store,
             NewEntity {
@@ -1639,7 +1639,7 @@ pub mod contract {
     /// makes *jojobot knew this then* something nobody can claim after the
     /// fact.
     pub async fn a_claim_carries_when_it_was_taken_in<M: Memory>(store: &M) {
-        let subject = EntityId::new(EntityKind::PERSON, "contract-clocks");
+        let subject = EntityId("person:contract-clocks".into());
         add(
             store,
             NewEntity::new(subject.clone(), "Contract Clocks", "contract-fixture"),
@@ -1812,7 +1812,7 @@ pub mod contract {
     /// source is untouched, so the rule reaches only the claims it is about ·
     /// and **a claim that stops being machine-read stops being held to it**.
     pub async fn a_machine_read_claim_names_what_it_was_read_from<M: Memory>(store: &M) {
-        let subject = EntityId::new(EntityKind::PERSON, "contract-observed");
+        let subject = EntityId("person:contract-observed".into());
         add(
             store,
             NewEntity::new(subject.clone(), "Contract Observed", "contract-fixture"),
@@ -1989,7 +1989,7 @@ pub mod contract {
     }
 
     pub async fn a_folded_value_says_who_backs_it<M: Memory>(store: &M) {
-        let subject = EntityId::new(EntityKind::PERSON, "contract-backing");
+        let subject = EntityId("person:contract-backing".into());
         add(
             store,
             NewEntity::new(subject.clone(), "Contract Backing", "contract-fixture"),
@@ -2093,7 +2093,7 @@ pub mod contract {
     /// them cannot name a right answer by accident.
     pub async fn a_summed_key_has_no_backing_to_report<M: Memory>(store: &M) {
         use crate::memory::types::{DeclaredType, Field, Fold, ValueType};
-        let subject = EntityId::new(EntityKind::PERSON, "contract-tallied");
+        let subject = EntityId("person:contract-tallied".into());
         add(
             store,
             NewEntity::new(subject.clone(), "Contract Tallied", "contract-fixture"),
@@ -2183,7 +2183,7 @@ pub mod contract {
     }
 
     pub async fn a_claims_lineage_is_walkable_from_its_source<M: Memory>(store: &M) {
-        let subject = EntityId::new(EntityKind::PERSON, "contract-lineage");
+        let subject = EntityId("person:contract-lineage".into());
         add(
             store,
             NewEntity::new(subject.clone(), "Contract Lineage", "contract-fixture"),
@@ -2340,10 +2340,10 @@ pub mod contract {
     }
 
     pub async fn referring_to_answers_from_the_far_end<M: Memory>(store: &M) {
-        let gate = EntityId::new(EntityKind::EVENT, "contract-winter-fest");
-        let other = EntityId::new(EntityKind::EVENT, "contract-leaving-party");
-        let holder = EntityId::new(EntityKind::PERSON, "contract-milhouse");
-        let bystander = EntityId::new(EntityKind::PERSON, "contract-otto");
+        let gate = EntityId("event:contract-winter-fest".into());
+        let other = EntityId("event:contract-leaving-party".into());
+        let holder = EntityId("person:contract-milhouse".into());
+        let bystander = EntityId("person:contract-otto".into());
         for (id, name) in [
             (&gate, "Contract Winter Fest"),
             (&other, "Contract Leaving Party"),
@@ -2448,8 +2448,8 @@ pub mod contract {
     }
 
     pub async fn a_child_names_its_parent_and_reads_back<M: Memory>(store: &M) {
-        let parent = EntityId::new(EntityKind::PROJECT, "contract-monorail");
-        let child = EntityId::new(EntityKind::PROJECT, "contract-monorail-funding");
+        let parent = EntityId("project:contract-monorail".into());
+        let child = EntityId("project:contract-monorail-funding".into());
 
         let root = add(
             store,
@@ -2490,10 +2490,10 @@ pub mod contract {
     /// the caller pays only for the branch it descends into. A grandchild is
     /// not a child, and a leaf has none.
     pub async fn children_are_handles_and_one_level_deep<M: Memory>(store: &M) {
-        let root = EntityId::new(EntityKind::PROJECT, "contract-springfield");
-        let track = EntityId::new(EntityKind::PROJECT, "contract-springfield-track");
-        let cars = EntityId::new(EntityKind::PROJECT, "contract-springfield-cars");
-        let brakes = EntityId::new(EntityKind::PROJECT, "contract-springfield-brakes");
+        let root = EntityId("project:contract-springfield".into());
+        let track = EntityId("project:contract-springfield-track".into());
+        let cars = EntityId("project:contract-springfield-cars".into());
+        let brakes = EntityId("project:contract-springfield-brakes".into());
 
         add(
             store,
@@ -2554,8 +2554,8 @@ pub mod contract {
     /// prose replacement both go through here, because both rebuild the page
     /// around the part they came to change.
     pub async fn a_write_that_rewrites_a_child_leaves_it_where_it_was<M: Memory>(store: &M) {
-        let parent = EntityId::new(EntityKind::PROJECT, "contract-kwik-e");
-        let child = EntityId::new(EntityKind::PROJECT, "contract-kwik-e-squishee");
+        let parent = EntityId("project:contract-kwik-e".into());
+        let child = EntityId("project:contract-kwik-e-squishee".into());
         add(
             store,
             NewEntity::new(parent.clone(), "Contract Kwik-E", "contract-fixture"),
@@ -2618,7 +2618,7 @@ pub mod contract {
     /// know that one" to a caller whose real problem is that it never wrote a
     /// handle at all.
     pub async fn a_parent_that_is_not_a_handle_is_refused_before_the_guard<M: Memory>(store: &M) {
-        let child = EntityId::new(EntityKind::PROJECT, "contract-bad-parent");
+        let child = EntityId("project:contract-bad-parent".into());
         for bad in ["Some Project", "person:", "notakind:atlas", "person:Alpha"] {
             let err = store
                 .add_entity(NewEntity {
@@ -2647,14 +2647,14 @@ pub mod contract {
     /// that does not exist is an error carrying candidates — never an empty
     /// list, which a caller would read as "this thing has nothing under it".
     pub async fn children_of_an_unknown_entity_is_a_miss<M: Memory>(store: &M) {
-        let known = EntityId::new(EntityKind::PROJECT, "contract-ghost-parent");
+        let known = EntityId("project:contract-ghost-parent".into());
         add(
             store,
             NewEntity::new(known.clone(), "Contract Ghost Parent", "contract-fixture"),
         )
         .await;
 
-        let typo = EntityId::new(EntityKind::PROJECT, "contract-ghost-parnt");
+        let typo = EntityId("project:contract-ghost-parnt".into());
         let err = store
             .children(&typo)
             .await
@@ -2673,12 +2673,12 @@ pub mod contract {
     /// is written: not the child, and certainly not the parent it named.
     /// Creation is an intentional act; naming a thing is not creating it.
     pub async fn an_unnamed_parent_is_refused_and_provisions_nothing<M: Memory>(store: &M) {
-        let real = EntityId::new(EntityKind::PROJECT, "contract-plant");
-        let typo = EntityId::new(EntityKind::PROJECT, "contract-plnt");
+        let real = EntityId("project:contract-plant".into());
+        let typo = EntityId("project:contract-plnt".into());
         // Named so it resembles neither the real parent nor the typo: this
         // case is about the PARENT gate, and a child that tripped the screen on
         // its own handle first would report a block about itself.
-        let child = EntityId::new(EntityKind::PROJECT, "contract-shift-rota");
+        let child = EntityId("project:contract-shift-rota".into());
         add(
             store,
             NewEntity::new(real.clone(), "Contract Plant", "contract-fixture"),
@@ -2743,7 +2743,7 @@ pub mod contract {
     /// because there is no honest "I checked, they're different" answer when
     /// both handles are the same one.
     pub async fn nothing_may_be_its_own_parent<M: Memory>(store: &M) {
-        let ouroboros = EntityId::new(EntityKind::PROJECT, "contract-ouroboros");
+        let ouroboros = EntityId("project:contract-ouroboros".into());
         let blocked = store
             .add_entity(NewEntity {
                 parent: Some(ouroboros.clone()),
@@ -2799,7 +2799,7 @@ pub mod contract {
     }
 
     pub async fn prose_is_replaced_whole_and_reads_back<M: Memory>(store: &M) {
-        let bot = EntityId::new(EntityKind::BOT, "contract-epsilon");
+        let bot = EntityId("bot:contract-epsilon".into());
         add(
             store,
             NewEntity::new(bot.clone(), "Contract Epsilon", "contract-fixture"),
@@ -2895,7 +2895,7 @@ pub mod contract {
 
         // And a handle that names nothing is a miss — never a doc conjured to
         // hold the prose, the same rule every other verb here follows.
-        let ghost = EntityId::new(EntityKind::BOT, "contract-ghost-bot");
+        let ghost = EntityId("bot:contract-ghost-bot".into());
         let err = store
             .set_prose(&ghost, "a charter for nobody")
             .await
@@ -2917,8 +2917,8 @@ pub mod contract {
 
     /// `list_entities(kind)` narrows to one kind and never leaks another's.
     pub async fn list_entities_filters_by_kind<M: Memory>(store: &M) {
-        let place = EntityId::new(EntityKind::PLACE, "contract-north-trail");
-        let topic = EntityId::new(EntityKind::TOPIC, "contract-widgets");
+        let place = EntityId("place:contract-north-trail".into());
+        let topic = EntityId("topic:contract-widgets".into());
         add(
             store,
             NewEntity::new(place.clone(), "North Trail", "user-named"),
@@ -2944,7 +2944,7 @@ pub mod contract {
 
     /// An entity's metadata edits in place; the handle is untouched.
     pub async fn update_entity_edits_metadata_in_place<M: Memory>(store: &M) {
-        let id = EntityId::new(EntityKind::THING, "contract-red-bike");
+        let id = EntityId("thing:contract-red-bike".into());
         add(store, NewEntity::new(id.clone(), "Red Bike", "user-named")).await;
 
         let updated = store
@@ -2976,8 +2976,8 @@ pub mod contract {
     /// side-steppable: create under a throwaway name, then rename onto the
     /// collision — and two people wear one name with no confirmation asked.
     pub async fn update_entity_screens_a_colliding_rename<M: Memory>(store: &M) {
-        let first = EntityId::person("contract-renamed-onto");
-        let second = EntityId::person("contract-renamer");
+        let first = EntityId::person("person:contract-renamed-onto");
+        let second = EntityId::person("person:contract-renamer");
         add(
             store,
             NewEntity::new(first.clone(), "Renamed Onto", "user-named"),
@@ -3068,8 +3068,8 @@ pub mod contract {
     /// created — must still be freely renamable: re-screening the immutable
     /// handle turned that one decision into a permanent block on the name field.
     pub async fn update_entity_does_not_re_screen_the_handle<M: Memory>(store: &M) {
-        let settled = EntityId::person("contract-nearslug");
-        let neighbour = EntityId::person("contract-nearslugg");
+        let settled = EntityId::person("person:contract-nearslug");
+        let neighbour = EntityId::person("person:contract-nearslugg");
         add(store, NewEntity::new(settled, "Nearslug One", "user-named")).await;
         // The near-slug the guard reported, judged different at creation — made
         // the way a caller really makes one, over the refusal's own token.
@@ -3102,13 +3102,13 @@ pub mod contract {
     /// even on a patch that renames nothing — otherwise search would index
     /// two entities answering to one word.
     pub async fn update_entity_screens_a_colliding_alias<M: Memory>(store: &M) {
-        let owner = EntityId::person("contract-alias-owner");
+        let owner = EntityId::person("person:contract-alias-owner");
         add(
             store,
             NewEntity::new(owner.clone(), "Contract Alias Owner", "user-named"),
         )
         .await;
-        let borrower = EntityId::person("contract-alias-borrower");
+        let borrower = EntityId::person("person:contract-alias-borrower");
         add(
             store,
             NewEntity::new(borrower.clone(), "Contract Alias Borrower", "user-named"),
@@ -3170,7 +3170,7 @@ pub mod contract {
     /// is not a collision with itself. Without this, every later patch to an
     /// entity's alias set comes back blocked by the entity's own name.
     pub async fn update_entity_is_not_blocked_by_its_own_labels<M: Memory>(store: &M) {
-        let id = EntityId::new(EntityKind::ORG, "contract-self-labelled");
+        let id = EntityId("org:contract-self-labelled".into());
         add(
             store,
             NewEntity {
@@ -3203,7 +3203,7 @@ pub mod contract {
     /// gate that fired on them would make an already-settled duplicate name
     /// permanently uneditable in every other field.
     pub async fn update_entity_without_a_rename_is_not_screened<M: Memory>(store: &M) {
-        let first = EntityId::new(EntityKind::ORG, "contract-unscreened");
+        let first = EntityId("org:contract-unscreened".into());
         add(
             store,
             NewEntity::new(first.clone(), "Unscreened Org", "user-named"),
@@ -3212,7 +3212,7 @@ pub mod contract {
         // A second entity that legitimately shares the name — settled once, at
         // creation, over that refusal's own token. That settlement must not be
         // re-litigated by a patch that touches no label at all.
-        let twin = EntityId::new(EntityKind::ORG, "contract-unscreened-twin");
+        let twin = EntityId("org:contract-unscreened-twin".into());
         add_over_the_screen(
             store,
             NewEntity::new(twin.clone(), "Unscreened Org", "user-named"),
@@ -3241,7 +3241,7 @@ pub mod contract {
     /// Updating an entity that doesn't exist errors with the nearest candidates
     /// — it never quietly creates one.
     pub async fn update_entity_unknown_handle_never_creates<M: Memory>(store: &M) {
-        let ghost = EntityId::new(EntityKind::THING, "contract-red-bikee");
+        let ghost = EntityId("thing:contract-red-bikee".into());
         let err = store
             .update_entity(
                 &ghost,
@@ -3278,7 +3278,7 @@ pub mod contract {
     /// exactly what `update_fact` accepts — the pairing that makes facts
     /// editable at all.
     pub async fn facts_carry_a_usable_address<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-addressable");
+        let subject = EntityId::person("person:contract-addressable");
         let captured = capture(
             store,
             NewFact::about(subject.clone(), "address me", date(2026, 7, 24)),
@@ -3310,7 +3310,7 @@ pub mod contract {
     /// An edit rewrites the row in place — fix-the-source — and the read path
     /// shows the new truth with no second copy left beside it.
     pub async fn update_fact_edits_in_place<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-editable");
+        let subject = EntityId::person("person:contract-editable");
         let captured = capture(
             store,
             NewFact::about(subject.clone(), "works at the old place", date(2026, 7, 1)),
@@ -3352,7 +3352,7 @@ pub mod contract {
     /// reader to adjudicate, and hides the correction from every default
     /// search, which is precisely where it is needed.
     pub async fn a_refutation_is_an_ordinary_content_edit<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-refutable");
+        let subject = EntityId::person("person:contract-refutable");
         let captured = capture(
             store,
             NewFact::about(
@@ -3396,7 +3396,7 @@ pub mod contract {
     /// Promotion to testimony is gated on the user's explicit confirmation —
     /// and a refused promotion leaves the fact exactly as it was.
     pub async fn promotion_to_testimony_needs_confirmation<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-promotable");
+        let subject = EntityId::person("person:contract-promotable");
         let captured = capture(
             store,
             NewFact::about(subject.clone(), "prefers mornings", date(2026, 7, 1)),
@@ -3447,7 +3447,7 @@ pub mod contract {
     /// and both stored. One field for the two questions makes a session pick
     /// which of them to be wrong about.
     pub async fn a_hedged_claim_round_trips<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-hedged-word");
+        let subject = EntityId::person("person:contract-hedged-word");
         let captured = capture(
             store,
             NewFact {
@@ -3470,7 +3470,7 @@ pub mod contract {
     /// written before this field meant — so only a hedge has to be asked for,
     /// and no existing row changed meaning when the column arrived.
     pub async fn standing_defaults_to_what_the_provenance_implies<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-silent-standing");
+        let subject = EntityId::person("person:contract-silent-standing");
         let said = capture(
             store,
             NewFact {
@@ -3516,7 +3516,7 @@ pub mod contract {
     /// confirmed is an ordinary row: the axes are independent, and the gate is
     /// on settling an open claim rather than on the pairing.
     pub async fn a_capture_declares_its_own_standing<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-unbacked-guess");
+        let subject = EntityId::person("person:contract-unbacked-guess");
         ensure(store, &subject).await;
         let settled = capture(
             store,
@@ -3551,7 +3551,7 @@ pub mod contract {
     pub async fn settling_a_hedge_needs_confirmation_and_keeps_its_provenance<M: Memory>(
         store: &M,
     ) {
-        let subject = EntityId::person("contract-settle-gate");
+        let subject = EntityId::person("person:contract-settle-gate");
         let hedged = capture(
             store,
             NewFact {
@@ -3606,7 +3606,7 @@ pub mod contract {
     /// **Reopening is free**, exactly as demotion to inference is free. Nothing
     /// is risked by a claim admitting it might be wrong.
     pub async fn reopening_a_settled_claim_needs_no_ceremony<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-reopening");
+        let subject = EntityId::person("person:contract-reopening");
         let settled = capture(
             store,
             NewFact {
@@ -3638,7 +3638,7 @@ pub mod contract {
     /// caller who means both says both. The alternative is the coupling the
     /// second field exists to remove — move one and the other follows.
     pub async fn a_patch_moves_only_the_axis_it_names<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-confirmed-guess");
+        let subject = EntityId::person("person:contract-confirmed-guess");
         let guess = capture(
             store,
             NewFact::about(subject.clone(), "probably shuts at nine", date(2026, 7, 1)),
@@ -3701,7 +3701,7 @@ pub mod contract {
 
     /// Demotion needs no ceremony — only promotion is gated.
     pub async fn demotion_to_inference_is_free<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-demotable");
+        let subject = EntityId::person("person:contract-demotable");
         let captured = capture(
             store,
             NewFact {
@@ -3725,7 +3725,7 @@ pub mod contract {
     /// An unknown address errors with the addresses that do exist, and writes
     /// nothing — the never-guess rule on the update path.
     pub async fn update_fact_unknown_address_never_creates<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-missing-row");
+        let subject = EntityId::person("person:contract-missing-row");
         let captured = capture(
             store,
             NewFact::about(subject.clone(), "the only row here", date(2026, 7, 1)),
@@ -3763,7 +3763,7 @@ pub mod contract {
     /// unknown handle answers with near misses, exactly as `update_entity`
     /// does, and a known entity that simply holds no rows says so plainly.
     pub async fn update_fact_tells_an_unknown_handle_from_an_empty_entity<M: Memory>(store: &M) {
-        let known = EntityId::person("contract-addressee");
+        let known = EntityId::person("person:contract-addressee");
         add(
             store,
             NewEntity::new(known.clone(), "Addressee", "user-named"),
@@ -3775,7 +3775,7 @@ pub mod contract {
             ..Default::default()
         };
 
-        let typo = EntityId::person("contract-addresse");
+        let typo = EntityId::person("person:contract-addresse");
         let err = store
             .update_fact(&FactAddress::new(typo, FactId("f1".into())), nudge())
             .await
@@ -3833,10 +3833,10 @@ pub mod contract {
     /// path. This is what makes ask-across an edge walk instead of an AI reading
     /// prose, so it is bound by the same read-back invariant as the row itself.
     pub async fn capture_writes_an_edge_that_reads_back<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-edged");
+        let subject = EntityId::person("person:contract-edged");
         let edge = Edge::new(
             EdgeShape::Location,
-            EntityId::new(EntityKind::PLACE, "contract-far-country"),
+            EntityId("place:contract-far-country".into()),
         );
         let captured = capture(
             store,
@@ -3907,13 +3907,13 @@ pub mod contract {
     /// An object of the wrong kind for its shape is refused outright, and the
     /// fact does not land either — the edge is part of the write, not a garnish.
     pub async fn a_wrong_kind_edge_object_is_refused<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-miskinded");
+        let subject = EntityId::person("person:contract-miskinded");
         let err = store
             .capture(NewFact {
                 // A `location` must point at a place; this one points at a person.
                 edge: Some(Edge::new(
                     EdgeShape::Location,
-                    EntityId::person("contract-alpha"),
+                    EntityId::person("person:contract-alpha"),
                 )),
                 ..NewFact::about(subject.clone(), "should never be stored", date(2026, 7, 1))
             })
@@ -3928,14 +3928,14 @@ pub mod contract {
     /// nobody else references, so the walk comes back empty and nothing looks
     /// wrong. It comes back as candidates instead, and nothing is written.
     pub async fn an_edge_object_is_screened_by_the_guard<M: Memory>(store: &M) {
-        let object = EntityId::new(EntityKind::PLACE, "contract-riverbend");
+        let object = EntityId("place:contract-riverbend".into());
         add(
             store,
             NewEntity::new(object.clone(), "Riverbend", "user-named"),
         )
         .await;
 
-        let subject = EntityId::person("contract-edge-guarded");
+        let subject = EntityId::person("person:contract-edge-guarded");
         // The subject faces the gate too, so it is provisioned first: this spec
         // is about the object, and the guard reports the first handle it stops.
         add(
@@ -3944,7 +3944,7 @@ pub mod contract {
         )
         .await;
 
-        let typo = EntityId::new(EntityKind::PLACE, "contract-riverbnd");
+        let typo = EntityId("place:contract-riverbnd".into());
         let outcome = store
             .capture(NewFact {
                 edge: Some(Edge::new(EdgeShape::Location, typo.clone())),
@@ -3986,7 +3986,7 @@ pub mod contract {
     /// a real store can say that a cleared key left the rows under the fact
     /// rather than lingering there to be read back on the next call.
     pub async fn update_fact_sets_and_clears_a_field<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-field-edit");
+        let subject = EntityId::person("person:contract-field-edit");
         let captured = capture(
             store,
             NewFact {
@@ -4045,7 +4045,7 @@ pub mod contract {
     /// would return a hundred histories of length one — which is the same
     /// firehose the caller already had, and counts nothing.
     pub async fn a_key_written_many_times_holds_one_value_and_counts<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-counted");
+        let subject = EntityId::person("person:contract-counted");
         let key = "donuts_eaten";
         let written = 100;
         for nth in 1..=written {
@@ -4123,7 +4123,7 @@ pub mod contract {
     /// store's own type rows: a store that dropped the column would keep every
     /// key on newest-wins and give no other sign of it.
     pub async fn a_counter_totals_its_writes_and_keeps_them<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-totalled");
+        let subject = EntityId::person("person:contract-totalled");
         store
             .declare_type(crate::memory::types::DeclaredType::new(
                 "contract-snacking",
@@ -4209,7 +4209,7 @@ pub mod contract {
     pub async fn an_edit_appends_and_the_value_it_replaced_stays_in_the_history<M: Memory>(
         store: &M,
     ) {
-        let subject = EntityId::person("contract-appended");
+        let subject = EntityId::person("person:contract-appended");
         let captured = capture(
             store,
             NewFact {
@@ -4264,7 +4264,7 @@ pub mod contract {
     /// recorded as the write that took it off. Nothing is deleted from the
     /// substrate, which is the same one-way rule retraction runs on.
     pub async fn clearing_a_key_leaves_its_writes_behind<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-cleared");
+        let subject = EntityId::person("person:contract-cleared");
         let captured = capture(
             store,
             NewFact {
@@ -4314,7 +4314,7 @@ pub mod contract {
     pub async fn history_of_an_unwritten_key_is_empty_and_of_no_entity_is_a_miss<M: Memory>(
         store: &M,
     ) {
-        let subject = EntityId::person("contract-unwritten");
+        let subject = EntityId::person("person:contract-unwritten");
         capture(
             store,
             NewFact {
@@ -4344,7 +4344,7 @@ pub mod contract {
             "nothing was recorded under that key, and the thing is still there"
         );
         let missed = store
-            .history(&EntityId::person("contract-no-such"), "weight")
+            .history(&EntityId::person("person:contract-no-such"), "weight")
             .await;
         assert!(
             matches!(missed, Err(MemoryError::UnknownEntity { .. })),
@@ -4355,7 +4355,7 @@ pub mod contract {
     /// `update_fact` attaches an edge to a fact that didn't have one — the
     /// day-to-day path for an edge realized after the fact was captured.
     pub async fn update_fact_attaches_an_edge<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-edge-later");
+        let subject = EntityId::person("person:contract-edge-later");
         let captured = capture(
             store,
             NewFact::about(subject.clone(), "was at the festival", date(2026, 7, 1)),
@@ -4365,7 +4365,7 @@ pub mod contract {
 
         let edge = Edge::new(
             EdgeShape::Attendance,
-            EntityId::new(EntityKind::EVENT, "contract-winter-fest"),
+            EntityId("event:contract-winter-fest".into()),
         );
         let updated = edit(
             store,
@@ -4402,8 +4402,8 @@ pub mod contract {
     /// comparison a dropped field cannot survive is against the CALLER's
     /// record, and this is the only place that comparison is made.
     pub async fn a_records_fields_survive_capture<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-evented");
-        let touched = EntityId::new(EntityKind::PLACE, "contract-kiln-yard");
+        let subject = EntityId::person("person:contract-evented");
+        let touched = EntityId("place:contract-kiln-yard".into());
         ensure(store, &touched).await;
 
         let recorded: std::collections::BTreeMap<String, String> = [
@@ -4486,9 +4486,9 @@ pub mod contract {
     /// And it takes the whole write with it: a record is one write, so a ref
     /// that cannot be resolved leaves no half-recorded fact behind.
     pub async fn a_records_ref_is_screened_by_the_guard<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-ref-guarded");
+        let subject = EntityId::person("person:contract-ref-guarded");
         ensure(store, &subject).await;
-        let stranger = EntityId::person("contract-nobody-created-this");
+        let stranger = EntityId::person("person:contract-nobody-created-this");
 
         let outcome = store
             .capture(NewFact {
@@ -4516,7 +4516,7 @@ pub mod contract {
     /// domain's**, so both stores answer for it: a rule one store enforces and
     /// the other does not is a rule that holds until somebody switches stores.
     pub async fn a_reserved_field_key_is_refused<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-reserved-key");
+        let subject = EntityId::person("person:contract-reserved-key");
         ensure(store, &subject).await;
 
         let outcome = store
@@ -4599,7 +4599,7 @@ pub mod contract {
     /// makes this different from every store where taking something back means
     /// losing the evidence that it was ever said.
     pub async fn retracting_a_record_marks_it_and_records_why<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-retracted");
+        let subject = EntityId::person("person:contract-retracted");
         let event = capture(
             store,
             NewFact::about(subject.clone(), "moved to the 14th", date(2026, 7, 3)),
@@ -4654,7 +4654,7 @@ pub mod contract {
     /// said why, because a plausible-sounding reason here would be
     /// indistinguishable later from one somebody actually gave.
     pub async fn a_retraction_needs_no_reason<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-unreasoned");
+        let subject = EntityId::person("person:contract-unreasoned");
         let event = capture(
             store,
             NewFact::about(subject.clone(), "it happened", date(2026, 7, 3)),
@@ -4697,7 +4697,7 @@ pub mod contract {
     /// status back are the same wish wearing three faces — so no single one of
     /// them is the whole test.
     pub async fn a_retraction_is_one_way<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-oneway");
+        let subject = EntityId::person("person:contract-oneway");
         let event = capture(
             store,
             NewFact::about(subject.clone(), "it happened", date(2026, 7, 3)),
@@ -4767,7 +4767,7 @@ pub mod contract {
     /// The record keeps it. That is where the marker means something, and
     /// [`Fact::is_retraction`] is read off it.
     pub async fn the_retraction_marker_is_not_one_of_the_things_fields<M: Memory>(store: &M) {
-        let subject = EntityId::new(EntityKind::THING, "contract-marker-not-a-field");
+        let subject = EntityId("thing:contract-marker-not-a-field".into());
         let claim = capture(
             store,
             NewFact {
@@ -4829,7 +4829,7 @@ pub mod contract {
     /// **The refusal is one move, not a lockout.** The account is an ordinary
     /// record otherwise, and the repairs any record gets still reach it.
     pub async fn clearing_the_retraction_marker_is_refused<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-clear-marker");
+        let subject = EntityId::person("person:contract-clear-marker");
         let event = capture(
             store,
             NewFact::about(subject.clone(), "it happened", date(2026, 7, 3)),
@@ -4929,7 +4929,7 @@ pub mod contract {
     /// An address naming nothing is the same miss an edit's is — never a new
     /// record, and never a silent success.
     pub async fn retracting_an_unknown_address_never_writes<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-retract-miss");
+        let subject = EntityId::person("person:contract-retract-miss");
         ensure(store, &subject).await;
         let missed = FactAddress::new(subject.clone(), FactId("f404".into()));
 
@@ -4957,7 +4957,7 @@ pub mod contract {
     /// **no token forces it — not even the one this refusal itself mints.** Two
     /// same-named people can never merge into one portrait silently (rule 61).
     pub async fn add_entity_blocks_an_existing_handle<M: Memory>(store: &M) {
-        let id = EntityId::person("contract-alpha");
+        let id = EntityId::person("person:contract-alpha");
         add(store, NewEntity::new(id.clone(), "Alpha", "crm-card")).await;
 
         let outcome = store
@@ -5002,14 +5002,14 @@ pub mod contract {
     /// minted lets nothing through at all. Both halves, because a store that
     /// accepts any string passes the first one.
     pub async fn add_entity_reports_a_near_miss_then_accepts_its_own_token<M: Memory>(store: &M) {
-        let first = EntityId::new(EntityKind::ORG, "contract-riverside");
+        let first = EntityId("org:contract-riverside".into());
         add(
             store,
             NewEntity::new(first.clone(), "Riverside", "user-named"),
         )
         .await;
 
-        let typo = EntityId::new(EntityKind::ORG, "contract-riversid");
+        let typo = EntityId("org:contract-riversid".into());
         let outcome = store
             .add_entity(NewEntity::new(typo.clone(), "Riversid", "user-named"))
             .await
@@ -5065,7 +5065,7 @@ pub mod contract {
     /// There is no override on this path either: a genuinely new
     /// entity is `add_entity`, then the capture — two deliberate steps.
     pub async fn capture_requires_an_existing_subject<M: Memory>(store: &M) {
-        let known = EntityId::person("contract-zenith");
+        let known = EntityId::person("person:contract-zenith");
         add(store, NewEntity::new(known.clone(), "Zenith", "user-named")).await;
 
         // A fact about an entity that exists: waved straight through, always —
@@ -5077,7 +5077,7 @@ pub mod contract {
         .await;
 
         // A near miss comes back with the candidate that explains it…
-        let typo = EntityId::person("contract-zenit");
+        let typo = EntityId::person("person:contract-zenit");
         let outcome = store
             .capture(NewFact::about(
                 typo.clone(),
@@ -5096,7 +5096,7 @@ pub mod contract {
 
         // …and a handle nothing resembles blocks just the same, with nothing
         // to suggest.
-        let stranger = EntityId::new(EntityKind::WORK, "contract-first-mix");
+        let stranger = EntityId("work:contract-first-mix".into());
         let outcome = store
             .capture(NewFact::about(
                 stranger.clone(),
@@ -5162,14 +5162,14 @@ pub mod contract {
     /// rots silently — the edge points at something nobody else references, the
     /// walk comes back empty, and nothing looks wrong.
     pub async fn capture_requires_an_existing_edge_object<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-edge-stranger");
+        let subject = EntityId::person("person:contract-edge-stranger");
         add(
             store,
             NewEntity::new(subject.clone(), "Edge Stranger", "user-named"),
         )
         .await;
 
-        let stranger = EntityId::new(EntityKind::EVENT, "contract-unheard-of-fest");
+        let stranger = EntityId("event:contract-unheard-of-fest".into());
         let outcome = store
             .capture(NewFact {
                 edge: Some(Edge::new(EdgeShape::Attendance, stranger.clone())),
@@ -5221,14 +5221,14 @@ pub mod contract {
     /// green, and the hole is exactly the interesting one: an edge realized
     /// after the fact is the day-to-day way edges get drawn.
     pub async fn update_fact_requires_an_existing_edge_object<M: Memory>(store: &M) {
-        let subject = EntityId::person("contract-late-edge");
+        let subject = EntityId::person("person:contract-late-edge");
         let captured = capture(
             store,
             NewFact::about(subject.clone(), "was somewhere that week", date(2026, 7, 1)),
         )
         .await;
 
-        let stranger = EntityId::new(EntityKind::PLACE, "contract-nowhere-in-particular");
+        let stranger = EntityId("place:contract-nowhere-in-particular".into());
         let outcome = store
             .update_fact(
                 &captured.address(),
@@ -5289,7 +5289,7 @@ pub mod contract {
     /// back. A nickname that survives only in the caller's request is a nickname
     /// the next session has never heard of.
     pub async fn add_entity_keeps_its_alternate_names<M: Memory>(store: &M) {
-        let id = EntityId::person("contract-many-named");
+        let id = EntityId::person("person:contract-many-named");
         let added = add(
             store,
             NewEntity {
@@ -5363,7 +5363,7 @@ pub mod contract {
     /// a second record gets created under the name the user actually says and
     /// the facts split evenly between the two.
     pub async fn add_entity_screens_every_name_an_entity_answers_to<M: Memory>(store: &M) {
-        let known = EntityId::person("contract-many-labelled");
+        let known = EntityId::person("person:contract-many-labelled");
         add(
             store,
             NewEntity {
@@ -5373,7 +5373,7 @@ pub mod contract {
         )
         .await;
 
-        let under_the_alias = EntityId::person("contract-nickname-only");
+        let under_the_alias = EntityId::person("person:contract-nickname-only");
         let outcome = store
             .add_entity(NewEntity::new(
                 under_the_alias.clone(),
@@ -5403,7 +5403,7 @@ pub mod contract {
     /// An entity write with a malformed field is refused outright — a name that
     /// could break out of its frontmatter line never reaches the store.
     pub async fn malformed_entity_fields_are_rejected<M: Memory>(store: &M) {
-        let id = EntityId::person("contract-injector");
+        let id = EntityId::person("person:contract-injector");
         for (name, source, crm) in [
             ("", "user-named", None),
             ("ok", "", None),
@@ -5438,7 +5438,7 @@ pub mod contract {
     /// outright to every other layer, which left the entity with no way to
     /// record it at all.
     pub async fn a_cross_link_takes_the_task_layers_own_grammar<M: Memory>(store: &M) {
-        let id = EntityId::person("contract-crosslink");
+        let id = EntityId::person("person:contract-crosslink");
         add(
             store,
             NewEntity {
@@ -5464,7 +5464,7 @@ pub mod contract {
     /// are two columns and a widening that reaches one leaves the other
     /// exactly as it was.
     pub async fn a_field_at_the_validators_limit_survives_storage<M: Memory>(store: &M) {
-        let id = EntityId::person("contract-brimful");
+        let id = EntityId::person("person:contract-brimful");
         let source = format!("{:-<200}", "contract-source-");
         let crm = format!("{:0<200}", "card:");
         assert_eq!(
@@ -5525,7 +5525,7 @@ pub mod contract {
         store: &M,
         search: &S,
     ) {
-        let subject = EntityId::person("contract-searchable");
+        let subject = EntityId::person("person:contract-searchable");
         let captured = capture(
             store,
             NewFact::about(
@@ -5565,7 +5565,7 @@ pub mod contract {
         store: &M,
         search: &S,
     ) {
-        let subject = EntityId::person("contract-penny");
+        let subject = EntityId::person("person:contract-nelson");
         let watched = capture(
             store,
             NewFact {
@@ -5616,7 +5616,7 @@ pub mod contract {
         store: &M,
         search: &S,
     ) {
-        let subject = EntityId::person("contract-searchable");
+        let subject = EntityId::person("person:contract-searchable");
         capture(
             store,
             NewFact {
@@ -5663,7 +5663,7 @@ pub mod contract {
         store: &M,
         search: &S,
     ) {
-        let subject = EntityId::person("contract-retraction-hit");
+        let subject = EntityId::person("person:contract-retraction-hit");
         let live = capture(
             store,
             NewFact::about(subject.clone(), "the quartet rehearsed", date(2026, 7, 1)),
@@ -5728,7 +5728,7 @@ pub mod contract {
         store: &M,
         search: &S,
     ) {
-        let subject = EntityId::person("contract-search-superseded");
+        let subject = EntityId::person("person:contract-search-superseded");
         let live = capture(
             store,
             NewFact::about(subject.clone(), "plays the theremin", date(2026, 7, 1)),
@@ -5797,12 +5797,12 @@ pub mod contract {
         store: &M,
         search: &S,
     ) {
-        let far = EntityId::new(EntityKind::PLACE, "contract-faraway");
+        let far = EntityId("place:contract-faraway".into());
         let here = capture_at(store, "contract-away-one", &far, date(2026, 7, 1)).await;
         let there = capture_at(store, "contract-away-two", &far, date(2026, 7, 2)).await;
 
         // A fact that talks about the place but draws no edge to it.
-        let talker = EntityId::person("contract-away-talker");
+        let talker = EntityId::person("person:contract-away-talker");
         capture(
             store,
             NewFact::about(
@@ -5813,7 +5813,7 @@ pub mod contract {
         )
         .await;
         // …and a place that is edged there but is not a person.
-        let project = EntityId::new(EntityKind::PROJECT, "contract-away-project");
+        let project = EntityId("project:contract-away-project".into());
         capture(
             store,
             NewFact {
@@ -5859,13 +5859,13 @@ pub mod contract {
         store: &M,
         search: &S,
     ) {
-        let fest = EntityId::new(EntityKind::EVENT, "contract-connected-fest");
+        let fest = EntityId("event:contract-connected-fest".into());
         let attendee = capture(
             store,
             NewFact {
                 edge: Some(Edge::new(EdgeShape::Attendance, fest.clone())),
                 ..NewFact::about(
-                    EntityId::person("contract-conn-one"),
+                    EntityId::person("person:contract-conn-one"),
                     "went both nights",
                     date(2026, 7, 1),
                 )
@@ -5877,7 +5877,7 @@ pub mod contract {
             NewFact {
                 edge: Some(Edge::new(EdgeShape::About, fest.clone())),
                 ..NewFact::about(
-                    EntityId::new(EntityKind::WORK, "contract-conn-mix"),
+                    EntityId("work:contract-conn-mix".into()),
                     "recorded live that weekend",
                     date(2026, 7, 2),
                 )
@@ -5893,10 +5893,10 @@ pub mod contract {
             NewFact {
                 edge: Some(Edge::new(
                     EdgeShape::Attendance,
-                    EntityId::new(EntityKind::EVENT, "contract-connected-other"),
+                    EntityId("event:contract-connected-other".into()),
                 )),
                 ..NewFact::about(
-                    EntityId::person("contract-conn-two"),
+                    EntityId::person("person:contract-conn-two"),
                     "went to the other one",
                     date(2026, 7, 3),
                 )
@@ -5935,7 +5935,7 @@ pub mod contract {
     /// by the write guard's own matcher, so search and the guard can never
     /// disagree about what counts as the same thing.
     pub async fn search_pins_a_named_entity_first<M: Memory, S: Search>(store: &M, search: &S) {
-        let handle = EntityId::new(EntityKind::ORG, "contract-pinnable-guild");
+        let handle = EntityId("org:contract-pinnable-guild".into());
         add(
             store,
             NewEntity::new(handle.clone(), "Pinnable Guild", "user-named"),
@@ -5969,7 +5969,7 @@ pub mod contract {
         store: &M,
         search: &S,
     ) {
-        let subject = EntityId::person("contract-orienteer");
+        let subject = EntityId::person("person:contract-orienteer");
         add(
             store,
             NewEntity {
@@ -6026,8 +6026,8 @@ pub mod contract {
     /// same bare answer as a fact with no subject: the surroundings are the part
     /// that makes the next question askable.
     pub async fn search_entity_hits_carry_their_edges<M: Memory, S: Search>(store: &M, search: &S) {
-        let handle = EntityId::new(EntityKind::ORG, "contract-orient-guild");
-        let hall = EntityId::new(EntityKind::PLACE, "contract-orient-hall");
+        let handle = EntityId("org:contract-orient-guild".into());
+        let hall = EntityId("place:contract-orient-hall".into());
         add(
             store,
             NewEntity::new(handle.clone(), "Orienting Guild", "user-named"),
@@ -6398,7 +6398,7 @@ pub mod contract {
         // This is the whole point of the unit: what a thing is gets written
         // down a piece at a time, and a store full of half-descriptions is what
         // a real one looks like.
-        let whole = EntityId::person("contract-crate-whole");
+        let whole = EntityId::person("person:contract-crate-whole");
         for (key, value, said) in [
             ("weight", "12", "somebody weighed it"),
             ("arrives", "2026-08-10", "and somebody else was told when"),
@@ -6413,7 +6413,7 @@ pub mod contract {
             .await;
         }
         // Carries one of them, and nothing else ever says the rest.
-        let partial = EntityId::person("contract-crate-partial");
+        let partial = EntityId::person("person:contract-crate-partial");
         capture(
             store,
             NewFact {
@@ -6429,7 +6429,7 @@ pub mod contract {
         )
         .await;
         // Carries neither, and is a thing all the same.
-        let unrelated = EntityId::person("contract-crate-unrelated");
+        let unrelated = EntityId::person("person:contract-crate-unrelated");
         capture(
             store,
             NewFact {
@@ -6530,7 +6530,7 @@ pub mod contract {
             .await
             .expect("declaring should succeed");
 
-        let whole = EntityId::new(EntityKind::THING, "contract-pallet-whole");
+        let whole = EntityId("thing:contract-pallet-whole".into());
         for (key, value, said) in [
             ("stacked", "12", "somebody counted the boxes"),
             (
@@ -6548,7 +6548,7 @@ pub mod contract {
             )
             .await;
         }
-        let partial = EntityId::new(EntityKind::THING, "contract-pallet-half");
+        let partial = EntityId("thing:contract-pallet-half".into());
         capture(
             store,
             NewFact {
@@ -6644,7 +6644,7 @@ pub mod contract {
             .await
             .expect("declaring should succeed");
 
-        let messy = EntityId::person("contract-pallet-messy");
+        let messy = EntityId::person("person:contract-pallet-messy");
         capture(
             store,
             NewFact {
@@ -6732,9 +6732,9 @@ pub mod contract {
     /// there. The negative it rests on is a different kind, which must NOT be
     /// in a kind-scoped answer however many objects share the store.
     pub async fn a_graph_query_selects_a_kind_and_returns_its_prose<M: Memory>(store: &M) {
-        let one = EntityId::new(EntityKind::BOT, "contract-graph-one");
-        let two = EntityId::new(EntityKind::BOT, "contract-graph-two");
-        let outsider = EntityId::person("contract-graph-outsider");
+        let one = EntityId("bot:contract-graph-one".into());
+        let two = EntityId("bot:contract-graph-two".into());
+        let outsider = EntityId::person("person:contract-graph-outsider");
         for id in [&one, &two, &outsider] {
             ensure(store, id).await;
         }
@@ -6805,9 +6805,9 @@ pub mod contract {
     /// the other record — a build ignoring the value passes the positive and
     /// fails here.
     pub async fn a_graph_query_filters_on_a_stored_value_and_walks_an_edge<M: Memory>(store: &M) {
-        let gathering = EntityId::new(EntityKind::EVENT, "contract-graph-gathering");
-        let coming = EntityId::person("contract-graph-coming");
-        let staying = EntityId::person("contract-graph-staying");
+        let gathering = EntityId("event:contract-graph-gathering".into());
+        let coming = EntityId::person("person:contract-graph-coming");
+        let staying = EntityId::person("person:contract-graph-staying");
         ensure(store, &gathering).await;
 
         let yes = "yes = certain, ~confirmed~ 100% ünïcode";
@@ -7065,17 +7065,17 @@ pub mod contract {
     }
 
     pub async fn a_trip_records_who_came_and_answers_from_either_end<M: Memory>(store: &M) {
-        let away = EntityId::new(EntityKind::EVENT, "contract-long-weekend");
-        let home = EntityId::new(EntityKind::PLACE, "contract-harbour-end");
-        let there = EntityId::new(EntityKind::PLACE, "contract-fjord-town");
+        let away = EntityId("event:contract-long-weekend".into());
+        let home = EntityId("place:contract-harbour-end".into());
+        let there = EntityId("place:contract-fjord-town".into());
         for id in [&away, &home, &there] {
             ensure(store, id).await;
         }
         let companions = [
-            EntityId::person("contract-omicron"),
-            EntityId::person("contract-sigma"),
-            EntityId::person("contract-tau"),
-            EntityId::person("contract-upsilon"),
+            EntityId::person("person:contract-omicron"),
+            EntityId::person("person:contract-sigma"),
+            EntityId::person("person:contract-tau"),
+            EntityId::person("person:contract-upsilon"),
         ];
 
         // The trip itself: the keys the shipped type names, so this is a trip
@@ -7129,7 +7129,7 @@ pub mod contract {
 
         // **A trip nobody came on still reads back**, so recording companions
         // is something a trip may do rather than something it must.
-        let alone = EntityId::new(EntityKind::EVENT, "contract-lone-crossing");
+        let alone = EntityId("event:contract-lone-crossing".into());
         ensure(store, &alone).await;
         capture(
             store,
@@ -7208,8 +7208,8 @@ pub mod contract {
     }
 
     pub async fn a_declared_reference_key_is_walkable_against_the_store<M: Memory>(store: &M) {
-        let owner = EntityId::person("contract-relation-owner");
-        let held = EntityId::new(EntityKind::THING, "contract-relation-held");
+        let owner = EntityId::person("person:contract-relation-owner");
+        let held = EntityId("thing:contract-relation-held".into());
         ensure(store, &owner).await;
         ensure(store, &held).await;
 
@@ -7475,7 +7475,7 @@ pub mod contract {
     pub async fn a_type_named_after_a_kind_does_not_gate_that_kinds_writes<M: Memory>(store: &M) {
         // A shipped kind that names no key, so what governs a place here can
         // only be the caller's type below.
-        let moes = EntityId::new(EntityKind::PLACE, "contract-tavern");
+        let moes = EntityId("place:contract-tavern".into());
         ensure(store, &moes).await;
         store
             .declare_type(DeclaredType::new(
@@ -7514,7 +7514,7 @@ pub mod contract {
             )
             .await
             .expect("a kind may name the keys its things keep");
-        let helper = EntityId::new(EntityKind::PET, "contract-the-heavy-one");
+        let helper = EntityId("pet:contract-the-heavy-one".into());
         ensure(store, &helper).await;
         let refused = store
             .capture(NewFact {
@@ -7566,13 +7566,13 @@ pub mod contract {
         // declaring a new kind fills the set this process parses against, and any
         // case beside this one that stands a store up empties it again.
 
-        let moes = EntityId::new(EntityKind::PLACE, "contract-moes");
-        let helper = EntityId::new(EntityKind::PET, "contract-santas-little-helper");
+        let moes = EntityId("place:contract-moes".into());
+        let helper = EntityId("pet:contract-santas-little-helper".into());
         ensure(store, &moes).await;
         ensure(store, &helper).await;
 
         // A thing that fits: the venue is a place and the nights are a number.
-        let stay = EntityId::new(EntityKind::WORK, "contract-the-stay");
+        let stay = EntityId("work:contract-the-stay".into());
         let booked = capture(
             store,
             NewFact {
@@ -7632,7 +7632,7 @@ pub mod contract {
         // the type's keys and not the other, so there is no fit to protect and
         // the store takes the value as written. Without this beat the case
         // above passes on a build that refuses every reference everywhere.
-        let sketch = EntityId::new(EntityKind::EVENT, "contract-the-sketch");
+        let sketch = EntityId("event:contract-the-sketch".into());
         let jotted = capture(
             store,
             NewFact {
@@ -7760,7 +7760,7 @@ pub mod contract {
         );
 
         // ① A member of the set lands.
-        let sketch = EntityId::new(EntityKind::PROJECT, "contract-the-sketchbook");
+        let sketch = EntityId("project:contract-the-sketchbook".into());
         ensure(store, &sketch).await;
         let opened = capture(
             store,
@@ -7838,7 +7838,7 @@ pub mod contract {
         // of this kind, so there is no fit to protect, and the same value the
         // fitting thing was refused is taken as written. That is what keeps a
         // messy record repairable.
-        let jotted = EntityId::new(EntityKind::EVENT, "contract-the-jotting");
+        let jotted = EntityId("event:contract-the-jotting".into());
         ensure(store, &jotted).await;
         store
             .capture(NewFact {
@@ -7862,9 +7862,9 @@ pub mod contract {
             .await
             .expect("declaring a type of my own is accepted");
 
-        let borrower = EntityId::new(EntityKind::PERSON, "contract-milhouse");
+        let borrower = EntityId("person:contract-milhouse".into());
         ensure(store, &borrower).await;
-        let ledger = EntityId::new(EntityKind::THING, "contract-the-ledger");
+        let ledger = EntityId("thing:contract-the-ledger".into());
         ensure(store, &ledger).await;
 
         let missing = store
@@ -7938,7 +7938,7 @@ pub mod contract {
         // **A value that is no handle is not asked to exist.** It fails its
         // declaration and that is the floor's question; this thing fits no
         // type, so nothing refuses it and the note stays writable.
-        let scrap = EntityId::new(EntityKind::THING, "contract-the-scrap");
+        let scrap = EntityId("thing:contract-the-scrap".into());
         ensure(store, &scrap).await;
         store
             .capture(NewFact {
@@ -7998,7 +7998,7 @@ pub mod contract {
         // one**, which is what makes the refusal below answer for the floor: a
         // guard measured against every key a kind names would decide this thing
         // fits nothing and let the required key go.
-        let whole = EntityId::new(EntityKind::ORG, "contract-fitting-thing");
+        let whole = EntityId("org:contract-fitting-thing".into());
         let costed = capture(
             store,
             NewFact {
@@ -8052,7 +8052,7 @@ pub mod contract {
         // nothing here to protect — and a rule that read the CHANGE rather
         // than the result would refuse this one too and leave the record
         // unrepairable.
-        let partial = EntityId::new(EntityKind::ORG, "contract-loose-record");
+        let partial = EntityId("org:contract-loose-record".into());
         let half = capture(
             store,
             NewFact {
@@ -8142,7 +8142,7 @@ pub mod contract {
         // a shipped kind is used rather than a new one, for the reason
         // the case above gives.
 
-        let held = EntityId::new(EntityKind::TOPIC, "contract-run-of-stalls");
+        let held = EntityId("topic:contract-run-of-stalls".into());
         let seasonal = capture(
             store,
             NewFact {
@@ -8237,7 +8237,7 @@ pub mod contract {
         // A THING carrying every key that type names. Its kind is `thing`, and
         // `thing` names no keys, so nothing here is governed however completely
         // it answers the vocabulary.
-        let answers = EntityId::new(EntityKind::THING, "contract-vocabulary-answerer");
+        let answers = EntityId("thing:contract-vocabulary-answerer".into());
         let costed = capture(
             store,
             NewFact {
@@ -8287,7 +8287,7 @@ pub mod contract {
     /// A filter chooses which objects come back; it does not change what each
     /// one is.
     pub async fn a_thing_reads_back_as_its_fields_folded<M: Memory>(store: &M) {
-        let subject = EntityId::new(EntityKind::THING, "contract-folded-thing");
+        let subject = EntityId("thing:contract-folded-thing".into());
         let sittings = [
             [("weight", "11"), ("wheel", "700c")],
             // The second sitting adds a key and writes one of the first
@@ -8393,7 +8393,7 @@ pub mod contract {
     /// back on the record and in the history, and every reader of "what the
     /// thing IS" keeps serving the stale value.
     pub async fn the_newest_write_wins_however_old_the_record_it_landed_in<M: Memory>(store: &M) {
-        let subject = EntityId::new(EntityKind::THING, "contract-edited-older-record");
+        let subject = EntityId("thing:contract-edited-older-record".into());
         let older = capture(
             store,
             NewFact {
@@ -8462,7 +8462,7 @@ pub mod contract {
     /// ranking records would find the key gone from the newest record, fall
     /// back to an older one, and resurrect a value nobody wrote back.
     pub async fn a_cleared_key_is_not_resurrected_by_an_older_record<M: Memory>(store: &M) {
-        let subject = EntityId::new(EntityKind::THING, "contract-cleared-key");
+        let subject = EntityId("thing:contract-cleared-key".into());
         capture(
             store,
             NewFact {
@@ -8513,7 +8513,7 @@ pub mod contract {
     /// plain recall. Only the fold would know, and nothing told the caller to
     /// look there.
     pub async fn clearing_a_key_the_record_never_carried_changes_nothing<M: Memory>(store: &M) {
-        let subject = EntityId::new(EntityKind::THING, "contract-clear-off-address");
+        let subject = EntityId("thing:contract-clear-off-address".into());
         capture(
             store,
             NewFact {
@@ -8576,7 +8576,7 @@ pub mod contract {
     /// indistinguishable from one that never does: a history inside the window
     /// comes back whole, with nothing left out.
     pub async fn a_long_history_is_cut_to_its_newest_and_says_how_many<M: Memory>(store: &M) {
-        let subject = EntityId::new(EntityKind::THING, "contract-long-history");
+        let subject = EntityId("thing:contract-long-history".into());
         let written = graph::WRITES_SHOWN + 5;
         for nth in 1..=written {
             capture(
@@ -8646,7 +8646,7 @@ pub mod contract {
 
         // A key written a handful of times is untouched by any of this, and
         // says nothing was left out.
-        let short = EntityId::new(EntityKind::THING, "contract-short-history");
+        let short = EntityId("thing:contract-short-history".into());
         for nth in 1..=3 {
             capture(
                 store,
@@ -8689,7 +8689,7 @@ pub mod contract {
     /// it. The negative is the filter: a pet is not returned by a listing of
     /// things, so the kind is carried rather than defaulted to something.
     pub async fn a_pet_is_its_own_kind_in_the_store<M: Memory>(store: &M) {
-        let cat = EntityId::new(EntityKind::PET, "contract-pet-cat");
+        let cat = EntityId("pet:contract-pet-cat".into());
         ensure(store, &cat).await;
 
         let read = store
@@ -8727,8 +8727,8 @@ pub mod contract {
     /// refusal, nothing enforces the rule; without the write that succeeds, the
     /// case passes identically on a build that refuses every rhythm there is.
     pub async fn a_rhythm_is_refused_without_a_parent<M: Memory>(store: &M) {
-        let owner = EntityId::new(EntityKind::THING, "contract-kettle");
-        let orphan = EntityId::new(EntityKind::RHYTHM, "contract-descale");
+        let owner = EntityId("thing:contract-kettle".into());
+        let orphan = EntityId("rhythm:contract-descale".into());
         add(
             store,
             NewEntity::new(owner.clone(), "Contract Kettle", "contract-fixture"),

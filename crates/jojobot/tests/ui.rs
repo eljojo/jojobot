@@ -91,13 +91,13 @@ async fn memory_with_an_orphan() -> Arc<dyn Memory> {
     let store = Arc::new(InMemoryMemory::booted());
     seed(store.as_ref()).await;
     store.past_the_guard(Entity {
-        id: EntityId::new(EntityKind::THING, "sigma"),
+        id: EntityId("thing:sigma".into()),
         kind: EntityKind::THING,
         name: "Sigma".to_string(),
         aliases: Vec::new(),
         source: "the fixture roster".to_string(),
         crm: None,
-        parent: Some(EntityId::new(EntityKind::PERSON, "ghost")),
+        parent: Some(EntityId("person:ghost".into())),
         boot: Boot::default(),
     });
     store
@@ -106,12 +106,12 @@ async fn memory_with_an_orphan() -> Arc<dyn Memory> {
 async fn seed(store: &dyn Memory) {
     for new in [
         NewEntity::new(
-            EntityId::new(EntityKind::PERSON, "alpha"),
+            EntityId("person:alpha".into()),
             "Alpha",
             "the fixture roster",
         ),
         NewEntity::new(
-            EntityId::new(EntityKind::PLACE, "shelbyville"),
+            EntityId("place:shelbyville".into()),
             // A name is free text a person wrote, and this one bites: it is
             // rendered in a root's row on the index and in the record table on
             // its own page.
@@ -122,25 +122,25 @@ async fn seed(store: &dyn Memory) {
         store.add_entity(new).await.expect("the roster is written");
     }
     let mut child = NewEntity::new(
-        EntityId::new(EntityKind::TOPIC, "widgets"),
+        EntityId("topic:widgets".into()),
         "Widgets",
         "the fixture roster",
     );
-    child.parent = Some(EntityId::new(EntityKind::PERSON, "alpha"));
+    child.parent = Some(EntityId("person:alpha".into()));
     store.add_entity(child).await.expect("the child is written");
 
     // A fact held at the child, drawing a relation out of the subtree — so a
     // page can be asserted to follow a relation somewhere its own branch does
     // not reach.
     let mut fact = NewFact::about(
-        EntityId::new(EntityKind::TOPIC, "widgets"),
+        EntityId("topic:widgets".into()),
         "The widget stall runs on Thursdays",
         Date::constant(2026, 3, 4),
     );
     fact.provenance = Provenance::Testimony;
     fact.edge = Some(Edge::new(
         EdgeShape::Location,
-        EntityId::new(EntityKind::PLACE, "shelbyville"),
+        EntityId("place:shelbyville".into()),
     ));
     store.capture(fact).await.expect("the fact is written");
 
@@ -152,7 +152,7 @@ async fn seed(store: &dyn Memory) {
         ("pitch", "14", "and somebody else counted the pitches"),
     ] {
         let mut piece = NewFact::about(
-            EntityId::new(EntityKind::TOPIC, "widgets"),
+            EntityId("topic:widgets".into()),
             said,
             Date::constant(2026, 3, 6),
         );
@@ -167,7 +167,7 @@ async fn seed(store: &dyn Memory) {
         ("45", "and forty-five on the second", 8),
     ] {
         let mut takings = NewFact::about(
-            EntityId::new(EntityKind::TOPIC, "widgets"),
+            EntityId("topic:widgets".into()),
             said,
             Date::constant(2026, 3, day),
         );
@@ -193,7 +193,7 @@ async fn seed(store: &dyn Memory) {
     // parts of a node page — the fact table and the prose block.
     store
         .capture(NewFact::about(
-            EntityId::new(EntityKind::TOPIC, "widgets"),
+            EntityId("topic:widgets".into()),
             typed("fact-content"),
             Date::constant(2026, 3, 5),
         ))
@@ -201,7 +201,7 @@ async fn seed(store: &dyn Memory) {
         .expect("the markup-bearing fact is written");
     store
         .set_prose(
-            &EntityId::new(EntityKind::TOPIC, "widgets"),
+            &EntityId("topic:widgets".into()),
             &format!("What the stall is for {}", typed("prose")),
         )
         .await
@@ -221,7 +221,7 @@ struct Board {
 /// message waiting in `new`, one run of it, and a beat in that run's
 /// chronology.
 async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
-    let bot = EntityId::new(EntityKind::BOT, "otto");
+    let bot = EntityId("bot:otto".into());
     memory
         .add_entity(NewEntity::new(bot.clone(), "Otto", "the fixture roster"))
         .await
@@ -1308,7 +1308,7 @@ async fn rails(board: &Board) -> Rails {
         .collect();
     let mut runs: Vec<String> = board
         .sessions
-        .sessions_of(&EntityId::new(EntityKind::BOT, "otto"))
+        .sessions_of(&EntityId("bot:otto".into()))
         .await
         .expect("the runs are readable")
         .iter()

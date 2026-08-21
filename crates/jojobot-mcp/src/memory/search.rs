@@ -1526,7 +1526,7 @@ mod tests {
             (
                 "subject",
                 SearchQuery {
-                    subject: Some(EntityId::new(EntityKind::PERSON, "alpha")),
+                    subject: Some(EntityId("person:alpha".into())),
                     ..SearchQuery::default()
                 },
             ),
@@ -1535,7 +1535,7 @@ mod tests {
                 SearchQuery {
                     edge: Some(EdgeFilter {
                         shape: Some(EdgeShape::Location),
-                        object: EntityId::new(EntityKind::PLACE, "shelbyville"),
+                        object: EntityId("place:shelbyville".into()),
                     }),
                     ..SearchQuery::default()
                 },
@@ -1645,7 +1645,7 @@ mod tests {
     #[tokio::test]
     async fn search_renders_a_mixed_list_of_typed_hits() {
         let entity = Entity {
-            id: EntityId::new(EntityKind::WORK, "first-mix"),
+            id: EntityId("work:first-mix".into()),
             kind: EntityKind::WORK,
             name: "First Mix".into(),
             aliases: vec!["The First One".into()],
@@ -1656,8 +1656,8 @@ mod tests {
         };
         let fact = Fact {
             id: FactId("f3".into()),
-            home: EntityId::person("alpha"),
-            subject: EntityId::person("alpha"),
+            home: EntityId::person("person:alpha"),
+            subject: EntityId::person("person:alpha"),
             content: "spending the winter away".into(),
             details: Some("said so in June".into()),
             provenance: Provenance::Testimony,
@@ -1675,7 +1675,7 @@ mod tests {
             stale_after: None,
         };
         let alpha = Entity {
-            id: EntityId::person("alpha"),
+            id: EntityId::person("person:alpha"),
             kind: EntityKind::PERSON,
             name: "Alpha".into(),
             aliases: vec!["Al".into()],

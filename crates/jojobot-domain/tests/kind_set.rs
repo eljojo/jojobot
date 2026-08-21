@@ -54,7 +54,7 @@ fn a_loaded_kind_is_known_and_the_compiled_list_cannot_answer_for_it() {
     // notice: `pet` is compiled and NOT loaded here, so a parse that answers
     // for it is answering from the compiled list.
     assert_eq!(
-        EntityId::new(EntityKind::PERSON, "alpha").kind(),
+        EntityId("person:alpha".into()).kind(),
         Some(EntityKind::PERSON),
         "a handle whose kind is loaded parses",
     );
@@ -133,7 +133,7 @@ fn the_seed_writes_before_it_reads() {
         .expect("the kinds are seeded");
 
     assert_eq!(
-        EntityId::person("kind-set-reader").kind(),
+        EntityId::person("person:kind-set-reader").kind(),
         Some(EntityKind::PERSON),
         "after the seed this process reads a handle, which it can only do if the seed \
          loaded what it had just written",
@@ -181,7 +181,7 @@ fn a_store_stood_up_loads_nothing_and_a_booted_one_loads_what_it_holds() {
          booted store",
     );
     assert_eq!(
-        EntityId::person("kind-set-reader").kind(),
+        EntityId::person("person:kind-set-reader").kind(),
         Some(EntityKind::PERSON),
         "and the set is filled well enough to parse a handle, which is what a case \
          needs it for",

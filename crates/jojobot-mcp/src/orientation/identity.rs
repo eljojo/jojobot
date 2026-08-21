@@ -384,7 +384,7 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
 
         let healed = jojobot
-            .heal_missing_box(&EntityId::new(EntityKind::BOT, "gamma"))
+            .heal_missing_box(&EntityId("bot:gamma".into()))
             .await;
 
         assert_eq!(healed["available"], true, "{healed}");
@@ -443,7 +443,7 @@ mod tests {
         // It is a real box on the board, not a rendering.
         let boxes = jojobot.mailboxes.list_mailboxes().await.expect("list ok");
         assert_eq!(boxes.len(), 1, "{boxes:?}");
-        assert_eq!(boxes[0].owner, EntityId::new(EntityKind::BOT, "gamma"));
+        assert_eq!(boxes[0].owner, EntityId("bot:gamma".into()));
 
         // …and the second boot is quiet, because there is nothing left to fix.
         let again = boot(&jojobot, "gamma").await["identity"]["owned_mailbox"].clone();

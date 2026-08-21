@@ -621,7 +621,7 @@ mod tests {
             .unwrap_or_else(|| panic!("the bot's box was never opened: {boxes:?}"));
         assert_eq!(
             opened.owner,
-            EntityId::new(EntityKind::BOT, "gamma"),
+            EntityId("bot:gamma".into()),
             "…and it is the bot's own, by construction"
         );
     }

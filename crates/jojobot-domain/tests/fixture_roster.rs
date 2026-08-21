@@ -15,9 +15,17 @@
 //! file under `crates/`, and in the markdown at the workspace root, which is
 //! where this repository's prose about itself lives. A comment is read on the
 //! same terms as code and on no wider ones — the handle form is what the scan
-//! looks for, wherever it sits, and comments are where past leaks lived. Bare
-//! slugs handed to constructors are out of reach for a text scan; the handle
-//! form is where every leak so far has entered.
+//! looks for, wherever it sits, and comments are where past leaks lived.
+//!
+//! **A slug handed to a handle constructor is in scope too**, and it is what
+//! [`no_handle_in_the_workspace_is_built_from_a_bare_slug`] holds: a name given
+//! to `EntityId::new` or `EntityId::person` in parts never appears as
+//! `kind:slug`, so nothing here would compare it against the roster. That check
+//! reads the constructor rather than the string — the signature declares the
+//! argument is a slug — so it stays as crisp as this one. ⚠️ **It covers a call
+//! whose KIND is written out.** A kind a caller declares at runtime carries a
+//! token the domain's set does not hold, so a handle under one is unreadable to
+//! this scan whichever way it is written.
 //!
 //! **A life specific written in ordinary words passes this gate, because
 //! nothing here is looking for it.** A comment, a doc string or a fixture that
@@ -40,6 +48,12 @@ fn kinds() -> Vec<&'static str> {
 }
 
 /// The complete allowlist. Keep it sorted; keep it fictional.
+///
+/// **The descriptive case labels are the synthetic branch of that rule**, not
+/// an exception to it: `thing:contract-clear-off-address` says what a case is
+/// about and names nobody. They are here because the fixture carrying one has
+/// to be visible to the scan, never because the list is a pool of approved
+/// words.
 ///
 /// **Some entries are engine material rather than fixtures**, and they are
 /// here deliberately rather than by drift: `bot:assistant`, the default
@@ -193,6 +207,181 @@ const ROSTER: &[&str] = &[
     "work:first-mix",
     "work:phi",
     "work:sigma",
+    // **The shared contract suite's own fixtures, and the case labels beside
+    // them.** They were invisible until the fixtures named their handles whole:
+    // a slug handed to a constructor carries no handle for this scan to read.
+    // Most are labels saying what a case is about rather than names of anybody.
+    "bot:contract-epsilon",
+    "bot:contract-ghost-bot",
+    "bot:contract-graph-one",
+    "bot:contract-graph-two",
+    "event:contract-connected-fest",
+    "event:contract-connected-other",
+    "event:contract-graph-gathering",
+    "event:contract-leaving-party",
+    "event:contract-lone-crossing",
+    "event:contract-long-weekend",
+    "event:contract-the-jotting",
+    "event:contract-the-sketch",
+    "event:contract-unheard-of-fest",
+    "event:contract-winter-fest",
+    "org:contract-fitting-thing",
+    "org:contract-loose-record",
+    "org:contract-orient-guild",
+    "org:contract-pinnable-guild",
+    "org:contract-riversid",
+    "org:contract-riverside",
+    "org:contract-self-labelled",
+    "org:contract-unscreened",
+    "org:contract-unscreened-twin",
+    "person:contract-addressable",
+    "person:contract-addresse",
+    "person:contract-addressee",
+    "person:contract-alias-borrower",
+    "person:contract-alias-owner",
+    "person:contract-alpha",
+    "person:contract-appended",
+    "person:contract-away-talker",
+    "person:contract-backing",
+    "person:contract-backslash",
+    "person:contract-brimful",
+    "person:contract-cleared",
+    "person:contract-clear-marker",
+    "person:contract-clocks",
+    "person:contract-confirmed-guess",
+    "person:contract-conn-one",
+    "person:contract-conn-two",
+    "person:contract-counted",
+    "person:contract-crate-partial",
+    "person:contract-crate-unrelated",
+    "person:contract-crate-whole",
+    "person:contract-crosslink",
+    "person:contract-demotable",
+    "person:contract-duet",
+    "person:contract-edged",
+    "person:contract-edge-guarded",
+    "person:contract-edge-later",
+    "person:contract-edge-stranger",
+    "person:contract-editable",
+    "person:contract-evented",
+    "person:contract-field-edit",
+    "person:contract-graph-coming",
+    "person:contract-graph-outsider",
+    "person:contract-graph-staying",
+    "person:contract-hedged-word",
+    "person:contract-injector",
+    "person:contract-late-edge",
+    "person:contract-lineage",
+    "person:contract-many-labelled",
+    "person:contract-many-named",
+    "person:contract-milhouse",
+    "person:contract-miskinded",
+    "person:contract-missing-row",
+    "person:contract-multi",
+    "person:contract-nearslug",
+    "person:contract-nearslugg",
+    "person:contract-never-captured",
+    "person:contract-nickname-only",
+    "person:contract-nobody-created-this",
+    "person:contract-no-such",
+    "person:contract-observed",
+    "person:contract-omicron",
+    "person:contract-oneway",
+    "person:contract-orienteer",
+    "person:contract-orjent",
+    "person:contract-otto",
+    "person:contract-pallet-messy",
+    "person:contract-nelson",
+    "person:contract-pipe",
+    "person:contract-promotable",
+    "person:contract-provenance",
+    "person:contract-readback",
+    "person:contract-ref-guarded",
+    "person:contract-refutable",
+    "person:contract-relation-owner",
+    "person:contract-renamed-onto",
+    "person:contract-renamer",
+    "person:contract-reopening",
+    "person:contract-reserved-key",
+    "person:contract-retracted",
+    "person:contract-retraction-hit",
+    "person:contract-retract-miss",
+    "person:contract-searchable",
+    "person:contract-search-superseded",
+    "person:contract-settle-gate",
+    "person:contract-sigma",
+    "person:contract-silent-standing",
+    "person:contract-solo",
+    "person:contract-tallied",
+    "person:contract-tau",
+    "person:contract-totalled",
+    "person:contract-unbacked-guess",
+    "person:contract-unreasoned",
+    "person:contract-unwritten",
+    "person:contract-upsilon",
+    "person:contract-whitespace",
+    "person:contract-zenit",
+    "person:contract-zenith",
+    "person:kind-set-reader",
+    "pet:contract-pet-cat",
+    "pet:contract-santas-little-helper",
+    "pet:contract-the-heavy-one",
+    "place:contract-faraway",
+    "place:contract-far-country",
+    "place:contract-fjord-town",
+    "place:contract-harbour-end",
+    "place:contract-kiln-yard",
+    "place:contract-moes",
+    "place:contract-north-trail",
+    "place:contract-nowhere-in-particular",
+    "place:contract-orient-hall",
+    "place:contract-riverbend",
+    "place:contract-riverbnd",
+    "place:contract-tavern",
+    "project:contract-atlas",
+    "project:contract-away-project",
+    "project:contract-bad-parent",
+    "project:contract-ghost-parent",
+    "project:contract-ghost-parnt",
+    "project:contract-kwik-e",
+    "project:contract-kwik-e-squishee",
+    "project:contract-monorail",
+    "project:contract-monorail-funding",
+    "project:contract-ouroboros",
+    "project:contract-plant",
+    "project:contract-plnt",
+    "project:contract-shift-rota",
+    "project:contract-springfield",
+    "project:contract-springfield-brakes",
+    "project:contract-springfield-cars",
+    "project:contract-springfield-track",
+    "project:contract-the-sketchbook",
+    "rhythm:contract-descale",
+    "rhythm:corner-stall",
+    "rhythm:holds-nothing",
+    "thing:contract-cleared-key",
+    "thing:contract-clear-off-address",
+    "thing:contract-edited-older-record",
+    "thing:contract-folded-thing",
+    "thing:contract-kettle",
+    "thing:contract-long-history",
+    "thing:contract-marker-not-a-field",
+    "thing:contract-pallet-half",
+    "thing:contract-pallet-whole",
+    "thing:contract-red-bike",
+    "thing:contract-red-bikee",
+    "thing:contract-relation-held",
+    "thing:contract-short-history",
+    "thing:contract-the-ledger",
+    "thing:contract-the-scrap",
+    "thing:contract-vocabulary-answerer",
+    "thing:handcart",
+    "topic:contract-run-of-stalls",
+    "topic:contract-widgets",
+    "view:my-week",
+    "work:contract-conn-mix",
+    "work:contract-first-mix",
+    "work:contract-the-stay",
 ];
 
 /// Every file in the workspace that can carry a handle.
@@ -696,4 +885,159 @@ fn the_gate_reads_a_named_character_and_an_unnamed_role_apart() {
         "…and a pronoun for a character the line names must pass, or the report above is the \
          gate flagging everything rather than working: {unattached:?}"
     );
+}
+
+/// **A handle built in this workspace names its kind where the scan can read
+/// it.**
+///
+/// The gate above reads handle-shaped text, so a name that never appears as
+/// `kind:slug` is a name it has never compared against the roster. Two
+/// constructors take a handle apart: `EntityId::new`, which takes a kind and a
+/// slug, and `EntityId::person`, which takes a slug alone. **A slug handed to
+/// either of them is a name in this repository that no allowlist has seen.**
+///
+/// **This reads a DECLARED fact, not a guess.** The scan does not ask which
+/// bare strings in the workspace look like slugs — that question has no crisp
+/// answer and asking it would make the check above less trustworthy. It asks
+/// what those two signatures already say: the argument in that position IS a
+/// slug, because the constructor's own type says so. **A check keyed on the
+/// constructor is exactly as crisp as one keyed on a `kind:` prefix.**
+///
+/// **It is keyed on the constructor rather than on the kind**, and one call
+/// shows why: a kind can be a variable, so a scan reading the kind token would
+/// not see that call at all. The second argument is what this reads, whatever
+/// the first one is.
+///
+/// It holds no list of names and has no opinion about any string's content
+/// (rules 45, 106). The way to satisfy it is to write the handle whole, which
+/// is what puts the name in front of the roster.
+#[test]
+fn no_handle_in_the_workspace_is_built_from_a_bare_slug() {
+    let bare = bare_slugs_in(&scanned_files(&workspace_root()));
+    assert!(
+        bare.is_empty(),
+        "these hand a bare slug to a handle constructor, so the name never appears as \
+         `kind:slug` and the roster gate above has never seen it — write the handle \
+         whole:\n{}",
+        bare.join("\n")
+    );
+}
+
+/// **Both halves, or the case above proves nothing.**
+///
+/// A scan that read nothing would satisfy the assertion on its own, and a scan
+/// that flagged every call would be deleted by the first author who met it. So
+/// one file hands a bare slug to each constructor and one writes the handle
+/// whole through the same calls.
+#[test]
+fn the_gate_reads_a_bare_slug_and_a_whole_handle_apart() {
+    let scratch = Scratch::new("bare-slugs");
+    scratch.write(
+        "crates/bare.rs",
+        concat!(
+            "fn a() {\n",
+            "    let x = EntityId::new(EntityKind::PERSON, \"someone\");\n",
+            "    let y = EntityId::person(\"another\");\n",
+            "}\n",
+        ),
+    );
+    scratch.write(
+        "crates/whole.rs",
+        concat!(
+            "fn b() {\n",
+            "    let x = EntityId::new(EntityKind::PERSON, \"person:milhouse\");\n",
+            "    let y = EntityId::person(\"person:ralph\");\n",
+            "}\n",
+        ),
+    );
+
+    let bare = bare_slugs_in(&scanned_files(&scratch.0));
+
+    assert!(
+        bare.iter().any(|line| line.contains("someone")),
+        "a bare slug handed to EntityId::new has to be reported: {bare:?}"
+    );
+    assert!(
+        bare.iter().any(|line| line.contains("another")),
+        "…and one handed to EntityId::person: {bare:?}"
+    );
+    assert!(
+        !bare.iter().any(|line| line.contains("whole.rs")),
+        "…and a whole handle through the same calls must pass, or the report above is the \
+         scan flagging everything rather than working: {bare:?}"
+    );
+}
+
+/// Every bare slug handed to a handle constructor, as `call in path`.
+///
+/// **A slug carries its kind or it does not.** The argument is read as written:
+/// one that already holds a colon is a whole handle and the scan above reads
+/// it; one that does not is a name nothing compares against the roster.
+///
+/// A non-literal argument — a variable, a `format!` — is out of reach here and
+/// is out of reach of any text scan. What this catches is the literal, which is
+/// where a name a person typed actually enters.
+fn bare_slugs_in(files: &[PathBuf]) -> Vec<String> {
+    let mut bare = Vec::new();
+    for file in files {
+        if file.file_name().is_some_and(|n| n == "fixture_roster.rs") {
+            continue;
+        }
+        let text = fs::read_to_string(file).expect("readable source file");
+        for (call, argument) in constructor_arguments(&text) {
+            if argument.contains(':') {
+                continue;
+            }
+            bare.push(format!("{call}(\"{argument}\") in {}", file.display()));
+        }
+    }
+    bare.sort();
+    bare.dedup();
+    bare
+}
+
+/// **The two constructors that take a handle apart**, with the literal each
+/// one is handed.
+///
+/// `EntityId::person` takes the slug first, so its argument is the literal that
+/// opens the call. `EntityId::new` takes the kind first and the slug second, so
+/// the scan walks past the kind and reads the literal after the comma.
+///
+/// ⚠️ **A call whose KIND is a variable is skipped, and that is a stated limit
+/// rather than an oversight.** A kind can be declared by a caller at runtime,
+/// and a handle under one carries a token that is not in the domain's set — so
+/// the scan above would not read it as a handle even written whole, and
+/// demanding the whole handle there would buy nothing. What this covers is a
+/// handle whose kind the scan can name.
+fn constructor_arguments(text: &str) -> Vec<(&'static str, String)> {
+    let mut found = Vec::new();
+    for (call, takes_a_kind) in [("EntityId::person", false), ("EntityId::new", true)] {
+        let needle = format!("{call}(");
+        for (idx, _) in text.match_indices(&needle) {
+            let mut rest = &text[idx + needle.len()..];
+            if takes_a_kind {
+                let kind = rest.trim_start();
+                // The kind written out, rather than one a caller declared and
+                // this call resolved: only the first is a token the scan knows.
+                if !kind.starts_with("EntityKind::")
+                    && !kind.starts_with("jojobot_domain::memory::EntityKind::")
+                {
+                    continue;
+                }
+                let Some(comma) = rest.find(',') else {
+                    continue;
+                };
+                rest = &rest[comma + 1..];
+            }
+            let rest = rest.trim_start();
+            let Some(literal) = rest.strip_prefix('"') else {
+                continue;
+            };
+            let Some(end) = literal.find('"') else {
+                continue;
+            };
+            found.push((call, literal[..end].to_string()));
+        }
+    }
+    found
 }

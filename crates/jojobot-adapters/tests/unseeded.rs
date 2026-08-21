@@ -22,7 +22,7 @@ use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::free_port;
 use jojobot_domain::mailbox::{MailboxError, MailboxName, Mailboxes, OwnerIndex, OwnerLookup};
-use jojobot_domain::memory::{EntityId, EntityKind};
+use jojobot_domain::memory::EntityId;
 
 /// A directory of this run's own, removed when it is done.
 struct Scratch(PathBuf);
@@ -61,7 +61,7 @@ async fn an_unseeded_process_says_so_rather_than_blaming_the_handle() {
     let refused = mail
         .create_mailbox(
             &MailboxName("inbox".into()),
-            &EntityId::new(EntityKind::BOT, "gamma"),
+            &EntityId("bot:gamma".into()),
             None,
         )
         .await

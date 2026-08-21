@@ -643,7 +643,7 @@ mod tests {
             .await
             .expect("list ok")
             .into_iter()
-            .filter(|b| b.owner == EntityId::new(EntityKind::BOT, "gamma"))
+            .filter(|b| b.owner == EntityId("bot:gamma".into()))
             .collect();
         assert_eq!(held.len(), 2, "the fixture holds two boxes for one bot");
         assert_eq!(

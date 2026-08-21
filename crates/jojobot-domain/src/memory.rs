@@ -3259,7 +3259,7 @@ mod tests {
 
     #[test]
     fn person_id_prefixes_a_bare_handle_but_respects_a_typed_one() {
-        assert_eq!(EntityId::person("alpha").as_str(), "person:alpha");
+        assert_eq!(EntityId::person("person:alpha").as_str(), "person:alpha");
         assert_eq!(EntityId::person("person:alpha").as_str(), "person:alpha");
     }
 
@@ -3269,7 +3269,7 @@ mod tests {
         // adversarial id adversarial is that its kind half names no kind the
         // set holds, so the refusals below are statements about the loaded set.
         crate::memory::kinds::load_shipped();
-        assert!(validate_subject(&EntityId::person("alpha")).is_ok());
+        assert!(validate_subject(&EntityId::person("person:alpha")).is_ok());
         assert!(validate_subject(&EntityId("project:jojobot-server".into())).is_ok());
         // Injection vectors: newline, pipe, header, fence, space, uppercase, empty.
         for bad in [
@@ -3338,7 +3338,7 @@ mod tests {
         // `bot` sits in the set beside the other kinds and is read the same
         // way, so what is loaded is the thing being asserted.
         crate::memory::kinds::load_shipped();
-        let id = EntityId::new(EntityKind::BOT, "otto");
+        let id = EntityId("bot:otto".into());
         assert_eq!(id.as_str(), "bot:otto");
         assert_eq!(id.kind(), Some(EntityKind::BOT));
         assert!(validate_subject(&id).is_ok());
@@ -3354,7 +3354,7 @@ mod tests {
         // the split is answered from the set, so what comes back is a read of
         // it rather than of the string.
         crate::memory::kinds::load_shipped();
-        let id = EntityId::new(EntityKind::PROJECT, "jojobot-server");
+        let id = EntityId("project:jojobot-server".into());
         assert_eq!(id.as_str(), "project:jojobot-server");
         assert_eq!(id.kind(), Some(EntityKind::PROJECT));
         assert_eq!(id.slug(), "jojobot-server");
@@ -3404,7 +3404,7 @@ mod tests {
         // about something else, so the set is setup — and setup comes from
         // standing a store up, filled from what that store holds.
         let _booted = crate::memory::testing::InMemoryMemory::booted();
-        let addr = FactAddress::new(EntityId::person("alpha"), FactId("f3".into()));
+        let addr = FactAddress::new(EntityId::person("person:alpha"), FactId("f3".into()));
         assert_eq!(addr.to_string(), "person:alpha#f3");
         assert_eq!(FactAddress::parse("person:alpha#f3").unwrap(), addr);
         for bad in [
@@ -3616,7 +3616,7 @@ mod tests {
     #[test]
     fn an_alias_set_is_replaced_whole_or_left_alone() {
         let mut entity = Entity {
-            id: EntityId::person("alpha"),
+            id: EntityId::person("person:alpha"),
             kind: EntityKind::PERSON,
             name: "Alpha".into(),
             aliases: vec!["Al".into()],
@@ -3686,7 +3686,7 @@ mod tests {
     #[test]
     fn an_entitys_labels_are_its_name_and_its_aliases() {
         let entity = |name: &str, aliases: Vec<String>| Entity {
-            id: EntityId::person("alpha"),
+            id: EntityId::person("person:alpha"),
             kind: EntityKind::PERSON,
             name: name.into(),
             aliases,

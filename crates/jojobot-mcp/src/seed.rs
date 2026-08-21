@@ -378,7 +378,7 @@ mod tests {
     #[tokio::test]
     async fn a_near_miss_on_the_board_does_not_deny_the_default_identity_its_box() {
         let (memory, mailboxes) = ports();
-        let other = EntityId::new(EntityKind::BOT, "gamma");
+        let other = EntityId("bot:gamma".into());
         // One letter off `assistant` — a near miss by the mailbox guard's own
         // budget.
         mailboxes

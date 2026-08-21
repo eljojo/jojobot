@@ -32,9 +32,7 @@ pub(crate) const TEST_SID: &str = "test";
 pub(crate) fn seeded_registry() -> Arc<sid::SessionRegistry> {
     let registry = Arc::new(sid::SessionRegistry::new());
     registry
-        .mint_with(&EntityId::new(EntityKind::BOT, "otto"), None, || {
-            TEST_SID.to_string()
-        })
+        .mint_with(&EntityId("bot:otto".into()), None, || TEST_SID.to_string())
         .expect("a free handle in a fresh registry");
     registry
 }
@@ -50,9 +48,7 @@ pub(crate) fn writing_as(jojobot: &Jojobot) -> String {
     if jojobot.registry.lookup(TEST_SID).is_none() {
         let _ = jojobot
             .registry
-            .mint_with(&EntityId::new(EntityKind::BOT, "otto"), None, || {
-                TEST_SID.to_string()
-            });
+            .mint_with(&EntityId("bot:otto".into()), None, || TEST_SID.to_string());
     }
     TEST_SID.to_string()
 }

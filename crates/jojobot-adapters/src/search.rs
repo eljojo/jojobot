@@ -2459,7 +2459,7 @@ mod tests {
     #[tokio::test]
     async fn a_hand_built_doc_holds_what_the_store_would_hold() {
         let store = InMemoryMemory::booted();
-        let who = EntityId::person("milhouse");
+        let who = EntityId::person("person:milhouse");
         store
             .add_entity(NewEntity::new(who.clone(), "Milhouse", "user-named"))
             .await
@@ -3355,7 +3355,7 @@ mod tests {
             Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
         store
             .add_entity(NewEntity::new(
-                EntityId::person("alpha"),
+                EntityId::person("person:alpha"),
                 "Alpha",
                 "user-named",
             ))
@@ -3365,7 +3365,7 @@ mod tests {
             .expect("not blocked");
         let captured = store
             .capture(NewFact::about(
-                EntityId::person("alpha"),
+                EntityId::person("person:alpha"),
                 "works at the old place",
                 date(2026, 7, 1),
             ))
@@ -3413,7 +3413,7 @@ mod tests {
             Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
         store
             .add_entity(NewEntity::new(
-                EntityId::person("zenith"),
+                EntityId::person("person:zenith"),
                 "Zenith",
                 "user-named",
             ))
@@ -3424,7 +3424,7 @@ mod tests {
 
         let blocked = store
             .capture(NewFact::about(
-                EntityId::person("zenit"),
+                EntityId::person("person:zenit"),
                 "should not be indexed",
                 date(2026, 7, 1),
             ))
@@ -3447,7 +3447,7 @@ mod tests {
         let inner = Arc::new(InMemoryMemory::booted());
         inner
             .add_entity(NewEntity::new(
-                EntityId::person("alpha"),
+                EntityId::person("person:alpha"),
                 "Alpha",
                 "user-named",
             ))
@@ -3455,7 +3455,7 @@ mod tests {
             .expect("add ok");
         inner
             .capture(NewFact::about(
-                EntityId::person("alpha"),
+                EntityId::person("person:alpha"),
                 "was here before the server started",
                 date(2026, 7, 1),
             ))
@@ -3510,7 +3510,7 @@ mod tests {
         let inner = Arc::new(InMemoryMemory::booted());
         inner
             .add_entity(NewEntity::new(
-                EntityId::person("alpha"),
+                EntityId::person("person:alpha"),
                 "Alpha",
                 "user-named",
             ))
@@ -3518,7 +3518,7 @@ mod tests {
             .expect("add ok");
         let stands = inner
             .capture(NewFact::about(
-                EntityId::person("alpha"),
+                EntityId::person("person:alpha"),
                 "the quartet rehearsed",
                 date(2026, 7, 1),
             ))
@@ -3528,7 +3528,7 @@ mod tests {
             .expect("not blocked");
         let taken_back = inner
             .capture(NewFact::about(
-                EntityId::person("alpha"),
+                EntityId::person("person:alpha"),
                 "the quartet rehearsed twice",
                 date(2026, 7, 2),
             ))
@@ -3548,7 +3548,7 @@ mod tests {
         // row standing for different reasons and are marked by different verbs.
         let moved_past = inner
             .capture(NewFact::about(
-                EntityId::person("alpha"),
+                EntityId::person("person:alpha"),
                 "the quartet rehearsed on Tuesdays",
                 date(2026, 7, 4),
             ))
@@ -4475,8 +4475,8 @@ mod tests {
         fn marked() -> Fact {
             Fact {
                 id: jojobot_domain::memory::FactId("f1".into()),
-                home: EntityId::person("alpha"),
-                subject: EntityId::person("alpha"),
+                home: EntityId::person("person:alpha"),
+                subject: EntityId::person("person:alpha"),
                 content: Self::MARKER.into(),
                 details: None,
                 provenance: Provenance::Testimony,
@@ -4603,7 +4603,7 @@ mod tests {
     #[tokio::test]
     async fn the_decorator_forwards_the_reads_the_store_answers_for_itself() {
         let indexed = IndexedMemory::new(Arc::new(Delegated)).expect("index opens");
-        let alpha = EntityId::person("alpha");
+        let alpha = EntityId::person("person:alpha");
 
         let backed = Memory::backing(&indexed, &alpha)
             .await
@@ -4654,7 +4654,7 @@ mod tests {
     /// One row to write onto that page.
     fn ferret() -> NewFact {
         NewFact {
-            subject: EntityId::person("alpha"),
+            subject: EntityId::person("person:alpha"),
             content: "keeps a ferret".into(),
             details: None,
             provenance: Provenance::Testimony,
@@ -4904,7 +4904,7 @@ mod tests {
         );
         assert_eq!(
             store.index().behind_now(),
-            vec![EntityId::person("alpha")],
+            vec![EntityId::person("person:alpha")],
             "and it knows which document it is behind on"
         );
         // What `Partial` claims, and the half a bare "not Loaded" assertion would
@@ -5106,7 +5106,7 @@ mod tests {
         let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
         store.rebuild().await.expect("rebuild");
 
-        let alpha = EntityId::person("alpha");
+        let alpha = EntityId::person("person:alpha");
         assert_eq!(
             store
                 .search_via_port(&SearchQuery::text("ferret"))
@@ -5172,7 +5172,7 @@ mod tests {
         let logged = log_sink();
 
         let orphan = Fact {
-            subject: EntityId::person("alphaa"),
+            subject: EntityId::person("person:alphaa"),
             ..fact("person:alpha", "f1", "plays chess", date(2026, 1, 1))
         };
         // Its own doc id, unique in this binary. The sink is the binary's — one
@@ -5238,7 +5238,7 @@ mod tests {
         const DOC: &str = "outline-uuid-re1nd3x";
 
         let hand_edited = Fact {
-            subject: EntityId::person("ghostly"),
+            subject: EntityId::person("person:ghostly"),
             ..fact(
                 "person:alpha",
                 "f1",
@@ -5258,7 +5258,7 @@ mod tests {
 
         store
             .capture(NewFact::about(
-                EntityId::person("alpha"),
+                EntityId::person("person:alpha"),
                 "an ordinary fact, written now",
                 date(2026, 1, 2),
             ))
@@ -5297,7 +5297,7 @@ mod tests {
         const DOC: &str = "outline-uuid-f0r31gn";
 
         let elsewhere = Fact {
-            subject: EntityId::person("kappa"),
+            subject: EntityId::person("person:kappa"),
             ..fact(
                 "person:alpha",
                 "f1",
@@ -5327,13 +5327,13 @@ mod tests {
         // Never a rebuild: a rebuild reports this doc itself, and the assertion
         // would stop being about the write path.
         store
-            .reindex(&EntityId::person("kappa"))
+            .reindex(&EntityId::person("person:kappa"))
             .await
             .expect("reindex ok");
 
         store
             .capture(NewFact::about(
-                EntityId::person("alpha"),
+                EntityId::person("person:alpha"),
                 "another ordinary fact, written now",
                 date(2026, 1, 2),
             ))
@@ -5368,7 +5368,7 @@ mod tests {
         const DOC: &str = "outline-uuid-c05m3";
 
         let elsewhere = Fact {
-            subject: EntityId::person("beta"),
+            subject: EntityId::person("person:beta"),
             ..fact("person:alpha", "f1", "took the ferry", date(2026, 1, 1))
         };
         let store = Arc::new(
