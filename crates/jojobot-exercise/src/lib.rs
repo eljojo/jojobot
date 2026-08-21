@@ -19,7 +19,6 @@
 //! way, in this library, and `make check` runs those.
 
 pub mod agent;
-pub mod bike_room;
 pub mod checks;
 pub mod expectations;
 pub mod handover_room;

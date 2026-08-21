@@ -163,11 +163,15 @@ fn the_room_is_one_phase_delivered_whole() {
 /// registry answers nothing to everybody, so the positive rides with it.
 #[test]
 fn the_room_has_expectations_of_its_own() {
-    let checks = expectations::for_playbook(&format!("a/b/{}", expectations::BIKE_ROOM))
-        .expect("the room has expectations");
-    assert!(
-        (3..=4).contains(&checks.len()),
-        "the room asserts on {} intermediate(s), and the shape is three or four",
+    // **Named as the registry ships it.** This room has no Rust half, so its
+    // locks come out of its document and a name that reaches no document
+    // reaches no locks.
+    let checks =
+        expectations::for_playbook(expectations::BIKE_ROOM).expect("the room has expectations");
+    assert_eq!(
+        checks.len(),
+        5,
+        "the room's document carries five locks: {}",
         checks.len(),
     );
     for check in &checks {
@@ -442,7 +446,7 @@ async fn the_locks_that_measure_reachability_fail_on_a_room_written_in_prose() {
     let held: Vec<bool> = outcomes.iter().map(|o| o.held).collect();
     assert_eq!(
         held,
-        vec![true, false, false, true],
+        vec![true, false, false, false, true],
         "the box was opened and a handoff was left, and neither the service day nor the year's \
          distance can be reached: {}",
         saying(&outcomes),

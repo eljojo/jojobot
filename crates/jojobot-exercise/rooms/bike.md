@@ -66,35 +66,36 @@ tidy.
 * **The brief**, waiting in the `assistant` box: what the operator wants, in an
   operator's words, with no verb anywhere in it.
 
-**The words live in `crates/jojobot-exercise/src/bike_room.rs`, and they live
-there once.** A copy of the brief in this document is a copy that drifts away
-from the one a run actually posts.
+```world
+entity  thing:gravel-bike | Gravel Bike
+entity  thing:road-bike | Road Bike
 
-## The locks
+fact    thing:gravel-bike | testimony | ridden most weeks
+fact    thing:road-bike | testimony | hanging in the basement, unridden for two years
 
-Each is asserted on store state, and each is written to hold for a route
-nobody predicted. **They are numbered in the order the goal reaches them. That
-is not a claim that each depends on the one above it** — locks 2, 3 and 4 all
-stand on lock 1, and none of them stands on each other.
+# Two years of distances, under a key the occupant is never told. It is there
+# to be found, and finding it is what makes this year's number join the years
+# before it instead of starting a set of one.
+record  thing:gravel-bike | {"km": "2600", "year": "2024"} | the year's tally for 2024
+record  thing:gravel-bike | {"km": "3800", "year": "2025"} | the year's tally for 2025
+record  thing:gravel-bike | {"done_on": "2025-04-18", "work": "chain, cables, bearings"} | annual service
+record  thing:gravel-bike | {"expires": "2029-04-11"} | frame warranty
+record  thing:road-bike | {"expires": "2025-06-30"} | frame warranty
 
-1. **The brief left the box.** The message waiting for `assistant` is no longer
-   `new`. Delivery is the claim and not the verb that took it: draining the
-   box, taking the one message, posting from inside it and retiring it straight
-   from `new` all count. The positive it rests on is that the brief is on the
-   board at all — an unfurnished room has nothing to move.
-2. **The service went on the bike as a value.** The day the brief gives is
-   readable off `thing:gravel-bike` as a value: under a key on a record, or as
-   the day the record is dated. Which key is the occupant's business. A day
-   written into a sentence does not hold, and the check says which of the two
-   it found.
-3. **This year's distance joined the years before it.** The key the earlier
-   distances are under carries a third write, and the bike now reads this
-   year's number. The room never says what that key is called; a session that
-   starts a set of one leaves three numbers that are not a set.
-4. **A handoff is waiting.** Either a message the occupant left, or a run left
-   open saying what it was working on. Both are rails the product offers, and
-   the check takes either — choosing one would fail a session that chose the
-   other and call it a product failure.
+# The whole of what the occupant is told, and it arrives as mail. It carries
+# the work and none of the method. An indented line continues the one above it.
+message assistant | the bikes, and a few things I want off them | Both bikes are on here already, and the gravel one is the one I actually ride.
+
+    Three things, none of them urgent.
+
+    The gravel bike went in for its service on 2026-08-11 — chain and cables, and they left the bearings alone this time. Put it with the rest of what has been done to it.
+
+    This year came to 4100 km on it. The road bike has not moved at all.
+
+    And tell me which of the two is still covered by its warranty. I keep working that out by hand and I would rather ask.
+
+    When you are done, leave what you did where whoever comes next will pick it up. I will ask again in a month.
+```
 
 ## Phase 1 — the room
 
@@ -102,6 +103,43 @@ stand on lock 1, and none of them stands on each other.
 context but the line below.
 
 > start jojobot as assistant
+
+```locks
+# The brief left the box. Delivery is the claim and not the verb that took it:
+# draining the box, taking the one message, posting from inside it and retiring
+# it straight from `new` all count. Reaching for Rust here says the assertion
+# vocabulary cannot correlate a message's subject with that message's state:
+# `lacks "state":"new"` is a claim about EVERY message, and it fails the moment
+# the occupant posts one of its own.
+check   the_brief_left_the_box
+say     the brief is still sitting new in the box, so the occupant never learnt what the work is
+
+# The service went on the bike as a VALUE — under a key on a record, or as the
+# day the record is dated — rather than into a sentence. Which key is the
+# occupant's business, and a query cannot ask whether a string is a value under
+# SOME key rather than prose, so this one reaches for Rust.
+check   the_service_day_is_a_value
+say     the service day went onto the bike as prose, so what has been done to it cannot be asked for
+
+# This year's number joined the years before it. Three writes of the key the
+# room already keeps its distances under, and this year's among them.
+recall {"subject": "thing:gravel-bike", "history": "km"}
+at least 3 of "value":
+carries "value":"4100"
+say     the distance key does not carry a third write with this year's number, so the year went somewhere a question cannot reach
+
+# And the bike READS as this year's now. The write could have landed and been
+# older than the ones before it; what a thing holds is the newest write.
+recall {"subject": "thing:gravel-bike"}
+carries "km":"4100"
+say     the bike's distance does not read as this year's number, so the newest thing recorded about how far it goes is not this year
+
+# A handoff is waiting: EITHER a message the occupant left, or a run left open
+# saying what it was working on. Both are rails the product offers, and an
+# assertion has no way to say "either of these", so this one reaches for Rust.
+check   a_handoff_is_waiting
+say     no message was left and no open run says what it was doing, so the next session arrives at what the occupant found and not at what it did
+```
 
 ## What this room cannot measure
 

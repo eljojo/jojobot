@@ -14,9 +14,12 @@
 use crate::run::Expectation;
 use crate::surface::Seed;
 
-pub use crate::bike_room::BIKE_ROOM;
 pub use crate::handover_room::HANDOVER_ROOM;
 pub use crate::loop_room::LOOP_ROOM;
+
+/// **The bike room**, converted: its world and its locks are in its document,
+/// and the two claims no query expresses are named checks.
+pub const BIKE_ROOM: &str = "rooms/bike.md";
 
 /// **The ledger room**, which has no Rust half: its world and its locks are
 /// written in its own document, so the name is all there is to register.
@@ -43,10 +46,7 @@ type Room = (&'static str, Option<InRust>);
 /// document, which is where both are read from for every room — the Rust below
 /// is only what a room that has not been converted still falls back to.
 const ROOMS: [Room; 5] = [
-    (
-        BIKE_ROOM,
-        Some((crate::bike_room::expectations, crate::bike_room::seed)),
-    ),
+    (BIKE_ROOM, None),
     (
         LOOP_ROOM,
         Some((crate::loop_room::expectations, crate::loop_room::seed)),

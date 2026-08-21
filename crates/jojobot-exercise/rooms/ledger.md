@@ -74,9 +74,7 @@ message assistant | the jobs I pay for, and the words I want on them | I have be
 ```locks
 # A lock carries no session, so the board is read rather than a box. The rule
 # and its reason live in the format's own text.
-search {"query": "*", "include_mail": true, "limit": 200}
-carries the jobs I pay for, and the words I want on them
-lacks   "state":"new"
+check   the_brief_left_the_box
 say     the brief is still sitting new in the box, so nobody took delivery of it
 
 # The room keeps its jobs under two keys and tells the occupant neither: a job
