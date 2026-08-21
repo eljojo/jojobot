@@ -274,6 +274,30 @@ impl Results {
                 said.phase, said.prompt, said.output
             );
         }
+        // **What the door offered, phase by phase.** Collected since this
+        // harness existed and rendered nowhere, so the one thing a reader
+        // wants from a long run — is jojobot handing over MORE as the story
+        // accumulates, or less — was thrown away with the process.
+        //
+        // Rendered whole rather than diffed: a diff is a summary, and what to
+        // make of the change is the reader's.
+        if !self.boundaries.is_empty() {
+            let _ = writeln!(
+                out,
+                "\n── what the door offered, phase by phase ───────────────────"
+            );
+            for boundary in &self.boundaries {
+                let _ = writeln!(
+                    out,
+                    "\n▸ before {}\n  runs offered: {}\n  world: {}\n  mail:  {}\n  door:  {}",
+                    boundary.before,
+                    boundary.runs_offered,
+                    boundary.world,
+                    boundary.mail,
+                    boundary.board,
+                );
+            }
+        }
         let _ = writeln!(
             out,
             "\n── results ─────────────────────────────────────────────────"
@@ -626,6 +650,43 @@ mod tests {
         assert!(
             !rendered.trim().is_empty(),
             "…so an empty file can only mean the capture never wrote, which is a different fault",
+        );
+    }
+
+    /// **What the door offered at each boundary is in the run**, because that
+    /// is how a long run shows jojobot handing over more context as the story
+    /// accumulates, or less.
+    ///
+    /// It was collected and rendered nowhere, so it died with the process.
+    #[test]
+    fn what_the_door_offered_at_each_phase_is_in_the_kept_run() {
+        let mut run = ran(&["Phase 1 — the opening"]);
+        run.boundaries = vec![super::Boundary {
+            before: "Phase 2 — the close".into(),
+            world: "what the index could see".into(),
+            mail: "what the board reported".into(),
+            runs_offered: 2,
+            board: "the runs the door offered".into(),
+        }];
+        let rendered = run.rendered();
+        assert!(
+            rendered.contains("Phase 2 — the close")
+                && rendered.contains("what the index could see")
+                && rendered.contains("what the board reported")
+                && rendered.contains("the runs the door offered"),
+            "the boundary is in the run a person reads: {rendered}",
+        );
+    }
+
+    /// **A run with no boundaries renders no boundary section**, so an empty
+    /// heading never reads as a door that offered nothing.
+    #[test]
+    fn a_run_with_no_boundaries_does_not_render_an_empty_section() {
+        assert!(
+            !ran(&["Phase 1 — the only one"])
+                .rendered()
+                .contains("what the door offered"),
+            "an empty section would read as a door that offered nothing",
         );
     }
 
