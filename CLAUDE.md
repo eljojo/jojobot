@@ -455,7 +455,10 @@ roles and never an operator.
   than something somebody had to be watching**, and the judgement stays a
   person's: no score, no rubric, no summary. A room gives one goal in the operator's
   voice and a one-line entry, then leaves the agent to find the door, the box
-  and the route. It is in addition to the stories, never instead of them.
+  and the route. **A room is its own document: its starting world and its
+  checks are written there.** A check that cannot be asked of jojobot is an
+  escape into Rust, and a run prints how many escapes a room took, including
+  none. It is in addition to the stories, never instead of them.
 - **Commits: one per coherent problem.** A milestone lands as a handful of
   commits — never one per file or checklist item, never dozens. **A fix and
   the test that proves it are ONE problem**, however a task listed them.
