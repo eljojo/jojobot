@@ -45,6 +45,22 @@ const FRESH: &str = "fresh";
 /// fact about the sitting — what a maintainer would put there anyway.
 const DAY: &str = "**Day:";
 
+/// **The marker that says a phase is one a person has to read.**
+///
+/// Some things a demanding run measures cannot be locked, and that is not a
+/// gap: a run asserts over what the model LEFT IN THE STORE and never over what
+/// it said, because an assertion over words is a text match against a model's
+/// phrasing and it would weaken every result the run ever produced.
+///
+/// **A question about something nobody ever recorded is the clearest case.**
+/// The right answer is that jojobot does not know, and a confident invention
+/// that records nothing leaves an identical store.
+///
+/// So the format owes that phase not a lock but PROMINENCE — the run puts it
+/// where a reader lands rather than leaving it in the middle of a long
+/// transcript.
+const READ_THIS: &str = "**Read this.**";
+
 /// **A line that ends one delivery and starts the next**, inside a phase.
 ///
 /// A phase used to arrive as one message, so a step asking what the agent
@@ -77,6 +93,10 @@ pub struct Phase {
     pub deliveries: Vec<String>,
     /// Whether this phase starts a session of its own.
     pub fresh_session: bool,
+    /// **Whether a person has to read this phase.** What it measures lives in
+    /// the answer rather than in the room, so nothing asserts over it and the
+    /// run surfaces it instead.
+    pub read_this: bool,
     /// **The day this sitting claims**, when the document says one.
     ///
     /// `None` is a sitting that names no day, which is every room written
@@ -115,6 +135,7 @@ impl Playbook {
                         prompt: String::new(),
                         deliveries: Vec::new(),
                         fresh_session: false,
+                        read_this: false,
                         day: None,
                     });
                 }
@@ -131,10 +152,15 @@ impl Playbook {
                 // The two markers sit on one line as often as not, so the day
                 // is looked for here as well as on a line of its own.
                 current.day = current.day.take().or_else(|| day_in(said));
+                current.read_this |= said.contains(READ_THIS);
                 continue;
             }
             if let Some(said) = line.trim_start().strip_prefix(DAY) {
                 current.day = day_in(said);
+                continue;
+            }
+            if line.contains(READ_THIS) {
+                current.read_this = true;
                 continue;
             }
             // The block quote is the part addressed to the model. Everything

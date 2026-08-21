@@ -91,6 +91,10 @@ pub struct Said {
     pub ran: bool,
     /// Whether this phase was told to carry the conversation before it on.
     pub continuing: bool,
+    /// **Whether a person has to read this one.** What it measures lives in the
+    /// answer rather than in the room, so nothing asserts over it and the run
+    /// puts it where a reader lands.
+    pub read_this: bool,
 }
 
 /// Everything one run produced.
@@ -251,6 +255,29 @@ impl Results {
         let mut out = String::new();
         let _ = writeln!(out, "playbook: {}", self.playbook);
         let _ = writeln!(out, "model:    {}", self.model);
+        // **What only a reader can judge, where a reader lands.**
+        //
+        // A second copy on purpose: these phases stay in the run's order below
+        // as well. Nothing is moved out of the story and nothing is condensed —
+        // the cost of a duplicated passage is nothing and the cost of missing
+        // it is the run.
+        let to_read: Vec<&Said> = self.transcript.iter().filter(|s| s.read_this).collect();
+        if !to_read.is_empty() {
+            let _ = writeln!(
+                out,
+                "\n── read these: nothing asserts over them ───────────────────\n\
+                 \nWhat these phases measure lives in the answer rather than in the room, so no \
+                 lock covers them and no result below says whether they held. They are here in \
+                 full, and again in their place in the run."
+            );
+            for said in to_read {
+                let _ = writeln!(
+                    out,
+                    "\n▸ {}\n  asked: {}\n{}",
+                    said.phase, said.prompt, said.output
+                );
+            }
+        }
         let _ = writeln!(
             out,
             "\n── transcript ──────────────────────────────────────────────"
@@ -458,6 +485,7 @@ pub async fn go(
             output,
             ran,
             continuing: !(at == 0 || phase.fresh_session),
+            read_this: phase.read_this,
         });
         // Taken after every phase and named for the one that comes next, so a
         // claim about a change has both sides of its boundary.
@@ -589,6 +617,7 @@ mod tests {
                     output: format!("what {phase} answered"),
                     ran: true,
                     continuing: false,
+                    read_this: false,
                 })
                 .collect(),
             uncovered: Vec::new(),
@@ -687,6 +716,54 @@ mod tests {
                 .rendered()
                 .contains("what the door offered"),
             "an empty section would read as a door that offered nothing",
+        );
+    }
+
+    /// **A phase nothing asserts over is put where a reader lands, and left in
+    /// its place as well.**
+    ///
+    /// The shape this exists for: a question about something nobody ever
+    /// recorded, where the right answer is that jojobot does not know. A
+    /// confident invention that records nothing leaves an identical room, so no
+    /// lock can reach it — and a run that buried it would have measured
+    /// nothing while looking complete.
+    ///
+    /// **Both halves**: it is lifted to the front, and it is still in the run's
+    /// order. Without the second, the passage would have been moved out of the
+    /// story rather than surfaced.
+    #[test]
+    fn a_phase_nothing_asserts_over_is_lifted_and_also_left_in_place() {
+        let mut run = ran(&["Phase 1 — the opening", "Phase 2 — what nobody recorded"]);
+        run.transcript[1].read_this = true;
+        let rendered = run.rendered();
+
+        let lifted = rendered.find("read these").expect("the section is there");
+        let story = rendered.find("── transcript").expect("and the run itself");
+        assert!(lifted < story, "a reader lands on it first: {rendered}");
+        assert_eq!(
+            rendered
+                .matches("what Phase 2 — what nobody recorded answered")
+                .count(),
+            2,
+            "it is in both places, so nothing was moved out of the story: {rendered}",
+        );
+        assert_eq!(
+            rendered
+                .matches("what Phase 1 — the opening answered")
+                .count(),
+            1,
+            "…and a phase nobody marked is in the story once, not lifted: {rendered}",
+        );
+    }
+
+    /// **A run with nothing to read renders no such section**, so an empty
+    /// heading never reads as a run with no judgement in it.
+    #[test]
+    fn a_run_with_nothing_to_read_renders_no_section_for_it() {
+        assert!(
+            !ran(&["Phase 1 — all locked"])
+                .rendered()
+                .contains("read these")
         );
     }
 

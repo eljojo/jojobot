@@ -26,6 +26,7 @@ fn said(phase: &str, ran: bool, continuing: bool) -> Said {
         output: "the agent answered, and it reads perfectly well".into(),
         ran,
         continuing,
+        read_this: false,
     }
 }
 
@@ -138,6 +139,7 @@ fn a_phase_that_skipped_its_steps_is_a_harness_failure() {
             output: "53. neither came back. Summary 48-53: PASS".into(),
             ran: true,
             continuing: false,
+            read_this: false,
         }],
         &[1, 1],
         vec![held_outcome()],
@@ -161,6 +163,7 @@ fn a_phase_that_skipped_its_steps_is_a_harness_failure() {
                 .into(),
             ran: true,
             continuing: false,
+            read_this: false,
         }],
         &[1, 1],
         vec![held_outcome()],
@@ -187,6 +190,7 @@ fn a_phase_that_skipped_its_steps_is_a_harness_failure() {
             output: "53. the loop with a cadence came back".into(),
             ran: true,
             continuing: false,
+            read_this: false,
         }],
         &[1, 1],
     );
