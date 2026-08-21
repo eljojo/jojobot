@@ -24,6 +24,12 @@
 //! * **`a_handoff_is_waiting`** — say **either** of two claims. The assertion
 //!   vocabulary is three words that do not branch, on purpose, and an `or`
 //!   would be the first branch in it.
+//! * **`a_colleague_exists_with_its_box`**, **`the_pile_is_in_the_colleagues_box`**
+//!   and **`what_became_of_the_pile_is_on_the_record`** — **name a thing the
+//!   OCCUPANT named.** A lock's query is text written before the run, and these
+//!   three are about *whichever bot is not the one that ships*. Nothing in the
+//!   query surface computes that, and pinning a handle would assert the
+//!   occupant guessed the same word the room did.
 
 use serde_json::{Value, json};
 
@@ -34,7 +40,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 3] = [
+pub const CHECKS: [Hatch; 6] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -44,7 +50,208 @@ pub const CHECKS: [Hatch; 3] = [
     ("a_handoff_is_waiting", || {
         checked(|seen| Box::pin(a_handoff_is_waiting(seen)))
     }),
+    ("a_colleague_exists_with_its_box", || {
+        checked(|seen| Box::pin(a_colleague_exists_with_its_box(seen)))
+    }),
+    ("the_pile_is_in_the_colleagues_box", || {
+        checked(|seen| Box::pin(the_pile_is_in_the_colleagues_box(seen)))
+    }),
+    ("what_became_of_the_pile_is_on_the_record", || {
+        checked(|seen| Box::pin(what_became_of_the_pile_is_on_the_record(seen)))
+    }),
 ];
+
+/// The identity a fresh instance ships with, and the one every occupant wears.
+const OCCUPANT: &str = "bot:assistant";
+
+/// How many things the handover brief hands over. The number is the whole of
+/// that room's terminal question: a cold session cannot guess it, and nothing
+/// but the mail rail can tell it.
+const PILE: usize = 3;
+
+/// **A second identity stands, with the box that came with it.**
+///
+/// A box is not made: it opens with the bot that owns it, in the one act. The
+/// occupant is never told that, which is what this is watching.
+async fn a_colleague_exists_with_its_box(seen: &Observed<'_>) -> Result<(), String> {
+    let board = seen.room.call("start_here", json!({"brief": true})).await;
+    let bots = bots_on(&board);
+    if !bots.iter().any(|bot| bot["handle"] == OCCUPANT) {
+        return Err(format!(
+            "the shipped identity is not on the board, so nothing was read: {board}"
+        ));
+    }
+    let colleagues: Vec<&Value> = bots
+        .iter()
+        .filter(|bot| bot["handle"] != OCCUPANT)
+        .collect();
+    match colleagues.as_slice() {
+        [] => Err("no second identity was made, so there is nobody to hand anything to".into()),
+        [colleague] if colleague["mail"].is_null() => Err(format!(
+            "{} exists and owns no box, so it cannot be written to",
+            colleague["handle"],
+        )),
+        [_] => Ok(()),
+        many => Err(format!(
+            "{} identities were made where the brief asked for one",
+            many.len()
+        )),
+    }
+}
+
+/// **The pile is in the colleague's box, one thing at a time.**
+///
+/// The brief asks for them separately so they can be worked separately, which
+/// is the mail rail doing what it is for. A run that handed the whole pile over
+/// as one message has left a colleague with one thing to finish rather than
+/// three, and the terminal question has nothing to count.
+async fn the_pile_is_in_the_colleagues_box(seen: &Observed<'_>) -> Result<(), String> {
+    let colleague = colleague_of(seen)
+        .await
+        .ok_or("there is no colleague, so there is no box to have handed anything to")?;
+    let owned = colleague.trim_start_matches("bot:").to_string();
+    let handed: Vec<Value> = mail(seen)
+        .await
+        .into_iter()
+        .filter(|hit| hit["mailbox"] == owned.as_str())
+        .collect();
+    if handed.len() != PILE {
+        return Err(format!(
+            "{} thing(s) are in the colleague's box where the brief handed over {PILE}",
+            handed.len(),
+        ));
+    }
+    // The positive that makes the count mean anything: they came from the
+    // occupant rather than from nowhere.
+    match handed.iter().all(|hit| hit["sender"] == OCCUPANT) {
+        true => Ok(()),
+        false => Err(format!(
+            "something in the colleague's box was not sent by {OCCUPANT}"
+        )),
+    }
+}
+
+/// **What became of the pile is written where a later session will find it.**
+///
+/// A session with no memory of the first cannot know how many things were
+/// handed over, and nothing it can read says so: the colleague's box is not its
+/// to open, and the state of somebody else's mail is in no sentence anywhere.
+///
+/// Both halves: the count is written onto the colleague, and the pile really is
+/// untouched — so a run that wrote a number without looking is not credited
+/// with an answer that happens to be right.
+async fn what_became_of_the_pile_is_on_the_record(seen: &Observed<'_>) -> Result<(), String> {
+    let colleague = colleague_of(seen)
+        .await
+        .ok_or("there is no colleague, so there is nothing to have found out about")?;
+    let owned = colleague.trim_start_matches("bot:").to_string();
+    let waiting = mail(seen)
+        .await
+        .into_iter()
+        .filter(|hit| hit["mailbox"] == owned.as_str() && hit["state"] == "new")
+        .count();
+    if waiting != PILE {
+        return Err(format!(
+            "{waiting} of the pile is waiting where {PILE} was handed over, so the answer this \
+             lock reads for is not {PILE} at all"
+        ));
+    }
+    let read = seen
+        .room
+        .call("recall", json!({"subject": colleague, "facts": true}))
+        .await;
+    match said_the_count(&read, PILE) {
+        true => Ok(()),
+        false => Err(format!(
+            "nothing on {colleague} says how much of the pile is still waiting, so a later \
+             session has to go and find out again"
+        )),
+    }
+}
+
+/// Whether a read says the number, as a figure or as the word. **Both, because
+/// which one somebody writes is not what that room measures.**
+///
+/// ⚠️ **Asked of what the SESSION wrote, never of the whole answer.** A read
+/// carries the day a claim is about, the moment the store took it in and the
+/// address that edits it, and those carry digits nobody chose: a nanosecond
+/// stamp holds almost any figure. Over the whole payload this opens on a room
+/// where the session wrote something and answered nothing.
+fn said_the_count(read: &str, count: usize) -> bool {
+    const WORDS: [&str; 4] = ["zero", "one", "two", "three"];
+    let figure = count.to_string();
+    let word = WORDS.get(count);
+    authored(read).iter().any(|said| {
+        let said = said.to_lowercase();
+        said.contains(&figure) || word.is_some_and(|word| said.contains(word))
+    })
+}
+
+/// **Everything on this read that a session chose the words of**: what each
+/// thing holds, and each claim's own sentence, note and keys.
+///
+/// A payload this cannot parse says nothing, so the check reads nothing and
+/// misses. That is the safe direction: a check that cannot read the answer must
+/// not report one.
+fn authored(read: &str) -> Vec<String> {
+    let Ok(body) = serde_json::from_str::<Value>(read) else {
+        return Vec::new();
+    };
+    let mut said = Vec::new();
+    for object in body["objects"].as_array().into_iter().flatten() {
+        written_values(&object["fields"], &mut said);
+        for fact in object["facts"].as_array().into_iter().flatten() {
+            for wording in ["content", "details"] {
+                if let Some(text) = fact[wording].as_str() {
+                    said.push(text.to_string());
+                }
+            }
+            written_values(&fact["fields"], &mut said);
+        }
+    }
+    said
+}
+
+/// The values of a key/value bag, which are the caller's own words. The KEYS
+/// are the caller's too, and they are left out: a key called `pile_of_3` is a
+/// name for the question rather than an answer to it.
+fn written_values(fields: &Value, said: &mut Vec<String>) {
+    for value in fields.as_object().into_iter().flatten().map(|(_, v)| v) {
+        if let Some(text) = value.as_str() {
+            said.push(text.to_string());
+        }
+    }
+}
+
+/// The colleague's handle — whichever bot is not the one that ships.
+async fn colleague_of(seen: &Observed<'_>) -> Option<String> {
+    let board = seen.room.call("start_here", json!({"brief": true})).await;
+    bots_on(&board)
+        .iter()
+        .filter(|bot| bot["handle"] != OCCUPANT)
+        .filter_map(|bot| bot["handle"].as_str().map(str::to_string))
+        .next()
+}
+
+/// The bots a boarding snapshot names, each with its mail beside it.
+fn bots_on(board: &str) -> Vec<Value> {
+    serde_json::from_str::<Value>(board)
+        .ok()
+        .and_then(|body| body["snapshot"]["entities"]["bots"].as_array().cloned())
+        .unwrap_or_default()
+}
+
+/// Every message on the board, mail asked for.
+async fn mail(seen: &Observed<'_>) -> Vec<Value> {
+    let board = seen
+        .room
+        .call(
+            "search",
+            json!({"query": "*", "include_mail": true, "limit": 200}),
+        )
+        .await;
+    messages(&board)
+}
 
 /// **The message the room was furnished with is no longer waiting.**
 ///

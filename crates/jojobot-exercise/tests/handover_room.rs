@@ -189,11 +189,15 @@ fn the_room_is_two_phases_and_the_second_has_no_memory() {
 /// still gets none.
 #[test]
 fn the_room_has_expectations_of_its_own() {
-    let checks = expectations::for_playbook(&format!("a/b/{}", expectations::HANDOVER_ROOM))
-        .expect("the room has expectations");
-    assert!(
-        (3..=4).contains(&checks.len()),
-        "the room asserts on {} intermediate(s), and the shape is three or four",
+    // **Named as the registry ships it.** This room has no Rust half, so its
+    // locks come out of its document and a name that reaches no document
+    // reaches no locks.
+    let checks =
+        expectations::for_playbook(expectations::HANDOVER_ROOM).expect("the room has expectations");
+    assert_eq!(
+        checks.len(),
+        4,
+        "the room's document carries four locks: {}",
         checks.len(),
     );
     assert!(

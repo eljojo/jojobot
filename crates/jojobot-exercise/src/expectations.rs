@@ -14,7 +14,9 @@
 use crate::run::Expectation;
 use crate::surface::Seed;
 
-pub use crate::handover_room::HANDOVER_ROOM;
+/// **The handover room**, converted: its world and its locks are in its
+/// document, and every lock but the first is a named check.
+pub const HANDOVER_ROOM: &str = "rooms/handover.md";
 
 /// **The loop room**, converted: its world and its locks are in its document.
 pub const LOOP_ROOM: &str = "rooms/loop.md";
@@ -52,13 +54,7 @@ const ROOMS: [Room; 5] = [
     (LOOP_ROOM, None),
     (LEDGER_ROOM, None),
     (YEAR_ROOM, None),
-    (
-        HANDOVER_ROOM,
-        Some((
-            crate::handover_room::expectations,
-            crate::handover_room::seed,
-        )),
-    ),
+    (HANDOVER_ROOM, None),
 ];
 
 /// **Where a shipped room's document is on disk.**

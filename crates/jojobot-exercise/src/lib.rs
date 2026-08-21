@@ -21,7 +21,6 @@
 pub mod agent;
 pub mod checks;
 pub mod expectations;
-pub mod handover_room;
 pub mod lock;
 pub mod playbook;
 pub mod room;
