@@ -44,6 +44,11 @@ check: fmt-check test lint ## The DONE bar: formatted, green, clippy-clean
 # two crates meet is invisible to every scoped run, and that class is what the
 # full bar is kept for.
 #
+# ⚠️ **A crate with no tests exits zero here.** The number of cases that ran is
+# in the output — `running 0 tests` — and not in the exit code, so a run that
+# found nothing to run reports the same success as a run that passed a suite.
+# Read the count, not the code.
+#
 #     make narrow CRATE=<name>
 CRATE ?=
 narrow: ## The inner loop: one crate's tests and lint, plus the format check
