@@ -338,7 +338,16 @@ async fn nothing_on_the_surface_goes_unexercised() {
     // the world; what it must NOT carry is a handle, because a caller with no
     // identity has nothing to write with.
     let (oriented, no_handle) = story.call("start_here", json!({})).await;
-    oriented.says("\"snapshot\"").says("\"skills\"");
+    oriented.says("\"snapshot\"");
+    // **Counted, not named.** `says("skills")` holds on a build that ships
+    // none: the key is there and the list under it is empty.
+    assert!(
+        !oriented.json()["skills"]
+            .as_array()
+            .expect("the door names the skills it ships")
+            .is_empty(),
+        "the door named no skill, so a build shipping none would read as one that ships them",
+    );
     assert!(
         no_handle.is_none(),
         "an anonymous boot handed back a session handle: {}",
@@ -366,9 +375,19 @@ async fn nothing_on_the_surface_goes_unexercised() {
     // **The positive it rests on, in the same read.** A door that had stopped
     // serving procedures altogether would refuse that name too, and the
     // refusal above would look exactly like this one.
-    s.call("start_here", json!({"skill": "rhythms"}))
-        .await
-        .says("\"body\"");
+    let procedure = s.call("start_here", json!({"skill": "rhythms"})).await;
+    // **Counted, not named.** A `body` key holding an empty string satisfies
+    // an assertion on its own name, and an empty procedure is exactly what a
+    // door that had stopped serving them would return.
+    assert!(
+        procedure.json()["skill"]["body"]
+            .as_str()
+            .expect("the door serves the procedure it was asked for")
+            .len()
+            > 200,
+        "the procedure came back empty or nearly so, which is what a door that stopped serving \
+         them would look like",
+    );
 
     // A search that narrows nothing is refused rather than answered with
     // everything or with a cheerful empty list, and the refusal names what was

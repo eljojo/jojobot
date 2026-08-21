@@ -64,7 +64,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     s.recall("place:moes")
         .await
         .claim(&derived)
-        .says("\"derived_from\"")
+        .says(&format!("\"derived_from\":\"{hedged}\""))
         .never_says("\"derived_from\":[");
 
     s.wrap("worked out a third claim from the first two").await;
