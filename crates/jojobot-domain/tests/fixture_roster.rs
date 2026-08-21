@@ -618,11 +618,7 @@ fn pronouns_for_nobody(files: &[PathBuf]) -> Vec<String> {
                 at += 1;
             }
             let block = lines[start..at].join(" ");
-            let named = block.contains("person:")
-                || block.contains("pet:")
-                || block.contains("bot:")
-                || names.iter().any(|name| says_word(&block, name, true));
-            if named {
+            if names_somebody(&block, &names) {
                 continue;
             }
             for (line, text) in &prose[start..at] {
@@ -633,6 +629,81 @@ fn pronouns_for_nobody(files: &[PathBuf]) -> Vec<String> {
         }
     }
     unattached.sort();
+    unattached
+}
+
+/// **Is there anybody in this block for a pronoun to mean?**
+///
+/// A handle, or a character's name in words. The two checks below ask the same
+/// question of different text — a block of source, and a block of a commit
+/// message — so they ask it through one function rather than two copies that
+/// drift (rule 51).
+fn names_somebody(block: &str, names: &[String]) -> bool {
+    block.contains("person:")
+        || block.contains("pet:")
+        || block.contains("bot:")
+        || names.iter().any(|name| says_word(block, name, true))
+}
+
+/// **Every commit that this checkout has not pushed**, as its short name and
+/// its message.
+///
+/// The range is READ rather than configured: whatever is on `HEAD` and not on
+/// `origin/main`. Nobody maintains a count, and a push shortens the range by
+/// itself.
+///
+/// **It reads the message and never the diff.** What a commit changed is not
+/// this check's business; what it SAYS is.
+///
+/// ⚠️ **A range this cannot read is a failure rather than a pass.** No git, no
+/// repository, no `origin/main` to compare against — in each case the check did
+/// not run, and reporting that as a clean range would be the exact lie every
+/// other gate in this file is built to avoid.
+fn unpushed_commits() -> Vec<(String, String)> {
+    let out = std::process::Command::new("git")
+        .args(["log", "--format=%h%x00%B%x01", "origin/main..HEAD"])
+        .current_dir(workspace_root())
+        .output()
+        .expect(
+            "this check reads the unpushed commit messages and needs git on the PATH. \
+             It did not run.",
+        );
+    assert!(
+        out.status.success(),
+        "the unpushed range could not be read, so this check did not run — it compares \
+         HEAD against origin/main, and one of them is missing here: {}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .split('\u{1}')
+        .filter_map(|commit| commit.trim().split_once('\u{0}'))
+        .map(|(name, message)| (name.to_string(), message.to_string()))
+        .collect()
+}
+
+/// **Every pronoun in these messages with nobody to stand for**, as
+/// `commit: the line`.
+///
+/// The same rule the source check uses, asked of a commit message: the block is
+/// the unit, and a block that names nobody has nobody for a pronoun to mean.
+fn operator_pronouns_in(commits: &[(String, String)]) -> Vec<String> {
+    let names = character_names();
+    let mut unattached = Vec::new();
+    for (commit, message) in commits {
+        for block in message.split("\n\n") {
+            let joined = block.replace('\n', " ");
+            if names_somebody(&joined, &names) {
+                continue;
+            }
+            for line in block.lines().filter(|l| !l.trim().is_empty()) {
+                if PRONOUNS.iter().any(|word| says_word(line, word, false)) {
+                    unattached.push(format!("{commit}: {}", line.trim()));
+                }
+            }
+        }
+    }
+    unattached.sort();
+    unattached.dedup();
     unattached
 }
 
@@ -1040,4 +1111,74 @@ fn constructor_arguments(text: &str) -> Vec<(&'static str, String)> {
         }
     }
     found
+}
+
+/// **A commit message names the role, never the person behind it.**
+///
+/// The bright line says this repository names ROLES — the operator, a caller, a
+/// reader — and a commit message is text on its way in exactly as a comment is.
+/// The message outlives the branch, and nothing rewrites it afterwards.
+///
+/// 🚨 **The convention is what mints this defect, which is why one careful pass
+/// never catches it.** A commit body cites the authority behind a change, and
+/// the shortest way to write that authority is a pronoun. So the rule that
+/// makes this history auditable is the same rule that produces the breach, and
+/// it produces it in almost every message that carries one.
+///
+/// **Forward-only, and that is the operator's ruling.** What is pushed stays:
+/// rewriting published history costs more than the breach. This reads the range
+/// that is still local, where a message can still be amended cheaply.
+///
+/// ⚠️ **An empty range passes, and that is not this check going blind.** A
+/// range empties every time somebody pushes, so failing on it would fail the
+/// normal state. What proves the reader is alive is
+/// [`the_check_reads_a_commit_for_the_operator_and_one_for_a_character_apart`],
+/// which runs in the same suite and does not depend on what the range holds.
+#[test]
+fn no_unpushed_commit_message_writes_a_pronoun_for_the_operator() {
+    let unattached = operator_pronouns_in(&unpushed_commits());
+    assert!(
+        unattached.is_empty(),
+        "these commit messages read as the operator's pronouns. This repository names the \
+         ROLE rather than the person, so write the operator, a reader or a caller. These \
+         commits are not pushed yet, so amending the message is still cheap. If a line \
+         really is about a fictional character, name them in it:\n{}",
+        unattached.join("\n")
+    );
+}
+
+/// **Both halves, or the case above proves nothing.**
+///
+/// A reader that returned nothing would satisfy that assertion on its own, and
+/// one that flagged every pronoun would be switched off by the first author who
+/// met it. So one message cites an authority with nobody in the block, and one
+/// talks about a character it names.
+#[test]
+fn the_check_reads_a_commit_for_the_operator_and_one_for_a_character_apart() {
+    let commits = vec![
+        (
+            "aaaaaaa".to_string(),
+            "boundary: a stranded write stops being told to retry\n\nThe change lands \
+             under his ruling."
+                .to_string(),
+        ),
+        (
+            "bbbbbbb".to_string(),
+            "tests: the walk finds the tools Milhouse lent\n\nMilhouse lent the wrench \
+             and never got it back, so his tools are what the walk finds."
+                .to_string(),
+        ),
+    ];
+
+    let unattached = operator_pronouns_in(&commits);
+
+    assert!(
+        unattached.iter().any(|line| line.starts_with("aaaaaaa")),
+        "an authority line with nobody in its block has to be reported: {unattached:?}"
+    );
+    assert!(
+        !unattached.iter().any(|line| line.starts_with("bbbbbbb")),
+        "…and a pronoun for a character the block names must pass, or the report above is \
+         the check flagging everything rather than working: {unattached:?}"
+    );
 }
