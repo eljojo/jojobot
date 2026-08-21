@@ -132,6 +132,17 @@ impl Seed {
         Seed::default()
     }
 
+    /// **How many things this seed furnishes.** A room read out of a document
+    /// has to be able to say that its lines reached the builder, and a count is
+    /// the whole of that claim.
+    pub fn len(&self) -> usize {
+        self.writes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.writes.is_empty()
+    }
+
     /// Put a thing in the world. A `bot` is refused: standing up an identity is
     /// the shipped behaviour under test, not a fixture.
     pub fn entity(mut self, kind: &str, handle: &str, name: &str) -> Result<Seed> {

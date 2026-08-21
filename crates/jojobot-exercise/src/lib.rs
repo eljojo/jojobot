@@ -28,3 +28,4 @@ pub mod playbook;
 pub mod room;
 pub mod run;
 pub mod surface;
+pub mod world;
