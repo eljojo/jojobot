@@ -18,11 +18,14 @@ use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
+use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_adapters::testing::free_port;
 use jojobot_domain::mailbox::testing::contract as mailboxes;
 use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
 use jojobot_domain::memory::EntityId;
+use jojobot_domain::memory::Memory;
+use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::session::testing::contract as sessions;
 
@@ -164,6 +167,84 @@ async fn the_indexed_dolt_store_satisfies_the_whole_contract() {
         &Retrieval::new(indexed.index(), vec![indexed.clone()]),
     )
     .await;
+
+    store.stop().await;
+}
+
+/// **What the REAL store keeps when the build supplies half the text.**
+///
+/// The decorator sits above the port and does not care which store answers, so
+/// its behaviour is proven against the fake. **What only a store can answer is
+/// what ends up in the column** — and that is the claim that matters here,
+/// because the whole design rests on the build's half never being written down.
+/// A store that quietly kept it would freeze this instance on this build, and
+/// every case above would stay green.
+///
+/// **Three answers, and each covers how the others pass on a build that is
+/// wrong.** Without the first, a store that wrote nothing at all would pass.
+/// Without the second, a store that kept everything would. Without the third,
+/// the case says nothing about what a reader actually gets.
+#[tokio::test]
+async fn the_real_store_keeps_the_operators_half_and_not_the_builds() {
+    let scratch = Scratch::new("provisioned");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("provisioned")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    const SHIPPED: &str = "You answer in one line unless asked otherwise.";
+    let bot = EntityId::new(jojobot_domain::memory::EntityKind::BOT, "gamma");
+    let bare = DoltMemory::open(pool.clone());
+    bare.add_entity(jojobot_domain::memory::NewEntity::new(
+        bot.clone(),
+        "Gamma",
+        "jojobot",
+    ))
+    .await
+    .expect("the identity is created")
+    .written()
+    .expect("an empty board blocks nothing");
+
+    let served = Provisioned::new(
+        bare,
+        Provisions::new(vec![Provision::prose(bot.clone(), SHIPPED)]),
+    );
+    served
+        .set_prose(&bot, "Gamma files the weekly note.")
+        .await
+        .expect("the operator's own half lands");
+
+    // ① What the store kept, read straight out of the column rather than
+    // through the layer that would resolve it.
+    let kept: String = sqlx::query_scalar("SELECT prose FROM entity WHERE id = ?")
+        .bind(bot.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the column reads");
+    assert_eq!(
+        kept.trim(),
+        "Gamma files the weekly note.",
+        "the operator's half is what the store holds",
+    );
+    // ② …and the build's half is not in it, which is what makes an upgrade
+    // free and this instance unfrozen.
+    assert!(
+        !kept.contains(SHIPPED),
+        "the build's half was written down, so this instance is frozen on this build: {kept}",
+    );
+    // ③ …while a reader gets both.
+    let read = served
+        .scan_entity(&bot)
+        .await
+        .expect("the scan reads")
+        .expect("the entity is there")
+        .prose;
+    assert!(read.contains(SHIPPED) && read.contains("files the weekly note"));
 
     store.stop().await;
 }
