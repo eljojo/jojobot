@@ -23,6 +23,7 @@ pub mod bike_room;
 pub mod expectations;
 pub mod handover_room;
 pub mod ledger_room;
+pub mod lock;
 pub mod loop_room;
 pub mod playbook;
 pub mod room;
