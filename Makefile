@@ -11,14 +11,46 @@
 CARGO ?= cargo
 
 .DEFAULT_GOAL := help
-.PHONY: help check test lint fmt fmt-check build integration paid
+.PHONY: help check narrow test lint fmt fmt-check build integration paid
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
 		| sed -e 's/:.*## / — /' \
 		| awk '{ printf "  \033[1m%-12s\033[0m %s\n", $$1, substr($$0, index($$0, "—")) }'
 
+# **The boundary bar.** Run it before a report, before a carry, and before
+# anything reaches a review.
+#
+# It is the default and it stays the default: the whole workspace, every
+# suite, every target. The narrow target below covers less, and it is the
+# override rather than the rule.
 check: fmt-check test lint ## The DONE bar: formatted, green, clippy-clean
+
+# **The inner loop, scoped to one crate.** Run it between edits.
+#
+# It checks the format, then runs that crate's tests, then lints that crate.
+# Those are the three ways a change inside one crate breaks on its own.
+#
+# **It refuses when no crate is named.** A scoped target that widened to the
+# workspace by itself would make the narrow command and the full bar the same
+# command, and a person reading either one could not tell which had run.
+#
+# **The format check covers the workspace and takes under a second.** It is
+# here because it is the one class a crate-scoped run cannot see: no
+# `cargo test -p` reads formatting, so that failure would wait for the
+# boundary.
+#
+# ⚠️ It is not a replacement for `make check`. A defect that exists only where
+# two crates meet is invisible to every scoped run, and that class is what the
+# full bar is kept for.
+#
+#     make narrow CRATE=<name>
+CRATE ?=
+narrow: ## The inner loop: one crate's tests and lint, plus the format check
+	@test -n "$(CRATE)" || { echo "make narrow needs a crate: make narrow CRATE=<name>"; exit 2; }
+	$(CARGO) fmt --all --check
+	$(CARGO) test -p $(CRATE)
+	$(CARGO) clippy -p $(CRATE) --all-targets -- -D warnings
 
 test: ## Every fast suite (no network)
 	$(CARGO) test --workspace
