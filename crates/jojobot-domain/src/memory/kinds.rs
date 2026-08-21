@@ -109,11 +109,18 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
         // missing either is a question nobody can ask — unlike a loop, where
         // an absent cadence still leaves a loop.
         "view" => vec![
+            // **What the question looks at** — the kind it selects. Required,
+            // because a question that says nothing about what it looks at is
+            // one nobody can ask.
             Field::required("selects", ValueType::Text),
-            Field::new("where_key", ValueType::Text),
-            Field::new("where_is", ValueType::Text),
-            Field::new("follow", ValueType::Text),
-            Field::new("asks", ValueType::Text),
+            // **What of each one comes back**, as the names the read already
+            // uses: `facts`, `prose`, `charter`. Optional, and a view that
+            // names none answers with the things themselves.
+            Field::new("shows", ValueType::Text),
+            // **The one question the graph answers that a selection cannot** —
+            // `overdue`. It is a named ask rather than a filter because being
+            // late is arithmetic over two dates and a cadence, not a value.
+            Field::one_of("asks", ["overdue"]),
         ],
         _ => Vec::new(),
     }

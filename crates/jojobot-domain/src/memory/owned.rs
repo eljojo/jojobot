@@ -163,6 +163,11 @@ impl Provisions {
         self.records().find(|(held, _)| &held.id == entity)
     }
 
+    /// Take on what another capability supplies.
+    pub fn extend(&mut self, more: Vec<Provision>) {
+        self.0.extend(more);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

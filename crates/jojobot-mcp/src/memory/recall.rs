@@ -282,6 +282,20 @@ pub struct RecallArgs {
     /// Which edges to walk. Omit to walk none, and the answer is flat.
     #[serde(default)]
     pub follow: Option<FollowArgs>,
+    /// **A question asked by name** — a view's handle, or its bare slug.
+    ///
+    /// A view is a record that holds a query, so asking for one is naming it.
+    /// **Some ship with the software and you can declare your own**, with
+    /// `add_entity` of kind `view` and the keys `selects`, `shows` and `asks`.
+    /// Both are records of the same shape, so nothing about the answer depends
+    /// on where the view came from.
+    ///
+    /// What the view says is what this call asks; anything you send beside it
+    /// is yours and wins, so a view is a starting point rather than a cage.
+    ///
+    /// A name that is no view comes back blocked, with the views that exist.
+    #[serde(default)]
+    pub view: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -508,6 +522,89 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
         );
     }
     body
+}
+
+impl Jojobot {
+    /// **Read a view and fill the call it was named in.**
+    ///
+    /// A view is a record, so this is an ordinary read of its keys — and it is
+    /// the ONE path, whether the record came from the store or from what the
+    /// build supplies. That is what keeps a shipped view and the operator's own
+    /// from needing two mechanisms (rule 106).
+    ///
+    /// **The caller's own arguments win.** A view says what to ask; a caller
+    /// that also named a kind meant that kind.
+    async fn asked_by_name(
+        &self,
+        named: &str,
+        args: RecallArgs,
+    ) -> Result<RecallArgs, Box<CallToolResult>> {
+        let handle = match named.trim().split_once(':') {
+            Some((kind, _)) if kind == EntityKind::VIEW.as_token() => {
+                EntityId(named.trim().to_string())
+            }
+            _ => EntityId::new(EntityKind::VIEW, named.trim()),
+        };
+        let held = self.memory.fields(&handle).await;
+        let held = match held {
+            Ok(held) if !held.is_empty() => held,
+            // **No view under that name.** The candidates are the views that
+            // exist, which is what a caller who guessed a name needs — and it
+            // costs one read they were about to make anyway.
+            _ => {
+                let known = self
+                    .memory
+                    .list_entities(Some(EntityKind::VIEW))
+                    .await
+                    .unwrap_or_default();
+                // **Every view, named in the sentence rather than as
+                // candidates.** A candidate carries a reason the guard flagged
+                // it, and none of these was flagged: they are simply what there
+                // is. Putting them in the list would mean stating a match that
+                // was never made.
+                //
+                // A similarity screen would be worse still — it answers a wild
+                // guess with nothing, which reads as "there are no views".
+                let names = known
+                    .iter()
+                    .map(|e| e.id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(Box::new(blocked_body(
+                    &handle,
+                    &[],
+                    match names.is_empty() {
+                        true => format!(
+                            "Nothing was read: no view is named '{}', and there are no views \
+                             here yet. Declare one with add_entity of kind view.",
+                            handle.as_str(),
+                        ),
+                        false => format!(
+                            "Nothing was read: no view is named '{}'. The views here are: \
+                             {names}. Ask for one of those, or declare your own with \
+                             add_entity of kind view.",
+                            handle.as_str(),
+                        ),
+                    },
+                )));
+            }
+        };
+        let shows = |what: &str| {
+            held.get("shows")
+                .is_some_and(|s| s.split(',').any(|part| part.trim() == what))
+        };
+        Ok(RecallArgs {
+            kind: args.kind.or_else(|| held.get("selects").cloned()),
+            facts: args.facts.or(shows("facts").then_some(true)),
+            prose: args.prose.or(shows("prose").then_some(true)),
+            charter: args.charter.or(shows("charter").then_some(true)),
+            overdue: args.overdue.or_else(|| {
+                (held.get("asks").map(String::as_str) == Some("overdue"))
+                    .then_some(OverdueArgs { as_of: None })
+            }),
+            ..args
+        })
+    }
 }
 
 /// **The charter a bot answers with** — its prose, read.
@@ -839,6 +936,16 @@ impl Jojobot {
         // day.** What is held is asked as of a day like everything else, so a
         // call that named one for `overdue` asks about the same day here, and
         // the answer says which day it used either way.
+        // **A view fills the call in before anything reads it.** What the view
+        // says is what this call asks; what the caller sent beside it wins, so
+        // a view is a starting point rather than a cage.
+        let args = match args.view.clone() {
+            None => args,
+            Some(named) => match self.asked_by_name(&named, args).await {
+                Ok(filled) => filled,
+                Err(refused) => return Ok(*refused),
+            },
+        };
         let today = parse_date(None, &self.zone_for(args.sid.as_deref()))?;
         // Every key some declaration made a reference — what makes a value a
         // link. Read once, here, so the ranking stays a function of what it is
@@ -1027,6 +1134,7 @@ mod tests {
     /// asserting on a claim's own wording has to ask for the claim.
     fn of(subject: &str) -> RecallArgs {
         RecallArgs {
+            view: None,
             subject: Some(subject.into()),
             kind: None,
             answers_type: None,
@@ -2772,6 +2880,7 @@ mod tests {
     /// A call naming nothing at all — the base every case above varies.
     fn of_nothing() -> RecallArgs {
         RecallArgs {
+            view: None,
             subject: None,
             kind: None,
             answers_type: None,

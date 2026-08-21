@@ -123,6 +123,7 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
 /// case that asserts on what a claim SAYS has to ask for the claim.
 pub(crate) fn recall_args(subject: &str) -> RecallArgs {
     RecallArgs {
+        view: None,
         subject: Some(subject.into()),
         kind: None,
         answers_type: None,

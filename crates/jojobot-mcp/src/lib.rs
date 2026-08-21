@@ -37,6 +37,19 @@ mod caller;
 pub mod mailboxes;
 pub mod memory;
 pub mod orientation;
+pub mod views;
+
+/// **Everything this build supplies, in one place.**
+///
+/// A capability ships data by adding an entry here — the charter's text, the
+/// views, and whatever comes next. **One door**, so a reader can see the whole
+/// of what the software puts into an instance without hunting for it, and so
+/// adding a capability is adding data rather than wiring.
+pub fn provisions() -> jojobot_domain::memory::owned::Provisions {
+    let mut supplied = orientation::charter::provisions();
+    supplied.extend(views::provisions());
+    supplied
+}
 pub mod seed;
 pub mod session;
 pub mod sid;

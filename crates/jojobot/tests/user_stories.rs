@@ -85,5 +85,8 @@ mod unsure;
 /// An upgrade takes back the rows the binary owns and no longer ships.
 #[path = "user_stories/upgrading.rs"]
 mod upgrading;
+/// A question you ask by name, whether the software shipped it or you did.
+#[path = "user_stories/views.rs"]
+mod views;
 #[path = "user_stories/vocabulary.rs"]
 mod vocabulary;

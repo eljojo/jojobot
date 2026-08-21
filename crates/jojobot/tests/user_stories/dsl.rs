@@ -238,7 +238,7 @@ impl Story {
 
     /// The store, plus what this build supplies over it.
     fn wired(store: InMemoryMemory) -> Provisioned<InMemoryMemory> {
-        Provisioned::new(store, jojobot_mcp::orientation::charter::provisions())
+        Provisioned::new(store, jojobot_mcp::provisions())
     }
 
     /// **Serve a jojobot on an instance an older build left behind** — a store

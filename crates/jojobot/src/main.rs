@@ -137,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
     // reader sees would be a second seam.
     let memory: Arc<dyn Memory> = Arc::new(Provisioned::new(
         DoltMemory::open(store.pool().clone()),
-        jojobot_mcp::orientation::charter::provisions(),
+        jojobot_mcp::provisions(),
     ));
 
     // **The kinds, before anything reads a handle.** Every kind this instance

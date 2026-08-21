@@ -49,6 +49,11 @@ fn kinds() -> Vec<&'static str> {
 /// must stay that way.
 const ROSTER: &[&str] = &[
     "bot:assistant",
+    // The view a story declares to stand beside the ones the software ships.
+    // **The shipped views are not here and do not need to be**: this scan reads
+    // handle-shaped text, and the build names them by kind and slug separately,
+    // so no `view:` literal for them exists to read.
+    "view:my-people",
     "bot:delta",
     "bot:epsilo",
     "bot:epsilon",
@@ -105,6 +110,7 @@ const ROSTER: &[&str] = &[
     "person:kappa",
     "person:maude",
     "person:milhouse",
+    "person:ralph",
     "person:ned-flander",
     "person:ned-flanders",
     "person:nelson",
