@@ -43,18 +43,25 @@ pub enum AuthError {
     Forbidden(String),
 }
 
-/// The subset of registered claims jojobot reads after validation. Issuer,
-/// audience and expiry are validated by [`Validator::validate`] itself; this
-/// carries the principal onward.
+/// The claim jojobot reads after validation. Issuer, audience and expiry are
+/// validated by [`Validator::validate`] itself; this carries the principal
+/// onward.
+///
+/// **The subject is the whole of it, and nothing else about the token is
+/// consulted.** A claim jojobot does not name is ignored rather than refused,
+/// so an issuer that grows a claim does not fail every token.
+///
+/// ⚠️ **A scope is not read, and that is a decision rather than an omission.**
+/// One client holds one audience, and the two are revoked together, so a scope
+/// would discriminate nothing that the subject allowlist does not already
+/// decide. **A second client on a different audience is the condition that
+/// makes a scope mean something, and this is due again the day one exists.**
 #[derive(Debug, Clone, Deserialize)]
 pub struct Claims {
     /// Subject — the stable, issuer-assigned principal id. This is the
     /// authorization key ([`Validator::authorize`]): unlike `email`, it is
     /// present in Pocket ID access tokens and not user-editable.
     pub sub: String,
-    /// OAuth scopes, when present.
-    #[serde(default)]
-    pub scope: Option<String>,
 }
 
 /// Validates bearer tokens against a fixed set of issuer signing keys.
@@ -355,6 +362,10 @@ mod tests {
         exp: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         nbf: Option<u64>,
+        /// A claim jojobot does not read, carried to prove one is ignored
+        /// rather than refused.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<String>,
     }
 
     struct KeyPair {
@@ -424,6 +435,7 @@ mod tests {
             aud: AUD.to_string(),
             exp: now() + 3600,
             nbf: None,
+            scope: None,
         }
     }
 
@@ -586,6 +598,32 @@ mod tests {
         assert_eq!(claims.sub, "user-1");
     }
 
+    /// **A claim jojobot does not read does not stop a token being accepted.**
+    ///
+    /// An issuer adds claims over time and jojobot names the few it uses. If
+    /// this type ever refused what it did not name, every token from an issuer
+    /// that grew a claim would fail closed — an outage caused by somebody
+    /// else's release rather than by anything here.
+    ///
+    /// **Both halves.** The token is accepted AND the subject comes back, so
+    /// this cannot pass on a build that accepted the token and read nothing
+    /// out of it.
+    #[test]
+    fn a_claim_jojobot_does_not_read_is_ignored_rather_than_refused() {
+        let kp = gen_keypair();
+        let mut c = good_claims();
+        c.scope = Some("openid profile".to_string());
+        let token = sign(&kp.enc, KID, &c);
+
+        let claims = validator(kp.decoding)
+            .validate(&token)
+            .expect("a token carrying an unread claim is still valid");
+        assert_eq!(
+            claims.sub, "user-1",
+            "…and the subject is still what the token said"
+        );
+    }
+
     #[test]
     fn rejects_wrong_audience() {
         let kp = gen_keypair();
@@ -718,6 +756,7 @@ mod tests {
             aud: audience.to_string(),
             exp: now() + 3600,
             nbf: None,
+            scope: None,
         }
     }
 
