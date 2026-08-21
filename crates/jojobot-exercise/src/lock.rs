@@ -62,40 +62,66 @@ pub struct Lock {
     pub expects: Vec<Expect>,
     /// The authored sentence a reader sees when this does not hold.
     pub say: String,
+    /// **What the run calls this check**, which is the sentence under the key
+    /// of the phase it was written beneath — `Phase 2 — the pump says sent`.
+    ///
+    /// The run names a phase nothing asserts over, and it keys a check to a
+    /// phase by the `Phase N` its name opens with. An author who wrote the
+    /// lock under a heading has said which phase it belongs to already, so the
+    /// reader carries it rather than asking for it a second time in the
+    /// sentence. A lock under no heading is its sentence alone.
+    pub name: String,
 }
 
 const OPENS: &str = "```locks";
 const FENCE: &str = "```";
 
+/// The heading that starts a phase, and the same one the playbook reads.
+const PHASE: &str = "## Phase ";
+
 /// **Read the locks out of a document.** Blank lines separate one from the next.
 pub fn read(document: &str) -> Result<Vec<Lock>> {
     let mut locks = Vec::new();
-    for block in blocks(document) {
-        for (at, lines) in block {
-            locks.push(one(&lines).with_context(|| format!("reading the lock at line {at}"))?);
-        }
+    for (at, lines, phase) in blocks(document) {
+        locks.push(
+            one(&lines, phase.as_deref())
+                .with_context(|| format!("reading the lock at line {at}"))?,
+        );
     }
     Ok(locks)
 }
 
-/// Each `locks` block, split into the runs of lines that make one lock.
-fn blocks(document: &str) -> Vec<Vec<(usize, Vec<String>)>> {
+/// Every lock in the document: where it starts, its lines, and the key of the
+/// phase it was written under.
+fn blocks(document: &str) -> Vec<(usize, Vec<String>, Option<String>)> {
     let mut all = Vec::new();
     let mut inside = false;
-    let mut current: Vec<(usize, Vec<String>)> = Vec::new();
     let mut lines: Vec<String> = Vec::new();
+    let mut phase: Option<String> = None;
     let mut began = 0;
+    let close = |lines: &mut Vec<String>, all: &mut Vec<_>, began, phase: &Option<String>| {
+        if !lines.is_empty() {
+            all.push((began, std::mem::take(lines), phase.clone()));
+        }
+    };
     for (at, line) in document.lines().enumerate() {
         let trimmed = line.trim();
+        // **A phase heading outside a block says which phase the locks under
+        // it belong to.** Every other heading ends the phase before it, the
+        // same way the playbook reads them, so a lock under a maintainer's
+        // section is keyed to nothing rather than to whatever came last.
+        if !inside && let Some(heading) = line.strip_prefix("## ") {
+            phase = line
+                .starts_with(PHASE)
+                .then(|| crate::run::phase_key(heading.trim()).to_string());
+            continue;
+        }
         if !inside && trimmed == OPENS {
             inside = true;
             continue;
         }
         if inside && trimmed.starts_with(FENCE) {
-            if !lines.is_empty() {
-                current.push((began, std::mem::take(&mut lines)));
-            }
-            all.push(std::mem::take(&mut current));
+            close(&mut lines, &mut all, began, &phase);
             inside = false;
             continue;
         }
@@ -103,9 +129,7 @@ fn blocks(document: &str) -> Vec<Vec<(usize, Vec<String>)>> {
             continue;
         }
         if trimmed.is_empty() || trimmed.starts_with('#') {
-            if !lines.is_empty() {
-                current.push((began, std::mem::take(&mut lines)));
-            }
+            close(&mut lines, &mut all, began, &phase);
             continue;
         }
         if lines.is_empty() {
@@ -116,7 +140,7 @@ fn blocks(document: &str) -> Vec<Vec<(usize, Vec<String>)>> {
     all
 }
 
-fn one(lines: &[String]) -> Result<Lock> {
+fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
     let (verb, rest) = lines[0]
         .split_once(char::is_whitespace)
         .with_context(|| "a lock opens with what it asks: a verb and its arguments, or a check")?;
@@ -173,7 +197,16 @@ fn one(lines: &[String]) -> Result<Lock> {
              well, in the same lock",
         );
     }
-    Ok(Lock { asks, expects, say })
+    let name = match phase {
+        Some(phase) => format!("{phase} \u{2014} {say}"),
+        None => say.clone(),
+    };
+    Ok(Lock {
+        asks,
+        expects,
+        say,
+        name,
+    })
 }
 
 /// **A lock, as the thing a run checks.**
@@ -184,7 +217,7 @@ fn one(lines: &[String]) -> Result<Lock> {
 #[async_trait::async_trait]
 impl crate::run::Expectation for Lock {
     fn name(&self) -> &str {
-        &self.say
+        &self.name
     }
 
     async fn check(&self, seen: &crate::run::Observed<'_>) -> crate::run::Outcome {
@@ -193,7 +226,7 @@ impl crate::run::Expectation for Lock {
             // is counted where the run reports, and a lock that reached this
             // point without one is a room naming a check that does not exist.
             return crate::run::Outcome {
-                name: self.say.clone(),
+                name: self.name.clone(),
                 held: false,
                 saying: format!(
                     "this lock names a check nobody wrote: {}",
@@ -208,7 +241,7 @@ impl crate::run::Expectation for Lock {
             Ok(args) => args,
             Err(e) => {
                 return crate::run::Outcome {
-                    name: self.say.clone(),
+                    name: self.name.clone(),
                     held: false,
                     saying: format!("this lock's query is not json: {e}"),
                 };
@@ -244,14 +277,14 @@ impl crate::run::Expectation for Lock {
             };
             if let Some(missed) = missed {
                 return crate::run::Outcome {
-                    name: self.say.clone(),
+                    name: self.name.clone(),
                     held: false,
                     saying: format!("{}: {missed}. What came back: {}", self.say, short(&answer)),
                 };
             }
         }
         crate::run::Outcome {
-            name: self.say.clone(),
+            name: self.name.clone(),
             held: true,
             saying: self.say.clone(),
         }
@@ -384,6 +417,63 @@ mod tests {
         )
         .expect("both read");
         assert_eq!(hatches(&read), vec!["the_cost_reads_as_a_number"]);
+    }
+
+    /// **A lock is keyed to the phase it is written under.**
+    ///
+    /// The run names a phase nothing asserts over, and it keys a check to a
+    /// phase by the `Phase N` its name opens with. An author writing a lock
+    /// under a phase heading has already said which phase it belongs to, so
+    /// the reader carries it rather than asking for it twice.
+    ///
+    /// **Both halves**: the locks under two headings take their own keys, and
+    /// a lock under no heading is named by its sentence alone. Without the
+    /// second, a reader that prefixed everything would pass.
+    #[test]
+    fn a_lock_is_keyed_to_the_phase_it_is_written_under() {
+        let keyed = read(
+            "## Phase 1 — the room\n\
+             \n\
+             ```locks\n\
+             recall {\"kind\": \"thing\"}\n\
+             carries thing:jukebox\n\
+             say     the jukebox is gone\n\
+             ```\n\
+             \n\
+             ## Phase 2 — the cold question\n\
+             \n\
+             ```locks\n\
+             recall {\"kind\": \"person\"}\n\
+             carries person:milhouse\n\
+             say     milhouse is gone\n\
+             ```\n",
+        )
+        .expect("both read");
+        assert_eq!(
+            keyed.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(),
+            vec![
+                "Phase 1 — the jukebox is gone",
+                "Phase 2 — milhouse is gone",
+            ],
+            "a lock keyed to no phase leaves that phase reading as uncovered",
+        );
+        assert_eq!(
+            keyed[0].say, "the jukebox is gone",
+            "the authored sentence is untouched by the key",
+        );
+
+        let unkeyed = read(
+            "```locks\n\
+             recall {\"kind\": \"thing\"}\n\
+             carries thing:jukebox\n\
+             say     the jukebox is gone\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        assert_eq!(
+            unkeyed[0].name, "the jukebox is gone",
+            "a lock under no phase heading was given a key nothing in the document says",
+        );
     }
 
     /// **Blank lines separate locks**, so a phase carrying three is three.

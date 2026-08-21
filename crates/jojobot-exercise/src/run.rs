@@ -549,7 +549,7 @@ fn phase_is_covered(phase: &str, expectations: &[&str]) -> bool {
 
 /// The `Phase N` a phase or an expectation is keyed by — everything before the
 /// dash that separates the number from the title.
-fn phase_key(name: &str) -> &str {
+pub(crate) fn phase_key(name: &str) -> &str {
     name.split('\u{2014}').next().unwrap_or("").trim()
 }
 
