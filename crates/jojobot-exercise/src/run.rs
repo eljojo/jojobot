@@ -215,21 +215,72 @@ impl Results {
     }
 
     /// **The transcript first, then the results.** When something did not hold
-    /// the next question is always what the agent reached for, so it is printed
+    /// the next question is always what the agent reached for, so it is shown
     /// rather than kept for a rerun that costs money again.
     pub fn print(&self) {
-        println!("── transcript ──────────────────────────────────────────────");
+        print!("{}", self.rendered());
+    }
+
+    /// **Keep the run where somebody can read it after the process is gone.**
+    ///
+    /// A paid run's most valuable output is the part no assertion touches —
+    /// what the model reached for, what it did not find, what it concluded.
+    /// That exists only here, and stdout is where it stopped existing.
+    ///
+    /// **The same rendering as [`print`](Self::print), so the two cannot
+    /// drift**: a second renderer for the file is how the read copy comes to
+    /// say something the printed one does not.
+    ///
+    /// **Whole, from the beginning.** A capture that keeps the end of a
+    /// transcript has thrown away the part where the model was working out
+    /// what it could do — which is the part being judged.
+    pub fn write_to(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, self.rendered())
+    }
+
+    /// The whole run as text: transcript, then results.
+    ///
+    /// **One rendering, two destinations.** Read by [`print`](Self::print) for
+    /// the person watching and by [`write_to`](Self::write_to) for the person
+    /// reading afterwards.
+    pub fn rendered(&self) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        let _ = writeln!(out, "playbook: {}", self.playbook);
+        let _ = writeln!(out, "model:    {}", self.model);
+        let _ = writeln!(
+            out,
+            "\n── transcript ──────────────────────────────────────────────"
+        );
+        // **An empty transcript says so.** Otherwise a run that produced
+        // nothing and a capture that never ran read the same — an empty
+        // section and an empty file, and nobody can tell which they are
+        // holding.
+        if self.transcript.is_empty() {
+            let _ = writeln!(
+                out,
+                "\nTHE RUN PRODUCED NO TRANSCRIPT: no phase produced any output. This is the \
+                 run's own answer, not a capture that failed — a file that stops here was \
+                 written by a run that had nothing to say."
+            );
+        }
         for said in &self.transcript {
-            println!(
+            let _ = writeln!(
+                out,
                 "\n▸ {}\n  said: {}\n{}",
                 said.phase, said.prompt, said.output
             );
         }
-        println!("\n── results ─────────────────────────────────────────────────");
-        println!("playbook: {}", self.playbook);
-        println!("model:    {}", self.model);
+        let _ = writeln!(
+            out,
+            "\n── results ─────────────────────────────────────────────────"
+        );
         if !self.the_room_changed() {
-            println!(
+            let _ = writeln!(
+                out,
                 "\nFAILED: the room is exactly as it was furnished, so the agent left no visible \
                  side effect and nothing below means anything — an unchanged room satisfies every \
                  negative assertion by itself."
@@ -237,27 +288,48 @@ impl Results {
         }
         for outcome in &self.outcomes {
             let mark = if outcome.held { "held" } else { "FAILED" };
-            println!("  [{mark}] {} — {}", outcome.name, outcome.saying);
+            let _ = writeln!(out, "  [{mark}] {} — {}", outcome.name, outcome.saying);
         }
         for lost in self.lost_continuity() {
-            println!(
+            let _ = writeln!(
+                out,
                 "  [ FAILED ] {lost}. A phase that lost its memory still produces a readable \
                  transcript, and the phases that measure continuity are meaningless without it."
             );
         }
         for unanswered in self.steps_unanswered() {
-            println!(
+            let _ = writeln!(
+                out,
                 "  [ HARNESS ] {unanswered}. The run did not measure what it was sent to \
                  measure, which reads as a pass unless it is said here."
             );
         }
         for phase in &self.uncovered {
-            println!(
+            let _ = writeln!(
+                out,
                 "  [ no check ] {phase} — what this phase measures lives in the agent's answer, \
                  so a person reads it above. It is NOT passed."
             );
         }
+        out
     }
+}
+
+/// **Where a run goes when nobody said.**
+///
+/// Named for the playbook it ran and the moment it ran, under one directory, so
+/// runs accumulate rather than overwrite each other — a run's history is the
+/// point of keeping them, and a fixed name would leave only the last one.
+pub fn kept_beside(playbook: &str) -> std::path::PathBuf {
+    let stem = std::path::Path::new(playbook)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "run".to_string());
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    std::path::PathBuf::from("transcripts").join(format!("{stem}-{at}.md"))
 }
 
 /// **The step numbers a phase asks about**, read off the playbook's own list.
@@ -476,7 +548,122 @@ pub async fn starting_identity(room: &Surface) -> Result<serde_json::Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::phase_is_covered;
+    use super::{Results, Said, phase_is_covered};
+
+    /// A run with two phases and nothing else — the smallest thing that has a
+    /// beginning and an end.
+    fn ran(phases: &[&str]) -> Results {
+        Results {
+            playbook: "rooms/whatever.md".into(),
+            model: "some-model".into(),
+            outcomes: Vec::new(),
+            transcript: phases
+                .iter()
+                .map(|phase| Said {
+                    phase: (*phase).to_string(),
+                    prompt: format!("what {phase} was asked"),
+                    output: format!("what {phase} answered"),
+                    ran: true,
+                    continuing: false,
+                })
+                .collect(),
+            uncovered: Vec::new(),
+            boundaries: Vec::new(),
+            before: String::new(),
+            after: String::new(),
+        }
+    }
+
+    /// **The run outlives the process, whole and from the beginning.**
+    ///
+    /// The valuable half of a paid run is the part no assertion touches — what
+    /// the model reached for and what it concluded — and it existed only on
+    /// stdout.
+    ///
+    /// **The FIRST phase is asserted as hard as the last.** A capture that
+    /// keeps the end of a transcript looks right at a glance and has thrown
+    /// away the part where the model was working out what it could do.
+    #[test]
+    fn a_run_is_readable_in_full_after_the_process_is_gone() {
+        let dir = std::env::temp_dir().join(format!("exercise-transcript-{}", std::process::id()));
+        let path = dir.join("run.md");
+        ran(&["Phase 1 — the opening", "Phase 2 — the close"])
+            .write_to(&path)
+            .expect("the transcript is written");
+
+        let read = std::fs::read_to_string(&path).expect("and reads back");
+        assert!(
+            read.contains("Phase 1 — the opening")
+                && read.contains("what Phase 1 — the opening answered"),
+            "the beginning of the run is in the file: {read}",
+        );
+        assert!(
+            read.contains("Phase 2 — the close"),
+            "…and so is the end: {read}",
+        );
+        assert!(
+            read.contains("some-model"),
+            "…and which model produced it, because a run nobody can attribute is not evidence",
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **A run that produced nothing says so, rather than leaving an empty
+    /// file.**
+    ///
+    /// The failure this exists for: an empty capture and a capture that never
+    /// ran are the same bytes, and a person holding one cannot tell which it
+    /// is. **Both halves in one case** — the run's own nothing is stated, and
+    /// the file is not empty, which is what makes the two distinguishable.
+    #[test]
+    fn a_run_that_produced_nothing_says_so_and_an_empty_file_means_the_capture_failed() {
+        let empty = ran(&[]);
+        let rendered = empty.rendered();
+        assert!(
+            rendered.contains("THE RUN PRODUCED NO TRANSCRIPT"),
+            "a run with nothing to say says that in its own words: {rendered}",
+        );
+        assert!(
+            !rendered.trim().is_empty(),
+            "…so an empty file can only mean the capture never wrote, which is a different fault",
+        );
+    }
+
+    /// **A run is named for the playbook it ran**, so a directory of them is
+    /// readable without opening any.
+    ///
+    /// **And two runs of one playbook do not collide.** A fixed name leaves
+    /// only the last run, which is the opposite of keeping them.
+    #[test]
+    fn a_kept_run_is_named_for_its_playbook_and_does_not_overwrite_the_last_one() {
+        let path = super::kept_beside("crates/jojobot-exercise/rooms/ledger.md");
+        let named = path.to_string_lossy().to_string();
+        assert!(
+            named.starts_with("transcripts/") && named.contains("ledger"),
+            "a run is filed under one directory, named for its playbook: {named}",
+        );
+        assert_ne!(
+            named, "transcripts/ledger.md",
+            "…and carries what tells two runs of it apart",
+        );
+    }
+
+    /// **What is written and what is shown are one rendering.**
+    ///
+    /// A second renderer for the file is how the copy somebody reads afterwards
+    /// comes to say something the printed one did not.
+    #[test]
+    fn the_written_run_and_the_shown_run_are_the_same_text() {
+        let run = ran(&["Phase 1 — the only one"]);
+        let dir = std::env::temp_dir().join(format!("exercise-same-{}", std::process::id()));
+        let path = dir.join("run.md");
+        run.write_to(&path).expect("written");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read back"),
+            run.rendered(),
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// **A phase is covered by the check written for THAT phase.**
     ///

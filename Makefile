@@ -58,10 +58,18 @@ integration: ## Run the suites against the real store
 # `make check` must never run it: nothing here is a `cargo test` case, so it
 # happens when somebody types it and at no other time.
 #
-#     make paid PLAYBOOK=<path> [MODEL=<name>]
+# **The run is kept.** What a paid run is judged by is the part no assertion
+# touches — what the model reached for, what it did not find, what it concluded
+# — and that lived on stdout and nowhere else. It is written whole, under
+# `transcripts/`, and the run says where it went. TRANSCRIPT=<path> puts it
+# somewhere else.
+#
+#     make paid PLAYBOOK=<path> [MODEL=<name>] [TRANSCRIPT=<path>]
 PLAYBOOK ?=
 MODEL ?=
+TRANSCRIPT ?=
 paid: build ## Drive a REAL model through a playbook — reaches the network and COSTS MONEY
 	@test -n "$(PLAYBOOK)" || { echo "make paid needs a playbook: make paid PLAYBOOK=<path>"; exit 2; }
 	$(CARGO) run -q -p jojobot-exercise -- \
-		--playbook $(PLAYBOOK) $(if $(MODEL),--model $(MODEL),)
+		--playbook $(PLAYBOOK) $(if $(MODEL),--model $(MODEL),) \
+		$(if $(TRANSCRIPT),--transcript $(TRANSCRIPT),)

@@ -6,3 +6,6 @@ result-*
 *.age
 .env
 .mcp.json
+# Paid runs are kept for a person to read, not committed: they are one run on
+# one day, and they carry whatever a real model said.
+/transcripts

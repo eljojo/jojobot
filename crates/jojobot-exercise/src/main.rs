@@ -27,6 +27,22 @@ async fn main() -> Result<()> {
 
     let results = run::go(&playbook, &agent, &seed, &expectations).await?;
     results.print();
+    // **The run is kept, and where it went is said.** A paid run's most
+    // valuable output is the part no expectation touches — what the model
+    // reached for, what it did not find, what it concluded — and stdout is
+    // where that stopped existing. **Written before the exit below**, so a run
+    // that failed its expectations is the one most worth reading and is not
+    // the one thrown away.
+    match results.write_to(&asked.transcript) {
+        Ok(()) => println!("\ntranscript: {}", asked.transcript.display()),
+        // Not fatal, and loud. The run happened and was billed; losing the
+        // file is worth saying and is not worth pretending the run did not
+        // hold.
+        Err(e) => eprintln!(
+            "\nTRANSCRIPT NOT WRITTEN to {}: {e}. The run above is on stdout and nowhere else.",
+            asked.transcript.display(),
+        ),
+    }
     if !results.held() {
         std::process::exit(1);
     }
@@ -36,6 +52,8 @@ async fn main() -> Result<()> {
 struct Asked {
     playbook: String,
     model: String,
+    /// Where the run is kept for somebody to read afterwards.
+    transcript: std::path::PathBuf,
 }
 
 /// **The model is a parameter, never a constant** — it is the operator's call,
@@ -43,16 +61,26 @@ struct Asked {
 fn arguments() -> Result<Asked> {
     let mut playbook = None;
     let mut model = DEFAULT_MODEL.to_string();
+    let mut transcript = None;
     let mut args = std::env::args().skip(1);
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--playbook" => playbook = args.next(),
             "--model" => model = args.next().context("--model needs a name")?,
-            other => anyhow::bail!("unknown argument {other:?} — see --playbook and --model"),
+            "--transcript" => {
+                transcript = Some(std::path::PathBuf::from(
+                    args.next().context("--transcript needs a path")?,
+                ))
+            }
+            other => anyhow::bail!(
+                "unknown argument {other:?} — see --playbook, --model and --transcript"
+            ),
         }
     }
+    let playbook = playbook.context("--playbook is required: this crate authors none")?;
     Ok(Asked {
-        playbook: playbook.context("--playbook is required: this crate authors none")?,
+        transcript: transcript.unwrap_or_else(|| run::kept_beside(&playbook)),
+        playbook,
         model,
     })
 }
