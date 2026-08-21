@@ -22,6 +22,10 @@ pub use crate::loop_room::LOOP_ROOM;
 /// written in its own document, so the name is all there is to register.
 pub const LEDGER_ROOM: &str = "rooms/ledger.md";
 
+/// **The year** — twelve cold sittings, one a month. Written in its document
+/// from the beginning, which is what the format was built for.
+pub const YEAR_ROOM: &str = "rooms/year.md";
+
 /// **The Rust half of a room that still has one** — what must be true of it
 /// afterwards, and what it is furnished with before anybody arrives.
 type InRust = (
@@ -38,7 +42,7 @@ type Room = (&'static str, Option<InRust>);
 /// **`None` is a converted room**: its world and its locks are in its own
 /// document, which is where both are read from for every room — the Rust below
 /// is only what a room that has not been converted still falls back to.
-const ROOMS: [Room; 4] = [
+const ROOMS: [Room; 5] = [
     (
         BIKE_ROOM,
         Some((crate::bike_room::expectations, crate::bike_room::seed)),
@@ -48,6 +52,7 @@ const ROOMS: [Room; 4] = [
         Some((crate::loop_room::expectations, crate::loop_room::seed)),
     ),
     (LEDGER_ROOM, None),
+    (YEAR_ROOM, None),
     (
         HANDOVER_ROOM,
         Some((

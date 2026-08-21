@@ -1,0 +1,639 @@
+//! **The year, held for free.**
+//!
+//! Twelve cold sittings over a fictional year. The locks that matter are late
+//! and the work that earns them is early, so the case that says the year
+//! measures anything is the one that works only its second half: a store that
+//! nobody wrote in until June cannot answer the questions September and October
+//! ask.
+//!
+//! Both kinds of case, named apart: the ones that prove the locks discriminate,
+//! and the one that proves the year is solvable at all. A year whose own
+//! arithmetic is wrong is unreachable by every session that will ever enter it,
+//! every discriminating case still passes, and the failure surfaces on a paid
+//! run reading as a defect in the product.
+
+use jojobot_exercise::expectations;
+use jojobot_exercise::playbook::Playbook;
+use jojobot_exercise::room::{Room, server_binary};
+use jojobot_exercise::run::{Boundary, Observed, Outcome, uncovered_phases};
+use jojobot_exercise::surface::Surface;
+use serde_json::{Value, json};
+
+/// **The locks the year carries, in the order its document writes them.**
+///
+/// The names are this file's rather than the document's: what is pinned is the
+/// order and what each lock is about, so a sentence rewritten in the room does
+/// not break a case here.
+const JANUARY: [usize; 3] = [0, 1, 2];
+const FEBRUARY: [usize; 3] = [3, 4, 5];
+const MARCH: [usize; 1] = [6];
+const APRIL: [usize; 2] = [7, 8];
+const MAY: [usize; 1] = [9];
+const JUNE: [usize; 2] = [10, 11];
+const JULY: [usize; 1] = [12];
+const AUGUST: [usize; 2] = [13, 14];
+const SEPTEMBER: [usize; 1] = [15];
+const OCTOBER: [usize; 1] = [16];
+
+/// How many locks the year carries.
+const LOCKS: usize = 17;
+
+/// **The sittings a person reads**, which assert nothing and must not.
+const READ_THESE: [&str; 2] = ["Phase 11", "Phase 12"];
+
+/// The document a run is driven by.
+fn room_document() -> Playbook {
+    let path = expectations::room_document(expectations::YEAR_ROOM);
+    Playbook::read(&path).unwrap_or_else(|e| panic!("the shipped room must read: {e:#}"))
+}
+
+/// A room furnished the way a run furnishes it, and a handle to write into it
+/// as an occupant would.
+async fn furnished() -> (Room, Surface, String) {
+    let room = Room::open(&server_binary().expect("a jojobot binary"))
+        .await
+        .expect("a room");
+    let surface = Surface::connect(room.endpoint()).await.expect("a client");
+    expectations::seed_for(expectations::YEAR_ROOM)
+        .expect("the room has furniture")
+        .furnish(&surface)
+        .await
+        .expect("the room is furnished");
+    let booted = surface
+        .must("start_here", json!({"bot": "assistant", "brief": true}))
+        .await
+        .expect("the shipped identity boots");
+    let sid = booted["session"]["sid"]
+        .as_str()
+        .expect("a handle")
+        .to_string();
+    (room, surface, sid)
+}
+
+/// A call an occupant would make.
+async fn did(room: &Surface, sid: &str, verb: &str, mut args: Value) -> String {
+    args["sid"] = json!(sid);
+    room.call(verb, args).await
+}
+
+/// Every lock the year registers, run against the room as it stands.
+async fn judge_all(room: &Surface) -> Vec<Outcome> {
+    let boundaries: Vec<Boundary> = Vec::new();
+    let seen = Observed {
+        room,
+        boundaries: &boundaries,
+    };
+    let checks = expectations::for_playbook(expectations::YEAR_ROOM).expect("the year asserts");
+    let mut outcomes = Vec::new();
+    for check in checks {
+        outcomes.push(check.check(&seen).await);
+    }
+    assert!(
+        !outcomes.is_empty(),
+        "the year registered no locks, so a run would report a pass over an empty list",
+    );
+    outcomes
+}
+
+/// What the run would say, so a failure names the lock that failed.
+fn saying(outcomes: &[Outcome]) -> String {
+    outcomes
+        .iter()
+        .enumerate()
+        .map(|(at, o)| format!("\n  {at:>2} [{}] {}", o.held, o.saying))
+        .collect()
+}
+
+/// The address of the record on `subject` whose content carries `needle`.
+async fn address_of(room: &Surface, subject: &str, needle: &str) -> String {
+    let read = room
+        .call("recall", json!({"subject": subject, "facts": true}))
+        .await;
+    let parsed: Value = serde_json::from_str(&read).expect("the read is json");
+    parsed["objects"][0]["facts"]
+        .as_array()
+        .expect("the records behind the fields")
+        .iter()
+        .find(|fact| {
+            fact["content"]
+                .as_str()
+                .is_some_and(|said| said.contains(needle))
+        })
+        .and_then(|fact| fact["address"].as_str())
+        .unwrap_or_else(|| panic!("no record on {subject} says {needle:?}: {read}"))
+        .to_string()
+}
+
+// ── the twelve sittings, each done the way a session that read the surface
+//    would do it, and each carrying the day the document says it happens on ──
+
+async fn january(room: &Surface, sid: &str) {
+    did(room, sid, "read_mailbox", json!({})).await;
+    did(
+        room,
+        sid,
+        "add_entity",
+        json!({"kind": "rhythm", "handle": "chain-check", "name": "Chain check",
+               "source": "the operator", "parent": "thing:gravel-bike"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "rhythm:chain-check", "content": "look at the bike chain every ninety days",
+               "provenance": "testimony", "date": "2026-01-12",
+               "fields": {"name": "Chain check", "last_check_in": "2025-12-20",
+                          "cadence_days": "90", "counts_from": "2025-12-20",
+                          "advances_from": "due_date"}}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "person:milhouse", "content": "lives in Springfield",
+               "provenance": "testimony", "date": "2026-01-12",
+               "shape": "location", "object": "place:springfield"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "person:milhouse", "content": "rides with the club",
+               "provenance": "testimony", "date": "2026-01-12",
+               "shape": "membership", "object": "org:north-trail-club"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "add_entity",
+        json!({"kind": "event", "handle": "trail-survey", "name": "The trail survey",
+               "source": "the operator"}),
+    )
+    .await;
+}
+
+async fn february(room: &Surface, sid: &str) {
+    for (kind, handle, name) in [
+        ("person", "ralph", "Ralph"),
+        ("person", "nelson", "Nelson"),
+        ("thing", "floor-pump", "The Floor Pump"),
+    ] {
+        did(
+            room,
+            sid,
+            "add_entity",
+            json!({"kind": kind, "handle": handle, "name": name, "source": "the operator"}),
+        )
+        .await;
+    }
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:floor-pump", "content": "lent out, wanted back before the survey",
+               "provenance": "testimony", "date": "2026-02-08",
+               "shape": "connection", "object": "person:ralph"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "person:nelson", "content": "joined the club",
+               "provenance": "testimony", "date": "2026-02-08",
+               "shape": "membership", "object": "org:north-trail-club"}),
+    )
+    .await;
+}
+
+async fn march(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "org:north-trail-club", "content": "meets on Tuesdays",
+               "provenance": "testimony", "date": "2026-03-15"}),
+    )
+    .await;
+}
+
+async fn april(room: &Surface, sid: &str) {
+    let was = address_of(room, "person:milhouse", "Springfield").await;
+    did(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": was, "status": "superseded"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "person:milhouse", "content": "moved to Shelbyville",
+               "provenance": "testimony", "date": "2026-04-19",
+               "shape": "location", "object": "place:shelbyville"}),
+    )
+    .await;
+}
+
+async fn may(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "place:north-trail", "content": "washed out at the top end this spring",
+               "provenance": "testimony", "date": "2026-05-10"}),
+    )
+    .await;
+}
+
+async fn june(room: &Surface, sid: &str) {
+    for who in ["person:milhouse", "person:nelson"] {
+        did(
+            room,
+            sid,
+            "capture",
+            json!({"subject": who, "content": "was at the trail survey",
+                   "provenance": "testimony", "date": "2026-06-14",
+                   "shape": "attendance", "object": "event:trail-survey"}),
+        )
+        .await;
+    }
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
+               "provenance": "testimony", "date": "2026-06-14",
+               "fields": {"last_check_in": "2026-06-14"}}),
+    )
+    .await;
+}
+
+async fn july(room: &Surface, sid: &str) {
+    let wrong = address_of(room, "org:north-trail-club", "Tuesdays").await;
+    did(
+        room,
+        sid,
+        "retract",
+        json!({"address": wrong, "reason": "the operator says the club has never met on Tuesdays"}),
+    )
+    .await;
+}
+
+async fn august(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "org:north-trail-club", "content": "the operator is standing for the committee",
+               "provenance": "testimony", "date": "2026-08-16"}),
+    )
+    .await;
+}
+
+async fn september(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:floor-pump", "content": "came back at the survey",
+               "provenance": "testimony", "date": "2026-09-13",
+               "shape": "connection", "object": "person:ralph"}),
+    )
+    .await;
+}
+
+async fn october(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
+               "provenance": "testimony", "date": "2026-10-11",
+               "shape": "connection", "object": "person:nelson"}),
+    )
+    .await;
+}
+
+/// The whole year, worked the way it is meant to be.
+async fn worked_the_year(room: &Surface, sid: &str) {
+    january(room, sid).await;
+    february(room, sid).await;
+    march(room, sid).await;
+    april(room, sid).await;
+    may(room, sid).await;
+    june(room, sid).await;
+    july(room, sid).await;
+    august(room, sid).await;
+    september(room, sid).await;
+    october(room, sid).await;
+}
+
+// ────────────────────────────── the cases ──────────────────────────────
+
+/// **Twelve sittings, every one cold, every one claiming its day.**
+///
+/// The day is what the whole fiction rests on: jojobot reads no clock, so a
+/// sitting that names no day is stamped with the day the run happened and the
+/// year is fiction only in the prose.
+#[test]
+fn the_year_is_twelve_cold_sittings_and_every_one_claims_its_day() {
+    let year = room_document();
+    assert_eq!(
+        year.phases.len(),
+        12,
+        "the year is a sitting a month: {:?}",
+        year.phases.iter().map(|p| &p.name).collect::<Vec<_>>(),
+    );
+    let mut days: Vec<&str> = Vec::new();
+    for phase in &year.phases {
+        assert!(
+            phase.fresh_session,
+            "{} carries the sitting before it, so the store is optional in it",
+            phase.name,
+        );
+        let day = phase
+            .day
+            .as_deref()
+            .unwrap_or_else(|| panic!("{} claims no day", phase.name));
+        assert!(
+            phase.prompt.contains(&day[..4]),
+            "{} claims {day} where the harness reads and does not say a date where the occupant \
+             does, so nothing carries it into a call: {:?}",
+            phase.name,
+            phase.prompt,
+        );
+        days.push(day);
+    }
+    let mut sorted = days.clone();
+    sorted.sort_unstable();
+    assert_eq!(days, sorted, "the year does not run forwards: {days:?}");
+    sorted.dedup();
+    assert_eq!(
+        sorted.len(),
+        days.len(),
+        "two sittings claim the same day, so neither generated assertion can say which one \
+         wrote: {days:?}",
+    );
+}
+
+/// **The entries name no verb the room serves.**
+///
+/// A room gives the player every fact the task needs and never the move.
+#[tokio::test]
+async fn no_entry_names_a_verb_the_room_serves() {
+    let (_room, surface, _sid) = furnished().await;
+    let verbs = surface
+        .tools_for_the_model()
+        .await
+        .expect("the room lists its verbs");
+    assert!(
+        verbs.len() > 5,
+        "the room served {} verbs, so finding none in the entries proves nothing",
+        verbs.len(),
+    );
+    for phase in &room_document().phases {
+        for verb in &verbs {
+            let name = verb["name"].as_str().expect("a verb has a name");
+            assert!(
+                !phase.prompt.contains(name),
+                "{} names the verb {name}, so the occupant did not have to find it",
+                phase.name,
+            );
+        }
+        let said = phase.prompt.to_lowercase();
+        for pointed in ["mail", "box", "message", "waiting"] {
+            assert!(
+                !said.contains(pointed),
+                "{} points the occupant at its mail, so the first lock opens itself: {:?}",
+                phase.name,
+                phase.prompt,
+            );
+        }
+    }
+}
+
+/// **The two sittings a person must read are marked, and nothing asserts over
+/// them. Every other sitting is asserted over.**
+///
+/// Both halves. A shape landing in READ is not a failure of the format; a
+/// shape landing in READ that the format then buries is one, and a sitting
+/// nobody wrote a lock for that is NOT marked to be read is a sitting that
+/// silently measures nothing.
+#[test]
+fn the_sittings_a_person_reads_are_marked_and_every_other_one_is_locked() {
+    let year = room_document();
+    let checks = expectations::for_playbook(expectations::YEAR_ROOM).expect("the year asserts");
+    assert_eq!(
+        checks.len(),
+        LOCKS,
+        "the year carries {} locks and the roll-call above names {LOCKS}",
+        checks.len(),
+    );
+
+    let unasserted = uncovered_phases(&year, &checks);
+    let read_this: Vec<&str> = year
+        .phases
+        .iter()
+        .filter(|p| p.read_this)
+        .map(|p| p.name.as_str())
+        .collect();
+    assert_eq!(
+        read_this.len(),
+        READ_THESE.len(),
+        "the sittings marked to be read are {read_this:?}",
+    );
+    for key in READ_THESE {
+        assert!(
+            read_this.iter().any(|name| name.starts_with(key)),
+            "{key} is not marked to be read: {read_this:?}",
+        );
+        assert!(
+            unasserted.iter().any(|name| name.starts_with(key)),
+            "{key} is marked to be read and a lock asserts over it anyway: {unasserted:?}",
+        );
+    }
+    assert_eq!(
+        unasserted.len(),
+        READ_THESE.len(),
+        "a sitting asserts nothing and is not marked to be read, so it measures nothing and \
+         says nothing: {unasserted:?}",
+    );
+}
+
+/// **A year nobody worked in fails every lock.**
+///
+/// The room is furnished with five nouns and a brief, so nothing any lock
+/// claims is true of it — which is what makes the case that follows mean
+/// something.
+#[tokio::test]
+async fn a_year_nobody_worked_in_fails_every_lock() {
+    let (_room, surface, _sid) = furnished().await;
+    let outcomes = judge_all(&surface).await;
+    for outcome in &outcomes {
+        assert!(
+            !outcome.held,
+            "a furnished year nobody worked in held a lock: {}",
+            saying(&outcomes),
+        );
+    }
+}
+
+/// **The year is solvable, and this is the case that says so.**
+///
+/// A different kind of case from the ones above: those prove the locks
+/// discriminate between stores somebody put state into by hand. This one proves
+/// every question the year asks CAN be answered through the served surface.
+///
+/// Without it a year whose own arithmetic is wrong would be unreachable by
+/// every session that ever enters it, every case above would still pass, and
+/// the failure would surface on a paid run reading as a defect in the product.
+#[tokio::test]
+async fn every_lock_holds_once_the_year_is_worked() {
+    let (_room, surface, sid) = furnished().await;
+    worked_the_year(&surface, &sid).await;
+    let outcomes = judge_all(&surface).await;
+    for outcome in &outcomes {
+        assert!(
+            outcome.held,
+            "a year worked the way it is meant to be failed a lock: {}",
+            saying(&outcomes),
+        );
+    }
+}
+
+/// 🚨 **The sabotage that says the year measures anything: start it in June.**
+///
+/// If the second half of the year reads much the same against a store nobody
+/// wrote in until June, the year is measuring nothing — it is twelve rooms in a
+/// row rather than one year.
+///
+/// **Both halves.** The early sittings' locks fail because that work never
+/// happened, and the LATE ones fail too — September and October ask about a
+/// thing February created, and no amount of working the second half well can
+/// answer them.
+#[tokio::test]
+async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
+    let (_room, surface, sid) = furnished().await;
+    // June onwards, done as well as a session can do it against a store that
+    // holds nothing any of it refers to.
+    june(&surface, &sid).await;
+    august(&surface, &sid).await;
+    september(&surface, &sid).await;
+    october(&surface, &sid).await;
+
+    let outcomes = judge_all(&surface).await;
+    // **Sixteen of the seventeen locks fail.** The one that holds is the only
+    // claim in the year that rests on nothing before it — August files the
+    // committee note against a club that came with the furniture.
+    let stands_alone = AUGUST[1];
+    for at in JANUARY
+        .iter()
+        .chain(&FEBRUARY)
+        .chain(&MARCH)
+        .chain(&APRIL)
+        .chain(&MAY)
+        .chain(&JUNE)
+        .chain(&JULY)
+        .chain(&[AUGUST[0]])
+        .chain(&SEPTEMBER)
+        .chain(&OCTOBER)
+    {
+        assert!(
+            !outcomes[*at].held,
+            "a year that began in June answered a question resting on a sitting that never \
+             happened, so it is twelve rooms in a row rather than one year: {}",
+            saying(&outcomes),
+        );
+    }
+    // The positive half: this is not a store where every write failed. The one
+    // sitting that needed nothing before it did land.
+    assert!(
+        outcomes[stands_alone].held,
+        "not one lock held, so the case above passes on a run where nothing was written at \
+         all: {}",
+        saying(&outcomes),
+    );
+}
+
+/// **A sitting that recorded the year in prose leaves the late questions
+/// unanswerable**, which is the whole reason the shapes were chosen.
+///
+/// Every claim is written down, in sentences, and nothing carries a key, an
+/// edge or a loop. A reader could answer every question from the prose; a cold
+/// session cannot.
+#[tokio::test]
+async fn the_locks_fail_on_a_year_written_entirely_in_prose() {
+    let (_room, surface, sid) = furnished().await;
+    did(&surface, &sid, "read_mailbox", json!({})).await;
+    for (subject, said, day) in [
+        (
+            "person:milhouse",
+            "he lives in Springfield and rides with the north trail club",
+            "2026-01-12",
+        ),
+        (
+            "thing:gravel-bike",
+            "the chain wants looking at every ninety days, last done 2025-12-20",
+            "2026-01-12",
+        ),
+        (
+            "org:north-trail-club",
+            "Ralph has the floor pump on loan and Nelson has joined",
+            "2026-02-08",
+        ),
+    ] {
+        did(
+            &surface,
+            &sid,
+            "capture",
+            json!({"subject": subject, "content": said,
+                   "provenance": "testimony", "date": day}),
+        )
+        .await;
+    }
+    let outcomes = judge_all(&surface).await;
+    for at in JANUARY[1..].iter().chain(&FEBRUARY).chain(&JUNE) {
+        assert!(
+            !outcomes[*at].held,
+            "a year written in sentences held a lock that needs a key, an edge or a loop: {}",
+            saying(&outcomes),
+        );
+    }
+    // The positive that stops the assertion above passing on a store that lost
+    // everything: the brief was taken, so this session did reach the room.
+    assert!(
+        outcomes[JANUARY[0]].held,
+        "the box was never opened, so nothing here says the session got as far as the room: {}",
+        saying(&outcomes),
+    );
+}
+
+/// The year's own furniture avoids every day a sitting claims, so no generated
+/// date assertion can hold on the furniture alone.
+#[test]
+fn no_furniture_is_dated_on_a_day_a_sitting_claims() {
+    let year = room_document();
+    let world = std::fs::read_to_string(expectations::room_document(expectations::YEAR_ROOM))
+        .expect("the room reads");
+    let block: String = world
+        .lines()
+        .skip_while(|l| l.trim() != "```world")
+        .take_while(|l| l.trim() != "```" || l.trim() == "```world")
+        .collect();
+    for phase in &year.phases {
+        let day = phase.day.as_deref().expect("every sitting claims a day");
+        assert!(
+            !block.contains(day),
+            "{} claims {day} and the room is furnished with a record already carrying it, so \
+             that sitting's generated assertion would hold whatever it did",
+            phase.name,
+        );
+    }
+}
