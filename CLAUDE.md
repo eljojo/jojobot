@@ -446,7 +446,14 @@ roles and never an operator.
   through against a throwaway instance, and its assertions are over what the
   model LEFT in the store, never over what it said. `make paid` takes the
   playbook as a parameter, and the playbooks are **rooms**, in
-  `crates/jojobot-exercise/rooms/`. A room gives one goal in the operator's
+  `crates/jojobot-exercise/rooms/`. **A run is KEPT** — written whole to a file
+  the run names, before its exit code is decided, because a run that failed its
+  expectations is the one most worth reading. `TRANSCRIPT=` puts it elsewhere.
+  **A run that produced nothing says so in its own words**, so an empty file can
+  only mean the capture never wrote — a different fault with a different fix.
+  ⚠️ **This is what makes a run something to judge by after the fact rather
+  than something somebody had to be watching**, and the judgement stays a
+  person's: no score, no rubric, no summary. A room gives one goal in the operator's
   voice and a one-line entry, then leaves the agent to find the door, the box
   and the route. It is in addition to the stories, never instead of them.
 - **Commits: one per coherent problem.** A milestone lands as a handful of
