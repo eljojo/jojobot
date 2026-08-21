@@ -168,7 +168,7 @@ async fn keeping_track_of_bikes() {
         .await;
     passage
         .says("\"key\":\"state\"")
-        .says("\"count\":2")
+        .number("/objects/0/history/count", 2)
         .says("\"value\":\"for sale\"")
         .says("\"value\":\"sold\"");
     // **Asked and empty is not the same answer as never asked**, and only one
@@ -290,7 +290,7 @@ async fn keeping_track_of_bikes() {
         .await;
     dates
         .says("\"key\":\"done_on\"")
-        .says("\"count\":2")
+        .number("/objects/0/history/count", 2)
         .says(&format!("\"record\":\"{service}\""))
         .says("\"status\":\"active\"")
         .says("2026-04-18")
@@ -427,7 +427,7 @@ async fn keeping_track_of_bikes() {
         .await;
     ridden
         .says("\"key\":\"km\"")
-        .says("\"count\":3")
+        .number("/objects/0/history/count", 3)
         .says(&format!("\"record\":\"{}\"", tallies[0]));
     // **Read out of the history itself, and asserted as an ORDER.** Every one
     // of these numbers is also on the records above, so a search of the whole
@@ -456,7 +456,7 @@ async fn keeping_track_of_bikes() {
         json!({ "subject": "thing:road-bike", "history": "km" }),
     )
     .await
-    .says("\"count\":1")
+    .number("/objects/0/history/count", 1)
     .never_says("4100");
 
     // The ordinary read is untouched: a call that names no key carries no

@@ -187,7 +187,7 @@ async fn nothing_on_the_surface_goes_unexercised() {
     // belongs to `list_sent`, not here.)
     s.call("search", json!({"query": "walks to work", "limit": 1}))
         .await
-        .says("\"count\":1");
+        .number("/count", 1);
 
     // ── an argument this surface does not have, at either level ─────────────
 

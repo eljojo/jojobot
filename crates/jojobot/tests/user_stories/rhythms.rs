@@ -209,7 +209,7 @@ async fn which_of_the_loops_have_gone_quiet() {
         .await;
     history.says("skipped");
     history.says("ran");
-    history.says("\"count\":2");
+    history.number("/objects/0/history/count", 2);
     // The measurement is on the thing, kept as it was written.
     history.says("\"wear_mm\":\"0.4\"");
 

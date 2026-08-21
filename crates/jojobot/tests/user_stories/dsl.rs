@@ -1402,6 +1402,58 @@ impl Answer {
         );
         self
     }
+
+    /// **A number, read at the place it lives rather than matched as text.**
+    ///
+    /// 🚨 **The payload is compact json, so `"count":3` is a PREFIX of
+    /// `"count":30`.** An assertion written that way reads as *exactly three
+    /// came back* and claims *some number starting with three came back* — and
+    /// a reader trusts the first reading. This one cannot be satisfied by a
+    /// bigger number.
+    ///
+    /// The pointer is written out rather than hidden behind a helper per
+    /// shape: a story is read by a person, and where the number lives is part
+    /// of what the story says.
+    pub fn number(&self, pointer: &str, expected: i64) -> &Self {
+        let found = self.json();
+        let at = found.pointer(pointer).unwrap_or_else(|| {
+            panic!(
+                "the {} carries nothing at {pointer}: {}",
+                self.what, self.body
+            )
+        });
+        assert_eq!(
+            at.as_i64(),
+            Some(expected),
+            "the {} holds {at} at {pointer} rather than {expected}: {}",
+            self.what,
+            self.body,
+        );
+        self
+    }
+}
+
+/// 🚨 **What a text assertion about a number cannot do, shown once.**
+///
+/// Every count in these stories used to be written as `says("\"count\":3")`.
+/// **Both halves**: the text needle is satisfied by a payload holding THIRTY,
+/// and the structural read is not. Without the first half this proves only
+/// that the new assertion works; without the second it proves nothing at all.
+#[test]
+fn a_count_matched_as_text_is_satisfied_by_a_bigger_count() {
+    let thirty = Answer {
+        what: "answer".into(),
+        body: "{\"count\":30,\"objects\":[]}".into(),
+    };
+    assert!(
+        thirty.body.contains("\"count\":3"),
+        "the old needle does not match thirty, so there was nothing to fix",
+    );
+    assert_eq!(
+        thirty.json()["count"].as_i64(),
+        Some(30),
+        "the structural read sees thirty where the needle saw three",
+    );
 }
 
 async fn call(client: &Client, tool: &str, args: Value) -> Value {

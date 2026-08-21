@@ -176,7 +176,7 @@ async fn a_counter_adds_its_writes_up_and_still_lists_them() {
             json!({ "subject": "person:homer", "history": "donuts" }),
         )
         .await;
-    occasions.says("\"count\":3");
+    occasions.number("/objects/0/history/count", 3);
     // **Three writes, each naming the record it arrived in.** The count alone
     // would pass on a build that stored one write and said three; the addresses
     // are what say the occasions are separate things somebody can go and read.
