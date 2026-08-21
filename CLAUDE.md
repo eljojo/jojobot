@@ -273,21 +273,23 @@ Shipped and live:
   charter · rules (plain facts, so each carries its own provenance) ·
   memory · one owned mailbox, opened with the bot in the same act and named
   for its handle. **A charter has two layers, and neither is a copy of the
-  other**: the core the build ships for the identity the software ships, and
-  the instance's own prose written through `set_charter`. Two reads compose
-  them, core first, and the instance's text narrows rather than repeals it:
-  the boot door, for the identity a session holds, and `recall` with
-  `charter`, for a colleague's — that one mints no session and hands back no
-  handle, which is what makes a directory read possible without booting as
-  the bot it belongs to. **So a bot nobody has written for still answers
-  with the core**, while every other bot's charter is its written prose
-  alone. The
-  core is never a stored record — upgrading it is shipping a new build,
-  with nothing to migrate and no instance frozen on the version that made
-  it. **A write carrying the core is refused rather than trimmed**, because
-  a caller that reads the composed charter and sends it back would store
-  the build's words as the instance's, where they stop moving when the
-  software does.
+  other**: the text the build supplies for the identity the software ships,
+  and the instance's own prose written through `set_charter`. **No verb
+  composes them.** The build supplies its text at an address and the store
+  resolves it underneath every read, so a caller is never told a shipped
+  half exists and no reader carries a word for it — the boot door and
+  `recall` both simply read prose. Reading a colleague's charter mints no
+  session and hands back no handle, which is what makes a directory read
+  possible without booting as the bot it belongs to. **So a bot nobody has
+  written for still answers with what the build supplies**, while every
+  other bot's charter is its written prose alone. The build's half is never
+  stored: upgrading it is shipping a new build, with nothing to migrate and
+  no instance frozen on the version that made it. **A write carrying it is
+  refused rather than trimmed**, because a caller that reads a charter and
+  sends it back would store the build's words as the instance's, where they
+  stop moving when the software does. **The refusal names no core** — it
+  says the text repeats what the software already says here, and to send
+  only what is being added.
   **`start_here` is the one orienting door** — the same verb with or without
   a bot: world-model and snapshot always, plus the identity when a bot is
   named. The door itself **mints no identity**: an unknown bot name comes back
