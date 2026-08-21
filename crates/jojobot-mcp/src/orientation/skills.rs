@@ -53,6 +53,13 @@ pub(crate) const SKILLS: &[Skill] = &[
         body: RHYTHMS,
     },
     Skill {
+        name: "asking",
+        when_to_use: "When you need something out of the graph and are about to work out how \
+                      to ask for it. Also when a capability seems to be missing, because it \
+                      usually is not.",
+        body: ASKING,
+    },
+    Skill {
         name: "evidence",
         when_to_use: "Before you write anything that the operator will read later. This \
                       includes a claim about a person, a summary, a portrait, and a note.",
@@ -73,6 +80,77 @@ pub(crate) fn index() -> serde_json::Value {
         .map(|s| serde_json::json!({ "name": s.name, "when_to_use": s.when_to_use }))
         .collect()
 }
+
+const ASKING: &str = r#"# asking
+
+**Getting something out of the graph, without working the shape out first.**
+
+## 1. Look for a view before you build a question
+
+A **view** is a question somebody already worked out, asked for by name. Ask
+`recall` with `view` and the name:
+
+    recall  view: "colleagues"     the identities here, and what each is for
+    recall  view: "loops"          the recurring things, and what each last recorded
+
+**Some ship with the software and you can declare your own.** A name that is no
+view comes back blocked and names the ones that are — so **guessing a name is
+how you find out what is here**, and it costs one call.
+
+Declare your own with the surface you already know: `add_entity` of kind `view`,
+then the keys.
+
+    selects   what it looks at — a kind. Required.
+    shows     what of each comes back: facts, prose, charter.
+    asks      overdue, when the question is what has fallen due.
+
+Anything you send beside the name wins, so a view is a starting point rather
+than a cage: `recall  view: "loops"  facts: true` is the shipped question with
+one thing changed.
+
+## 2. 🚨 A capability arrives as an ARGUMENT on a verb you already know
+
+**Never as a new verb.** This surface grows by widening what exists, so when you
+go looking for a capability and find no verb named for it, **that is not an
+answer** — read the arguments of the verb whose job it is.
+
+Views are an argument on `recall`. So are walking a relation, asking what has
+fallen due, and reading one key's history. **Mail is an argument on `search`.**
+The list of verbs is short on purpose and it is not the list of what jojobot can
+do.
+
+## 3. When no view fits, say the shape
+
+`recall` takes three axes and they combine into ONE question:
+
+- **which objects** — `subject` (one handle), `kind`, `answers_type`, or
+  `fields` (a key and its value)
+- **what of each** — `facts`, `prose`, `charter`, `fields`, `history`
+- **where to walk** — `follow`, which takes an edge or a key that holds a
+  handle, in either direction
+
+*Which people are in Springfield* is a `kind` plus a `follow` on the location
+edge. *Which visits cost more than fifty* is a key filter on the record.
+*Which friends have eaten three donuts* is a key filter on the THING — the same
+key, folded. Those two are different questions and the difference is whose value
+you are asking about.
+
+**Selection chooses; traversal reaches.** If you find yourself walking to narrow
+something down, you wanted a filter.
+
+## 4. Use `search` when you only have words
+
+`recall` is for when you can describe the shape. `search` is for when you are
+looking for something and have words rather than a shape — one ranked list over
+entities, facts and prose, and over mail too when you ask for it with
+`include_mail: true`.
+
+## 5. If you asked and got nothing
+
+Read the answer rather than re-sending it. A blocked answer says what to do
+next and names what exists; an empty result is a real answer and means nobody
+wrote that down. **They are different**, and neither is fixed by asking again.
+"#;
 
 const RECOMMEND: &str = r#"# recommend
 

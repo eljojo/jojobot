@@ -94,3 +94,65 @@ async fn a_session_asks_a_shipped_view_and_its_own_by_name_through_one_read() {
 
     story.finish().await;
 }
+
+/// **A session that was told nothing finds the capability and uses it.**
+///
+/// The bar a view has to clear is not that it exists — it is that an agent
+/// carrying no knowledge of it ends up asking one. So this walks the route a
+/// cold session actually takes: the boot names the skill, the skill is fetched
+/// by name, and **what comes out of it is a COMPOSED CALL that lands** rather
+/// than a recital of what the axes are.
+#[tokio::test]
+async fn a_session_told_nothing_finds_the_view_path_and_composes_a_real_question() {
+    let story = Story::begin("bot:gamma").await;
+    let (booted, s) = story.full_boot().await;
+
+    // ① The boot names the skill and what it is for, and ships no body — which
+    // is what makes it free to know it exists.
+    booted_names_the_skill(&booted);
+
+    // ② Fetched by name, it names the view path and the shipped views.
+    let skill = story.skill("asking").await.to_string();
+    assert!(
+        skill.contains("colleagues") && skill.contains("loops"),
+        "the skill's worked examples are the views that really ship: {skill}",
+    );
+    // …and the sentence that stops an agent concluding a capability is absent.
+    assert!(
+        skill.contains("ARGUMENT on a verb you already know"),
+        "the skill says where capabilities live on this surface: {skill}",
+    );
+
+    // ③ **The composed call.** Not the axes recited — a real question, built
+    // from what the skill just said, that comes back with the answer.
+    s.add("person:milhouse", "Milhouse").await;
+    let composed = s
+        .call("recall", json!({"view": "colleagues", "facts": true}))
+        .await;
+    composed.says("bot:assistant");
+    // The argument sent beside the view won, which is what the skill promised.
+    assert!(
+        composed.raw().contains("\"facts\""),
+        "what the caller sent beside the view name took: {}",
+        composed.raw(),
+    );
+
+    story.finish().await;
+}
+
+/// The boot's skill index carries this skill by name, with no body.
+fn booted_names_the_skill(booted: &serde_json::Value) {
+    let skills = booted["skills"].as_array().expect("the boot lists skills");
+    let asking = skills
+        .iter()
+        .find(|s| s["name"] == "asking")
+        .unwrap_or_else(|| panic!("a cold session is told this skill exists: {booted}"));
+    assert!(
+        asking["when_to_use"].is_string(),
+        "…and what it is for, which is what a session compares against its job",
+    );
+    assert!(
+        asking.get("body").is_none(),
+        "…and it costs nothing: the index ships no bodies",
+    );
+}
