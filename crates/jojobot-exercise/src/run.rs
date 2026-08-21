@@ -545,6 +545,12 @@ pub async fn go(
     for expectation in expectations {
         outcomes.push(expectation.check(&seen).await);
     }
+    // **Generated, and deliberately not part of what covers a phase.** A
+    // sitting whose only assertion is the one this run wrote for it is a
+    // sitting nobody wrote a lock for, and it must still read as uncovered.
+    for generated in days_claimed(playbook) {
+        outcomes.push(generated.check(&seen).await);
+    }
 
     let uncovered = uncovered_phases(playbook, expectations);
     let hatches = hatches_taken(expectations);
@@ -562,6 +568,110 @@ pub async fn go(
     };
     surface.finish().await;
     Ok(results)
+}
+
+/// **The assertion every dated sitting gets, generated rather than authored.**
+///
+/// A run acting out a year is fiction inside the test: jojobot learns nothing
+/// about elapsed time and reads no clock, so it stamps a write with real today
+/// when the caller sends no date. **The year therefore holds exactly as far as
+/// each sitting carries its own day into the calls it makes, and the caller is
+/// a real model.**
+///
+/// A sitting told in prose that it is March, which then writes without a date,
+/// leaves a record stamped with real today. Nothing else in the run fails and
+/// the transcript reads perfectly well. **No lock written after the fact can
+/// catch it without the whole run already being ruined**, and it is not a
+/// defect in jojobot — the frame belongs to the caller, which is right, and a
+/// caller that forgets is corrected by nothing.
+///
+/// ⭐ **So a firing here is a RESULT rather than harness noise.** It is the
+/// product's most likely silent failure, caught where a person reads it, and
+/// the sentence names which sitting claimed which day.
+///
+/// A phase that claims no day gets none of this, which is every room written
+/// before the year existed.
+pub fn days_claimed(playbook: &crate::playbook::Playbook) -> Vec<Box<dyn Expectation>> {
+    playbook
+        .phases
+        .iter()
+        .filter_map(|phase| {
+            let day = phase.day.clone()?;
+            Some(Box::new(DayClaimed {
+                name: format!("{} — the sitting claimed {day}", phase_key(&phase.name)),
+                phase: phase.name.clone(),
+                day,
+            }) as Box<dyn Expectation>)
+        })
+        .collect()
+}
+
+/// One sitting's day, and the claim that what it wrote carries it.
+struct DayClaimed {
+    /// The phase this is about, as the playbook names it.
+    phase: String,
+    /// The day that phase claims.
+    day: String,
+    name: String,
+}
+
+#[async_trait::async_trait]
+impl Expectation for DayClaimed {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn check(&self, seen: &Observed<'_>) -> Outcome {
+        let missed = |saying: String| Outcome {
+            name: self.name.clone(),
+            held: false,
+            saying,
+        };
+        let Some((_, after)) = seen.across(&self.phase) else {
+            return missed(format!(
+                "{}: the run took no reading either side of this sitting, so nothing can say                  whether it carried {}",
+                self.phase, self.day,
+            ));
+        };
+        // 🚨 **The day has to arrive with the RUN.** A room furnished with a
+        // record already dated this sitting's day makes the claim below hold
+        // whatever the occupant does, and it holds silently. Refuse instead, so
+        // the author moves the seed.
+        let furnished = seen
+            .boundaries
+            .first()
+            .is_some_and(|b| stamped(b, &self.day));
+        if furnished {
+            return missed(format!(
+                "{}: the room was furnished with a record already dated {}, so this assertion                  would hold whatever the sitting did. Move the furniture off that day.",
+                self.phase, self.day,
+            ));
+        }
+        match stamped(after, &self.day) {
+            true => Outcome {
+                name: self.name.clone(),
+                held: true,
+                saying: format!(
+                    "{} wrote under the day it claimed, {}",
+                    self.phase, self.day
+                ),
+            },
+            // ⚠️ **The transcript has to say WHICH sitting**, because the
+            // sentence is the finding.
+            false => missed(format!(
+                "{} was told it is {} and nothing it wrote carries that day, so its records are                  stamped with the day the run happened and the year is fiction only in the                  prose. Read this sitting.",
+                self.phase, self.day,
+            )),
+        }
+    }
+}
+
+/// Whether anything the run could see at a boundary carries this day.
+///
+/// Both halves of what a boundary reads, because a sitting may leave its mark
+/// on either.
+fn stamped(at: &Boundary, day: &str) -> bool {
+    at.world.contains(day) || at.mail.contains(day)
 }
 
 /// **The phases nothing asserts over**, named rather than omitted.
