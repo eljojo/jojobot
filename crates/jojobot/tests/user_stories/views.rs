@@ -71,5 +71,26 @@ async fn a_session_asks_a_shipped_view_and_its_own_by_name_through_one_read() {
         .await;
     refused.says("colleagues");
 
+    // ── a shipped view's name is not the operator's to take ────────────────
+    //
+    // **What the build supplies behaves like a stored row** (rule 234), so the
+    // handle guard has to see it — a guard that reads only the store sees no
+    // collision here and lets a second thing answer to one name.
+    let taken = s
+        .refused(
+            "add_entity",
+            json!({
+                "kind": "view", "handle": "colleagues", "name": "My Colleagues",
+                "source": "user-named",
+            }),
+        )
+        .await;
+    // The way forward is a name of their own, as it is for a shipped kind.
+    taken.says("colleagues");
+
+    // …and the pairing it rests on: a name of the operator's own still lands.
+    // Without this the case passes on a build that refuses every view there is.
+    s.add("view:my-loops", "My Loops").await;
+
     story.finish().await;
 }

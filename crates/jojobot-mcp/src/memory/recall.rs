@@ -755,7 +755,17 @@ impl Jojobot {
         description = "The graph query: say the shape you want and get that shape back. Use it \
                        when you can describe what you are after — a handle, a kind, a type, a key \
                        and its value — and use search when you are looking for something and only \
-                       have words for it. Three axes, and they COMBINE into one question rather \
+                       have words for it. \
+                       START WITH A VIEW IF ONE FITS: a view is a question somebody already \
+                       worked out, asked for by NAME — `view: \"colleagues\"` for the identities \
+                       here and what each is for, `view: \"loops\"` for the recurring things and \
+                       what each last recorded. SOME SHIP WITH THE SOFTWARE AND YOU CAN DECLARE \
+                       YOUR OWN, with add_entity of kind view and the keys selects, shows and \
+                       asks; a name that is no view comes back blocked naming the ones that are, \
+                       which is how you find out what is here. Anything you send beside the name \
+                       wins, so a view is a starting point rather than a cage — and you never \
+                       have to work the shape out first to get an answer. \
+                       Three axes, and they COMBINE into one question rather \
                        than three. WHICH OBJECTS: subject (one handle), kind, answers_type \
                        (structural — an OBJECT answers a type by the keys every write on it \
                        leaves standing, whether or not anybody declared it one, and carrying \

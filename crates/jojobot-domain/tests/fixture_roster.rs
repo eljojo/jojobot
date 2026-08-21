@@ -53,6 +53,7 @@ const ROSTER: &[&str] = &[
     // **The shipped views are not here and do not need to be**: this scan reads
     // handle-shaped text, and the build names them by kind and slug separately,
     // so no `view:` literal for them exists to read.
+    "view:my-loops",
     "view:my-people",
     "bot:delta",
     "bot:epsilo",

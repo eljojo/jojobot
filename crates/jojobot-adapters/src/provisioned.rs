@@ -39,7 +39,7 @@ use jiff::civil::Date;
 use jojobot_domain::memory::owned::{Provisions, extended, guard_extension};
 use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, FieldBacking,
-    FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, search, types,
+    FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, guard, search, types,
 };
 
 /// A store, plus what this build supplies over it.
@@ -146,7 +146,30 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
 
     // ── everything else is the store's, unchanged ───────────────────────────
 
+    /// **A handle the build supplies is taken, exactly as a stored one is.**
+    ///
+    /// What the build supplies behaves like a stored row (rule 234), and that
+    /// is not only true of reads: a guard that consults the store to DECIDE
+    /// something has to see the supplied half too. **The guard is the half that
+    /// fails silently** — a read resolving a supplied record while the screen
+    /// beside it sees nothing lets a second thing answer to one name, and
+    /// nothing reports it.
+    ///
+    /// **Exact handle, so it is never overridable** — a token answers *these
+    /// are two different things*, and there is only one handle here.
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+        if let Some((supplied, _)) = self.provisions.record_for(&new.id) {
+            return Ok(Guarded::Blocked {
+                attempted: new.id.clone(),
+                candidates: vec![guard::EntityMatch {
+                    handle: supplied.id.clone(),
+                    kind: supplied.kind,
+                    name: supplied.name.clone(),
+                    source: supplied.source.clone(),
+                    reason: guard::MatchReason::ExactHandle,
+                }],
+            });
+        }
         self.inner.add_entity(new).await
     }
 
