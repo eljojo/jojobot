@@ -68,11 +68,42 @@ pub fn shipped_rooms() -> impl Iterator<Item = &'static str> {
 }
 
 /// The expectations for a playbook, or nothing when none are written.
+///
+/// **A room's own document is asked first.** The locks written beside the
+/// phases they belong to are the room's checks; the Rust list below is what a
+/// room used to be, and a room that has been converted is not in it.
 pub fn for_playbook(source: &str) -> Option<Vec<Box<dyn Expectation>>> {
+    if let Some(written) = locks_in(source) {
+        return Some(written);
+    }
     ROOMS
         .iter()
         .find(|(document, _, _)| source.ends_with(document))
         .map(|(_, checks, _)| checks())
+}
+
+/// The locks a room's document carries, or nothing when it carries none.
+///
+/// **A document that cannot be read is not a room with no locks.** A parse
+/// failure here would otherwise read as "nobody wrote any", and the run would
+/// refuse to start saying the wrong thing about why.
+fn locks_in(source: &str) -> Option<Vec<Box<dyn Expectation>>> {
+    let document = std::fs::read_to_string(source)
+        .or_else(|_| std::fs::read_to_string(room_document(source)))
+        .ok()?;
+    match crate::lock::read(&document) {
+        Ok(locks) if locks.is_empty() => None,
+        Ok(locks) => Some(
+            locks
+                .into_iter()
+                .map(|lock| Box::new(lock) as Box<dyn Expectation>)
+                .collect(),
+        ),
+        // **Refused loudly rather than silently ignored.** A malformed lock is
+        // an author's mistake and a run that started anyway would report a pass
+        // over the checks that happened to parse.
+        Err(e) => panic!("the locks in {source} cannot be read: {e:#}"),
+    }
 }
 
 /// **What a room is furnished with before its occupant arrives**, and an empty
@@ -83,6 +114,16 @@ pub fn for_playbook(source: &str) -> Option<Vec<Box<dyn Expectation>>> {
 /// message that was never posted fails on the harness rather than on the
 /// product, and the two halves in two files drift apart.
 pub fn seed_for(source: &str) -> anyhow::Result<Seed> {
+    // **The document furnishes its own room when it says how.** The Rust
+    // builders below are what a room used to be; a converted room's world is
+    // beside its story.
+    let document = std::fs::read_to_string(source)
+        .or_else(|_| std::fs::read_to_string(room_document(source)))
+        .unwrap_or_default();
+    let written = crate::world::read(&document)?;
+    if !written.is_empty() {
+        return Ok(written);
+    }
     match ROOMS
         .iter()
         .find(|(document, _, _)| source.ends_with(document))

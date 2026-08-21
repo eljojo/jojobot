@@ -58,7 +58,7 @@ pub fn read(document: &str) -> Result<Seed> {
 /// name where the mistake is rather than only what it was.
 fn lines_of(document: &str) -> Vec<(usize, String)> {
     let mut inside = false;
-    let mut found = Vec::new();
+    let mut found: Vec<(usize, String)> = Vec::new();
     for (at, line) in document.lines().enumerate() {
         let trimmed = line.trim();
         if !inside && trimmed == OPENS {
@@ -69,9 +69,32 @@ fn lines_of(document: &str) -> Vec<(usize, String)> {
             inside = false;
             continue;
         }
-        // A blank line is spacing and a `#` line is a note to whoever
-        // maintains the room. Neither furnishes anything.
-        if inside && !trimmed.is_empty() && !trimmed.starts_with('#') {
+        if !inside {
+            continue;
+        }
+        // **An indented line continues the one above it.** A message body is
+        // prose with paragraphs in it — it is where a room's whole goal lives —
+        // and a format that could only carry one line could not furnish a real
+        // room at all. Found by converting one, which is why the conversion
+        // came before the year.
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if let Some((_, carried)) = found.last_mut() {
+                carried.push('\n');
+                carried.push_str(trimmed);
+                continue;
+            }
+        }
+        // A blank line inside a body is a paragraph break and belongs to it.
+        if trimmed.is_empty() {
+            if let Some((_, carried)) = found.last_mut()
+                && carried.contains('\n')
+            {
+                carried.push('\n');
+            }
+            continue;
+        }
+        // A `#` line is a note to whoever maintains the room.
+        if !trimmed.starts_with('#') {
             found.push((at + 1, trimmed.to_string()));
         }
     }
@@ -160,6 +183,36 @@ mod tests {
             read.len(),
             5,
             "every line of the block furnished something: {read:?}",
+        );
+    }
+
+    /// **A message body is prose with paragraphs in it**, and that is where a
+    /// room's whole goal lives.
+    ///
+    /// Found by converting a real room: the first thing the format could not
+    /// carry was the one field that matters most. **Both halves** — the body
+    /// keeps its paragraphs, and the line after it is still its own item rather
+    /// than swallowed.
+    #[test]
+    fn a_message_body_may_be_prose_with_paragraphs_and_the_next_item_survives() {
+        let read = read(
+            "```world\n\
+             message dev | The brief | I have been writing down the jobs.\n\
+             \n\
+             \x20   And I want to ask which are still owing.\n\
+             entity thing:jukebox | The Jukebox\n\
+             ```\n",
+        )
+        .expect("the world reads");
+        assert_eq!(
+            read.len(),
+            2,
+            "the body is one item and the entity after it is another: {read:?}",
+        );
+        let body = format!("{read:?}");
+        assert!(
+            body.contains("still owing"),
+            "the continued line is in the body: {body}",
         );
     }
 
