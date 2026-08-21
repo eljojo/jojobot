@@ -510,16 +510,7 @@ pub async fn go(
         outcomes.push(expectation.check(&seen).await);
     }
 
-    // **A phase with no expectation is named, not omitted.** An expectation is
-    // keyed to a phase by the `Phase N` its name opens with, so a phase no
-    // check mentions is one nobody is asserting anything about.
-    let named: Vec<&str> = expectations.iter().map(|e| e.name()).collect();
-    let uncovered = playbook
-        .phases
-        .iter()
-        .filter(|phase| !phase_is_covered(&phase.name, &named))
-        .map(|phase| phase.name.clone())
-        .collect();
+    let uncovered = uncovered_phases(playbook, expectations);
 
     let results = Results {
         playbook: playbook.source.clone(),
@@ -533,6 +524,25 @@ pub async fn go(
     };
     surface.finish().await;
     Ok(results)
+}
+
+/// **The phases nothing asserts over**, named rather than omitted.
+///
+/// An expectation is keyed to a phase by the `Phase N` its name opens with, so
+/// a phase no check mentions is one nobody is asserting anything about. A run
+/// reports these, and a room is held against this so a check keyed to nothing
+/// is caught by `cargo test` rather than by a paid run.
+pub fn uncovered_phases(
+    playbook: &crate::playbook::Playbook,
+    expectations: &[Box<dyn Expectation>],
+) -> Vec<String> {
+    let named: Vec<&str> = expectations.iter().map(|e| e.name()).collect();
+    playbook
+        .phases
+        .iter()
+        .filter(|phase| !phase_is_covered(&phase.name, &named))
+        .map(|phase| phase.name.clone())
+        .collect()
 }
 
 /// Whether any of `expectations` is keyed to this phase.

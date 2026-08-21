@@ -13,9 +13,38 @@
 use jojobot_exercise::expectations;
 use jojobot_exercise::playbook::Playbook;
 use jojobot_exercise::room::{Room, server_binary};
-use jojobot_exercise::run::{Boundary, Observed, Outcome};
+use jojobot_exercise::run::{Boundary, Observed, Outcome, uncovered_phases};
 use jojobot_exercise::surface::Surface;
 use serde_json::{Value, json};
+
+/// **The locks this room carries, in the order its document writes them.**
+///
+/// The names are this file's rather than the document's: what is pinned is the
+/// order of the locks and what each one is about, so a sentence rewritten in
+/// the room does not break a case here.
+const BRIEF_LEFT_THE_BOX: usize = 0;
+const THE_PUMP_JOB: usize = 1;
+const THE_CHAIN_JOB: usize = 2;
+const THE_KETTLE_IS_PUT_RIGHT: usize = 3;
+const THE_AIR_FILTER_IS_PUT_RIGHT: usize = 4;
+const THE_JUKEBOX_IS_UNTOUCHED: usize = 5;
+const THE_TORQUE_WRENCH_IS_UNTOUCHED: usize = 6;
+
+/// **The locks that assert the furniture survived**, which hold on a room
+/// nobody worked in — the positive half the two above them rest on.
+const THE_FURNITURE: [usize; 2] = [THE_JUKEBOX_IS_UNTOUCHED, THE_TORQUE_WRENCH_IS_UNTOUCHED];
+
+/// How many locks the room carries.
+const LOCKS: usize = 7;
+
+/// What the run would report, given the locks that held and no others.
+fn only(held: &[usize]) -> Vec<bool> {
+    let mut want = vec![false; LOCKS];
+    for at in held {
+        want[*at] = true;
+    }
+    want
+}
 
 /// The document a run is driven by, read from the root of the workspace.
 fn room_document() -> Playbook {
@@ -201,16 +230,52 @@ fn the_room_is_two_phases_and_the_second_has_no_memory() {
 /// still gets none.
 #[test]
 fn the_room_has_expectations_of_its_own() {
-    let checks = expectations::for_playbook(&format!("a/b/{}", expectations::LEDGER_ROOM))
-        .expect("the room has expectations");
-    assert!(
-        (3..=4).contains(&checks.len()),
-        "the room asserts on {} intermediate(s), and the shape is three or four",
+    // **Named as the registry ships it.** This room has no Rust half, so its
+    // locks come out of its document and a name that reaches no document
+    // reaches no locks — which is the run refusing at the door rather than
+    // running a room against the checks of a file somewhere else.
+    let checks =
+        expectations::for_playbook(expectations::LEDGER_ROOM).expect("the room has expectations");
+    assert_eq!(
+        checks.len(),
+        LOCKS,
+        "the room asserts on {} things and the roll-call above names {LOCKS}",
         checks.len(),
     );
+    // **The locks come out of the document and nowhere else.** This room has no
+    // Rust half, so a reader that stopped finding the written locks would fall
+    // through to a registry entry that no longer exists and the room would run
+    // asserting nothing.
     assert!(
         expectations::for_playbook("docs/SOMETHING-ELSE.md").is_none(),
         "a playbook nobody has written expectations for was given some",
+    );
+}
+
+/// **No phase of this room reads as having no check.**
+///
+/// A lock is keyed to a phase by the `Phase N` its name opens with, and a lock
+/// written in a document says which phase it belongs to by where it is
+/// written. A room whose locks are keyed to nothing runs them and reports both
+/// phases as uncovered, which reads to a person as a room that measures
+/// nothing.
+#[test]
+fn every_phase_of_this_room_is_asserted_over() {
+    let checks =
+        expectations::for_playbook(expectations::LEDGER_ROOM).expect("the room has expectations");
+    assert_eq!(
+        uncovered_phases(&room_document(), &checks),
+        Vec::<String>::new(),
+        "a phase of this room is asserted over by nothing: {:?}",
+        checks.iter().map(|c| c.name()).collect::<Vec<_>>(),
+    );
+    // The positive control: the rule these names are held against is the one
+    // that reports a phase, so a phase nothing names must come back named.
+    let none: Vec<Box<dyn jojobot_exercise::run::Expectation>> = Vec::new();
+    assert_eq!(
+        uncovered_phases(&room_document(), &none).len(),
+        room_document().phases.len(),
+        "a room with no checks at all reported some phase as covered",
     );
 }
 
@@ -239,19 +304,23 @@ async fn no_entry_names_a_verb_the_room_serves() {
     }
 }
 
-/// **A room the occupant never got anywhere in fails every check.**
+/// **A room the occupant never got anywhere in fails every lock that measures
+/// work, and holds only the two that measure the furniture.**
 ///
-/// The furnished room already carries three jobs with the operator's own words
-/// on them, so the terminal lock's positive half holds by itself — what must
-/// fail is its absence half, because two jobs still say what nobody agreed to.
+/// The furnished room already carries two jobs with the operator's own words on
+/// them, and those two locks are the positive half the cold phase's locks rest
+/// on: they hold here by construction. Every other lock must fail, and the two
+/// halves are asserted together because a case that only said "some failed"
+/// would pass on a build where nothing is checked at all.
 #[tokio::test]
-async fn every_check_fails_on_a_room_nobody_worked_in() {
+async fn a_room_nobody_worked_in_fails_every_lock_but_the_furniture() {
     let (_room, surface, _sid) = furnished().await;
     let outcomes = judge_all(&surface).await;
-    for outcome in &outcomes {
-        assert!(
-            !outcome.held,
-            "a furnished room nobody touched held a check: {}",
+    for (at, outcome) in outcomes.iter().enumerate() {
+        assert_eq!(
+            outcome.held,
+            THE_FURNITURE.contains(&at),
+            "a furnished room nobody touched: {}",
             saying(&outcomes),
         );
     }
@@ -285,8 +354,15 @@ async fn the_terminal_lock_fails_when_the_cold_phase_did_nothing() {
     let held: Vec<bool> = outcomes.iter().map(|o| o.held).collect();
     assert_eq!(
         held,
-        vec![true, true, false],
-        "the first phase's locks hold and the terminal one does not: {}",
+        only(&[
+            BRIEF_LEFT_THE_BOX,
+            THE_PUMP_JOB,
+            THE_CHAIN_JOB,
+            THE_JUKEBOX_IS_UNTOUCHED,
+            THE_TORQUE_WRENCH_IS_UNTOUCHED,
+        ]),
+        "the first phase's locks hold, the two jobs the cold phase is for do not, and the \
+         furniture is as it was: {}",
         saying(&outcomes),
     );
 }
@@ -320,10 +396,19 @@ async fn the_terminal_lock_fails_when_a_word_that_was_right_was_painted_over() {
 
     let outcomes = judge_all(&surface).await;
     assert!(
-        !outcomes[2].held,
-        "a word that was already right was painted over and the terminal lock held: {}",
+        !outcomes[THE_JUKEBOX_IS_UNTOUCHED].held,
+        "a word that was already right was painted over and the lock on it held: {}",
         saying(&outcomes),
     );
+    // The half that stops the assertion above passing on a room where every
+    // lock fails: the jobs the cold phase was for were still put right.
+    for at in [THE_KETTLE_IS_PUT_RIGHT, THE_AIR_FILTER_IS_PUT_RIGHT] {
+        assert!(
+            outcomes[at].held,
+            "the cold phase's own work was undone as well: {}",
+            saying(&outcomes),
+        );
+    }
 }
 
 /// **The room a session that did everything in PROSE leaves.**
@@ -364,8 +449,13 @@ async fn the_locks_fail_on_a_room_written_in_prose() {
     let held: Vec<bool> = outcomes.iter().map(|o| o.held).collect();
     assert_eq!(
         held,
-        vec![true, false, false],
-        "the box was opened and nothing else can be reached: {}",
+        only(&[
+            BRIEF_LEFT_THE_BOX,
+            THE_JUKEBOX_IS_UNTOUCHED,
+            THE_TORQUE_WRENCH_IS_UNTOUCHED,
+        ]),
+        "the box was opened, nothing a question can reach was written, and the furniture is as \
+         it was: {}",
         saying(&outcomes),
     );
 }

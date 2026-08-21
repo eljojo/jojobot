@@ -28,36 +28,42 @@ question answers itself and without it there is nothing to ask.
 ## What the room holds before the occupant arrives
 
 Six things and four jobs, written months ago by somebody who had no type in
-mind. Two of them carry words the operator uses — `thing:jukebox` says paid and
-`thing:torque-wrench` says invoiced. Two carry words nobody agreed to —
-`thing:kettle` says pending and `thing:the-air-filter` says sent.
-`thing:floor-pump` and `thing:gravel-bike` carry no job at all, and the brief's
-two new jobs belong on them.
+mind. Two of the jobs carry words the operator uses, two carry words nobody
+agreed to, and two things carry no job at all.
 
 **Two odd words rather than one, on purpose.** One outlier among four is a
 pattern a reader can guess at; two make the question about the set rather than
 about the odd one out.
 
-**And the new jobs go on things that carry no job.** What a thing holds is what
-its keys fold to, and conformance is asked of the thing rather than of one
-record — so a new job on `thing:kettle` would fold over the word nobody agreed
-to and hide the whole question. The first version of this room did exactly
-that, and the terminal question came back saying everything was in order.
+**And the brief's new jobs go on the things that carry no job.** What a thing
+holds is what its keys fold to, and conformance is asked of the thing rather
+than of one record — so a new job on `thing:kettle` would fold over the word
+nobody agreed to and hide the whole question. The first version of this room
+did exactly that, and the terminal question came back saying everything was in
+order.
 
-**The words live in `crates/jojobot-exercise/src/ledger_room.rs`, once.**
+```world
+entity  thing:jukebox | The Jukebox
+entity  thing:torque-wrench | The Torque Wrench
+entity  thing:kettle | The Kettle
+entity  thing:the-air-filter | The Air Filter
+entity  thing:floor-pump | The Floor Pump
+entity  thing:gravel-bike | The Gravel Bike
 
-## The locks
+record  thing:jukebox | {"cost": "180", "settled": "paid"} | new valves
+record  thing:torque-wrench | {"cost": "55", "settled": "invoiced"} | calibration
+record  thing:kettle | {"cost": "25", "settled": "pending"} | descaled by the shop
+record  thing:the-air-filter | {"cost": "18", "settled": "sent"} | filter swap
 
-1. **The brief left the box.** No longer `new`, whichever verb took delivery.
-2. **The new jobs use the keys the old jobs use, and a word the operator uses.**
-   The room keeps its jobs under two keys and names neither; a job under a key
-   of the occupant's own invention is a job the operator's question never
-   reaches. The positive it rests on: the older jobs are still there to have
-   been read.
-3. **The words nobody agreed to are gone, and the rest are as they were.** The
-   terminal lock. Both halves — a run that swept every job to one word leaves
-   no word nobody agreed to and has answered nothing, so the two that were
-   already right must still say what they said.
+# The brief, and the only place the three words are ever said. An indented
+# line continues the one above it.
+message assistant | the jobs I pay for, and the words I want on them | I have been writing down the jobs I pay people for, and I want to be able to ask which of them are still owing.
+    From now on there are three words for where a job has got to, and no others: invoiced, paid, waived.
+
+    Two to put on, both done on 2026-08-11. The floor pump was serviced, thirty five, and I paid on the spot. The bike has a new chain, sixty, and they have invoiced me for that one.
+
+    Leave it so whoever comes next can pick it up.
+```
 
 ## Phase 1 — the room
 
@@ -65,11 +71,57 @@ that, and the terminal question came back saying everything was in order.
 
 > start jojobot as assistant
 
+```locks
+# A lock carries no session, so it can ask only the verbs that need no
+# identity. `read_mailbox` opens the box of whoever is asking, and there is
+# nobody here — so the board is read through `search` instead.
+search {"query": "*", "include_mail": true, "limit": 200}
+carries the jobs I pay for, and the words I want on them
+lacks   "state":"new"
+say     the brief is still sitting new in the box, so nobody took delivery of it
+
+# The keys are named in the assertion, not just the values. The room keeps its
+# jobs under two keys and tells the occupant neither; a job written under a key
+# of somebody's own invention is a job the operator's question never reaches.
+recall {"subject": "thing:floor-pump"}
+carries "cost":"35"
+carries "settled":"paid"
+say     the pump job is not on the floor pump under the keys the older jobs use, with the cost and the word the brief gave it
+
+recall {"subject": "thing:gravel-bike"}
+carries "cost":"60"
+carries "settled":"invoiced"
+say     the chain job is not on the gravel bike under the keys the older jobs use, with the cost and the word the brief gave it
+```
+
 ## Phase 2 — the word nobody agreed to
 
 **Session: fresh.** No memory of phase 1.
 
 > start jojobot as assistant — some of the jobs on there are filled in with words I do not use, and I want those ones saying invoiced instead
+
+```locks
+# The two jobs the cold session is here for.
+recall {"subject": "thing:kettle"}
+carries "settled":"invoiced"
+say     the kettle still carries the word nobody agreed to, or its job lost its word altogether
+
+recall {"subject": "thing:the-air-filter"}
+carries "settled":"invoiced"
+say     the air filter still carries the word nobody agreed to, or its job lost its word altogether
+
+# The positive the two above rest on, and it is one lock per thing because a
+# lock reads one answer as text: it can say a word is in there and it cannot
+# say which thing is holding it. A session that painted every job the same word
+# leaves no word nobody agreed to and has answered nothing.
+recall {"subject": "thing:jukebox"}
+carries "settled":"paid"
+say     the jukebox's job no longer says paid, so a word that was already right was painted over
+
+recall {"subject": "thing:torque-wrench"}
+carries "settled":"invoiced"
+say     the torque wrench's job no longer says invoiced, so a word that was already right was painted over
+```
 
 ## What this room cannot measure
 

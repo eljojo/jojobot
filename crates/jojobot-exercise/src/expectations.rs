@@ -16,39 +16,44 @@ use crate::surface::Seed;
 
 pub use crate::bike_room::BIKE_ROOM;
 pub use crate::handover_room::HANDOVER_ROOM;
-pub use crate::ledger_room::LEDGER_ROOM;
 pub use crate::loop_room::LOOP_ROOM;
 
-/// One room: the document it is driven by, what must be true of it afterwards,
-/// and what it is furnished with before anybody arrives.
-type Room = (
-    &'static str,
+/// **The ledger room**, which has no Rust half: its world and its locks are
+/// written in its own document, so the name is all there is to register.
+pub const LEDGER_ROOM: &str = "rooms/ledger.md";
+
+/// **The Rust half of a room that still has one** — what must be true of it
+/// afterwards, and what it is furnished with before anybody arrives.
+type InRust = (
     fn() -> Vec<Box<dyn Expectation>>,
     fn() -> anyhow::Result<Seed>,
 );
 
+/// One room: the document it is driven by, and its Rust half when it has one.
+type Room = (&'static str, Option<InRust>);
+
 /// **Every room this build ships.** A room is added here in one line, and a
 /// document that is not on this list is a document no run will drive.
+///
+/// **`None` is a converted room**: its world and its locks are in its own
+/// document, which is where both are read from for every room — the Rust below
+/// is only what a room that has not been converted still falls back to.
 const ROOMS: [Room; 4] = [
     (
         BIKE_ROOM,
-        crate::bike_room::expectations,
-        crate::bike_room::seed,
+        Some((crate::bike_room::expectations, crate::bike_room::seed)),
     ),
     (
         LOOP_ROOM,
-        crate::loop_room::expectations,
-        crate::loop_room::seed,
+        Some((crate::loop_room::expectations, crate::loop_room::seed)),
     ),
-    (
-        LEDGER_ROOM,
-        crate::ledger_room::expectations,
-        crate::ledger_room::seed,
-    ),
+    (LEDGER_ROOM, None),
     (
         HANDOVER_ROOM,
-        crate::handover_room::expectations,
-        crate::handover_room::seed,
+        Some((
+            crate::handover_room::expectations,
+            crate::handover_room::seed,
+        )),
     ),
 ];
 
@@ -64,7 +69,7 @@ pub fn room_document(name: &str) -> std::path::PathBuf {
 
 /// The documents this build ships, by name — what a caller may point a run at.
 pub fn shipped_rooms() -> impl Iterator<Item = &'static str> {
-    ROOMS.iter().map(|(document, _, _)| *document)
+    ROOMS.iter().map(|(document, _)| *document)
 }
 
 /// The expectations for a playbook, or nothing when none are written.
@@ -78,8 +83,8 @@ pub fn for_playbook(source: &str) -> Option<Vec<Box<dyn Expectation>>> {
     }
     ROOMS
         .iter()
-        .find(|(document, _, _)| source.ends_with(document))
-        .map(|(_, checks, _)| checks())
+        .find(|(document, _)| source.ends_with(document))
+        .and_then(|(_, rust)| rust.map(|(checks, _)| checks()))
 }
 
 /// The locks a room's document carries, or nothing when it carries none.
@@ -126,9 +131,9 @@ pub fn seed_for(source: &str) -> anyhow::Result<Seed> {
     }
     match ROOMS
         .iter()
-        .find(|(document, _, _)| source.ends_with(document))
+        .find(|(document, _)| source.ends_with(document))
     {
-        Some((_, _, furniture)) => furniture(),
-        None => Ok(Seed::new()),
+        Some((_, Some((_, furniture)))) => furniture(),
+        Some((_, None)) | None => Ok(Seed::new()),
     }
 }
