@@ -164,9 +164,15 @@ Shipped and live:
   required and optional alike** — so a value that is not what its key declared
   does not count as holding it. **Adding keys is never refused, and a
   thing that answers no type is a first-class thing.** **The software ships two
-  types of its own — `entitlement` and `trip` — declared at every startup, and a
-  shipped name is closed to a caller's redeclaration**, so a type says where it
-  came from and a caller can tell the two apart before it collides with one. **`rhythm` is a shipped
+  types of its own — `entitlement` and `trip` — declared at every startup, and it
+  ships KINDS the same way — RECONCILED at every startup, which is the stronger
+  word: the build's set is authoritative, so a kind an older build shipped and
+  this one dropped is taken back rather than left behind.** **A shipped name is
+  closed to a caller's redeclaration, and what makes that checkable is a mark on
+  the row: a row the binary owns records its origin as shipped, and the guard
+  reads that column rather than any list of protected names** — so a row added to
+  the build is protected by being written, and no list can go stale. A caller
+  never supplies that origin; only in-process code can. **`rhythm` is a shipped
   KIND and it declares every key its loop uses** — a name
   and the day of the last check-in are required; the cadence in days, the day
   the next cycle counts from, which of the two dates a late check-in advances
