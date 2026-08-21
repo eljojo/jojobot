@@ -76,6 +76,12 @@ const PILE: usize = 3;
 async fn a_colleague_exists_with_its_box(seen: &Observed<'_>) -> Result<(), String> {
     let board = seen.room.call("start_here", json!({"brief": true})).await;
     let bots = bots_on(&board);
+    // ⚠️ **Nothing exercises this, and nothing can.** The shipped identity is
+    // seeded before the server answers anything and no verb removes a bot, so
+    // through the served surface this board always names it. What it guards is
+    // a reading that came back unparseable — damage, or a build that changed
+    // the door's shape — and reporting *no colleague* for either would blame
+    // the occupant for the room.
     if !bots.iter().any(|bot| bot["handle"] == OCCUPANT) {
         return Err(format!(
             "the shipped identity is not on the board, so nothing was read: {board}"
@@ -87,6 +93,13 @@ async fn a_colleague_exists_with_its_box(seen: &Observed<'_>) -> Result<(), Stri
         .collect();
     match colleagues.as_slice() {
         [] => Err("no second identity was made, so there is nobody to hand anything to".into()),
+        // ⚠️ **Nothing exercises this either, and nothing can.** A box opens
+        // with the bot that owns it, in the same act, and no verb opens or
+        // removes one — so a bot with no box is damage a person caused
+        // underneath the surface, which is the state the mcp crate writes
+        // straight to Memory to test its own repair. It stays because a check
+        // that read past it would report *no colleague* for a colleague that
+        // is there.
         [colleague] if colleague["mail"].is_null() => Err(format!(
             "{} exists and owns no box, so it cannot be written to",
             colleague["handle"],
