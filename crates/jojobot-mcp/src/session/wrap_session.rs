@@ -11,9 +11,9 @@ pub struct WrapSessionArgs {
     /// The story of this session, for somebody with none of your context: what
     /// it was for, what happened, what is left. It becomes the final entry in
     /// this session's own chronology, and goes nowhere else.
-    pub story: String,
+    pub(crate) story: String,
     /// Your session id — the session to wrap.
-    pub sid: String,
+    pub(crate) sid: String,
 }
 
 /// End the session, telling its story into its own chronology.

@@ -13,17 +13,17 @@ pub struct OrientArgs {
     /// Omit it for an anonymous orientation: you get the world and the
     /// snapshot, and no sid.
     #[serde(default)]
-    pub bot: Option<String>,
+    pub(crate) bot: Option<String>,
     /// Skip the orientation essay and return only what changes between calls —
     /// the snapshot, your identity, your session.
     #[serde(default)]
-    pub brief: Option<bool>,
+    pub(crate) brief: Option<bool>,
     /// Your answer to the resume-or-new choice a boot hands back when this bot
     /// has a session worth picking up: the `sid` of the one you are resuming,
     /// exactly as the offer spelled it, or `new` for a fresh session. Leave it
     /// off on a first boot — there is nothing to answer yet.
     #[serde(default)]
-    pub resume: Option<String>,
+    pub(crate) resume: Option<String>,
     /// **A skill to read, by the name the index gave it.** The boot lists every
     /// skill by name and when-to-use and ships no bodies; this is how you get
     /// one, once the index has told you it is relevant.
@@ -33,7 +33,7 @@ pub struct OrientArgs {
     /// procedures. A name that is no skill comes back blocked, naming the ones
     /// that are.
     #[serde(default)]
-    pub skill: Option<String>,
+    pub(crate) skill: Option<String>,
     /// The session handle you are already carrying, if you have one — the same
     /// `sid` that rides every other call you make. Leave it off when you have
     /// none: this door is where one comes from, so a first boot has nothing to
@@ -42,7 +42,7 @@ pub struct OrientArgs {
     /// a session that came back to a server it does not recognise learns that
     /// in the same call it re-orients with.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
     /// **The timezone this session works in** — an IANA name like
     /// `America/New_York` or `Europe/Madrid`. Send it when you boot, and send
     /// it again when you resume from somewhere else.
@@ -61,7 +61,7 @@ pub struct OrientArgs {
     /// Send none and days are resolved in UTC. On a resume, sending none keeps
     /// the zone the run already had rather than moving it.
     #[serde(default)]
-    pub timezone: Option<String>,
+    pub(crate) timezone: Option<String>,
 }
 
 /// **The one orienting door**, with or without an identity: the world-model

@@ -12,9 +12,9 @@ pub struct EdgeFilterArgs {
     /// `connection`).
     /// Omit for **any** edge pointing at `object` — "what's connected to X".
     #[serde(default)]
-    pub shape: Option<String>,
+    pub(crate) shape: Option<String>,
     /// The entity the edge must point at, as `kind:slug`.
-    pub object: String,
+    pub(crate) object: String,
 }
 
 /// Arguments to `search`.
@@ -24,28 +24,28 @@ pub struct SearchArgs {
     /// entity's prose. **All words must match.** Optional when at least one
     /// filter below is given.
     #[serde(default)]
-    pub query: Option<String>,
+    pub(crate) query: Option<String>,
     /// Narrow to one entity kind — an entity's own kind, a fact's subject's kind,
     /// or the kind of the entity whose prose matched.
     #[serde(default)]
-    pub kind: Option<String>,
+    pub(crate) kind: Option<String>,
     /// `active` (the default) or `superseded`. A superseded fact is **excluded
     /// unless asked for by name** — a claim already moved past must not come
     /// back as current truth.
     #[serde(default)]
-    pub status: Option<String>,
+    pub(crate) status: Option<String>,
     /// `testimony`, `observation` or `inference` — keep only the claims backed
     /// that way. `observation` is a claim an AI read out of a system of record,
     /// and it names the system it was read from.
     #[serde(default)]
-    pub provenance: Option<String>,
+    pub(crate) provenance: Option<String>,
     /// Facts about this entity, as `kind:slug`.
     #[serde(default)]
-    pub subject: Option<String>,
+    pub(crate) subject: Option<String>,
     /// Facts drawing a matching edge. With `kind`, this is how a cross-entity
     /// question ("which people are in X") is answered in one call.
     #[serde(default)]
-    pub edge: Option<EdgeFilterArgs>,
+    pub(crate) edge: Option<EdgeFilterArgs>,
     /// **THINGS that answer this type, by name.** Matching is STRUCTURAL: a
     /// thing carrying the type's keys comes back whether or not anybody
     /// declared it to be one, so this finds things nobody filed under it. It is
@@ -65,7 +65,7 @@ pub struct SearchArgs {
     /// A name no type answers to comes back blocked, naming the types that do
     /// exist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub answers_type: Option<String>,
+    pub(crate) answers_type: Option<String>,
     /// **Only the things that FIT this type**, by name — the ones carrying
     /// EVERY key it names, counted over every write on each.
     ///
@@ -81,7 +81,7 @@ pub struct SearchArgs {
     /// Pass one or the other, never both. A name no type answers to comes back
     /// blocked, naming the types that do exist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fits_type: Option<String>,
+    pub(crate) fits_type: Option<String>,
     /// Whether messages left in mailboxes are searched too. **Defaults to
     /// false, and worth passing true** when you are looking for what a session
     /// knows: a report filed for another session is exactly the context you
@@ -89,16 +89,16 @@ pub struct SearchArgs {
     /// it. It is off unless you ask, because a message hit carries somebody's
     /// box, sender and a snippet, and this verb is the one to reach for first.
     #[serde(default)]
-    pub include_mail: Option<bool>,
+    pub(crate) include_mail: Option<bool>,
     /// How many results; defaults to 20. There is no pagination — a second page
     /// is a better query.
     #[serde(default)]
-    pub limit: Option<u32>,
+    pub(crate) limit: Option<u32>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// One search result on the wire. **Every hit says what it is** (`hit`), so a

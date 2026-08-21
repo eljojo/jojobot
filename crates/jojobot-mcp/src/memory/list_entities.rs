@@ -10,12 +10,12 @@ use super::*;
 pub struct ListEntitiesArgs {
     /// Narrow to one kind; omit for every entity.
     #[serde(default)]
-    pub kind: Option<String>,
+    pub(crate) kind: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// Every entity jojobot knows, optionally narrowed to one kind.

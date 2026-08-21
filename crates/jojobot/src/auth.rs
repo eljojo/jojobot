@@ -61,7 +61,7 @@ pub struct Claims {
     /// Subject — the stable, issuer-assigned principal id. This is the
     /// authorization key ([`Validator::authorize`]): unlike `email`, it is
     /// present in Pocket ID access tokens and not user-editable.
-    pub sub: String,
+    pub(crate) sub: String,
 }
 
 /// Validates bearer tokens against a fixed set of issuer signing keys.

@@ -27,32 +27,32 @@ pub struct AddEntityArgs {
     /// is for: nothing about an identity is compiled in, so every bot beyond
     /// the one a fresh instance ships with is made through this call — and the
     /// mailbox it owns opens in the same act.
-    pub kind: String,
+    pub(crate) kind: String,
     /// The slug half of the handle (`[a-z0-9-]+`), or a full `kind:slug` id
     /// whose kind must match `kind`. The handle is the name this entity is
     /// addressed by, and the only name a caller ever sends: every fact, message
     /// and journal beat that refers to it carries this string. Choose it with
     /// care.
-    pub handle: String,
+    pub(crate) handle: String,
     /// Display name, as a human would write it.
-    pub name: String,
+    pub(crate) name: String,
     /// The other names this one answers to — nickname, short form, initials.
     /// Screened and searched exactly as `name` is, so a nickname the user
     /// actually says is both recognized and findable. No commas.
     #[serde(default)]
-    pub aliases: Option<Vec<String>>,
+    pub(crate) aliases: Option<Vec<String>>,
     /// Where this entity came from — **never invented**: the user named it, or
     /// a real source produced it (e.g. `user-named`, `crm-card`, `calendar`).
-    pub source: String,
+    pub(crate) source: String,
     /// Optional cross-link to this entity in the task layer, in whatever form
     /// that layer addresses things. One reference, no space and no comma.
     #[serde(default)]
-    pub crm: Option<String>,
+    pub(crate) crm: Option<String>,
     /// `always` marks this entity as part of the core an assistant loads at
     /// the start of every session; the default `on-demand` is fetched when the
     /// conversation reaches for it. Only the exact token `always` counts.
     #[serde(default)]
-    pub boot: Option<String>,
+    pub(crate) boot: Option<String>,
     /// **The entity this one sits under**, as `kind:slug`. Optional — most
     /// entities are roots — and **it must already exist**, exactly as every
     /// other handle a write names must: a parent jojobot does not know comes
@@ -66,19 +66,19 @@ pub struct AddEntityArgs {
     /// A `rhythm` requires one — it is a loop ON something, and the parent is
     /// what says on what.
     #[serde(default)]
-    pub parent: Option<String>,
+    pub(crate) parent: Option<String>,
     /// The token a previous call's refusal handed you, sent back after you read
     /// its candidates and judged them a different entity. It lifts only the
     /// refusal that minted it — a token you made up, or one from another
     /// refusal, lifts nothing — and it never overrides an exact handle
     /// collision.
     #[serde(default)]
-    pub override_token: Option<String>,
+    pub(crate) override_token: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 impl Jojobot {

@@ -9,7 +9,7 @@ use super::*;
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetCharterArgs {
     /// The bot whose charter this is: its bare slug, or its full handle.
-    pub bot: String,
+    pub(crate) bot: String,
     /// The charter itself. Prose: paragraphs are fine.
     ///
     /// **It replaces what this bot had**, so send the whole thing rather than
@@ -18,12 +18,12 @@ pub struct SetCharterArgs {
     /// ⚠️ **Send what YOU are writing, not a charter you just read back.** Some
     /// of what a read hands you may be text the software already supplies, and
     /// sending that back comes back blocked with nothing written.
-    pub prose: String,
+    pub(crate) prose: String,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// Write a bot's charter — the prose layer of its own page.

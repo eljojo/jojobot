@@ -10,33 +10,33 @@ use super::*;
 pub struct UpdateEntityArgs {
     /// The entity's handle. It says which entity to edit; this verb does not
     /// edit it.
-    pub handle: String,
+    pub(crate) handle: String,
     /// New display name.
     #[serde(default)]
-    pub name: Option<String>,
+    pub(crate) name: Option<String>,
     /// The whole alias set, replaced. Omit to leave it alone; pass `[]` to clear
     /// it. No commas.
     #[serde(default)]
-    pub aliases: Option<Vec<String>>,
+    pub(crate) aliases: Option<Vec<String>>,
     /// New source.
     #[serde(default)]
-    pub source: Option<String>,
+    pub(crate) source: Option<String>,
     /// New cross-link to this entity in the task layer, in whatever form that
     /// layer addresses things. One reference, no space and no comma.
     #[serde(default)]
-    pub crm: Option<String>,
+    pub(crate) crm: Option<String>,
     /// The token a previous call's refusal handed you, sent back after you read
     /// its candidates for the name or alias you are claiming here and judged
     /// them a different entity. It lifts only the refusal that minted it. Any
     /// change to what this entity is CALLED is screened exactly as a creation
     /// is.
     #[serde(default)]
-    pub override_token: Option<String>,
+    pub(crate) override_token: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// Edit an entity's metadata in place. The handle itself never changes, and

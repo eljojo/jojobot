@@ -29,7 +29,7 @@ pub struct FieldArgs {
     /// name IS the schema**: `expires` and `expiry_date` are two different types
     /// and nothing will point that out, because matching is structural and a key
     /// means whatever the things carrying it mean by it.
-    pub key: String,
+    pub(crate) key: String,
     /// What the value holds: `text`, `number`, `date`, `date_range`, `boolean`,
     /// or `reference` (another entity's `kind:slug` handle, which is what makes
     /// it walkable). Defaults to `text`, which holds anything — or to `number`
@@ -58,7 +58,7 @@ pub struct FieldArgs {
     /// declares comes back flagged on the hit, so a read shows the mistake
     /// rather than a write being turned away.
     #[serde(default)]
-    pub holds: Option<String>,
+    pub(crate) holds: Option<String>,
     /// **How the writes of this key come down to the one value it holds.**
     /// `newest` is the default and needs no declaring: the newest write wins,
     /// which is how every key reads unless you say otherwise.
@@ -74,7 +74,7 @@ pub struct FieldArgs {
     /// counter cannot be written inconsistently; chosen per write, one caller
     /// adds while another replaces and the value quietly means two things.
     #[serde(default)]
-    pub folds: Option<String>,
+    pub(crate) folds: Option<String>,
     /// **Whether a thing has to hold this key to be one of these at all.**
     /// Defaults to false, and leave it there unless the key really is what
     /// makes the thing what it is: the required keys are the ones a thing is
@@ -92,7 +92,7 @@ pub struct FieldArgs {
     /// is why a required key on a kind is a refusal waiting to happen. Here it
     /// is the vocabulary a reader asks with.
     #[serde(default)]
-    pub required: bool,
+    pub(crate) required: bool,
     /// **The named set this key holds one of** — a closed vocabulary.
     ///
     /// ⚠️ **What that buys depends on who declared the key.** On a KIND's key,
@@ -120,7 +120,7 @@ pub struct FieldArgs {
     /// no values, a value named twice, and a value carrying a comma are each
     /// refused, because a comma is what separates the items of a list.
     #[serde(default)]
-    pub one_of: Option<Vec<String>>,
+    pub(crate) one_of: Option<Vec<String>>,
 }
 
 /// Arguments to `declare_type`.
@@ -131,15 +131,15 @@ pub struct DeclareTypeArgs {
     ///
     /// **Unless the software ships that type**, which is refused: a shipped
     /// type is closed and the answer says so. Pick a name of your own.
-    pub name: String,
+    pub(crate) name: String,
     /// The keys a thing of this type carries. **At least one**: a type is the
     /// keys it names, and a name with nothing under it is one nobody can query
     /// by.
-    pub fields: Vec<FieldArgs>,
+    pub(crate) fields: Vec<FieldArgs>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// Declare a type: a name and the keys a thing of it carries.

@@ -10,12 +10,12 @@ use super::*;
 pub struct ReadMessageArgs {
     /// The message's id, exactly as a search hit, a delivery or `post_message`
     /// returned it.
-    pub message_id: String,
+    pub(crate) message_id: String,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// Take delivery of one message by id, leaving the rest of its box alone.

@@ -25,7 +25,7 @@ use crate::ui::{Ui, refuse};
 #[derive(Debug, Deserialize)]
 pub struct Start {
     #[serde(default)]
-    pub next: Option<String>,
+    pub(crate) next: Option<String>,
 }
 
 /// `/ui/callback` — what the issuer sends back. Either a code and the state it
@@ -33,13 +33,13 @@ pub struct Start {
 #[derive(Debug, Deserialize)]
 pub struct Callback {
     #[serde(default)]
-    pub code: Option<String>,
+    pub(crate) code: Option<String>,
     #[serde(default)]
-    pub state: Option<String>,
+    pub(crate) state: Option<String>,
     #[serde(default)]
-    pub error: Option<String>,
+    pub(crate) error: Option<String>,
     #[serde(default)]
-    pub error_description: Option<String>,
+    pub(crate) error_description: Option<String>,
 }
 
 /// The issuer's answer at the token endpoint. An access token may be there;

@@ -10,15 +10,15 @@ use super::*;
 pub struct JournalArgs {
     /// One high-level beat: what you set out to do, what you found, what you
     /// decided, what went wrong. Prose — paragraphs are fine.
-    pub entry: String,
+    pub(crate) entry: String,
     /// What you are working on NOW, in one line. Optional, and it **replaces**
     /// the session's current focus rather than adding to it.
     #[serde(default)]
-    pub focus: Option<String>,
+    pub(crate) focus: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. A session is
     /// bound to the bot that booted it; there is no way to write into another
     /// one.
-    pub sid: String,
+    pub(crate) sid: String,
 }
 
 /// Record one beat in this session's chronology, and optionally move what

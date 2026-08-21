@@ -65,15 +65,15 @@ pub fn draw() -> String {
 pub struct Handle {
     /// The identity this session is one run of. **A session is bound to it at
     /// boot and never switches**, so this is what refuses somebody else's sid.
-    pub bot: EntityId,
+    pub(crate) bot: EntityId,
     /// The store's card, once there is one.
-    pub card: Option<SessionId>,
+    pub(crate) card: Option<SessionId>,
     /// **The zone this run resolves days against**, as the IANA name the caller
     /// supplied at the door, or nothing when it supplied none.
     ///
     /// Held here as well as on the card because the card is lazy: a run that has
     /// only read has no row yet, and its reads are day-grained too.
-    pub zone: Option<String>,
+    pub(crate) zone: Option<String>,
 }
 
 /// Minting found no free handle. See [`MINT_ATTEMPTS`].

@@ -15,7 +15,7 @@ pub struct PingArgs {
     /// is running. Those are the two halves of one question when the surface
     /// stops looking like the one you booted on.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// Liveness probe: returns jojobot's identity and its current wall-clock

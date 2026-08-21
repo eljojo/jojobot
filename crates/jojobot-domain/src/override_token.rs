@@ -47,11 +47,11 @@ fn key() -> &'static RandomState {
 pub struct Collision {
     /// Which gate refused — so a mailbox token cannot lift an entity refusal
     /// even if the names happen to match.
-    pub gate: &'static str,
+    pub(crate) gate: &'static str,
     /// What the caller tried to write.
-    pub attempted: String,
+    pub(crate) attempted: String,
     /// What the guard found, in the order it reported them.
-    pub candidates: Vec<String>,
+    pub(crate) candidates: Vec<String>,
 }
 
 impl Collision {

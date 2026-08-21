@@ -638,18 +638,18 @@ pub struct DeclaredType {
 pub struct Mistyped {
     pub key: String,
     /// What the type said the key holds.
-    pub declared: ValueType,
+    pub(crate) declared: ValueType,
     /// The kind the key points at, when it is a reference that names one.
     /// Carried beside `declared` because `reference` alone cannot say what is
     /// wrong with a value that IS a handle — a reader looking at
     /// `pet:santas-little-helper` under a key wanting a place needs the kind to
     /// see the mistake at all.
-    pub points_at: Option<EntityKind>,
+    pub(crate) points_at: Option<EntityKind>,
     /// The values the key is narrowed to, when the declaration names a set.
     /// Carried for the reason `points_at` is: a closed set holds text, so a
     /// reader told the key wants text is looking at a value that IS text and
     /// cannot see the mistake at all.
-    pub one_of: Option<Vec<String>>,
+    pub(crate) one_of: Option<Vec<String>>,
     /// What the record actually carries, so a reader can see the mistake
     /// rather than being told one happened.
     pub value: String,
@@ -657,7 +657,7 @@ pub struct Mistyped {
     /// key leaves the type unanswered; a bad value in an optional one is a
     /// mistake worth reporting and does not decide whether the thing is one of
     /// these.
-    pub required: bool,
+    pub(crate) required: bool,
 }
 
 impl Mistyped {
@@ -703,7 +703,7 @@ pub struct Match {
     /// The subset of `lacking` the type REQUIRES. **This is what completeness
     /// is measured against**; the rest is a description of what else there is
     /// room for.
-    pub lacking_required: Vec<String>,
+    pub(crate) lacking_required: Vec<String>,
     /// Keys that are there and hold something else — by name, by what the key
     /// wanted and by what is actually in it, so a reader sees the mistake.
     pub mistyped: Vec<Mistyped>,

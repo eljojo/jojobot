@@ -107,9 +107,9 @@ pub enum Supplies {
 #[derive(Debug, Clone)]
 pub struct Provision {
     /// The address it answers at.
-    pub at: EntityId,
+    pub(crate) at: EntityId,
     /// What it puts there.
-    pub supplies: Supplies,
+    pub(crate) supplies: Supplies,
 }
 
 impl Provision {

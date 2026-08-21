@@ -163,14 +163,14 @@ impl AdvancesFrom {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotSchedulable {
     /// The key at fault.
-    pub key: &'static str,
+    pub(crate) key: &'static str,
     /// What the rhythm holds under it, when it holds anything. `None` is the
     /// key nobody wrote, and the two need different repairs: one is a value to
     /// correct, the other is a value to add.
-    pub held: Option<String>,
+    pub(crate) held: Option<String>,
     /// The values this key accepts, when it is a vocabulary. Empty for a key
     /// whose value is a number or a date.
-    pub accepts: Vec<&'static str>,
+    pub(crate) accepts: Vec<&'static str>,
 }
 
 impl std::fmt::Display for NotSchedulable {
@@ -205,11 +205,11 @@ impl std::fmt::Display for NotSchedulable {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Schedule {
     /// How many days a cycle lasts.
-    pub cadence_days: i32,
+    pub(crate) cadence_days: i32,
     /// Which date the next cycle counts from, when a check-in is late.
-    pub advances_from: AdvancesFrom,
+    pub(crate) advances_from: AdvancesFrom,
     /// The date this cycle counts from.
-    pub counts_from: Date,
+    pub(crate) counts_from: Date,
 }
 
 impl Schedule {

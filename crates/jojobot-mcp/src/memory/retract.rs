@@ -10,13 +10,13 @@ use super::*;
 pub struct RetractArgs {
     /// The record's global address, `kind:slug#local-id` — exactly as `recall`
     /// or a search hit returned it.
-    pub address: String,
+    pub(crate) address: String,
     /// Why it is being taken back, in one line. Optional — worth giving: a
     /// record marked taken-back with no account of why is hard for a later
     /// reader to tell from damage. Left out, the retraction says plainly that
     /// no reason was given rather than inventing one.
     #[serde(default)]
-    pub reason: Option<String>,
+    pub(crate) reason: Option<String>,
     /// **The day the record was taken back**, `YYYY-MM-DD`. Defaults to today
     /// in your session's zone.
     ///
@@ -31,7 +31,7 @@ pub struct RetractArgs {
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// Take back one addressed record, and record why.

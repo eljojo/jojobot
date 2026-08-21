@@ -10,9 +10,9 @@ use super::*;
 pub struct AmendJournalArgs {
     /// What the most recent entry should say instead. It replaces that entry
     /// whole.
-    pub entry: String,
+    pub(crate) entry: String,
     /// Your session id — the session whose newest entry to rewrite.
-    pub sid: String,
+    pub(crate) sid: String,
 }
 
 /// Rewrite the newest entry in place.

@@ -9,15 +9,15 @@ use super::*;
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct MarkProcessedArgs {
     /// The message's id, exactly as `read_mailbox` returned it.
-    pub message_id: String,
+    pub(crate) message_id: String,
     /// What happened — including a failure. Optional, one plain line.
     #[serde(default)]
-    pub notes: Option<String>,
+    pub(crate) notes: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// Retire a message once it has actually been acted on.

@@ -17,28 +17,28 @@ pub struct ListSentArgs {
     /// recorded on each message. Omit it for your own — your `sid` says who
     /// that is, and your own mail is what this verb is for.
     #[serde(default)]
-    pub sender: Option<String>,
+    pub(crate) sender: Option<String>,
     /// **Only what you sent to this bot** — a bare name like `gamma`, or its
     /// full handle. Omit for everyone you have written to. You addressed a
     /// colleague, so this is how you ask after them.
     #[serde(default)]
-    pub to: Option<String>,
+    pub(crate) to: Option<String>,
     /// How many messages to return, newest first. Defaults to twenty.
     ///
     /// **No pagination and no cursor**, as `search` has none: a second page is
     /// a narrower question — one box, or one sender. What is left out is
     /// counted and said, never silently dropped.
     #[serde(default)]
-    pub limit: Option<u32>,
+    pub(crate) limit: Option<u32>,
     /// Ship the bodies back too. Off by default: you wrote them, so the useful
     /// answer is where they got to, not what they say.
     #[serde(default)]
-    pub include_bodies: Option<bool>,
+    pub(crate) include_bodies: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// What a sender has sent, and where it got to — without touching any of it.

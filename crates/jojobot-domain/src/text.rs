@@ -46,28 +46,28 @@ pub enum Ellipsis {
 pub struct Fitted {
     /// What this strategy is for. Carried so a failure names the call site
     /// rather than a line number in here.
-    pub name: &'static str,
+    pub(crate) name: &'static str,
     /// How many characters the field holds — see [`Ellipsis`] for whether that
     /// includes the one a cut adds.
     pub budget: usize,
     /// Where the ellipsis is counted from.
-    pub ellipsis: Ellipsis,
+    pub(crate) ellipsis: Ellipsis,
     /// Whether runs of whitespace collapse to one line first.
     ///
     /// Off for a field whose input is **already** one line and whose internal
     /// spacing is the writer's: an outcome record says what a person typed, and
     /// collapsing their double spaces would be an edit nobody asked for.
-    pub flatten: bool,
+    pub(crate) flatten: bool,
     /// Whether backticks and control characters are removed.
     ///
     /// On only where the text rides **above a fenced machine block**: a
     /// backtick there can close the fence and turn the block into prose, which
     /// is a corrupt card rather than an ugly one.
-    pub strip_unprintable: bool,
+    pub(crate) strip_unprintable: bool,
     /// What to render when nothing survives. `None` renders the empty string —
     /// right for a field that is a fragment of a longer line, wrong for one
     /// that is the whole of what a reader sees.
-    pub when_empty: Option<&'static str>,
+    pub(crate) when_empty: Option<&'static str>,
 }
 
 impl Fitted {
@@ -472,11 +472,11 @@ pub enum Compare {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Changed {
     /// What the field is called to a caller — never where it is kept.
-    pub field: &'static str,
+    pub(crate) field: &'static str,
     /// What was written.
-    pub wrote: String,
+    pub(crate) wrote: String,
     /// What came back.
-    pub read: String,
+    pub(crate) read: String,
 }
 
 impl std::fmt::Display for Changed {

@@ -19,12 +19,12 @@ pub struct CaptureArgs {
     /// as a person). **It must already exist**: a subject jojobot doesn't know
     /// comes back with candidates and nothing is written. Create it with
     /// `add_entity` first if it is genuinely new.
-    pub subject: String,
+    pub(crate) subject: String,
     /// The crisp claim to remember — single line, no line breaks.
-    pub content: String,
+    pub(crate) content: String,
     /// Nuance, the why, merge notes — the description under the claim.
     #[serde(default)]
-    pub details: Option<String>,
+    pub(crate) details: Option<String>,
     /// `testimony` (the user said it), `observation` (you read it in a system
     /// of record) or `inference` (you derived it). Defaults to `inference`:
     /// anything not tied to the user's words is a hypothesis.
@@ -34,7 +34,7 @@ pub struct CaptureArgs {
     /// one. Without it the call is refused, because a claim that reads back
     /// settled and cannot be gone back to is worse than one filed as a guess.
     #[serde(default)]
-    pub provenance: Option<String>,
+    pub(crate) provenance: Option<String>,
     /// `settled` or `open` — **how sure anyone is**, which is a different
     /// question from `provenance`'s *who backs it*.
     ///
@@ -49,28 +49,28 @@ pub struct CaptureArgs {
     /// only on the one move that takes a claim the operator hedged and calls
     /// it settled.
     #[serde(default)]
-    pub standing: Option<String>,
+    pub(crate) standing: Option<String>,
     /// The fact's freshness date, `YYYY-MM-DD`. Defaults to today (UTC).
     #[serde(default)]
-    pub date: Option<String>,
+    pub(crate) date: Option<String>,
     /// The shape of the edge this fact draws: `location` (object is a place) ·
     /// `membership` (an org) · `attendance` (an event) · `about` (any kind) ·
     /// `connection` (any kind — a link is there and how it relates was not
     /// recorded). Requires `object`; neither works alone.
     #[serde(default)]
-    pub shape: Option<String>,
+    pub(crate) shape: Option<String>,
     /// The entity the edge points at, as `kind:slug`. **It must already exist**,
     /// exactly as `subject` must — an edge into a node nobody else references is
     /// how a cross-entity question quietly starts coming back empty.
     #[serde(default)]
-    pub object: Option<String>,
+    pub(crate) object: Option<String>,
     /// **The claim this one was derived from**, as its address
     /// (`kind:slug#local-id`), when it was derived from another claim rather
     /// than from an entity. An edge's object is an entity; this is not an
     /// edge, because a claim has no entity to point at when what it came from
     /// is itself a claim.
     #[serde(default)]
-    pub derived_from: Option<String>,
+    pub(crate) derived_from: Option<String>,
     /// **The record's fields**, as a flat bag of key/value pairs — anything
     /// worth recording about this claim beyond the sentence.
     ///
@@ -80,7 +80,7 @@ pub struct CaptureArgs {
     /// class of thing is asked for: the fields ARE what the record says, and a
     /// type is something the keys answer rather than something you announce.
     #[serde(default)]
-    pub fields: Option<std::collections::BTreeMap<String, String>>,
+    pub(crate) fields: Option<std::collections::BTreeMap<String, String>>,
     /// The entities this record touches, as `kind:slug` — **each must already
     /// exist**, exactly as `subject` must.
     ///
@@ -90,7 +90,7 @@ pub struct CaptureArgs {
     /// asserts the record is about that entity, and this only admits that it
     /// touches it.
     #[serde(default)]
-    pub refs: Option<Vec<String>>,
+    pub(crate) refs: Option<Vec<String>>,
     /// **Record this as a check-in on a rhythm** — `ran`, `skipped` or
     /// `snoozed`. The subject must be a `rhythm`; on anything else this is
     /// refused.
@@ -115,7 +115,7 @@ pub struct CaptureArgs {
     /// `advances_from`, a `counts_from` — comes back blocked naming the key it
     /// is short of, and nothing is written.
     #[serde(default)]
-    pub check_in: Option<String>,
+    pub(crate) check_in: Option<String>,
     /// **The day after which this reading stops being good**, `YYYY-MM-DD`.
     /// Optional, and most claims never carry one.
     ///
@@ -126,12 +126,12 @@ pub struct CaptureArgs {
     /// sweep, no reminder, nobody is coming to check it. **A claim carrying no
     /// day made no promise**, which is neither fresh nor stale.
     #[serde(default)]
-    pub stale_after: Option<String>,
+    pub(crate) stale_after: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// **The keys a check-in computes**, which a caller therefore does not send.

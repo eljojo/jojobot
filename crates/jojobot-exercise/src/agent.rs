@@ -60,8 +60,8 @@ impl Conversation {
 /// decides, and therefore the whole of what its tests can hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invocation {
-    pub program: String,
-    pub args: Vec<String>,
+    pub(crate) program: String,
+    pub(crate) args: Vec<String>,
     /// **Where the CLI is started from, and it is a directory with nothing in
     /// it.** The CLI discovers instruction files by walking up from its working
     /// directory, and `--strict-mcp-config` says nothing about those: it scopes
@@ -70,7 +70,7 @@ pub struct Invocation {
     /// instructions name the verbs and the properties the suite measures — and
     /// a model coached that way produces a transcript that reads like a product
     /// which works.
-    pub cwd: std::path::PathBuf,
+    pub(crate) cwd: std::path::PathBuf,
 }
 
 impl Invocation {
@@ -92,10 +92,10 @@ impl Invocation {
 /// What one invocation produced.
 pub struct Worked {
     /// Everything it printed.
-    pub output: String,
+    pub(crate) output: String,
     /// Whether the CLI itself reported success. A phase told to continue a
     /// conversation the CLI could not find is the case this exists for.
-    pub ran: bool,
+    pub(crate) ran: bool,
 }
 
 /// The shipped agent, driven headless.

@@ -18,12 +18,12 @@ use jojobot_domain::text;
 pub struct KeyFilterArgs {
     /// The key, exactly as it is spelled where it was written. Matching is
     /// structural, so nothing has to have declared it.
-    pub key: String,
+    pub(crate) key: String,
     /// The value it must hold. **Omit it to ask only that the key is there** —
     /// a different question, and the one to ask when you want everything that
     /// records a thing rather than everything that records it one way.
     #[serde(default)]
-    pub value: Option<String>,
+    pub(crate) value: Option<String>,
     /// **How the value is compared**, and what a key was DECLARED to hold is
     /// what licenses it. `equals` is the default and needs no declaration.
     /// `before` and `after` need a type declaring the key a `date`; `less` and
@@ -31,7 +31,7 @@ pub struct KeyFilterArgs {
     /// declaration does not license comes back blocked, rather than quietly
     /// answering the equality question instead.
     #[serde(default)]
-    pub compare: Option<String>,
+    pub(crate) compare: Option<String>,
     /// **What this filter is asked OF**, and it is two different questions.
     ///
     /// `thing` is the default: what the object HOLDS — the newest write of the
@@ -50,7 +50,7 @@ pub struct KeyFilterArgs {
     /// hold on the SAME record** — they describe a single record rather than a
     /// list of separate questions.
     #[serde(default)]
-    pub scope: Option<String>,
+    pub(crate) scope: Option<String>,
 }
 
 /// The `follow` argument of a `recall` — which edges to walk, and how far.
@@ -59,7 +59,7 @@ pub struct FollowArgs {
     /// Narrow to one shape (`location` · `membership` · `attendance` · `about`
     /// · `connection`). Omit for **any** edge — "whatever it is connected to".
     #[serde(default)]
-    pub shape: Option<String>,
+    pub(crate) shape: Option<String>,
     /// **A declared relation to walk instead of an edge.** A relation is a KEY
     /// that some type declared to hold a `reference`: the declaration says the
     /// value is another entity rather than a string that looks like one, and
@@ -79,17 +79,17 @@ pub struct FollowArgs {
     /// A key may be spelled like an edge shape. Pass one or the other, never
     /// both.
     #[serde(default)]
-    pub relation: Option<String>,
+    pub(crate) relation: Option<String>,
     /// **Which end of the edge to leave by**, and it is two different
     /// questions. `out` (the default) follows the edges this object's own
     /// records draw — from a guest, the party they are attending. `in` follows
     /// the edges other objects draw AT this one — from the party, its guests.
     #[serde(default)]
-    pub direction: Option<String>,
+    pub(crate) direction: Option<String>,
     /// How many hops: 1 is the neighbours, 2 is the neighbours' neighbours.
     /// Defaults to 1.
     #[serde(default)]
-    pub depth: Option<u32>,
+    pub(crate) depth: Option<u32>,
     /// **What the walk keeps of what it reaches.** The same key filters the
     /// selection takes, applied at every hop rather than to the roots — so
     /// "this person's pets" narrows to "this person's pets born before a date".
@@ -97,7 +97,7 @@ pub struct FollowArgs {
     /// records that answered, and one that was reached and not kept leaves the
     /// object that points at it marked as having edges nobody followed.
     #[serde(default)]
-    pub keeping: Option<Vec<KeyFilterArgs>>,
+    pub(crate) keeping: Option<Vec<KeyFilterArgs>>,
     /// **Keep only what FITS this type**, by name — the objects carrying EVERY
     /// key the type names, counted across everything recorded about each one.
     ///
@@ -113,7 +113,7 @@ pub struct FollowArgs {
     /// travelling one of a type's own keys reaches things that answer the type
     /// by construction, so admitting partials would exclude nothing.
     #[serde(default)]
-    pub fits_type: Option<String>,
+    pub(crate) fits_type: Option<String>,
 }
 
 /// Arguments to `recall`.
@@ -126,10 +126,10 @@ pub struct RecallArgs {
     /// asks which objects. A handle that names nothing comes back blocked with
     /// the nearest handles, never as an empty answer.
     #[serde(default)]
-    pub subject: Option<String>,
+    pub(crate) subject: Option<String>,
     /// Every entity of one kind.
     #[serde(default)]
-    pub kind: Option<String>,
+    pub(crate) kind: Option<String>,
     /// **Objects that answer this type**, by name. Matching is STRUCTURAL — an
     /// object carrying the type's keys answers it whether or not anybody
     /// declared it one — and it is asked of the OBJECT: every write on it
@@ -147,12 +147,12 @@ pub struct RecallArgs {
     /// A name no type answers to comes back blocked, naming the types that do
     /// exist.
     #[serde(default)]
-    pub answers_type: Option<String>,
+    pub(crate) answers_type: Option<String>,
     /// Objects holding a record that carries these keys, and the values named.
     /// **Every filter must hold on ONE record**: two filters describe a single
     /// record, not two separate questions.
     #[serde(default)]
-    pub fields: Option<Vec<KeyFilterArgs>>,
+    pub(crate) fields: Option<Vec<KeyFilterArgs>>,
     /// Whether each object's records come back — the claims its fields were
     /// written in, each with its own wording, provenance and the address that
     /// edits it.
@@ -163,7 +163,7 @@ pub struct RecallArgs {
     /// you need a claim's own words, where it came from, or its address —
     /// and an answer that left them out says how many there were.
     #[serde(default)]
-    pub facts: Option<bool>,
+    pub(crate) facts: Option<bool>,
     /// Whether each object's **prose** comes back — the human half of its page,
     /// whole. Off by default, because a page is bigger than a claim and shipping
     /// every one of them unasked is a cost the caller cannot decline.
@@ -172,7 +172,7 @@ pub struct RecallArgs {
     /// wrote and what `set_charter` replaces. Ask for `charter` instead to read
     /// what that identity actually answers with.
     #[serde(default)]
-    pub prose: Option<bool>,
+    pub(crate) prose: Option<bool>,
     /// **A bot's charter, whole** — what that identity answers with.
     ///
     /// **This is how you read a colleague.** Booting as another bot would make
@@ -185,7 +185,7 @@ pub struct RecallArgs {
     ///
     /// Objects that are not bots carry no charter at all.
     #[serde(default)]
-    pub charter: Option<bool>,
+    pub(crate) charter: Option<bool>,
     /// **The writes behind one key, oldest first** — name the key, and each
     /// object comes back carrying every write of it, with the record each one
     /// arrived in and that record's date.
@@ -202,7 +202,7 @@ pub struct RecallArgs {
     /// comes back as no writes rather than as a refusal — the thing is there
     /// and nothing was recorded under that key.
     #[serde(default)]
-    pub history: Option<String>,
+    pub(crate) history: Option<String>,
     /// **How many of that key's writes come back**, newest kept. Twenty when
     /// you do not say.
     ///
@@ -211,7 +211,7 @@ pub struct RecallArgs {
     /// how many writes exist and how many it left out, so raising this is how
     /// you reach the far end — deliberately, rather than by surprise.
     #[serde(default)]
-    pub history_most: Option<u32>,
+    pub(crate) history_most: Option<u32>,
     /// **Where each folded value came from**, and who backs it: the claim whose
     /// write won the key, its provenance and its standing.
     ///
@@ -221,7 +221,7 @@ pub struct RecallArgs {
     /// it. A key whose writes are summed has no single winning claim and is not
     /// here.
     #[serde(default)]
-    pub backing: Option<bool>,
+    pub(crate) backing: Option<bool>,
     /// **The claims worked out from one claim**, by its address
     /// `kind:slug#local-id` — lineage walked from the source's end.
     ///
@@ -230,7 +230,7 @@ pub struct RecallArgs {
     /// every status come back**, because a claim that was itself withdrawn is
     /// part of the answer to *what did we build on this*.
     #[serde(default)]
-    pub built_on: Option<String>,
+    pub(crate) built_on: Option<String>,
     /// **The values already recorded under one key**, across the objects this
     /// call selected, each with how many of them hold it — most used first.
     ///
@@ -248,11 +248,11 @@ pub struct RecallArgs {
     /// A key nobody has written comes back with nothing in use rather than as
     /// a refusal.
     #[serde(default)]
-    pub values: Option<String>,
+    pub(crate) values: Option<String>,
     /// **How many values come back**, most used kept. Twenty when you do not
     /// say. The answer always says how many exist and how many it left out.
     #[serde(default)]
-    pub values_most: Option<u32>,
+    pub(crate) values_most: Option<u32>,
     /// **Keep only what is OWED as of a date** — what has a due moment that
     /// day has reached.
     ///
@@ -278,10 +278,10 @@ pub struct RecallArgs {
     /// deliberate: a half-built loop that surfaced at no read ever would never
     /// be heard from again.
     #[serde(default)]
-    pub overdue: Option<OverdueArgs>,
+    pub(crate) overdue: Option<OverdueArgs>,
     /// Which edges to walk. Omit to walk none, and the answer is flat.
     #[serde(default)]
-    pub follow: Option<FollowArgs>,
+    pub(crate) follow: Option<FollowArgs>,
     /// **A question asked by name** — a view's handle, or its bare slug.
     ///
     /// A view is a record that holds a query, so asking for one is naming it.
@@ -295,12 +295,12 @@ pub struct RecallArgs {
     ///
     /// A name that is no view comes back blocked, with the views that exist.
     #[serde(default)]
-    pub view: Option<String>,
+    pub(crate) view: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// **The overdue question of a `recall`** — which rhythms have gone quiet, as
@@ -319,7 +319,7 @@ pub struct OverdueArgs {
     /// Naming a date is what makes *what has gone quiet by next Friday* a
     /// question this can be asked.
     #[serde(default)]
-    pub as_of: Option<String>,
+    pub(crate) as_of: Option<String>,
 }
 
 /// The key filters of a call, wherever they sit: a selection describes the

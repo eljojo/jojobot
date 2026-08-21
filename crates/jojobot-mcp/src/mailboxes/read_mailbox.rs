@@ -18,7 +18,7 @@ pub struct ReadMailboxArgs {
     /// owes nothing. `new_only` has nothing to say here: no bodies are shipped
     /// either way.
     #[serde(default)]
-    pub counts_only: Option<bool>,
+    pub(crate) counts_only: Option<bool>,
     /// Ship bodies only for messages nobody has taken yet — **the default**.
     /// Leftovers, the ones flagged `seen_before`, still come back, still
     /// counted, still owed; only their bodies are left out, and each says so.
@@ -26,12 +26,12 @@ pub struct ReadMailboxArgs {
     /// Pass `false` to get those bodies back — the read a consumer makes when
     /// it is recovering from a crash and no longer holds what it was given.
     #[serde(default)]
-    pub new_only: Option<bool>,
+    pub(crate) new_only: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// Which mailbox gate stopped a write — because the way out of each is

@@ -101,10 +101,10 @@ pub enum Expect {
 
 /// One lock.
 pub struct Lock {
-    pub asks: Asks,
-    pub expects: Vec<Expect>,
+    pub(crate) asks: Asks,
+    pub(crate) expects: Vec<Expect>,
     /// The authored sentence a reader sees when this does not hold.
-    pub say: String,
+    pub(crate) say: String,
     /// **What the run calls this check**, which is the sentence under the key
     /// of the phase it was written beneath — `Phase 2 — the pump says sent`.
     ///

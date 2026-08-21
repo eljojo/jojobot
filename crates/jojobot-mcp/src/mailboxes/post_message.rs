@@ -15,13 +15,13 @@ pub struct PostMessageArgs {
     ///
     /// **It must already exist** — a name no bot answers to comes back with
     /// candidates and nothing is written.
-    pub to: String,
+    pub(crate) to: String,
     /// The message itself. Prose: paragraphs are fine.
-    pub body: String,
+    pub(crate) body: String,
     /// **Your session id.** Required here, because it is what jojobot records
     /// as the sender: a message from nobody is a message nobody can reply to,
     /// and identity that is merely declared is identity that can be wrong.
-    pub sid: String,
+    pub(crate) sid: String,
     /// What this message is about, in one line — a title, not a summary.
     /// Optional, and worth giving: it is what a reader sees in a listing and on
     /// a search hit before they open anything. Do NOT also repeat it as the
@@ -34,14 +34,14 @@ pub struct PostMessageArgs {
     /// here takes markdown. A title over 120 characters is refused rather than
     /// cut, because shortening your own title is yours to do.
     #[serde(default)]
-    pub subject: Option<String>,
+    pub(crate) subject: Option<String>,
 
     /// The id of the message this one answers, when it answers one. Optional.
     /// It must name a message that exists — a miss comes back blocked and
     /// nothing is written — and it links the two without saying anything about
     /// either: it does not deliver, handle, or oblige.
     #[serde(default)]
-    pub in_reply_to: Option<String>,
+    pub(crate) in_reply_to: Option<String>,
 }
 
 /// **A bare name is a bot.** `gamma` and `bot:gamma` address the same colleague, and

@@ -13,7 +13,7 @@ pub struct AuthConfig {
     /// minted for a different resource are rejected.
     pub audience: String,
     /// Optional explicit JWKS URI. When absent it is discovered from the issuer.
-    pub jwks_uri: Option<String>,
+    pub(crate) jwks_uri: Option<String>,
     /// Per-user authorization allowlist of subject ids (OIDC `sub` claim values,
     /// e.g. Pocket ID user ids). Empty means no allowlist is configured — any
     /// validated token passes, preserving the authentication-only behaviour.

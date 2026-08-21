@@ -117,7 +117,7 @@ fn row(entity: &Entity, by_id: &HashMap<&EntityId, &Entity>) -> String {
 pub struct NodeQuery {
     /// A key to open: the page renders every write behind it, oldest first.
     #[serde(default)]
-    pub history: Option<String>,
+    pub(crate) history: Option<String>,
 }
 
 /// `/{path}` — one node: what sits below it, and the facts held there.

@@ -10,18 +10,18 @@ use super::*;
 pub struct UpdateFactArgs {
     /// The fact's global address, `kind:slug#local-id` — exactly as `recall`
     /// returned it.
-    pub address: String,
+    pub(crate) address: String,
     /// Replacement claim.
     #[serde(default)]
-    pub content: Option<String>,
+    pub(crate) content: Option<String>,
     /// Replacement details; pass an empty string to clear them.
     #[serde(default)]
-    pub details: Option<String>,
+    pub(crate) details: Option<String>,
     /// `active` or `superseded`. **A refutation is not a status** — to record
     /// that something is not so, rewrite `content` to state the negative truth;
     /// it stays `active`, because that IS the current truth.
     #[serde(default)]
-    pub status: Option<String>,
+    pub(crate) status: Option<String>,
     /// `testimony`, `observation` or `inference`. Moving a claim TO `testimony`
     /// needs `confirmed_by_user` whichever value it held: a claim you read
     /// somewhere is not a step towards the user having said it. An
@@ -30,7 +30,7 @@ pub struct UpdateFactArgs {
     /// reason**, because both leave a machine read of a system nobody named.
     /// A claim that already carries one does not have to name it again.
     #[serde(default)]
-    pub provenance: Option<String>,
+    pub(crate) provenance: Option<String>,
     /// `settled` or `open`. **Moving a claim that is ALREADY open to settled
     /// requires `confirmed_by_user`** — the operator hedged that claim, and
     /// only the operator can withdraw the hedge. Reopening is free.
@@ -39,33 +39,33 @@ pub struct UpdateFactArgs {
     /// declaring a standing. A fresh `capture` may state `settled` and is
     /// taken at its word, the way it is taken at its word about provenance.
     #[serde(default)]
-    pub standing: Option<String>,
+    pub(crate) standing: Option<String>,
     /// Required for two promotions of an EXISTING claim: anything → testimony
     /// (inference or observation alike), and an open standing → settled. Set it only when the user has actually
     /// confirmed the claim. Nothing else is gated on it — a fresh `capture`
     /// declares its provenance and its standing on honour.
     #[serde(default)]
-    pub confirmed_by_user: Option<bool>,
+    pub(crate) confirmed_by_user: Option<bool>,
     /// The shape of an edge to attach: `location` · `membership` · `attendance` ·
     /// `about` · `connection` (a link is there and how it relates was not
     /// recorded). Requires `object`; neither works alone.
     #[serde(default)]
-    pub shape: Option<String>,
+    pub(crate) shape: Option<String>,
     /// The entity the edge points at, as `kind:slug`. **It must already exist** —
     /// `add_entity` first if it is genuinely new.
     #[serde(default)]
-    pub object: Option<String>,
+    pub(crate) object: Option<String>,
     /// **Fields to set**, as key/value pairs. Each key named is written; a key
     /// the record already carries and this does not name is left alone, so an
     /// edit reaches one field without restating the rest.
     #[serde(default)]
-    pub fields: Option<std::collections::BTreeMap<String, String>>,
+    pub(crate) fields: Option<std::collections::BTreeMap<String, String>>,
     /// **Fields to remove**, by key. Its own argument rather than an empty
     /// value in `fields`: an empty value is a value somebody wrote, and
     /// setting a key to nothing and taking the key off the record are two
     /// different edits.
     #[serde(default)]
-    pub clear_fields: Option<Vec<String>>,
+    pub(crate) clear_fields: Option<Vec<String>>,
     /// **The day after which this reading stops being good**, `YYYY-MM-DD`.
     ///
     /// It is a fact about jojobot's knowledge rather than about the world: a
@@ -73,12 +73,12 @@ pub struct UpdateFactArgs {
     /// the content. Past this day a read SAYS SO and **nothing else happens** —
     /// no sweep, no reminder, nobody is coming to check it.
     #[serde(default)]
-    pub stale_after: Option<String>,
+    pub(crate) stale_after: Option<String>,
     /// **Take the day off**, leaving a claim that makes no promise about how
     /// long it stays good. Its own flag, because leaving it alone and removing
     /// it are two different edits.
     #[serde(default)]
-    pub clear_stale_after: Option<bool>,
+    pub(crate) clear_stale_after: Option<bool>,
     /// **The claim this one was worked out from**, as its address
     /// `kind:slug#local-id`.
     ///
@@ -86,16 +86,16 @@ pub struct UpdateFactArgs {
     /// claim is often written before anybody notices what it rests on. The
     /// named claim must exist.
     #[serde(default)]
-    pub derived_from: Option<String>,
+    pub(crate) derived_from: Option<String>,
     /// **Take the lineage pointer off.** Its own flag, because leaving it alone
     /// and removing it are two different edits.
     #[serde(default)]
-    pub clear_derived_from: Option<bool>,
+    pub(crate) clear_derived_from: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
     #[serde(default)]
-    pub sid: Option<String>,
+    pub(crate) sid: Option<String>,
 }
 
 /// Edit one addressed fact in place — fix the source, never an addendum.
