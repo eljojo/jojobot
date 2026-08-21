@@ -1230,6 +1230,17 @@ pub struct Answer {
 }
 
 impl Answer {
+    /// **The answer as structure**, for the claims a substring cannot make.
+    ///
+    /// `says` reads the payload as text, which is right for *this wording is
+    /// in there* and wrong for *this list is not empty*: a key that is present
+    /// and holds nothing satisfies every `says` about its name. Counting what
+    /// came back needs the shape.
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::from_str(&self.body)
+            .unwrap_or_else(|e| panic!("the {} is not json: {e}: {}", self.what, self.body))
+    }
+
     /// The assertion that can actually fail on a correction: the old wording is
     /// GONE, not merely outnumbered.
     pub fn never_says(&self, needle: &str) -> &Self {

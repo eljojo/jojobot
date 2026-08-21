@@ -198,5 +198,36 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
     );
     s.wrap("finished what the run before it started").await;
 
+    // 🚨 **The vocabulary the software arrived holding, named at the door.**
+    //
+    // A session that has just booted has to write something, and the kinds a
+    // handle may carry are the first thing it needs. It used to find them out
+    // by declaring one and reading a refusal, or by asking a question it had
+    // no reason to ask — the distinction was invisible until it tripped.
+    //
+    // **Names and origin, never bodies.** What a kind means and which keys it
+    // asks for is a deliberate second read; what a boot owes is the list.
+    let (vocabulary, _) = story
+        .call("start_here", json!({"bot": "otto", "brief": true}))
+        .await;
+    vocabulary
+        .says("\"kinds\"")
+        .says("\"person\"")
+        .says("\"shipped\"");
+
+    // **The half that makes the three above mean anything.** A boot that named
+    // an empty list would satisfy every `says` on a key that is present and
+    // holds nothing, which is the shape this suite has paid for more than
+    // once. The kinds are counted out of the answer instead.
+    let named = vocabulary.json()["snapshot"]["vocabulary"]["kinds"]
+        .as_array()
+        .expect("the boot names the kinds it ships")
+        .len();
+    assert!(
+        named > 5,
+        "a boot naming {named} kind(s) is a build that ships almost none, or a list that came \
+         back empty and read as an answer",
+    );
+
     story.finish().await;
 }

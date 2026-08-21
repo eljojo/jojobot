@@ -205,7 +205,48 @@ impl Jojobot {
                 }
             }
         }
-        let snapshot = serde_json::json!({ "entities": entities, "mail": mail });
+        // **The vocabulary the software arrived holding, named at the door.**
+        //
+        // A session that has just booted has to write something, and which
+        // kinds a handle may carry is the first thing it needs. It used to
+        // find out by declaring one and reading a refusal, or by asking a
+        // question it had no reason to ask: the distinction was invisible
+        // until it tripped, which is the safe-default rule upside down.
+        //
+        // **Names and origin, never bodies.** What a kind means and which keys
+        // it asks for is bigger than the list and is a deliberate second read.
+        // The origin rides along because it is what a caller can ACT on: a
+        // shipped name is closed to redeclaration and a declared one is theirs
+        // to reshape, and no other field says which.
+        //
+        // **Read from the store rather than from the list this build ships**,
+        // for the same reason the boot's other reads are: a kind a caller
+        // declared is part of the vocabulary, and a shipped kind the store
+        // somehow lost is not.
+        let vocabulary = match self.memory.declared_kinds().await {
+            Ok(kinds) => {
+                let mut named: Vec<serde_json::Value> = kinds
+                    .iter()
+                    .map(|(token, origin)| {
+                        serde_json::json!({ "kind": token, "origin": origin.as_token() })
+                    })
+                    .collect();
+                named.sort_by_key(|k| k["kind"].as_str().unwrap_or("").to_string());
+                serde_json::json!({ "available": true, "kinds": named })
+            }
+            // **Best-effort, like every other half of this answer.** A boot
+            // that could not read the vocabulary says so rather than naming
+            // none: "there are no kinds" and "jojobot could not look" are
+            // different claims and a caller acts on both.
+            Err(_) => serde_json::json!({
+                "available": false,
+                "kinds": [],
+                "note": "the vocabulary is not readable right now, so this is not a claim that \
+                         the software ships none",
+            }),
+        };
+        let snapshot =
+            serde_json::json!({ "entities": entities, "mail": mail, "vocabulary": vocabulary });
         // **Only after the identity resolved.** A name that is no bot boots
         // nothing, so it starts no session and sweeps nothing either — binding
         // a connection to an identity jojobot just refused would be a session
@@ -263,6 +304,60 @@ mod tests {
     /// scoping standing. If this assertion's polarity ever flips back, that
     /// means ownership is being read off the entity record again — a
     /// regression.
+    /// **A boot that could not read the vocabulary says so rather than naming
+    /// none.**
+    ///
+    /// *There are no kinds* and *jojobot could not look* are different claims,
+    /// and a caller acts on both: the first says invent your own vocabulary,
+    /// and the second says come back. **Both halves**, because a marker that
+    /// was always false would satisfy the first assertion on its own.
+    #[tokio::test]
+    async fn a_vocabulary_that_cannot_be_read_says_so_rather_than_shipping_none() {
+        let memory = Arc::new(InMemoryMemory::booted());
+        crate::seed::ensure_kinds(&(memory.clone() as Arc<dyn Memory>))
+            .await
+            .expect("the build's kinds are written");
+        let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let reading = Jojobot::new(
+            memory.clone(),
+            Arc::new(SpySearch::default()),
+            boxes.clone(),
+            Arc::new(InMemorySessions::new()),
+            crate::harness::seeded_registry(),
+        );
+        make_box(&reading, "dev").await;
+        let read = boot(&reading, "dev").await;
+        assert_eq!(
+            read["snapshot"]["vocabulary"]["available"], true,
+            "a store that answers did not read as available: {read}"
+        );
+        assert!(
+            read["snapshot"]["vocabulary"]["kinds"]
+                .as_array()
+                .is_some_and(|kinds| !kinds.is_empty()),
+            "a store that answers named no kinds, so the case below proves nothing: {read}"
+        );
+
+        let blind = Jojobot::new(
+            Arc::new(DownMemory(Down::Vocabulary, memory)),
+            Arc::new(SpySearch::default()),
+            boxes,
+            Arc::new(InMemorySessions::new()),
+            crate::harness::seeded_registry(),
+        );
+        let unread = boot(&blind, "dev").await;
+        assert_eq!(
+            unread["snapshot"]["vocabulary"]["available"], false,
+            "a boot that could not read the vocabulary claimed it could: {unread}"
+        );
+        assert!(
+            unread["snapshot"]["vocabulary"]["kinds"]
+                .as_array()
+                .is_some_and(|kinds| kinds.is_empty()),
+            "an unreadable vocabulary named kinds it never read: {unread}"
+        );
+    }
+
     #[tokio::test]
     async fn an_unreadable_entity_index_no_longer_hides_who_drains_what() {
         let memory = Arc::new(InMemoryMemory::booted());

@@ -282,6 +282,9 @@ pub(crate) enum Down {
     /// The type roster — the one fallible step behind every `answers_type`
     /// argument.
     TypeRoster,
+    /// The kind vocabulary — the read the boot door names the shipped kinds
+    /// from, and the one whose failure must not read as a build shipping none.
+    Vocabulary,
 }
 
 /// A handler whose mailbox world answers nothing, over a memory the caller
@@ -295,7 +298,7 @@ impl Memory for DownMemory {
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         match self.0 {
             Down::EntityIndex => Err(MemoryError::Store("the entity index cannot be read".into())),
-            Down::TypeRoster => self.1.list_entities(kind).await,
+            Down::TypeRoster | Down::Vocabulary => self.1.list_entities(kind).await,
         }
     }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
@@ -319,7 +322,12 @@ impl Memory for DownMemory {
     async fn declared_kinds(
         &self,
     ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
-        self.1.declared_kinds().await
+        match self.0 {
+            Down::Vocabulary => Err(MemoryError::Store(
+                "the kind vocabulary cannot be read".into(),
+            )),
+            Down::EntityIndex | Down::TypeRoster => self.1.declared_kinds().await,
+        }
     }
 
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
@@ -331,6 +339,7 @@ impl Memory for DownMemory {
     ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
         match self.0 {
             Down::TypeRoster => Err(MemoryError::Store("the type roster cannot be read".into())),
+            Down::Vocabulary => self.1.declared_types().await,
             Down::EntityIndex => self.1.declared_types().await,
         }
     }
