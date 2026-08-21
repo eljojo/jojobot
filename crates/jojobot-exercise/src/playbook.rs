@@ -33,6 +33,18 @@ const PHASE: &str = "## Phase ";
 const MARKER: &str = "**Session:";
 const FRESH: &str = "fresh";
 
+/// **The day this sitting happens on**, written beside the session marker.
+///
+/// A run acting out a year is fiction inside the test: nothing in jojobot
+/// learns about elapsed time, and there is no clock to fool. **The surface
+/// takes the day from the caller and stamps real today only when a caller
+/// sends none**, so the fiction holds exactly as far as each sitting carries
+/// its own date into the calls it makes.
+///
+/// It is written where the session marker is because it is the same kind of
+/// fact about the sitting — what a maintainer would put there anyway.
+const DAY: &str = "**Day:";
+
 /// **A line that ends one delivery and starts the next**, inside a phase.
 ///
 /// A phase used to arrive as one message, so a step asking what the agent
@@ -65,6 +77,12 @@ pub struct Phase {
     pub deliveries: Vec<String>,
     /// Whether this phase starts a session of its own.
     pub fresh_session: bool,
+    /// **The day this sitting claims**, when the document says one.
+    ///
+    /// `None` is a sitting that names no day, which is every room written
+    /// before the year existed — and those are stamped with real today by the
+    /// surface, exactly as they always were.
+    pub day: Option<String>,
 }
 
 /// An ordered list of phases, and where they were read from.
@@ -97,6 +115,7 @@ impl Playbook {
                         prompt: String::new(),
                         deliveries: Vec::new(),
                         fresh_session: false,
+                        day: None,
                     });
                 }
                 continue;
@@ -109,6 +128,13 @@ impl Playbook {
             };
             if let Some(said) = line.trim_start().strip_prefix(MARKER) {
                 current.fresh_session = said.to_lowercase().contains(FRESH);
+                // The two markers sit on one line as often as not, so the day
+                // is looked for here as well as on a line of its own.
+                current.day = current.day.take().or_else(|| day_in(said));
+                continue;
+            }
+            if let Some(said) = line.trim_start().strip_prefix(DAY) {
+                current.day = day_in(said);
                 continue;
             }
             // The block quote is the part addressed to the model. Everything
@@ -155,6 +181,17 @@ impl Playbook {
 fn quoted(line: &str) -> Option<&str> {
     let rest = line.strip_prefix('>')?;
     Some(rest.strip_prefix(' ').unwrap_or(rest))
+}
+
+/// **The day a marker line names**, in the one shape a date is written here.
+///
+/// Read out rather than pattern-matched loosely: a line saying `**Day: soon.**`
+/// names no day, and a sitting whose date could not be read must come back
+/// `None` so the run says so rather than inventing one.
+fn day_in(said: &str) -> Option<String> {
+    said.split(|c: char| !(c.is_ascii_digit() || c == '-'))
+        .find(|part| part.len() == 10 && part.split('-').count() == 3 && part.starts_with("20"))
+        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -226,6 +263,61 @@ Prose after the last phase, for a maintainer.
                 "a maintainer's prose reached the model in {:?}: {:?}",
                 phase.name,
                 phase.prompt,
+            );
+        }
+    }
+
+    /// **A sitting claims the day it happens on, and one that names none says
+    /// so.**
+    ///
+    /// The year is fiction inside the test and jojobot stamps real today when a
+    /// caller sends no date, so a sitting that cannot state its day is a
+    /// sitting whose fiction silently collapses.
+    ///
+    /// **Both halves in one case**: the day is read off the line, and a phase
+    /// that names no day comes back with none rather than with something
+    /// invented. Without the second, a reader that returned a date for
+    /// everything would pass.
+    #[test]
+    fn a_phase_carries_the_day_it_claims_and_none_when_it_names_none() {
+        let read = Playbook::parse(
+            "trivial",
+            "## Phase 1 — the opening\n\
+             **Session: fresh.** **Day: 2026-03-04.**\n\
+             \n\
+             > what the model is told\n\
+             \n\
+             ## Phase 2 — no day at all\n\
+             **Session: fresh.**\n\
+             \n\
+             > and this one\n",
+        )
+        .expect("the playbook reads");
+        assert_eq!(read.phases[0].day.as_deref(), Some("2026-03-04"));
+        assert_eq!(
+            read.phases[1].day, None,
+            "a sitting that names no day invents none",
+        );
+    }
+
+    /// **A day nobody can read comes back as none.**
+    ///
+    /// ⚠️ **The number matters.** A first version of this used `**Day: soon.**`
+    /// and passed against a reader that accepted any token at all — because
+    /// "soon" carries no digits, so a loose reader found nothing there either.
+    /// **It was watching nothing.** A marker that carries a number which is not
+    /// a date is what tells a real reader from a shrug.
+    #[test]
+    fn a_marker_carrying_something_that_is_not_a_date_carries_no_day() {
+        for vague in ["**Day: soon.**", "**Day: 3.**", "**Day: 2026-3.**"] {
+            let read = Playbook::parse(
+                "trivial",
+                &format!("## Phase 1 — vague\n**Session: fresh.** {vague}\n\n> told\n"),
+            )
+            .expect("the playbook reads");
+            assert_eq!(
+                read.phases[0].day, None,
+                "{vague:?} names no day, so the sitting claims none",
             );
         }
     }
