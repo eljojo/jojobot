@@ -36,7 +36,7 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 use jiff::civil::Date;
 
-use jojobot_domain::memory::owned::{Provisions, Slot, extended, guard_extension};
+use jojobot_domain::memory::owned::{Provisions, extended, guard_extension};
 use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, FieldBacking,
     FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, search, types,
@@ -57,12 +57,31 @@ impl<M> Provisioned<M> {
         Provisioned { inner, provisions }
     }
 
+    /// A record the build supplies, as the document a reader would have got had
+    /// the store held it. **No facts**: a supplied record is a thing the
+    /// software ships, and a claim about it is somebody's to make.
+    fn supplied_scan(&self, entity: &EntityId) -> Option<search::DocScan> {
+        let (held, fields) = self.provisions.record_for(entity)?;
+        Some(search::DocScan {
+            doc_id: held.id.to_string(),
+            title: held.name.clone(),
+            prose: self
+                .provisions
+                .prose_for(entity)
+                .unwrap_or_default()
+                .to_string(),
+            entity: Some(held.clone()),
+            facts: Vec::new(),
+            fields: fields.clone(),
+        })
+    }
+
     /// Resolve a scanned document's prose, if the build supplies any for it.
     fn resolve(&self, doc: &mut search::DocScan) {
         let Some(entity) = doc.entity.as_ref() else {
             return;
         };
-        if let Some(shipped) = self.provisions.at(&entity.id, &Slot::Prose) {
+        if let Some(shipped) = self.provisions.prose_for(&entity.id) {
             doc.prose = extended(shipped, &doc.prose);
         }
     }
@@ -78,20 +97,32 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
 
     async fn scan(&self) -> Result<Vec<search::DocScan>, MemoryError> {
         let mut scanned = self.inner.scan().await?;
-        if !self.provisions.is_empty() {
-            for doc in &mut scanned {
-                self.resolve(doc);
+        if self.provisions.is_empty() {
+            return Ok(scanned);
+        }
+        for doc in &mut scanned {
+            self.resolve(doc);
+        }
+        for (entity, _) in self.provisions.records() {
+            let stored = scanned
+                .iter()
+                .any(|d| d.entity.as_ref().is_some_and(|e| e.id == entity.id));
+            if !stored && let Some(doc) = self.supplied_scan(&entity.id) {
+                scanned.push(doc);
             }
         }
         Ok(scanned)
     }
 
     async fn scan_entity(&self, entity: &EntityId) -> Result<Option<search::DocScan>, MemoryError> {
-        let mut scanned = self.inner.scan_entity(entity).await?;
-        if let Some(doc) = scanned.as_mut() {
-            self.resolve(doc);
+        match self.inner.scan_entity(entity).await? {
+            Some(mut doc) => {
+                self.resolve(&mut doc);
+                Ok(Some(doc))
+            }
+            // The store holds no row, so a supplied record is the whole answer.
+            None => Ok(self.supplied_scan(entity)),
         }
-        Ok(scanned)
     }
 
     // ── and the one write that reaches it ───────────────────────────────────
@@ -107,7 +138,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     /// this call put in the store rather than what a later read will answer
     /// with.
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        if let Some(shipped) = self.provisions.at(entity, &Slot::Prose) {
+        if let Some(shipped) = self.provisions.prose_for(entity) {
             guard_extension(shipped, prose)?;
         }
         self.inner.set_prose(entity, prose).await
@@ -118,8 +149,48 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.inner.add_entity(new).await
     }
+
+    // ── the reads a WHOLE supplied record has to answer ─────────────────────
+    //
+    // A record the build supplies is in no table, so every read that would
+    // have found a stored one has to find this one instead. These four are
+    // what the graph query reads through, which is what makes a supplied
+    // record answerable by the same code that answers a stored one.
+
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
-        self.inner.list_entities(kind).await
+        let mut held = self.inner.list_entities(kind).await?;
+        for (entity, _) in self.provisions.records() {
+            // **The store's row wins where both exist.** What the operator
+            // declared is theirs, and a build that supplies the same handle
+            // does not overwrite it in the answer.
+            if kind.is_none_or(|k| entity.kind == k) && !held.iter().any(|e| e.id == entity.id) {
+                held.push(entity.clone());
+            }
+        }
+        Ok(held)
+    }
+
+    async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
+        // A handle the store does not hold is a miss, which is right for a
+        // handle nobody wrote and wrong for a record the software ships.
+        let held = match self.inner.fields(entity).await {
+            Err(MemoryError::UnknownEntity { .. })
+                if self.provisions.record_for(entity).is_some() =>
+            {
+                BTreeMap::new()
+            }
+            answer => answer?,
+        };
+        match self.provisions.record_for(entity) {
+            // Supplied keys sit UNDER what the store holds, for the reason
+            // prose does: the operator's write is the narrowing one.
+            Some((_, supplied)) => {
+                let mut folded = supplied.clone();
+                folded.extend(held);
+                Ok(folded)
+            }
+            None => Ok(held),
+        }
     }
     async fn backing(
         &self,
@@ -146,8 +217,19 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.inner.capture(fact).await
     }
+    /// **A supplied record is not a miss.** Recall of a handle the store does
+    /// not hold is an absence rather than an empty page — which is right, and
+    /// wrong for a record the software ships: it is there, and nobody has made
+    /// a claim about it yet.
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        self.inner.recall(subject).await
+        match self.inner.recall(subject).await {
+            Err(MemoryError::UnknownEntity { .. })
+                if self.provisions.record_for(subject).is_some() =>
+            {
+                Ok(Vec::new())
+            }
+            answer => answer,
+        }
     }
     async fn update_fact(
         &self,
@@ -158,9 +240,6 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     }
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         self.inner.history(entity, key).await
-    }
-    async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
-        self.inner.fields(entity).await
     }
     async fn retract(
         &self,
@@ -362,6 +441,120 @@ mod tests {
         assert!(
             read.contains("files the weekly note"),
             "…while what the operator wrote is exactly where they left it: {read}",
+        );
+    }
+
+    /// A record the build ships: kind, handle, and the keys it carries.
+    fn shipped_record(slug: &str) -> jojobot_domain::memory::owned::Provision {
+        let id = EntityId::new(EntityKind::VIEW, slug);
+        jojobot_domain::memory::owned::Provision::record(
+            Entity {
+                id: id.clone(),
+                kind: EntityKind::VIEW,
+                name: format!("The {slug} view"),
+                aliases: Vec::new(),
+                source: "jojobot".into(),
+                crm: None,
+                parent: None,
+                boot: Default::default(),
+            },
+            BTreeMap::from([("selects".to_string(), "rhythm".to_string())]),
+        )
+    }
+
+    /// **A record the build ships answers every read a stored one answers, and
+    /// the store holds nothing of it.**
+    ///
+    /// Four reads because those are the four the graph query goes through: a
+    /// supplied record that answered three of them would be a thing you could
+    /// list and not read. **And the store is asked directly at the end** —
+    /// without that, a layer that quietly wrote the record down would pass, and
+    /// the instance would be frozen on the build that wrote it.
+    #[tokio::test]
+    async fn a_record_the_build_ships_answers_like_a_stored_one_and_is_stored_nowhere() {
+        let store = InMemoryMemory::booted();
+        let over = Provisioned::new(store, Provisions::new(vec![shipped_record("loops")]));
+        let id = EntityId::new(EntityKind::VIEW, "loops");
+
+        assert!(
+            over.list_entities(Some(EntityKind::VIEW))
+                .await
+                .expect("the listing reads")
+                .iter()
+                .any(|e| e.id == id),
+            "a supplied record is in the listing its kind answers",
+        );
+        assert_eq!(
+            over.fields(&id)
+                .await
+                .expect("the keys read")
+                .get("selects"),
+            Some(&"rhythm".to_string()),
+            "…and it carries the keys the build gave it",
+        );
+        assert_eq!(
+            over.scan_entity(&id)
+                .await
+                .expect("the scan reads")
+                .expect("the record is there")
+                .entity
+                .map(|e| e.name),
+            Some("The loops view".to_string()),
+            "…and it scans like a document",
+        );
+        assert!(
+            over.recall(&id)
+                .await
+                .expect("recall is not a miss")
+                .is_empty(),
+            "…and recalling it is an empty page rather than an absence",
+        );
+
+        // **The store holds nothing of it.** The claim the whole design rests
+        // on, asked of the store itself rather than through the layer that
+        // would answer for it either way.
+        assert!(
+            !over
+                .inner
+                .list_entities(None)
+                .await
+                .expect("the store reads")
+                .iter()
+                .any(|e| e.id == id),
+            "the build's record was written down, so this instance is frozen on this build",
+        );
+    }
+
+    /// **A build that stops shipping a record loses it, and what the operator
+    /// declared under the same kind is untouched.**
+    ///
+    /// Paired in one read, or the case passes on a build that empties the
+    /// listing.
+    #[tokio::test]
+    async fn a_record_the_build_stops_shipping_goes_and_the_operators_stays() {
+        let store = InMemoryMemory::booted();
+        let theirs = EntityId::new(EntityKind::VIEW, "my-week");
+        store
+            .add_entity(NewEntity::new(theirs.clone(), "My Week", "user-named"))
+            .await
+            .expect("the operator declares their own")
+            .written()
+            .expect("an empty board blocks nothing");
+
+        let dropped = Provisioned::new(store, Provisions::default());
+        let listed = dropped
+            .list_entities(Some(EntityKind::VIEW))
+            .await
+            .expect("the listing reads");
+        assert!(
+            !listed
+                .iter()
+                .any(|e| e.id == EntityId::new(EntityKind::VIEW, "loops")),
+            "the build stopped shipping it, so the instance stops holding it: {listed:?}",
+        );
+        assert!(
+            listed.iter().any(|e| e.id == theirs),
+            "…and what the operator declared is exactly where they left it: {listed:?}",
         );
     }
 

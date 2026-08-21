@@ -28,9 +28,9 @@ use super::EntityKind;
 /// change is that the set is data. What makes the shipped ones different from any
 /// other kind is not the compiler: it is that a seed writes them at every
 /// startup and a caller cannot redeclare one.
-pub const SHIPPED: [&str; 12] = [
+pub const SHIPPED: [&str; 13] = [
     "person", "project", "place", "event", "work", "thing", "org", "topic", "bot", "pet", "rhythm",
-    "machine",
+    "machine", "view",
 ];
 
 /// **The keys a shipped kind carries**, and almost all of them carry none.
@@ -103,6 +103,17 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
                 "outcome",
                 crate::attention::Outcome::ALL.map(crate::attention::Outcome::as_token),
             ),
+        ],
+        // **A question asked by name.** The keys are what a view IS: what it
+        // selects over, and what it keeps. They are required because a view
+        // missing either is a question nobody can ask — unlike a loop, where
+        // an absent cadence still leaves a loop.
+        "view" => vec![
+            Field::required("selects", ValueType::Text),
+            Field::new("where_key", ValueType::Text),
+            Field::new("where_is", ValueType::Text),
+            Field::new("follow", ValueType::Text),
+            Field::new("asks", ValueType::Text),
         ],
         _ => Vec::new(),
     }

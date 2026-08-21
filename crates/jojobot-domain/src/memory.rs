@@ -79,6 +79,16 @@ impl EntityKind {
     /// other — **nothing about a bot is compiled in**; a bot is data in the
     /// operator's own store, and this kind is only what lets it be one.
     pub const BOT: EntityKind = EntityKind("bot");
+    /// **A question asked by name** — a query over the graph, held as a record
+    /// so that asking for it is naming it.
+    ///
+    /// **A kind rather than a function**, because the software ships some and
+    /// the operator declares others, and those have to be the same shape: a
+    /// list of queries in the code would be a catalogue of the ones somebody
+    /// thought of, and the operator's own would need a second path (rule 106).
+    /// As records they go through one door and nothing running a view can tell
+    /// which half supplied it.
+    pub const VIEW: EntityKind = EntityKind("view");
     /// A companion animal: a dog, a cat, a horse.
     ///
     /// **Not a `thing`.** `thing` is a named possession, and a pet is not one.
@@ -115,7 +125,7 @@ impl EntityKind {
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 12] = [
+    pub const ALL: [EntityKind; 13] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -128,6 +138,7 @@ impl EntityKind {
         EntityKind::PET,
         EntityKind::RHYTHM,
         EntityKind::MACHINE,
+        EntityKind::VIEW,
     ];
 
     /// A kind from a token this crate already holds for the life of the
@@ -3298,6 +3309,7 @@ mod tests {
             (EntityKind::PET, "pet"),
             (EntityKind::RHYTHM, "rhythm"),
             (EntityKind::MACHINE, "machine"),
+            (EntityKind::VIEW, "view"),
         ];
         for (kind, token) in all {
             assert_eq!(kind.as_token(), token);

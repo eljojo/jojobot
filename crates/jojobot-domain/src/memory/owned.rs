@@ -39,7 +39,9 @@
 //! the store refuses to remove one even when handed its name.
 
 use super::types::Origin;
-use super::{EntityId, MemoryError};
+use std::collections::BTreeMap;
+
+use super::{Entity, EntityId, MemoryError};
 
 /// **Which owned rows this build no longer ships**, out of what the store
 /// holds.
@@ -70,17 +72,27 @@ where
         .collect()
 }
 
-/// **Where on a row a provision lands.**
+/// **What a provision puts into the store's answers.**
 ///
-/// The store's own vocabulary — a place on a record — never a capability's
-/// name. That is what keeps the mechanism free of a list of the features it
-/// knows about (rule 106): a new capability names a slot, and nothing here
-/// gains a branch for it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Slot {
-    /// The human half of an entity's page. A charter is prose; so is a
-    /// portrait. Nothing here knows which it is looking at.
-    Prose,
+/// Two shapes, and the difference is whether the store holds a row at all. A
+/// capability names one; nothing here branches on which capability it is (rule
+/// 106).
+#[derive(Debug, Clone)]
+pub enum Supplies {
+    /// **Text at the human half of a row the store already holds.** Resolved
+    /// on top of what the operator wrote, which narrows it.
+    Prose(String),
+    /// **A whole record the store holds nothing of** — the row itself and the
+    /// keys it carries.
+    ///
+    /// It is how the software ships a THING rather than a paragraph. The
+    /// record answers every read a stored one answers, so the code that uses
+    /// it cannot tell which half supplied it — which is the whole point, and
+    /// what keeps a capability from forking over where its data came from.
+    Record {
+        entity: Entity,
+        fields: BTreeMap<String, String>,
+    },
 }
 
 /// **A value this build supplies at an address in the store.**
@@ -94,21 +106,26 @@ pub enum Slot {
 /// touched.
 #[derive(Debug, Clone)]
 pub struct Provision {
-    /// The row it lands on.
+    /// The address it answers at.
     pub at: EntityId,
-    /// The place on that row.
-    pub slot: Slot,
-    /// What the build puts there.
-    pub value: String,
+    /// What it puts there.
+    pub supplies: Supplies,
 }
 
 impl Provision {
-    /// The prose this build ships for an entity.
+    /// The prose this build ships for an entity the store already holds.
     pub fn prose(at: EntityId, value: impl Into<String>) -> Self {
         Provision {
             at,
-            slot: Slot::Prose,
-            value: value.into(),
+            supplies: Supplies::Prose(value.into()),
+        }
+    }
+
+    /// **A whole record this build ships**, addressed by its own handle.
+    pub fn record(entity: Entity, fields: BTreeMap<String, String>) -> Self {
+        Provision {
+            at: entity.id.clone(),
+            supplies: Supplies::Record { entity, fields },
         }
     }
 }
@@ -125,12 +142,25 @@ impl Provisions {
         Provisions(provisions)
     }
 
-    /// What the build supplies at this address, if anything.
-    pub fn at(&self, entity: &EntityId, slot: &Slot) -> Option<&str> {
-        self.0
-            .iter()
-            .find(|p| &p.at == entity && &p.slot == slot)
-            .map(|p| p.value.trim())
+    /// The prose the build supplies for this entity, if any.
+    pub fn prose_for(&self, entity: &EntityId) -> Option<&str> {
+        self.0.iter().find_map(|p| match &p.supplies {
+            Supplies::Prose(value) if &p.at == entity => Some(value.trim()),
+            _ => None,
+        })
+    }
+
+    /// Every whole record this build supplies.
+    pub fn records(&self) -> impl Iterator<Item = (&Entity, &BTreeMap<String, String>)> {
+        self.0.iter().filter_map(|p| match &p.supplies {
+            Supplies::Record { entity, fields } => Some((entity, fields)),
+            Supplies::Prose(_) => None,
+        })
+    }
+
+    /// The record the build supplies under this handle, if any.
+    pub fn record_for(&self, entity: &EntityId) -> Option<(&Entity, &BTreeMap<String, String>)> {
+        self.records().find(|(held, _)| &held.id == entity)
     }
 
     pub fn is_empty(&self) -> bool {

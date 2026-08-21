@@ -251,7 +251,7 @@ pub(crate) const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. Two worlds live here.\
                  \n\n**MEMORY.** What jojobot knows is **entities** — a person, project, place, \
-                 event, work, thing, org, topic, bot, pet, rhythm or machine, each with a typed \
+                 event, work, thing, org, topic, bot, pet, rhythm, machine or view, each with a typed \
                  handle, \
                  `kind:slug` \
                  — the name it is addressed by, and the only name a caller ever sends — and **facts** about them: single dated claims, each carrying an \
