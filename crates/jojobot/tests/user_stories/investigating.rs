@@ -188,7 +188,10 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .claim(&reading)
         .says("0xB200000000010A")
         .says("mcelog --client");
-    s.recall("machine:tau").await.claim(&outage).says("38");
+    s.recall("machine:tau")
+        .await
+        .claim(&outage)
+        .says("\"down_seconds\":\"38\"");
 
     s.wrap("recorded the outage and the reading").await;
 

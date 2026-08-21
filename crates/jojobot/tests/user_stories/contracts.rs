@@ -182,7 +182,7 @@ async fn a_declared_type_describes_a_thing_and_holds_it_to_nothing() {
         }),
     )
     .await
-    .says("128");
+    .says("a key may be 128");
 
     // ── ⑤ and the two questions, over everything above ──────────────────────
     //

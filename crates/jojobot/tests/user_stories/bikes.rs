@@ -143,7 +143,7 @@ async fn keeping_track_of_bikes() {
         }),
     )
     .await
-    .says("128");
+    .says("128 characters");
 
     // The day the bike sells, the key is rewritten where it stands: what a
     // thing IS is current truth, so the record reads back holding the new value
