@@ -1,72 +1,49 @@
-//! **The charter the software ships, and how an instance's own text sits on
-//! top of it.**
+//! **The charter the software ships.**
 //!
 //! A charter is standing behaviour: what this identity is, what it must not do,
 //! what it is expected to do. **It is not a skill** — a skill is a procedure
 //! fetched when it applies, and this is read on every boot.
 //!
-//! # It is never a stored record, and that is the whole design
+//! # It is a provision, and that is the whole design
 //!
-//! The core lives here, in the binary, and is composed into what a caller
-//! reads. **Then upgrading it is shipping a new build**: nothing to migrate, no
-//! record to reconcile, and nothing that has to tell a seeded record from a
-//! written one.
+//! The text lives here, in the binary, and this module's only job is to declare
+//! WHERE it goes. Resolving it into a read and keeping it out of a write happen
+//! underneath every verb, in the store decorator that holds what this build
+//! supplies — so nothing in this crate composes anything, and no verb has a
+//! word for it.
 //!
-//! A seed that wrote the core into the store once, at creation, would freeze an
-//! instance on the build that made it — a later version improves the core and
-//! no existing instance ever sees it. That is the shape this exists to avoid,
-//! and it is the one every other case would have passed.
+//! **Then upgrading is shipping a new build**: nothing to migrate, no record to
+//! reconcile, and nothing that has to tell a seeded record from a written one.
+//! A seed that wrote this into the store once, at creation, would freeze an
+//! instance on the build that made it (rule 226).
 //!
 //! # The instance's own text NARROWS, it never repeals
 //!
-//! What an instance writes through `set_charter` is read ALONGSIDE the shipped
-//! text rather than instead of it. That keeps the two halves under their own
-//! owners: the software owns the general behaviour, the operator's data owns
-//! the personalization, and neither is a second copy of the other.
+//! What an instance writes through `set_charter` is its own half and the only
+//! half the store holds. A read hands back both, the build's first, because the
+//! second narrows the first.
 //!
 //! **Every default works unconfigured.** An instance that has written nothing
-//! answers with the core, which is what makes a fresh instance an identity that
-//! can say what it is for.
+//! answers with this text, which is what makes a fresh instance an identity
+//! that can say what it is for.
 
-use jojobot_domain::memory::EntityId;
+use jojobot_domain::memory::owned::{Provision, Provisions};
+use jojobot_domain::memory::{EntityId, EntityKind};
 
-/// **The identity the software ships**, and the only one that has a core.
+/// **What this build supplies, and where.**
 ///
-/// A caller's own bots are theirs entirely: nothing is composed into them, and
-/// what they answer with is what somebody wrote.
-const SHIPPED: &str = "bot:assistant";
-
-/// The core charter for a bot, or nothing for one the software does not ship.
-pub(crate) fn core_for(bot: &EntityId) -> Option<&'static str> {
-    (bot.as_str() == SHIPPED).then_some(ASSISTANT)
-}
-
-/// **The charter a caller reads**: the shipped core, the instance's own text,
-/// or both — and nothing at all when there is neither.
+/// The whole of what shipping a charter costs: a value and an address. Adding
+/// another is another entry here — no table, no column, no verb, and no change
+/// to how any verb reads or writes.
 ///
-/// The core comes first and the instance's text follows it, because the second
-/// narrows the first: a reader meeting the override before the behaviour it
-/// narrows has to hold it in the air until the general case arrives.
-pub(crate) fn compose(core: Option<&str>, own: Option<&str>) -> Option<String> {
-    let own = own.map(str::trim).filter(|text| !text.is_empty());
-    match (core, own) {
-        (None, None) => None,
-        (None, Some(own)) => Some(own.to_string()),
-        (Some(core), None) => Some(core.trim().to_string()),
-        (Some(core), Some(own)) => Some(format!(
-            "{}\n\n---\n\n{}\n\n{own}",
-            core.trim(),
-            THIS_INSTANCE,
-        )),
-    }
+/// A caller's own bots are theirs entirely: an address nothing supplies reads
+/// back exactly what somebody wrote.
+pub fn provisions() -> Provisions {
+    Provisions::new(vec![Provision::prose(
+        EntityId::new(EntityKind::BOT, crate::seed::DEFAULT_BOT),
+        ASSISTANT,
+    )])
 }
-
-/// **What the second half is**, said in the answer rather than left to be
-/// inferred. A reader meeting two blocks of prose with nothing between them
-/// cannot tell which of them a new build could change.
-const THIS_INSTANCE: &str = "**Above is the charter this build ships and it moves when the software \
-     does. Below is what this instance has written for itself: it narrows what \
-     is above and never repeals it.**";
 
 /// The shipped charter for the assistant.
 ///

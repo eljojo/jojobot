@@ -293,10 +293,8 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     .says("codec work");
 
     // **And the identity the software SHIPS reads whole through the same
-    // door.** Its charter is two layers — the core this build carries and
-    // whatever the instance has written under it — and only the second is
-    // stored, so the roster read above shows a fraction of it with nothing
-    // saying so. Asking for the charter composes both.
+    // door.** Some of what it answers with is text the build supplies rather
+    // than text anybody wrote, and this read cannot tell — which is the point.
     //
     // This is what a directory is for, and the route matters as much as the
     // answer: reading a colleague by booting as it is the one act the rules
@@ -309,15 +307,15 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         )
         .await;
     whole.says("THEIR WORD IS GROUND TRUTH");
-    // The page that asked for the stored half instead is told what it is
-    // missing, since a fraction of a charter reads exactly like all of one.
+    // **The page and the charter are one text, so asking for either gets all
+    // of it.** There is no fraction to warn about: every reader of this bot
+    // reads the same words, whichever key it asked under.
     s.shape(
-        "the shipped identity's own layer",
+        "the shipped identity's page",
         json!({"subject": "bot:assistant", "prose": true, "facts": false}),
     )
     .await
-    .says("charter_note")
-    .never_says("THEIR WORD IS GROUND TRUTH");
+    .says("THEIR WORD IS GROUND TRUTH");
 
     // Where the coordinator's own mail got to is readable without taking
     // delivery of anything, and the search finds work filed for somebody else

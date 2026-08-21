@@ -88,27 +88,21 @@ impl Jojobot {
             return Ok(Err(guard::screen(bot, &[], index)));
         };
 
-        // **The charter is COMPOSED, never a single record.** The core ships in
-        // the binary and the instance's own text is the doc's prose, and the
-        // two are read together: the software owns the general behaviour, the
-        // instance owns what narrows it, and neither is a copy of the other.
+        // **The charter is the doc's prose, read.** What the build supplies is
+        // already in it, resolved underneath this verb, so there is nothing to
+        // compose here and no second half to fetch.
         //
-        // That is what makes an upgrade free — a new build moves the core and
-        // touches nothing anybody wrote. It is not read at all when it is not
-        // being shipped.
+        // `null` means a bot with nothing to say: one nobody has written for
+        // and the build supplies nothing for.
         let charter = match answering_an_offer {
             true => None,
-            false => {
-                let own = self
-                    .memory
-                    .scan_entity(bot)
-                    .await
-                    .map_err(memory_error)?
-                    .map(|doc| doc.prose);
-                // `null` still means a bot with nothing to say — one the
-                // software does not ship and nobody has written for.
-                super::charter::compose(super::charter::core_for(bot), own.as_deref())
-            }
+            false => self
+                .memory
+                .scan_entity(bot)
+                .await
+                .map_err(memory_error)?
+                .map(|doc| doc.prose)
+                .filter(|prose| !prose.trim().is_empty()),
         };
         let rules = self.memory.recall(bot).await.map_err(memory_error)?;
 
@@ -522,206 +516,6 @@ mod tests {
                 .expect("list ok")
                 .is_empty(),
             "a person is not an addressee and never gets a box"
-        );
-    }
-
-    /// **A fresh instance's assistant answers with the charter the software
-    /// ships, and an instance's own text sits on top of it.**
-    ///
-    /// Three reads in one case, because each covers how the others pass on a
-    /// build that is wrong: an identity that has written nothing answers with
-    /// the core, one that has written something answers with **both**, and a
-    /// bot the software does not ship answers with its own text alone.
-    ///
-    /// Without the third, this passes on a build that composes the assistant's
-    /// core into every identity there is.
-    #[tokio::test]
-    async fn the_shipped_identity_answers_with_the_core_and_an_override_sits_on_it() {
-        let jojobot = handler();
-        make_bot(&jojobot, "assistant").await;
-        make_bot(&jojobot, "gamma").await;
-
-        let charter_of = async |name: &str| {
-            boot(&jojobot, name).await["identity"]["charter"]
-                .as_str()
-                .map(str::to_string)
-        };
-
-        // ① Nothing written, and the identity can still say what it is for.
-        let shipped = charter_of("assistant")
-            .await
-            .expect("the shipped identity answers with the charter it ships");
-        assert!(
-            shipped.contains("THEIR WORD IS GROUND TRUTH"),
-            "an instance that has written nothing reads the core: {shipped}",
-        );
-
-        // ② The instance's own text NARROWS: both halves come back.
-        jojobot
-            .set_charter(Parameters(SetCharterArgs {
-                bot: "assistant".into(),
-                prose: "This instance keeps the workshop rota.".into(),
-                sid: Some(TEST_SID.to_string()),
-            }))
-            .await
-            .expect("set_charter ok");
-        let layered = charter_of("assistant")
-            .await
-            .expect("the identity still answers");
-        assert!(
-            layered.contains("THEIR WORD IS GROUND TRUTH"),
-            "the core is still there under the override: {layered}",
-        );
-        assert!(
-            layered.contains("This instance keeps the workshop rota."),
-            "…and the instance's own text is on top of it: {layered}",
-        );
-
-        // ③ A bot the software does not ship gets no core at all.
-        jojobot
-            .set_charter(Parameters(SetCharterArgs {
-                bot: "gamma".into(),
-                prose: "Holds the plan.".into(),
-                sid: Some(TEST_SID.to_string()),
-            }))
-            .await
-            .expect("set_charter ok");
-        let theirs = charter_of("gamma").await.expect("gamma answers");
-        assert_eq!(
-            theirs, "Holds the plan.",
-            "a caller's own bot answers with what somebody wrote and nothing else",
-        );
-    }
-
-    /// **The core is never a stored record, and this is the case that decides
-    /// the design.**
-    ///
-    /// A build that wrote the core into the store once, at creation, passes
-    /// every other case here and fails only this one — and what it would cost
-    /// is that an instance freezes on the build that made it, so a later
-    /// version improves the core and no existing instance ever sees it.
-    ///
-    /// So the store is read directly: after a boot that answered with the core,
-    /// and after the instance writes its own text, what is KEPT is the
-    /// instance's text and nothing else.
-    #[tokio::test]
-    async fn the_core_is_composed_into_the_answer_and_never_written_down() {
-        let jojobot = handler();
-        make_bot(&jojobot, "assistant").await;
-        let bot = EntityId("bot:assistant".to_string());
-
-        // A boot that shipped the core must not have left it anywhere.
-        let shipped = boot(&jojobot, "assistant").await["identity"]["charter"]
-            .as_str()
-            .expect("the core is served")
-            .to_string();
-        assert!(shipped.contains("THEIR WORD IS GROUND TRUTH"));
-        let kept = jojobot
-            .memory
-            .scan_entity(&bot)
-            .await
-            .expect("the store answers")
-            .map(|doc| doc.prose)
-            .unwrap_or_default();
-        assert!(
-            kept.trim().is_empty(),
-            "the core was written down, so this instance is frozen on this build: {kept:?}",
-        );
-
-        // And once the instance writes its own, THAT is what is kept — the
-        // positive the absence above rests on, in the same case.
-        jojobot
-            .set_charter(Parameters(SetCharterArgs {
-                bot: "assistant".into(),
-                prose: "This instance keeps the workshop rota.".into(),
-                sid: Some(TEST_SID.to_string()),
-            }))
-            .await
-            .expect("set_charter ok");
-        let kept = jojobot
-            .memory
-            .scan_entity(&bot)
-            .await
-            .expect("the store answers")
-            .map(|doc| doc.prose)
-            .unwrap_or_default();
-        assert_eq!(
-            kept.trim(),
-            "This instance keeps the workshop rota.",
-            "what the store keeps is the instance's own text, and only that",
-        );
-        assert!(
-            !kept.contains("THEIR WORD IS GROUND TRUTH"),
-            "the core rode into the store on the override: {kept}",
-        );
-    }
-
-    /// **The answer carries whatever core THIS BUILD ships**, so an upgrade is
-    /// a new build and nothing else.
-    ///
-    /// **The core is asked of the software and never restated here.** A case
-    /// that quoted the text back would stay green on a build shipping a
-    /// different one — which is the upgrade it claims to be watching — and on a
-    /// build shipping none at all.
-    ///
-    /// Structural rather than a substring search: the answer **starts with**
-    /// exactly what `core_for` returns and **ends with** the instance's own
-    /// text. That is an equality against the live constant, so it tracks any
-    /// edit to the shipped wording rather than pinning a phrase somebody wrote.
-    ///
-    /// Then the upgrade itself, composed from the real core: a later build's
-    /// core replaces this one in what a caller reads, and the instance's text
-    /// is exactly where it was. **Nothing is migrated because nothing was
-    /// stored** — which the case above proves, and which is what makes this one
-    /// a statement about builds rather than about records.
-    #[tokio::test]
-    async fn the_answer_carries_whatever_core_this_build_ships() {
-        let jojobot = handler();
-        make_bot(&jojobot, "assistant").await;
-        let bot = EntityId("bot:assistant".to_string());
-        let theirs = "This instance keeps the workshop rota.";
-
-        // **Consulted, not quoted.** If the software ships no core, this is
-        // where the case stops — which is the whole point of asking.
-        let core =
-            super::charter::core_for(&bot).expect("the software ships a core for its own identity");
-
-        jojobot
-            .set_charter(Parameters(SetCharterArgs {
-                bot: "assistant".into(),
-                prose: theirs.into(),
-                sid: Some(TEST_SID.to_string()),
-            }))
-            .await
-            .expect("set_charter ok");
-        let served = boot(&jojobot, "assistant").await["identity"]["charter"]
-            .as_str()
-            .expect("the identity answers with a charter")
-            .to_string();
-
-        assert!(
-            served.starts_with(core.trim()),
-            "the answer opens with the core this build ships, whatever it currently says — so \
-             changing the constant changes the answer and nothing has to be migrated: {served}",
-        );
-        assert!(
-            served.trim_end().ends_with(theirs),
-            "…and the instance's own text sits under it: {served}",
-        );
-
-        // **The upgrade, built from the core that is really shipping.** A later
-        // build says one more thing; what a caller reads moves with it, and
-        // what the instance wrote does not.
-        let improved = format!("{core}\n\nAND THE STANDING RULE THIS BUILD ADDED.");
-        let after = super::charter::compose(Some(&improved), Some(theirs))
-            .expect("a core and an instance's text compose");
-        assert!(
-            after.contains("AND THE STANDING RULE THIS BUILD ADDED."),
-            "the core a later build ships is what a caller reads: {after}",
-        );
-        assert!(
-            after.trim_end().ends_with(theirs),
-            "…and the upgrade left what the instance wrote exactly where it was: {after}",
         );
     }
 

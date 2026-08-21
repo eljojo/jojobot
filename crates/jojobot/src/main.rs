@@ -10,6 +10,7 @@ use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::owners::MemoryOwners;
+use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
 use jojobot_domain::mailbox::{Mailboxes, OwnerIndex};
 use jojobot_domain::memory::Memory;
@@ -129,7 +130,15 @@ async fn main() -> anyhow::Result<()> {
     // **Memory is served from the store**, over the same pool as mail and
     // sessions. There is no second store to reach and nothing to carry: the
     // records moved, and the documents they came from are a person's copy now.
-    let memory: Arc<dyn Memory> = Arc::new(DoltMemory::open(store.pool().clone()));
+    // **…and what this build supplies over it.** The decorator resolves the
+    // build's own half into every read and keeps a caller from storing it back,
+    // and nothing above it has a word for either. It sits UNDER the index on
+    // purpose: the index is a reader, and a reader that saw something no other
+    // reader sees would be a second seam.
+    let memory: Arc<dyn Memory> = Arc::new(Provisioned::new(
+        DoltMemory::open(store.pool().clone()),
+        jojobot_mcp::orientation::charter::provisions(),
+    ));
 
     // **The kinds, before anything reads a handle.** Every kind this instance
     // holds is written and then read back, and what comes back is the set this

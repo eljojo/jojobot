@@ -245,6 +245,23 @@ pub(crate) fn memory_declined(
         // advice that implies otherwise sends a model round a loop with no
         // end. What it can do is declare under a name of its own, and the
         // sentence says so and names the verb to do it with (rule 68).
+        // **The caller does not know a mechanism is here, so the sentence does
+        // not name one.** No layer, no core, no composition: what they did is
+        // send back text that repeats what is already there, and what they can
+        // do is send only the part they are adding. A reader who has never
+        // heard of any of this can act on that, which is the whole bar.
+        //
+        // The address is on the answer because a caller writing several things
+        // needs to know which one came back.
+        MemoryError::RepeatsShipped => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. Sending this again will not change the answer. Send \
+                 only the part you are adding — what you write is kept beside what is already \
+                 there, and a read hands back both."
+            ),
+        )),
         MemoryError::ShippedType { ref name } => Ok(blocked_body(
             &EntityId(name.clone()),
             &[],
@@ -327,6 +344,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::InvalidQuery(_)
         | MemoryError::InvalidType(_)
         | MemoryError::ShippedType { .. }
+        | MemoryError::RepeatsShipped
         | MemoryError::BreaksFit { .. }
         | MemoryError::BreaksType { .. }
         | MemoryError::UnknownFact { .. }

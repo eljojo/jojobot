@@ -1,38 +1,34 @@
-//! **A row the binary owns** — what that means, and how a boot makes the
-//! store hold exactly the set this build ships (rule 234).
+//! **What the binary supplies, and what it owns** (rule 234).
 //!
-//! The software writes rows of its own: the kinds today, and whatever a later
-//! build ships beside them. Those rows are not the operator's. A caller cannot
-//! change one, the software changes them on every boot, and the set is
-//! **reconciled rather than upserted** — a row an older build shipped and this
-//! one does not is taken back.
+//! A capability ships data by DECLARING it here — a value and where it goes —
+//! and by doing nothing else. No table, no column, no verb, no change to how
+//! that capability reads or writes. **A feature must not know that shipped data
+//! exists**, so nothing above the layer that answers reads has a word for it.
 //!
-//! # Why an owned row has to be marked
+//! # The software's half is not stored
 //!
-//! Reconciling has to tell *the operator wrote this* from *an older build
-//! shipped this and the new one dropped it*. The two need opposite treatment
-//! and in the store they are the same row. So the row carries the answer: an
-//! [`Origin`] of [`Shipped`](Origin::Shipped) is the mark, and it is one column
-//! rather than a version history, because the question a reconcile asks is
-//! *whose row is this* and not *which build wrote it*.
+//! A [`Provision`] lives in the build. A read resolves it into the answer and a
+//! write is kept from storing it back, and the store holds only what the
+//! operator wrote.
 //!
-//! **The mark is read, never listed** (rule 106). Nothing here holds the names
-//! of the rows to protect: the protection reads the column, so a row added to
-//! the build is protected by being written, and a list nobody updated cannot
-//! go stale.
+//! **That is what makes upgrading free and reclaiming unnecessary.** A later
+//! build improves the value and every instance reads the new one; a build that
+//! stops supplying one stops supplying it, and the operator's half was never
+//! touched. Nothing marks it, because nothing of it is there to mark.
 //!
-//! # Who the software writes as
+//! # …except where the store has to enforce it
 //!
-//! An owned row is written by **the build**, and the [`Origin`] on the row IS
-//! that identity. There is no bot and no session behind it: these rows are the
-//! software's vocabulary rather than claims about the operator's life, so
-//! nothing about them is attributable to a caller.
+//! **A kind is the exception, and the reason is enforcement rather than
+//! storage.** The store refuses a write that would drop a thing below its
+//! kind's required keys, and it decides that by reading the declarations it
+//! holds. A kind whose keys lived only in the binary is a floor the store
+//! cannot stand on.
 //!
-//! That is what makes "prevent unintended changes while forcing intended ones"
-//! a check on the WRITER rather than a property of the row. The origin is an
-//! argument only in-process code can supply — no served verb exposes it — so a
-//! caller writes as a caller by construction, and the store refuses a caller's
-//! declaration over an owned row by reading the column.
+//! So a kind is **materialized**: written into the store, marked with an
+//! [`Origin`] of [`Shipped`](Origin::Shipped), and **reconciled rather than
+//! upserted** — what the store holds as the software's and this build no longer
+//! ships is taken back by [`reclaimed`]. **The mark is read, never listed**
+//! (rule 106): nothing here holds the names of the rows to protect.
 //!
 //! # Reclaiming is not a delete verb
 //!
@@ -43,6 +39,7 @@
 //! the store refuses to remove one even when handed its name.
 
 use super::types::Origin;
+use super::{EntityId, MemoryError};
 
 /// **Which owned rows this build no longer ships**, out of what the store
 /// holds.
@@ -71,6 +68,141 @@ where
         .filter(|name| !ships.contains(name))
         .map(str::to_string)
         .collect()
+}
+
+/// **Where on a row a provision lands.**
+///
+/// The store's own vocabulary — a place on a record — never a capability's
+/// name. That is what keeps the mechanism free of a list of the features it
+/// knows about (rule 106): a new capability names a slot, and nothing here
+/// gains a branch for it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Slot {
+    /// The human half of an entity's page. A charter is prose; so is a
+    /// portrait. Nothing here knows which it is looking at.
+    Prose,
+}
+
+/// **A value this build supplies at an address in the store.**
+///
+/// The whole of what a capability declares in order to ship data. No table, no
+/// column, no verb: a value, and where it goes.
+///
+/// **It is not stored.** The build carries it and a read resolves it in, which
+/// is why nothing marks it and nothing reconciles it — a build that stops
+/// supplying one stops supplying it, and what the operator wrote was never
+/// touched.
+#[derive(Debug, Clone)]
+pub struct Provision {
+    /// The row it lands on.
+    pub at: EntityId,
+    /// The place on that row.
+    pub slot: Slot,
+    /// What the build puts there.
+    pub value: String,
+}
+
+impl Provision {
+    /// The prose this build ships for an entity.
+    pub fn prose(at: EntityId, value: impl Into<String>) -> Self {
+        Provision {
+            at,
+            slot: Slot::Prose,
+            value: value.into(),
+        }
+    }
+}
+
+/// **What this build supplies, and the two questions asked of it.**
+///
+/// Held by the layer that answers reads, handed in from the build. An empty set
+/// is the ordinary case for every row in the store.
+#[derive(Debug, Clone, Default)]
+pub struct Provisions(Vec<Provision>);
+
+impl Provisions {
+    pub fn new(provisions: Vec<Provision>) -> Self {
+        Provisions(provisions)
+    }
+
+    /// What the build supplies at this address, if anything.
+    pub fn at(&self, entity: &EntityId, slot: &Slot) -> Option<&str> {
+        self.0
+            .iter()
+            .find(|p| &p.at == entity && &p.slot == slot)
+            .map(|p| p.value.trim())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// **What the build supplies, then what the operator wrote.**
+///
+/// The build's half comes first because the second narrows the first: a reader
+/// meeting the exception before the rule has to hold it in the air until the
+/// rule arrives.
+///
+/// The divider is text rather than nothing, because two blocks of prose with a
+/// blank line between them do not tell a reader which of the two a new build
+/// could change under them.
+pub fn extended(shipped: &str, own: &str) -> String {
+    let own = own.trim();
+    if own.is_empty() {
+        return shipped.trim().to_string();
+    }
+    format!("{}\n\n---\n\n{}\n\n{own}", shipped.trim(), THE_LAYER_BELOW)
+}
+
+/// **What the second half is**, said in the answer rather than left to be
+/// inferred.
+const THE_LAYER_BELOW: &str = "**Above is what this build ships, and it moves when the software \
+     does. Below is what this instance has written for itself: it narrows what \
+     is above and never repeals it.**";
+
+/// **May this text be stored at an address the build supplies?**
+///
+/// **The read-modify-write trap, closed underneath.** A caller reads a resolved
+/// value, adds a line and sends the whole thing back. Storing it would write
+/// the build's own words into the instance's half, where they stop moving when
+/// the software does — a shipped default turned into a frozen customisation by
+/// a caller doing the most ordinary thing there is.
+///
+/// **Refused, never trimmed** (rule 68). Cutting the text down to the half we
+/// wanted would store something the caller did not write, and they would never
+/// learn which half was kept. The caller does not know this mechanism exists,
+/// so the refusal has to be actionable by somebody who has never heard of it:
+/// it says the text repeats what the software already says, and to send only
+/// what is being added.
+pub fn guard_extension(shipped: &str, incoming: &str) -> Result<(), MemoryError> {
+    if carries(incoming, shipped) {
+        return Err(MemoryError::RepeatsShipped);
+    }
+    Ok(())
+}
+
+/// **Does this text carry that one**, whitespace aside.
+///
+/// Compared on the non-empty lines rather than byte for byte: a caller that
+/// reflowed what it read, or re-indented it, has still sent the same words
+/// back, and a byte comparison would wave that through.
+fn carries(text: &str, shipped: &str) -> bool {
+    let lines = |s: &str| -> Vec<String> {
+        s.lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let needle = lines(shipped);
+    if needle.is_empty() {
+        return false;
+    }
+    let hay = lines(text);
+    hay.windows(needle.len().max(1))
+        .any(|window| window == needle.as_slice())
+        || needle.iter().all(|line| hay.contains(line))
 }
 
 #[cfg(test)]

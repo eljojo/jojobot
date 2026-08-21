@@ -11,6 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use jojobot::{AppState, build_app};
+use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
@@ -226,9 +227,18 @@ impl Story {
     }
 
     /// Serve a fresh jojobot and stand the bot up, the way an operator would.
-    /// `bot` carries its kind prefix, for the same reason `add` does.
+    ///
+    /// **Wired exactly as the binary wires it**, decorator included: the store,
+    /// what this build supplies over it, then the index over both. A story that
+    /// stood up the bare store would serve a jojobot poorer than the deployment
+    /// it stands for, and would report the fixture's limits as the software's.
     pub async fn begin(bot: &str) -> Self {
-        Self::serve(bot, Arc::new(InMemoryMemory::booted())).await
+        Self::serve(bot, Arc::new(Self::wired(InMemoryMemory::booted()))).await
+    }
+
+    /// The store, plus what this build supplies over it.
+    fn wired(store: InMemoryMemory) -> Provisioned<InMemoryMemory> {
+        Provisioned::new(store, jojobot_mcp::orientation::charter::provisions())
     }
 
     /// **Serve a jojobot on an instance an older build left behind** — a store
@@ -251,7 +261,7 @@ impl Story {
         .await
         .expect("an older build declared its own kinds");
         store.boot();
-        Self::serve(bot, Arc::new(store)).await
+        Self::serve(bot, Arc::new(Self::wired(store))).await
     }
 
     async fn serve(bot: &str, store: Arc<dyn jojobot_domain::memory::Memory>) -> Self {
@@ -493,6 +503,22 @@ impl Story {
         let bot = bot.strip_prefix("bot:").unwrap_or(bot);
         let client = self.connect().await;
         let booted = call(&client, "start_here", json!({"bot": bot, "brief": true})).await;
+        // **A bot with a run already in flight is handed the choice rather than
+        // a handle**, and the identity the software ships always has one: the
+        // fixture's own bootstrap booted as it. A story dispatching to a
+        // colleague wants a run of its own, so it answers `new` — which closes
+        // nothing that was already open.
+        let booted = match booted["session"]["sid"].as_str() {
+            Some(_) => booted,
+            None => {
+                call(
+                    &client,
+                    "start_here",
+                    json!({"bot": bot, "brief": true, "resume": "new"}),
+                )
+                .await
+            }
+        };
         let sid = booted["session"]["sid"]
             .as_str()
             .unwrap_or_else(|| panic!("boot handed back no handle: {booted}"))

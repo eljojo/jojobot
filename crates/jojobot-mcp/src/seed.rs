@@ -17,15 +17,15 @@
 //!
 //! # What it deliberately does NOT do
 //!
-//! It does not write a charter, and the identity still has one. **The core
-//! ships in the binary and is composed into what a caller reads** — see
-//! [`crate::orientation::charter`] — so what an instance writes for itself is
-//! the only charter text in the store.
+//! It does not write a charter, and the identity still has one. **The text
+//! ships in the binary as a provision** — see [`crate::orientation::charter`] —
+//! and is resolved into a read underneath every verb, so what an instance
+//! writes for itself is the only charter text in the store.
 //!
-//! Writing the core here would freeze an instance on the build that seeded it:
-//! a later version improves the core and no existing instance would ever see
-//! it. The bot exists, it can be booted as, it can write, and it can say what
-//! it is for.
+//! Writing it here would freeze an instance on the build that seeded it: a
+//! later version improves the text and no existing instance would ever see it.
+//! The bot exists, it can be booted as, it can write, and it can say what it is
+//! for.
 //!
 //! It writes no record of either type, and nothing here computes anything from
 //! one. A vocabulary is what a writer fills in; what to do about a rhythm that

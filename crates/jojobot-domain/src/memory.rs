@@ -2483,6 +2483,22 @@ pub enum MemoryError {
         /// The type name that was declared.
         name: String,
     },
+    /// **The text repeats what the software already supplies here.**
+    ///
+    /// Not a malformed call and not a permission problem: the write is well
+    /// formed and the address is the caller's own to write. What it carries is
+    /// the build's own half, which a caller gets by reading the resolved value
+    /// and sending it back — the most ordinary thing a caller does, and the one
+    /// that would freeze the build's words as this instance's.
+    ///
+    /// **The caller does not know this mechanism exists**, so the message says
+    /// nothing about provisions, layers or composition. It says the text
+    /// repeats what is already there and to send only what is being added.
+    #[error(
+        "this text repeats what the software already says here, so storing it would keep \
+         today's wording after the software has moved on"
+    )]
+    RepeatsShipped,
     /// **The write would drop the thing below a type it already fits.**
     ///
     /// Not a malformed call: the edit is well formed and the record is real.

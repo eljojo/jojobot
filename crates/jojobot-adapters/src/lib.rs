@@ -14,6 +14,7 @@
 
 pub mod dolt;
 pub mod owners;
+pub mod provisioned;
 pub mod search;
 
 // The port helper the suites share lives behind this feature, exactly as the
