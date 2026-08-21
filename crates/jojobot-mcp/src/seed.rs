@@ -38,8 +38,23 @@ use jojobot_domain::memory::kinds;
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, MemoryError, NewEntity};
 
-/// The identity every instance has.
-pub const DEFAULT_BOT: &str = "assistant";
+/// The identity every instance has, **named by its handle**.
+///
+/// **One literal with two readers**: the entity is addressed by this, and the
+/// mailbox is named for the slug inside it, read back through [`EntityId`]
+/// rather than by cutting the string here. Two constants would be two copies
+/// of one name with nothing holding them in step.
+///
+/// **The handle is written whole because the bright-line gate reads
+/// handle-shaped text.** A bare slug is a name no gate compares against the
+/// fictional roster, so an address written as a kind and a slug apart reaches
+/// the repository unchecked (rules 164, 45).
+pub const DEFAULT_BOT: &str = "bot:assistant";
+
+/// The default identity's address.
+pub(crate) fn default_bot() -> EntityId {
+    EntityId(DEFAULT_BOT.to_string())
+}
 
 /// **The types this build ships**, complete with their keys.
 ///
@@ -168,7 +183,7 @@ pub async fn ensure_default_identity(
     memory: &Arc<dyn Memory>,
     mailboxes: &Arc<dyn Mailboxes>,
 ) -> Seeded {
-    let id = EntityId::new(EntityKind::BOT, DEFAULT_BOT);
+    let id = default_bot();
 
     match memory.list_entities(Some(EntityKind::BOT)).await {
         Ok(bots) if bots.iter().any(|b| b.id == id) => return Seeded::AlreadyThere,
@@ -186,7 +201,7 @@ pub async fn ensure_default_identity(
         return Seeded::Unreachable(e.to_string());
     }
     if let Err(e) = mailboxes
-        .create_mailbox(&MailboxName(DEFAULT_BOT.to_string()), &id, None)
+        .create_mailbox(&MailboxName(id.slug().to_string()), &id, None)
         .await
     {
         // The bot landed and its box did not. Not silently: this is the state
@@ -346,7 +361,7 @@ mod tests {
         // An identity that cannot be written to is not one.
         let boxes = mailboxes.list_mailboxes().await.expect("list ok");
         assert!(
-            boxes.iter().any(|b| b.name.0 == DEFAULT_BOT),
+            boxes.iter().any(|b| b.name.0 == default_bot().slug()),
             "the default identity has its box: {boxes:?}"
         );
     }
@@ -379,7 +394,7 @@ mod tests {
         assert!(
             matches!(
                 mailboxes
-                    .create_mailbox(&MailboxName(DEFAULT_BOT.into()), &other, None)
+                    .create_mailbox(&MailboxName(default_bot().slug().into()), &other, None)
                     .await
                     .expect("a blocked create is a result, not a failure"),
                 jojobot_domain::mailbox::Guarded::Blocked { .. }
@@ -393,7 +408,7 @@ mod tests {
         );
         let boxes = mailboxes.list_mailboxes().await.expect("list ok");
         assert!(
-            boxes.iter().any(|b| b.name.0 == DEFAULT_BOT),
+            boxes.iter().any(|b| b.name.0 == default_bot().slug()),
             "the default identity has a box of its own, not the near miss: {boxes:?}"
         );
     }
@@ -409,7 +424,7 @@ mod tests {
 
         // Somebody's real instance: the identity has been renamed and carries
         // a rule. Both must survive.
-        let id = EntityId::new(EntityKind::BOT, DEFAULT_BOT);
+        let id = default_bot();
         memory
             .capture(jojobot_domain::memory::NewFact::about(
                 id.clone(),

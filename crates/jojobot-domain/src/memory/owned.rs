@@ -158,6 +158,16 @@ impl Provisions {
         })
     }
 
+    /// **Every address this build supplies at**, whatever it puts there.
+    ///
+    /// The question a check about the SHAPE of a provision asks: a record and
+    /// a paragraph are supplied differently and are addressed the same way, so
+    /// a reader asking where the build writes must not have to know which of
+    /// the two it met.
+    pub fn addresses(&self) -> impl Iterator<Item = &EntityId> {
+        self.0.iter().map(|p| &p.at)
+    }
+
     /// The record the build supplies under this handle, if any.
     pub fn record_for(&self, entity: &EntityId) -> Option<(&Entity, &BTreeMap<String, String>)> {
         self.records().find(|(held, _)| &held.id == entity)

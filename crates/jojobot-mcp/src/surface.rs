@@ -2230,39 +2230,43 @@ async fn the_subject_constraint_is_refused_by_the_verb_and_stated_on_the_paramet
     );
 }
 
-/// **A record this build supplies names itself by its handle, in the source.**
+/// **Every address this build supplies is named by its handle, in the source.**
 ///
 /// The bright-line gate is an allowlist over handle-shaped text — a kind, a
 /// colon and a slug — in the workspace sources, and it reports every handle
-/// that is not on the fictional roster. A shipped record named by a kind and a
-/// bare slug as two separate values writes no handle anywhere, so the gate
-/// finds nothing to compare and the slug reaches the repository unchecked.
+/// that is not on the fictional roster. An address written as a kind and a
+/// bare slug carries no handle anywhere, so the gate finds nothing to compare
+/// and the slug reaches the repository unchecked.
 ///
 /// **What changes is the shape the build writes, never the scanner** (rule
 /// 45). A handle in the source is a handle the gate already reads, and a
 /// scanner taught to guess which bare string is a slug would make the crisp
 /// half of that check fuzzy.
 ///
+/// **Asked of every address, never of the records alone.** A record and a
+/// paragraph are supplied differently and addressed identically, and the blind
+/// spot is the address rather than what sits at it — so a check scoped to one
+/// of the two leaves the other open, which is what it did (rule 234).
+///
 /// **This is one half of the bright line and the roster suite is the other.**
-/// This half says a shipped handle is written down;
+/// This half says a supplied handle is written down;
 /// `every_handle_in_the_workspace_is_on_the_fictional_roster` says a written
 /// handle is on the roster. An off-roster shipped slug is caught by the pair
-/// and by neither alone.
+/// and by neither alone. The split is forced: this crate is the only one that
+/// can see `provisions()`, and the roster suite is in a crate this one depends
+/// on.
 ///
-/// **The count is asserted before the loop**, because a build that supplies no
-/// record satisfies the loop without reading anything.
+/// **The count is asserted before the loop**, because a build that supplies
+/// nothing satisfies the loop without reading anything.
 #[test]
-fn every_shipped_record_names_itself_by_its_handle_in_the_source() {
+fn every_address_the_build_supplies_is_named_by_its_handle_in_the_source() {
     let source = shipped_source();
     let supplied = provisions();
-    let handles: Vec<String> = supplied
-        .records()
-        .map(|(entity, _)| entity.id.to_string())
-        .collect();
+    let handles: Vec<String> = supplied.addresses().map(|at| at.to_string()).collect();
 
     assert!(
         !handles.is_empty(),
-        "this build supplies no record at all, so the check below reads nothing"
+        "this build supplies nothing at all, so the check below reads nothing"
     );
     let unwritten: Vec<&String> = handles
         .iter()
@@ -2270,7 +2274,7 @@ fn every_shipped_record_names_itself_by_its_handle_in_the_source() {
         .collect();
     assert!(
         unwritten.is_empty(),
-        "these shipped records are named by a kind and a bare slug, so no handle exists \
-         for the roster gate to read — name each record by its handle instead:\n{unwritten:?}"
+        "these addresses are written as a kind and a bare slug, so no handle exists for \
+         the roster gate to read — name each one by its handle instead:\n{unwritten:?}"
     );
 }

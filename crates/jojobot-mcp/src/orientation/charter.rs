@@ -28,7 +28,6 @@
 //! that can say what it is for.
 
 use jojobot_domain::memory::owned::{Provision, Provisions};
-use jojobot_domain::memory::{EntityId, EntityKind};
 
 /// **What this build supplies, and where.**
 ///
@@ -40,7 +39,7 @@ use jojobot_domain::memory::{EntityId, EntityKind};
 /// back exactly what somebody wrote.
 pub fn provisions() -> Provisions {
     Provisions::new(vec![Provision::prose(
-        EntityId::new(EntityKind::BOT, crate::seed::DEFAULT_BOT),
+        crate::seed::default_bot(),
         ASSISTANT,
     )])
 }
