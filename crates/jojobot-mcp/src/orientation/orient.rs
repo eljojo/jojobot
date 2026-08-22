@@ -441,16 +441,18 @@ mod tests {
             "an unreadable roster came back as a bare marker with nothing a caller can act \
              on: {booted}"
         );
-        // **The note beside it is prose somebody reads.** A run of spaces in
-        // one is source indentation that escaped a wrapped literal — the
-        // file's own layout arriving in a sentence.
+        // **The note beside it is prose somebody reads, and what it SAYS is not
+        // asserted.** That this answer is in the degraded mode is the marker's
+        // claim, and that an explanation came with it is the presence check
+        // above; a third assertion quoting the sentence would break the day
+        // somebody improves it and prove nothing about behaviour either way.
+        //
+        // What is asserted is not the wording: a run of spaces is source
+        // indentation that escaped a wrapped literal — the file's own layout
+        // arriving in a sentence, which is a defect in any wording.
         let note = booted["snapshot"]["mail"]["note"]
             .as_str()
             .expect("the degraded shape says why it is shaped that way");
-        assert!(
-            note.contains("listed by owner"),
-            "the note explains this shape: {note:?}"
-        );
         assert!(
             !note.contains("  "),
             "…as one run of prose, with none of the source's indentation in it: {note:?}"
