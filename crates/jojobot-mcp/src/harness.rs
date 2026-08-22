@@ -209,6 +209,25 @@ pub(crate) async fn seed_bot(memory: &Arc<InMemoryMemory>, slug: &str) {
         .expect("the fixture bot is not blocked");
 }
 
+/// A boot that states the day its run is in, the way a run that is not
+/// happening now does.
+pub(crate) async fn boot_on(jojobot: &Jojobot, name: &str, today: &str) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .start_here(Parameters(OrientArgs {
+                timezone: None,
+                today: Some(today.into()),
+                bot: Some(name.into()),
+                brief: None,
+                skill: None,
+                resume: None,
+                sid: None,
+            }))
+            .await
+            .expect("the boot call is ok"),
+    )
+}
+
 pub(crate) async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
     json_of(
         &jojobot

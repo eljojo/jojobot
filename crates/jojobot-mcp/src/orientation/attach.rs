@@ -224,8 +224,47 @@ impl Jojobot {
         };
         if let Some(obj) = block.as_object_mut() {
             obj.insert("swept".into(), swept.into());
+            // 🚨 **A sweep that closed nothing is not a sweep that could not
+            // run.** Both leave `swept` empty, and only one of them means a
+            // stale run is still standing. Said only in the log, the surface
+            // reads the same for both and the caller meets that run again on
+            // every boot with nothing saying why.
+            obj.insert(
+                "unswept".into(),
+                unswept
+                    .iter()
+                    .map(|(session, _)| session.to_string())
+                    .collect::<Vec<_>>()
+                    .into(),
+            );
+            obj.insert("swept_in".into(), Self::frame(today));
         }
         Ok(block)
+    }
+
+    /// **The frame this boot decided staleness in**, said where a caller meets
+    /// the decision.
+    ///
+    /// 🚨 **A caller that does not know the frame is its to state never will.**
+    /// It is handed a list of its own runs, cannot tell which are over, and has
+    /// nothing saying the list was decided on a clock — so a run acting out
+    /// months in minutes reads every sitting it ever had as still working. The
+    /// one place it can learn otherwise is the answer that is wrong, which is
+    /// this one.
+    ///
+    /// A caller that stated a day is told which day and nothing more: it does
+    /// not need to be sold an argument it already sent.
+    fn frame(today: Option<jiff::civil::Date>) -> serde_json::Value {
+        match today {
+            Some(day) => serde_json::json!({ "day": day.to_string() }),
+            None => serde_json::json!({
+                "day": serde_json::Value::Null,
+                "note": "no day was stated, so runs were judged quiet on this server's clock. \
+                         If your run is not happening now — catching up on an earlier day, or \
+                         acting out a stretch of time — send the day you are in as `today` and \
+                         the decision is made in that frame instead.",
+            }),
+        }
     }
 
     /// The block for a session with no card behind it yet — a first boot, or
@@ -1283,6 +1322,116 @@ mod tests {
         assert_eq!(
             resumed["session"]["session"]["state"], "active",
             "…and taking the offer reopens it: {resumed}"
+        );
+    }
+
+    /// 🚨 **The boot says which frame it swept in, and names the way to change
+    /// it.**
+    ///
+    /// The frame belongs to the caller, and a caller that does not know it may
+    /// state one never will: it meets a list of its own runs, cannot tell which
+    /// are over, and has nothing to tell it the list was decided on a clock. A
+    /// run acting out months in minutes reads every sitting it ever had as
+    /// still working, and the only place it could learn otherwise is here —
+    /// **at the moment it is looking at the answer that is wrong.**
+    ///
+    /// ⛔️ **The essay is not where this lands.** A session that never reads it
+    /// closely still meets this, because it is in the answer it already asked
+    /// for.
+    ///
+    /// **Both halves.** A caller that stated nothing is told what was used and
+    /// what to send; a caller that stated a day is told which day, and is not
+    /// handed advice about an argument it already used.
+    #[tokio::test]
+    async fn a_boot_says_which_frame_it_swept_in_and_how_to_state_another() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+
+        let quiet = boot(&jojobot, "gamma").await;
+        let said = quiet["session"]["swept_in"].to_string();
+        // **The argument name is read off the served schema**, so a rename
+        // reaches this case and a name no verb publishes fails it.
+        let published = crate::arguments::published_argument_names();
+        assert!(
+            published.contains("today"),
+            "no verb publishes `today`, so this case is pinning an argument that does not \
+             exist: {published:?}",
+        );
+        assert!(
+            said.contains("today"),
+            "a boot that swept on the clock does not name the argument that would have stated \
+             a frame, so a run acting out months has no way to learn the list is wrong: {said}",
+        );
+
+        let stated = boot_on(&jojobot, "gamma", "2026-09-13").await;
+        let told = stated["session"]["swept_in"].to_string();
+        assert!(
+            told.contains("2026-09-13"),
+            "a boot that stated a day is not told which day it swept in: {told}",
+        );
+        assert!(
+            !told.contains("today"),
+            "a caller that already sent the argument is being told to send it: {told}",
+        );
+    }
+
+    /// 🚨 **A sweep that closed nothing does not read like a sweep that could
+    /// not run.**
+    ///
+    /// Both leave `swept` empty. One means every run is still working; the
+    /// other means a stale run is still standing because the store refused to
+    /// retire it — and the second is the one a reader has to act on. Told apart
+    /// only by a log line, the surface says the same thing for both, and the
+    /// caller is looking at a run it will be offered again on every boot with
+    /// nothing saying why.
+    ///
+    /// **Both halves, because either alone passes on a build that reports
+    /// neither.**
+    #[tokio::test]
+    async fn a_sweep_that_closed_nothing_is_not_a_sweep_that_could_not_run() {
+        let (jojobot, store, _memory, _sid) = crate::session::testing::refusing_close().await;
+        // This double refuses until it is told not to, so the half that must
+        // find nothing to sweep is taken with it agreeing.
+        store
+            .refuse
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+
+        // Nothing stale: one run, an hour old, which is quiet rather than over.
+        let quiet = boot(&jojobot, "gamma").await;
+        assert_eq!(quiet["session"]["swept"], serde_json::json!([]));
+        assert_eq!(
+            quiet["session"]["unswept"],
+            serde_json::json!([]),
+            "a boot that found nothing stale reported something it could not sweep",
+        );
+
+        // Now a run that is plainly over, and a store that will not retire it.
+        store
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("t001".into()),
+                focus: "long over".into(),
+                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
+                started_on: None,
+            })
+            .await
+            .expect("begin ok");
+        store
+            .refuse
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let refused = boot(&jojobot, "gamma").await;
+        assert_eq!(
+            refused["session"]["swept"],
+            serde_json::json!([]),
+            "the store refused, so nothing was closed",
+        );
+        assert_ne!(
+            refused["session"]["unswept"],
+            serde_json::json!([]),
+            "a stale run the store refused to retire is reported nowhere a caller reads, so it \
+             is offered again on every boot with nothing saying why",
         );
     }
 

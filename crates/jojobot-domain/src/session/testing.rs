@@ -12,6 +12,7 @@
 use std::sync::Mutex;
 
 use jiff::Timestamp;
+use jiff::civil::Date;
 
 use super::{
     EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionState,
@@ -1045,6 +1046,98 @@ pub mod contract {
 
     /// The whole spec, against one store. Each case runs on a **fresh** store,
     /// so nothing here depends on the order the others ran in.
+    /// 🚨 **A stated day survives a write and a read**, on the run and on the
+    /// beat.
+    ///
+    /// The sweep decides in the caller's frame, and it reads that frame back
+    /// out of the store on the next boot. **A store that takes the day and
+    /// loses it answers every later boot on the clock while the caller believes
+    /// it stated a frame** — the failure is silent and it looks exactly like
+    /// the defect this replaced.
+    ///
+    /// ⚠️ **It belongs here rather than in a case of the fake's**, because the
+    /// two stores fail this differently: a double holds a struct and cannot
+    /// drop a column, and a real store drops one by naming the wrong list or
+    /// binding nothing to it. Both of those happened while this was built.
+    ///
+    /// **The other half is the run that states nothing**, which must read back
+    /// as nothing — a store that stamped a day of its own would satisfy the
+    /// first half and assume the frame it is forbidden to assume.
+    pub async fn a_stated_day_survives_a_write_and_a_read(store: &dyn Sessions) {
+        let day = |text: &str| text.parse::<Date>().expect("a date");
+        let stated = store
+            .begin(NewSession {
+                bot: bot("gamma"),
+                sid: sid(80),
+                focus: "acting out a year".to_string(),
+                started_at: at(80),
+                timezone: None,
+                started_on: Some(day("2026-03-15")),
+            })
+            .await
+            .expect("a run may say which day it is in");
+        store
+            .append(
+                &stated.id,
+                NewEntry::manual("what I set out to do", at(81), Some(day("2026-03-16"))),
+            )
+            .await
+            .expect("a beat may say which day it happened on");
+
+        let read = store
+            .read_session(&stated.id)
+            .await
+            .expect("the run reads back");
+        assert_eq!(
+            read.started_on,
+            Some(day("2026-03-15")),
+            "the day the run stated did not survive the round trip",
+        );
+        assert_eq!(
+            read.entries.first().and_then(|e| e.on),
+            Some(day("2026-03-16")),
+            "the day the beat stated did not survive the round trip",
+        );
+        assert_eq!(
+            read.last_beat_on(),
+            Some(day("2026-03-16")),
+            "the newest stated day is what the sweep measures, and it is not the one stored",
+        );
+
+        // **The run that states nothing.** A store that answered with a day of
+        // its own would pass everything above and assume the frame.
+        let quiet = store
+            .begin(NewSession {
+                bot: bot("gamma"),
+                sid: sid(82),
+                focus: "happening now".to_string(),
+                started_at: at(82),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("a run need not say which day it is in");
+        store
+            .append(&quiet.id, NewEntry::manual("a beat", at(83), None))
+            .await
+            .expect("a beat need not either");
+        let read = store
+            .read_session(&quiet.id)
+            .await
+            .expect("the run reads back");
+        assert_eq!(read.started_on, None, "a day was invented for a run");
+        assert_eq!(
+            read.entries.first().and_then(|e| e.on),
+            None,
+            "a day was invented for a beat",
+        );
+        assert_eq!(
+            read.last_beat_on(),
+            None,
+            "…so there is no frame to measure"
+        );
+    }
+
     pub async fn run_all<S: Sessions, F: Fn() -> S>(fresh: F) {
         a_begun_session_is_active_and_empty(&fresh()).await;
         beginning_twice_under_one_handle_yields_one_run(&fresh()).await;
@@ -1064,5 +1157,6 @@ pub mod contract {
         addressing_an_unknown_session_is_a_miss(&fresh()).await;
         malformed_input_is_refused(&fresh()).await;
         an_entry_survives_the_round_trip(&fresh()).await;
+        a_stated_day_survives_a_write_and_a_read(&fresh()).await;
     }
 }
