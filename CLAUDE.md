@@ -446,6 +446,19 @@ roles and never an operator.
   its own guard breaks and stays still when an independent one does. ⚠️
   **Choosing an independent neighbour is the hard part — reasoning about which
   one is independent is not enough. Run it.**
+- 🚨 **A room runs against a BUILT binary, so a sabotage of served code is
+  invisible to it unless you build first.** The rooms spawn the server, and
+  `cargo test -p jojobot-exercise` does not rebuild it — **so an edit to any
+  served source, checked only through the rooms, reads GREEN because the code
+  under test was never loaded.** That is the strongest possible wrong reason
+  for a pass. **Build the workspace in the same command as the run.** ⚠️ **And
+  the same trap reads the other way: a REFUSAL you did not expect may be the
+  old binary publishing the old schema rather than a second copy of a rule.**
+- ⚠️ **A verdict comes from the exit code of the command you ran, so do not
+  hand a pipeline to something that reports one.** A run piped through `grep`
+  reports `grep`'s exit code, and the tool faithfully repeats it — **green,
+  with the failing names printed directly above it.** The instrument is not at
+  fault and should not second-guess what it was given. **Drop the pipe.**
 - **Inserting code directly above an attribute orphans it onto what you
   inserted.** A `#[test]` or `#[cfg(test)]` line binds to the item below it, so
   a new item slipped in between takes the attribute and the old one loses it.
