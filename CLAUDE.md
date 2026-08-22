@@ -446,6 +446,13 @@ roles and never an operator.
   its own guard breaks and stays still when an independent one does. ⚠️
   **Choosing an independent neighbour is the hard part — reasoning about which
   one is independent is not enough. Run it.**
+- **Inserting code directly above an attribute orphans it onto what you
+  inserted.** A `#[test]` or `#[cfg(test)]` line binds to the item below it, so
+  a new item slipped in between takes the attribute and the old one loses it.
+  ⚠️ **One instance ran a case TWICE while every suite stayed green** — a
+  duplicated attribute is not a failure, it is a count nobody reads. **The
+  linter finds these and the suite cannot.** Insert below the attribute, or
+  read the two lines above your edit before you leave it.
 - **Every feature appears in a user story.** A feature that no story exercises
   is a finding. This is a second bar, not the same one: a unit test proves the
   feature works, and a story proves the feature can be reached through the
