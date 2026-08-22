@@ -157,6 +157,24 @@ pub fn final_text(stream: &str) -> Option<String> {
         .find_map(|event| event["result"].as_str().map(str::to_string))
 }
 
+/// **What goes into the transcript a person reads, given a stream.**
+///
+/// The run asks the CLI for events rather than text, so the answer a reader
+/// wants is inside them. **This is what keeps the readable transcript
+/// readable**: without it the run would render raw events into the file the
+/// operator reads.
+///
+/// A stream that never reached a result says so **and keeps its own text**. A
+/// sitting the run could not parse is still a sitting somebody has to read, and
+/// throwing the material away to report a tidy failure is the opposite of what
+/// the raw file exists for.
+pub fn spoken(printed: &str) -> String {
+    match final_text(printed) {
+        Some(said) => said,
+        None => format!("[no result event in this sitting's stream]\n{printed}"),
+    }
+}
+
 /// The content blocks of one event, which is where calls and answers live.
 fn blocks(event: &serde_json::Value) -> Vec<serde_json::Value> {
     event["message"]["content"]
@@ -442,6 +460,40 @@ mod tests {
             "an answered call is marked refused, which happens when a missing is_error is read \
              as anything but success: {:?}",
             made[1],
+        );
+    }
+
+    /// **The transcript gets what the model said, never the events.**
+    ///
+    /// This is the guard on bar ② of the slice: the run asks for events, so
+    /// without this the file the operator reads fills with JSON.
+    #[test]
+    fn the_readable_answer_comes_out_of_the_stream_and_the_events_do_not() {
+        let made = fixture("made-calls.jsonl");
+        let said = spoken(&made);
+        assert_eq!(said, "Milhouse", "the answer a person reads");
+        assert!(
+            !said.contains("tool_use") && !said.contains(r#""type""#),
+            "raw events reached the readable transcript: {said}",
+        );
+    }
+
+    /// **A stream with no result keeps its own text rather than vanishing.**
+    ///
+    /// A sitting the run could not parse is still one somebody has to read.
+    /// Reporting a tidy failure and dropping the material is the opposite of
+    /// what the kept stream is for.
+    #[test]
+    fn a_sitting_with_no_result_says_so_and_still_hands_back_what_it_printed() {
+        let broken = r#"{"type":"system","subtype":"init"}"#;
+        let said = spoken(broken);
+        assert!(
+            said.contains("no result event"),
+            "a sitting that never finished reads like one that did: {said}",
+        );
+        assert!(
+            said.contains(broken),
+            "the material was thrown away to report the failure: {said}",
         );
     }
 }

@@ -163,6 +163,37 @@ async fn within(
     }
 }
 
+/// **What a finished process means, read apart from the running of it.**
+///
+/// Separate because spawning needs the agent CLI and this needs nothing: the
+/// decision that the transcript carries what the model said, and that the
+/// stream is kept beside it, is testable only where there is no process to
+/// start.
+fn finished(done: &std::process::Output) -> Worked {
+    let printed = String::from_utf8_lossy(&done.stdout).to_string();
+    // **The line asks for events, so the readable half is read out of them.**
+    // Without this the transcript the operator reads fills with JSON, and the
+    // run trades its most-read output for its most-machine-readable one.
+    let mut said = crate::calls::spoken(&printed);
+    if !done.status.success() {
+        said.push_str(&format!(
+            "\n[the agent exited {}]\n{}",
+            done.status,
+            String::from_utf8_lossy(&done.stderr),
+        ));
+    }
+    Worked {
+        output: said,
+        raw: printed,
+        // **A refused resume is the failure that looks like success.** The CLI
+        // is asked to carry a conversation on; if it cannot, an invocation that
+        // came back non-zero is the one signal the harness has without spending
+        // anything, and a phase that lost its memory and carried on regardless
+        // produces a transcript a reader would pass.
+        ran: done.status.success(),
+    }
+}
+
 impl Agent {
     pub fn new(model: &str) -> Agent {
         Agent {
@@ -216,6 +247,17 @@ impl Agent {
             // is a run that never finishes.
             "--permission-mode".to_string(),
             "bypassPermissions".to_string(),
+            // **The event stream, because a run has to record what the occupant
+            // DID.** Plain text gives back the final answer and nothing about
+            // the calls behind it, so a sitting that says it wrote a record and
+            // a sitting that wrote nothing read the same.
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+            // **The CLI refuses the format without this**, and refuses it
+            // before the model is reached — so a line carrying the format alone
+            // starts nothing and the run records the whole sitting as
+            // unanswered for a reason that is not the model's.
+            "--verbose".to_string(),
         ]);
         args.push(prompt.to_string());
         Invocation {
@@ -261,26 +303,7 @@ impl Agent {
                 ran: false,
             });
         };
-        let printed = String::from_utf8_lossy(&done.stdout).to_string();
-        let mut said = printed.clone();
-        if !done.status.success() {
-            said.push_str(&format!(
-                "\n[the agent exited {}]\n{}",
-                done.status,
-                String::from_utf8_lossy(&done.stderr),
-            ));
-        }
-        Ok(Worked {
-            output: said,
-            raw: printed,
-            // **A refused resume is the failure that looks like success.** The
-            // CLI is asked to carry a conversation on; if it cannot, an
-            // invocation that came back non-zero is the one signal the harness
-            // has without spending anything, and a phase that lost its memory
-            // and carried on regardless produces a transcript a reader would
-            // pass.
-            ran: done.status.success(),
-        })
+        Ok(finished(&done))
     }
 }
 
@@ -507,5 +530,73 @@ mod tests {
             "the prompt is the last thing on the line: {:?}",
             line.args,
         );
+    }
+
+    /// **A run records what the occupant DID, so the line asks for the event
+    /// stream rather than the final text.**
+    ///
+    /// Plain `--print` gives back the answer and nothing about the calls behind
+    /// it, so a sitting that claimed it wrote a record and a sitting that wrote
+    /// nothing render identically.
+    ///
+    /// **The two flags are one decision, which is why they are one case.** The
+    /// CLI refuses the format on its own — `--output-format=stream-json
+    /// requires --verbose` — so a line carrying the format alone starts nothing
+    /// at all, and a run would report a whole sitting as unanswered for a
+    /// reason that has nothing to do with the model.
+    #[test]
+    fn a_phase_asks_for_the_event_stream_and_the_flag_the_cli_demands_beside_it() {
+        let line = Agent::new("sonnet").invocation("http://room", &Conversation::fresh(), "go");
+        assert_eq!(
+            flag_after(&line, "--output-format").as_deref(),
+            Some("stream-json"),
+            "without this the run keeps the answer and loses every call behind it: {:?}",
+            line.args,
+        );
+        assert!(
+            line.args.iter().any(|a| a == "--verbose"),
+            "the CLI refuses stream-json without it, so the phase would never start: {:?}",
+            line.args,
+        );
+    }
+
+    /// A finished process, without one having been started.
+    fn finished_with(stdout: &str, code: i32) -> Worked {
+        use std::os::unix::process::ExitStatusExt as _;
+        finished(&std::process::Output {
+            status: std::process::ExitStatus::from_raw(code),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        })
+    }
+
+    /// **The transcript carries what the model said, and the stream is kept
+    /// whole beside it.**
+    ///
+    /// The run asks the CLI for events, so without this the file the operator
+    /// reads fills with JSON. **Both halves in one case**: a check that only
+    /// read the transcript would pass on a build that had thrown the events
+    /// away, and one that only read the stream would pass on a build that had
+    /// rendered them into the transcript.
+    #[test]
+    fn a_finished_phase_says_what_the_model_said_and_keeps_the_events_apart() {
+        let stream = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\
+                      \"id\":\"id-1\",\"name\":\"capture\",\"input\":{}}]}}\n\
+                      {\"type\":\"result\",\"result\":\"the sitting is done\"}";
+        let worked = finished_with(stream, 0);
+        assert_eq!(
+            worked.output, "the sitting is done",
+            "the transcript does not carry what the model said",
+        );
+        assert!(
+            !worked.output.contains("tool_use"),
+            "raw events reached the readable transcript: {}",
+            worked.output,
+        );
+        assert_eq!(
+            worked.raw, stream,
+            "the stream was not kept whole, so the calls are gone",
+        );
+        assert!(worked.ran, "a clean exit reads as a run that worked");
     }
 }
