@@ -1,6 +1,6 @@
 //! **The year, held for free.**
 //!
-//! Twelve cold sittings over a fictional year. The locks that matter are late
+//! Thirteen cold sittings over a fictional year. The locks that matter are late
 //! and the work that earns them is early, so the case that says the year
 //! measures anything is the one that works only its second half: a store that
 //! nobody wrote in until June cannot answer the questions September and October
@@ -36,12 +36,13 @@ const JULY: [usize; 1] = [12];
 const AUGUST: [usize; 2] = [13, 14];
 const SEPTEMBER: [usize; 1] = [15];
 const OCTOBER: [usize; 1] = [16];
+const LATE_OCTOBER: [usize; 2] = [17, 18];
 
 /// How many locks the year carries.
-const LOCKS: usize = 17;
+const LOCKS: usize = 19;
 
 /// **The sittings a person reads**, which assert nothing and must not.
-const READ_THESE: [&str; 2] = ["Phase 11", "Phase 12"];
+const READ_THESE: [&str; 2] = ["Phase 12", "Phase 13"];
 
 /// The document a run is driven by.
 fn room_document() -> Playbook {
@@ -325,6 +326,41 @@ async fn october(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **The retraction case, worked for the first time all year.** Nelson's
+/// survey attendance was never true, and the record it corrects is a June
+/// fact that only exists because January stood up the event and February
+/// stood up Nelson — the dependency the room is built to test. Bart's
+/// membership is folded in beside it, the same shape February used for
+/// Nelson himself.
+async fn late_october(room: &Surface, sid: &str) {
+    let wrong = address_of(room, "person:nelson", "trail survey").await;
+    did(
+        room,
+        sid,
+        "retract",
+        json!({"address": wrong,
+               "reason": "Nelson never actually made it to the survey — he was fixing a flat that morning",
+               "date": "2026-10-24"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "add_entity",
+        json!({"kind": "person", "handle": "bart", "name": "Bart", "source": "the operator"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "person:bart", "content": "joined the club",
+               "provenance": "testimony", "date": "2026-10-24",
+               "shape": "membership", "object": "org:north-trail-club"}),
+    )
+    .await;
+}
+
 /// The whole year, worked the way it is meant to be.
 async fn worked_the_year(room: &Surface, sid: &str) {
     january(room, sid).await;
@@ -337,22 +373,23 @@ async fn worked_the_year(room: &Surface, sid: &str) {
     august(room, sid).await;
     september(room, sid).await;
     october(room, sid).await;
+    late_october(room, sid).await;
 }
 
 // ────────────────────────────── the cases ──────────────────────────────
 
-/// **Twelve sittings, every one cold, every one claiming its day.**
+/// **Thirteen sittings, every one cold, every one claiming its day.**
 ///
 /// The day is what the whole fiction rests on: jojobot reads no clock, so a
 /// sitting that names no day is stamped with the day the run happened and the
 /// year is fiction only in the prose.
 #[test]
-fn the_year_is_twelve_cold_sittings_and_every_one_claims_its_day() {
+fn the_year_is_thirteen_cold_sittings_and_every_one_claims_its_day() {
     let year = room_document();
     assert_eq!(
         year.phases.len(),
-        12,
-        "the year is a sitting a month: {:?}",
+        13,
+        "the year carries one extra sitting, in October: {:?}",
         year.phases.iter().map(|p| &p.name).collect::<Vec<_>>(),
     );
     let mut days: Vec<&str> = Vec::new();
@@ -515,13 +552,18 @@ async fn every_lock_holds_once_the_year_is_worked() {
 /// 🚨 **The sabotage that says the year measures anything: start it in June.**
 ///
 /// If the second half of the year reads much the same against a store nobody
-/// wrote in until June, the year is measuring nothing — it is twelve rooms in a
-/// row rather than one year.
+/// wrote in until June, the year is measuring nothing — it is thirteen rooms
+/// in a row rather than one year.
 ///
 /// **Both halves.** The early sittings' locks fail because that work never
-/// happened, and the LATE ones fail too — September and October ask about a
-/// thing February created, and no amount of working the second half well can
-/// answer them.
+/// happened, and the LATE ones fail too — September, October and the sitting
+/// after it ask about things February and June created, and no amount of
+/// working the second half well can answer them.
+///
+/// **Late October is not called at all**, the same way July never is: both
+/// need an address `recall` would have to find first, and neither address
+/// exists in a store that skipped the sitting that wrote it. Not calling them
+/// is the honest version of the same failure their locks report on their own.
 #[tokio::test]
 async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
     let (_room, surface, sid) = furnished().await;
@@ -533,7 +575,7 @@ async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
     october(&surface, &sid).await;
 
     let outcomes = judge_all(&surface).await;
-    // **Sixteen of the seventeen locks fail.** The one that holds is the only
+    // **Eighteen of the nineteen locks fail.** The one that holds is the only
     // claim in the year that rests on nothing before it — August files the
     // committee note against a club that came with the furniture.
     let stands_alone = AUGUST[1];
@@ -548,11 +590,12 @@ async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
         .chain(&[AUGUST[0]])
         .chain(&SEPTEMBER)
         .chain(&OCTOBER)
+        .chain(&LATE_OCTOBER)
     {
         assert!(
             !outcomes[*at].held,
             "a year that began in June answered a question resting on a sitting that never \
-             happened, so it is twelve rooms in a row rather than one year: {}",
+             happened, so it is thirteen rooms in a row rather than one year: {}",
             saying(&outcomes),
         );
     }
@@ -674,6 +717,7 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
             7 => august(&surface, &sid).await,
             8 => september(&surface, &sid).await,
             9 => october(&surface, &sid).await,
+            10 => late_october(&surface, &sid).await,
             // The two sittings a person reads ask questions and record
             // nothing, which is what they are for.
             _ => {}
@@ -691,10 +735,10 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
         room: &surface,
         boundaries: &boundaries,
     };
-    // **Every dated sitting, with none excluded.** The sitting whose act is a
-    // retraction used to be left out: a retraction is dated and `retract` took
-    // no date, so that record always carried the day the run happened. The
-    // verb takes one now, so the year holds all the way through.
+    // **Every dated sitting, with none excluded.** July rewrites the March
+    // claim with `update_fact` and late October retracts a June one with
+    // `retract` — both verbs take a date now, so both carry the day the
+    // operator names rather than the day the run happened.
     let mut missed = Vec::new();
     let mut asked = 0;
     for dated in days_claimed(&year) {
@@ -705,8 +749,8 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
         }
     }
     assert_eq!(
-        asked, 10,
-        "the year claims ten days outside the two sittings a person reads, and this asked \
+        asked, 11,
+        "the year claims eleven days outside the two sittings a person reads, and this asked \
          about {asked}",
     );
     assert!(

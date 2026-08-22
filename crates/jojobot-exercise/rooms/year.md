@@ -332,7 +332,41 @@ carries person:nelson
 say     October: one of the two accounts of how the pump came back is gone, so a sitting picked a winner where the design says both stand
 ```
 
-## Phase 11 — November, something nobody ever wrote down
+## Phase 11 — later in October, somebody who was never there
+
+**Session: fresh.** **Day: 2026-10-24.**
+
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
+> start jojobot as assistant — it is 24 October 2026, and it turns out Nelson never actually made it to the June survey — he was fixing a flat that morning and I only just found out — so I do not want him down as having been there, and Bart has joined the club
+
+```locks
+# `retract`'s own case, walked for the first time all year. June's attendance
+# claim was not a state that later changed — it was never true at all. The
+# record it corrects only exists because January stood up the event and
+# February stood up Nelson, and June is what put him at it: a run that started
+# here from nothing has nobody on file to un-attend.
+#
+# The positive is the mark; the negative is the other move that also stops a
+# later sitting reading him as having gone — an edit that leaves the record
+# superseded rather than retracted would say his attendance changed, when he
+# was never there to begin with.
+recall {"subject": "person:nelson", "facts": true}
+carries "status":"retracted"
+lacks   "status":"superseded"
+say     October (again): Nelson's survey attendance is not marked taken back, so a session reading his page later still finds him at an event he never went to
+
+# The second shape, folded in: Bart, walked rather than read off a sentence,
+# the same device February used for Nelson.
+recall {"subject": "org:north-trail-club", "follow": {"shape": "membership", "direction": "in"}}
+carries person:bart
+say     October (again): Bart cannot be walked to the club, so he is a name in a transcript and nothing on the roster
+```
+
+
+## Phase 12 — November, something nobody ever wrote down
 
 **Session: fresh.** **Day: 2026-11-08.** **Read this.**
 
@@ -357,7 +391,7 @@ nothing leaves an identical store. **That half is unlockable by construction.**
 ⭐ **So this is the passage to read.** It is the project's oldest open failure
 class and this is the first place it happens in front of anybody.
 
-## Phase 12 — December, what has gone quiet
+## Phase 13 — December, what has gone quiet
 
 **Session: fresh.** **Day: 2026-12-13.** **Read this.**
 
