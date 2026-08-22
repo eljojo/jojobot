@@ -19,6 +19,7 @@
 //! way, in this library, and `make check` runs those.
 
 pub mod agent;
+pub mod calls;
 pub mod checks;
 pub mod expectations;
 pub mod lock;

@@ -24,6 +24,7 @@ fn said(phase: &str, ran: bool, continuing: bool) -> Said {
         phase: phase.to_string(),
         prompt: "say something".into(),
         output: "the agent answered, and it reads perfectly well".into(),
+        raw: String::new(),
         ran,
         continuing,
         read_this: false,
@@ -138,6 +139,7 @@ fn a_phase_that_skipped_its_steps_is_a_harness_failure() {
             // The shape the paid run produced: one step answered, the rest
             // swept into a range nobody wrote out.
             output: "53. neither came back. Summary 48-53: PASS".into(),
+            raw: String::new(),
             ran: true,
             continuing: false,
             read_this: false,
@@ -162,6 +164,7 @@ fn a_phase_that_skipped_its_steps_is_a_harness_failure() {
             prompt: asked.into(),
             output: "48. added it. 49. recorded it. 50. added the second. 51. checked it in. 52. asked. 53. asked again."
                 .into(),
+            raw: String::new(),
             ran: true,
             continuing: false,
             read_this: false,
@@ -189,6 +192,7 @@ fn a_phase_that_skipped_its_steps_is_a_harness_failure() {
             phase: "Phase 2 — the identity you arrive holding".into(),
             prompt: "5. Say what the charter told you.".into(),
             output: "53. the loop with a cadence came back".into(),
+            raw: String::new(),
             ran: true,
             continuing: false,
             read_this: false,

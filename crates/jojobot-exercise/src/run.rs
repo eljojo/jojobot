@@ -100,6 +100,10 @@ pub struct Said {
     pub phase: String,
     pub prompt: String,
     pub output: String,
+    /// **What the CLI wrote for this sitting, untouched.** Kept beside the run
+    /// rather than rendered into it: the readable transcript is for a person
+    /// and this is the material every other reading is made from.
+    pub raw: String,
     /// Whether the invocation itself came back clean.
     pub ran: bool,
     /// Whether this phase was told to carry the conversation before it on.
@@ -258,7 +262,19 @@ impl Results {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, self.rendered())
+        std::fs::write(path, self.rendered())?;
+        // **The raw stream goes beside it, never instead of it.** The readable
+        // file above is what the operator reads; this is what a later reading
+        // is made from, and a fault in one must not cost the other.
+        crate::calls::keep_raw(path, &self.sittings())
+    }
+
+    /// Each sitting's name paired with the stream it produced, in run order.
+    fn sittings(&self) -> Vec<(String, String)> {
+        self.transcript
+            .iter()
+            .map(|said| (said.phase.clone(), said.raw.clone()))
+            .collect()
     }
 
     /// The whole run as text: transcript, then results.
@@ -500,6 +516,7 @@ pub async fn go(
         // arriving together made a wrong prediction impossible to record.
         let mut output = String::new();
         let mut ran = true;
+        let mut raw = String::new();
         for delivery in &phase.deliveries {
             let worked = agent
                 .work(room.endpoint(), &conversation, delivery)
@@ -509,6 +526,7 @@ pub async fn go(
                 output.push('\n');
             }
             output.push_str(&worked.output);
+            raw.push_str(&worked.raw);
             ran &= worked.ran;
             // Every delivery after the first carries the one before it on, or
             // the answer to the prediction is not in the room when the reveal
@@ -519,6 +537,7 @@ pub async fn go(
             phase: phase.name.clone(),
             prompt: phase.prompt.clone(),
             output,
+            raw,
             ran,
             continuing: !(at == 0 || phase.fresh_session),
             read_this: phase.read_this,
@@ -859,6 +878,7 @@ mod tests {
                     phase: (*phase).to_string(),
                     prompt: format!("what {phase} was asked"),
                     output: format!("what {phase} answered"),
+                    raw: format!(r#"{{"type":"result","phase":"{phase}"}}"#),
                     ran: true,
                     continuing: false,
                     read_this: false,

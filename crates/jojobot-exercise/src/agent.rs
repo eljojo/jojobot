@@ -93,6 +93,12 @@ impl Invocation {
 pub struct Worked {
     /// Everything it printed.
     pub(crate) output: String,
+    /// **The stream exactly as the CLI wrote it, before anything reads it.**
+    ///
+    /// Kept apart from [`output`](Worked::output) because that one is rendered
+    /// for a person and this one is the evidence. A run keeps this to disk, so
+    /// a mistake in any later reading costs a re-read rather than the run.
+    pub(crate) raw: String,
     /// Whether the CLI itself reported success. A phase told to continue a
     /// conversation the CLI could not find is the case this exists for.
     pub(crate) ran: bool,
@@ -247,10 +253,16 @@ impl Agent {
                     "[the agent did not answer within {} seconds and was stopped]",
                     PHASE_DEADLINE.as_secs(),
                 ),
+                // **A stopped phase printed nothing, and that is a fact rather
+                // than a gap.** The sitting still appears in the kept stream
+                // carrying no events, which is what tells a reader it produced
+                // nothing instead of that the capture missed it.
+                raw: String::new(),
                 ran: false,
             });
         };
-        let mut said = String::from_utf8_lossy(&done.stdout).to_string();
+        let printed = String::from_utf8_lossy(&done.stdout).to_string();
+        let mut said = printed.clone();
         if !done.status.success() {
             said.push_str(&format!(
                 "\n[the agent exited {}]\n{}",
@@ -260,6 +272,7 @@ impl Agent {
         }
         Ok(Worked {
             output: said,
+            raw: printed,
             // **A refused resume is the failure that looks like success.** The
             // CLI is asked to carry a conversation on; if it cannot, an
             // invocation that came back non-zero is the one signal the harness
