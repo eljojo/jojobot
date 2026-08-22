@@ -244,17 +244,23 @@ say     June: the chain check does not say it was done on the day this sitting c
 > start jojobot as assistant — it is 5 July 2026 and I was wrong in March, the club has never met on Tuesdays and I do not want that standing
 
 ```locks
-# Taken back rather than deleted. The record is an archive and a later sitting
-# must be able to see that somebody once believed it — what it must not do is
-# read it as true.
+# Rewritten in place, not retracted. The March claim is about what the club's
+# schedule IS — an ongoing state — and in July it did not stop being so, it
+# was never so. retract's own words are for something that HAPPENED and
+# turned out not to; update_fact's are for a claim about what is true now,
+# and they say plainly to rewrite the content to state the negative truth and
+# leave the record active. A retraction here would lose the one thing the
+# rewrite keeps: that this is the SAME claim, corrected, not two claims about
+# it.
 #
-# The second half is what stops a correction taking the subject out with the
-# claim, and it is in the same lock because on its own it is true of a room
-# nobody worked in.
+# The day is the second half, and it is asked for the reason the first half
+# is: a rewrite with no date given keeps the ORIGINAL day forever, and a
+# sitting in December reading that day would think March corrected itself.
 recall {"subject": "org:north-trail-club", "facts": true}
-carries "status":"retracted"
-carries north-trail-club
-say     July: nothing on the club is marked taken back, so a sitting in December still reads Tuesdays as current — or the club went with the claim
+carries never met on Tuesdays
+carries "date":"2026-07-05"
+lacks   "status":"retracted"
+say     July: the March claim does not currently say the club never met on Tuesdays under July's own day — either it was never rewritten, or it was retracted instead and the current truth is not on the record
 ```
 
 ## Phase 8 — August, a question that needs a walk

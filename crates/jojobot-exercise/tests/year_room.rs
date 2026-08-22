@@ -282,8 +282,9 @@ async fn july(room: &Surface, sid: &str) {
     did(
         room,
         sid,
-        "retract",
-        json!({"address": wrong, "reason": "the operator says the club has never met on Tuesdays",
+        "update_fact",
+        json!({"address": wrong,
+               "content": "The club has never met on Tuesdays — the operator was wrong to say so in March.",
                "date": "2026-07-05"}),
     )
     .await;
