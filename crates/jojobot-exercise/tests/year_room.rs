@@ -78,13 +78,15 @@ async fn did(room: &Surface, sid: &str, verb: &str, mut args: Value) -> String {
     room.call(verb, args).await
 }
 
-/// Every lock the year registers, run against the room as it stands.
-async fn judge_all(room: &Surface) -> Vec<Outcome> {
-    let boundaries: Vec<Boundary> = Vec::new();
-    let seen = Observed {
-        room,
-        boundaries: &boundaries,
-    };
+/// Every lock the year registers, run against the room as it stands and
+/// against the readings the run took as it went.
+///
+/// ⚠️ **The boundaries are an argument rather than an empty list.** A check
+/// scoped to one sitting's window has nothing to read without them, and a case
+/// that judged a worked year against no readings would report that check
+/// failing for a reason that has nothing to do with the year.
+async fn judge_all(room: &Surface, boundaries: &[Boundary]) -> Vec<Outcome> {
+    let seen = Observed { room, boundaries };
     let checks = expectations::for_playbook(expectations::YEAR_ROOM).expect("the year asserts");
     let mut outcomes = Vec::new();
     for check in checks {
@@ -372,18 +374,61 @@ async fn late_october(room: &Surface, sid: &str) {
 }
 
 /// The whole year, worked the way it is meant to be.
-async fn worked_the_year(room: &Surface, sid: &str) {
-    january(room, sid).await;
-    february(room, sid).await;
-    march(room, sid).await;
-    april(room, sid).await;
-    may(room, sid).await;
-    june(room, sid).await;
-    july(room, sid).await;
-    august(room, sid).await;
-    september(room, sid).await;
-    october(room, sid).await;
-    late_october(room, sid).await;
+async fn worked_the_year(room: &Surface, sid: &str) -> Vec<Boundary> {
+    work_the_year(
+        room,
+        sid,
+        &room_document(),
+        &(0..WORKED).collect::<Vec<_>>(),
+    )
+    .await
+}
+
+/// The sittings that record something. The two after them are the ones a
+/// person reads, and they write nothing by design.
+const WORKED: usize = 11;
+
+/// **The year worked sitting by sitting, taking the readings a run takes.**
+///
+/// One driver for both of the cases that work the whole year, because they were
+/// two copies of the same order and a check scoped to a sitting's window needs
+/// the readings either way. **The run's own boundary names, from the run's own
+/// rule** — naming them here would prove a shape this suite invented.
+///
+/// `worked` names the sittings to do. **Naming them rather than taking a first
+/// one**: the case that starts the year in June deliberately leaves July and
+/// late October out as well, because both edit a claim no earlier sitting
+/// wrote, and a range cannot say that.
+async fn work_the_year(
+    room: &Surface,
+    sid: &str,
+    year: &Playbook,
+    worked: &[usize],
+) -> Vec<Boundary> {
+    let named = boundary_names(year);
+    let mut boundaries = vec![boundary(room, &named[0]).await];
+    for (at, _phase) in year.phases.iter().enumerate() {
+        if worked.contains(&at) {
+            match at {
+                0 => january(room, sid).await,
+                1 => february(room, sid).await,
+                2 => march(room, sid).await,
+                3 => april(room, sid).await,
+                4 => may(room, sid).await,
+                5 => june(room, sid).await,
+                6 => july(room, sid).await,
+                7 => august(room, sid).await,
+                8 => september(room, sid).await,
+                9 => october(room, sid).await,
+                10 => late_october(room, sid).await,
+                // The two sittings a person reads ask questions and record
+                // nothing, which is what they are for.
+                _ => {}
+            }
+        }
+        boundaries.push(boundary(room, &named[at + 1]).await);
+    }
+    boundaries
 }
 
 // ────────────────────────────── the cases ──────────────────────────────
@@ -525,8 +570,11 @@ fn the_sittings_a_person_reads_are_marked_and_every_other_one_is_locked() {
 /// something.
 #[tokio::test]
 async fn a_year_nobody_worked_in_fails_every_lock() {
-    let (_room, surface, _sid) = furnished().await;
-    let outcomes = judge_all(&surface).await;
+    let (_room, surface, sid) = furnished().await;
+    // The readings a run takes, with nothing done between them: a check scoped
+    // to one sitting must see an empty window rather than no window at all.
+    let boundaries = work_the_year(&surface, &sid, &room_document(), &[]).await;
+    let outcomes = judge_all(&surface, &boundaries).await;
     for outcome in &outcomes {
         assert!(
             !outcome.held,
@@ -548,8 +596,8 @@ async fn a_year_nobody_worked_in_fails_every_lock() {
 #[tokio::test]
 async fn every_lock_holds_once_the_year_is_worked() {
     let (_room, surface, sid) = furnished().await;
-    worked_the_year(&surface, &sid).await;
-    let outcomes = judge_all(&surface).await;
+    let boundaries = worked_the_year(&surface, &sid).await;
+    let outcomes = judge_all(&surface, &boundaries).await;
     for outcome in &outcomes {
         assert!(
             outcome.held,
@@ -579,12 +627,8 @@ async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
     let (_room, surface, sid) = furnished().await;
     // June onwards, done as well as a session can do it against a store that
     // holds nothing any of it refers to.
-    june(&surface, &sid).await;
-    august(&surface, &sid).await;
-    september(&surface, &sid).await;
-    october(&surface, &sid).await;
-
-    let outcomes = judge_all(&surface).await;
+    let boundaries = work_the_year(&surface, &sid, &room_document(), &[5, 7, 8, 9]).await;
+    let outcomes = judge_all(&surface, &boundaries).await;
     // **Eighteen of the nineteen locks fail.** The one that holds is the only
     // claim in the year that rests on nothing before it — August files the
     // committee note against a club that came with the furniture.
@@ -655,7 +699,8 @@ async fn the_locks_fail_on_a_year_written_entirely_in_prose() {
         )
         .await;
     }
-    let outcomes = judge_all(&surface).await;
+    let boundaries = work_the_year(&surface, &sid, &room_document(), &[]).await;
+    let outcomes = judge_all(&surface, &boundaries).await;
     for at in JANUARY[1..].iter().chain(&FEBRUARY).chain(&JUNE) {
         assert!(
             !outcomes[*at].held,
@@ -710,30 +755,10 @@ fn no_furniture_is_dated_on_a_day_a_sitting_claims() {
 async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
     let (_room, surface, sid) = furnished().await;
     let year = room_document();
-    // The run's own reads, in the run's own order and with the run's own names.
-    // **The run's own names, from the run's own rule.** Naming them here would
-    // prove a shape this case invented rather than the one a run takes.
-    let named = boundary_names(&year);
-    let mut boundaries = vec![boundary(&surface, &named[0]).await];
-    for (at, _phase) in year.phases.iter().enumerate() {
-        match at {
-            0 => january(&surface, &sid).await,
-            1 => february(&surface, &sid).await,
-            2 => march(&surface, &sid).await,
-            3 => april(&surface, &sid).await,
-            4 => may(&surface, &sid).await,
-            5 => june(&surface, &sid).await,
-            6 => july(&surface, &sid).await,
-            7 => august(&surface, &sid).await,
-            8 => september(&surface, &sid).await,
-            9 => october(&surface, &sid).await,
-            10 => late_october(&surface, &sid).await,
-            // The two sittings a person reads ask questions and record
-            // nothing, which is what they are for.
-            _ => {}
-        }
-        boundaries.push(boundary(&surface, &named[at + 1]).await);
-    }
+    // The run's own reads, in the run's own order and with the run's own names,
+    // taken by the one driver the lock case uses. Two copies of this order was
+    // how they came to disagree about which sittings write.
+    let boundaries = worked_the_year(&surface, &sid).await;
 
     let changed = boundaries[0].world != boundaries[boundaries.len() - 1].world;
     assert!(
@@ -771,5 +796,46 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
          winnable by anybody: {}",
         missed.len(),
         missed.join("\n  "),
+    );
+}
+
+/// 🚨 **The check scoped to one sitting's window, asked both ways in one
+/// case.**
+///
+/// Every other lock in this room runs once against the FINISHED room, so the
+/// only question it can ask is whether something is still there at the end.
+/// March cannot be asked that: July rewrites what March wrote, in place and
+/// under July's own day, and editing a claim destroys what it said before.
+///
+/// **So this reads the world either side of March.** The negative is a year
+/// worked without that sitting; the positive is a year worked with it. **Both
+/// in one case, because a negative on its own passes identically on a run where
+/// the check is broken and reports nothing.**
+///
+/// ⚠️ **July is left out of the negative as well**, and not to be kind to it:
+/// July edits the claim March writes, so a year missing March cannot run July
+/// at all. Working it would fail on the missing address rather than on the
+/// window this case is about.
+#[tokio::test]
+async fn the_march_window_says_whether_that_sitting_recorded_anything() {
+    let without = [0, 1, 3, 4, 5, 7, 8, 9, 10];
+    let (_room, surface, sid) = furnished().await;
+    let boundaries = work_the_year(&surface, &sid, &room_document(), &without).await;
+    let missing = judge_all(&surface, &boundaries).await;
+    assert!(
+        !missing[MARCH[0]].held,
+        "a year where March recorded nothing held March's lock, so the window is reading \
+         something else: {}",
+        saying(&missing),
+    );
+
+    let (_room, surface, sid) = furnished().await;
+    let boundaries = worked_the_year(&surface, &sid).await;
+    let worked = judge_all(&surface, &boundaries).await;
+    assert!(
+        worked[MARCH[0]].held,
+        "a year where March did record failed March's lock, so the check is refusing the right \
+         answer rather than measuring the sitting: {}",
+        saying(&worked),
     );
 }

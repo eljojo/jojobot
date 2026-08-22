@@ -173,8 +173,16 @@ say     February: the club cannot be walked to its members, so August's question
 > start jojobot as assistant — it is 15 March 2026 and the club meets on Tuesdays, put that down
 
 ```locks
-recall {"subject": "org:north-trail-club", "facts": true}
-carries Tuesday
+# ⚠️ **A named check, because this is the one sitting the finished room cannot
+# answer for.** July rewrites what March wrote, in place and under July's own
+# day, and editing a claim destroys what it said before — so at the end of the
+# run nothing is dated March and nothing says what March said. The word
+# "Tuesday" survived only because the corrected sentence happens to keep it,
+# which is a check standing on an accident rather than on the record.
+#
+# The check reads the world either side of this sitting and asks whether the
+# club gained a record in that window. Only this sitting writes there.
+check   the_club_was_given_a_claim_in_march
 say     March: nothing says the club meets on Tuesdays, so July has nothing to take back
 ```
 

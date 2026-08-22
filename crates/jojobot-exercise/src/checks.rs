@@ -40,7 +40,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 6] = [
+pub const CHECKS: [Hatch; 7] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -58,6 +58,9 @@ pub const CHECKS: [Hatch; 6] = [
     }),
     ("what_became_of_the_pile_is_on_the_record", || {
         checked(|seen| Box::pin(what_became_of_the_pile_is_on_the_record(seen)))
+    }),
+    ("the_club_was_given_a_claim_in_march", || {
+        checked(|seen| Box::pin(the_club_was_given_a_claim_in_march(seen)))
     }),
 ];
 
@@ -420,5 +423,50 @@ fn collect_values(value: &Value, into: &mut Vec<String>) {
             }
         }
         _ => {}
+    }
+}
+
+/// The sitting whose window this reads, and the subject it counts records on.
+const MARCH: &str = "Phase 3";
+const CLUB: &str = "\"subject\":\"org:north-trail-club\"";
+
+/// 🚨 **What ONE SITTING recorded, asked in that sitting's own window.**
+///
+/// **Every other check in every room runs once, against the finished room**, so
+/// the only question a room can ask is whether something is still there at the
+/// end. That is a weaker question, and March is where the difference bites: a
+/// later sitting rewrites March's claim IN PLACE, under its own day, and
+/// editing a claim destroys what it said before — the earlier text is on no
+/// read, because a claim's content is a column on the fact row rather than one
+/// of the field writes the store keeps. **So by the time the checks run there
+/// is nothing dated March and nothing saying what March said.**
+///
+/// ⛔️ **The needle cannot be a word, either.** March's claim survives today
+/// only because the sentence that replaced it happens to keep one — which is a
+/// check standing on an accident.
+///
+/// **So this reads the world either side of March and asks whether the club
+/// gained a record in that window.** Only March writes there. It is structural,
+/// it is phrasing-free, and no later sitting can take it away.
+///
+/// ⚠️ **A run that took no readings must fail here and say why.** Every suite
+/// passed an empty boundary list until this shipped, so a check that held
+/// against no boundaries would pass everywhere it had not been wired up — which
+/// is the worst answer available, because it looks like coverage.
+async fn the_club_was_given_a_claim_in_march(seen: &Observed<'_>) -> Result<(), String> {
+    let Some((before, after)) = seen.across(MARCH) else {
+        return Err(format!(
+            "this run took no reading either side of {MARCH}, so nothing here can say what that \
+             sitting recorded. A check scoped to one sitting needs the run's own boundaries.",
+        ));
+    };
+    let had = before.world.matches(CLUB).count();
+    let has = after.world.matches(CLUB).count();
+    match has > had {
+        true => Ok(()),
+        false => Err(format!(
+            "the club carried {had} records before {MARCH} and {has} after, so that sitting \
+             recorded nothing about it and July has nothing to take back",
+        )),
     }
 }
