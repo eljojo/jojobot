@@ -1006,8 +1006,11 @@ impl Jojobot {
             }),
         };
 
-        let mut found = match graph::walk(self.memory.as_ref(), &query).await {
-            Ok(found) => found,
+        let graph::Selected {
+            objects: mut found,
+            withheld,
+        } = match graph::walk(self.memory.as_ref(), &query).await {
+            Ok(answer) => answer,
             Err(e) => return memory_declined("recall", e),
         };
         // **The arithmetic is the domain's and the selection is here.** It is
@@ -1091,6 +1094,18 @@ impl Jojobot {
             // way to learn which day that was, and an answer about an unnamed
             // day is one nobody can check.
             "overdue_as_of": as_of.map(|d| d.to_string()),
+            // **What this selection matched and did not hand over, because it
+            // belongs to another identity.**
+            //
+            // 🚨 **Withheld and absent are the same empty list without this.** A
+            // session searching its own past and getting nothing back reads it
+            // as "there is nothing" rather than "you were not allowed", and
+            // acts on the first.
+            //
+            // **A total, never a breakdown.** How many is work status, which a
+            // colleague may see; which identity holds them is a directory of
+            // who is busy, and the caller named no handle to earn it.
+            "withheld": withheld,
             "objects": found
                 .iter()
                 .zip(held)

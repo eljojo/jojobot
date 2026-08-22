@@ -121,6 +121,7 @@ async fn selected<M: Memory>(store: &M, select: graph::Selection) -> Vec<EntityI
     )
     .await
     .expect("a selection")
+    .objects
     .into_iter()
     .map(|o| o.entity.id)
     .collect()
@@ -1124,7 +1125,8 @@ async fn the_required_keys_are_the_ones_the_loop_actually_writes() {
         },
     )
     .await
-    .expect("a selection");
+    .expect("a selection")
+    .objects;
     let fields = &objects.first().expect("the loop").fields;
     for key in &required {
         assert!(

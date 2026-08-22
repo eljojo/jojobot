@@ -1179,6 +1179,7 @@ pub mod contract {
         )
         .await
         .expect("a handle is a selection")
+        .objects
         .first()
         .unwrap_or_else(|| panic!("a walk from {id} must answer with the thing itself"))
         .fields
@@ -6769,7 +6770,8 @@ pub mod contract {
             },
         )
         .await
-        .expect("a kind is a selection");
+        .expect("a kind is a selection")
+        .objects;
 
         let page = |id: &EntityId| {
             found
@@ -6838,7 +6840,8 @@ pub mod contract {
                     },
                 )
                 .await
-                .expect("a key filter is a selection");
+                .expect("a key filter is a selection")
+                .objects;
                 found
                     .iter()
                     .map(|o| o.entity.id.clone())
@@ -6881,7 +6884,8 @@ pub mod contract {
             },
         )
         .await
-        .expect("a subject with a walk");
+        .expect("a subject with a walk")
+        .objects;
         let reached: Vec<&EntityId> = walked[0].connected.iter().map(|o| &o.entity.id).collect();
         assert!(
             reached.contains(&&coming) && reached.contains(&&staying),
@@ -7158,7 +7162,8 @@ pub mod contract {
             },
         )
         .await
-        .expect("a handle is a selection");
+        .expect("a handle is a selection")
+        .objects;
         assert_eq!(
             read.first().map(|o| &o.entity.id),
             Some(&alone),
@@ -7202,7 +7207,8 @@ pub mod contract {
             },
         )
         .await
-        .expect("a subject with a walk");
+        .expect("a subject with a walk")
+        .objects;
         walked
             .first()
             .map(|o| o.connected.iter().map(|c| c.entity.id.clone()).collect())
@@ -7277,7 +7283,8 @@ pub mod contract {
         declare(ValueType::Reference).await;
         let found = reached("keeper")
             .await
-            .expect("declared a reference, the key is a relation");
+            .expect("declared a reference, the key is a relation")
+            .objects;
         let connected: Vec<&EntityId> = found[0].connected.iter().map(|o| &o.entity.id).collect();
         assert!(
             connected.contains(&&held),
@@ -7301,7 +7308,8 @@ pub mod contract {
             },
         )
         .await
-        .expect("a declared date licenses an ordering");
+        .expect("a declared date licenses an ordering")
+        .objects;
         assert!(
             older.iter().any(|o| o.entity.id == held),
             "the record stored before that date is selected by the ordering: {older:?}",
@@ -8326,7 +8334,8 @@ pub mod contract {
             },
         )
         .await
-        .expect("a handle is a selection");
+        .expect("a handle is a selection")
+        .objects;
         let object = &dense[0];
         assert_eq!(
             object.fields,
@@ -8363,7 +8372,8 @@ pub mod contract {
             },
         )
         .await
-        .expect("a handle is a selection");
+        .expect("a handle is a selection")
+        .objects;
         assert_eq!(
             whole[0].facts.len(),
             2,
@@ -8613,6 +8623,7 @@ pub mod contract {
                 )
                 .await
                 .expect("a handle is a selection")
+                .objects
             }
         };
 
@@ -8677,7 +8688,8 @@ pub mod contract {
             },
         )
         .await
-        .expect("a handle is a selection");
+        .expect("a handle is a selection")
+        .objects;
         let history = found[0].history.as_ref().expect("the query named a key");
         assert_eq!((history.total, history.writes.len()), (3, 3));
         assert_eq!(

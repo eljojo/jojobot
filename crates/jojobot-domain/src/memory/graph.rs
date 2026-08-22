@@ -810,22 +810,40 @@ impl History {
 /// filtered again — a neighbour is in the answer because something pointed at
 /// it, and re-applying the caller's filters at every hop would return a set
 /// that is neither the neighbourhood nor the selection.
+/// **What a selection answered, and what it kept back.**
+///
+/// The count is here rather than left to the caller because only the query
+/// knows it: by the time a list of objects reaches anybody, what was filtered
+/// out is indistinguishable from what was never there.
+#[derive(Debug, Clone)]
+pub struct Selected {
+    /// The objects the caller may read, in handle order.
+    pub objects: Vec<Object>,
+    /// **How many this selection matched and withheld as another identity's.**
+    /// A total, never a breakdown: how many is work status, and which identity
+    /// holds them is a directory of who is busy.
+    pub withheld: usize,
+}
+
 pub fn resolve(
     scanned: &[DocScan],
     declarations: &[types::DeclaredType],
     query: &GraphQuery,
-) -> Result<Vec<Object>, MemoryError> {
+) -> Result<Selected, MemoryError> {
     query.validate()?;
     check_declared(query, declarations)?;
     let ctx = Ctx::of(scanned, declarations);
     let roots = ctx.roots(&query.select)?;
-    Ok(roots
-        .into_iter()
-        .map(|id| {
-            let mut seen = HashSet::from([id.clone()]);
-            ctx.expand(&id, None, query, query.follow.as_ref(), &mut seen)
-        })
-        .collect())
+    Ok(Selected {
+        objects: roots
+            .into_iter()
+            .map(|id| {
+                let mut seen = HashSet::from([id.clone()]);
+                ctx.expand(&id, None, query, query.follow.as_ref(), &mut seen)
+            })
+            .collect(),
+        withheld: ctx.withheld(&query.select),
+    })
 }
 
 /// The store's documents, indexed the three ways a walk reads them.
@@ -978,6 +996,19 @@ impl<'a> Ctx<'a> {
             .collect();
         found.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         Ok(found)
+    }
+
+    /// **What this selection matched and kept back as another identity's.**
+    ///
+    /// Counted over the same properties the selection filters on, so it answers
+    /// "how many of the things you asked for are not yours" rather than "how
+    /// many owned things exist".
+    fn withheld(&self, select: &Selection) -> usize {
+        self.entities
+            .values()
+            .filter(|e| select.kind.is_none_or(|k| e.kind == k))
+            .filter(|e| !self.readable_by(&e.id, select))
+            .count()
     }
 
     /// **May the caller read this object?**
@@ -1305,7 +1336,7 @@ impl<'a> Ctx<'a> {
 /// and that handle's records. A walk costs every entity's records, because
 /// which objects it reaches is not known until it has been walked, and an
 /// inbound walk has to ask who points here.
-pub async fn walk<M>(store: &M, query: &GraphQuery) -> Result<Vec<Object>, MemoryError>
+pub async fn walk<M>(store: &M, query: &GraphQuery) -> Result<Selected, MemoryError>
 where
     M: super::Memory + ?Sized,
 {
@@ -1388,7 +1419,7 @@ where
     // the answer: the walk cannot know which objects it will return, and a read
     // of every entity's writes would pay for the ones nobody asked about.
     if let Some(wanted) = &query.history {
-        for object in &mut found {
+        for object in &mut found.objects {
             fill_history(store, object, wanted).await?;
         }
     }
@@ -1554,14 +1585,14 @@ mod tests {
             history: None,
         };
 
-        let mine = resolve(&scanned, &[], &asking(Some("bot:gamma"))).expect("a kind selects");
+        let mine = resolved(&scanned, &[], &asking(Some("bot:gamma"))).expect("a kind selects");
         assert_eq!(
             handles(&mine),
             vec!["bot:gamma", "bot:otto"],
             "the caller's own owned object, and everything owned by nobody",
         );
 
-        let theirs = resolve(&scanned, &[], &asking(Some("bot:delta"))).expect("a kind selects");
+        let theirs = resolved(&scanned, &[], &asking(Some("bot:delta"))).expect("a kind selects");
         assert_eq!(
             handles(&theirs),
             vec!["bot:delta", "bot:otto"],
@@ -1569,11 +1600,60 @@ mod tests {
              list of one bot's things",
         );
 
-        let anonymous = resolve(&scanned, &[], &asking(None)).expect("a kind selects");
+        let anonymous = resolved(&scanned, &[], &asking(None)).expect("a kind selects");
         assert_eq!(
             handles(&anonymous),
             vec!["bot:otto"],
             "a caller with no identity reaches everything unowned and nothing owned",
+        );
+    }
+
+    /// **What was withheld is counted, so a refusal cannot read as an empty
+    /// store.**
+    ///
+    /// 🚨 **This is the whole reason the axis exists.** A bot that may not read
+    /// something and a bot for which there is nothing both get an empty list,
+    /// and the first reads as the second — so a session searching its own past
+    /// concludes there is nothing rather than that it was not allowed.
+    ///
+    /// **A TOTAL and never a breakdown.** How many is work status; which
+    /// colleague holds them is a directory of who is busy, and the caller named
+    /// no handle to earn that.
+    ///
+    /// Both halves: the caller's own are returned AND the rest are counted.
+    /// Without the count this passes on a build that filters silently.
+    #[test]
+    fn what_a_selection_withheld_is_counted_rather_than_dropped_in_silence() {
+        let scanned = vec![
+            owned_by(entity("bot:gamma", "Gamma"), "bot:gamma", ""),
+            owned_by(entity("bot:delta", "Delta"), "bot:delta", ""),
+            owned_by(entity("bot:epsilon", "Epsilon"), "bot:epsilon", ""),
+            doc(entity("bot:otto", "Otto"), "", Vec::new()),
+        ];
+        let query = GraphQuery {
+            select: Selection {
+                kind: Some(EntityKind::BOT),
+                asked_by: Some(EntityId("bot:gamma".into())),
+                ..Selection::default()
+            },
+            include: Include {
+                facts: false,
+                prose: false,
+            },
+            follow: None,
+            history: None,
+        };
+
+        let answer = resolve(&scanned, &[], &query).expect("a kind selects");
+
+        assert_eq!(
+            handles(&answer.objects),
+            vec!["bot:gamma", "bot:otto"],
+            "the caller's own, and everything owned by nobody",
+        );
+        assert_eq!(
+            answer.withheld, 2,
+            "…and the two belonging to other identities are counted rather than vanishing",
         );
     }
 
@@ -1623,13 +1703,24 @@ mod tests {
             ),
         }
 
-        let mine = resolve(&scanned, &[], &naming("bot:gamma")).expect("its owner reads it");
+        let mine = resolved(&scanned, &[], &naming("bot:gamma")).expect("its owner reads it");
         assert_eq!(handles(&mine), vec!["bot:gamma"]);
         assert_eq!(
             mine[0].prose.as_deref(),
             Some("what gamma is for"),
             "…and reads it whole, so this is a refusal of others rather than of everyone",
         );
+    }
+
+    /// The objects a selection answered with — what almost every case here
+    /// asks for. The cases about what was WITHHELD call `resolve` directly,
+    /// because the count is the thing they assert.
+    fn resolved(
+        scanned: &[DocScan],
+        declarations: &[types::DeclaredType],
+        query: &GraphQuery,
+    ) -> Result<Vec<Object>, MemoryError> {
+        resolve(scanned, declarations, query).map(|answer| answer.objects)
     }
 
     /// A fact drawing one edge.
@@ -1747,7 +1838,7 @@ mod tests {
             follow: None,
             history: None,
         };
-        let found = resolve(&scanned, &[], &query).expect("a kind is a selection");
+        let found = resolved(&scanned, &[], &query).expect("a kind is a selection");
         assert_eq!(
             handles(&found),
             vec![
@@ -1769,7 +1860,7 @@ mod tests {
             found[1],
         );
 
-        let unasked = resolve(
+        let unasked = resolved(
             &scanned,
             &[],
             &GraphQuery {
@@ -1802,12 +1893,12 @@ mod tests {
                 },
                 ..GraphQuery::default()
             };
-            resolve(&scanned, &[], &query).expect("a key filter is a selection")
+            resolved(&scanned, &[], &query).expect("a key filter is a selection")
         };
         assert_eq!(handles(&by_value("yes")), vec!["person:patana"]);
         assert_eq!(handles(&by_value("no")), vec!["person:barney-gumble"]);
 
-        let any = resolve(
+        let any = resolved(
             &scanned,
             &[],
             &GraphQuery {
@@ -1838,7 +1929,7 @@ mod tests {
         // other question, and the pair is what says the two are apart. Without
         // the assertion above, this one passes on a build where every filter is
         // still the record's.
-        let on_a_record = resolve(
+        let on_a_record = resolved(
             &scanned,
             &[],
             &GraphQuery {
@@ -1877,11 +1968,11 @@ mod tests {
             ..GraphQuery::default()
         };
         assert_eq!(
-            handles(&resolve(&scanned, &[], &query(EntityKind::PERSON)).expect("both filters")),
+            handles(&resolved(&scanned, &[], &query(EntityKind::PERSON)).expect("both filters")),
             vec!["person:barney-gumble", "person:patana"],
         );
         assert!(
-            resolve(&scanned, &[], &query(EntityKind::PLACE))
+            resolved(&scanned, &[], &query(EntityKind::PLACE))
                 .expect("both filters")
                 .is_empty(),
             "the kind narrows the same set the key does, so a kind holding no such record is empty",
@@ -1897,7 +1988,7 @@ mod tests {
             "reply",
             vec![types::Field::required("rsvp", types::ValueType::Text)],
         );
-        let found = resolve(
+        let found = resolved(
             &scanned,
             &[],
             &GraphQuery {
@@ -1919,7 +2010,7 @@ mod tests {
             vec![types::Field::required("weight", types::ValueType::Number)],
         );
         assert!(
-            resolve(
+            resolved(
                 &scanned,
                 &[],
                 &GraphQuery {
@@ -1990,7 +2081,7 @@ mod tests {
             ),
         ];
 
-        let found = resolve(
+        let found = resolved(
             &scanned,
             &[],
             &GraphQuery {
@@ -2077,7 +2168,7 @@ mod tests {
             .collect(),
         )];
 
-        let found = resolve(
+        let found = resolved(
             &scanned,
             &[],
             &GraphQuery {
@@ -2115,7 +2206,7 @@ mod tests {
     fn a_walk_leaves_by_either_end_of_an_edge() {
         let scanned = store();
         let from_party = |direction: Direction| {
-            resolve(
+            resolved(
                 &scanned,
                 &[],
                 &GraphQuery {
@@ -2162,7 +2253,7 @@ mod tests {
             "the party's own record draws no edge, so outbound reaches nobody",
         );
 
-        let from_guest = resolve(
+        let from_guest = resolved(
             &scanned,
             &[],
             &GraphQuery {
@@ -2191,7 +2282,7 @@ mod tests {
     /// asking again per guest, which is two calls for one question.
     #[test]
     fn a_reached_object_brings_its_own_facts() {
-        let found = resolve(
+        let found = resolved(
             &store(),
             &[],
             &GraphQuery {
@@ -2246,7 +2337,7 @@ mod tests {
     fn a_two_hop_walk_returns_the_shape_and_not_a_list() {
         let scanned = store();
         let from_patana = |depth: usize| {
-            resolve(
+            resolved(
                 &scanned,
                 &[],
                 &GraphQuery {
@@ -2306,7 +2397,7 @@ mod tests {
     fn an_object_says_when_it_has_edges_nobody_followed() {
         let scanned = store();
         let from_patana = |depth: usize| {
-            resolve(
+            resolved(
                 &scanned,
                 &[],
                 &GraphQuery {
@@ -2365,7 +2456,7 @@ mod tests {
     /// satisfy "it terminated".
     #[test]
     fn a_walk_over_a_cycle_terminates() {
-        let found = resolve(
+        let found = resolved(
             &store(),
             &[],
             &GraphQuery {
@@ -2408,7 +2499,7 @@ mod tests {
     #[test]
     fn a_named_subject_is_not_filtered_away_and_an_unknown_one_is_a_miss() {
         let scanned = store();
-        let found = resolve(
+        let found = resolved(
             &scanned,
             &[],
             &GraphQuery {
@@ -2431,7 +2522,7 @@ mod tests {
             found[0],
         );
 
-        let missed = resolve(
+        let missed = resolved(
             &scanned,
             &[],
             &GraphQuery::subject(EntityId("person:ned-flander".into())),
@@ -2457,7 +2548,7 @@ mod tests {
     #[test]
     fn a_query_that_narrows_nothing_is_refused() {
         let refused = |query: GraphQuery| {
-            resolve(&store(), &[], &query).expect_err("this query cannot be served");
+            resolved(&store(), &[], &query).expect_err("this query cannot be served");
         };
         refused(GraphQuery::default());
         refused(GraphQuery {
@@ -2486,7 +2577,7 @@ mod tests {
         // The positive the three refusals rest on: the same walk one hop
         // shallower is served, so "refused" is about the argument and not
         // about walks.
-        resolve(
+        resolved(
             &store(),
             &[],
             &GraphQuery {
@@ -2516,7 +2607,7 @@ mod tests {
     #[test]
     fn a_walk_keeps_what_fits_a_type_and_not_what_merely_answers_it() {
         let reached = |fits: Option<types::DeclaredType>| {
-            let found = resolve(
+            let found = resolved(
                 &kennel(),
                 &[pet()],
                 &GraphQuery {
@@ -2706,7 +2797,7 @@ mod tests {
             ),
         ];
         let walk = |from: &str, direction: Direction| {
-            resolve(
+            resolved(
                 &scanned,
                 &declarations,
                 &GraphQuery {
@@ -2752,7 +2843,7 @@ mod tests {
         let scanned = kennel();
         let declarations = vec![pet()];
         let walk = |from: &str, relation: &str, direction: Direction| {
-            resolve(
+            resolved(
                 &scanned,
                 &declarations,
                 &GraphQuery {
@@ -2826,7 +2917,7 @@ mod tests {
             }),
             history: None,
         };
-        resolve(&kennel(), &[], &query).expect_err(
+        resolved(&kennel(), &[], &query).expect_err(
             "with nothing declared, a key holding a handle is a string that looks like one",
         );
 
@@ -2836,12 +2927,12 @@ mod tests {
             "pet",
             vec![types::Field::required("owner", types::ValueType::Text)],
         );
-        resolve(&kennel(), std::slice::from_ref(&as_text), &query)
+        resolved(&kennel(), std::slice::from_ref(&as_text), &query)
             .expect_err("a key declared to hold text is not a relation");
 
         // …and the positive in the same case, so the two refusals are about the
         // declaration and not about relations.
-        resolve(&kennel(), &[pet()], &query).expect("declared as a reference, it is one");
+        resolved(&kennel(), &[pet()], &query).expect("declared as a reference, it is one");
     }
 
     /// **One key name, two types, and the text one does not bury the
@@ -2860,7 +2951,7 @@ mod tests {
             vec![types::Field::required("owner", types::ValueType::Text)],
         );
         let walk = |declarations: &[types::DeclaredType]| {
-            resolve(
+            resolved(
                 &kennel(),
                 declarations,
                 &GraphQuery {
@@ -2922,7 +3013,7 @@ mod tests {
         ];
 
         let reached = |from: &str, relation: &str, direction: Direction| {
-            let found = resolve(
+            let found = resolved(
                 &scanned,
                 std::slice::from_ref(&trip),
                 &GraphQuery {
@@ -2985,7 +3076,7 @@ mod tests {
         let scanned = kennel();
         let declarations = vec![pet()];
         let walk = |from: &str, relation: &str, direction: Direction| {
-            resolve(
+            resolved(
                 &scanned,
                 &declarations,
                 &GraphQuery {
@@ -3088,7 +3179,7 @@ mod tests {
         ];
 
         let along = |along: Along| {
-            let found = resolve(
+            let found = resolved(
                 &scanned,
                 std::slice::from_ref(&declared),
                 &GraphQuery {
@@ -3136,7 +3227,7 @@ mod tests {
     fn a_declaration_licenses_an_ordering_and_nothing_else_does() {
         let scanned = kennel();
         let born_before = |declarations: &[types::DeclaredType]| {
-            resolve(
+            resolved(
                 &scanned,
                 declarations,
                 &GraphQuery {
@@ -3163,7 +3254,7 @@ mod tests {
 
         // The number half of the same rule, and its own negative: `less` is
         // licensed by a declared number, and asking it of the date key is not.
-        let lighter = resolve(
+        let lighter = resolved(
             &scanned,
             &[pet()],
             &GraphQuery {
@@ -3177,7 +3268,7 @@ mod tests {
         .expect("a declared number licenses an ordering");
         assert_eq!(handles(&lighter), vec!["pet:snowball"]);
 
-        resolve(
+        resolved(
             &scanned,
             &[pet()],
             &GraphQuery {
@@ -3196,7 +3287,7 @@ mod tests {
     /// type for it, and nothing about the ordering above narrows that.
     #[test]
     fn an_undeclared_record_keeps_equality() {
-        let found = resolve(
+        let found = resolved(
             &kennel(),
             &[],
             &GraphQuery {
@@ -3223,7 +3314,7 @@ mod tests {
         let scanned = kennel();
         let declarations = vec![pet()];
         let from_bart = |keeping: Vec<FieldFilter>| {
-            resolve(
+            resolved(
                 &scanned,
                 &declarations,
                 &GraphQuery {
@@ -3297,7 +3388,7 @@ mod tests {
             .push(fact("pet:santas-little-helper", "f2", "went to the vet"));
         let declarations = vec![pet()];
         let from_bart = |keeping: Vec<FieldFilter>| {
-            resolve(
+            resolved(
                 &scanned,
                 &declarations,
                 &GraphQuery {
@@ -3367,7 +3458,7 @@ mod tests {
         scanned[0].facts.push(visiting);
 
         let says = |handle: &str| {
-            resolve(&scanned, &[], &GraphQuery::subject(EntityId(handle.into())))
+            resolved(&scanned, &[], &GraphQuery::subject(EntityId(handle.into())))
                 .expect("a subject")
                 .swap_remove(0)
                 .facts

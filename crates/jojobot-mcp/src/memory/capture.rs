@@ -222,6 +222,7 @@ impl Jojobot {
         .await
         {
             Ok(found) => found
+                .objects
                 .first()
                 .map(|object| object.fields.clone())
                 .unwrap_or_default(),
