@@ -32,7 +32,17 @@ fn run(transcript: Vec<Said>) -> Results {
         boundaries: Vec::new(),
         before: "before".into(),
         after: "after".into(),
+        served: Vec::new(),
     }
+}
+
+/// A recorded stream, as this crate's own material.
+fn fixture(name: &str) -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("the fixture is test material: {}: {e}", path.display()))
 }
 
 /// A directory of this case's own, named for the case so two cannot collide.
@@ -132,4 +142,113 @@ fn a_sitting_that_called_nothing_is_kept_and_reads_apart_from_one_that_made_call
     );
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 🚨 **What the occupant DID is in the file a person reads, sitting by
+/// sitting.**
+///
+/// The transcript held what the model said at the end. A sitting that reports
+/// it wrote a record and a sitting that wrote nothing rendered the same, and
+/// that difference is the whole verdict. The stream beside the transcript held
+/// the answer and nothing put it where a reader lands.
+///
+/// **The positive half is the one a dead parser fails**: the verbs, in the
+/// order they were called. A case that only asserted an absence would hold
+/// against a build that found no calls at all — which is exactly how a silent
+/// sitting reads.
+#[test]
+fn the_calls_a_sitting_made_are_rendered_in_order() {
+    let made = run(vec![said(
+        "Phase 1 — one",
+        "said something",
+        &fixture("made-calls.jsonl"),
+    )]);
+    let text = made.rendered();
+    let write = text
+        .find("Write")
+        .expect("the first verb it called is in the run");
+    let read = text
+        .find("Read")
+        .expect("the second verb it called is in the run");
+    assert!(
+        write < read,
+        "the calls are not in the order they were made, so the log is not a record of what \
+         happened: {text}",
+    );
+}
+
+/// **A sitting that called nothing says so, and does not read like a capture
+/// that failed.**
+///
+/// Both are silence on the page otherwise, and they mean opposite things: one
+/// is an occupant that recorded nothing, the other is a run that lost the
+/// material.
+#[test]
+fn a_sitting_that_called_nothing_reads_apart_from_one_that_did_not_run() {
+    let quiet = run(vec![said(
+        "Phase 1 — one",
+        "said something",
+        &fixture("called-nothing.jsonl"),
+    )]);
+    let silent = quiet.rendered();
+
+    let mut broken = said("Phase 1 — one", "said something", "");
+    broken.ran = false;
+    let failed = run(vec![broken]).rendered();
+
+    assert_ne!(
+        silent, failed,
+        "a sitting that made no calls renders exactly as a sitting that never ran",
+    );
+    assert!(
+        silent.contains("no calls"),
+        "a sitting that called nothing does not say so: {silent}",
+    );
+}
+
+/// 🚨 **The run states which verbs were called and which never were.**
+///
+/// A whole simulated year ran and a verb was never called once. That was found
+/// by a person noticing an absence; a tally makes it a fact the run states.
+///
+/// ⛔️ **Counts and names, and nothing else.** No score and no reading of how
+/// the run went: the operator judges a run by reading it, and anything that
+/// condenses replaces that judgement with a proxy.
+///
+/// **Both halves.** A verb that was called is counted — which a dead parser
+/// fails — and a verb the room serves and nobody called is named.
+#[test]
+fn the_run_tallies_the_verbs_called_and_the_verbs_never_called() {
+    let mut tallied = run(vec![said(
+        "Phase 1 — one",
+        "said something",
+        &fixture("made-calls.jsonl"),
+    )]);
+    // Read off the room in a real run; named here because this case is the
+    // renderer's and not the room's.
+    tallied.served = vec!["Write".into(), "Read".into(), "capture".into()];
+    let text = tallied.rendered();
+
+    let tally = text.split("verbs").last().expect("the run renders a tally");
+    // ⚠️ **The two halves have to be read apart.** Every served verb appears
+    // somewhere in this block whatever happened, so asserting a name is present
+    // holds identically against a build that found no calls at all and listed
+    // every verb as never called. The split is what makes each half mean
+    // something.
+    let (called, never) = tally
+        .split_once("never called:")
+        .expect("the tally names what was never called");
+    assert!(
+        called.contains("Write") && called.contains("Read"),
+        "the verbs the occupant called are not counted as called: {tally}",
+    );
+    assert!(
+        never.contains("capture"),
+        "a verb the room serves and nobody called is not named, so an absence is still \
+         something a person has to notice: {tally}",
+    );
+    assert!(
+        !never.contains("Write"),
+        "a verb that was called is listed as never called: {tally}",
+    );
 }

@@ -131,6 +131,10 @@ pub struct Results {
     /// What the room held before the agent touched it, and after.
     pub before: String,
     pub after: String,
+    /// **Every verb the room served this run**, read off the room rather than
+    /// written down: what a verb is called is the surface's to say, and a list
+    /// kept here would go stale the day one is added.
+    pub served: Vec<String>,
 }
 
 impl Results {
@@ -269,6 +273,121 @@ impl Results {
         crate::calls::keep_raw(path, &self.sittings())
     }
 
+    /// **What one sitting DID**, under what it said.
+    ///
+    /// 🚨 **The verdict on a sitting is in its calls, and the transcript held
+    /// only its closing words.** A sitting that reports it marked a record
+    /// superseded and a sitting that marked nothing render the same sentence,
+    /// and a reader cannot tell them apart.
+    ///
+    /// ⛔️ **Facts and no reading of them.** The verb, what it acted on, whether
+    /// the room turned it down, and enough of the answer to tell one call from
+    /// another. Whether the calls were the RIGHT ones is the person's, and
+    /// nothing here condenses a run into a verdict that replaces that.
+    ///
+    /// **Three states, and they are not the same fact.** A sitting that made
+    /// calls lists them; a sitting that made none says so; a sitting whose
+    /// invocation never came back says THAT, because silence from an occupant
+    /// and silence from a capture mean opposite things.
+    fn did(said: &Said) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        if !said.ran {
+            let _ = writeln!(
+                out,
+                "  calls: the invocation did not come back, so nothing was captured for this \
+                 sitting"
+            );
+            return out;
+        }
+        let made = crate::calls::calls_in(&said.raw);
+        if made.is_empty() {
+            let _ = writeln!(
+                out,
+                "  calls: none — this sitting made no calls at all, which is its own answer"
+            );
+            return out;
+        }
+        let _ = writeln!(out, "  calls:");
+        for (at, call) in made.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "  {:>3}. {}{}  on {}\n       → {}",
+                at + 1,
+                call.verb,
+                match call.refused {
+                    true => "  [refused]",
+                    false => "",
+                },
+                call.about,
+                call.head,
+            );
+        }
+        out
+    }
+
+    /// **Which verbs this run called, and which it never did.**
+    ///
+    /// ⭐ **An absence is the finding a person is least likely to notice.** A
+    /// whole simulated year ran with a verb never called once, and it took
+    /// somebody spotting the gap. Counting is arithmetic over what was
+    /// recorded, so the run can state it.
+    ///
+    /// ⛔️ **A count is not a score.** Nothing here says a run went well or
+    /// badly, and nothing weighs one verb against another: the operator judges
+    /// a run by reading it, and a number that stood in for that reading would
+    /// replace their judgement with a proxy.
+    ///
+    /// **The set comes from the room**, so a verb added to the surface is
+    /// covered the day it ships and nothing here goes stale.
+    fn tally(&self) -> String {
+        use std::fmt::Write as _;
+        let mut counted: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        for said in &self.transcript {
+            for call in crate::calls::calls_in(&said.raw) {
+                *counted.entry(call.verb).or_default() += 1;
+            }
+        }
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "\n── verbs, called and never called ──────────────────────────"
+        );
+        for (verb, times) in &counted {
+            let _ = writeln!(out, "  {times:>4}  {verb}");
+        }
+        if counted.is_empty() {
+            let _ = writeln!(out, "  this run called no verbs at all");
+        }
+        // **The room's own list, less what was called.** A verb nobody reached
+        // for is the finding a reader is least likely to see on their own.
+        let untouched: Vec<&String> = self
+            .served
+            .iter()
+            .filter(|verb| !counted.contains_key(*verb))
+            .collect();
+        match untouched.is_empty() {
+            true if self.served.is_empty() => {
+                let _ = writeln!(
+                    out,
+                    "  the room's verb list was not read, so nothing here says what went \
+                     uncalled"
+                );
+            }
+            true => {
+                let _ = writeln!(out, "  every verb the room serves was called");
+            }
+            false => {
+                let _ = writeln!(out, "  never called:");
+                for verb in untouched {
+                    let _ = writeln!(out, "        {verb}");
+                }
+            }
+        }
+        out
+    }
+
     /// Each sitting's name paired with the stream it produced, in run order.
     fn sittings(&self) -> Vec<(String, String)> {
         self.transcript
@@ -332,7 +451,9 @@ impl Results {
                 "\n▸ {}\n  said: {}\n{}",
                 said.phase, said.prompt, said.output
             );
+            let _ = write!(out, "{}", Results::did(said));
         }
+        let _ = write!(out, "{}", self.tally());
         // **What the door offered, phase by phase.** Collected since this
         // harness existed and rendered nowhere, so the one thing a reader
         // wants from a long run — is jojobot handing over MORE as the story
@@ -568,8 +689,20 @@ pub async fn go(
 
     let uncovered = uncovered_phases(playbook, expectations);
     let hatches = hatches_taken(expectations);
+    // **Read off the room rather than written down.** What a verb is called is
+    // the surface's to say, and a list kept in the harness goes stale the day
+    // one ships. A room that could not be asked reports no list rather than an
+    // empty one, so "nothing went uncalled" cannot be said by a failed read.
+    let served: Vec<String> = surface
+        .tools_for_the_model()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str().map(str::to_string))
+        .collect();
 
     let results = Results {
+        served,
         playbook: playbook.source.clone(),
         model: agent.model().to_string(),
         outcomes,
@@ -869,6 +1002,7 @@ mod tests {
     /// beginning and an end.
     fn ran(phases: &[&str]) -> Results {
         Results {
+            served: Vec::new(),
             playbook: "rooms/whatever.md".into(),
             model: "some-model".into(),
             outcomes: Vec::new(),

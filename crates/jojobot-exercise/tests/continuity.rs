@@ -42,6 +42,7 @@ fn run(transcript: Vec<Said>, offered: &[usize]) -> Results {
 /// failure — and the assertion proves nothing.
 fn run_with(transcript: Vec<Said>, offered: &[usize], outcomes: Vec<Outcome>) -> Results {
     Results {
+        served: Vec::new(),
         playbook: "trivial".into(),
         model: "sonnet".into(),
         outcomes,
