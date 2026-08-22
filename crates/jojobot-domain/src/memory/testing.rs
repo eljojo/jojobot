@@ -22,7 +22,7 @@ use super::{
     guard::{self, Decision},
     normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
     search, standing_of, validate_content, validate_details, validate_edge, validate_entity,
-    validate_fields, validate_prose, validate_provenance_source, validate_subject,
+    validate_fields, validate_prose, validate_provenance_source, validate_write_subject,
 };
 
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
@@ -385,7 +385,7 @@ impl Memory for InMemoryMemory {
         handle: &EntityId,
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        validate_subject(handle)?;
+        validate_write_subject(handle)?;
         // Taken before the lock: index() locks too.
         let index = self.index();
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
@@ -411,7 +411,7 @@ impl Memory for InMemoryMemory {
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         // Same guards the real adapter applies, so the fake can't drift.
-        validate_subject(&fact.subject)?;
+        validate_write_subject(&fact.subject)?;
         validate_content(&fact.content)?;
         validate_details(fact.details.as_deref())?;
         if let Some(edge) = &fact.edge {
@@ -458,7 +458,7 @@ impl Memory for InMemoryMemory {
         // provisioned its own entity would make the open hatch the one place on
         // the surface where that stopped being true.
         for object in &fact.refs {
-            validate_subject(object)?;
+            validate_write_subject(object)?;
             if let Decision::Block(candidates) = guard::decide_existing(object, &index) {
                 return Ok(Guarded::Blocked {
                     attempted: object.clone(),
@@ -869,7 +869,7 @@ impl Memory for InMemoryMemory {
     }
 
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        validate_subject(entity)?;
+        validate_write_subject(entity)?;
         validate_prose(prose)?;
         // Never creates: a handle that names nothing is a miss with its near
         // candidates, exactly as it is for every other verb here.
@@ -1575,10 +1575,21 @@ pub mod contract {
 
     // --- the entity model ----------------------------------------------------
 
-    /// A fact can be about any of the ten kinds, not just people — and each
-    /// lands in its own home, addressable under its own handle.
+    /// A fact can be about any kind that memory owns, not just people — and
+    /// each lands in its own home, addressable under its own handle.
+    ///
+    /// ⛔️ **`session` is the exception, and it is a real one rather than a gap
+    /// in this case.** A session is addressable so a bot can ask the graph
+    /// about its own past runs, and it is written through the session verbs
+    /// alone: its life is a state machine — bound to its bot, wrapped once and
+    /// never reopened, only an abandoned run walking back — that a memory write
+    /// would step straight past. **Selectable is not writable, and this kind is
+    /// where those two part company.**
     pub async fn every_kind_holds_facts<M: Memory>(store: &M) {
-        for kind in EntityKind::ALL {
+        for kind in EntityKind::ALL
+            .into_iter()
+            .filter(|kind| *kind != EntityKind::SESSION)
+        {
             let subject = EntityId::new(kind, format!("contract-kind-{kind}"));
             let captured = capture(
                 store,

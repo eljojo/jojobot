@@ -89,6 +89,13 @@ impl EntityKind {
     /// As records they go through one door and nothing running a view can tell
     /// which half supplied it.
     pub const VIEW: EntityKind = EntityKind("view");
+
+    /// **One mortal run of a bot.** A session is addressable so a bot can ask
+    /// the graph about its own past runs — and it is not written through the
+    /// memory verbs. Its life is a state machine the session verbs hold: bound
+    /// to its bot, wrapped once and never reopened, and only an abandoned run
+    /// walks back.
+    pub const SESSION: EntityKind = EntityKind("session");
     /// A companion animal: a dog, a cat, a horse.
     ///
     /// **Not a `thing`.** `thing` is a named possession, and a pet is not one.
@@ -125,7 +132,7 @@ impl EntityKind {
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 13] = [
+    pub const ALL: [EntityKind; 14] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -139,6 +146,7 @@ impl EntityKind {
         EntityKind::RHYTHM,
         EntityKind::MACHINE,
         EntityKind::VIEW,
+        EntityKind::SESSION,
     ];
 
     /// A kind from a token this crate already holds for the life of the
@@ -1167,6 +1175,29 @@ pub fn validate_entity(
             "'{id}' is a rhythm and names no parent. A rhythm is a loop ON something, and the \
              parent says whose job it is — the thing maintained, or the bot that carries the \
              review. Send this again with parent set to the handle it is a loop on"
+        )));
+    }
+    Ok(())
+}
+
+/// **A subject a WRITE may name.** Every check [`validate_subject`] makes, and
+/// one more: a session is not written through the memory verbs.
+///
+/// ⚠️ **Separate from the read check on purpose.** A session is readable — that
+/// is the whole point of giving it a handle — so the reads that validate a
+/// subject must keep accepting one. Only the writes refuse.
+///
+/// **Selectable must not mean writable.** A session's life is a state machine
+/// the session verbs hold: bound to its bot, wrapped once and never reopened,
+/// and only an abandoned run walks back. A memory write onto its handle would
+/// step past all three, and no read has any reason to.
+pub fn validate_write_subject(subject: &EntityId) -> Result<(), MemoryError> {
+    validate_subject(subject)?;
+    if subject.kind() == Some(EntityKind::SESSION) {
+        return Err(MemoryError::InvalidSubject(format!(
+            "'{subject}' is a session, and a session is not written through the memory verbs. \
+             Its chronology is appended with journal, corrected with amend_journal, and closed \
+             with wrap_session. Read it here; change it there"
         )));
     }
     Ok(())
@@ -3325,6 +3356,7 @@ mod tests {
             (EntityKind::RHYTHM, "rhythm"),
             (EntityKind::MACHINE, "machine"),
             (EntityKind::VIEW, "view"),
+            (EntityKind::SESSION, "session"),
         ];
         for (kind, token) in all {
             assert_eq!(kind.as_token(), token);
@@ -3379,6 +3411,42 @@ mod tests {
 
     /// The grammar is `kind:slug` with slug `[a-z0-9-]+`: an unknown kind, a
     /// missing kind, an underscore, or a second colon is not an entity id.
+    /// **A session is readable and is not writable through the memory verbs.**
+    ///
+    /// 🚨 **Selectable must not mean writable.** A session is given a handle so
+    /// a bot can ask the graph about its own past runs. A memory write onto
+    /// that handle would step past the state machine the session verbs hold —
+    /// bound to its bot, wrapped once and never reopened, only an abandoned run
+    /// walking back — none of which the memory path knows about.
+    ///
+    /// **Both halves, and they are the point:** the write gate refuses it and
+    /// the read gate does NOT. A check that refused both would make the handle
+    /// useless, and the handle is the whole capability.
+    ///
+    /// The ordinary kind is here because a gate that refused every subject
+    /// would satisfy the first assertion on its own.
+    #[test]
+    fn a_session_is_refused_by_the_write_gate_and_allowed_by_the_read_gate() {
+        // A handle is parsed against the kinds this process loaded, so the
+        // set arrives the way a boot delivers it.
+        let _booted = testing::InMemoryMemory::booted();
+        let run = EntityId("session:contract-gamma-run".into());
+        let ordinary = EntityId::person("person:milhouse");
+
+        assert!(
+            validate_write_subject(&run).is_err(),
+            "a memory write onto a session steps past the verbs that hold its life",
+        );
+        assert!(
+            validate_subject(&run).is_ok(),
+            "…and reading one is exactly what giving it a handle was for",
+        );
+        assert!(
+            validate_write_subject(&ordinary).is_ok(),
+            "…and an ordinary subject is still written, or the gate refuses everything",
+        );
+    }
+
     #[test]
     fn validate_subject_enforces_the_kind_slug_grammar() {
         // **The set is this case's subject, not its setup.** The grammar's

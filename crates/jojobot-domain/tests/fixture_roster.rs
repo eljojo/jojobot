@@ -265,6 +265,7 @@ const ROSTER: &[&str] = &[
     "person:contract-editable",
     "person:contract-evented",
     "person:contract-field-edit",
+    "session:contract-gamma-run",
     "person:contract-graph-coming",
     "person:contract-graph-outsider",
     "person:contract-graph-staying",

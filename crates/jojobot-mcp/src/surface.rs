@@ -275,7 +275,15 @@ fn every_kind_the_store_accepts_is_listed_where_a_caller_reads() {
         .expect("a description has a first paragraph")
         .to_string();
 
-    for kind in EntityKind::ALL {
+    // ⛔️ **`session` is deliberately not offered.** A session is not created
+    // through `add_entity` — it begins when a bot boots and its life is held by
+    // the session verbs — so listing it would name a kind this argument cannot
+    // make. It is addressable for READING, which is a different question from
+    // what a caller may create.
+    for kind in EntityKind::ALL
+        .into_iter()
+        .filter(|kind| *kind != EntityKind::SESSION)
+    {
         let token = kind.as_token();
         assert!(
             listed.contains(&format!("`{token}`")),

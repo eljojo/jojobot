@@ -28,9 +28,9 @@ use super::EntityKind;
 /// change is that the set is data. What makes the shipped ones different from any
 /// other kind is not the compiler: it is that a seed writes them at every
 /// startup and a caller cannot redeclare one.
-pub const SHIPPED: [&str; 13] = [
+pub const SHIPPED: [&str; 14] = [
     "person", "project", "place", "event", "work", "thing", "org", "topic", "bot", "pet", "rhythm",
-    "machine", "view",
+    "machine", "view", "session",
 ];
 
 /// **The keys a shipped kind carries**, and almost all of them carry none.

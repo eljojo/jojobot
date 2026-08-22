@@ -39,7 +39,8 @@ use jojobot_domain::memory::{
     screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
     types::{DeclaredType, Field, Fold, Origin, ValueType, guard_replacement, validate_type},
     validate_content, validate_details, validate_edge, validate_entity, validate_fields,
-    validate_prose, validate_provenance_source, validate_subject, writes_of,
+    validate_prose, validate_provenance_source, validate_subject, validate_write_subject,
+    writes_of,
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
@@ -685,7 +686,7 @@ impl Memory for DoltMemory {
         handle: &EntityId,
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        validate_subject(handle)?;
+        validate_write_subject(handle)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let index = Self::index(&mut tx).await?;
         let Some(mut entity) = index.iter().find(|e| &e.id == handle).cloned() else {
@@ -709,7 +710,7 @@ impl Memory for DoltMemory {
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
-        validate_subject(&fact.subject)?;
+        validate_write_subject(&fact.subject)?;
         validate_content(&fact.content)?;
         validate_details(fact.details.as_deref())?;
         if let Some(edge) = &fact.edge {
@@ -739,7 +740,7 @@ impl Memory for DoltMemory {
             });
         }
         for object in &fact.refs {
-            validate_subject(object)?;
+            validate_write_subject(object)?;
             if let guard::Decision::Block(candidates) = guard::decide_existing(object, &index) {
                 return Ok(Guarded::Blocked {
                     attempted: object.clone(),
@@ -1156,7 +1157,7 @@ impl Memory for DoltMemory {
     }
 
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
-        validate_subject(entity)?;
+        validate_write_subject(entity)?;
         validate_prose(prose)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let index = Self::index(&mut tx).await?;
