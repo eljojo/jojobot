@@ -356,6 +356,15 @@ mod tests {
                 .is_some_and(|kinds| kinds.is_empty()),
             "an unreadable vocabulary named kinds it never read: {unread}"
         );
+        // **That a note is THERE, never what it says.** See the roster case for
+        // why the wording stays unpinned.
+        assert!(
+            unread["snapshot"]["vocabulary"]["note"]
+                .as_str()
+                .is_some_and(|note| !note.trim().is_empty()),
+            "an unreadable vocabulary came back as a bare marker, so nothing tells a caller \
+             this is not a build that ships none: {unread}"
+        );
     }
 
     #[tokio::test]
@@ -406,6 +415,31 @@ mod tests {
         assert_eq!(
             booted["snapshot"]["entities"]["available"], false,
             "the entity index must be down, or this proves nothing: {booted}"
+        );
+        // **Mail reports itself AVAILABLE while the roster is down**, because
+        // an unreadable roster costs the roster and nothing else. Paired with
+        // the shape that says this branch was really taken: without it, a build
+        // where the degraded path never runs satisfies the marker by never
+        // reaching it.
+        assert_eq!(
+            booted["snapshot"]["mail"]["available"], true,
+            "mail reads as down when only the roster is: {booted}"
+        );
+        assert!(
+            booted["snapshot"]["mail"]["by_owner"].is_array(),
+            "the degraded shape was never reached, so the marker above says nothing: {booted}"
+        );
+        // **That a note is THERE, never what it says.** A marker alone tells a
+        // caller something is down and nothing about whether to retry, wait or
+        // go elsewhere. The wording is deliberately unpinned: an assertion
+        // quoting a sentence breaks when the sentence improves and proves
+        // nothing about behaviour.
+        assert!(
+            booted["snapshot"]["entities"]["note"]
+                .as_str()
+                .is_some_and(|note| !note.trim().is_empty()),
+            "an unreadable roster came back as a bare marker with nothing a caller can act \
+             on: {booted}"
         );
         // **The note beside it is prose somebody reads.** A run of spaces in
         // one is source indentation that escaped a wrapped literal — the
@@ -888,6 +922,15 @@ mod tests {
         // unreachable mailbox world means jojobot cannot say which box is
         // yours, or whether you have one — and it must say exactly that
         // instead of naming a box it cannot see.
+        // **That a note is THERE, never what it says.** See the roster case
+        // above for why the wording stays unpinned.
+        assert!(
+            body["snapshot"]["mail"]["note"]
+                .as_str()
+                .is_some_and(|note| !note.trim().is_empty()),
+            "an unreachable mail world came back as a bare marker with nothing a caller can act \
+             on: {body}"
+        );
         let owned = &me["owned_mailbox"];
         assert_eq!(owned["available"], false, "got {owned}");
         assert!(
