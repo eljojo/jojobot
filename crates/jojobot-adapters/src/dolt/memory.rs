@@ -1201,6 +1201,7 @@ impl Memory for DoltMemory {
                 // cannot be folded back into it.
                 fields: Self::held_by(&mut tx, &entity.id).await?,
                 entity: Some(entity),
+                owner: None,
             });
         }
         tx.commit().await.map_err(store)?;

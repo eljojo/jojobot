@@ -2387,6 +2387,7 @@ mod tests {
             entity,
             facts,
             fields,
+            owner: None,
         }
     }
 
@@ -3613,6 +3614,7 @@ mod tests {
                     date(2026, 1, 1),
                 )],
                 fields: Default::default(),
+                owner: None,
             },
             DocScan {
                 doc_id: "outline-uuid-9b2c".into(),
@@ -3621,6 +3623,7 @@ mod tests {
                 entity: Some(entity("person:beta", "Beta")),
                 facts: vec![fact("person:beta", "f1", "keeps a gecko", date(2026, 1, 1))],
                 fields: Default::default(),
+                owner: None,
             },
         ])
     }
@@ -4144,6 +4147,7 @@ mod tests {
                     entity: Some(entity("person:alpha", "Alpha")),
                     facts: Vec::new(),
                     fields: Default::default(),
+                    owner: None,
                 }],
                 index.reading_begins(),
             )
@@ -4648,6 +4652,7 @@ mod tests {
             entity: Some(entity("person:alpha", "Alpha")),
             facts: Vec::new(),
             fields: Default::default(),
+            owner: None,
         }])
     }
 
@@ -4946,6 +4951,7 @@ mod tests {
                 entity: Some(entity("person:alpha", "Alpha")),
                 facts: Vec::new(),
                 fields: Default::default(),
+                owner: None,
             },
             DocScan {
                 doc_id: "outline-uuid-b2c9".into(),
@@ -4959,6 +4965,7 @@ mod tests {
                     date(2026, 1, 1),
                 )],
                 fields: Default::default(),
+                owner: None,
             },
         ]);
         inner.blinded();
@@ -5102,6 +5109,7 @@ mod tests {
                 date(2026, 1, 1),
             )],
             fields: Default::default(),
+            owner: None,
         }]);
         let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
         store.rebuild().await.expect("rebuild");

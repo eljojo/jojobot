@@ -73,6 +73,7 @@ impl<M> Provisioned<M> {
             entity: Some(held.clone()),
             facts: Vec::new(),
             fields: fields.clone(),
+            owner: None,
         })
     }
 

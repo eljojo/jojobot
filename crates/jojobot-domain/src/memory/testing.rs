@@ -916,6 +916,8 @@ impl Memory for InMemoryMemory {
                     // it also carries cannot be folded back into it.
                     fields: super::folded_fields(&self.writes_on(&entity.id, &facts), &declared),
                     entity: Some(entity),
+                    // A stored row is the whole instance's, exactly as it was.
+                    owner: None,
                 }
             }))
             .collect())

@@ -863,9 +863,14 @@ impl Jojobot {
         // verb publishes a `sid` and says it is what tells jojobot who is
         // asking, so a handle that addresses nothing is refused rather than
         // dropped.
-        if let Err(refused) = self.attributable(args.sid.as_deref()) {
-            return Ok(refused);
-        }
+        // **And the identity it resolves is KEPT**, because it is what says
+        // which owned objects this read may reach. Deriving it here rather than
+        // taking it as an argument is the whole of that rule: a caller cannot
+        // ask for somebody else's, because there is nowhere to say so.
+        let asked_by = match self.caller(args.sid.as_deref()) {
+            Ok(caller) => caller.map(|caller| caller.bot),
+            Err(refused) => return Ok(refused),
+        };
         // **The name is resolved to its declaration here, once**, exactly as
         // `search` resolves it: everything below takes the keys rather than
         // the name, and a name nobody declared is answered where the roster to
@@ -987,6 +992,7 @@ impl Jojobot {
                 kind: args.kind.as_deref().map(parse_kind).transpose()?,
                 answers_type,
                 fields: key_filters(args.fields.as_deref().unwrap_or_default())?,
+                asked_by,
             },
             include,
             follow,

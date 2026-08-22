@@ -66,6 +66,15 @@ pub struct DocScan {
     /// Empty on a doc that is no entity, and on a thing nobody has written a
     /// key on.
     pub fields: std::collections::BTreeMap<String, String>,
+    /// **Who may read this document** — `None` for everything the whole
+    /// instance can see, which is every stored row.
+    ///
+    /// ⚠️ **A PROPERTY, never a field.** `owner` is an ordinary key a caller
+    /// may write on anything, so reading visibility out of the fields map
+    /// would let a caller change what somebody else can see by writing a key.
+    /// This is set by whatever projects the document and a caller never
+    /// constructs one.
+    pub owner: Option<crate::memory::EntityId>,
 }
 
 /// The subjects in `doc`'s table that name **no known entity** — the split-brain
@@ -821,6 +830,7 @@ mod tests {
                 row("f4", "person:alphaa"), // …twice, reported once
             ],
             fields: Default::default(),
+            owner: None,
         };
         let known: HashSet<EntityId> = [
             EntityId::person("person:alpha"),
@@ -899,6 +909,7 @@ mod tests {
                 row("f4", "person:alphaa"), // names nothing: an orphan, not this
             ],
             fields: Default::default(),
+            owner: None,
         };
         let known: HashSet<EntityId> = [
             EntityId::person("person:alpha"),

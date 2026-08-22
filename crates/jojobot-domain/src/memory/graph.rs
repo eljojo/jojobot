@@ -189,6 +189,14 @@ pub struct Selection {
     /// SAME record, because they describe a single record rather than a pair of
     /// separate questions.
     pub fields: Vec<FieldFilter>,
+    /// **Who is asking**, filled from the session handle by the verb and never
+    /// from an argument.
+    ///
+    /// ⭐ **A caller cannot ask for somebody else's objects because there is
+    /// nowhere to say so** — the access rule is the absence of an argument
+    /// rather than a check on one. `None` is a caller with no identity, which
+    /// reaches everything unowned and nothing owned.
+    pub asked_by: Option<EntityId>,
 }
 
 impl Selection {
@@ -824,6 +832,9 @@ pub fn resolve(
 struct Ctx<'a> {
     /// Every entity, by handle.
     entities: BTreeMap<&'a EntityId, &'a Entity>,
+    /// **Who each owned object belongs to.** Absent for everything the whole
+    /// instance can read, which is every stored row.
+    owners: BTreeMap<&'a EntityId, &'a EntityId>,
     /// Every entity, in handle order — what the near-miss screen reads.
     index: Vec<Entity>,
     /// Each entity's prose.
@@ -853,6 +864,7 @@ struct Ctx<'a> {
 impl<'a> Ctx<'a> {
     fn of(scanned: &'a [DocScan], declarations: &'a [types::DeclaredType]) -> Self {
         let mut entities = BTreeMap::new();
+        let mut owners: BTreeMap<&EntityId, &EntityId> = BTreeMap::new();
         let mut prose = BTreeMap::new();
         let mut fields = BTreeMap::new();
         let mut facts: BTreeMap<&EntityId, Vec<&Fact>> = BTreeMap::new();
@@ -860,6 +872,9 @@ impl<'a> Ctx<'a> {
 
         for doc in scanned {
             if let Some(entity) = doc.entity.as_ref() {
+                if let Some(owner) = doc.owner.as_ref() {
+                    owners.insert(&entity.id, owner);
+                }
                 entities.insert(&entity.id, entity);
                 prose.insert(&entity.id, doc.prose.as_str());
                 fields.insert(&entity.id, &doc.fields);
@@ -899,6 +914,7 @@ impl<'a> Ctx<'a> {
         index.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
         Ctx {
             entities,
+            owners,
             index,
             prose,
             fields,
@@ -928,6 +944,9 @@ impl<'a> Ctx<'a> {
             .entities
             .values()
             .filter(|e| select.kind.is_none_or(|k| e.kind == k))
+            // **An owned object is its owner's alone.** Objects declaring no
+            // owner are the whole store as it stands, and they answer everyone.
+            .filter(|e| self.readable_by(&e.id, select))
             // **The type is asked of the thing and the keys of its records.**
             // Two units, because they are two questions: whether this thing
             // carries a type's keys across everything said about it, and
@@ -946,6 +965,19 @@ impl<'a> Ctx<'a> {
             .collect();
         found.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         Ok(found)
+    }
+
+    /// **May the caller read this object?**
+    ///
+    /// An object declaring no owner answers everyone — that is the whole store
+    /// as it stands, and a rule that hid unowned things would empty every
+    /// instance. An owned one answers its owner alone, and a caller carrying no
+    /// identity owns nothing.
+    fn readable_by(&self, id: &EntityId, select: &Selection) -> bool {
+        match self.owners.get(id) {
+            None => true,
+            Some(owner) => select.asked_by.as_ref() == Some(*owner),
+        }
     }
 
     /// **How this thing answers the selection's type**, over its fields folded
@@ -1327,6 +1359,7 @@ where
             facts,
             fields,
             entity: Some(entity.clone()),
+            owner: None,
         });
     }
     // **Read only for the questions that need it.** A declaration is what makes
@@ -1461,7 +1494,74 @@ mod tests {
             entity: Some(entity),
             facts,
             fields,
+            owner: None,
         }
+    }
+
+    /// An owned document: readable by one identity and nobody else.
+    fn owned_by(entity: Entity, owner: &str, prose: &str) -> DocScan {
+        DocScan {
+            owner: Some(EntityId(owner.to_string())),
+            ..doc(entity, prose, Vec::new())
+        }
+    }
+
+    /// **An owned object comes back to its owner and to nobody else.**
+    ///
+    /// Both halves in one read: the caller finds its own, and does not find
+    /// another's. A third identity is asked the same question, so this is a
+    /// filter rather than a list of one bot's things.
+    ///
+    /// ⚠️ **The withheld COUNT is not here yet, and until it is these two
+    /// answers are the same empty list to a caller** — one that may not read a
+    /// thing, and one for which there is nothing. Nothing declares an owner
+    /// yet, so no caller meets that today.
+    ///
+    /// The unowned object is here because it is the whole rest of the store:
+    /// nothing that exists today declares an owner, and a filter that hid
+    /// unowned things would empty every instance.
+    #[test]
+    fn an_owned_object_answers_its_owner_and_nobody_else() {
+        let scanned = vec![
+            owned_by(entity("bot:gamma", "Gamma"), "bot:gamma", ""),
+            owned_by(entity("bot:delta", "Delta"), "bot:delta", ""),
+            doc(entity("bot:otto", "Otto"), "", Vec::new()),
+        ];
+        let asking = |who: Option<&str>| GraphQuery {
+            select: Selection {
+                kind: Some(EntityKind::BOT),
+                asked_by: who.map(|w| EntityId(w.to_string())),
+                ..Selection::default()
+            },
+            include: Include {
+                facts: false,
+                prose: false,
+            },
+            follow: None,
+            history: None,
+        };
+
+        let mine = resolve(&scanned, &[], &asking(Some("bot:gamma"))).expect("a kind selects");
+        assert_eq!(
+            handles(&mine),
+            vec!["bot:gamma", "bot:otto"],
+            "the caller's own owned object, and everything owned by nobody",
+        );
+
+        let theirs = resolve(&scanned, &[], &asking(Some("bot:delta"))).expect("a kind selects");
+        assert_eq!(
+            handles(&theirs),
+            vec!["bot:delta", "bot:otto"],
+            "…and another identity sees its own instead, so this is a filter rather than a \
+             list of one bot's things",
+        );
+
+        let anonymous = resolve(&scanned, &[], &asking(None)).expect("a kind selects");
+        assert_eq!(
+            handles(&anonymous),
+            vec!["bot:otto"],
+            "a caller with no identity reaches everything unowned and nothing owned",
+        );
     }
 
     /// A fact drawing one edge.
