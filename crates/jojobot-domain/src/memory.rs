@@ -2557,6 +2557,21 @@ pub enum MemoryError {
         /// Addresses that do exist, nearest first.
         nearest: Vec<String>,
     },
+    /// **The named object exists and belongs to another identity.**
+    ///
+    /// Deliberately not [`UnknownEntity`](MemoryError::UnknownEntity), which
+    /// would be a lie that protects nothing: the caller is holding the handle,
+    /// so denying the object exists hides no fact it does not already have and
+    /// only makes every other answer less believable. **A caller has to be able
+    /// to tell "you may not read this" from "there is nothing here", because
+    /// the two ask for different next moves.**
+    #[error("'{attempted}' belongs to {owner}, and only its owner reads it")]
+    NotYours {
+        /// The handle that was named.
+        attempted: String,
+        /// The identity it belongs to.
+        owner: String,
+    },
     /// The named entity doesn't exist. Same rule: report, never create.
     #[error("no entity '{attempted}'{}", nearest_handles(nearest))]
     UnknownEntity {

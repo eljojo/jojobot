@@ -938,6 +938,19 @@ impl<'a> Ctx<'a> {
                     nearest: guard::screen(subject, &[], &self.index),
                 });
             }
+            // **Naming a handle skips every filter below, which is why the
+            // owner is checked HERE rather than only there.** The selection
+            // path filters; the naming path returns the object it was given.
+            if !self.readable_by(subject, select) {
+                return Err(MemoryError::NotYours {
+                    attempted: subject.to_string(),
+                    owner: self
+                        .owners
+                        .get(subject)
+                        .map(|owner| owner.to_string())
+                        .unwrap_or_default(),
+                });
+            }
             return Ok(vec![subject.clone()]);
         }
         let mut found: Vec<EntityId> = self
@@ -1561,6 +1574,61 @@ mod tests {
             handles(&anonymous),
             vec!["bot:otto"],
             "a caller with no identity reaches everything unowned and nothing owned",
+        );
+    }
+
+    /// **Naming another identity's object is refused, and the refusal is not
+    /// the one a typo gets.**
+    ///
+    /// ⚠️ **Selecting by kind filters; naming a handle does not.** A named
+    /// subject returns that object before any filter runs, which is right for
+    /// every reason it was written — and wrong the moment an object has an
+    /// owner, because the filter is what keeps it private.
+    ///
+    /// ⛔️ **It must not answer "no such thing" either.** The caller is holding
+    /// the handle, so denying the object exists hides nothing and only makes
+    /// the answer untrustworthy — the defect closed on the write path at
+    /// `c733f74`, arriving on the read path.
+    ///
+    /// Both halves: the owner still reads it by name.
+    #[test]
+    fn naming_another_identitys_object_is_refused_and_its_owner_still_reads_it() {
+        let scanned = vec![owned_by(
+            entity("bot:gamma", "Gamma"),
+            "bot:gamma",
+            "what gamma is for",
+        )];
+        let naming = |who: &str| GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("bot:gamma".into())),
+                asked_by: Some(EntityId(who.to_string())),
+                ..Selection::default()
+            },
+            include: Include {
+                facts: false,
+                prose: true,
+            },
+            follow: None,
+            history: None,
+        };
+
+        let refused = resolve(&scanned, &[], &naming("bot:delta"));
+        match refused {
+            Err(MemoryError::NotYours { attempted, .. }) => {
+                assert_eq!(attempted, "bot:gamma");
+            }
+            other => panic!(
+                "another identity's object is refused as somebody else's, never as absent \
+                 and never returned: {other:?}"
+            ),
+        }
+
+        let mine = resolve(&scanned, &[], &naming("bot:gamma")).expect("its owner reads it");
+        assert_eq!(handles(&mine), vec!["bot:gamma"]);
+        assert_eq!(
+            mine[0].prose.as_deref(),
+            Some("what gamma is for"),
+            "…and reads it whole, so this is a refusal of others rather than of everyone",
         );
     }
 

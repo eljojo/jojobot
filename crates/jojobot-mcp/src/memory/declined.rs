@@ -253,6 +253,19 @@ pub(crate) fn memory_declined(
         //
         // The address is on the answer because a caller writing several things
         // needs to know which one came back.
+        // **Refused because it is somebody else's, which is not the same
+        // answer as absent.** A caller told a handle names nothing cannot tell
+        // a typo from a thing it may not read, and would retry the first
+        // forever. This says which it is and that retrying will not help.
+        MemoryError::NotYours { ref attempted, .. } => Ok(blocked_body(
+            &EntityId(attempted.clone()),
+            &[],
+            format!(
+                "Nothing was read: {e}. It is there, and it is not yours — sending this \
+                 again will not change the answer. A session's chronology is its own bot's, \
+                 and yours is what your own handle reaches."
+            ),
+        )),
         MemoryError::RepeatsShipped => Ok(blocked_body(
             &EntityId(String::new()),
             &[],
@@ -349,6 +362,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::BreaksType { .. }
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
+        | MemoryError::NotYours { .. }
         | MemoryError::NotRetractable { .. }
         | MemoryError::SourceRetracted { .. }
         | MemoryError::UnsourcedObservation
