@@ -53,11 +53,60 @@ impl Room {
     /// the directory, both ports and the open-on-loopback permission all reach
     /// the server the way an operator's service manager passes them.
     pub async fn open(binary: &Path) -> Result<Room> {
-        // Before the first room and only then: what an older run abandoned is
-        // there when this one starts, and nothing this run does adds to it.
-        static SWEPT: std::sync::Once = std::sync::Once::new();
-        SWEPT.call_once(sweep_abandoned_stores);
+        sweep_once();
         Room::spawn(binary, DeathSignal::Ask).await
+    }
+
+    /// 🚨 **A room and a client that reaches it, retried as ONE thing.**
+    ///
+    /// A room is not open until somebody can talk to it. The spawn is retried
+    /// because a port this process tested and let go can be taken before the
+    /// child binds it — and **the same window is open one step further on**: a
+    /// server that bound its port can still be unreachable by the time a client
+    /// dials it, and a neighbouring process is all it takes. Retrying only the
+    /// spawn stops one step short of where the failure lands.
+    ///
+    /// ⛔️ **Why this matters more than a flaky setup usually does.** The
+    /// failure arrives as a NAMED ROOM CHECK going red, which reads as jojobot
+    /// being broken, and the check that fails differs from run to run. A suite
+    /// that can report a lock failure caused by a neighbouring process makes
+    /// every verdict it gives negotiable — and the paid run is the instrument
+    /// this build develops against.
+    ///
+    /// **A real failure still fails.** No binary is refused before the first
+    /// attempt. A server that cannot start fails every attempt and is reported
+    /// with the count in it, and the message says the ROOM could not be opened
+    /// rather than saying anything about what the room holds.
+    pub async fn open_with_client(binary: &Path) -> Result<(Room, crate::surface::Surface)> {
+        sweep_once();
+        anyhow::ensure!(
+            binary.is_file(),
+            "no jojobot binary at {} — build the workspace first",
+            binary.display(),
+        );
+        let mut last = None;
+        for _ in 0..ATTEMPTS {
+            let room = match Room::spawn_once(binary, &DeathSignal::Ask).await {
+                Ok(room) => room,
+                Err(e) => {
+                    last = Some(e);
+                    continue;
+                }
+            };
+            match crate::surface::Surface::connect(room.endpoint()).await {
+                Ok(surface) => return Ok((room, surface)),
+                // **The room goes with the attempt.** Dropping it takes the
+                // server and its directory, so a retry starts from nothing
+                // rather than from a server nobody can reach.
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last
+            .unwrap_or_else(|| anyhow::anyhow!("no attempt was made"))
+            .context(format!(
+                "the room could not be opened in {ATTEMPTS} attempts, each on ports of its own \
+                 — this is the room, not what the room holds"
+            )))
     }
 
     /// **A room whose server is not asked to die with this run** — what a
@@ -593,6 +642,13 @@ fn port_at(seed: u16, slot: u16) -> u16 {
     20_000 + seed.wrapping_add(slot) % 20_000
 }
 
+/// **Before the first room and only then**: what an older run abandoned is
+/// there when this one starts, and nothing this run does adds to it.
+fn sweep_once() {
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    SWEPT.call_once(sweep_abandoned_stores);
+}
+
 /// **Where the shipped server is**, for a caller that did not say.
 ///
 /// Beside whatever is running: a `cargo run` binary and a test binary both sit
@@ -612,6 +668,7 @@ pub fn server_binary() -> Result<PathBuf> {
         }
         let candidate = here.join("jojobot");
         if candidate.is_file() {
+            refuse_a_stale_server(&candidate, &crates_dir(), MY_CRATE)?;
             return Ok(candidate);
         }
     }
@@ -620,9 +677,181 @@ pub fn server_binary() -> Result<PathBuf> {
     )
 }
 
+/// This crate's directory name, which is the one the staleness guard leaves
+/// out: the rooms are not what the server is built from.
+const MY_CRATE: &str = "jojobot-exercise";
+
+/// **Where the workspace's crates are**, from where this crate was compiled.
+fn crates_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default()
+}
+
+/// 🚨 **Refuse a server binary older than the sources it is built from.**
+///
+/// **This crate does not depend on the `jojobot` crate.** A room spawns
+/// `target/debug/jojobot` as a process, so nothing makes cargo build it: `cargo
+/// test -p jojobot-exercise` compiles the cases and then drives whatever server
+/// was last built, by anybody, at any commit. **The cases report on code
+/// nobody under test is running, and they report it as room checks passing** —
+/// a verdict wearing the product's clothes.
+///
+/// So a scoped run either drives a binary this workspace's sources describe or
+/// it does not run. **Refusing is the half taken here**, because building from
+/// inside a test would be cargo calling cargo.
+///
+/// ⛔️ **This crate's own sources are left out, and that is not a convenience.**
+/// Editing a room, a lock or a case does not stale the server, and a guard that
+/// said it did would refuse the honest workspace build that runs right after
+/// the edit.
+///
+/// **A workspace it cannot find judges nothing.** A binary named through
+/// `JOJOBOT_BIN` never reaches here, and that is the way to drive a server
+/// built somewhere else on purpose.
+pub(crate) fn refuse_a_stale_server(binary: &Path, crates: &Path, mine: &str) -> Result<()> {
+    let Ok(built) = std::fs::metadata(binary).and_then(|m| m.modified()) else {
+        return Ok(());
+    };
+    let Ok(entries) = std::fs::read_dir(crates) else {
+        return Ok(());
+    };
+    for crate_dir in entries.flatten() {
+        if crate_dir.file_name() == *mine {
+            continue;
+        }
+        if let Some(newer) = newest_change_under(&crate_dir.path(), built) {
+            anyhow::bail!(
+                "the jojobot binary at {} is older than {} — this crate does not depend on the \
+                 `jojobot` crate, so a scoped run does not rebuild the server it drives. Run \
+                 `cargo build --workspace` first, or `make check`, or name a binary in \
+                 JOJOBOT_BIN.",
+                binary.display(),
+                newer.display(),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The first file under `at` modified after `built`, if any. **The first rather
+/// than the newest**: the answer is one name for a person to read, and finding
+/// one is already the whole verdict.
+fn newest_change_under(at: &Path, built: std::time::SystemTime) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(at).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
+            if let Some(found) = newest_change_under(&path, built) {
+                return Some(found);
+            }
+            continue;
+        }
+        if std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .is_ok_and(|changed| changed > built)
+        {
+            return Some(path);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{INIT, RoomServer, abandoned, port_at, room_name, serves_a_room, starting_slot};
+    use super::{
+        INIT, RoomServer, abandoned, port_at, refuse_a_stale_server, room_name, serves_a_room,
+        starting_slot,
+    };
+
+    /// A file with something in it, and every directory above it.
+    fn put(at: &std::path::Path) {
+        std::fs::create_dir_all(at.parent().expect("a parent")).expect("the directories");
+        std::fs::write(at, b"something").expect("the file");
+    }
+
+    /// **Rewrite `at` until it is strictly newer than `than`.**
+    ///
+    /// A test cannot set a modification time through the standard library, and
+    /// two writes in one tick can land on the same stamp. Writing until the
+    /// clock has moved is the property the case needs, said directly.
+    fn put_newer_than(at: &std::path::Path, than: &std::path::Path) {
+        let floor = std::fs::metadata(than)
+            .and_then(|m| m.modified())
+            .expect("the file to compare against");
+        for _ in 0..1000 {
+            put(at);
+            let now = std::fs::metadata(at)
+                .and_then(|m| m.modified())
+                .expect("what was just written");
+            if now > floor {
+                return;
+            }
+        }
+        panic!(
+            "{} never became newer than {}",
+            at.display(),
+            than.display()
+        );
+    }
+
+    /// A workspace shape: one crate the server is built from, and the crate
+    /// the rooms live in.
+    fn a_workspace(named: &str) -> std::path::PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("jojobot-stale-{named}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        put(&root.join("crates/alpha/src/lib.rs"));
+        put(&root.join("crates/jojobot-exercise/src/room.rs"));
+        root
+    }
+
+    /// 🚨 **A room drives a binary it did not build, and a scoped run never
+    /// builds it.**
+    ///
+    /// `jojobot-exercise` does not depend on the `jojobot` crate — the rooms
+    /// spawn `target/debug/jojobot` as a process. So `cargo test -p
+    /// jojobot-exercise` compiles the cases and drives whatever server was last
+    /// built, by anybody, at any commit. **The cases then report on code nobody
+    /// under test is running**, and they report it as room checks passing.
+    ///
+    /// **Three claims, and the third is the one that makes this usable.** A
+    /// binary newer than the server's sources is the honest case and is
+    /// allowed. A binary older than any of them is refused, naming the file, so
+    /// the answer is *the instrument is stale* rather than a verdict about
+    /// jojobot. **And a change to this crate's own sources refuses nothing** —
+    /// editing a room test does not stale the server, and a guard that said it
+    /// did would refuse every honest run of `make check`.
+    #[test]
+    fn a_server_older_than_the_sources_it_is_built_from_is_refused() {
+        let root = a_workspace("order");
+        let crates = root.join("crates");
+        let binary = root.join("jojobot");
+        put_newer_than(&binary, &crates.join("alpha/src/lib.rs"));
+        refuse_a_stale_server(&binary, &crates, "jojobot-exercise")
+            .expect("a binary newer than every server source is the honest case");
+
+        put_newer_than(&crates.join("alpha/src/lib.rs"), &binary);
+        let refused = refuse_a_stale_server(&binary, &crates, "jojobot-exercise")
+            .expect_err("a binary older than a server source is a stale instrument")
+            .to_string();
+        assert!(
+            refused.contains("alpha"),
+            "the refusal does not name the source that outran the binary, so a reader cannot \
+             tell it from a verdict about jojobot: {refused}",
+        );
+
+        put_newer_than(&binary, &crates.join("alpha/src/lib.rs"));
+        put_newer_than(&crates.join("jojobot-exercise/src/room.rs"), &binary);
+        refuse_a_stale_server(&binary, &crates, "jojobot-exercise").expect(
+            "this crate's own sources are not the server's — editing a room test must not \
+             refuse the run that tests the edit",
+        );
+    }
 
     /// **Every shape a room can be in, put to the sweep at once.**
     ///

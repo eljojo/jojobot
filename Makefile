@@ -49,11 +49,21 @@ check: fmt-check test lint ## The DONE bar: formatted, green, clippy-clean
 # found nothing to run reports the same success as a run that passed a suite.
 # Read the count, not the code.
 #
+# 🚨 **A scoped run does not build what a test SPAWNS**, and one crate's tests
+# spawn the server as a process rather than calling it. `cargo test -p
+# jojobot-exercise` compiles its own cases and drives whatever `jojobot` binary
+# was last built, at any commit — so it can report on code nobody under test is
+# running. **This target builds the workspace first for that reason**, which
+# costs an incremental link and removes the whole class. The rooms also refuse
+# a binary older than the sources it is built from, so the two halves agree
+# rather than one covering for the other.
+#
 #     make narrow CRATE=<name>
 CRATE ?=
 narrow: ## The inner loop: one crate's tests and lint, plus the format check
 	@test -n "$(CRATE)" || { echo "make narrow needs a crate: make narrow CRATE=<name>"; exit 2; }
 	$(CARGO) fmt --all --check
+	$(CARGO) build --workspace
 	$(CARGO) test -p $(CRATE)
 	$(CARGO) clippy -p $(CRATE) --all-targets -- -D warnings
 
