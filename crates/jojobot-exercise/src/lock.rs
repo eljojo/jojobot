@@ -567,13 +567,11 @@ mod tests {
     /// alone.
     #[tokio::test]
     async fn a_named_check_supplies_the_verdict_and_the_lock_supplies_the_sentence() {
-        let room =
-            crate::room::Room::open(&crate::room::server_binary().expect("a jojobot binary"))
-                .await
-                .expect("a room");
-        let surface = crate::surface::Surface::connect(room.endpoint())
-            .await
-            .expect("a client");
+        let (_room, surface) = crate::room::Room::open_with_client(
+            &crate::room::server_binary().expect("a jojobot binary"),
+        )
+        .await
+        .expect("a room");
         let boundaries: Vec<crate::run::Boundary> = Vec::new();
         let seen = crate::run::Observed {
             room: &surface,
@@ -618,13 +616,11 @@ mod tests {
     /// **A lock naming a check nobody wrote still fails**, and says so.
     #[tokio::test]
     async fn a_lock_naming_a_check_nobody_wrote_fails_rather_than_holding() {
-        let room =
-            crate::room::Room::open(&crate::room::server_binary().expect("a jojobot binary"))
-                .await
-                .expect("a room");
-        let surface = crate::surface::Surface::connect(room.endpoint())
-            .await
-            .expect("a client");
+        let (_room, surface) = crate::room::Room::open_with_client(
+            &crate::room::server_binary().expect("a jojobot binary"),
+        )
+        .await
+        .expect("a room");
         let boundaries: Vec<crate::run::Boundary> = Vec::new();
         let seen = crate::run::Observed {
             room: &surface,

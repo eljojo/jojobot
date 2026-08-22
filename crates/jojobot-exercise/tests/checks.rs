@@ -26,10 +26,9 @@ const THE_PILE_IS_IN_THE_BOX: usize = 2;
 /// **A room with nothing in it.** Not a room whose furniture failed — a room
 /// nobody furnished, which is what a check's control has to survive.
 async fn bare() -> (Room, Surface) {
-    let room = Room::open(&server_binary().expect("a jojobot binary"))
+    let (room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
         .await
         .expect("a room");
-    let surface = Surface::connect(room.endpoint()).await.expect("a client");
     (room, surface)
 }
 

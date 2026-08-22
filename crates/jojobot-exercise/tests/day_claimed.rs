@@ -62,10 +62,9 @@ fn at(before: &str, world: &str) -> Boundary {
 /// A room to hand the check, which never asks it anything: the claim is about
 /// what the run saw at each boundary, and the boundaries are the argument.
 async fn a_room() -> (Room, Surface) {
-    let room = Room::open(&server_binary().expect("a jojobot binary"))
+    let (room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
         .await
         .expect("a room");
-    let surface = Surface::connect(room.endpoint()).await.expect("a client");
     (room, surface)
 }
 

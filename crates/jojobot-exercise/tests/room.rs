@@ -22,10 +22,10 @@ use jojobot_exercise::surface::{Seed, Surface};
 /// that instance — the shipped identity, with the mailbox it owns.
 #[tokio::test]
 async fn a_room_comes_up_holding_the_shipped_identity() {
-    let room = Room::open(&server_binary().expect("a jojobot binary to run"))
-        .await
-        .expect("a room");
-    let surface = Surface::connect(room.endpoint()).await.expect("a client");
+    let (_room, surface) =
+        Room::open_with_client(&server_binary().expect("a jojobot binary to run"))
+            .await
+            .expect("a room");
 
     let booted = starting_identity(&surface)
         .await
@@ -117,10 +117,10 @@ async fn a_seed_furnishes_the_room_and_never_coaches_the_occupant() {
         "a seed wrote a rule onto an identity",
     );
 
-    let room = Room::open(&server_binary().expect("a jojobot binary to run"))
-        .await
-        .expect("a room");
-    let surface = Surface::connect(room.endpoint()).await.expect("a client");
+    let (_room, surface) =
+        Room::open_with_client(&server_binary().expect("a jojobot binary to run"))
+            .await
+            .expect("a room");
 
     Seed::new()
         .entity("place", "springfield", "Springfield")
@@ -196,5 +196,32 @@ async fn a_server_that_cannot_start_is_reported_after_every_attempt() {
     assert!(
         said.contains("before it served"),
         "the failure no longer says what happened to the server: {said}",
+    );
+}
+
+/// **A real failure still fails, and it fails before the first attempt.**
+///
+/// The retry around opening a room exists for a port a neighbour took, which is
+/// a condition that clears on its own. **No binary never clears.** Retrying it
+/// would turn a plain answer into a slow one, and the caller would wait out
+/// three spawns to be told the same thing.
+///
+/// The message names the binary that is not there, so the reader is sent to the
+/// build rather than to jojobot.
+#[tokio::test]
+async fn a_room_with_no_binary_is_refused_rather_than_retried() {
+    let missing = std::path::Path::new("/nonexistent/jojobot-that-was-never-built");
+    let Err(refused) = Room::open_with_client(missing).await else {
+        panic!("there is no binary there, so no room can be opened");
+    };
+    let refused = refused.to_string();
+    assert!(
+        refused.contains(&missing.display().to_string()),
+        "the refusal does not name the binary it looked for: {refused}",
+    );
+    assert!(
+        !refused.contains("attempts"),
+        "a missing binary was retried — that condition does not clear, so retrying it only \
+         makes the same answer slower: {refused}",
     );
 }

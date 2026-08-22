@@ -53,10 +53,9 @@ fn room_document() -> Playbook {
 /// A room furnished the way a run furnishes it, and a handle to write into it
 /// as an occupant would.
 async fn furnished() -> (Room, Surface, String) {
-    let room = Room::open(&server_binary().expect("a jojobot binary"))
+    let (room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
         .await
         .expect("a room");
-    let surface = Surface::connect(room.endpoint()).await.expect("a client");
     expectations::seed_for(expectations::YEAR_ROOM)
         .expect("the room has furniture")
         .furnish(&surface)

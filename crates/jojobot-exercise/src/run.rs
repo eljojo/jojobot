@@ -474,8 +474,7 @@ pub async fn go(
         playbook.source,
     );
 
-    let room = Room::open(&crate::room::server_binary()?).await?;
-    let surface = Surface::connect(room.endpoint()).await?;
+    let (room, surface) = Room::open_with_client(&crate::room::server_binary()?).await?;
     seed.furnish(&surface)
         .await
         .context("furnishing the room")?;
