@@ -53,6 +53,7 @@ impl Jojobot {
         // for the fallback, and silently moving a running session's frame is
         // the one thing this must not do.
         timezone: Option<&str>,
+        today: Option<jiff::civil::Date>,
     ) -> Result<serde_json::Value, CallToolResult> {
         // **A boot is a read-the-board → decide → write-the-registry span like
         // the write verbs, so it takes the same gate, on the same key.** Its
@@ -75,7 +76,7 @@ impl Jojobot {
             offerable,
             swept,
             unswept,
-        } = match sweep_and_find(self.sessions.as_ref(), bot, swept_at).await {
+        } = match sweep_and_find(self.sessions.as_ref(), bot, swept_at, today).await {
             Ok(found) => found,
             Err(e) => {
                 tracing::warn!(error = %e, bot = %bot, "the session world is not reachable");
@@ -109,6 +110,7 @@ impl Jojobot {
                 let handle = self.mint_or_say_why(bot, None)?;
                 self.registry
                     .set_zone(&handle, timezone.map(str::to_string));
+                self.registry.set_day(&handle, today);
                 // Bound to the identity with no session: the first write is
                 // what begins the card, exactly as a first boot's is. **The run
                 // that was offered is left running** — a new session never
@@ -123,6 +125,7 @@ impl Jojobot {
                 // resume that names none keeps what the run had: see `attach`.
                 if let Some(zone) = timezone {
                     self.registry.set_zone(&handle, Some(zone.to_string()));
+                    self.registry.set_day(&handle, today);
                     if let Some(session) = &session
                         && let Err(e) = self.sessions.set_timezone(&session.id, Some(zone)).await
                     {
@@ -157,6 +160,7 @@ impl Jojobot {
                 let handle = self.mint_or_say_why(bot, None)?;
                 self.registry
                     .set_zone(&handle, timezone.map(str::to_string));
+                self.registry.set_day(&handle, today);
                 self.fresh_block(handle)
             }
             None => {
@@ -427,6 +431,7 @@ mod tests {
                     skill: None,
                     resume: None,
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -504,6 +509,7 @@ mod tests {
                     sid: fixture_sid(line!() + nth as u32),
                     focus: focus.into(),
                     started_at: jiff::Timestamp::now(),
+                    started_on: None,
                 })
                 .await
                 .expect("begin ok");
@@ -561,6 +567,7 @@ mod tests {
                 sid: Sid("t001".into()),
                 focus: "reading the hand-off".into(),
                 started_at: jiff::Timestamp::now(),
+                started_on: None,
             })
             .await
             .expect("begin ok");
@@ -749,6 +756,7 @@ mod tests {
                 sid: Sid("t900".into()),
                 focus: "from before handles were stored".into(),
                 started_at: jiff::Timestamp::now(),
+                started_on: None,
             })
             .await
             .expect("begin ok");
@@ -830,6 +838,7 @@ mod tests {
                     skill: None,
                     resume: Some(handle.clone()),
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("a dead handle is an answer, not a protocol failure"),
@@ -851,6 +860,7 @@ mod tests {
                     skill: None,
                     resume: Some("k3fo".into()),
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("an unreadable handle is an answer too"),
@@ -878,6 +888,7 @@ mod tests {
                     skill: None,
                     resume: Some(gammas.clone()),
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("somebody else's handle is an answer, not a protocol failure"),
@@ -925,6 +936,7 @@ mod tests {
                     sid: fixture_sid(line!() + nth),
                     focus: focus.into(),
                     started_at: jiff::Timestamp::now(),
+                    started_on: None,
                 })
                 .await
                 .expect("begin ok");
@@ -1063,6 +1075,7 @@ mod tests {
                 sid: Sid("t001".into()),
                 focus: "still going".into(),
                 started_at: jiff::Timestamp::now(),
+                started_on: None,
             })
             .await
             .expect("begin ok");
@@ -1103,6 +1116,7 @@ mod tests {
                 sid: Sid("t001".into()),
                 focus: "a finished piece of work".into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(2),
+                started_on: None,
             })
             .await
             .expect("begin ok");
@@ -1129,6 +1143,7 @@ mod tests {
                     skill: None,
                     resume: Some(held.as_str().into()),
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("a wrapped run is an answer, not a protocol failure"),
@@ -1222,6 +1237,7 @@ mod tests {
                 sid: Sid("t001".into()),
                 focus: "something from the day before yesterday".into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
+                started_on: None,
             })
             .await
             .expect("begin ok");
@@ -1284,6 +1300,7 @@ mod tests {
                 sid: Sid("t001".into()),
                 focus: "still going".into(),
                 started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1),
+                started_on: None,
             })
             .await
             .expect("begin ok");
@@ -1409,6 +1426,7 @@ mod tests {
                     sid: fixture_sid(line!()),
                     focus: "from the day before yesterday".into(),
                     started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
+                    started_on: None,
                 })
                 .await
                 .expect("begin ok");
@@ -1420,6 +1438,7 @@ mod tests {
                 skill: None,
                 resume: None,
                 sid: None,
+                today: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {
                 entry: "the first beat".into(),
@@ -1498,6 +1517,7 @@ mod tests {
                 skill: None,
                 resume: None,
                 sid: None,
+                today: None,
             }));
             let writing = jojobot.journal(Parameters(JournalArgs {
                 entry: "the first beat, which is what mints the card".into(),

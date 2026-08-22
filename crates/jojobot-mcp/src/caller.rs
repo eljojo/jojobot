@@ -35,6 +35,9 @@ pub(crate) struct Caller {
     /// supplied at the door. `None` is a run that supplied none, and those are
     /// answered in [`crate::memory::parse::FALLBACK_ZONE`].
     pub(crate) zone: Option<String>,
+    /// **The day this run says it is in**, from the card the boot wrote. It is
+    /// what a beat is stamped with and what the sweep reads.
+    pub(crate) day: Option<jiff::civil::Date>,
 }
 
 impl Caller {
@@ -152,6 +155,7 @@ impl Jojobot {
             bot: held.bot,
             card: held.card,
             zone: held.zone,
+            day: held.day,
         }))
     }
 
@@ -309,6 +313,7 @@ impl Jojobot {
                 focus,
                 started_at: jiff::Timestamp::now(),
                 timezone: caller.zone.clone(),
+                started_on: caller.day,
             })
             .await
             .map_err(session_error)?;

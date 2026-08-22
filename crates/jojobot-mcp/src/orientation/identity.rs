@@ -502,6 +502,7 @@ mod tests {
                 skill: None,
                 resume: None,
                 sid: None,
+                today: None,
             }))
             .await
             .expect_err("this door boots bots");
@@ -548,6 +549,7 @@ mod tests {
                 sid: fixture_sid(line!()),
                 focus: "reading the hand-off".into(),
                 started_at: jiff::Timestamp::now(),
+                started_on: None,
             })
             .await
             .expect("begin ok");

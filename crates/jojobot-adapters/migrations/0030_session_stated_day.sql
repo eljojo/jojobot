@@ -1,0 +1,20 @@
+-- The day a run says it is in, and the day each beat says it happened on.
+--
+-- The sweep decides whether a run went quiet, and it decided on the server's
+-- clock: the moment of the boot, less the instant of the newest beat. Both
+-- sides were the server's, so a run acting out months finished in real minutes
+-- and nothing it left was ever stale — every sitting after the first met a
+-- resume-or-new choice it should never have seen. A session catching up on last
+-- week, and an instance restored from a backup, meet the same wrong answer.
+--
+-- The frame belongs to the caller here exactly as it does for the day a capture
+-- gets. Stating it at the door alone is not enough: the other side of the
+-- subtraction is the beats, so a beat carries the day its run says it happened
+-- on and the sweep compares two values in one frame.
+--
+-- The day is stored as given and never derived. A run states it or it does not.
+--
+-- NULL is a run, or a beat, that stated none, which is what every row written
+-- before these columns is. Those are answered on the clock, which is what they
+-- already meant.
+ALTER TABLE session ADD COLUMN started_on VARCHAR(10) NULL;

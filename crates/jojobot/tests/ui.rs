@@ -279,24 +279,32 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
             sid: Sid("ot1x".to_string()),
             focus: "Reading the survey".to_string(),
             started_at: FIXED_INSTANT,
+            started_on: None,
         })
         .await
         .expect("the run begins");
     sessions
         .append(
             &session.id,
-            NewEntry::manual("Set out to read the survey end to end.", FIXED_INSTANT),
+            NewEntry::manual(
+                "Set out to read the survey end to end.",
+                FIXED_INSTANT,
+                None,
+            ),
         )
         .await
         .expect("the beat is recorded");
     sessions
-        .append(&session.id, NewEntry::manual(LONG_BEAT, FIXED_INSTANT))
+        .append(
+            &session.id,
+            NewEntry::manual(LONG_BEAT, FIXED_INSTANT, None),
+        )
         .await
         .expect("the long beat is recorded");
     sessions
         .append(
             &session.id,
-            NewEntry::manual(typed("chronology-beat"), FIXED_INSTANT),
+            NewEntry::manual(typed("chronology-beat"), FIXED_INSTANT, None),
         )
         .await
         .expect("the markup-bearing beat is recorded");

@@ -214,6 +214,7 @@ pub(crate) async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
         &jojobot
             .start_here(Parameters(OrientArgs {
                 timezone: None,
+                today: None,
                 bot: Some(name.into()),
                 brief: None,
                 skill: None,
@@ -235,6 +236,7 @@ pub(crate) async fn boot_answering(
         &jojobot
             .start_here(Parameters(OrientArgs {
                 timezone: None,
+                today: None,
                 bot: Some(name.into()),
                 brief: None,
                 skill: None,
@@ -276,6 +278,7 @@ pub(crate) async fn booted_in(
                 skill: None,
                 resume: resume.map(str::to_string),
                 sid: None,
+                today: None,
             }))
             .await
             .expect("the boot call is ok"),

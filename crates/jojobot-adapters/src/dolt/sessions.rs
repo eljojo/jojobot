@@ -94,7 +94,8 @@ impl DoltSessions {
         id: &SessionId,
     ) -> Result<Session, SessionError> {
         let row = sqlx::query(
-            "SELECT id, sid, bot, focus, started_at, state, timezone FROM session WHERE id = ?",
+            "SELECT id, sid, bot, focus, started_at, state, timezone, started_on FROM session
+             WHERE id = ?",
         )
         .bind(id.as_str())
         .fetch_optional(&mut **tx)
@@ -104,7 +105,7 @@ impl DoltSessions {
             attempted: id.to_string(),
         })?;
         let entries = sqlx::query(
-            "SELECT id, at, text, touched, beat FROM journal_entry
+            "SELECT id, at, text, touched, beat, happened_on FROM journal_entry
              WHERE session = ? ORDER BY ordinal",
         )
         .bind(id.as_str())
@@ -177,6 +178,9 @@ fn session_from(
         bot: EntityId(row.try_get::<String, _>("bot").map_err(store)?),
         focus: row.try_get::<String, _>("focus").map_err(store)?,
         started_at: instant(&started)?,
+        started_on: day(row
+            .try_get::<Option<String>, _>("started_on")
+            .map_err(store)?)?,
         // A state token the store does not recognize is a record jojobot
         // cannot read. It is not a session in an unknown column — there are no
         // columns here — so it is a store fault a person repairs.
@@ -194,6 +198,9 @@ fn entry_from(row: &sqlx::mysql::MySqlRow) -> Result<JournalEntry, SessionError>
     Ok(JournalEntry {
         id: EntryId(row.try_get::<String, _>("id").map_err(store)?),
         at: instant(&at)?,
+        on: day(row
+            .try_get::<Option<String>, _>("happened_on")
+            .map_err(store)?)?,
         text: row.try_get::<String, _>("text").map_err(store)?,
         touched: touched.as_deref().map(instant).transpose()?,
         beat: row.try_get::<Option<String>, _>("beat").map_err(store)?,
@@ -207,6 +214,22 @@ fn instant(raw: &str) -> Result<Timestamp, SessionError> {
         tracing::error!(cell = %raw, "a session row carries a timestamp that is no timestamp");
         SessionError::Store("a session row carries a timestamp jojobot cannot read".into())
     })
+}
+
+/// **A stated day as the store holds it**, or nothing when the run stated none.
+///
+/// A cell that is no date is a store fault a person repairs, exactly as a
+/// timestamp that is no timestamp is: it is not a run without a frame, it is a
+/// run whose frame jojobot cannot read, and answering it on the clock would
+/// quietly serve the wrong one.
+fn day(raw: Option<String>) -> Result<Option<jiff::civil::Date>, SessionError> {
+    raw.map(|cell| {
+        cell.parse().map_err(|_| {
+            tracing::error!(cell = %cell, "a session row carries a day that is no day");
+            SessionError::Store("a session row carries a day jojobot cannot read".into())
+        })
+    })
+    .transpose()
 }
 
 /// An instant as it is stored: RFC 3339, nanoseconds intact.
@@ -287,8 +310,8 @@ impl Sessions for DoltSessions {
             .await?,
         );
         sqlx::query(
-            "INSERT INTO session (id, sid, bot, focus, started_at, state, timezone)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO session (id, sid, bot, focus, started_at, state, timezone, started_on)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(id.as_str())
         .bind(new.sid.as_str())
@@ -297,6 +320,7 @@ impl Sessions for DoltSessions {
         .bind(stamp(new.started_at))
         .bind(SessionState::Active.as_token())
         .bind(new.timezone.as_deref())
+        .bind(new.started_on.map(|day| day.to_string()))
         .execute(&mut *tx)
         .await
         .map_err(store)?;
@@ -334,8 +358,8 @@ impl Sessions for DoltSessions {
             .await?,
         );
         sqlx::query(
-            "INSERT INTO journal_entry (session, id, ordinal, at, text, touched, beat)
-             VALUES (?, ?, ?, ?, ?, NULL, ?)",
+            "INSERT INTO journal_entry (session, id, ordinal, at, text, touched, beat, happened_on)
+             VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
         )
         .bind(id.as_str())
         .bind(entry_id.as_str())
@@ -343,6 +367,7 @@ impl Sessions for DoltSessions {
         .bind(stamp(entry.at))
         .bind(normalize_entry(&entry.text))
         .bind(entry.beat.as_deref())
+        .bind(entry.on.map(|day| day.to_string()))
         .execute(&mut *tx)
         .await
         .map_err(store)?;
@@ -512,7 +537,7 @@ async fn read_entry(
     entry: &EntryId,
 ) -> Result<JournalEntry, SessionError> {
     let row = sqlx::query(
-        "SELECT id, at, text, touched, beat FROM journal_entry WHERE session = ? AND id = ?",
+        "SELECT id, at, text, touched, beat, happened_on FROM journal_entry WHERE session = ? AND id = ?",
     )
     .bind(session.as_str())
     .bind(entry.as_str())
@@ -606,6 +631,7 @@ mod tests {
             sessions
                 .begin(NewSession {
                     timezone: None,
+                    started_on: None,
                     bot: EntityId(format!("bot:{slug}")),
                     sid: Sid(sid.into()),
                     focus: "a run".into(),
@@ -630,6 +656,7 @@ mod tests {
                 NewEntry::manual(
                     "what I set out to do",
                     "2026-01-01T00:02:00Z".parse().unwrap(),
+                    None,
                 ),
             )
             .await
@@ -638,7 +665,11 @@ mod tests {
         let next = sessions
             .append(
                 &second.id,
-                NewEntry::manual("what I found", "2026-01-01T00:03:00Z".parse().unwrap()),
+                NewEntry::manual(
+                    "what I found",
+                    "2026-01-01T00:03:00Z".parse().unwrap(),
+                    None,
+                ),
             )
             .await
             .expect("append ok");
@@ -698,6 +729,7 @@ mod tests {
             sessions
                 .begin(NewSession {
                     timezone: None,
+                    started_on: None,
                     bot: EntityId(format!("bot:{slug}")),
                     sid: Sid(sid.into()),
                     focus: "a run".into(),
@@ -712,14 +744,14 @@ mod tests {
         let mine = sessions
             .append(
                 &one.id,
-                NewEntry::manual("mine", "2026-01-01T00:02:00Z".parse().unwrap()),
+                NewEntry::manual("mine", "2026-01-01T00:02:00Z".parse().unwrap(), None),
             )
             .await
             .expect("append ok");
         let theirs = sessions
             .append(
                 &other.id,
-                NewEntry::manual("theirs", "2026-01-01T00:03:00Z".parse().unwrap()),
+                NewEntry::manual("theirs", "2026-01-01T00:03:00Z".parse().unwrap(), None),
             )
             .await
             .expect("append ok");
@@ -830,6 +862,7 @@ mod tests {
                 sid: Sid("ab12".into()),
                 focus: "a run".into(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                started_on: None,
             })
             .await
             .expect("begin ok");
@@ -907,6 +940,7 @@ mod tests {
                 sid: Sid("cd34".into()),
                 focus: "a run whose boundaries cannot be marked".into(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                started_on: None,
             })
             .await
             .expect("a run starts even when its boundary cannot be marked");

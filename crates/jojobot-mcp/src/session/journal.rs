@@ -83,7 +83,7 @@ impl Jojobot {
             .sessions
             .append(
                 &session,
-                NewEntry::manual(args.entry, jiff::Timestamp::now()),
+                NewEntry::manual(args.entry, jiff::Timestamp::now(), caller.day),
             )
             .await
         {
@@ -411,6 +411,7 @@ mod tests {
                 sid: Sid("t001".into()),
                 focus: "a finished piece of work".into(),
                 started_at: jiff::Timestamp::now(),
+                started_on: None,
             })
             .await
             .expect("begin ok");

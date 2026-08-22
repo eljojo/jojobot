@@ -105,7 +105,7 @@ impl Jojobot {
                 self.sessions
                     .append(
                         &session,
-                        NewEntry::beat(class, text, jiff::Timestamp::now()),
+                        NewEntry::beat(class, text, jiff::Timestamp::now(), caller.day),
                     )
                     .await
                     .map(|_| ())

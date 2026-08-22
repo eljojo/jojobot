@@ -74,6 +74,10 @@ pub struct Handle {
     /// Held here as well as on the card because the card is lazy: a run that has
     /// only read has no row yet, and its reads are day-grained too.
     pub(crate) zone: Option<String>,
+    /// **The day this run says it is in**, when it stated one. Carried beside
+    /// the zone for the same reason: a run outlives a restart, and the sweep
+    /// reads this frame rather than the server's clock.
+    pub(crate) day: Option<jiff::civil::Date>,
 }
 
 /// Minting found no free handle. See [`MINT_ATTEMPTS`].
@@ -166,6 +170,7 @@ impl SessionRegistry {
                     bot: bot.clone(),
                     card,
                     zone: None,
+                    day: None,
                 },
             );
             return Ok(Sid(candidate));
@@ -236,6 +241,7 @@ impl SessionRegistry {
                     // from the board; a zone kept only in the process would be
                     // gone while the run it belongs to is still being worked.
                     zone: session.timezone.clone(),
+                    day: session.started_on,
                 },
             );
         }
@@ -256,6 +262,22 @@ impl SessionRegistry {
             .get_mut(sid.as_str())
         {
             handle.zone = zone;
+        }
+    }
+
+    /// **Record the day this run says it is in**, replacing whatever it held.
+    ///
+    /// Called on every boot that supplies one, resume included, for the reason
+    /// the zone is: a run outlives a device hop and a night, so the day it was
+    /// born in is not always the day it is being worked in.
+    pub fn set_day(&self, sid: &Sid, day: Option<jiff::civil::Date>) {
+        if let Some(handle) = self
+            .held
+            .write()
+            .expect("the registry is poisoned")
+            .get_mut(sid.as_str())
+        {
+            handle.day = day;
         }
     }
 

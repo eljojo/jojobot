@@ -1,0 +1,14 @@
+-- The day a beat says it happened on, in its run's own frame.
+--
+-- The other side of the subtraction the sweep makes. A day stated only at
+-- the door would be measured against beats stamped on the server's clock,
+-- which is two frames in one subtraction rather than one frame moved to the
+-- caller.
+--
+-- The column is named for what it holds and not for the column beside it:
+-- `at` is when the store took the beat in, and this is the day the run says
+-- it belongs to. They differ for any run that is not happening now.
+--
+-- NULL is a beat whose run stated no day, which is every row written before
+-- this column. Those are answered on the clock, as they already were.
+ALTER TABLE journal_entry ADD COLUMN happened_on VARCHAR(10) NULL;

@@ -123,7 +123,10 @@ impl Jojobot {
             Some(told) => told,
             None => match self
                 .sessions
-                .append(&session, NewEntry::manual(&story, jiff::Timestamp::now()))
+                .append(
+                    &session,
+                    NewEntry::manual(&story, jiff::Timestamp::now(), caller.day),
+                )
                 .await
             {
                 Ok(entry) => entry,
@@ -540,13 +543,14 @@ mod tests {
                 sid: Sid("d001".into()),
                 focus: "their run".into(),
                 started_at: jiff::Timestamp::now(),
+                started_on: None,
             })
             .await
             .expect("begin ok");
         store
             .append(
                 &theirs.id,
-                NewEntry::manual("their beat", jiff::Timestamp::now()),
+                NewEntry::manual("their beat", jiff::Timestamp::now(), None),
             )
             .await
             .expect("append ok");

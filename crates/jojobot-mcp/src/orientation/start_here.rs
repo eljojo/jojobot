@@ -43,6 +43,24 @@ pub struct OrientArgs {
     /// in the same call it re-orients with.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **The day this run is in**, as `YYYY-MM-DD`, when it is not the day the
+    /// server is having.
+    ///
+    /// **The sweep decides whether your other runs went quiet, and it decides in
+    /// this frame.** Send it when a run is not happening now: a session catching
+    /// up on last week, an instance restored from a backup, a run acting out a
+    /// stretch of time. Without it the sweep answers on the server's clock, so a
+    /// run that covers months in minutes leaves every one of its own sittings
+    /// looking like it is still working, and each boot after the first meets a
+    /// resume-or-new choice for runs that are long over.
+    ///
+    /// **jojobot never derives it.** The zone beside it says how to name a day;
+    /// this says which day you are in, and no zone can tell the server that.
+    ///
+    /// Send none and the sweep answers on the clock, which is what it always
+    /// did.
+    #[serde(default)]
+    pub(crate) today: Option<String>,
     /// **The timezone this session works in** — an IANA name like
     /// `America/New_York` or `Europe/Madrid`. Send it when you boot, and send
     /// it again when you resume from somewhere else.
@@ -212,11 +230,17 @@ impl Jojobot {
                     .map(str::trim)
                     .is_some_and(|z| !z.is_empty())
             });
+        // **Validated here too, and for the same reason.** A day that is no day
+        // is a malformed argument a caller can still fix, and taking it as
+        // "stated nothing" would answer the sweep on the clock while the caller
+        // believes it stated a frame.
+        let today = parse_day(args.today.as_deref())?;
         self.orient(
             bot.as_ref(),
             args.brief.unwrap_or(false),
             resume,
             timezone.as_deref(),
+            today,
             carried,
         )
         .await
@@ -254,6 +278,7 @@ mod tests {
                 skill: Some("evidence".into()),
                 resume: Some("jm7z".into()),
                 sid: None,
+                today: None,
             }))
             .await
             .expect("start_here ok");
@@ -277,6 +302,7 @@ mod tests {
                 skill: Some("evidence".into()),
                 resume: Some("jm7z".into()),
                 sid: None,
+                today: None,
             }))
             .await
             .expect("start_here ok");
@@ -316,6 +342,7 @@ mod tests {
                     skill: Some("evidence".into()),
                     resume: None,
                     sid: Some(live.clone()),
+                    today: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -368,6 +395,7 @@ mod tests {
                         skill: None,
                         resume: None,
                         sid,
+                        today: None,
                     }))
                     .await
                     .expect("start_here ok"),
@@ -439,6 +467,7 @@ mod tests {
                 skill: None,
                 resume: None,
                 sid: None,
+                today: None,
             }))
             .await
             .expect("start_here ok");
@@ -514,6 +543,7 @@ mod tests {
                     skill: None,
                     resume: None,
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -530,6 +560,7 @@ mod tests {
                     skill: None,
                     resume: None,
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -588,6 +619,7 @@ mod tests {
                         skill: None,
                         resume: None,
                         sid: None,
+                        today: None,
                     }))
                     .await
                     .expect("start_here ok"),
@@ -601,6 +633,7 @@ mod tests {
                         skill: None,
                         resume: None,
                         sid: None,
+                        today: None,
                     }))
                     .await
                     .expect("start_here ok"),
@@ -648,6 +681,7 @@ mod tests {
                     skill: None,
                     resume: None,
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("boot ok"),
@@ -671,6 +705,7 @@ mod tests {
                 skill: None,
                 resume: None,
                 sid: None,
+                today: None,
             }))
             .await
             .expect("orientation still lands");
@@ -700,6 +735,7 @@ mod tests {
                 skill: None,
                 resume: Some("new".into()),
                 sid: None,
+                today: None,
             }))
             .await
             .expect("a misuse is an answer, not a protocol failure");
@@ -743,6 +779,7 @@ mod tests {
                 skill: None,
                 resume: None,
                 sid: None,
+                today: None,
             }))
             .await
             .expect_err("another kind must be refused");
@@ -780,6 +817,7 @@ mod tests {
                     skill: None,
                     resume: None,
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
@@ -798,6 +836,7 @@ mod tests {
                     skill: None,
                     resume: None,
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),
@@ -863,6 +902,7 @@ mod tests {
                     skill: None,
                     resume: None,
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("an unknown bot is an answer, not a protocol failure"),

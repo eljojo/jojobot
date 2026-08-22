@@ -31,6 +31,7 @@
 //! entries in tests and examples are openly fictional.
 
 use jiff::Timestamp;
+use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
 use crate::memory::EntityId;
@@ -218,6 +219,23 @@ impl std::fmt::Display for SessionState {
 /// entry, or when it started if it never wrote one.
 pub const ABANDONED_AFTER: jiff::SignedDuration = jiff::SignedDuration::from_hours(24);
 
+/// **The last day a run is still working**, from the newest day it states.
+///
+/// The judgement is [`ABANDONED_AFTER`]'s and it is read off it rather than
+/// written again: a session that goes quiet overnight is still that night's
+/// work, so a run whose newest stated day is yesterday is live and one older is
+/// not. Two constants for one judgement is how they come to disagree.
+fn keeps_working_until(last: Date) -> Date {
+    last.checked_add(jiff::Span::new().hours(ABANDONED_AFTER.as_hours()))
+        .unwrap_or(Date::MAX)
+}
+
+/// **The last day a stopped run is still offered back**, on the same rule.
+fn still_offered_until(last: Date) -> Date {
+    last.checked_add(jiff::Span::new().hours(OFFER_ABANDONED_WITHIN.as_hours()))
+        .unwrap_or(Date::MAX)
+}
+
 /// How recently a run must have stopped for a boot to **offer** it back.
 ///
 /// **Its own number, deliberately not [`ABANDONED_AFTER`].** They answer
@@ -307,6 +325,16 @@ pub struct JournalEntry {
     pub id: EntryId,
     /// When it was recorded.
     pub at: Timestamp,
+    /// **The day the caller says this beat happened on**, when the run stated
+    /// one. `at` is when the store took it in; this is the day it belongs to in
+    /// the caller's own frame, and they are different questions for any run
+    /// that is not happening now — a session catching up on last week, or one
+    /// acting out months in minutes.
+    ///
+    /// `None` is a beat from a run that stated no day, and the sweep answers
+    /// those on the clock exactly as it always did.
+    #[serde(default)]
+    pub on: Option<Date>,
     /// The entry itself.
     pub text: String,
     /// When this entry was last rewritten, for one that has been.
@@ -352,23 +380,34 @@ pub struct NewEntry {
     pub at: Timestamp,
     /// The verb class, for an automatic beat; `None` for a session's own entry.
     pub beat: Option<String>,
+    /// **The day the caller's run says this happened on**, or nothing when the
+    /// run stated none. Passed in for the reason `at` is: the domain reads no
+    /// clock and invents no frame.
+    pub on: Option<Date>,
 }
 
 impl NewEntry {
     /// An entry the session wrote.
-    pub fn manual(text: impl Into<String>, at: Timestamp) -> Self {
+    pub fn manual(text: impl Into<String>, at: Timestamp, on: Option<Date>) -> Self {
         NewEntry {
             text: text.into(),
             at,
+            on,
             beat: None,
         }
     }
 
     /// A beat jojobot wrote about a verb class.
-    pub fn beat(class: impl Into<String>, text: impl Into<String>, at: Timestamp) -> Self {
+    pub fn beat(
+        class: impl Into<String>,
+        text: impl Into<String>,
+        at: Timestamp,
+        on: Option<Date>,
+    ) -> Self {
         NewEntry {
             text: text.into(),
             at,
+            on,
             beat: Some(class.into()),
         }
     }
@@ -395,6 +434,11 @@ pub struct NewSession {
     /// from a database on the machine serving the call, and this model stays
     /// clock-free and reads nothing.
     pub timezone: Option<String>,
+    /// **The day this run says it begins on**, as the caller stated it at the
+    /// door, or nothing when it stated none. Carried beside the zone because it
+    /// answers the other half of the same question: the zone says how to name a
+    /// day, and this says which day the run is in.
+    pub started_on: Option<Date>,
 }
 
 /// One session on the record.
@@ -434,6 +478,11 @@ pub struct Session {
     /// carried one.
     #[serde(default)]
     pub timezone: Option<String>,
+    /// **The day this run says it began on**, when it stated one. It is what
+    /// the sweep measures a session that has journalled nothing against, the
+    /// same way `started_at` is on the clock.
+    #[serde(default)]
+    pub started_on: Option<Date>,
 }
 
 impl Session {
@@ -451,10 +500,35 @@ impl Session {
             .unwrap_or(self.started_at)
     }
 
-    /// Whether `now` is far enough past this session's last beat to sweep it.
-    /// Only an `active` session is ever swept: the other two are already closed.
-    pub fn is_stale(&self, now: Timestamp) -> bool {
-        !self.state.is_terminal() && now.duration_since(self.last_beat()) >= ABANDONED_AFTER
+    /// **The newest day this session has to show for itself in the caller's own
+    /// frame**: the newest day any beat states, or the day it says it began.
+    ///
+    /// `None` when the run stated no day anywhere, which is the only case the
+    /// clock answers.
+    pub fn last_beat_on(&self) -> Option<Date> {
+        self.entries
+            .iter()
+            .filter_map(|e| e.on)
+            .max()
+            .or(self.started_on)
+    }
+
+    /// Whether this session is far enough past its last beat to sweep it. Only
+    /// an `active` session is ever swept: the other two are already closed.
+    ///
+    /// 🚨 **`today` is the day the caller states, and it wins when both sides
+    /// have one.** The clock answers only when nobody stated a frame — a run
+    /// acting out months finishes in real minutes, so measured on the clock
+    /// nothing it leaves is ever stale and every sitting after the first meets
+    /// a choice it should never see.
+    pub fn is_stale(&self, now: Timestamp, today: Option<Date>) -> bool {
+        if self.state.is_terminal() {
+            return false;
+        }
+        match (today, self.last_beat_on()) {
+            (Some(today), Some(last)) => today > keeps_working_until(last),
+            _ => now.duration_since(self.last_beat()) >= ABANDONED_AFTER,
+        }
     }
 
     /// Whether a boot should **offer** this run back — an `abandoned` one that
@@ -463,9 +537,14 @@ impl Session {
     /// `wrapped` is never offered: its story was told and it does not reopen.
     /// An older `abandoned` run is not offered either, and stays resumable by
     /// anyone holding its handle — see the constant.
-    pub fn is_offerable(&self, now: Timestamp) -> bool {
-        self.state == SessionState::Abandoned
-            && now.duration_since(self.last_beat()) < OFFER_ABANDONED_WITHIN
+    pub fn is_offerable(&self, now: Timestamp, today: Option<Date>) -> bool {
+        if self.state != SessionState::Abandoned {
+            return false;
+        }
+        match (today, self.last_beat_on()) {
+            (Some(today), Some(last)) => today <= still_offered_until(last),
+            _ => now.duration_since(self.last_beat()) < OFFER_ABANDONED_WITHIN,
+        }
     }
 }
 
@@ -777,12 +856,13 @@ pub async fn sweep_and_find(
     sessions: &dyn Sessions,
     bot: &EntityId,
     now: Timestamp,
+    today: Option<Date>,
 ) -> Result<Board, SessionError> {
     let existing = sessions.sessions_of(bot).await?;
 
     let mut swept = Vec::new();
     let mut unswept = Vec::new();
-    for stale in existing.iter().filter(|s| s.is_stale(now)) {
+    for stale in existing.iter().filter(|s| s.is_stale(now, today)) {
         match sessions.close(&stale.id, SessionState::Abandoned).await {
             Ok(_) => swept.push(stale.id.to_string()),
             Err(e) => unswept.push((stale.id.clone(), e)),
@@ -792,7 +872,7 @@ pub async fn sweep_and_find(
     // Newest first already, so the first live one is the newest.
     let live: Vec<Session> = existing
         .iter()
-        .filter(|s| !s.state.is_terminal() && !s.is_stale(now))
+        .filter(|s| !s.state.is_terminal() && !s.is_stale(now, today))
         .cloned()
         .collect();
     // **Read AFTER the sweep, and through it.** The run this boot just marked
@@ -808,7 +888,7 @@ pub async fn sweep_and_find(
             },
             false => s,
         })
-        .find(|s| s.is_offerable(now));
+        .find(|s| s.is_offerable(now, today));
     Ok(Board {
         live,
         offerable,
@@ -897,10 +977,12 @@ mod projection_tests {
             started_at: "2026-07-24T09:00:00Z".parse().expect("a timestamp"),
             state: SessionState::Active,
             timezone: None,
+            started_on: None,
             entries: vec![
                 JournalEntry {
                     id: EntryId("e1".into()),
                     at: "2026-07-24T09:05:00Z".parse().expect("a timestamp"),
+                    on: None,
                     text: "set out to read the gate".to_string(),
                     touched: None,
                     beat: None,
@@ -908,6 +990,7 @@ mod projection_tests {
                 JournalEntry {
                     id: EntryId("e2".into()),
                     at: "2026-07-24T09:30:00Z".parse().expect("a timestamp"),
+                    on: None,
                     text: "found the scan reads handles only".to_string(),
                     touched: None,
                     beat: None,
@@ -999,6 +1082,7 @@ mod tests {
                 let entry = JournalEntry {
                     id: beat.entry.clone(),
                     at: contract::epoch(),
+                    on: None,
                     touched: None,
                     beat: Some((*class).to_string()),
                     text: text.clone(),
@@ -1020,6 +1104,7 @@ mod tests {
         let entry = |text: &str| JournalEntry {
             id: EntryId("e1".into()),
             at: contract::epoch(),
+            on: None,
             touched: None,
             beat: Some("capture".into()),
             text: text.to_string(),
@@ -1046,12 +1131,14 @@ mod tests {
         let entry = |id: &str, beat: Option<&str>, text: &str| JournalEntry {
             id: EntryId(id.into()),
             at: contract::epoch(),
+            on: None,
             touched: None,
             beat: beat.map(str::to_string),
             text: text.to_string(),
         };
         let session = Session {
             timezone: None,
+            started_on: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -1087,6 +1174,7 @@ mod tests {
         store
             .begin(NewSession {
                 timezone: None,
+                started_on: None,
                 bot: EntityId("bot:gamma".into()),
                 sid: Sid(format!("s{nth:03}")),
                 focus: focus.to_string(),
@@ -1108,7 +1196,9 @@ mod tests {
         let warm = run(&store, 2, "an hour ago", 1).await;
         let ancient = run(&store, 3, "a fortnight ago", 24 * 15).await;
 
-        let board = sweep_and_find(&store, &gamma, at).await.expect("a board");
+        let board = sweep_and_find(&store, &gamma, at, None)
+            .await
+            .expect("a board");
 
         assert_eq!(
             board.swept,
@@ -1140,7 +1230,7 @@ mod tests {
 
         // The clock is the argument, not the wall: ask the same store at an
         // earlier instant and nothing is stale yet.
-        let earlier = sweep_and_find(&store, &gamma, at - ABANDONED_AFTER)
+        let earlier = sweep_and_find(&store, &gamma, at - ABANDONED_AFTER, None)
             .await
             .expect("a board");
         assert!(
@@ -1219,7 +1309,7 @@ mod tests {
         let gamma = EntityId("bot:gamma".into());
         let stale = run(&store.0, 1, "yesterday's work", 36).await;
 
-        let board = sweep_and_find(&store, &gamma, contract::epoch())
+        let board = sweep_and_find(&store, &gamma, contract::epoch(), None)
             .await
             .expect("a refused close is not a failed boot");
 
@@ -1304,6 +1394,72 @@ mod tests {
         );
     }
 
+    /// 🚨 **The sweep answers in the day the caller states, and only falls back
+    /// to the clock when nobody stated one.**
+    ///
+    /// A run acting out months finishes in real minutes, so measured against a
+    /// clock nothing it left is ever stale and every sitting after the first
+    /// meets a resume-or-new choice it should never see. A session catching up
+    /// on last week, and an instance restored from a backup, meet the same
+    /// wrong answer — the frame belongs to the caller here exactly as it does
+    /// for the day a capture gets.
+    ///
+    /// **Both halves in one case.** A run whose newest stated day is months
+    /// back is stale; one whose newest stated day is yesterday is not, because
+    /// a session that goes quiet overnight is still that night's work. Without
+    /// the second half this passes identically against a sweep that closes
+    /// everything.
+    #[test]
+    fn staleness_is_measured_in_the_day_the_caller_states() {
+        let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
+        let day = |text: &str| text.parse::<Date>().expect("a date");
+        let run = |on: Date| Session {
+            timezone: None,
+            started_on: Some(on),
+            id: SessionId("1".into()),
+            sid: Some(Sid("s001".into())),
+            bot: EntityId("bot:gamma".into()),
+            focus: "nothing yet".into(),
+            started_at: start,
+            state: SessionState::Active,
+            entries: vec![JournalEntry {
+                id: EntryId("e1".into()),
+                at: start,
+                on: Some(on),
+                text: "did a thing".into(),
+                touched: None,
+                beat: None,
+            }],
+        };
+
+        let today = day("2026-09-13");
+        assert!(
+            run(day("2026-03-15")).is_stale(start, Some(today)),
+            "a run whose newest stated day is months back is not being swept, so a year acted \
+             out in minutes offers every sitting it ever had",
+        );
+        assert!(
+            !run(day("2026-09-12")).is_stale(start, Some(today)),
+            "a run that went quiet overnight was swept — that night's work is still the work, \
+             and this case would pass on a sweep that closed everything",
+        );
+        assert!(
+            !run(today).is_stale(start, Some(today)),
+            "a run from the caller's own day was swept",
+        );
+
+        // **The caller who states nothing gets exactly what it got before.**
+        let quiet = run(day("2026-03-15"));
+        assert!(
+            !quiet.is_stale(start, None),
+            "a caller that stated no day had the clock answer differently from before",
+        );
+        assert!(
+            quiet.is_stale(start + ABANDONED_AFTER, None),
+            "…and the clock still sweeps when nobody states a frame",
+        );
+    }
+
     /// The sweep measures the newest thing a session has to show for itself —
     /// and for one that never journalled, that is when it began. A session that
     /// boots and does nothing is exactly the case the sweep exists for, so
@@ -1313,6 +1469,7 @@ mod tests {
         let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
         let bare = Session {
             timezone: None,
+            started_on: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -1326,9 +1483,9 @@ mod tests {
             start,
             "no entries: the start is the last beat"
         );
-        assert!(!bare.is_stale(start + jiff::SignedDuration::from_hours(23)));
+        assert!(!bare.is_stale(start + jiff::SignedDuration::from_hours(23), None));
         assert!(
-            bare.is_stale(start + ABANDONED_AFTER),
+            bare.is_stale(start + ABANDONED_AFTER, None),
             "the threshold is inclusive"
         );
 
@@ -1337,6 +1494,7 @@ mod tests {
             entries: vec![JournalEntry {
                 id: EntryId("e1".into()),
                 at: start + hour,
+                on: None,
                 text: "did a thing".into(),
                 touched: None,
                 beat: None,
@@ -1349,7 +1507,7 @@ mod tests {
             "an entry moves the clock forward"
         );
         assert!(
-            !busy.is_stale(start + ABANDONED_AFTER),
+            !busy.is_stale(start + ABANDONED_AFTER, None),
             "…so the same instant that swept the bare one leaves this one alone"
         );
 
@@ -1358,7 +1516,7 @@ mod tests {
             state: SessionState::Wrapped,
             ..bare
         };
-        assert!(!closed.is_stale(start + ABANDONED_AFTER + hour));
+        assert!(!closed.is_stale(start + ABANDONED_AFTER + hour, None));
     }
 
     /// **The glyphs a reader confuses are not in the alphabet**, and everything
@@ -1405,6 +1563,7 @@ mod tests {
         let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
         let run = Session {
             timezone: None,
+            started_on: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -1416,19 +1575,19 @@ mod tests {
 
         let day = jiff::SignedDuration::from_hours(24);
         assert!(
-            run.is_offerable(start + day),
+            run.is_offerable(start + day, None),
             "yesterday's run is the one to offer"
         );
         assert!(
-            run.is_offerable(start + OFFER_ABANDONED_WITHIN - day),
+            run.is_offerable(start + OFFER_ABANDONED_WITHIN - day, None),
             "…and so is one from inside the window"
         );
         assert!(
-            !run.is_offerable(start + OFFER_ABANDONED_WITHIN),
+            !run.is_offerable(start + OFFER_ABANDONED_WITHIN, None),
             "the bound is exclusive at the edge"
         );
         assert!(
-            !run.is_offerable(start + OFFER_ABANDONED_WITHIN + day * 60),
+            !run.is_offerable(start + OFFER_ABANDONED_WITHIN + day * 60, None),
             "a run from two months ago is not something to bring up"
         );
 
@@ -1439,7 +1598,7 @@ mod tests {
                 ..run.clone()
             };
             assert!(
-                !other.is_offerable(start + day),
+                !other.is_offerable(start + day, None),
                 "{state} is not an abandoned run to offer back"
             );
         }
@@ -1457,14 +1616,15 @@ mod tests {
     #[test]
     fn an_automatic_beat_is_distinguishable_from_a_session_s_own_entry() {
         let at = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
-        let manual = NewEntry::manual("read the task", at);
-        let auto = NewEntry::beat("capture", "captured facts: person:milhouse", at);
+        let manual = NewEntry::manual("read the task", at, None);
+        let auto = NewEntry::beat("capture", "captured facts: person:milhouse", at, None);
         assert_eq!(manual.beat, None);
         assert_eq!(auto.beat.as_deref(), Some("capture"));
 
         let entry = |new: NewEntry| JournalEntry {
             id: EntryId("e1".into()),
             at: new.at,
+            on: None,
             text: new.text,
             touched: None,
             beat: new.beat,

@@ -316,6 +316,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0029_fact_by_source.sql"),
         leaves: Leaves::Index("fact", "by_source"),
     },
+    Migration {
+        version: "0030_session_stated_day",
+        sql: include_str!("../../migrations/0030_session_stated_day.sql"),
+        leaves: Leaves::Column("session", "started_on"),
+    },
+    Migration {
+        version: "0031_journal_entry_day",
+        sql: include_str!("../../migrations/0031_journal_entry_day.sql"),
+        leaves: Leaves::Column("journal_entry", "happened_on"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -712,6 +722,8 @@ mod tests {
         "0027_fact_inserted_at",
         "0028_fact_stale_after",
         "0029_fact_by_source",
+        "0030_session_stated_day",
+        "0031_journal_entry_day",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

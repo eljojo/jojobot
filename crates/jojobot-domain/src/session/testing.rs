@@ -138,6 +138,7 @@ impl Sessions for InMemorySessions {
             state: SessionState::Active,
             entries: Vec::new(),
             timezone: new.timezone,
+            started_on: new.started_on,
         };
         self.sessions
             .lock()
@@ -154,6 +155,7 @@ impl Sessions for InMemorySessions {
         let recorded = JournalEntry {
             id: EntryId(self.mint()),
             at: entry.at,
+            on: entry.on,
             text: normalize_entry(&entry.text),
             touched: None,
             beat: entry.beat,
@@ -299,6 +301,7 @@ pub mod contract {
                 focus: focus.to_string(),
                 started_at: at(at_offset),
                 timezone: None,
+                started_on: None,
             })
             .await
             .expect("begin should succeed")
@@ -312,7 +315,7 @@ pub mod contract {
         at_offset: i64,
     ) -> JournalEntry {
         store
-            .append(id, NewEntry::manual(text, at(at_offset)))
+            .append(id, NewEntry::manual(text, at(at_offset), None))
             .await
             .expect("append should succeed")
     }
@@ -343,6 +346,7 @@ pub mod contract {
                 focus: "reading the hand-off".to_string(),
                 started_at: at(0),
                 timezone: None,
+                started_on: None,
             })
             .await
             .expect("beginning again under a live handle is not an error");
@@ -425,7 +429,7 @@ pub mod contract {
         store
             .append(
                 &session.id,
-                NewEntry::beat("capture", "captured facts: person:milhouse", at(90)),
+                NewEntry::beat("capture", "captured facts: person:milhouse", at(90), None),
             )
             .await
             .expect("append should succeed");
@@ -474,7 +478,7 @@ pub mod contract {
         let beat = store
             .append(
                 &session.id,
-                NewEntry::beat("capture", "captured facts: person:milhouse", at(60)),
+                NewEntry::beat("capture", "captured facts: person:milhouse", at(60), None),
             )
             .await
             .expect("append ok");
@@ -531,7 +535,12 @@ pub mod contract {
         let beat = store
             .append(
                 &session.id,
-                NewEntry::beat("capture", "captured facts: person:milhouse (1)", at(60)),
+                NewEntry::beat(
+                    "capture",
+                    "captured facts: person:milhouse (1)",
+                    at(60),
+                    None,
+                ),
             )
             .await
             .expect("append ok");
@@ -607,6 +616,7 @@ pub mod contract {
                 focus: "reading the hand-off".to_string(),
                 started_at: at(70),
                 timezone: Some("Europe/Madrid".to_string()),
+                started_on: None,
             })
             .await
             .expect("a run may be born in a zone");
@@ -647,6 +657,7 @@ pub mod contract {
                 focus: "no zone named".to_string(),
                 started_at: at(71),
                 timezone: None,
+                started_on: None,
             })
             .await
             .expect("a run may name no zone");
@@ -726,7 +737,10 @@ pub mod contract {
         // The proof that reopening MEANT something: the verb that was refused a
         // moment ago now lands, and lands on the same record.
         store
-            .append(&reopened.id, NewEntry::manual("picked it back up", at(120)))
+            .append(
+                &reopened.id,
+                NewEntry::manual("picked it back up", at(120), None),
+            )
             .await
             .expect("a reopened session takes entries");
         let read = store.read_session(&abandoned.id).await.expect("read ok");
@@ -780,7 +794,7 @@ pub mod contract {
             let beat = store
                 .append(
                     &session.id,
-                    NewEntry::beat("capture", "captured facts: x (1)", at(30)),
+                    NewEntry::beat("capture", "captured facts: x (1)", at(30), None),
                 )
                 .await
                 .expect("append ok");
@@ -796,7 +810,10 @@ pub mod contract {
             };
             refused(
                 store
-                    .append(&session.id, NewEntry::manual("one more thing", at(120)))
+                    .append(
+                        &session.id,
+                        NewEntry::manual("one more thing", at(120), None),
+                    )
                     .await
                     .expect_err("append must be refused"),
                 "append",
@@ -944,7 +961,7 @@ pub mod contract {
                 .await
                 .expect_err("read must miss"),
             store
-                .append(&missing, NewEntry::manual("a beat", at(60)))
+                .append(&missing, NewEntry::manual("a beat", at(60), None))
                 .await
                 .expect_err("append must miss"),
             store
@@ -972,7 +989,7 @@ pub mod contract {
         let session = begin(store, "gamma", "the first run", 0).await;
         assert!(
             store
-                .append(&session.id, NewEntry::manual("   ", at(60)))
+                .append(&session.id, NewEntry::manual("   ", at(60), None))
                 .await
                 .is_err(),
             "an empty entry is not a beat"
@@ -989,6 +1006,7 @@ pub mod contract {
                     focus: "  ".into(),
                     started_at: at(0),
                     timezone: None,
+                    started_on: None,
                 })
                 .await
                 .is_err(),
@@ -1012,7 +1030,7 @@ pub mod contract {
         store
             .append(
                 &session.id,
-                NewEntry::manual("line one\r\nline two", at(120)),
+                NewEntry::manual("line one\r\nline two", at(120), None),
             )
             .await
             .expect("append ok");

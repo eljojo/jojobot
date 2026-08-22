@@ -63,6 +63,7 @@ pub(crate) async fn abandoned_run(
 ) -> Session {
     let begun = store
         .begin(NewSession {
+            started_on: None,
             timezone: None,
             bot: EntityId(format!("bot:{bot}")),
             sid: Sid(format!("t{:03}", hours_ago.rem_euclid(1000))),

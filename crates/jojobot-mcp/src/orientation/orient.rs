@@ -18,6 +18,7 @@ impl Jojobot {
         resume: Option<&str>,
         // The IANA zone this run resolves days in, validated at the door.
         timezone: Option<&str>,
+        today: Option<jiff::civil::Date>,
         // What the handle this caller arrived with is worth — from
         // [`Jojobot::standing`], and `Null` when they arrived with none.
         carried: serde_json::Value,
@@ -253,7 +254,7 @@ impl Jojobot {
         // belonging to nobody.
         let session = match bot {
             None => serde_json::Value::Null,
-            Some(bot) => match self.attach(bot, resume, timezone).await {
+            Some(bot) => match self.attach(bot, resume, timezone, today).await {
                 Ok(session) => session,
                 // A handle that addresses nothing stops the whole answer.
                 // Handing back orientation around it would bury the one thing
@@ -684,6 +685,7 @@ mod tests {
                     skill: None,
                     resume: None,
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -777,6 +779,7 @@ mod tests {
                     skill: None,
                     resume: None,
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -852,6 +855,7 @@ mod tests {
                     skill: None,
                     resume: None,
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("start_here ok"),
@@ -990,6 +994,7 @@ mod skills_are_indexed_not_shipped {
                     resume: None,
                     skill: None,
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("start_here answers"),
@@ -1046,6 +1051,7 @@ mod skills_are_indexed_not_shipped {
                     resume: None,
                     skill: Some("recommend".into()),
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("start_here answers"),
@@ -1080,6 +1086,7 @@ mod skills_are_indexed_not_shipped {
                     skill: Some("recommend".into()),
                     resume: None,
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("start_here answers"),
@@ -1120,6 +1127,7 @@ mod skills_are_indexed_not_shipped {
                     resume: None,
                     skill: Some("recomend".into()),
                     sid: None,
+                    today: None,
                 }))
                 .await
                 .expect("start_here answers"),

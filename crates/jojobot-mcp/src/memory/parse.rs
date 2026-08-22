@@ -293,6 +293,27 @@ pub(crate) const FALLBACK_ZONE: &str = "UTC";
 /// rather than in the domain**, which stays clock-free and carries the name as
 /// written: what a name means depends on a database on this machine, and that
 /// is not a thing a pure model should have to read.
+/// **The day a caller says its run is in**, or nothing when it said none.
+///
+/// A day that is no day is refused rather than read as nothing: a caller that
+/// stated a frame and had it dropped would be answered on the server's clock
+/// while believing otherwise, and the sweep is where that difference closes
+/// somebody's runs or leaves them open.
+pub(crate) fn parse_day(raw: Option<&str>) -> Result<Option<jiff::civil::Date>, McpError> {
+    let Some(said) = raw.map(str::trim).filter(|day| !day.is_empty()) else {
+        return Ok(None);
+    };
+    said.parse().map(Some).map_err(|_| {
+        McpError::invalid_params(
+            format!(
+                "`today` is {said:?}, which is no day — send a calendar day as YYYY-MM-DD, or \
+                 leave it off and the sweep answers on the clock"
+            ),
+            None,
+        )
+    })
+}
+
 pub(crate) fn parse_zone(raw: Option<&str>) -> Result<jiff::tz::TimeZone, McpError> {
     let name = raw.map(str::trim).filter(|n| !n.is_empty());
     let Some(name) = name else {
