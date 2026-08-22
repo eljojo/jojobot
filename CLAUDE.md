@@ -432,6 +432,20 @@ roles and never an operator.
 - **Strict TDD.** A feature is proven by an automated test; every bug fix
   starts from a failing test you watched fail FIRST. A manual run proves
   nothing.
+- **To watch a test fail, use `scripts/sabotage`.** It keeps the file, makes
+  the edit, runs the command, prints the verdict and puts the file back. **The
+  restore is on a trap, so it happens on a pass, a failure, a raise or a
+  stop** — there is no dirty tree to clean up afterwards and no moment where a
+  git verb is the convenient answer. **It refuses unless the text appears
+  exactly once**, and it reports an absence and an ambiguity apart, because
+  those send you to different places. ⚠️ **A hard kill cannot be caught, so it
+  names the copy on stdout when it starts.**
+- **A sabotage proves nothing until you know it landed where you meant.** Two
+  sites that look alike, one edit, and the verdict is about code nobody
+  touched. **Assert the edit reached THAT site**, and prove the case moves when
+  its own guard breaks and stays still when an independent one does. ⚠️
+  **Choosing an independent neighbour is the hard part — reasoning about which
+  one is independent is not enough. Run it.**
 - **Every feature appears in a user story.** A feature that no story exercises
   is a finding. This is a second bar, not the same one: a unit test proves the
   feature works, and a story proves the feature can be reached through the
