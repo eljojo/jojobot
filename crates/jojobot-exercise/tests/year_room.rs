@@ -285,7 +285,7 @@ async fn july(room: &Surface, sid: &str) {
         sid,
         "update_fact",
         json!({"address": wrong,
-               "content": "The club has never met on Tuesdays — the operator was wrong to say so in March.",
+               "content": "The North Trail Club does not meet on Tuesdays — the operator was mistaken in March; that never stood.",
                "date": "2026-07-05"}),
     )
     .await;

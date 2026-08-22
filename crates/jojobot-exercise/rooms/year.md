@@ -253,14 +253,19 @@ say     June: the chain check does not say it was done on the day this sitting c
 # rewrite keeps: that this is the SAME claim, corrected, not two claims about
 # it.
 #
-# The day is the second half, and it is asked for the reason the first half
-# is: a rewrite with no date given keeps the ORIGINAL day forever, and a
-# sitting in December reading that day would think March corrected itself.
+# The day is asked for the reason the status is: a rewrite with no date given
+# keeps the ORIGINAL day forever, and a sitting in December reading that day
+# would think March corrected itself.
+#
+# ⚠️ **Neither half reads the sentence.** The occupant chooses the words of
+# the negative truth, and "never met on Tuesdays" and "does not meet on
+# Tuesdays" are both right. A needle in the occupant's own prose measures
+# whoever authored the needle, so what is locked is the day the correction
+# carries and that the record still stands.
 recall {"subject": "org:north-trail-club", "facts": true}
-carries never met on Tuesdays
 carries "date":"2026-07-05"
 lacks   "status":"retracted"
-say     July: the March claim does not currently say the club never met on Tuesdays under July's own day — either it was never rewritten, or it was retracted instead and the current truth is not on the record
+say     July: nothing on the club carries July's own day, or the correction was taken back instead of written in — either way the March claim was not corrected in place on the day it was corrected
 ```
 
 ## Phase 8 — August, a question that needs a walk
