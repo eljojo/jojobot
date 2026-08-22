@@ -203,11 +203,20 @@ is never a unit of the schedule.
 `advances_from` says which date the next cycle counts from when a check-in is
 late. It takes `due_date`, the day the cycle fell due, or `check_in_date`, the
 day the check-in happened. It has no default. The operator picks it for each
-rhythm, so ask. A wrong pick is silent: every late check-in re-arms the loop
-it was meant to settle.
+rhythm. A wrong pick is silent: every late check-in re-arms the loop it was
+meant to settle.
 
 `counts_from` is the date this cycle counts from. jojobot writes it. The
 rhythm falls due `cadence_days` after it.
+
+Write the loop with `add_entity` as soon as the operator names one, and put in
+the keys the operator gave you. A key the operator has not chosen yet is a
+question you ask after the loop exists. It is never a reason to wait.
+
+A loop that holds part of a schedule tracks from the day it is written and
+comes back overdue with the fields it does hold, which is what puts the
+missing key in front of the operator. A loop nobody wrote tracks nothing, and
+nothing later reports that it is absent.
 
 ## How to find what is due
 
@@ -384,5 +393,42 @@ mod tests {
                  check-in can advance from — so it cannot say which date a rhythm counts from"
             );
         }
+    }
+
+    /// **The section that introduces the keys also names the verb that writes
+    /// the loop**, so a session reading what a rhythm holds is told to create
+    /// one.
+    ///
+    /// ⚠️ **What this pins is placement rather than wording.** A session meets
+    /// the keys at the moment it is deciding what to write. A section that
+    /// introduces a key the operator chooses, and says nothing about writing,
+    /// reads as a precondition on creating the loop at all — a paid run stopped
+    /// there twice and created nothing, and every later check-in in that run had
+    /// no loop to close.
+    ///
+    /// The verb is read off the served surface rather than written down here,
+    /// so a rename reaches this case.
+    #[test]
+    fn the_section_that_introduces_the_keys_names_the_verb_that_writes_the_loop() {
+        let creates = "add_entity";
+        assert!(
+            crate::Jojobot::tool_router()
+                .list_all()
+                .iter()
+                .any(|tool| tool.name.as_ref() == creates),
+            "the surface publishes no `{creates}`, so this case is pinning the wrong verb"
+        );
+
+        let text = body("rhythms");
+        let section = text
+            .split("\n## ")
+            .find(|section| names(section, attention::ADVANCES_FROM))
+            .expect("the rhythms procedure introduces the schedule keys under some heading");
+        assert!(
+            names(section, creates),
+            "the section introducing the keys does not name `{creates}` — it says what a \
+             rhythm holds and never says to write one, so a key the operator has yet to \
+             choose reads as a reason to create nothing"
+        );
     }
 }
