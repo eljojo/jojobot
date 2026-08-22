@@ -283,7 +283,8 @@ async fn july(room: &Surface, sid: &str) {
         room,
         sid,
         "retract",
-        json!({"address": wrong, "reason": "the operator says the club has never met on Tuesdays"}),
+        json!({"address": wrong, "reason": "the operator says the club has never met on Tuesdays",
+               "date": "2026-07-05"}),
     )
     .await;
 }
@@ -689,36 +690,23 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
         room: &surface,
         boundaries: &boundaries,
     };
-    // 🚨 **July is excluded, deliberately and for a reason nothing here can
-    // fix.** Its whole sitting is a retraction. A retraction IS dated — it
-    // leaves a record of its own — but `retract` takes no date from its
-    // caller, so that record is always stamped with the day the run happened.
-    // It is the one write on the surface whose day is not the caller's to
-    // give, and the year's fiction holds exactly as far as a sitting can carry
-    // its own day into the calls it makes.
-    //
-    // ⛔️ **This is a gap in the product, not a hole in the case.** The room
-    // does not bend: adding a write to July so the harness is satisfied would
-    // be the story rewritten to fit the fixture. The exclusion is named here
-    // so a later reader meets a decision rather than an oversight, and it goes
-    // when `retract` can be told a day.
-    let retraction_sitting = "Phase 7";
+    // **Every dated sitting, with none excluded.** The sitting whose act is a
+    // retraction used to be left out: a retraction is dated and `retract` took
+    // no date, so that record always carried the day the run happened. The
+    // verb takes one now, so the year holds all the way through.
     let mut missed = Vec::new();
-    let mut excluded = 0;
+    let mut asked = 0;
     for dated in days_claimed(&year) {
-        if dated.name().starts_with(retraction_sitting) {
-            excluded += 1;
-            continue;
-        }
+        asked += 1;
         let outcome = dated.check(&seen).await;
         if !outcome.held {
             missed.push(outcome.saying);
         }
     }
     assert_eq!(
-        excluded, 1,
-        "the exclusion above names a sitting this year does not have, so it is silently \
-         excluding nothing or excluding more than it says",
+        asked, 10,
+        "the year claims ten days outside the two sittings a person reads, and this asked \
+         about {asked}",
     );
     assert!(
         missed.is_empty(),

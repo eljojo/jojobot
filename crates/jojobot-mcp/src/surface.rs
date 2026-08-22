@@ -1959,6 +1959,7 @@ mod a_write_needs_an_identity {
                     address: second_address.clone(),
                     reason: None,
                     sid: None,
+                    date: None,
                 }))
                 .await
                 .expect("retract answers"),

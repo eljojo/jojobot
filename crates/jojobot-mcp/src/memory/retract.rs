@@ -17,6 +17,16 @@ pub struct RetractArgs {
     /// no reason was given rather than inventing one.
     #[serde(default)]
     pub reason: Option<String>,
+    /// **The day the record was taken back**, `YYYY-MM-DD`. Defaults to today
+    /// in your session's zone.
+    ///
+    /// A retraction leaves a dated record of its own, and a date says when a
+    /// thing is TRUE OF rather than when somebody typed it. **The day an
+    /// operator changed their mind is the fact a later reader most wants about
+    /// a retraction**, and it is not always the day the call is made — a
+    /// session catching up on last week says so here.
+    #[serde(default)]
+    pub date: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -57,7 +67,7 @@ impl Jojobot {
             return Ok(refused);
         }
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
-        let date = parse_date(None, &self.zone_for(args.sid.as_deref()))?;
+        let date = parse_date(args.date.as_deref(), &self.zone_for(args.sid.as_deref()))?;
 
         let taken_back = match self
             .memory
@@ -150,6 +160,7 @@ mod tests {
                 address: address_of(&source),
                 reason: Some("the ferry moved back".into()),
                 sid: Some(sid.clone()),
+                date: None,
             }))
             .await
             .expect("the retraction lands");
@@ -172,6 +183,7 @@ mod tests {
                 address: address_of(&unrelated),
                 reason: Some("it reopened".into()),
                 sid: Some(sid),
+                date: None,
             }))
             .await
             .expect("the retraction lands");
@@ -194,8 +206,57 @@ mod tests {
         RetractArgs {
             address: address.to_string(),
             reason: Some(reason.to_string()),
+            date: None,
             sid: Some(crate::harness::TEST_SID.into()),
         }
+    }
+
+    /// 🚨 **A retraction happens on a day, and the caller says which.**
+    ///
+    /// A retraction leaves a dated record of its own, and this verb used to
+    /// stamp it with the day the CALL happened — the one write on this surface
+    /// whose day was not the caller's to give. A date says when a thing is
+    /// TRUE OF, not when somebody typed it, and the day an operator changed
+    /// their mind is the fact a later reader most wants about a retraction.
+    ///
+    /// **Both halves.** A day given is the day carried, and no day given is
+    /// still today — without the second, a build that ignored the argument
+    /// entirely would satisfy the first.
+    #[tokio::test]
+    async fn a_retraction_carries_the_day_it_is_given_and_today_when_it_is_not() {
+        let jojobot = handler();
+
+        let address = a_record(&jojobot, "the club meets on Tuesdays").await;
+        let said = json_of(
+            &jojobot
+                .retract(Parameters(RetractArgs {
+                    date: Some("2026-07-05".into()),
+                    ..retract_args(&address, "it never met on Tuesdays")
+                }))
+                .await
+                .expect("the retraction lands"),
+        );
+        assert_eq!(
+            said["retraction"]["date"], "2026-07-05",
+            "the retraction carries the day the call happened rather than the day it is \
+             about: {said}"
+        );
+
+        let other = a_record(&jojobot, "the club meets on Wednesdays").await;
+        let undated = json_of(
+            &jojobot
+                .retract(Parameters(retract_args(&other, "it never met then either")))
+                .await
+                .expect("the retraction lands"),
+        );
+        let today = jiff::Timestamp::now()
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .date()
+            .to_string();
+        assert_eq!(
+            undated["retraction"]["date"], today,
+            "a retraction given no day stopped being stamped with today: {undated}"
+        );
     }
 
     /// **The whole verb in one pass**: the record stays and is marked, the
