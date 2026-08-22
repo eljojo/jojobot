@@ -61,6 +61,23 @@ const DAY: &str = "**Day:";
 /// transcript.
 const READ_THIS: &str = "**Read this.**";
 
+/// **The marker that says a sitting writes about a day that is not its own.**
+///
+/// The run generates one assertion per dated sitting: what the sitting wrote
+/// carries the day it was told. That premise is right for a sitting recording
+/// what happened in front of it, and wrong for one whose subject is an earlier
+/// day — a question about something lent seven months ago is answered by a
+/// record dated the day the thing came back, and dating it today would be the
+/// error rather than the proof.
+///
+/// ⛔️ **The exemption is the author's and it is written in the room**, for the
+/// reason [`READ_THIS`] is: which day a sitting writes under is a fact about
+/// what the sitting asks, and no rule the harness could apply reads it off the
+/// text. A sitting marked this way still owes the room a lock naming the day
+/// it does write under — the day comes back into the assertions there, where
+/// the author can say which one.
+const EARLIER_DAY: &str = "**Writes about an earlier day.**";
+
 /// **A line that ends one delivery and starts the next**, inside a phase.
 ///
 /// A phase used to arrive as one message, so a step asking what the agent
@@ -97,6 +114,9 @@ pub struct Phase {
     /// the answer rather than in the room, so nothing asserts over it and the
     /// run surfaces it instead.
     pub read_this: bool,
+    /// **Whether this sitting writes about a day that is not its own**, so the
+    /// generated day assertion does not apply to it. See [`EARLIER_DAY`].
+    pub about_an_earlier_day: bool,
     /// **The day this sitting claims**, when the document says one.
     ///
     /// `None` is a sitting that names no day, which is every room written
@@ -136,6 +156,7 @@ impl Playbook {
                         deliveries: Vec::new(),
                         fresh_session: false,
                         read_this: false,
+                        about_an_earlier_day: false,
                         day: None,
                     });
                 }
@@ -153,6 +174,7 @@ impl Playbook {
                 // is looked for here as well as on a line of its own.
                 current.day = current.day.take().or_else(|| day_in(said));
                 current.read_this |= said.contains(READ_THIS);
+                current.about_an_earlier_day |= said.contains(EARLIER_DAY);
                 continue;
             }
             if let Some(said) = line.trim_start().strip_prefix(DAY) {
@@ -161,6 +183,10 @@ impl Playbook {
             }
             if line.contains(READ_THIS) {
                 current.read_this = true;
+                continue;
+            }
+            if line.contains(EARLIER_DAY) {
+                current.about_an_earlier_day = true;
                 continue;
             }
             // The block quote is the part addressed to the model. Everything

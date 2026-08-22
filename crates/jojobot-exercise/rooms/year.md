@@ -22,6 +22,12 @@ that was told it is March and wrote under the day the run happened fails
 saying so. That is not the harness catching itself: it is a real session's
 most likely silent mistake, caught where a person reads it.
 
+**One sitting is asked about an earlier day and answers under that day**, which
+is right: a date says when a claim is true of and not when somebody typed it.
+That sitting says so under its own heading, the run generates nothing for it,
+and its lock names the day it does write under. The exemption is written where
+a person reads it rather than worked out from the text.
+
 ## Two facts every entry opens with
 
 A run of this room once turned up four sittings that asked a question and
@@ -297,6 +303,10 @@ say     August: nothing on the club says the operator is standing for the commit
 
 **Session: fresh.** **Day: 2026-09-13.**
 
+**Writes about an earlier day.** The pump came back at the survey in June, so
+the record belongs on the June day and not on this sitting's own. The run
+generates no day assertion here and the lock below names the day instead.
+
 > This is a role-play: play the day below as if it is really today.
 >
 > Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
@@ -304,13 +314,20 @@ say     August: nothing on the club says the operator is standing for the commit
 > start jojobot as assistant — it is 13 September 2026, did that thing I lent out ever come back? Ralph gave it back at the survey, so put that down either way
 
 ```locks
-# What this sitting must leave is a record about the pump, written on the day
-# it claims. The count of records would not do it: October writes about the
-# pump too, and a lock that counted would hold with this sitting missing.
+# What this sitting must leave is a record about the pump carrying the day the
+# pump came back, which is June's survey day. The count of records would not do
+# it: October writes about the pump too, and a lock that counted would hold with
+# this sitting missing.
+#
+# ⚠️ **June's day rather than September's, and that is the point of the
+# sitting.** A date says when a claim is TRUE OF and not when somebody typed
+# it, so a return that happened at the survey is dated the survey. Nothing else
+# on the pump carries that day — February's record is dated February and
+# October's is dated October — so only this sitting can satisfy it.
 recall {"subject": "thing:floor-pump", "facts": true}
 carries person:ralph
-carries "date":"2026-09-13"
-say     September: nothing was written about the pump on the day this sitting claims, so the question February left open is still open on the record
+carries "date":"2026-06-14"
+say     September: nothing on the pump carries the day it came back, so the question February left open is still open on the record
 ```
 
 ## Phase 10 — October, two sittings that disagree

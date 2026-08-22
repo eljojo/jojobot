@@ -308,7 +308,7 @@ async fn september(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:floor-pump", "content": "came back at the survey",
-               "provenance": "testimony", "date": "2026-09-13",
+               "provenance": "testimony", "date": "2026-06-14",
                "shape": "connection", "object": "person:ralph"}),
     )
     .await;
@@ -735,10 +735,11 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
         room: &surface,
         boundaries: &boundaries,
     };
-    // **Every dated sitting, with none excluded.** July rewrites the March
-    // claim with `update_fact` and late October retracts a June one with
+    // **Every dated sitting the room asserts a day over.** July rewrites the
+    // March claim with `update_fact` and late October retracts a June one with
     // `retract` — both verbs take a date now, so both carry the day the
-    // operator names rather than the day the run happened.
+    // operator names rather than the day the run happened. September is the
+    // one sitting that writes about an earlier day, and the room says so.
     let mut missed = Vec::new();
     let mut asked = 0;
     for dated in days_claimed(&year) {
@@ -749,9 +750,10 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
         }
     }
     assert_eq!(
-        asked, 11,
-        "the year claims eleven days outside the two sittings a person reads, and this asked \
-         about {asked}",
+        asked, 10,
+        "the year generates one assertion per dated sitting, less the two a person reads and \
+         September, which writes about the day the pump came back — and this asked about \
+         {asked}",
     );
     assert!(
         missed.is_empty(),

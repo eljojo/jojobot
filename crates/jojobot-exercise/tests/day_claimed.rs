@@ -32,6 +32,18 @@ const TWO_SITTINGS: &str = "\
 \n\
 > say anything at all\n";
 
+/// A dated sitting that says its subject is an earlier day, and the marker on
+/// a line of its own so this document does not also prove the marker line is
+/// shared with the session marker.
+const WRITES_EARLIER: &str = "\
+## Phase 1 — the September sitting\n\
+\n\
+**Session: fresh.** **Day: 2026-09-13.**\n\
+\n\
+**Writes about an earlier day.**\n\
+\n\
+> it is the thirteenth of September and the pump came back at the June survey\n";
+
 fn read() -> Playbook {
     Playbook::parse("rooms/whatever.md", TWO_SITTINGS).expect("the document reads")
 }
@@ -190,5 +202,52 @@ async fn a_day_the_room_was_furnished_with_refuses_rather_than_holding() {
         held.held && !held.saying.contains("furnished"),
         "a room furnished with nothing on that day was called furnished with it: {}",
         held.saying,
+    );
+}
+
+/// **A sitting that writes about an earlier day gets no generated assertion,
+/// and the same sitting without the marker gets one.**
+///
+/// The assertion's premise is that a sitting writes under the day it was told.
+/// That premise is false for a sitting whose subject is an earlier day: a
+/// question about a thing lent seven months ago is answered by a record dated
+/// the day the thing came back, and a date says when a claim is TRUE OF rather
+/// than when somebody typed it. Asserting the sitting's own day there fails the
+/// right answer.
+///
+/// **Both halves, because the marker is an exemption.** A build that generated
+/// nothing for any dated sitting would satisfy the first assertion alone, and
+/// it would take the year's strongest check off every other sitting silently.
+#[test]
+fn a_sitting_that_writes_about_an_earlier_day_gets_no_assertion() {
+    let marked = Playbook::parse("rooms/whatever.md", WRITES_EARLIER).expect("the document reads");
+    let phase = &marked.phases[0];
+    assert!(
+        phase.about_an_earlier_day,
+        "the marker is not read off the document, so nothing below is about it",
+    );
+    assert_eq!(
+        phase.day.as_deref(),
+        Some("2026-09-13"),
+        "the sitting still claims its own day — the marker says what it writes under, not that \
+         it is undated",
+    );
+    assert!(
+        days_claimed(&marked).is_empty(),
+        "the run generated a day assertion for a sitting the room says writes about an earlier \
+         day, so the right answer is marked a failure",
+    );
+
+    let plain = WRITES_EARLIER.replace("**Writes about an earlier day.**\n\n", "");
+    let unmarked = Playbook::parse("rooms/whatever.md", &plain).expect("the document reads");
+    assert!(
+        !unmarked.phases[0].about_an_earlier_day,
+        "this half is reading the wrong document: the marker is still on it",
+    );
+    assert_eq!(
+        days_claimed(&unmarked).len(),
+        1,
+        "the same sitting without the marker gets its assertion, so the exemption is the marker \
+         rather than something that stopped generating them at all",
     );
 }
