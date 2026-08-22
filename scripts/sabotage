@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""**A sabotage that cannot leave a dirty tree.**
+
+Watching a test fail means breaking the code it covers and seeing the red.
+Doing that in two steps — mutate, then restore — puts a decision between them,
+and a decision is where reflex lives: the tree is dirty, restoring is a thing
+somebody chooses to do, and the convenient way to choose it is a git verb the
+operator has closed.
+
+So this is ONE act. It keeps the file, mutates it, runs what you asked, prints
+the verdict, and puts the file back — and the putting back is in a `finally`
+with the signals wired into it, so it happens when the run passes, fails,
+raises, or is asked to stop. **There is no interval during which the tree is
+observably dirty, so there is nothing for a prohibited verb to be the answer
+to.**
+
+    scripts/sabotage <file> <from> <to> -- <command...>
+
+**It refuses unless the text it is replacing appears EXACTLY ONCE.** Asserting
+that a sabotage applied is not enough when a file has more than one site that
+looks like the target: a patch that lands somewhere else changes something,
+passes a did-anything-move check, and reports a verdict about code nobody
+touched. The uniqueness check is that rule, held here rather than by whoever is
+driving.
+
+⚠️ **It touches git not at all** — not to keep the file, not to put it back.
+A tool built to stop somebody reaching for a closed verb cannot reach for one.
+
+⚠️ **`SIGKILL` cannot be caught, by this or by anything.** A hard kill of this
+process leaves the file mutated, and the copy is named on stdout when the run
+starts so a person can put it back by hand. That is the one hole and it is
+stated rather than papered over.
+"""
+
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+
+
+USAGE = "usage: scripts/sabotage <file> <from> <to> -- <command...>"
+
+
+def refuse(why):
+    print(f"REFUSED: {why}", file=sys.stderr)
+    return 2
+
+
+def main(argv):
+    if "--" not in argv:
+        return refuse(USAGE)
+    split = argv.index("--")
+    named, command = argv[:split], argv[split + 1 :]
+    if len(named) != 3 or not command:
+        return refuse(USAGE)
+    path, old, new = named
+
+    if not os.path.isfile(path):
+        return refuse(f"{path} is no file")
+    before = open(path, encoding="utf-8").read()
+
+    # **The site has to be the one you meant.** A needle matching twice is a
+    # sabotage that will land somewhere, move something, and report a verdict
+    # about whichever site it happened to hit.
+    found = before.count(old)
+    if found != 1:
+        return refuse(
+            f"the text to replace appears {found} times in {path} and it has to appear once, "
+            f"so the sabotage lands where you meant it to"
+        )
+    after = before.replace(old, new, 1)
+    if after == before:
+        return refuse("the replacement leaves the file unchanged, so nothing would be sabotaged")
+
+    kept = tempfile.NamedTemporaryFile(
+        prefix="sabotage-", suffix=os.path.basename(path), delete=False
+    ).name
+    shutil.copyfile(path, kept)
+    print(f"SABOTAGE {path}: kept at {kept}", flush=True)
+
+    # **Asked to stop is a way of ending, not a way of skipping the restore.**
+    # Turning the signal into an exception is what lets one `finally` cover
+    # every ending this process has.
+    def stop(number, _frame):
+        raise SystemExit(128 + number)
+
+    for asked in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(asked, stop)
+
+    try:
+        with open(path, "w", encoding="utf-8") as writing:
+            writing.write(after)
+        # **Read back rather than trusted.** The write is what the verdict
+        # below is a verdict about, and a write that did not land would make
+        # every run after it a report on code nobody changed.
+        applied = open(path, encoding="utf-8").read()
+        if applied != after:
+            return refuse(f"{path} did not take the sabotage, so no verdict here means anything")
+        print(f"SABOTAGE APPLIED to the one site in {path}", flush=True)
+
+        ran = subprocess.run(command)
+        verdict = "RED" if ran.returncode != 0 else "GREEN"
+        print(
+            f"SABOTAGE VERDICT {verdict}: {' '.join(command)} exited {ran.returncode}",
+            flush=True,
+        )
+        return ran.returncode
+    finally:
+        shutil.copyfile(kept, path)
+        os.unlink(kept)
+        print(f"SABOTAGE RESTORED {path}", flush=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
