@@ -668,6 +668,19 @@ fn port_at(seed: u16, slot: u16) -> u16 {
     20_000 + seed.wrapping_add(slot) % 20_000
 }
 
+/// **The line a server prints once it is bound to this address.**
+///
+/// One definition, because two things depend on it: the room watches for it,
+/// and a case pins that the server still prints it. Written twice, the room
+/// would wait out its whole deadline for a contract nothing had noticed was
+/// broken.
+///
+/// **The whole line and not the address alone.** The startup line names the
+/// same address before anything is bound.
+pub(crate) fn serving_line(endpoint: &str) -> String {
+    format!("serving {endpoint}")
+}
+
 /// **Forward this server's log, and notice the line that says it is serving.**
 ///
 /// jojobot prints `serving <address>` once its listener is bound and never
@@ -684,10 +697,7 @@ fn watch_the_log(
     endpoint: String,
     serving: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
-    // **The whole line the server prints once it is bound**, built here so the
-    // startup line — which names the same address before anything is bound —
-    // cannot satisfy it.
-    let serving_line = format!("serving {endpoint}");
+    let serving_line = serving_line(&endpoint);
     std::thread::spawn(move || {
         use std::io::BufRead;
         for line in std::io::BufReader::new(log).lines().map_while(Result::ok) {
@@ -865,6 +875,88 @@ mod tests {
         put(&root.join("crates/alpha/src/lib.rs"));
         put(&root.join("crates/jojobot-exercise/src/room.rs"));
         root
+    }
+
+    /// 🚨 **The contract with the server: it announces the address it serves,
+    /// and only once that address answers.**
+    ///
+    /// A room no longer waits for its port to answer — it waits for its own
+    /// server to say it is serving. **That makes a line the product prints into
+    /// a contract, and nothing else enforces it.** Break it and every room
+    /// waits out its whole two-minute deadline before saying anything, which is
+    /// the worst way for a broken contract to announce itself.
+    ///
+    /// **So this case is deliberately fast**: it spawns one server directly
+    /// rather than through [`Room`], because going through `Room` would mean
+    /// waiting out the very deadline this exists to avoid.
+    ///
+    /// ⚠️ **The needle is [`serving_line`], the same function the room watches
+    /// with** — so if you reword what the server prints, this is what breaks,
+    /// and it breaks in seconds. Change both or neither.
+    ///
+    /// **Two claims, and the second is the one that matters.** The server says
+    /// it is serving that address, and the address answers by the time it says
+    /// so. A line printed before the listener is bound is the failure this
+    /// replaced: it reported a room ready in under half a second and every
+    /// check downstream failed.
+    #[tokio::test]
+    async fn the_server_announces_its_address_only_once_that_address_answers() {
+        let binary = super::server_binary().expect("a jojobot binary");
+        let dir = super::scratch().expect("a room directory");
+        let (served, served_held) = super::free_port().expect("a port to serve on");
+        let (store, store_held) = super::free_port().expect("a port for the store");
+        let endpoint = format!("http://127.0.0.1:{served}/mcp");
+
+        let mut spawning = std::process::Command::new(&binary);
+        spawning
+            .env("STATE_DIRECTORY", &dir)
+            .env("JOJOBOT_BIND", format!("127.0.0.1:{served}"))
+            .env("JOJOBOT_STORE_PORT", store.to_string())
+            .env("JOJOBOT_ALLOW_NO_AUTH", "1")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+        super::die_with_this_run(&mut spawning);
+        drop(served_held);
+        drop(store_held);
+        let mut server = spawning.spawn().expect("the server starts");
+        let log = server.stdout.take().expect("the server's own log");
+
+        let wanted = super::serving_line(&endpoint);
+        // **Short on purpose.** A server that is coming up reaches this line in
+        // about a second; the room's own deadline is minutes, because a room
+        // waits out a store migration. This case exists to fail FAST when the
+        // contract breaks, so it is bounded by what the line takes rather than
+        // by what a room is willing to wait.
+        let announced = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            tokio::task::spawn_blocking(move || {
+                use std::io::BufRead;
+                std::io::BufReader::new(log)
+                    .lines()
+                    .map_while(Result::ok)
+                    .any(|line| line.contains(&wanted))
+            }),
+        )
+        .await;
+
+        let answering = std::net::TcpStream::connect(("127.0.0.1", served)).is_ok();
+        let _ = server.kill();
+        let _ = server.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(
+            matches!(announced, Ok(Ok(true))),
+            "the server never printed {:?} — a room watches for that line and would wait out \
+             its whole deadline before reporting anything. If the wording changed, change \
+             `serving_line` with it.",
+            super::serving_line(&endpoint),
+        );
+        assert!(
+            answering,
+            "the server said it was serving {endpoint} and nothing answers there — a room takes \
+             that line as proof its own server is bound, so a line printed any earlier reports \
+             a room that is not up",
+        );
     }
 
     /// 🚨 **A room is ready when ITS OWN server answers, never when the port
