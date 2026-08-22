@@ -479,7 +479,8 @@ pub async fn go(
     seed.furnish(&surface)
         .await
         .context("furnishing the room")?;
-    let mut boundaries = vec![boundary(&surface, "Phase 1").await];
+    let named = boundary_names(playbook);
+    let mut boundaries = vec![boundary(&surface, &named[0]).await];
     let before = boundaries[0].world.clone();
 
     let mut transcript = Vec::new();
@@ -525,12 +526,7 @@ pub async fn go(
         });
         // Taken after every phase and named for the one that comes next, so a
         // claim about a change has both sides of its boundary.
-        let next = playbook
-            .phases
-            .get(at + 1)
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| "the end".to_string());
-        boundaries.push(boundary(&surface, &next).await);
+        boundaries.push(boundary(&surface, &named[at + 1]).await);
     }
 
     let after = boundaries
@@ -606,6 +602,29 @@ where
 /// nothing, and the lock that named it fails saying so.
 pub type Hatches = dyn Fn(&str) -> Option<Box<dyn Checks>> + Send + Sync;
 
+/// **What each boundary reading is called**, one per phase and one for the end.
+///
+/// **Every one is named for the phase it precedes, in full.** An expectation
+/// asks across a phase by that name, so a boundary named any other way is a
+/// reading nothing can find: the opening one was a bare `Phase 1` and the
+/// FIRST sitting of every dated room reported that nothing could be said about
+/// it.
+///
+/// One place decides them, and the run and the cases that stand in for a run
+/// both read it here — two copies of this rule is how the one inconsistency
+/// got in.
+pub fn boundary_names(playbook: &crate::playbook::Playbook) -> Vec<String> {
+    (0..=playbook.phases.len())
+        .map(|at| {
+            playbook
+                .phases
+                .get(at)
+                .map(|phase| phase.name.clone())
+                .unwrap_or_else(|| "the end".to_string())
+        })
+        .collect()
+}
+
 /// **The assertion every dated sitting gets, generated rather than authored.**
 ///
 /// A run acting out a year is fiction inside the test: jojobot learns nothing
@@ -632,6 +651,15 @@ pub fn days_claimed(playbook: &crate::playbook::Playbook) -> Vec<Box<dyn Expecta
         .phases
         .iter()
         .filter_map(|phase| {
+            // ⛔️ **A sitting marked to be read asserts nothing, by its own
+            // marker.** Generating one for it contradicts the marker rather
+            // than inconveniencing it: those sittings ask a question and
+            // record nothing, so the sitting that answers *jojobot does not
+            // know* correctly would be marked a failure for doing the right
+            // thing.
+            if phase.read_this {
+                return None;
+            }
             let day = phase.day.clone()?;
             Some(Box::new(DayClaimed {
                 name: format!("{} — the sitting claimed {day}", phase_key(&phase.name)),
@@ -766,7 +794,7 @@ pub(crate) fn phase_key(name: &str) -> &str {
 /// and everything the index can see — so a run that wrote a fact but no entity
 /// still moves it. The mail half is read apart because the claims about mail
 /// are claims about what did NOT move.
-async fn boundary(room: &Surface, before: &str) -> Boundary {
+pub async fn boundary(room: &Surface, before: &str) -> Boundary {
     let entities = room.call("list_entities", json!({})).await;
     let everything = room
         .call("search", json!({"query": "*", "limit": 200}))

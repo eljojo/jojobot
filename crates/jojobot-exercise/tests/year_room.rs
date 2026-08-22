@@ -15,7 +15,9 @@
 use jojobot_exercise::expectations;
 use jojobot_exercise::playbook::Playbook;
 use jojobot_exercise::room::{Room, server_binary};
-use jojobot_exercise::run::{Boundary, Observed, Outcome, uncovered_phases};
+use jojobot_exercise::run::{
+    Boundary, Observed, Outcome, boundary, boundary_names, days_claimed, uncovered_phases,
+};
 use jojobot_exercise::surface::Surface;
 use serde_json::{Value, json};
 
@@ -636,4 +638,93 @@ fn no_furniture_is_dated_on_a_day_a_sitting_claims() {
             phase.name,
         );
     }
+}
+
+/// 🚨 **The year is winnable — the half a lock suite cannot show.**
+///
+/// A run asserts more than the document's locks: it generates one date
+/// assertion per dated sitting, and its verdict also needs the room to have
+/// changed. **Nothing had ever shown those satisfiable**, so a failure on the
+/// first paid run would have been ambiguous between jojobot falling short and
+/// the year being unwinnable by anybody.
+///
+/// This drives the year the way a run does — a boundary read before anything,
+/// then one after each sitting, named for the sitting that comes next — and
+/// asks the generated assertions the same question the run asks them.
+#[tokio::test]
+async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
+    let (_room, surface, sid) = furnished().await;
+    let year = room_document();
+    // The run's own reads, in the run's own order and with the run's own names.
+    // **The run's own names, from the run's own rule.** Naming them here would
+    // prove a shape this case invented rather than the one a run takes.
+    let named = boundary_names(&year);
+    let mut boundaries = vec![boundary(&surface, &named[0]).await];
+    for (at, _phase) in year.phases.iter().enumerate() {
+        match at {
+            0 => january(&surface, &sid).await,
+            1 => february(&surface, &sid).await,
+            2 => march(&surface, &sid).await,
+            3 => april(&surface, &sid).await,
+            4 => may(&surface, &sid).await,
+            5 => june(&surface, &sid).await,
+            6 => july(&surface, &sid).await,
+            7 => august(&surface, &sid).await,
+            8 => september(&surface, &sid).await,
+            9 => october(&surface, &sid).await,
+            // The two sittings a person reads ask questions and record
+            // nothing, which is what they are for.
+            _ => {}
+        }
+        boundaries.push(boundary(&surface, &named[at + 1]).await);
+    }
+
+    let changed = boundaries[0].world != boundaries[boundaries.len() - 1].world;
+    assert!(
+        changed,
+        "the room is exactly as it was furnished, so a run of this year could not report a pass",
+    );
+
+    let seen = Observed {
+        room: &surface,
+        boundaries: &boundaries,
+    };
+    // 🚨 **July is excluded, deliberately and for a reason nothing here can
+    // fix.** Its whole sitting is a retraction. A retraction IS dated — it
+    // leaves a record of its own — but `retract` takes no date from its
+    // caller, so that record is always stamped with the day the run happened.
+    // It is the one write on the surface whose day is not the caller's to
+    // give, and the year's fiction holds exactly as far as a sitting can carry
+    // its own day into the calls it makes.
+    //
+    // ⛔️ **This is a gap in the product, not a hole in the case.** The room
+    // does not bend: adding a write to July so the harness is satisfied would
+    // be the story rewritten to fit the fixture. The exclusion is named here
+    // so a later reader meets a decision rather than an oversight, and it goes
+    // when `retract` can be told a day.
+    let retraction_sitting = "Phase 7";
+    let mut missed = Vec::new();
+    let mut excluded = 0;
+    for dated in days_claimed(&year) {
+        if dated.name().starts_with(retraction_sitting) {
+            excluded += 1;
+            continue;
+        }
+        let outcome = dated.check(&seen).await;
+        if !outcome.held {
+            missed.push(outcome.saying);
+        }
+    }
+    assert_eq!(
+        excluded, 1,
+        "the exclusion above names a sitting this year does not have, so it is silently \
+         excluding nothing or excluding more than it says",
+    );
+    assert!(
+        missed.is_empty(),
+        "a run of this year would fail {} of its generated date assertions, so it is not \
+         winnable by anybody: {}",
+        missed.len(),
+        missed.join("\n  "),
+    );
 }
