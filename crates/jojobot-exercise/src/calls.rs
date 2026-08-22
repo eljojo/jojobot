@@ -60,6 +60,127 @@ pub fn keep_raw(
     std::fs::write(path, raw_stream(sittings))
 }
 
+/// **One call the occupant made, as a reader needs it.**
+///
+/// Not the whole payload of anything. Some answers in these rooms are tens of
+/// kilobytes, and a log nobody can read is the same as no log — so this is the
+/// verb, enough of the arguments to say what it acted on, and enough of the
+/// answer to tell an answer from a refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Call {
+    /// The tool as the CLI named it.
+    pub verb: String,
+    /// What it acted on, read off the arguments.
+    pub about: String,
+    /// **Whether the room turned it down.** A refusal and an answer are the
+    /// difference between the occupant failing and the surface refusing, which
+    /// is the whole verdict on a sitting.
+    pub refused: bool,
+    /// Enough of the answer to tell one from another, and no more.
+    pub head: String,
+}
+
+/// **How much of an answer is kept.** Enough to tell a refusal from an answer
+/// and one answer from another; never enough to bury the log.
+const HEAD: usize = 160;
+
+/// The first `HEAD` characters, cut on a character boundary.
+fn head_of(text: &str) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    match flat.char_indices().nth(HEAD) {
+        Some((at, _)) => format!("{}…", &flat[..at]),
+        None => flat,
+    }
+}
+
+/// **Every call in one sitting's stream, in the order it was made.**
+///
+/// Reads the events and nothing else: no judgement about whether a call was
+/// the right one, because that is a person's reading and this is deterministic
+/// software.
+pub fn calls_in(stream: &str) -> Vec<Call> {
+    let events: Vec<serde_json::Value> = stream
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    // **The answer arrives in a later event than the call**, so the results are
+    // gathered first and each call then finds its own by id.
+    let mut answers: std::collections::HashMap<String, (bool, String)> =
+        std::collections::HashMap::new();
+    for block in events.iter().flat_map(blocks) {
+        if block["type"] == "tool_result" {
+            let Some(id) = block["tool_use_id"].as_str() else {
+                continue;
+            };
+            // **`is_error` is absent on a call that worked.** Reading a missing
+            // key as anything but "not an error" marks every good call refused.
+            let refused = block["is_error"].as_bool().unwrap_or(false);
+            answers.insert(
+                id.to_string(),
+                (refused, head_of(&flatten(&block["content"]))),
+            );
+        }
+    }
+    events
+        .iter()
+        .flat_map(blocks)
+        .filter(|block| block["type"] == "tool_use")
+        .map(|block| {
+            let id = block["id"].as_str().unwrap_or_default();
+            let (refused, head) = answers.get(id).cloned().unwrap_or((
+                false,
+                // **A call whose answer never arrived is a real shape.** The
+                // run can be stopped mid-sitting, and a log that invented an
+                // answer would hide exactly that.
+                "[no answer in the stream]".to_string(),
+            ));
+            Call {
+                verb: block["name"].as_str().unwrap_or("[unnamed]").to_string(),
+                about: head_of(&flatten(&block["input"])),
+                refused,
+                head,
+            }
+        })
+        .collect()
+}
+
+/// **What the occupant said at the end, which is what a person reads.**
+///
+/// The CLI reports it on the `result` event. `None` is a sitting that never
+/// reached one — stopped, or cut off — and that is a fact rather than an empty
+/// string.
+pub fn final_text(stream: &str) -> Option<String> {
+    stream
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|event| event["type"] == "result")
+        .find_map(|event| event["result"].as_str().map(str::to_string))
+}
+
+/// The content blocks of one event, which is where calls and answers live.
+fn blocks(event: &serde_json::Value) -> Vec<serde_json::Value> {
+    event["message"]["content"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Text out of a value that may be a string, a list of blocks, or an object.
+fn flatten(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(items) => items.iter().map(flatten).collect::<Vec<_>>().join(" "),
+        serde_json::Value::Object(fields) => fields
+            .iter()
+            .filter(|(key, _)| key.as_str() != "type")
+            .map(|(key, held)| format!("{key}={}", flatten(held)))
+            .collect::<Vec<_>>()
+            .join(" "),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,5 +308,140 @@ mod tests {
             "what came back is not what was written: {back}",
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The two captures, kept as they came off the CLI and scrubbed of ids,
+    /// paths and cost. **They are the primary source for every expectation
+    /// below** — the shapes here were read out of a real stream rather than
+    /// written from what the format ought to do.
+    fn fixture(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("the fixture is test material: {}: {e}", path.display()))
+    }
+
+    /// **Every call the occupant made, in order, with what it acted on.**
+    ///
+    /// This is the whole point of the slice: the sitting below reported its
+    /// answer and nothing about the two calls behind it.
+    #[test]
+    fn a_sitting_reports_the_calls_it_made_in_the_order_it_made_them() {
+        let made = calls_in(&fixture("made-calls.jsonl"));
+        assert_eq!(
+            made.iter().map(|c| c.verb.as_str()).collect::<Vec<_>>(),
+            vec!["Write", "Read"],
+            "the calls, in order: {made:#?}",
+        );
+        assert!(
+            made[0].about.contains("roster.txt"),
+            "a call that does not say what it acted on: {:?}",
+            made[0],
+        );
+        assert!(
+            made.iter().all(|c| !c.refused),
+            "a call the room answered is logged as refused: {made:#?}",
+        );
+    }
+
+    /// **A sitting that called nothing is not a sitting that was cut off.**
+    ///
+    /// The real capture settles what nothing else could: the silent stream is
+    /// NOT shorter or truncated — it carries the same framing throughout, and
+    /// what makes it silent is that no call is in it. So the positive and the
+    /// negative are one case: no calls, AND the sitting plainly reached its
+    /// end.
+    #[test]
+    fn a_sitting_that_called_nothing_still_reached_its_end() {
+        let silent = fixture("called-nothing.jsonl");
+        assert!(
+            calls_in(&silent).is_empty(),
+            "calls were found in the sitting that made none: {:#?}",
+            calls_in(&silent),
+        );
+        assert!(
+            final_text(&silent).is_some(),
+            "the silent sitting reads as cut off, which is what a failed capture looks like",
+        );
+        assert!(
+            silent.lines().count() > 10,
+            "the silent stream is not a short one, and a check that assumed it was would pass              here for the wrong reason: {} lines",
+            silent.lines().count(),
+        );
+    }
+
+    /// ⚠️ **The stream does not end at `result`.**
+    ///
+    /// A `system` event arrives after it in a real capture, so a reader that
+    /// stops at the result loses whatever follows. **The fixture is asserted to
+    /// still have that shape**, because the day it is regenerated without it,
+    /// this case would start passing for a reason that has nothing to do with
+    /// the parser.
+    #[test]
+    fn the_final_text_is_found_even_though_more_events_follow_it() {
+        let made = fixture("made-calls.jsonl");
+        let types: Vec<String> = made
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .map(|e| e["type"].as_str().unwrap_or_default().to_string())
+            .collect();
+        let at = types
+            .iter()
+            .position(|t| t == "result")
+            .expect("the capture reached a result");
+        assert!(
+            at < types.len() - 1,
+            "the fixture no longer carries the shape this case exists for: {types:?}",
+        );
+        assert_eq!(
+            final_text(&made).as_deref(),
+            Some("Milhouse"),
+            "the answer a person reads was not recovered from the stream",
+        );
+    }
+
+    /// **An answer is cut down, never carried whole.** Some answers in these
+    /// rooms are tens of kilobytes, and a log nobody can read is no log.
+    #[test]
+    fn an_answer_is_kept_only_as_far_as_it_tells_one_call_from_another() {
+        let long = "x".repeat(4_000);
+        let stream = format!(
+            r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"id-1","name":"recall","input":{{"handle":"person:milhouse"}}}}]}}}}
+{{"type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"id-1","content":"{long}"}}]}}}}"#
+        );
+        let made = calls_in(&stream);
+        assert_eq!(made.len(), 1, "one call: {made:#?}");
+        assert!(
+            made[0].head.chars().count() < 400,
+            "the whole answer was kept, so a run's log buries its own story: {} characters",
+            made[0].head.chars().count(),
+        );
+        assert!(
+            made[0].about.contains("person:milhouse"),
+            "the call no longer says what it acted on: {:?}",
+            made[0],
+        );
+    }
+
+    /// **A refusal is logged as one, and an answer is not.**
+    ///
+    /// `is_error` is absent on a call that worked — read from the capture, not
+    /// assumed — so a reader that treats a missing key as anything but success
+    /// marks every good call refused. Both directions in one case.
+    #[test]
+    fn a_refused_call_reads_apart_from_one_the_room_answered() {
+        let stream = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"id-1","name":"capture","input":{"subject":"person:milhouse"}},{"type":"tool_use","id":"id-2","name":"recall","input":{"handle":"person:nelson"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"id-1","content":"blocked: no such subject","is_error":true}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"id-2","content":"one entity"}]}}"#;
+        let made = calls_in(stream);
+        assert_eq!(made.len(), 2, "both calls: {made:#?}");
+        assert!(made[0].refused, "the refusal is not marked: {:?}", made[0]);
+        assert!(
+            !made[1].refused,
+            "an answered call is marked refused, which happens when a missing is_error is read \
+             as anything but success: {:?}",
+            made[1],
+        );
     }
 }
