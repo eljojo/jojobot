@@ -101,9 +101,19 @@ message assistant | starting to keep track of things | I am going to start keepi
 ```locks
 # The brief left the box. A lock carries no session, so the board is read
 # rather than a box.
-search {"query": "*", "include_mail": true, "limit": 200}
-carries starting to keep track of things
-lacks   "state":"new"
+#
+# ⚠️ **A named check rather than a query, for the reason every other room here
+# uses the same one.** A query can ask whether the board holds a message in
+# `new`; it cannot say WHICH message. So `lacks "state":"new"` was a claim
+# about every message on the board, and it went red the moment this sitting
+# left a note for the next one — which the brief asks for in the operator's own
+# words. The other half was worse: the text it looked for is the brief's own,
+# furnished before the occupant arrived, so it held whatever the occupant did
+# and the whole check rested on the negative.
+#
+# The check reads the OLDEST message on the board, which is always the brief,
+# and asks about that one.
+check   the_brief_left_the_box
 say     January: the brief is still sitting new, so nobody took delivery of what the year is built on
 
 # The loop. A chain check written as a sentence is not a late loop — it is not
@@ -294,9 +304,14 @@ carries person:milhouse
 lacks   person:bart
 say     August: somebody who was never at the survey is now recorded as having been there
 
+# ⚠️ **The day rather than the word.** What the operator called the committee
+# the occupant may call the board, and both are right — a needle inside the
+# occupant's prose measures whoever wrote the needle. Nothing else writes on the
+# club on this day: January's claim is January's, March's is rewritten under
+# July's day, and October touches the pump.
 recall {"subject": "org:north-trail-club", "facts": true}
-carries committee
-say     August: nothing on the club says the operator is standing for the committee, so the one thing this sitting was asked to record is not there
+carries "date":"2026-08-16"
+say     August: nothing on the club carries this sitting's own day, so the one thing it was asked to record is not there
 ```
 
 ## Phase 9 — September, a commitment seven months old

@@ -176,6 +176,17 @@ async fn january(room: &Surface, sid: &str) {
                "source": "the operator"}),
     )
     .await;
+    // **The brief asked for this in the operator's own words** — leave it so
+    // whoever picks it up in a month has what they need — so a sitting that
+    // writes a note for the next one is doing what it was told.
+    did(
+        room,
+        sid,
+        "post_message",
+        json!({"to": "assistant", "subject": "where the year stands",
+               "body": "The bike chain loop is on file and the club is on the roster."}),
+    )
+    .await;
 }
 
 async fn february(room: &Surface, sid: &str) {
@@ -295,7 +306,7 @@ async fn august(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-trail-club", "content": "the operator is standing for the committee",
+        json!({"subject": "org:north-trail-club", "content": "the operator is standing for election to the club board",
                "provenance": "testimony", "date": "2026-08-16"}),
     )
     .await;
