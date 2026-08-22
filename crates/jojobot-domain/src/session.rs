@@ -817,6 +817,133 @@ pub async fn sweep_and_find(
     })
 }
 
+/// **A session, as an object the graph query can select.**
+///
+/// ⭐ **The axis already existed; the handle is what a session lacked.** Give a
+/// run a handle and every question the query already answers reaches it —
+/// select by kind, follow the edge to the bot that owns it, read its
+/// chronology.
+///
+/// **The owner rides on the document rather than in its fields**, so a caller
+/// cannot change who may read a run by writing a key. A bot reads its own runs
+/// and nobody else's, and the count of what was withheld is what stops that
+/// reading as an empty store.
+///
+/// ⛔️ **The store holds no row for this.** It is projected at the read, the way
+/// the build's own records are, so nothing is migrated and no session is
+/// duplicated into the entity table. The write gate refuses a memory write onto
+/// the handle, which is what keeps the projection read-only.
+pub fn projected(session: &Session) -> crate::memory::search::DocScan {
+    let id = EntityId::new(crate::memory::EntityKind::SESSION, session.id.as_str());
+    crate::memory::search::DocScan {
+        doc_id: session.id.as_str().to_string(),
+        title: session.focus.clone(),
+        // **The chronology is the run's prose**, oldest first, which is the
+        // order it was written and the order it reads in.
+        prose: session
+            .entries
+            .iter()
+            .map(|entry| entry.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        entity: Some(crate::memory::Entity {
+            id,
+            kind: crate::memory::EntityKind::SESSION,
+            // A run is known by what it was working on, which is what tells two
+            // of them apart in an offer.
+            name: session.focus.clone(),
+            aliases: Vec::new(),
+            source: "jojobot".to_string(),
+            crm: None,
+            // **The bot owns its runs**, so the tree already says whose it is
+            // and no second copy has to be kept in step.
+            parent: Some(session.bot.clone()),
+            boot: Default::default(),
+        }),
+        facts: Vec::new(),
+        fields: std::collections::BTreeMap::from([
+            ("state".to_string(), session.state.as_token().to_string()),
+            ("started_at".to_string(), session.started_at.to_string()),
+            ("beats".to_string(), session.entries.len().to_string()),
+        ]),
+        owner: Some(session.bot.clone()),
+    }
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+    use crate::memory::EntityKind;
+
+    /// **A run projects into an object the query can select, owned by its bot.**
+    ///
+    /// ⭐ **This is the whole of what a session lacked.** Every axis the query
+    /// has works on it once it has a handle: the kind selects it, the owner
+    /// keeps it private, the parent is the walk to the bot, and the chronology
+    /// is its prose.
+    ///
+    /// **The owner is the property and not a field**, asserted here because a
+    /// caller can write a key called `owner` on anything, and visibility read
+    /// out of the fields would be visibility a caller controls.
+    #[test]
+    fn a_run_projects_as_an_object_its_own_bot_owns() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        let bot = EntityId("bot:gamma".into());
+        let session = Session {
+            id: SessionId("contract-gamma-run".into()),
+            sid: None,
+            bot: bot.clone(),
+            focus: "reading the roster gate".to_string(),
+            started_at: "2026-07-24T09:00:00Z".parse().expect("a timestamp"),
+            state: SessionState::Active,
+            timezone: None,
+            entries: vec![
+                JournalEntry {
+                    id: EntryId("e1".into()),
+                    at: "2026-07-24T09:05:00Z".parse().expect("a timestamp"),
+                    text: "set out to read the gate".to_string(),
+                    touched: None,
+                    beat: None,
+                },
+                JournalEntry {
+                    id: EntryId("e2".into()),
+                    at: "2026-07-24T09:30:00Z".parse().expect("a timestamp"),
+                    text: "found the scan reads handles only".to_string(),
+                    touched: None,
+                    beat: None,
+                },
+            ],
+        };
+
+        let doc = projected(&session);
+        let entity = doc.entity.as_ref().expect("a run is an object");
+
+        assert_eq!(entity.id, EntityId("session:contract-gamma-run".into()));
+        assert_eq!(entity.kind, EntityKind::SESSION);
+        assert_eq!(
+            doc.owner.as_ref(),
+            Some(&bot),
+            "the run is its bot's, and the owner is a property of the document",
+        );
+        assert_eq!(
+            entity.parent.as_ref(),
+            Some(&bot),
+            "…and the tree is the walk from a bot to its runs",
+        );
+        assert!(
+            !doc.fields.contains_key("owner"),
+            "the owner must not be a field, or a caller could write one and change who reads",
+        );
+        assert_eq!(doc.fields.get("beats").map(String::as_str), Some("2"));
+        assert!(
+            doc.prose.contains("set out to read the gate")
+                && doc.prose.contains("found the scan reads handles only"),
+            "the chronology is the run's prose, whole and in order: {}",
+            doc.prose,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::testing::{InMemorySessions, contract};
