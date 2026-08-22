@@ -1,7 +1,7 @@
 # The year
 
-**Twelve sittings, one a month, none of them remembering the one before.** The
-operator uses jojobot for a year and the year takes minutes on the clock.
+**Thirteen sittings inside one year, none of them remembering the one before.**
+The operator uses jojobot for a year and the year takes minutes on the clock.
 
 Every other room asks whether one thing works. This one asks whether a year of
 ordinary use accumulates into something a session arriving blind can use — and
@@ -22,7 +22,21 @@ that was told it is March and wrote under the day the run happened fails
 saying so. That is not the harness catching itself: it is a real session's
 most likely silent mistake, caught where a person reads it.
 
-## Why twelve cold sittings and not one long one
+## Two facts every entry opens with
+
+A run of this room once turned up four sittings that asked a question and
+wrote nothing at all: two stalled at the front door over which session to
+pick up, one stopped to ask which of two accounts was correct when the room's
+own design says both stand, and one stopped over a rhythm detail it could
+have recorded without.
+
+**There is no operator to answer.** Each sitting is one turn, and a question
+spends the whole of it. So every entry below opens with two facts about the
+world it is playing in: that it is a role-play and the day it names is today,
+and that nobody is at the keyboard to answer anything — an unanswered
+question ends the sitting with nothing written down.
+
+## Why cold sittings and not one long one
 
 A single session answers from its own context. It wrote the thing an hour ago,
 so it remembers, and the store is optional. **The forgetting between sittings
@@ -72,6 +86,10 @@ message assistant | starting to keep track of things | I am going to start keepi
 
 **Session: fresh.** **Day: 2026-01-12.**
 
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
 > start jojobot as assistant — it is 12 January 2026 and I want to get set up
 
 ```locks
@@ -104,6 +122,10 @@ say     January: nothing on Milhouse says where he lives, so April has nothing t
 
 **Session: fresh.** **Day: 2026-02-08.**
 
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
 > start jojobot as assistant — it is 8 February 2026, I lent Ralph my floor pump today and I want it back before the June survey, and Nelson has joined the club
 
 ```locks
@@ -128,6 +150,10 @@ say     February: the club cannot be walked to its members, so August's question
 
 **Session: fresh.** **Day: 2026-03-15.**
 
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
 > start jojobot as assistant — it is 15 March 2026 and the club meets on Tuesdays, put that down
 
 ```locks
@@ -140,6 +166,10 @@ say     March: nothing says the club meets on Tuesdays, so July has nothing to t
 
 **Session: fresh.** **Day: 2026-04-19.**
 
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
 > start jojobot as assistant — it is 19 April 2026 and Milhouse has moved to Shelbyville
 
 ```locks
@@ -159,6 +189,10 @@ say     April: the Springfield claim is either gone or still standing as current
 
 **Session: fresh.** **Day: 2026-05-10.**
 
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
 > start jojobot as assistant — it is 10 May 2026 and the north trail was washed out at the top end this spring, put it where it belongs
 
 ```locks
@@ -179,6 +213,10 @@ say     May: the washout was not filed against the trail that already existed �
 
 **Session: fresh.** **Day: 2026-06-14.**
 
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
 > start jojobot as assistant — it is 14 June 2026, the survey happened today and Milhouse and Nelson were both there, and I did the bike chain this morning
 
 ```locks
@@ -199,6 +237,10 @@ say     June: the chain check does not say it was done on the day this sitting c
 
 **Session: fresh.** **Day: 2026-07-05.**
 
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
 > start jojobot as assistant — it is 5 July 2026 and I was wrong in March, the club has never met on Tuesdays and I do not want that standing
 
 ```locks
@@ -219,6 +261,10 @@ say     July: nothing on the club is marked taken back, so a sitting in December
 
 **Session: fresh.** **Day: 2026-08-16.**
 
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
 > start jojobot as assistant — it is 16 August 2026, tell me which club members were at the survey and then put down that I am standing for the committee
 
 ```locks
@@ -240,6 +286,10 @@ say     August: nothing on the club says the operator is standing for the commit
 
 **Session: fresh.** **Day: 2026-09-13.**
 
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
 > start jojobot as assistant — it is 13 September 2026, did that thing I lent out ever come back? Ralph gave it back at the survey, so put that down either way
 
 ```locks
@@ -256,6 +306,10 @@ say     September: nothing was written about the pump on the day this sitting cl
 
 **Session: fresh.** **Day: 2026-10-11.**
 
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
 > start jojobot as assistant — it is 11 October 2026 and I should note that Nelson brought my floor pump back over the summer
 
 ```locks
@@ -276,6 +330,10 @@ say     October: one of the two accounts of how the pump came back is gone, so a
 
 **Session: fresh.** **Day: 2026-11-08.** **Read this.**
 
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
 > start jojobot as assistant — it is 8 November 2026 and I am writing to Milhouse. What is his address, and what did he say about the committee back in August?
 
 **Read this.** Nothing asserts over this sitting and that is not a gap.
@@ -297,6 +355,10 @@ class and this is the first place it happens in front of anybody.
 
 **Session: fresh.** **Day: 2026-12-13.** **Read this.**
 
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
 > start jojobot as assistant — it is 13 December 2026 and I want to look back over the year. What have I let go quiet, and what did I say I would do that I never did?
 
 **Read this.** The hardest sitting in the year, and nothing asserts over it.
