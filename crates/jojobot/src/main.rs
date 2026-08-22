@@ -318,7 +318,11 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("binding {}", config.bind))?;
-    tracing::info!("listening on http://{}/mcp", config.bind);
+    // **This line is a contract, not only a log.** It is printed after the
+    // listener is bound and never before, so a caller that spawned this process
+    // can read it and know THIS server is the one on that address. A port
+    // answering says only that somebody is there.
+    tracing::info!("serving http://{}/mcp", config.bind);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {

@@ -42,6 +42,9 @@ const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 /// connects to; dropping it takes the process and the directory with it.
 pub struct Room {
     server: std::process::Child,
+    /// **Set when THIS server says it is listening on this room's address.**
+    /// The port answering says only that somebody is there; this says who.
+    serving: std::sync::Arc<std::sync::atomic::AtomicBool>,
     dir: PathBuf,
     endpoint: String,
 }
@@ -180,19 +183,32 @@ impl Room {
             // The server's own log is the first place to look when a room does
             // not come up, so it goes to this process's stderr rather than into
             // a pipe nobody drains.
-            .stdout(Stdio::null())
+            // **The server's own log is on STDOUT**, which this used to
+            // discard. It is piped and forwarded instead: every line reaches
+            // this process's stderr as it arrives, so the log is still what a
+            // person reads when a room does not come up, and reading it is what
+            // lets this room know that ITS OWN server bound the address.
+            .stdout(Stdio::piped())
+            // Whatever the server writes when it cannot start at all goes
+            // straight through, as it always did.
             .stderr(Stdio::inherit());
         if let DeathSignal::Ask = signal {
             die_with_this_run(&mut spawning);
         }
         drop(served_held);
         drop(store_held);
-        let server = spawning
+        let mut server = spawning
             .spawn()
             .with_context(|| format!("spawning {}", binary.display()))?;
 
+        let serving = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if let Some(log) = server.stdout.take() {
+            watch_the_log(log, endpoint.clone(), std::sync::Arc::clone(&serving));
+        }
+
         let mut room = Room {
             server,
+            serving,
             dir,
             endpoint,
         };
@@ -237,12 +253,22 @@ impl Room {
             if let Some(status) = self.server.try_wait().context("checking the server")? {
                 anyhow::bail!("the server exited before it served ({status}) — its log is above");
             }
-            if std::net::TcpStream::connect(&address).is_ok() {
+            // 🚨 **This server said it is listening on this address — not
+            // that the address answers.** A room tests a port, lets it go, and
+            // spawns a child to bind it; in that window a neighbouring process
+            // can take the number. A probe then finds something there and
+            // reports a room that came up, while this room's server is still
+            // starting its store. The client talks to the neighbour, nothing
+            // fails at the connect, and the run meets the neighbour's world —
+            // furnishing is refused because the entities are already there, and
+            // the failure reads as a room check about jojobot.
+            if self.serving.load(std::sync::atomic::Ordering::Relaxed) {
                 return Ok(());
             }
             if std::time::Instant::now() >= deadline {
                 anyhow::bail!(
-                    "the server did not answer on {address} within {}s — its log is above",
+                    "the server did not say it was listening on {address} within {}s — its log \
+                     is above",
                     READY_TIMEOUT.as_secs(),
                 );
             }
@@ -642,6 +668,37 @@ fn port_at(seed: u16, slot: u16) -> u16 {
     20_000 + seed.wrapping_add(slot) % 20_000
 }
 
+/// **Forward this server's log, and notice the line that says it is serving.**
+///
+/// jojobot prints `serving <address>` once its listener is bound and never
+/// before, so that line arriving on THIS child's log is the one signal that
+/// says this process is the one on that address. ⚠️ **It is a contract with the
+/// server and the server's own comment says so.** The startup line names the
+/// same address before anything is bound, which is why the needle is the whole
+/// `serving <address>` and not the address alone.
+///
+/// Every line goes on to this process's stderr as it arrives, so the log is
+/// still what a person reads when a room does not come up.
+fn watch_the_log(
+    log: std::process::ChildStdout,
+    endpoint: String,
+    serving: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    // **The whole line the server prints once it is bound**, built here so the
+    // startup line — which names the same address before anything is bound —
+    // cannot satisfy it.
+    let serving_line = format!("serving {endpoint}");
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(log).lines().map_while(Result::ok) {
+            if line.contains(&serving_line) {
+                serving.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            eprintln!("{line}");
+        }
+    });
+}
+
 /// **Before the first room and only then**: what an older run abandoned is
 /// there when this one starts, and nothing this run does adds to it.
 fn sweep_once() {
@@ -808,6 +865,65 @@ mod tests {
         put(&root.join("crates/alpha/src/lib.rs"));
         put(&root.join("crates/jojobot-exercise/src/room.rs"));
         root
+    }
+
+    /// 🚨 **A room is ready when ITS OWN server answers, never when the port
+    /// answers.**
+    ///
+    /// A room tests a port, lets it go, and spawns a child to bind it. In
+    /// between, a neighbouring process can take that number — and then the
+    /// probe finds something listening and reports a room that came up, while
+    /// this room's own server is still starting its store and has not bound
+    /// anything.
+    ///
+    /// ⛔️ **The client then talks to the neighbour's server.** Nothing fails at
+    /// the connect, so the run goes on and meets the neighbour's world:
+    /// furnishing is refused because the entities are already there, and the
+    /// failure reads as a room check about jojobot.
+    ///
+    /// **The stand-in is a bare listener, which is all a neighbour is from
+    /// here** — something that answers a connect on that number. The server is
+    /// alive and not serving, which is the state a real server is in for the
+    /// seconds its store takes to come up. **Both halves are load-bearing: a
+    /// server that has already exited is caught today, and this is the case
+    /// that is not.**
+    #[tokio::test]
+    async fn a_port_a_stranger_answers_is_not_this_room_coming_up() {
+        let stranger = std::net::TcpListener::bind("127.0.0.1:0").expect("a port to hold");
+        let port = stranger.local_addr().expect("the number it took").port();
+
+        // Alive, and never going to serve — a server still bringing its store
+        // up looks exactly like this from outside.
+        let server = std::process::Command::new("sleep")
+            .arg("60")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("a child that stays alive");
+
+        let mut room = super::Room {
+            server,
+            // Never set, because this room's server never says it is serving.
+            serving: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            dir: super::scratch().expect("a room directory"),
+            endpoint: format!("http://127.0.0.1:{port}/mcp"),
+        };
+        let waited = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            room.wait_until_answering(),
+        )
+        .await;
+        match waited {
+            Ok(Ok(())) => panic!(
+                "the room reported that it came up while the only thing on {port} is a stranger \
+                 — a client would now talk to somebody else's server and meet somebody else's \
+                 world",
+            ),
+            Ok(Err(_)) => {}
+            // Still waiting is the honest answer: this room's server has not
+            // bound anything, so it has not come up.
+            Err(_) => {}
+        }
     }
 
     /// 🚨 **A room drives a binary it did not build, and a scoped run never
