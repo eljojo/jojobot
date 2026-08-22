@@ -17,6 +17,20 @@ pub struct UpdateFactArgs {
     /// Replacement details; pass an empty string to clear them.
     #[serde(default)]
     pub(crate) details: Option<String>,
+    /// **The day this claim is true of**, `YYYY-MM-DD`. Left alone when
+    /// omitted — the record keeps the day of the claim it replaces, exactly as
+    /// any field this patch does not name.
+    ///
+    /// **Give this whenever the correction happened later than the day the
+    /// claim describes.** A date says when a thing is TRUE OF rather than
+    /// when somebody typed it, and the day an operator changed their mind is
+    /// the fact a later reader most wants — the same reason `retract` carries
+    /// a date of its own. Rewriting content with no date given leaves the
+    /// ORIGINAL day on the record, permanently: a correction made months
+    /// later would otherwise read back as if it were true on the original
+    /// day forever.
+    #[serde(default)]
+    pub date: Option<String>,
     /// `active` or `superseded`. **A refutation is not a status** — to record
     /// that something is not so, rewrite `content` to state the negative truth;
     /// it stays `active`, because that IS the current truth.
@@ -102,9 +116,15 @@ pub struct UpdateFactArgs {
 #[tool_router(router = update_fact_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(description = "Edit an addressed fact in place \
-                       (content/details/status/provenance/standing). To record that something \
+                       (content/details/date/status/provenance/standing). To record that something \
                        is NOT so, rewrite content to state the negative truth — that is an \
                        ordinary edit and the fact stays active; there is no negated status. \
+                       DATE REWRITES WHICH DAY THE CLAIM IS TRUE OF, YYYY-MM-DD — the same \
+                       argument retract carries, and for the same reason: the day a correction \
+                       happened is not always the day the call is made. Omit it and the record \
+                       keeps the day of the claim it replaces; give it whenever that is wrong, or \
+                       a rewrite made long after the fact keeps the ORIGINAL day forever, with no \
+                       way to say later when the correction itself happened. \
                        TWO MOVES NEED confirmed_by_user, and they are different: moving a \
                        claim TO testimony (who backs it), from inference or from observation \
                        alike — a claim you read in a system of record is not a step towards the \
@@ -140,6 +160,11 @@ impl Jojobot {
         let patch = FactPatch {
             content: args.content,
             details: args.details,
+            date: args
+                .date
+                .as_deref()
+                .map(|day| parse_date(Some(day), &self.zone_for(args.sid.as_deref())))
+                .transpose()?,
             status: args.status.as_deref().map(parse_status).transpose()?,
             provenance: args
                 .provenance
@@ -432,6 +457,66 @@ mod tests {
         );
         assert_eq!(updated["edge"]["type"], "attendee");
         assert_eq!(updated["edge"]["object"], "event:winter-fest");
+    }
+
+    /// 🚨 **A correction can carry the day it was made, and omitting it leaves
+    /// the record's day untouched.**
+    ///
+    /// `update_fact` had no way to say when a rewrite happened, so a claim
+    /// captured under one day and corrected under a later one kept the
+    /// original day forever — the one thing a later reader most wants about a
+    /// correction had no argument to carry it. `retract` already took a date
+    /// for exactly this reason; this is the same argument on the verb the
+    /// caller is actually sent to for the common case of correcting a claim
+    /// about what is true now.
+    ///
+    /// **Both halves.** A day given is the day carried, and no day given
+    /// leaves the day the claim already held — without the second, a build
+    /// that always overwrote the day with today (or dropped the argument on
+    /// the floor) would satisfy the first alone.
+    #[tokio::test]
+    async fn a_correction_carries_the_day_it_is_given_and_leaves_it_otherwise() {
+        let jojobot = handler();
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                date: Some("2026-06-01".into()),
+                ..capture_args("alpha", "the club meets on Tuesdays")
+            },
+        )
+        .await;
+        let address = address_of(&captured);
+        assert_eq!(captured["date"], "2026-06-01");
+
+        let redated = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    content: Some("the club meets on Wednesdays".into()),
+                    date: Some("2026-08-15".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(
+            redated["date"], "2026-08-15",
+            "a correction given a day must carry that day rather than the day of the claim it \
+             replaces: {redated}"
+        );
+
+        let untouched = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    content: Some("the club meets on Thursdays".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(
+            untouched["date"], "2026-08-15",
+            "an edit naming no day must leave the record's existing day alone: {untouched}"
+        );
     }
 
     /// **A refutation is a content edit, and `negated` is refused by name.** The

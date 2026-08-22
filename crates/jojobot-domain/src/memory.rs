@@ -480,6 +480,14 @@ pub struct FactPatch {
     /// New lifecycle state. A refutation is **not** one of these: rewrite
     /// `content` to state the negative truth instead (see [`FactStatus`]).
     pub status: Option<FactStatus>,
+    /// **A new day this claim is true of** — see [`Fact::date`]. `None` leaves
+    /// the record's existing day untouched, exactly as every other field this
+    /// patch does not name; a record rewritten with no day given keeps the day
+    /// of the claim it replaces, on purpose. The day an operator corrected a
+    /// claim is the fact a later reader most wants, and it is not always the
+    /// day the call is made — the same reason [`Memory::retract`] carries a
+    /// date of its own.
+    pub date: Option<Date>,
     /// New provenance. Promoting inference → testimony additionally requires
     /// [`FactPatch::confirmed_by_user`].
     pub provenance: Option<Provenance>,
@@ -1395,6 +1403,9 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     }
     if let Some(status) = patch.status {
         fact.status = status;
+    }
+    if let Some(day) = patch.date {
+        fact.date = day;
     }
     if let Some(provenance) = patch.provenance {
         fact.provenance = provenance;

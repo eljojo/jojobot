@@ -150,6 +150,7 @@ pub(crate) fn update_args(address: &str) -> UpdateFactArgs {
         clear_fields: None,
         content: None,
         details: None,
+        date: None,
         status: None,
         standing: None,
         provenance: None,

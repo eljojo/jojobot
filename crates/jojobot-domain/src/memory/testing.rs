@@ -3356,6 +3356,64 @@ pub mod contract {
         );
     }
 
+    /// **An edit can carry a new day, and one that names none leaves the
+    /// record's day alone.**
+    ///
+    /// A record rewritten later keeps the day of the claim it replaces unless
+    /// the caller names a new one — otherwise a correction made months after
+    /// the original claim reads back as if it were true on the original day
+    /// forever, with no way for a caller to say when the correction itself
+    /// happened.
+    ///
+    /// **Both halves.** A day given is the day carried, and no day given is
+    /// still the day the claim was captured under — without the second, a
+    /// build that always overwrote the day with the one supplied (or that
+    /// silently dropped the field) would satisfy the first alone.
+    pub async fn an_edit_can_carry_a_new_day_and_omitted_leaves_it_alone<M: Memory>(store: &M) {
+        let subject = EntityId::person("person:contract-redated");
+        let captured = capture(
+            store,
+            NewFact::about(
+                subject.clone(),
+                "the club meets on Tuesdays",
+                date(2026, 7, 1),
+            ),
+        )
+        .await;
+        assert_eq!(captured.date, date(2026, 7, 1));
+
+        let redated = edit(
+            store,
+            &captured.address(),
+            FactPatch {
+                content: Some("the club meets on Wednesdays".into()),
+                date: Some(date(2026, 8, 15)),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(
+            redated.date,
+            date(2026, 8, 15),
+            "a correction given a day must carry that day, not the day of the claim it replaces"
+        );
+
+        let untouched = edit(
+            store,
+            &redated.address(),
+            FactPatch {
+                content: Some("the club meets on Thursdays".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(
+            untouched.date,
+            date(2026, 8, 15),
+            "an edit naming no day must leave the record's existing day alone"
+        );
+    }
+
     /// **A refutation is an ordinary content edit**, not a status. It rewrites
     /// the row in place to state the negative truth, keeps its id, and stays
     /// `active` — because "does NOT play the theremin" IS the current truth
@@ -8864,6 +8922,7 @@ pub mod contract {
 
         facts_carry_a_usable_address(store).await;
         update_fact_edits_in_place(store).await;
+        an_edit_can_carry_a_new_day_and_omitted_leaves_it_alone(store).await;
         a_refutation_is_an_ordinary_content_edit(store).await;
         promotion_to_testimony_needs_confirmation(store).await;
         demotion_to_inference_is_free(store).await;

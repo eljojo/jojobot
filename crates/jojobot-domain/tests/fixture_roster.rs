@@ -297,6 +297,7 @@ const ROSTER: &[&str] = &[
     "person:contract-promotable",
     "person:contract-provenance",
     "person:contract-readback",
+    "person:contract-redated",
     "person:contract-ref-guarded",
     "person:contract-refutable",
     "person:contract-relation-owner",
