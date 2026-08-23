@@ -152,7 +152,41 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     reported.says(&format!("\"in_reply_to\":\"{dispatched}\""));
     let report = reported.field("id");
 
-    g.processed(&dispatched, "built and reported").await;
+    let retired = g.processed(&dispatched, "built and reported").await;
+    // Nothing was changed on the way in, so the receipt says nothing about
+    // changes — the half that keeps the line below meaning something.
+    assert!(
+        retired.get("delta").is_none(),
+        "a record the store kept whole carries no delta: {retired}"
+    );
+
+    // ── an outcome record longer than the store keeps ───────────────────────
+    //
+    // A coordinator writing up a slice can outrun what the record holds. The
+    // note is cut rather than refused — the verb that retires a message will
+    // not fail over the length of its own record — and the cut is announced the
+    // way every other substitution on this surface is, rather than through a
+    // field of its own that a caller has to learn for one verb.
+    let asked = g
+        .post(
+            "gamma",
+            "Second batch",
+            "Long one: the reconciliation, every crate, one line each.",
+        )
+        .await;
+    let long = "reconciled the crates against the manifest and filed them ".repeat(200);
+    let cut = g.processed(&asked, &long).await;
+    let delta = &cut["delta"][0];
+    assert_eq!(delta["field"], "notes", "{cut}");
+    assert_eq!(
+        delta["stored"], cut["notes"],
+        "the receipt names what the store kept: {cut}"
+    );
+    assert!(
+        cut["notes"].as_str().expect("the record").ends_with('…'),
+        "and the record itself still says it was cut: {cut}"
+    );
+
     g.wrap("did the work and reported").await;
 
     // The round trip completes across three sessions that never shared a

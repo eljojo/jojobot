@@ -38,7 +38,7 @@ impl Jojobot {
                        order matters for work you still owe, not for work that was never owed. \
                        Write the outcome you actually have: a note \
                        longer than the record holds is CUT to fit and says so (a trailing ellipsis, \
-                       and notes_truncated: true), never refused — the verb that retires a \
+                       and a delta naming what was stored), never refused — the verb that retires a \
                        message will not fail over the length of its own record. The answer \
                        confirms the move — state, notes, id — WITHOUT echoing the message's body \
                        back at you, since the read that handed it over already gave you that; it \
@@ -83,23 +83,26 @@ impl Jojobot {
                          is terminal",
                     ),
                 );
-                if let Some(obj) = body.as_object_mut() {
-                    // **Always present, never inferred from the ellipsis.** The
-                    // record can legitimately end in one, and a reader that has
-                    // to guess whether a store cut its text is a reader that
-                    // will eventually guess wrong.
+                if self.receipts.delta {
+                    // **The cut is a substitution, announced the way every
+                    // other one is.** It had a flag of its own, so a caller who
+                    // had learnt to read `delta` for what jojobot changed had
+                    // to learn a second field for this one verb.
                     //
                     // **Only a record this call OFFERED can have been cut.**
                     // Both stores carry a pre-existing note forward when the
                     // caller supplies none, and nothing gates re-processing, so
                     // comparing unconditionally made a second call report a cut
-                    // of a record it never sent — the same wrong inference,
-                    // pointing the other way.
-                    obj.insert(
-                        "notes_truncated".into(),
-                        asked
-                            .is_some_and(|asked| processed.notes.as_deref() != Some(asked))
-                            .into(),
+                    // of a record it never sent.
+                    crate::answer::note_delta(
+                        &mut body,
+                        crate::answer::Difference::between(
+                            "notes",
+                            asked,
+                            processed.notes.as_deref().unwrap_or(""),
+                        )
+                        .into_iter()
+                        .collect(),
                     );
                 }
                 if self.receipts.postcondition {
@@ -279,9 +282,11 @@ mod tests {
             body["state"], "processed",
             "the message WAS handled: {body}"
         );
+        // **The cut is said out loud, the way every other substitution is.**
+        assert_eq!(body["delta"][0]["field"], "notes", "{body}");
         assert_eq!(
-            body["notes_truncated"], true,
-            "…and the cut is said out loud: {body}"
+            body["delta"][0]["stored"], body["notes"],
+            "the delta names what the store kept: {body}"
         );
         let kept = body["notes"].as_str().expect("the outcome is recorded");
         assert!(
@@ -297,7 +302,7 @@ mod tests {
     /// PRE-EXISTING note forward when the caller supplies none, and
     /// `mark_processed` has no state gate, so re-processing is reachable. The
     /// second call then saw notes it had not sent and reported a cut nobody
-    /// made: the same wrong inference the flag exists to prevent, pointing the
+    /// made: the same wrong inference this line exists to prevent, pointing the
     /// other way.
     #[tokio::test]
     async fn processing_again_without_notes_reports_no_cut() {
@@ -323,7 +328,7 @@ mod tests {
         };
 
         let first = processed(Some("filed under shipments".into())).await;
-        assert_eq!(first["notes_truncated"], false);
+        assert!(first.get("delta").is_none(), "{first}");
 
         // Again, recording nothing. The store keeps the earlier note.
         let again = processed(None).await;
@@ -331,14 +336,18 @@ mod tests {
             again["notes"], "filed under shipments",
             "the record stands: {again}"
         );
-        assert_eq!(
-            again["notes_truncated"], false,
+        assert!(
+            again.get("delta").is_none(),
             "no record was offered, so none was cut: {again}"
         );
     }
 
-    /// A record that fits is stored whole and reports no cut — the flag is
-    /// always present, so a reader never branches on whether it is there.
+    /// **A record that fits is stored whole and carries no delta at all.**
+    ///
+    /// The paired half of the cut above, and the one that keeps the line
+    /// meaning something: a receipt that named a difference on every call is
+    /// one a reader learns to skip, and it would be gone from view on the call
+    /// that needed it.
     #[tokio::test]
     async fn an_outcome_record_that_fits_reports_no_cut() {
         let jojobot = mailbox_handler();
@@ -355,7 +364,7 @@ mod tests {
                 .expect("mark_processed ok"),
         );
         assert_eq!(body["notes"], "filed under shipments");
-        assert_eq!(body["notes_truncated"], false, "{body}");
+        assert!(body.get("delta").is_none(), "{body}");
     }
 
     /// An id that names nothing is an answer, not a protocol error: naming

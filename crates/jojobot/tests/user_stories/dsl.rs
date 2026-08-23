@@ -1217,14 +1217,16 @@ impl Session {
             .await
     }
 
-    /// Retire a message once it has been acted on, with the outcome.
-    pub async fn processed(&self, id: &str, notes: &str) {
+    /// Retire a message once it has been acted on, with the outcome. Hands
+    /// back the receipt, which says what the store kept when it kept something
+    /// else.
+    pub async fn processed(&self, id: &str, notes: &str) -> Value {
         self.write(
             &format!("processing {id}"),
             "mark_processed",
             json!({"message_id": id, "notes": notes}),
         )
-        .await;
+        .await
     }
 
     /// Ends the session and the connection with it.
