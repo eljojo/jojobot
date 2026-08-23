@@ -119,7 +119,10 @@ Shipped and live:
   orienteering retrieval (every hit arrives with its surroundings).
   `connection` says a link is there and that how it relates was not recorded —
   an admission, never a weaker `about`, because filing an unknown link as a
-  claim laundres it into one.
+  claim launders it into one. A walk says when the claim behind a link was
+  taken back — marked rather than filtered, the way a fact read shows a
+  retracted claim instead of hiding it; a link two records draw stays
+  unmarked while either of them stands.
 - **The graph query** — `recall` is the precise lookup and `search` is the
   breadth. `recall` selects objects (a handle · a kind · a declared type · a
   key and its value · **the name of a VIEW, which fills the rest of the call in
