@@ -180,11 +180,45 @@ impl Jojobot {
                 }
             },
         };
-        json_result(&serde_json::json!({
+        let mut body = serde_json::json!({
             "session": session.as_str(),
             "entry": entry_receipt_json(&entry),
             "focus": moved.map(|s| s.focus),
-        }))
+        });
+        if self.receipts.postcondition {
+            crate::answer::note_postcondition(
+                &mut body,
+                self.what_a_beat_left_standing(&session).await,
+            );
+        }
+        json_result(&body)
+    }
+}
+
+impl Jojobot {
+    /// **What a caller's own beat did to its chronology.**
+    ///
+    /// A chronology is append-only and only its newest entry can be amended,
+    /// so a beat adds and never thins out. Saying so is the same work the
+    /// memory writes do: a session that suspects a write replaces what it
+    /// already recorded writes less than it knows, and a chronology is the one
+    /// record whose whole worth is that nothing was left out of it.
+    ///
+    /// The length is read for this line and left out when the store cannot
+    /// answer, since a number nothing backs is worse than the sentence alone.
+    async fn what_a_beat_left_standing(&self, session: &SessionId) -> String {
+        let length = self
+            .sessions
+            .read_session(session)
+            .await
+            .ok()
+            .map_or_else(String::new, |run| {
+                format!(" Its chronology is now {} entries long.", run.entries.len())
+            });
+        format!(
+            "Recorded as a new entry at the end of this session's chronology.{length} No earlier \
+             entry was rewritten; only the newest one can be amended."
+        )
     }
 }
 
@@ -194,6 +228,43 @@ mod tests {
     use crate::harness::*;
     use crate::session::testing::*;
     use jojobot_domain::session::Sid;
+
+    /// **A beat says what now stands and what it left alone.**
+    ///
+    /// A chronology is append-only and only its newest entry can be amended,
+    /// so a beat changes nothing that came before it. That is the same fear
+    /// the memory writes answer — an agent that suspects a write overwrites
+    /// what it already sent writes less than it knows — and a session's
+    /// chronology is the one record whose whole value is that nothing thins it
+    /// out.
+    ///
+    /// **The count is what makes the line worth reading**, so it is what this
+    /// pins: a constant sentence cannot say the chronology got longer.
+    #[tokio::test]
+    async fn a_beat_says_the_chronology_only_grew() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+
+        let first = journal_entry(&jojobot, &sid, "set out to find why the boot is slow").await;
+        let opening = first["postcondition"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a write states what now stands: {first}"))
+            .to_string();
+        assert!(
+            opening.contains('1'),
+            "the line has to say how long the chronology now is: {first}",
+        );
+
+        let second =
+            journal_entry(&jojobot, &sid, "found it: the index rebuilds on every read").await;
+        assert!(
+            second["postcondition"]
+                .as_str()
+                .expect("a write states what now stands")
+                .contains('2'),
+            "a second beat and the line still says one, so it is not counting: {second}",
+        );
+    }
 
     /// **A failure that cannot say whether the write landed says THAT.**
     ///

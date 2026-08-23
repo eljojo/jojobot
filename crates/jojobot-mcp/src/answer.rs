@@ -163,6 +163,19 @@ pub(crate) struct Difference {
     pub(crate) field: &'static str,
     pub(crate) sent: String,
     pub(crate) stored: String,
+    /// **Why this verb stores something else here**, where it has a reason.
+    ///
+    /// ⚠️ **A difference is not a fault**, and without a reason it reads as
+    /// one. The check-in path substitutes because the record it builds mixes a
+    /// caller's sentence with a computed schedule, and a caller told only that
+    /// its value was replaced learns to distrust a verb that did the right
+    /// thing.
+    ///
+    /// **It says what the stored value is and why the record can carry no
+    /// other — a fact about the record, never about how the server went about
+    /// the write** (rule 158). `None` where nothing needs explaining: a
+    /// sentence restating the comparison is noise wearing the shape of help.
+    pub(crate) because: Option<&'static str>,
 }
 
 impl Difference {
@@ -173,11 +186,23 @@ impl Difference {
     /// equal or they are not, and nothing here judges whether the substitution
     /// was right.
     pub(crate) fn between(field: &'static str, sent: Option<&str>, stored: &str) -> Option<Self> {
+        Self::converted(field, sent, stored, None)
+    }
+
+    /// The same comparison, carrying the reason this verb stores something
+    /// else here.
+    pub(crate) fn converted(
+        field: &'static str,
+        sent: Option<&str>,
+        stored: &str,
+        because: Option<&'static str>,
+    ) -> Option<Self> {
         let sent = sent?.trim();
         (!sent.eq_ignore_ascii_case(stored)).then(|| Self {
             field,
             sent: sent.to_string(),
             stored: stored.to_string(),
+            because,
         })
     }
 }
@@ -205,6 +230,7 @@ pub(crate) fn note_delta(body: &mut serde_json::Value, differences: Vec<Differen
                     "field": d.field,
                     "sent": d.sent,
                     "stored": d.stored,
+                    "because": d.because,
                 })
             })
             .collect::<Vec<_>>()
@@ -216,7 +242,13 @@ pub(crate) fn note_delta(body: &mut serde_json::Value, differences: Vec<Differen
             "stored differs from sent. {}",
             differences
                 .iter()
-                .map(|d| format!("{}: stored {}, you sent {}", d.field, d.stored, d.sent))
+                .map(|d| {
+                    let because = d.because.map(|w| format!(" — {w}")).unwrap_or_default();
+                    format!(
+                        "{}: stored {}, you sent {}{because}",
+                        d.field, d.stored, d.sent
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("; ")
         )

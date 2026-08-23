@@ -142,6 +142,16 @@ pub struct CaptureArgs {
 /// own key. The check-in path is the one that overrules today — it writes the
 /// derivation its computed schedule makes the record into — and this is what
 /// stops that being something a caller has to notice by comparing.
+/// **Why a check-in stores a derivation whatever the caller declared.**
+///
+/// A fact about the record: it holds a schedule jojobot worked out beside the
+/// caller's sentence, and a folded value is read with the certainty of the
+/// claim that carried it. Stated so the substitution does not read as a fault
+/// — it is correct, and a caller told only that its value was replaced learns
+/// to distrust a verb that did the right thing.
+const WHY_A_CHECK_IN_DERIVES: &str = "a check-in stores the schedule jojobot worked out beside your sentence, and a record \
+     carrying both is a derivation";
+
 struct Declared {
     subject: String,
     provenance: Option<String>,
@@ -161,14 +171,22 @@ impl Declared {
         }
     }
 
-    fn not_stored(&self, fact: &Fact) -> Vec<crate::answer::Difference> {
+    /// `converted` is the check-in's reason, given only when this call asked
+    /// for one: the same substitution on a call that did not is not this
+    /// verb's doing and must not borrow its explanation.
+    fn not_stored(
+        &self,
+        fact: &Fact,
+        converted: Option<&'static str>,
+    ) -> Vec<crate::answer::Difference> {
         use crate::answer::Difference;
         [
             Difference::between("subject", Some(&self.subject), fact.subject.as_str()),
-            Difference::between(
+            Difference::converted(
                 "provenance",
                 self.provenance.as_deref(),
                 fact.provenance.as_token(),
+                converted,
             ),
             Difference::between(
                 "standing",
@@ -403,6 +421,7 @@ impl Jojobot {
             return Ok(refused);
         }
         let declared = Declared::of(&args);
+        let checked_in = args.check_in.is_some();
         let subject = EntityId::person(&args.subject);
         let provenance = parse_provenance(args.provenance.as_deref())?;
         let date = parse_date(args.date.as_deref(), &self.zone_for(args.sid.as_deref()))?;
@@ -485,7 +504,10 @@ impl Jojobot {
                     parse_date(None, &self.zone_for(args.sid.as_deref()))?,
                 );
                 if self.receipts.delta {
-                    crate::answer::note_delta(&mut body, declared.not_stored(&fact));
+                    crate::answer::note_delta(
+                        &mut body,
+                        declared.not_stored(&fact, checked_in.then_some(WHY_A_CHECK_IN_DERIVES)),
+                    );
                 }
                 if self.receipts.postcondition {
                     crate::answer::note_postcondition(
@@ -811,6 +833,66 @@ mod tests {
             both["postcondition"].is_string(),
             "the same call with the switch on has to carry the line, or the case above passes \
              against a build that never computes one: {both}",
+        );
+    }
+
+    /// **A delta says why, where the verb that substituted has a reason.**
+    ///
+    /// ⚠️ **The line must not read as an apology.** This substitution is
+    /// correct: the record mixes a caller's sentence with a schedule jojobot
+    /// computed, and only one of those has anybody's word behind it. A bare
+    /// *stored differs from sent* reads as a fault report, and a caller that
+    /// reads it as one learns to distrust a verb that did the right thing.
+    ///
+    /// **The reason is a fact about the record, not about how the server went
+    /// about the write** — it says what the stored value IS and why that is
+    /// what the record can carry, which is where rule 158 draws the line.
+    ///
+    /// ⚠️ **What the pairing below watches, and what it cannot.** It catches a
+    /// reason smeared onto every difference. It does NOT catch the reason
+    /// escaping to a provenance substitution some other verb makes, and no
+    /// case can: `check_in` is the only path on this surface that stores a
+    /// provenance other than the one it was sent, so a build that attached
+    /// this reason unconditionally is indistinguishable from this one through
+    /// the served surface. The condition is held by construction. **The day a
+    /// second substituting path lands, that is the case to write.**
+    #[tokio::test]
+    async fn a_substitution_with_a_reason_carries_it() {
+        let jojobot = handler();
+        a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+        let receipt = capture_ok(&jojobot, a_late_check_in()).await;
+
+        let because = receipt["delta"][0]["because"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the substitution this verb makes has a reason: {receipt}"))
+            .to_string();
+        assert!(
+            because.contains("check_in") || because.contains("schedule"),
+            "the reason has to say what about this call replaced the value: {receipt}",
+        );
+
+        // The rendered line carries it too, since that is the half a reader
+        // reads rather than branches on.
+        let note = receipt["delta_note"].as_str().expect("a rendered line");
+        assert!(note.contains(&because), "{receipt}");
+
+        // ⭐ **Paired with a difference that has no reason to give.** A caller
+        // that names a bare handle gets it qualified, and nothing about that
+        // needs explaining — so `because` is absent rather than filled with a
+        // sentence restating the comparison. This is the half that fails on a
+        // build attaching the reason to every difference.
+        let qualified = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                ..capture_args("alpha", "said the kiln was lit")
+            },
+        )
+        .await;
+        assert_eq!(qualified["delta"][0]["field"], "subject", "{qualified}");
+        assert_eq!(
+            qualified["delta"][0]["because"],
+            serde_json::Value::Null,
+            "a difference with nothing to explain carries no explanation: {qualified}",
         );
     }
 

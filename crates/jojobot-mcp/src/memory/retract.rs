@@ -87,7 +87,7 @@ impl Jojobot {
         };
         self.beat("retract", &address.to_string(), args.sid.as_deref())
             .await;
-        json_result(&serde_json::json!({
+        let mut body = serde_json::json!({
             // **Both rows, because both were written.** The mark alone would
             // leave a caller holding a record it could not explain, and the
             // account alone would not prove the mark landed.
@@ -105,14 +105,127 @@ impl Jojobot {
                     "status": fact.status.as_token(),
                 }))
                 .collect::<Vec<_>>(),
-        }))
+        });
+        if self.receipts.postcondition {
+            crate::answer::note_postcondition(
+                &mut body,
+                what_a_retraction_left_standing(&address, &standing_on),
+            );
+        }
+        json_result(&body)
     }
+}
+
+/// **What a caller's own retraction did, and what it did not do.**
+///
+/// ⚠️ **It does not remove the record.** The claim stays in the store, comes
+/// back from a plain read marked as taken back, and keeps the edge it drew —
+/// so a caller answering from a walk still arrives at it. Nothing else on this
+/// surface says that, and an agent that assumes otherwise reads a withdrawn
+/// claim as a standing one.
+///
+/// The claims resting on it are named because nothing here changes them: what
+/// to do about a claim built on a withdrawn one is a judgement, and jojobot
+/// makes none.
+fn what_a_retraction_left_standing(address: &FactAddress, built_on: &[Fact]) -> String {
+    let resting = if built_on.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " {} claims were worked out from it and are unchanged; deciding what they are worth \
+             now is yours.",
+            built_on.len()
+        )
+    };
+    format!(
+        "{address} is marked as taken back. It is still stored, a read still returns it, and it \
+         still carries the edge it drew, so a walk arriving along that edge still reaches it.\
+         {resting}"
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::harness::*;
+    use crate::memory::testing::{ensure, recall_args};
+
+    /// **Taking a claim back says what still stands, and the same case proves
+    /// the sentence true.**
+    ///
+    /// ⚠️ **The model an agent arrives with is that a retraction removes the
+    /// claim. It does not.** The record stays in the store, comes back from a
+    /// plain `recall` marked `retracted`, and an edge on it still reaches
+    /// whatever it pointed at. An agent answering from a walk alone therefore
+    /// reads a withdrawn claim as a standing one, and nothing on the surface
+    /// said so.
+    ///
+    /// **The line and the behaviour are asserted together on purpose.** A
+    /// postcondition is prose the caller cannot check, so a case that pinned
+    /// only the wording would keep passing on the day the behaviour changed
+    /// underneath it — which is the one failure that makes this line worse
+    /// than none.
+    #[tokio::test]
+    async fn a_retraction_says_what_still_stands_and_the_store_agrees() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        ensure(&jojobot, "place:shelbyville").await;
+        let claim = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                shape: Some("location".into()),
+                object: Some("place:shelbyville".into()),
+                ..capture_args("person:alpha", "was living in Shelbyville that spring")
+            },
+        )
+        .await;
+        let address = address_of(&claim);
+
+        let body = json_of(
+            &jojobot
+                .retract(Parameters(RetractArgs {
+                    address: address.clone(),
+                    reason: Some("he was never there".into()),
+                    sid: Some(sid.clone()),
+                    date: None,
+                }))
+                .await
+                .expect("the retraction lands"),
+        );
+        let line = body["postcondition"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a write states what now stands: {body}"))
+            .to_string();
+        assert!(
+            line.contains(&address),
+            "the line has to name the record this took back: {body}",
+        );
+
+        // ⭐ **What the line claims, checked against the store in the same
+        // case.** The record is still there, still readable, and marked.
+        let read_back = json_of(
+            &jojobot
+                .recall(Parameters(recall_args("person:alpha")))
+                .await
+                .expect("recall ok"),
+        );
+        let kept = read_back["objects"][0]["facts"]
+            .as_array()
+            .expect("the records on the thing")
+            .iter()
+            .find(|f| f["address"] == address.as_str())
+            .unwrap_or_else(|| panic!("a plain recall still returns it: {read_back}"));
+        assert_eq!(
+            kept["status"], "retracted",
+            "it comes back marked rather than gone: {read_back}",
+        );
+        assert!(
+            kept["edge"].is_object(),
+            "and it still carries the edge a walk follows, which is the half the line exists to \
+             say: {read_back}",
+        );
+    }
 
     /// **Taking a claim back says what was built on it.**
     ///
