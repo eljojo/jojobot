@@ -65,7 +65,18 @@ USAGE = "usage: scripts/sabotage <file> <from> <to> -- <command...>"
 
 
 def refuse(why):
+    """**Say it on both streams.**
+
+    Every other line this tool prints goes to stdout, and this one went to
+    stderr alone — so a caller filtering stdout saw an empty screen and a tool
+    that had done nothing. **A refusal that reads as silence is the worst of
+    the four ways a verdict has been wrong**, because there is no contradiction
+    to notice: nothing happened and nothing said so.
+
+    Stderr keeps it too, so a caller already reading that stream is unaffected.
+    """
     print(f"REFUSED: {why}", file=sys.stderr)
+    print(f"SABOTAGE REFUSED: {why}", flush=True)
     return 2
 
 
