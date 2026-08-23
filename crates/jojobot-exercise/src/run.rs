@@ -245,13 +245,25 @@ impl Results {
     /// **The transcript first, then the results.** When something did not hold
     /// the next question is always what the agent reached for, so it is shown
     /// rather than kept for a rerun that costs money again.
-    /// **`kept` is where the whole stream will be**, so the person watching is
-    /// told the same thing as the person reading afterwards. They are one
-    /// rendering and `the_written_run_and_the_shown_run_are_the_same_text`
-    /// holds them to it: a notice on one and not the other would make the file
-    /// and the console disagree about what they are.
-    pub fn print(&self, kept: Option<&std::path::Path>) {
-        print!("{}", self.rendered(kept));
+    /// 🚨 **One rendering, both destinations, and the caller gets no say.**
+    ///
+    /// The person watching a run live and the person reading it afterwards are
+    /// misled by the same cut payload, so they are told the same thing. **An
+    /// earlier shape let each destination be handed its own rendering
+    /// argument, and the choice for the console then lived in `main` where no
+    /// case reaches it** — which made the guard below a claim rather than a
+    /// check. **Deciding here is what lets a free test hold it.**
+    ///
+    /// `out` is a parameter for the same reason: a function that writes
+    /// straight to stdout cannot be compared against the file.
+    pub fn show_and_keep(
+        &self,
+        path: &std::path::Path,
+        out: &mut impl std::io::Write,
+    ) -> std::io::Result<()> {
+        let rendered = self.rendered(Some(&crate::calls::beside(path)));
+        write!(out, "{rendered}")?;
+        self.keep(path, &rendered)
     }
 
     /// **Keep the run where somebody can read it after the process is gone.**
@@ -268,10 +280,16 @@ impl Results {
     /// transcript has thrown away the part where the model was working out
     /// what it could do — which is the part being judged.
     pub fn write_to(&self, path: &std::path::Path) -> std::io::Result<()> {
+        self.keep(path, &self.rendered(Some(&crate::calls::beside(path))))
+    }
+
+    /// The file half of [`show_and_keep`], given the text it already rendered
+    /// — so the run is rendered once and the two destinations cannot differ.
+    fn keep(&self, path: &std::path::Path, rendered: &str) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, self.rendered(Some(&crate::calls::beside(path))))?;
+        std::fs::write(path, rendered)?;
         // **The raw stream goes beside it, never instead of it.** The readable
         // file above is what the operator reads; this is what a later reading
         // is made from, and a fault in one must not cost the other.
@@ -1156,6 +1174,44 @@ mod tests {
         );
     }
 
+    /// **What was shown and what was kept are the same bytes, and no caller
+    /// gets a say.**
+    ///
+    /// 🚨 **The version of this guard that took a rendering argument per
+    /// destination could not hold it.** It asserted the file equalled what the
+    /// file-writer renders, which is a tautology, while the console's half was
+    /// decided in `main` — a file with no tests. Passing `None` there left the
+    /// whole suite green. **The guard's name promised an invariant its body
+    /// could not reach.**
+    ///
+    /// **So the decision moved out of `main`.** One call renders once and sends
+    /// the same string to both places; this asks for both and compares them.
+    /// ⭐ **There is no argument left for anybody to diverge on**, which is why
+    /// this holds where the previous shape only claimed to.
+    #[test]
+    fn what_is_shown_and_what_is_kept_are_the_same_bytes() {
+        let run = ran(&["Phase 1 — the only one"]);
+        let dir = std::env::temp_dir().join(format!("exercise-shown-{}", std::process::id()));
+        let path = dir.join("run.md");
+
+        let mut shown = Vec::new();
+        run.show_and_keep(&path, &mut shown).expect("kept");
+        let kept = std::fs::read_to_string(&path).expect("read back");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let shown = String::from_utf8(shown).expect("the run renders as text");
+        assert_eq!(
+            shown, kept,
+            "the console and the file are two renderings, so the copy somebody reads afterwards \
+             can say something the watcher never saw",
+        );
+        // The positive the comparison depends on: two empty strings are equal.
+        assert!(
+            shown.contains("run.jsonl") && shown.contains("cut"),
+            "…and both of them have to carry the notice: {shown}",
+        );
+    }
+
     /// **A run says how many locks reached for Rust, and which.**
     ///
     /// An escape nobody counts is an escape everybody takes, and each one names
@@ -1344,27 +1400,6 @@ mod tests {
             named, "transcripts/ledger.md",
             "…and carries what tells two runs of it apart",
         );
-    }
-
-    /// **What is written and what is shown are one rendering.**
-    ///
-    /// A second renderer for the file is how the copy somebody reads afterwards
-    /// comes to say something the printed one did not.
-    #[test]
-    fn the_written_run_and_the_shown_run_are_the_same_text() {
-        let run = ran(&["Phase 1 — the only one"]);
-        let dir = std::env::temp_dir().join(format!("exercise-same-{}", std::process::id()));
-        let path = dir.join("run.md");
-        run.write_to(&path).expect("written");
-        // **The same input to both destinations**, which is what the claim is:
-        // one rendering, not one argument. `print` is handed the same kept
-        // stream in `main`, so a notice that reached the file and not the
-        // console would still be two renderings and would still fail here.
-        assert_eq!(
-            std::fs::read_to_string(&path).expect("read back"),
-            run.rendered(Some(&crate::calls::beside(&path))),
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// **A phase is covered by the check written for THAT phase.**

@@ -26,14 +26,14 @@ async fn main() -> Result<()> {
     let seed = jojobot_exercise::expectations::seed_for(&playbook.source)?;
 
     let results = run::go(&playbook, &agent, &seed, &expectations).await?;
-    results.print(Some(&jojobot_exercise::calls::beside(&asked.transcript)));
+
     // **The run is kept, and where it went is said.** A paid run's most
     // valuable output is the part no expectation touches — what the model
     // reached for, what it did not find, what it concluded — and stdout is
     // where that stopped existing. **Written before the exit below**, so a run
     // that failed its expectations is the one most worth reading and is not
     // the one thrown away.
-    match results.write_to(&asked.transcript) {
+    match results.show_and_keep(&asked.transcript, &mut std::io::stdout()) {
         Ok(()) => println!("\ntranscript: {}", asked.transcript.display()),
         // Not fatal, and loud. The run happened and was billed; losing the
         // file is worth saying and is not worth pretending the run did not
