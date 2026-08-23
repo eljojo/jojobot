@@ -202,6 +202,23 @@ impl Jojobot {
                         obj.insert(key.into(), value);
                     }
                 }
+                if self.receipts.delta {
+                    // **The parent, not the handle.** This verb composes the
+                    // handle out of `kind` and the slug half, which is what
+                    // those arguments say they are. The parent is read as a
+                    // person when it names no kind, exactly as a capture's
+                    // subject is, and that is the substitution worth naming.
+                    crate::answer::note_delta(
+                        &mut body,
+                        crate::answer::Difference::between(
+                            "parent",
+                            args.parent.as_deref(),
+                            entity.parent.as_ref().map(EntityId::as_str).unwrap_or(""),
+                        )
+                        .into_iter()
+                        .collect(),
+                    );
+                }
                 json_result(&body)
             }
             // **A parent refusal is not a near miss, and saying it is offers a
@@ -307,6 +324,74 @@ mod tests {
     }
 
     use crate::memory::testing::*;
+
+    /// 🚨 **A bare PARENT is read as a person, and the receipt says so.**
+    ///
+    /// ⚠️ **The parent, not the handle.** This verb takes `kind` and the slug
+    /// half separately and composes them, which is what the argument says it
+    /// does — announcing that on every call would be the noise a reader learns
+    /// to skip. The parent is different: it is read as a person when it names
+    /// no kind, exactly as `capture`'s subject is, and `capture` announces it.
+    ///
+    /// **Paired with a parent that needed no reading**, and with no reason
+    /// given, for the reasons the sibling case on `update_entity` gives.
+    #[tokio::test]
+    async fn a_bare_parent_is_reported_as_read_and_a_qualified_one_is_not() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        ensure(&jojobot, "person:alpha").await;
+
+        let bare = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    parent: Some("alpha".into()),
+                    sid: Some(sid.clone()),
+                    ..add_args("thing", "red-kite", "Red Kite")
+                }))
+                .await
+                .expect("add_entity ok"),
+        );
+        assert_eq!(bare["parent"], "person:alpha", "{bare}");
+        assert_eq!(bare["delta"][0]["field"], "parent", "{bare}");
+        assert_eq!(bare["delta"][0]["sent"], "alpha", "{bare}");
+        assert_eq!(bare["delta"][0]["stored"], "person:alpha", "{bare}");
+        assert_eq!(
+            bare["delta"][0]["because"],
+            serde_json::Value::Null,
+            "a difference with nothing to explain carries no explanation: {bare}",
+        );
+
+        let qualified = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    parent: Some("person:alpha".into()),
+                    sid: Some(sid.clone()),
+                    ..add_args("thing", "blue-kite", "Blue Kite")
+                }))
+                .await
+                .expect("add_entity ok"),
+        );
+        assert_eq!(qualified["parent"], "person:alpha", "{qualified}");
+        assert!(
+            qualified.get("delta").is_none(),
+            "a parent that needed no reading carries no delta: {qualified}",
+        );
+
+        // The positive that stops both halves passing on a verb that stopped
+        // reporting parents at all: a call naming none says so and carries no
+        // delta either.
+        let rootless = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    sid: Some(sid),
+                    ..add_args("thing", "green-kite", "Green Kite")
+                }))
+                .await
+                .expect("add_entity ok"),
+        );
+        assert_eq!(rootless["parent"], serde_json::Value::Null, "{rootless}");
+        assert!(rootless.get("delta").is_none(), "{rootless}");
+    }
 
     /// `add_entity` creates any kind, and `list_entities` reads it back — the
     /// two halves of the entity surface, through the MCP path.

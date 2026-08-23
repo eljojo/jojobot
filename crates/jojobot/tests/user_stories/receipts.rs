@@ -173,5 +173,37 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
         kept.json(),
     );
 
+    // ── ⑤ the same courtesy on the verbs that were silent about it ──────────
+    //
+    // A bare handle is read as a person. `capture` announced that on its
+    // subject and the entity verbs did not, so one conversion was documented on
+    // one verb and invisible on two others — which is the whole defect one
+    // costume over: a caller that has to diff its own call against the answer
+    // learns to distrust every write.
+    let named = s
+        .call(
+            "add_entity",
+            json!({
+                "kind": "thing", "handle": "record-crate", "name": "Record Crate",
+                "source": "user-named", "parent": "barney-gumble",
+            }),
+        )
+        .await;
+    let receipt = named.json();
+    assert_eq!(receipt["parent"], "person:barney-gumble", "{receipt}");
+    assert_eq!(receipt["delta"][0]["field"], "parent", "{receipt}");
+    assert_eq!(receipt["delta"][0]["sent"], "barney-gumble", "{receipt}");
+    assert_eq!(
+        receipt["delta"][0]["stored"], "person:barney-gumble",
+        "the handle was read and the receipt has to say how: {receipt}",
+    );
+    // No reason, and that is honest: reading a bare handle as a person is what
+    // the argument means, where a check-in's substitution has a cause behind it
+    // worth a sentence.
+    assert!(
+        receipt["delta"][0]["because"].is_null(),
+        "a difference with nothing to explain carries no explanation: {receipt}",
+    );
+
     story.finish().await;
 }

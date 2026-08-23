@@ -168,7 +168,10 @@ pub(crate) fn counted(n: usize, singular: &str, plural: &str) -> String {
 /// distinction is the whole point: a default is jojobot filling a gap, and a
 /// difference is jojobot overruling a choice.
 pub(crate) struct Difference {
-    pub(crate) field: &'static str,
+    /// **Owned rather than static**, because a verb may substitute inside a
+    /// structure a caller named: a closed set belongs to one key, and a line
+    /// that could not say which key would leave a reader to guess.
+    pub(crate) field: String,
     pub(crate) sent: String,
     pub(crate) stored: String,
     /// **Why this verb stores something else here**, where it has a reason.
@@ -193,21 +196,25 @@ impl Difference {
     /// **Deterministic, and a comparison over declared data**: two tokens are
     /// equal or they are not, and nothing here judges whether the substitution
     /// was right.
-    pub(crate) fn between(field: &'static str, sent: Option<&str>, stored: &str) -> Option<Self> {
+    pub(crate) fn between(
+        field: impl Into<String>,
+        sent: Option<&str>,
+        stored: &str,
+    ) -> Option<Self> {
         Self::converted(field, sent, stored, None)
     }
 
     /// The same comparison, carrying the reason this verb stores something
     /// else here.
     pub(crate) fn converted(
-        field: &'static str,
+        field: impl Into<String>,
         sent: Option<&str>,
         stored: &str,
         because: Option<&'static str>,
     ) -> Option<Self> {
-        let sent = sent?.trim();
+        let sent = sent?;
         (!sent.eq_ignore_ascii_case(stored)).then(|| Self {
-            field,
+            field: field.into(),
             sent: sent.to_string(),
             stored: stored.to_string(),
             because,
@@ -235,7 +242,7 @@ pub(crate) fn note_delta(body: &mut serde_json::Value, differences: Vec<Differen
             .iter()
             .map(|d| {
                 serde_json::json!({
-                    "field": d.field,
+                    "field": d.field.as_str(),
                     "sent": d.sent,
                     "stored": d.stored,
                     "because": d.because,

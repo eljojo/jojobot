@@ -181,6 +181,9 @@ impl Jojobot {
             return Ok(refused);
         }
         let mut fields = Vec::with_capacity(args.fields.len());
+        // **What each closed set was sent as**, taken before the values are
+        // trimmed, because trimming is what the receipt below reports.
+        let mut sent_sets: Vec<(String, String)> = Vec::new();
         for field in &args.fields {
             let folds = match field.folds.as_deref().map(str::trim) {
                 None | Some("") => Fold::Newest,
@@ -209,10 +212,10 @@ impl Jojobot {
                 // unsatisfiable — no values, a repeat, a comma — is one rule in
                 // one place, so this verb and any other writer get the same
                 // answer.
-                one_of: field
-                    .one_of
-                    .as_ref()
-                    .map(|values| values.iter().map(|v| v.trim().to_string()).collect()),
+                one_of: field.one_of.as_ref().map(|values| {
+                    sent_sets.push((field.key.clone(), values.join(", ")));
+                    values.iter().map(|v| v.trim().to_string()).collect()
+                }),
                 ..declared
             });
         }
@@ -228,7 +231,7 @@ impl Jojobot {
         // Read back from the store rather than echoed, so the answer is what a
         // later reader gets and not what this call believed it sent.
         let known = self.memory.declared_types().await.map_err(memory_error)?;
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "type": declared_type_json(&declared),
             // **A name and where it came from — not the keys.** A caller
             // that has just declared one is choosing what else to reach for
@@ -241,6 +244,32 @@ impl Jojobot {
                 })
                 .collect::<Vec<_>>(),
         });
+        if self.receipts.delta {
+            // **Named per key, because a set belongs to one.** A line saying
+            // only that a set was trimmed would leave a caller who declared
+            // several to work out which.
+            //
+            // **No reason given.** A trimmed value is what the argument means,
+            // and both sides of a closed set compare trimmed — so this states a
+            // conversion rather than warning of a consequence.
+            let trimmed: Vec<crate::answer::Difference> = declared
+                .fields
+                .iter()
+                .filter_map(|field| {
+                    let stored = field.one_of.as_ref()?.join(", ");
+                    let sent = sent_sets
+                        .iter()
+                        .find(|(key, _)| key == &field.key)
+                        .map(|(_, sent)| sent.as_str())?;
+                    crate::answer::Difference::between(
+                        format!("one_of on '{}'", field.key),
+                        Some(sent),
+                        &stored,
+                    )
+                })
+                .collect();
+            crate::answer::note_delta(&mut body, trimmed);
+        }
         json_result(&body)
     }
 }
@@ -296,6 +325,62 @@ mod tests {
                 .collect(),
             sid: Some(TEST_SID.to_string()),
         }
+    }
+
+    /// 🚨 **A trimmed set value is reported, named by the key it belongs to.**
+    ///
+    /// **Paired with a set that needed no trimming**, which carries no delta at
+    /// all — a line on every declaration is one a reader learns to skip.
+    ///
+    /// ⚠️ **The trim is behaviourally inert and the line is still right.** Both
+    /// sides of a closed set compare trimmed, so a caller who sent padding is
+    /// not surprised later. What the line removes is having to diff your own
+    /// call against the answer to know the store kept something else.
+    ///
+    /// **Named per key**, because a type may narrow several and a line that
+    /// could not say which would leave a reader guessing.
+    #[tokio::test]
+    async fn a_trimmed_set_value_is_reported_and_a_clean_one_is_not() {
+        let jojobot = handler();
+        let narrowed = |name: &str, values: &[&str]| DeclareTypeArgs {
+            fields: vec![FieldArgs {
+                key: "outcome".into(),
+                holds: None,
+                folds: None,
+                required: false,
+                one_of: Some(values.iter().map(|v| (*v).to_string()).collect()),
+            }],
+            ..declare_args(name, &[])
+        };
+
+        let padded = json_of(
+            &jojobot
+                .declare_type(Parameters(narrowed("chore", &[" ran ", "skipped"])))
+                .await
+                .expect("declare_type ok"),
+        );
+        assert_eq!(
+            padded["delta"][0]["field"], "one_of on 'outcome'",
+            "{padded}",
+        );
+        assert_eq!(padded["delta"][0]["sent"], " ran , skipped", "{padded}");
+        assert_eq!(padded["delta"][0]["stored"], "ran, skipped", "{padded}");
+        assert_eq!(
+            padded["delta"][0]["because"],
+            serde_json::Value::Null,
+            "a difference with nothing to explain carries no explanation: {padded}",
+        );
+
+        let clean = json_of(
+            &jojobot
+                .declare_type(Parameters(narrowed("errand", &["ran", "skipped"])))
+                .await
+                .expect("declare_type ok"),
+        );
+        assert!(
+            clean.get("delta").is_none(),
+            "a set that needed no trimming carries no delta: {clean}",
+        );
     }
 
     /// One type out of the store, by name.

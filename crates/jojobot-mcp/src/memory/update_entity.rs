@@ -84,7 +84,24 @@ impl Jojobot {
             Guarded::Written(entity) => {
                 self.beat("update_entity", entity.id.as_str(), args.sid.as_deref())
                     .await;
-                json_result(&entity_json(&entity))
+                let mut body = entity_json(&entity);
+                if self.receipts.delta {
+                    // **No reason given, and that is the honest answer.**
+                    // Reading a bare handle as a person is what the argument
+                    // means; a sentence restating the comparison would be a
+                    // manufactured justification.
+                    crate::answer::note_delta(
+                        &mut body,
+                        crate::answer::Difference::between(
+                            "handle",
+                            Some(&args.handle),
+                            entity.id.as_str(),
+                        )
+                        .into_iter()
+                        .collect(),
+                    );
+                }
+                json_result(&body)
             }
             Guarded::Blocked {
                 attempted,
@@ -103,6 +120,66 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
+
+    /// 🚨 **A bare handle is read as a person, and the receipt says so.**
+    ///
+    /// `capture` already announces this same substitution on its subject. It
+    /// was silent here, so the identical conversion was a documented one on one
+    /// verb and invisible on another — and a caller that meets one unannounced
+    /// substitution has to price every write at its worst case.
+    ///
+    /// **Paired with a handle that needed no reading.** A caller sending the
+    /// qualified form gets no `delta` at all: a line on every call is one a
+    /// reader learns to skip, and it would be gone from view on the call that
+    /// needed it.
+    ///
+    /// **No reason, and that is the honest answer.** `capture`'s provenance
+    /// substitution has a real one behind it; reading a bare handle as a person
+    /// is what the argument means, so `because` is absent rather than filled
+    /// with a sentence restating the comparison.
+    #[tokio::test]
+    async fn a_bare_handle_is_reported_as_read_and_a_qualified_one_is_not() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        ensure(&jojobot, "person:alpha").await;
+        let rename = |handle: &str, name: &str| UpdateEntityArgs {
+            handle: handle.into(),
+            name: Some(name.into()),
+            aliases: None,
+            source: None,
+            crm: None,
+            override_token: None,
+            sid: Some(sid.clone()),
+        };
+
+        let bare = json_of(
+            &jojobot
+                .update_entity(Parameters(rename("alpha", "Alpha the first")))
+                .await
+                .expect("update_entity ok"),
+        );
+        assert_eq!(bare["id"], "person:alpha", "{bare}");
+        assert_eq!(bare["delta"][0]["field"], "handle", "{bare}");
+        assert_eq!(bare["delta"][0]["sent"], "alpha", "{bare}");
+        assert_eq!(bare["delta"][0]["stored"], "person:alpha", "{bare}");
+        assert_eq!(
+            bare["delta"][0]["because"],
+            serde_json::Value::Null,
+            "a difference with nothing to explain carries no explanation: {bare}",
+        );
+
+        let qualified = json_of(
+            &jojobot
+                .update_entity(Parameters(rename("person:alpha", "Alpha the second")))
+                .await
+                .expect("update_entity ok"),
+        );
+        assert_eq!(qualified["id"], "person:alpha", "{qualified}");
+        assert!(
+            qualified.get("delta").is_none(),
+            "a handle that needed no reading carries no delta: {qualified}",
+        );
+    }
 
     /// `update_entity` edits metadata and leaves the handle alone.
     #[tokio::test]
