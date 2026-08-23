@@ -196,15 +196,19 @@ const ROSTER: &[&str] = &[
     "thing:no-such-bike",
     "thing:bar-tape",
     "thing:bike-chain",
+    "thing:blue-kite",
     "thing:commit-omicron",
     "thing:floor-pump",
     "thing:folding-chairs",
     "thing:gravel-bike",
     "thing:leftorium-menu",
+    "thing:record-crate",
     "thing:red-bike",
     "thing:red-bikee",
+    "thing:red-kite",
     "thing:road-bike",
     "thing:sigma",
+    "thing:tau",
     "thing:that-search-summary",
     "thing:torque-wrench",
     "thing:trail-email",
@@ -216,6 +220,7 @@ const ROSTER: &[&str] = &[
     // them.** They were invisible until the fixtures named their handles whole:
     // a slug handed to a constructor carries no handle for this scan to read.
     // Most are labels saying what a case is about rather than names of anybody.
+    "bot:sigma",
     "bot:contract-epsilon",
     "bot:contract-ghost-bot",
     "bot:contract-graph-one",
@@ -241,6 +246,7 @@ const ROSTER: &[&str] = &[
     "org:contract-self-labelled",
     "org:contract-unscreened",
     "org:contract-unscreened-twin",
+    "person:comma-carrier",
     "person:contract-addressable",
     "person:contract-addresse",
     "person:contract-addressee",
@@ -391,6 +397,7 @@ const ROSTER: &[&str] = &[
     "thing:contract-the-ledger",
     "thing:contract-the-scrap",
     "thing:contract-vocabulary-answerer",
+    "thing:green-kite",
     "thing:handcart",
     "topic:contract-run-of-stalls",
     "topic:contract-widgets",
@@ -466,7 +473,10 @@ fn violations_in(files: &[PathBuf]) -> Vec<String> {
     let mut violations = Vec::new();
     for file in files {
         let text = fs::read_to_string(file).expect("readable source file");
-        for handle in handles_in(&text) {
+        for handle in handles_in(&text)
+            .into_iter()
+            .chain(two_part_handles_in(&text))
+        {
             if !ROSTER.contains(&handle.as_str()) {
                 violations.push(format!("{} in {}", handle, file.display()));
             }
@@ -502,6 +512,92 @@ fn handles_in(text: &str) -> Vec<String> {
         }
     }
     found
+}
+
+/// **The constructors that build a handle out of two arguments**, and the
+/// reason this is a list rather than a rule.
+///
+/// [`handles_in`] reads `kind:slug` as text, so it cannot see a name whose two
+/// halves never meet: `add_args("thing", "red-kite", …)` and a payload carrying
+/// `"kind"` and `"handle"` as separate keys both create an entity the scan
+/// never reads. **That is the commonest way a fixture is named**, so the gate
+/// that enforces the bright line was blind to the idiom most authors reach for.
+///
+/// ⛔️ **A rule instead of a list would have to guess which bare string is a
+/// slug, and that guess does not work.** Measured over this workspace: flagging
+/// any literal following any kind literal reports 38 off-roster names, of which
+/// 5 are real — `"session", "timezone"` and `"pet", "owner"` are a migration's
+/// table and column, not a handle. **A gate that is wrong six times out of
+/// seven is one people learn to wave through**, which costs more than the hole.
+///
+/// So this names the constructors. **It can go stale, exactly as the roster
+/// itself can**, and a new way of building a handle is invisible until somebody
+/// adds it here. That is the trade: a list that is sometimes short, against a
+/// rule that is usually wrong.
+const TWO_PART: &[(&str, &str)] = &[
+    // The test helper: `add_args("thing", "red-kite", "Red Kite")`.
+    ("add_args(", ","),
+    // A payload naming the halves as its own keys.
+    ("\"kind\":", "\"handle\":"),
+];
+
+/// Every handle in the text built out of two separate literals.
+///
+/// **Deliberately tolerant of whitespace and strict about everything else**: it
+/// reads the next quoted token after the anchor, requires it to be a kind, then
+/// reads the next quoted token after the separator. A pair that is not a kind
+/// followed by a slug is not a handle and is passed over.
+fn two_part_handles_in(text: &str) -> Vec<String> {
+    let known = kinds();
+    let mut found = Vec::new();
+    for (anchor, separator) in TWO_PART {
+        for (at, _) in text.match_indices(anchor) {
+            let after = at + anchor.len();
+            let Some((kind, ended)) = quoted_from(&text[after..]) else {
+                continue;
+            };
+            if !known.iter().any(|k| *k == kind) {
+                continue;
+            }
+            let rest = &text[after + ended..];
+            let Some(sep) = rest.find(separator) else {
+                continue;
+            };
+            // Only across a short gap: the two halves of one call, never the
+            // next one down the file.
+            if sep > 40 {
+                continue;
+            }
+            let Some((slug, _)) = quoted_from(&rest[sep + separator.len()..]) else {
+                continue;
+            };
+            if slug.is_empty() || !slug.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+                continue;
+            }
+            if slug
+                .chars()
+                .any(|c| !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '-')
+            {
+                continue;
+            }
+            found.push(format!("{kind}:{slug}"));
+        }
+    }
+    found
+}
+
+/// The next quoted token in `text`, and where its closing quote ends.
+fn quoted_from(text: &str) -> Option<(String, usize)> {
+    let opened = text.find('"')?;
+    if text[..opened]
+        .chars()
+        .any(|c| !c.is_whitespace() && c != ',' && c != ':')
+    {
+        return None;
+    }
+    let rest = &text[opened + 1..];
+    let closed = rest.find('"')?;
+    Some((rest[..closed].to_string(), opened + 1 + closed + 1))
 }
 
 /// **The gendered pronouns of English.** A closed set of words rather than a
@@ -869,10 +965,15 @@ fn the_roster_carries_no_name_the_workspace_has_stopped_using() {
         .map(|f| fs::read_to_string(f).expect("readable source file"))
         .collect();
 
+    // **The same two ways of naming a handle the violation scan reads**, or the
+    // two questions stop being opposites: a name built out of two literals
+    // would be caught as off-roster by one test and reported as an unused
+    // entry by the other, and adding it to the roster could not satisfy both.
+    let built = two_part_handles_in(&corpus);
     let orphaned: Vec<&str> = ROSTER
         .iter()
         .copied()
-        .filter(|handle| !corpus.contains(handle))
+        .filter(|handle| !corpus.contains(handle) && !built.iter().any(|b| b == handle))
         .collect();
     assert!(
         orphaned.is_empty(),
@@ -880,6 +981,72 @@ fn the_roster_carries_no_name_the_workspace_has_stopped_using() {
          stops being a record of what is here and becomes a pool of names nobody \
          reviewed the use of:\n{}",
         orphaned.join("\n")
+    );
+}
+
+/// 🚨 **A name built out of two literals is compared against the roster, and
+/// one already on it is not.**
+///
+/// **Both halves in one case.** The refusal is the capability; the acceptance
+/// is what says the gate discriminates rather than refusing everything it can
+/// read. A gate that refused every two-part name would satisfy the first alone
+/// and would be uninstallable.
+///
+/// ⚠️ **It states what it does NOT reach.** A kind a caller declares at
+/// runtime is not in [`kinds`], so a handle under one is unreadable however it
+/// is written — whole or in halves. **That gap is older than this gate and this
+/// gate does not close it**, and a reader who took the roster for complete
+/// coverage would be wrong in a way nothing on screen corrects.
+#[test]
+fn a_two_part_name_is_read_and_measured_against_the_roster() {
+    let on_it = ROSTER
+        .iter()
+        .find(|h| h.starts_with("thing:"))
+        .expect("the roster names a thing");
+    let (_, slug) = on_it.split_once(':').expect("a handle is kind:slug");
+
+    // **Assembled rather than written**, because the gate reads this file too:
+    // a literal off-roster pair here would be a violation of the rule the case
+    // is about, caught by the very scan it is testing.
+    let nobody = "no-such-".to_string() + "fixture";
+    let whole = format!("thing:{nobody}");
+    let refused = format!("add_args(\"thing\", \"{nobody}\", \"Nope\")");
+    assert_eq!(
+        two_part_handles_in(&refused),
+        vec![whole.clone()],
+        "a name whose halves never meet as text was not read, so no allowlist sees it",
+    );
+    assert!(
+        !ROSTER.contains(&whole.as_str()),
+        "the case rests on this name being off the roster",
+    );
+
+    let accepted = format!(r#"add_args("thing", "{slug}", "Fine")"#);
+    assert_eq!(
+        two_part_handles_in(&accepted),
+        vec![(*on_it).to_string()],
+        "the gate read a name already on the roster as something else",
+    );
+
+    // **The payload form, which is the other way a fixture names one.**
+    let payload = format!("{{\"kind\": \"thing\", \"handle\": \"{nobody}\"}}");
+    assert_eq!(two_part_handles_in(&payload), vec![whole]);
+
+    // ⛔️ **And what it must NOT read, asserted at each of the two places that
+    // refuse it**, because one string can pass for the wrong reason.
+    //
+    // No anchor: a migration's table and column sit beside each other as two
+    // literals and are not a handle. **Nothing about the kind list is being
+    // exercised here** — the constructor name is what excludes it.
+    assert!(
+        two_part_handles_in(r#"Leaves::NoRows("session", "timezone IS NULL")"#).is_empty(),
+        "two literals beside each other are not a handle",
+    );
+    // An anchor, and a first literal that is no kind. **This is the half the
+    // kind list decides**, and without it a sabotage of that list passes.
+    assert!(
+        two_part_handles_in(r#"add_args("notakind", "whatever", "X")"#).is_empty(),
+        "a call whose first argument is no kind does not name an entity",
     );
 }
 
