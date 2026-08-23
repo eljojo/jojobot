@@ -805,14 +805,20 @@ mod tests {
         .await
         .expect("a row from before the column");
 
-        assert_eq!(
-            apply(&pool, MIGRATIONS)
-                .await
-                .expect("the column lands on a table that already has rows"),
-            vec![
-                "0032_entity_badge".to_string(),
-                "0033_entity_merged_into".to_string(),
-            ],
+        // **Among what applied, rather than the whole list.** What this case is
+        // about is `ADD COLUMN` reaching a table that already has rows; which
+        // other migrations happen to sit after it is incidental to that. Pinning
+        // the whole tail makes every future migration break this case for a
+        // reason unrelated to its subject, and a case whose breakage and whose
+        // fix are both mechanical teaches people to edit it without reading it.
+        //
+        // **`ALL_VERSIONS` already pins the list and is what owns that job.**
+        let applied = apply(&pool, MIGRATIONS)
+            .await
+            .expect("the column lands on a table that already has rows");
+        assert!(
+            applied.contains(&"0032_entity_badge".to_string()),
+            "the badge migration did not apply to a populated table: {applied:?}",
         );
         let worn: Option<String> = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
             .bind("person:already-here")
