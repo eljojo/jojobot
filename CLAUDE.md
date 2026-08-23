@@ -440,13 +440,15 @@ roles and never an operator.
   starts from a failing test you watched fail FIRST. A manual run proves
   nothing.
 - **To watch a test fail, use `scripts/sabotage`.** It keeps the file, makes
-  the edit, runs the command, prints the verdict and puts the file back. **The
-  restore is on a trap, so it happens on a pass, a failure, a raise or a
-  stop** — there is no dirty tree to clean up afterwards and no moment where a
-  git verb is the convenient answer. **It refuses unless the text appears
-  exactly once**, and it reports an absence and an ambiguity apart, because
-  those send you to different places. ⚠️ **A hard kill cannot be caught, so it
-  names the copy on stdout when it starts.**
+  the edit, runs the command, prints the verdict and puts the file back.
+  **The restore is on a trap, so it happens on a pass, a failure, a raise or
+  a stop** — there is no dirty tree to clean up afterwards and no moment
+  where a git verb is the convenient answer. **It refuses unless the text
+  appears exactly once**, and it reports an absence and an ambiguity apart,
+  because those send you to different places. **It also refuses when its own
+  classifier fails its self-check** — a third reason, so read which one you
+  got before hunting for an ambiguity that is not there. ⚠️ **A hard kill
+  cannot be caught, so it names the copy on stdout when it starts.**
 - **A sabotage proves nothing until you know it landed where you meant.** Two
   sites that look alike, one edit, and the verdict is about code nobody
   touched. **Assert the edit reached THAT site**, and prove the case moves when
