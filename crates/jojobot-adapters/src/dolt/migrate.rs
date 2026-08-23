@@ -757,6 +757,66 @@ mod tests {
         },
     ];
 
+    /// 🚨 **The badge column arrives on an `entity` table that already has
+    /// rows**, which is the only state a real store is ever in when it meets
+    /// this migration.
+    ///
+    /// Every other case here migrates a fresh database, so `ADD COLUMN` is only
+    /// ever asked of an empty table. **A store that has been running is the
+    /// case that matters and it was the one nothing asked about.**
+    ///
+    /// **Both halves.** The statement lands rather than being refused, and the
+    /// rows that were already there come back carrying NULL — which is what the
+    /// column means by a row written before it existed, and what the fill at
+    /// startup then reaches.
+    #[tokio::test]
+    async fn the_badge_column_lands_on_an_entity_table_that_already_has_rows() {
+        let scratch = Scratch::new("migrate-badge-populated");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("badgepopulated")
+            .await
+            .expect("a database of its own");
+
+        // Everything up to the badge, so the entity table is there without it.
+        let upto = MIGRATIONS
+            .iter()
+            .position(|m| m.version == "0032_entity_badge")
+            .expect("the badge migration is in the list");
+        apply(&pool, &MIGRATIONS[..upto])
+            .await
+            .expect("the schema before the badge");
+        sqlx::query(
+            "INSERT INTO entity (id, kind, name, source, boot, prose) \
+             VALUES ('person:already-here', 'person', 'Already Here', 'contract-fixture', \
+             'on-demand', '')",
+        )
+        .execute(&pool)
+        .await
+        .expect("a row from before the column");
+
+        assert_eq!(
+            apply(&pool, MIGRATIONS)
+                .await
+                .expect("the column lands on a table that already has rows"),
+            vec!["0032_entity_badge".to_string()],
+        );
+        let worn: Option<String> = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+            .bind("person:already-here")
+            .fetch_one(&pool)
+            .await
+            .expect("the row is still there");
+        assert_eq!(
+            worn, None,
+            "a row that predates the column came back carrying something, so the fill cannot \
+             tell it apart from one it has already reached",
+        );
+    }
+
     /// **An interrupted backfill is recognized by no row being left unfilled.**
     ///
     /// A backfill changes rows and leaves the schema exactly as it found it, so

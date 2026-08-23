@@ -223,6 +223,80 @@ async fn an_entity_keeps_its_badge_through_every_rewrite() {
     store.stop().await;
 }
 
+/// 🚨 **A row written before the badge column existed is given one at startup,
+/// and a second pass gives out none.**
+///
+/// A row gains a badge when it is next rewritten, which reaches what something
+/// touches and no more. **A store where nothing is edited would keep unbadged
+/// rows for ever**, so the fill reaches the rest.
+///
+/// **The rows here carry NULL, written straight through SQL**, because that is
+/// what a row predating the column really looks like — an entity created
+/// through the port would already have one, and a fixture that used the port
+/// would be testing the mint again rather than the fill.
+///
+/// **Three reads.** The fill gives one to every waiting row; a second pass
+/// gives out none, which is what makes it safe to run at every startup; and the
+/// badges it gave out differ, because a fill that gave one badge to everybody
+/// would satisfy the first two.
+#[tokio::test]
+async fn the_fill_badges_rows_written_before_the_column_and_repeats_nothing() {
+    let scratch = Scratch::new("badgefill");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("badgefill")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    for handle in ["person:fill-alpha", "person:fill-beta"] {
+        sqlx::query(
+            "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge)
+             VALUES (?, 'person', 'Fill', 'contract-fixture', NULL, NULL, 'on-demand', '', NULL)",
+        )
+        .bind(handle)
+        .execute(&pool)
+        .await
+        .expect("a row from before the column");
+    }
+
+    assert_eq!(
+        memory.badge_the_unbadged().await.expect("the fill runs"),
+        2,
+        "the rows waiting for a badge were not given one",
+    );
+    let worn: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT badge FROM entity WHERE id IN ('person:fill-alpha', 'person:fill-beta')          ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("the rows are readable");
+    assert!(
+        worn.iter().all(Option::is_some),
+        "a row came back still waiting: {worn:?}",
+    );
+    assert_ne!(
+        worn[0], worn[1],
+        "two rows wear one badge, so it names neither of them",
+    );
+
+    assert_eq!(
+        memory
+            .badge_the_unbadged()
+            .await
+            .expect("the fill runs again"),
+        0,
+        "the fill gave out badges a second time, so running it at every startup would not be \
+         safe",
+    );
+
+    store.stop().await;
+}
+
 /// **The memory contract, against the real store.**
 ///
 /// One store for every case, which is what this contract is written for: its

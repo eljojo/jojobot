@@ -135,6 +135,27 @@ async fn main() -> anyhow::Result<()> {
     // and nothing above it has a word for either. It sits UNDER the index on
     // purpose: the index is a reader, and a reader that saw something no other
     // reader sees would be a second seam.
+    // **Every row carries a badge before anything reads one.** A row gains one
+    // when it is next rewritten, so a store where nothing is edited would keep
+    // rows written before the column for ever. This reaches the rest, after the
+    // migrations and before the index is built over them.
+    //
+    // **Not fatal.** The badge is nothing a caller can ask for yet, so a store
+    // that could not be reached here is a store the boot already reports on —
+    // and refusing to start over a column nothing reads would be worse than
+    // saying so.
+    let badging = DoltMemory::open(store.pool().clone());
+    match badging.badge_the_unbadged().await {
+        Ok(0) => {}
+        Ok(given) => tracing::info!(given, "store: gave a badge to rows written before it"),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "BADGES NOT FILLED — rows written before the badge column still carry none. Nothing \
+             was lost and nothing reads them yet; a restart once the store is reachable fills \
+             them."
+        ),
+    }
+
     let memory: Arc<dyn Memory> = Arc::new(Provisioned::new(
         DoltMemory::open(store.pool().clone()),
         jojobot_mcp::provisions(),

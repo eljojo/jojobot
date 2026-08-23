@@ -84,6 +84,47 @@ impl DoltMemory {
         DoltMemory { pool, draw }
     }
 
+    /// **Give a badge to every row written before the column existed.**
+    ///
+    /// A row gains one when it is next rewritten, which reaches the rows
+    /// something touches and no others. **A store where nothing is edited would
+    /// keep unbadged rows for ever**, so this reaches the rest — at startup,
+    /// after the migrations, where the schema is already known to be current.
+    ///
+    /// **Not a migration**, because a migration is SQL and the badge comes from
+    /// the store's own draw: probed inside a transaction, retried on a
+    /// collision, the same shape every badge has. A SQL backfill would be a
+    /// second generator, and rows of two different shapes is a cost that never
+    /// expires.
+    ///
+    /// **One transaction per row rather than one for all of them.** The draw
+    /// probes what is already committed, so a single transaction would be
+    /// probing against rows it had not written yet — and a fill that fails
+    /// half way has still filled half, which is progress rather than damage.
+    ///
+    /// Returns how many it gave out. **Idempotent: a second run fills none.**
+    pub async fn badge_the_unbadged(&self) -> Result<usize, MemoryError> {
+        let waiting: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM entity WHERE badge IS NULL ORDER BY id")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(store)?;
+        let mut given = 0;
+        for handle in waiting {
+            let mut tx = self.pool.begin().await.map_err(store)?;
+            let badge = mint_badge(&mut tx, &self.draw).await?;
+            sqlx::query("UPDATE entity SET badge = ? WHERE id = ? AND badge IS NULL")
+                .bind(&badge)
+                .bind(&handle)
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
+            tx.commit().await.map_err(store)?;
+            given += 1;
+        }
+        Ok(given)
+    }
+
     /// Every entity, whole — what the write guard screens against.
     ///
     /// **The whole roster, because the guard's answer is a function of all of
