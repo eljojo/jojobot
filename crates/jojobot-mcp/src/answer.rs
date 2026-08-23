@@ -152,6 +152,14 @@ impl Receipts {
     };
 }
 
+/// **A count and its noun, agreeing.** A real model read "1 entries long" off
+/// a postcondition in a paid run. These lines are read by something that
+/// reasons about what they say, so prose that announces itself as generated
+/// spends the trust the line was added to build.
+pub(crate) fn counted(n: usize, singular: &str, plural: &str) -> String {
+    format!("{n} {}", if n == 1 { singular } else { plural })
+}
+
 /// **One field the store did not keep as the caller sent it.**
 ///
 /// `sent` is what the caller wrote and `stored` is what the record carries.

@@ -207,14 +207,17 @@ impl Jojobot {
     /// The length is read for this line and left out when the store cannot
     /// answer, since a number nothing backs is worse than the sentence alone.
     async fn what_a_beat_left_standing(&self, session: &SessionId) -> String {
-        let length = self
-            .sessions
-            .read_session(session)
-            .await
-            .ok()
-            .map_or_else(String::new, |run| {
-                format!(" Its chronology is now {} entries long.", run.entries.len())
-            });
+        let length =
+            self.sessions
+                .read_session(session)
+                .await
+                .ok()
+                .map_or_else(String::new, |run| {
+                    format!(
+                        " Its chronology is now {} long.",
+                        crate::answer::counted(run.entries.len(), "entry", "entries")
+                    )
+                });
         format!(
             "Recorded as a new entry at the end of this session's chronology.{length} No earlier \
              entry was rewritten; only the newest one can be amended."
@@ -263,6 +266,31 @@ mod tests {
                 .expect("a write states what now stands")
                 .contains('2'),
             "a second beat and the line still says one, so it is not counting: {second}",
+        );
+    }
+
+    /// **The count reads as English at one and at none.**
+    ///
+    /// A real model read *"1 entries long"* off this line in a paid run. The
+    /// line exists to be read by something that reasons about what it says, so
+    /// prose that announces itself as generated spends the trust the line was
+    /// added to build.
+    #[tokio::test]
+    async fn the_chronology_count_reads_as_english_at_one() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        let first = journal_entry(&jojobot, &sid, "set out to find why the boot is slow").await;
+        let line = first["postcondition"].as_str().expect("a line").to_string();
+        assert!(
+            line.contains("1 entry") && !line.contains("1 entries"),
+            "the singular case reads as generated text: {line}",
+        );
+
+        let second = journal_entry(&jojobot, &sid, "found it").await;
+        let plural = second["postcondition"].as_str().expect("a line");
+        assert!(
+            plural.contains("2 entries"),
+            "…and the plural still has to be plural: {plural}",
         );
     }
 

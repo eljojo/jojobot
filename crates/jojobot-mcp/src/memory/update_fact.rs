@@ -304,10 +304,21 @@ impl Jojobot {
                     .count()
             })
             .map_or_else(String::new, |n| {
-                format!(
-                    " The {n} other records on {} are as they were.",
-                    fact.subject.as_str()
-                )
+                match n {
+                    // **Nothing else on the thing, so there is nothing to
+                    // reassure anybody about.** "The 0 other records are as
+                    // they were" is a sentence about an empty set, and a real
+                    // model read it in a paid run.
+                    0 => String::new(),
+                    1 => format!(
+                        " The 1 other record on {} is as it was.",
+                        fact.subject.as_str()
+                    ),
+                    n => format!(
+                        " The {n} other records on {} are as they were.",
+                        fact.subject.as_str()
+                    ),
+                }
             });
         let removed = if cleared.is_empty() {
             String::new()
@@ -422,6 +433,76 @@ mod tests {
         );
         assert_ne!(body["status"], "blocked", "the guard blocked: {body}");
         body
+    }
+
+    /// **The clause about what was left alone reads as English, and vanishes
+    /// when there is nothing to leave alone.**
+    ///
+    /// A real model read *"The 0 other records on thing:floor-pump are as they
+    /// were"* off this line in a paid run — a reassurance about an empty set,
+    /// on the one call in that year where the agent overwrote an account it
+    /// should have kept. **Three edges, because the count decides both the
+    /// noun and the verb**, and a line that announces itself as generated
+    /// spends the trust it was added to build.
+    #[tokio::test]
+    async fn what_an_edit_left_alone_reads_as_english_at_every_count() {
+        let jojobot = handler();
+        let only = capture_ok(
+            &jojobot,
+            capture_args("person:alpha", "said the kiln was lit"),
+        )
+        .await;
+
+        // Nothing else stands on the thing, so the clause is not there at all.
+        let alone = update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                content: Some("said the kiln was NOT lit".into()),
+                ..update_args(&address_of(&only))
+            },
+        )
+        .await;
+        let line = postcondition_line(&alone);
+        assert!(
+            !line.contains(" 0 "),
+            "a reassurance about an empty set: {line}",
+        );
+
+        capture_ok(
+            &jojobot,
+            capture_args("person:alpha", "and the flue was blocked"),
+        )
+        .await;
+        let one = postcondition_line(
+            &update_ok(
+                &jojobot,
+                UpdateFactArgs {
+                    content: Some("the kiln was cold all week".into()),
+                    ..update_args(&address_of(&only))
+                },
+            )
+            .await,
+        );
+        assert!(
+            one.contains("1 other record is") || one.contains("1 other record on person:alpha is"),
+            "singular noun with a plural verb: {one}",
+        );
+
+        capture_ok(&jojobot, capture_args("person:alpha", "and the door stuck")).await;
+        let two = postcondition_line(
+            &update_ok(
+                &jojobot,
+                UpdateFactArgs {
+                    content: Some("the kiln is lit again".into()),
+                    ..update_args(&address_of(&only))
+                },
+            )
+            .await,
+        );
+        assert!(
+            two.contains("2 other records") && two.contains("are as they were"),
+            "…and the plural still has to be plural: {two}",
+        );
     }
 
     /// **A field is set and cleared in place, and a plain recall shows it.**
