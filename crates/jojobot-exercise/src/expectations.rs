@@ -29,7 +29,7 @@ pub const BIKE_ROOM: &str = "rooms/bike.md";
 /// written in its own document, so the name is all there is to register.
 pub const LEDGER_ROOM: &str = "rooms/ledger.md";
 
-/// **The year** — thirteen cold sittings inside one year. Written in its
+/// **The year** — fourteen cold sittings inside one year. Written in its
 /// document from the beginning, which is what the format was built for.
 pub const YEAR_ROOM: &str = "rooms/year.md";
 

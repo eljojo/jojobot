@@ -1,6 +1,6 @@
 # The year
 
-**Thirteen sittings inside one year, none of them remembering the one before.**
+**Fourteen sittings inside one year, none of them remembering the one before.**
 The operator uses jojobot for a year and the year takes minutes on the clock.
 
 Every other room asks whether one thing works. This one asks whether a year of
@@ -252,8 +252,14 @@ say     June: the survey cannot be walked to who was at it, so August's question
 
 # The loop moved, and it moved to today rather than to whenever the run
 # happens. This is the sitting where the year's arithmetic is visible.
-recall {"kind": "rhythm"}
-carries "last_check_in":"2026-06-14"
+#
+# ⚠️ **The key's own HISTORY rather than what it holds now**, for the reason
+# January gives one lock above: the newest write wins the fold, so a lock on
+# the fold is a lock on being the last sitting to write the key. Late November
+# writes it again, and a lock reading the fold here would report June untouched
+# because a later sitting did its job.
+recall {"kind": "rhythm", "history": "last_check_in"}
+carries "value":"2026-06-14"
 say     June: the chain check does not say it was done on the day this sitting claims, so it is either untouched or stamped with the day the run happened
 ```
 
@@ -436,7 +442,59 @@ nothing leaves an identical store. **That half is unlockable by construction.**
 ⭐ **So this is the passage to read.** It is the project's oldest open failure
 class and this is the first place it happens in front of anybody.
 
-## Phase 13 — December, what has gone quiet
+## Phase 13 — late November, a question in nobody's words
+
+**Session: fresh.** **Day: 2026-11-22.**
+
+⚠️ **The one sitting asked about an earlier claim in words that claim never
+used.** January wrote a loop called *chain maintenance* on a *gravel bike*.
+This sitting says *drivetrain* and *service*, and shares not one word with what
+is stored. **A real person does not repeat their own filing language ten months
+later; they ask in whatever words they have that day.**
+
+🚨 **THIS LOCK MAY GO RED ON ITS FIRST PAID RUN, AND THAT IS A TRUE RESULT
+RATHER THAN A BROKEN ROOM.** Matching here is exact-token and conjunctive, so a
+sitting that reaches for the operator's own words gets **zero results** — and
+zero is indistinguishable from never having been told. **A sitting that stops
+there and answers *I have nothing on that* has failed correctly, and what it
+measured is the surface rather than the room.** ⛔️ **Do not card a red here as
+a room defect until somebody has read the sitting and shown the occupant had a
+path it did not take.** **It is winnable: the loop's own parent and the thing it
+hangs off are stable nouns, and a handle read back returns every claim on it
+whatever words the question arrived in. The room does not say which move that
+is, and it must not.**
+
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
+> start jojobot as assistant — it is 22 November 2026, when did I last get the drivetrain serviced, and put down that I did it again today
+
+```locks
+# **The day, not the word.** What the operator calls the drivetrain the record
+# calls a chain, and an occupant may write either — a needle in anybody's prose
+# measures whoever wrote the needle, which is the defect this room already
+# removed from March, July and August.
+#
+# ⚠️ **A named check rather than a query, and the reason is the failure this
+# sitting exists to catch.** The failure is not silence. It is a sitting that
+# reached for the operator's words, found nothing, and stood up a SECOND loop
+# beside the first — after which the store holds two, each with half the
+# history, and neither answers when the chain was last done. An assertion is a
+# substring of the whole answer, so it cannot tell one loop carrying both days
+# from two loops carrying one each. **And the handle is the occupant's own
+# word**: January invents it, so no lock may name it.
+#
+# One lock rather than two, for the reason May gives: "no second loop" is true
+# of a room nobody worked in, and it is this sitting's own day that makes the
+# absence mean something. January's check-in is 2025-12-20 and June's is
+# 2026-06-14, so this day is on that loop if and only if this sitting recorded
+# a turn of it.
+check   the_service_landed_on_the_loop_that_already_existed
+say     late November: this sitting's day is not on the loop January opened — either a question asked in the operator's own words reached nothing and the turn went unrecorded, or it was filed on a second loop standing beside the first, and neither one can say when the chain was last done
+```
+
+## Phase 14 — December, what has gone quiet
 
 **Session: fresh.** **Day: 2026-12-13.** **Read this.**
 

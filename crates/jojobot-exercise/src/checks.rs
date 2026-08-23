@@ -24,6 +24,12 @@
 //! * **`a_handoff_is_waiting`** — say **either** of two claims. The assertion
 //!   vocabulary is three words that do not branch, on purpose, and an `or`
 //!   would be the first branch in it.
+//! * **`the_service_landed_on_the_loop_that_already_existed`** — correlate two
+//!   values inside ONE object. An assertion is a substring of the whole
+//!   answer, so one loop carrying two check-in days and two loops carrying one
+//!   each read identically, and the second of those is the failure being
+//!   watched. Pinning the loop's handle is not the way out either: the
+//!   occupant invents it.
 //! * **`a_colleague_exists_with_its_box`**, **`the_pile_is_in_the_colleagues_box`**
 //!   and **`what_became_of_the_pile_is_on_the_record`** — **name a thing the
 //!   OCCUPANT named.** A lock's query is text written before the run, and these
@@ -40,7 +46,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 7] = [
+pub const CHECKS: [Hatch; 8] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -62,6 +68,10 @@ pub const CHECKS: [Hatch; 7] = [
     ("the_club_was_given_a_claim_in_march", || {
         checked(|seen| Box::pin(the_club_was_given_a_claim_in_march(seen)))
     }),
+    (
+        "the_service_landed_on_the_loop_that_already_existed",
+        || checked(|seen| Box::pin(the_service_landed_on_the_loop_that_already_existed(seen))),
+    ),
 ];
 
 /// The identity a fresh instance ships with, and the one every occupant wears.
@@ -467,6 +477,84 @@ async fn the_club_was_given_a_claim_in_march(seen: &Observed<'_>) -> Result<(), 
         false => Err(format!(
             "the club carried {had} records before {MARCH} and {has} after, so that sitting \
              recorded nothing about it and July has nothing to take back",
+        )),
+    }
+}
+
+/// The key a loop records its turns under, and the two days that matter: the
+/// one January opened the loop with, and the one the late sitting is asked to
+/// record.
+const TURNS: &str = "last_check_in";
+const OPENED: &str = "2025-12-20";
+const SERVICED: &str = "2026-11-22";
+
+/// **The late turn landed on the loop that already existed.**
+///
+/// The operator asks about the drivetrain and the loop is a chain check, so the
+/// sitting has to reach the record through something other than the words it
+/// was given. **What is watched is where the turn ended up**, and the failure
+/// is a second loop rather than silence: a sitting that searched, found
+/// nothing, and opened a new loop leaves a store holding two, each with half
+/// the history, and neither able to say when the chain was last done.
+///
+/// **The loop is identified by the day January opened it with rather than by a
+/// handle**, because the handle is a word the occupant invents.
+///
+/// A key's history is read rather than what it holds now, for the reason
+/// January's lock gives: the newest write wins the fold, so the fold cannot say
+/// which loop has been running all year.
+async fn the_service_landed_on_the_loop_that_already_existed(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    let read = seen
+        .room
+        .call("recall", json!({"kind": "rhythm", "history": TURNS}))
+        .await;
+    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let Some(loops) = parsed["objects"].as_array() else {
+        return Err(format!(
+            "no loop came back at all, so nothing was measured: {read}"
+        ));
+    };
+    let turns = |one: &Value| -> Vec<String> {
+        one["history"]["writes"]
+            .as_array()
+            .map(|writes| {
+                writes
+                    .iter()
+                    .filter_map(|write| write["value"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    // **The positive the whole check rests on.** Without it a store where
+    // January never ran reports the late sitting's failure, and the sentence
+    // beside this lock would blame the wrong month.
+    let Some(january) = loops
+        .iter()
+        .find(|one| turns(one).iter().any(|day| day == OPENED))
+    else {
+        return Err(format!(
+            "no loop carries {OPENED}, so the loop this sitting was asked about was never \
+             opened and there is nothing here for it to have found: {read}"
+        ));
+    };
+    if turns(january).iter().any(|day| day == SERVICED) {
+        return Ok(());
+    }
+    // **The two ways of not holding are worth telling apart**: a turn on some
+    // other loop is the second-loop failure, and no turn anywhere is a sitting
+    // that recorded nothing.
+    match loops
+        .iter()
+        .any(|one| turns(one).iter().any(|day| day == SERVICED))
+    {
+        true => Err(format!(
+            "{SERVICED} is recorded under {TURNS} on a loop that is not the one carrying \
+             {OPENED}, so this sitting stood a second loop beside the first"
+        )),
+        false => Err(format!(
+            "no loop records a turn on {SERVICED}, so this sitting wrote nothing under {TURNS}"
         )),
     }
 }

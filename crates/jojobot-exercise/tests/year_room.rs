@@ -1,6 +1,6 @@
 //! **The year, held for free.**
 //!
-//! Thirteen cold sittings over a fictional year. The locks that matter are late
+//! Fourteen cold sittings over a fictional year. The locks that matter are late
 //! and the work that earns them is early, so the case that says the year
 //! measures anything is the one that works only its second half: a store that
 //! nobody wrote in until June cannot answer the questions September and October
@@ -37,12 +37,13 @@ const AUGUST: [usize; 2] = [13, 14];
 const SEPTEMBER: [usize; 1] = [15];
 const OCTOBER: [usize; 1] = [16];
 const LATE_OCTOBER: [usize; 2] = [17, 18];
+const LATE_NOVEMBER: [usize; 1] = [19];
 
 /// How many locks the year carries.
-const LOCKS: usize = 19;
+const LOCKS: usize = 20;
 
 /// **The sittings a person reads**, which assert nothing and must not.
-const READ_THESE: [&str; 2] = ["Phase 12", "Phase 13"];
+const READ_THESE: [&str; 2] = ["Phase 12", "Phase 14"];
 
 /// The document a run is driven by.
 fn room_document() -> Playbook {
@@ -373,20 +374,31 @@ async fn late_october(room: &Surface, sid: &str) {
     .await;
 }
 
-/// The whole year, worked the way it is meant to be.
-async fn worked_the_year(room: &Surface, sid: &str) -> Vec<Boundary> {
-    work_the_year(
+/// **The turn asked for in words the record does not use.** The operator says
+/// drivetrain and service; the loop January opened is a chain check. A sitting
+/// that reaches the loop records the turn on it, and one that does not stands a
+/// second loop beside it.
+async fn late_november(room: &Surface, sid: &str) {
+    did(
         room,
         sid,
-        &room_document(),
-        &(0..WORKED).collect::<Vec<_>>(),
+        "capture",
+        json!({"subject": "rhythm:chain-check", "content": "did the chain again today",
+               "provenance": "testimony", "date": "2026-11-22",
+               "fields": {"last_check_in": "2026-11-22"}}),
     )
-    .await
+    .await;
 }
 
-/// The sittings that record something. The two after them are the ones a
-/// person reads, and they write nothing by design.
-const WORKED: usize = 11;
+/// The whole year, worked the way it is meant to be.
+async fn worked_the_year(room: &Surface, sid: &str) -> Vec<Boundary> {
+    work_the_year(room, sid, &room_document(), &WORKED).await
+}
+
+/// **The sittings that record something**, named rather than counted: the two
+/// a person reads write nothing by design, and one of them sits between the
+/// sittings that do, so a range cannot say it.
+const WORKED: [usize; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12];
 
 /// **The year worked sitting by sitting, taking the readings a run takes.**
 ///
@@ -421,6 +433,7 @@ async fn work_the_year(
                 8 => september(room, sid).await,
                 9 => october(room, sid).await,
                 10 => late_october(room, sid).await,
+                12 => late_november(room, sid).await,
                 // The two sittings a person reads ask questions and record
                 // nothing, which is what they are for.
                 _ => {}
@@ -433,17 +446,17 @@ async fn work_the_year(
 
 // ────────────────────────────── the cases ──────────────────────────────
 
-/// **Thirteen sittings, every one cold, every one claiming its day.**
+/// **Fourteen sittings, every one cold, every one claiming its day.**
 ///
 /// The day is what the whole fiction rests on: jojobot reads no clock, so a
 /// sitting that names no day is stamped with the day the run happened and the
 /// year is fiction only in the prose.
 #[test]
-fn the_year_is_thirteen_cold_sittings_and_every_one_claims_its_day() {
+fn the_year_is_fourteen_cold_sittings_and_every_one_claims_its_day() {
     let year = room_document();
     assert_eq!(
         year.phases.len(),
-        13,
+        14,
         "the year carries one extra sitting, in October: {:?}",
         year.phases.iter().map(|p| &p.name).collect::<Vec<_>>(),
     );
@@ -610,7 +623,7 @@ async fn every_lock_holds_once_the_year_is_worked() {
 /// 🚨 **The sabotage that says the year measures anything: start it in June.**
 ///
 /// If the second half of the year reads much the same against a store nobody
-/// wrote in until June, the year is measuring nothing — it is thirteen rooms
+/// wrote in until June, the year is measuring nothing — it is fourteen rooms
 /// in a row rather than one year.
 ///
 /// **Both halves.** The early sittings' locks fail because that work never
@@ -629,7 +642,7 @@ async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
     // holds nothing any of it refers to.
     let boundaries = work_the_year(&surface, &sid, &room_document(), &[5, 7, 8, 9]).await;
     let outcomes = judge_all(&surface, &boundaries).await;
-    // **Eighteen of the nineteen locks fail.** The one that holds is the only
+    // **Nineteen of the twenty locks fail.** The one that holds is the only
     // claim in the year that rests on nothing before it — August files the
     // committee note against a club that came with the furniture.
     let stands_alone = AUGUST[1];
@@ -645,11 +658,12 @@ async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
         .chain(&SEPTEMBER)
         .chain(&OCTOBER)
         .chain(&LATE_OCTOBER)
+        .chain(&LATE_NOVEMBER)
     {
         assert!(
             !outcomes[*at].held,
             "a year that began in June answered a question resting on a sitting that never \
-             happened, so it is thirteen rooms in a row rather than one year: {}",
+             happened, so it is fourteen rooms in a row rather than one year: {}",
             saying(&outcomes),
         );
     }
@@ -785,7 +799,7 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
         }
     }
     assert_eq!(
-        asked, 10,
+        asked, 11,
         "the year generates one assertion per dated sitting, less the two a person reads and \
          September, which writes about the day the pump came back — and this asked about \
          {asked}",
