@@ -69,12 +69,84 @@ def refuse(why):
     return 2
 
 
+# **What a cargo run says about itself, on the stream this tool keeps.**
+#
+# Measured rather than assumed: `test result:` is written to STDOUT and cargo's
+# own progress — Compiling, Finished, Running — to STDERR. **So keeping stdout
+# gets the marker and leaves the progress attached to the terminal**, which is
+# why only one of the two streams is teed.
+FAILED_CASE = "test result: FAILED"
+ANY_RESULT = "test result:"
+
+
+def run_and_keep(command):
+    """Run it, show every line as it arrives, and keep stdout.
+
+    ⛔️ **Teed rather than captured.** `capture_output` shows the caller nothing
+    until the run ends, and the run this tool is pointed at takes minutes — a
+    tool that goes silent for that long is worse than the defect it is fixing.
+
+    **Only stdout is redirected.** Stderr stays attached, so the runner's own
+    progress is untouched and a person watching sees what they saw before.
+    """
+    running = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
+    kept = []
+    for line in running.stdout:
+        print(line, end="", flush=True)
+        kept.append(line)
+    running.wait()
+    return running.returncode, "".join(kept)
+
+
+def disagrees(code, said):
+    """**How many targets the output says failed, when the code says none.**
+
+    A pure function over the exit code and the text, because it is the part
+    that decides — and the classifier beside it is self-checked for the same
+    reason. `None` is no opinion.
+    """
+    if code != 0 or ANY_RESULT not in said:
+        return None
+    failed = sum(1 for line in said.splitlines() if line.startswith(FAILED_CASE))
+    return failed or None
+
+
+def disagreement(code, said):
+    """**Say when the exit code and the output disagree.**
+
+    A verdict is the exit code of the command it was handed, and a caller who
+    pipes that command hands over the pipe's code instead — so the tool reports
+    GREEN over a wall of failures it never saw. **It has never seen them
+    because it never held the output**; now it does, and it can say when the
+    two do not match.
+
+    ⛔️ **It reports and never gates.** The exit code is still the verdict, and
+    a caller may have reasons this cannot see.
+
+    **Silence rather than a guess.** Output carrying no `test result:` line at
+    all is a runner this knows nothing about, and an opinion there would be one
+    somebody has to learn to ignore.
+    """
+    failed = disagrees(code, said)
+    if failed is None:
+        return
+    print(
+        f"SABOTAGE DISAGREES: the command exited 0 and its own output says {failed} "
+        "target(s) FAILED. The verdict above is the exit code of what you handed this tool — "
+        "a pipe reports its own. Read the count, not the code.",
+        flush=True,
+    )
+
+
 def main(argv):
     broken = self_check()
     if broken:
         return refuse(broken)
     if argv == ["--self-check"]:
-        print(f"SABOTAGE SELF-CHECK: {len(CHECKS)} classifier cases hold")
+        print(
+            f"SABOTAGE SELF-CHECK: {len(CHECKS)} classifier and {len(DISAGREEMENTS)} "
+            "disagreement cases hold"
+        )
         return 0
     if "--" not in argv:
         return refuse(USAGE)
@@ -127,15 +199,16 @@ def main(argv):
             return refuse(f"{path} did not take the sabotage, so no verdict here means anything")
         print(f"SABOTAGE APPLIED to the one site in {path}", flush=True)
 
-        ran = subprocess.run(command)
-        verdict = "RED" if ran.returncode != 0 else "GREEN"
+        code, said = run_and_keep(command)
+        verdict = "RED" if code != 0 else "GREEN"
         print(
-            f"SABOTAGE VERDICT {verdict}: {' '.join(command)} exited {ran.returncode}",
+            f"SABOTAGE VERDICT {verdict}: {' '.join(command)} exited {code}",
             flush=True,
         )
-        if ran.returncode == 0:
+        disagreement(code, said)
+        if code == 0:
             probe(path, before, old, command)
-        return ran.returncode
+        return code
     finally:
         shutil.copyfile(kept, path)
         os.unlink(kept)
@@ -263,6 +336,36 @@ CHECKS = (
 )
 
 
+# **What the disagreement reads, kept as the runner really writes it.** The
+# first is the shape that has printed GREEN over a wall of failures all day.
+DISAGREEMENTS = (
+    (
+        "a pipe hands over its own code and the output still says FAILED",
+        0,
+        "running 3 tests\ntest a ... FAILED\ntest result: FAILED. 2 passed; 1 failed\n",
+        1,
+    ),
+    (
+        "a genuinely green run is not a disagreement",
+        0,
+        "running 3 tests\ntest result: ok. 3 passed; 0 failed\n",
+        None,
+    ),
+    (
+        "a runner this knows nothing about gets no opinion",
+        0,
+        "hello\n",
+        None,
+    ),
+    (
+        "a red verdict needs no second opinion, whatever the output says",
+        101,
+        "test result: FAILED. 2 passed; 1 failed\n",
+        None,
+    ),
+)
+
+
 def self_check():
     """**The classifier answers for itself before it answers about anything.**
 
@@ -279,6 +382,12 @@ def self_check():
         got = classify(said, code)
         if got != wanted:
             return f"the probe classifier is wrong — {why}: said {got}, and it has to say {wanted}"
+    for why, code, said, wanted in DISAGREEMENTS:
+        got = disagrees(code, said)
+        if got != wanted:
+            return (
+                f"the disagreement check is wrong — {why}: said {got}, and it has to say {wanted}"
+            )
     return None
 
 
