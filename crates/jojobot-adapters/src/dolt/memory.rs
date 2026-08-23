@@ -32,11 +32,11 @@ use jiff::civil::Date;
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
     FactPatch, FactStatus, FieldWrite, Guarded, KeyWrite, Memory, MemoryError, Merge, NewEntity,
-    NewFact, Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch, fold_account,
-    folded_fields, guard, guard_fit,
+    NewFact, Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch, folded_fields,
+    guard, guard_fit,
     kinds::{self, NotAKind},
-    normalize_content, normalize_details, normalize_prose, referenced_by, retraction_of,
-    screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
+    merge_account, normalize_content, normalize_details, normalize_prose, referenced_by,
+    retraction_of, screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
     types::{DeclaredType, Field, Fold, Origin, ValueType, guard_replacement, validate_type},
     validate_content, validate_details, validate_edge, validate_entity, validate_fields,
     validate_prose, validate_provenance_source, validate_subject, validate_write_subject,
@@ -1095,7 +1095,7 @@ impl Memory for DoltMemory {
         date: Date,
     ) -> Result<Merge, MemoryError> {
         if folded == survivor {
-            return Err(MemoryError::NothingToFold {
+            return Err(MemoryError::NothingToMerge {
                 attempted: folded.to_string(),
             });
         }
@@ -1112,13 +1112,13 @@ impl Memory for DoltMemory {
                 });
             };
             if let Some(into) = &held.merged_into {
-                return Err(MemoryError::AlreadyFolded {
+                return Err(MemoryError::AlreadyMerged {
                     attempted: side.to_string(),
                     into: into.to_string(),
                 });
             }
         }
-        let account = fold_account(folded, survivor, reason, date)?;
+        let account = merge_account(folded, survivor, reason, date)?;
         let standing = standing_of(&account);
 
         // **Every column that holds this handle, in one transaction.** A fold

@@ -367,8 +367,8 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::SourceRetracted { .. }
         | MemoryError::UnsourcedObservation
         | MemoryError::AlreadyRetracted { .. }
-        | MemoryError::NothingToFold { .. }
-        | MemoryError::AlreadyFolded { .. }
+        | MemoryError::NothingToMerge { .. }
+        | MemoryError::AlreadyMerged { .. }
         | MemoryError::UnconfirmedPromotion
         | MemoryError::UnconfirmedSettling => McpError::invalid_params(e.to_string(), None),
         MemoryError::Store(msg) => {

@@ -1254,12 +1254,16 @@ fn breaks_the_row(value: &str) -> bool {
 /// is a row, and rows are reached by address.
 pub const RETRACTS: &str = "retracts";
 
-/// The key that marks a record as the account of a fold, holding the HANDLE
-/// that was folded away.
+/// The key that marks a record as the account of a merge, holding the HANDLE
+/// that was merged away.
 ///
-/// A handle rather than an address, unlike [`RETRACTS`]: a fold happens to a
+/// A handle rather than an address, unlike [`RETRACTS`]: a merge happens to a
 /// thing, where a retraction happens to a row.
-pub const FOLDS: &str = "folds";
+///
+/// ⚠️ **The word is deliberately not "fold".** In this codebase a thing's
+/// fields are every write on it, FOLDED — one word already has that meaning,
+/// and giving it a second one here would make both unreadable.
+pub const MERGED_FROM: &str = "merged_from";
 
 /// **How long a field key may be**, in characters.
 ///
@@ -1291,11 +1295,11 @@ pub const MAX_KEY_CHARS: usize = 128;
 /// did not write, and what a type is gets derived from what accumulates here,
 /// so a silently moved key is a corrupted sample.
 pub fn reserved_key(key: &str) -> bool {
-    // **[`FOLDS`] is reserved for the same reason**: the account of a fold is
-    // the only other record that says something about a row other than itself,
-    // and a caller able to write the key could claim somebody else's thing was
-    // folded away.
-    matches!(key.trim(), RETRACTS | FOLDS)
+    // **[`MERGED_FROM`] is reserved for the same reason**: the account of a
+    // merge is the only other record that says something about a row other than
+    // itself, and a caller able to write the key could claim somebody else's
+    // thing was merged away.
+    matches!(key.trim(), RETRACTS | MERGED_FROM)
 }
 
 /// **Where a machine-read claim was read**, and it is required on one.
@@ -2413,12 +2417,12 @@ pub fn retraction_of(
     })
 }
 
-/// **The dated account a fold writes on the survivor.**
+/// **The dated account a merge writes on the survivor.**
 ///
 /// Built here rather than in each store, exactly as [`retraction_of`] is, so
 /// the two stores cannot come to disagree about what the record of a fold looks
 /// like.
-pub fn fold_account(
+pub fn merge_account(
     folded: &EntityId,
     survivor: &EntityId,
     reason: Option<&str>,
@@ -2434,7 +2438,7 @@ pub fn fold_account(
     };
     Ok(NewFact {
         // Written by jojobot and never by a caller — see [`reserved_key`].
-        fields: [(FOLDS.to_string(), folded.to_string())]
+        fields: [(MERGED_FROM.to_string(), folded.to_string())]
             .into_iter()
             .collect(),
         ..NewFact::about(survivor.clone(), content, date)
@@ -2720,7 +2724,7 @@ pub enum MemoryError {
     /// account of an act that did not happen and mark a row as forwarding to
     /// itself, which is a read that never lands.
     #[error("'{attempted}' cannot be folded into itself: name the other handle")]
-    NothingToFold {
+    NothingToMerge {
         /// The handle that was given as both sides.
         attempted: String,
     },
@@ -2732,7 +2736,7 @@ pub enum MemoryError {
     /// answering in one hop, and every read that resolves a handle would have
     /// to walk an unbounded path to find out where it lands.
     #[error("'{attempted}' was already folded into '{into}': name '{into}' instead")]
-    AlreadyFolded {
+    AlreadyMerged {
         /// The forwarding handle that was named.
         attempted: String,
         /// Where it forwards to — the handle to use instead.
@@ -3152,10 +3156,10 @@ pub trait Memory: Send + Sync {
     /// things is allowed and is recorded exactly as legibly — being able to
     /// read what happened is the whole safeguard.
     ///
-    /// Nothing may be folded into itself ([`MemoryError::NothingToFold`]), a
+    /// Nothing may be folded into itself ([`MemoryError::NothingToMerge`]), a
     /// handle naming nothing is [`MemoryError::UnknownEntity`], and a row that
     /// was already folded is not a survivor anything else may be folded into
-    /// ([`MemoryError::AlreadyFolded`]) — chains are how a forwarding row stops
+    /// ([`MemoryError::AlreadyMerged`]) — chains are how a forwarding row stops
     /// answering in one hop.
     async fn merge(
         &self,

@@ -16,13 +16,14 @@ use std::sync::Mutex;
 use jiff::civil::Date;
 
 use super::{
-    Entity, EntityId, EntityKind, EntityPatch, FOLDS, Fact, FactAddress, FactId, FactPatch,
-    FactStatus, FieldWrite, Guarded, MAX_KEY_CHARS, Memory, MemoryError, Merge, NewEntity, NewFact,
-    Retraction, Standing, apply_entity_patch, apply_fact_patch, fold_account,
+    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, FactStatus,
+    FieldWrite, Guarded, MAX_KEY_CHARS, MERGED_FROM, Memory, MemoryError, Merge, NewEntity,
+    NewFact, Retraction, Standing, apply_entity_patch, apply_fact_patch,
     guard::{self, Decision},
-    normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
-    search, standing_of, validate_content, validate_details, validate_edge, validate_entity,
-    validate_fields, validate_prose, validate_provenance_source, validate_write_subject,
+    merge_account, normalize_content, normalize_details, normalize_prose, retraction_of,
+    screen_entity_patch, search, standing_of, validate_content, validate_details, validate_edge,
+    validate_entity, validate_fields, validate_prose, validate_provenance_source,
+    validate_write_subject,
 };
 
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
@@ -801,7 +802,7 @@ impl Memory for InMemoryMemory {
         date: Date,
     ) -> Result<Merge, MemoryError> {
         if folded == survivor {
-            return Err(MemoryError::NothingToFold {
+            return Err(MemoryError::NothingToMerge {
                 attempted: folded.to_string(),
             });
         }
@@ -824,14 +825,14 @@ impl Memory for InMemoryMemory {
                 .find(|e| &e.id == side)
                 .expect("checked present just above");
             if let Some(into) = &held.merged_into {
-                return Err(MemoryError::AlreadyFolded {
+                return Err(MemoryError::AlreadyMerged {
                     attempted: side.to_string(),
                     into: into.to_string(),
                 });
             }
         }
 
-        let account = fold_account(folded, survivor, reason, date)?;
+        let account = merge_account(folded, survivor, reason, date)?;
         let standing = standing_of(&account);
 
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
@@ -9369,8 +9370,18 @@ pub mod contract {
         // nobody can read afterwards is the one outcome this verb must not
         // leave behind.
         assert_eq!(folded.record.subject, kept);
+        // 🚨 **The literal, not the constant.** Asserting through `MERGED_FROM`
+        // compares the code with itself: rename the constant and both sides
+        // move together, so a stored key could be changed under everybody with
+        // the suite still green. **A key is DATA** — every record already
+        // written carries the old spelling — so the spelling is the thing to
+        // pin.
         assert_eq!(
-            folded.record.fields.get(FOLDS).map(String::as_str),
+            MERGED_FROM, "merged_from",
+            "the stored key changed spelling; every record already written carries the old one",
+        );
+        assert_eq!(
+            folded.record.fields.get(MERGED_FROM).map(String::as_str),
             Some(spare.as_str()),
             "the account did not name the handle it folded away: {:?}",
             folded.record,
@@ -9402,7 +9413,7 @@ pub mod contract {
             .await
             .expect_err("a folded row is not a side to fold");
         assert!(
-            matches!(again, MemoryError::AlreadyFolded { .. }),
+            matches!(again, MemoryError::AlreadyMerged { .. }),
             "refolding a forwarding row was not refused as such: {again:?}",
         );
 
@@ -9412,7 +9423,7 @@ pub mod contract {
             .await
             .expect_err("a fold has two sides");
         assert!(
-            matches!(itself, MemoryError::NothingToFold { .. }),
+            matches!(itself, MemoryError::NothingToMerge { .. }),
             "folding a thing into itself was not refused as such: {itself:?}",
         );
     }
