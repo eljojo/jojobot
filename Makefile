@@ -44,10 +44,21 @@ check: fmt-check test lint ## The DONE bar: formatted, green, clippy-clean
 # two crates meet is invisible to every scoped run, and that class is what the
 # full bar is kept for.
 #
-# ⚠️ **A crate with no tests exits zero here.** The number of cases that ran is
-# in the output — `running 0 tests` — and not in the exit code, so a run that
-# found nothing to run reports the same success as a run that passed a suite.
-# Read the count, not the code.
+# 🚨 **A run that selected nothing is refused, rather than reported as a pass.**
+# `cargo test` exits zero over an empty selection, so `0 passed; 0 failed` and a
+# green exit code are what a mistyped filter looks like — and the mistake that
+# produces it is ordinary: FILTER is a SUBSTRING of a test's full path, so a
+# regex written there matches nothing at all.
+#
+# **So the count is read before the run, and the count decides.** `--list` says
+# what the filter selects; none is a caller error and never a legitimate green.
+# The check reads a number rather than an exit code, which is the same rule it
+# exists to enforce.
+#
+# ⚠️ **The refusal names the filter when there was one and the crate when there
+# was not**, because a mistyped filter and a crate nobody has written tests for
+# yet send a reader to different places. **Nothing in this workspace is in the
+# second state today**, so that half is for the crate somebody adds next.
 #
 # 🚨 **A scoped run does not build what a test SPAWNS**, and one crate's tests
 # spawn the server as a process rather than calling it. `cargo test -p
@@ -58,13 +69,24 @@ check: fmt-check test lint ## The DONE bar: formatted, green, clippy-clean
 # a binary older than the sources it is built from, so the two halves agree
 # rather than one covering for the other.
 #
-#     make narrow CRATE=<name>
+#     make narrow CRATE=<name> [FILTER=<substring>]
 CRATE ?=
+FILTER ?=
 narrow: ## The inner loop: one crate's tests and lint, plus the format check
 	@test -n "$(CRATE)" || { echo "make narrow needs a crate: make narrow CRATE=<name>"; exit 2; }
 	$(CARGO) fmt --all --check
 	$(CARGO) build --workspace
-	$(CARGO) test -p $(CRATE)
+	@n=$$($(CARGO) test -p $(CRATE) $(FILTER) -- --list 2>/dev/null | grep -c ': test$$' || true); \
+	test "$$n" -gt 0 || { \
+		if [ -n "$(FILTER)" ]; then \
+			echo "make narrow: FILTER='$(FILTER)' selected no tests in $(CRATE), so the run would have reported a pass over nothing."; \
+			echo "FILTER is a SUBSTRING of a test's full path, not a regex. Name one substring, or drop FILTER to run the whole crate."; \
+		else \
+			echo "make narrow: $(CRATE) has no tests, so the run would have reported a pass over nothing."; \
+		fi; \
+		exit 2; \
+	}
+	$(CARGO) test -p $(CRATE) $(FILTER)
 	$(CARGO) clippy -p $(CRATE) --all-targets -- -D warnings
 
 test: ## Every fast suite (no network)
