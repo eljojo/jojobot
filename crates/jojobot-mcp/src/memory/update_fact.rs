@@ -105,6 +105,18 @@ pub struct UpdateFactArgs {
     /// and removing it are two different edits.
     #[serde(default)]
     pub(crate) clear_derived_from: Option<bool>,
+    /// **Take the edge off**, leaving a claim that points at nothing. Its own
+    /// flag for the reason the others are: an edit that names neither `shape`
+    /// nor `object` says nothing about edges and leaves the one already there
+    /// alone.
+    ///
+    /// **This is what a disproved claim needs.** Rewriting *was there* into
+    /// *was not there* leaves an attendance edge standing behind a sentence
+    /// that denies it, and every walk goes on answering through it. Taking the
+    /// claim back is a different act: a retraction is one-way and says the
+    /// claim should never have been recorded.
+    #[serde(default)]
+    pub(crate) clear_edge: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -139,7 +151,12 @@ impl Jojobot {
                        fields sets the keys you name and leaves every other key alone, and \
                        clear_fields takes keys off. Those are two arguments rather than one, \
                        because setting a key to an empty value and removing the key are \
-                       different edits and a caller means one of them. An address that \
+                       different edits and a caller means one of them. AND IT REACHES THE \
+                       EDGE BOTH WAYS: shape with object draws or replaces one, and clear_edge \
+                       takes it off. Reach for clear_edge when you rewrite a claim into its \
+                       negative — was there becoming was not there leaves the edge standing \
+                       behind a sentence that denies it, and walks keep answering through it. \
+                       An address that \
                        names no fact comes back status: blocked with the addresses that do \
                        exist — it never creates. IT ANSWERS WITH A RECEIPT, NOT THE RECORD: the \
                        address, the date, the provenance, the standing, the status and how many \
@@ -189,6 +206,7 @@ impl Jojobot {
                 .map(|address| FactAddress::parse(address).map_err(memory_error))
                 .transpose()?,
             clear_derived_from: args.clear_derived_from.unwrap_or(false),
+            clear_edge: args.clear_edge.unwrap_or(false),
             edge: match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
                 Ok(edge) => edge,
                 Err(refused) => return Ok(refused),
@@ -711,6 +729,67 @@ mod tests {
                 .expect("advice")
                 .contains("retracts"),
             "the refusal names the key: {refused}"
+        );
+    }
+
+    /// 🚨 **`clear_edge` takes the edge off, and an edit that never mentions
+    /// edges leaves it alone** — through the surface a caller holds.
+    ///
+    /// **The second half is the load-bearing one.** A build where every rewrite
+    /// silently dropped the edge would pass the first and be a worse defect
+    /// than the one this fixes: correcting a typo would cost the link and
+    /// nobody would be told.
+    ///
+    /// The rest of the patch still lands, so an empty edge is the argument
+    /// doing its work rather than the whole edit failing quietly.
+    #[tokio::test]
+    async fn clear_edge_takes_the_edge_off_and_a_silent_edit_does_not() {
+        let jojobot = handler();
+        ensure(&jojobot, "event:winter-fest").await;
+        let drawn = |said: &str| CaptureArgs {
+            shape: Some("attendance".into()),
+            object: Some("event:winter-fest".into()),
+            ..capture_args("person:alpha", said)
+        };
+
+        let kept = capture_ok(&jojobot, drawn("was at the winter fest")).await;
+        let reworded = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    content: Some("was at the winter fest, both nights".into()),
+                    ..update_args(&address_of(&kept))
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(
+            reworded["edge"]["object"], "event:winter-fest",
+            "an edit that never mentioned edges took one off: {reworded}",
+        );
+
+        let wrong = capture_ok(&jojobot, drawn("was at the winter fest")).await;
+        let corrected = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    content: Some("was never at the winter fest".into()),
+                    clear_edge: Some(true),
+                    ..update_args(&address_of(&wrong))
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            corrected["edge"].is_null(),
+            "the edge is still on a claim that now denies it: {corrected}",
+        );
+        assert_eq!(
+            corrected["status"], "active",
+            "taking the edge off is not a retraction: {corrected}",
+        );
+        assert_eq!(
+            corrected["content_bytes"].as_u64(),
+            Some("was never at the winter fest".len() as u64),
+            "the rewrite itself did not land: {corrected}",
         );
     }
 

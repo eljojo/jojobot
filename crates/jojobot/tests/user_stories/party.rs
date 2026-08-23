@@ -295,7 +295,7 @@ async fn throwing_a_birthday_party() {
         .never_says("retracted");
     s.retract(&dropped, "cannot make it after all — away that weekend")
         .await;
-    let after = s.shape("who is coming to the party", guests).await;
+    let after = s.shape("who is coming to the party", guests.clone()).await;
     after.says("person:maude").says("retracted");
     // The guest whose yes still stands is still reached, so the retraction took
     // one link and not the walk. **Which link carries the marker is not
@@ -303,6 +303,42 @@ async fn throwing_a_birthday_party() {
     // the verb's own suite; here the pair that means something is the same read
     // before and after.
     after.says("person:patana");
+
+    // ── and one guest was never coming at all ──────────────────────────────
+    //
+    // Different from dropping out. Barney was written down as attending on a
+    // misreading, so the claim is corrected to say the opposite — and a
+    // correction stays active, because what was recorded was wrong rather than
+    // something that should never have been recorded.
+    //
+    // Rewriting the sentence is not enough on its own: the attendance edge
+    // stands behind it, and the guest list goes on counting him. The edge comes
+    // off in the same edit.
+    s.add("person:ralph", "Ralph").await;
+    let misread = s
+        .fact_about(
+            "person:ralph",
+            "coming to the party",
+            "attendance",
+            "event:birthday-party",
+        )
+        .await;
+    s.shape("who is coming to the party", guests.clone())
+        .await
+        .says("person:ralph");
+    s.correct_clearing_the_edge(&misread, "is not coming — that was somebody else")
+        .await;
+    s.shape("who is coming to the party", guests)
+        .await
+        .never_says("person:ralph")
+        // The half that says the edit reached one claim and not the guest list:
+        // everybody else is still on it.
+        .says("person:patana");
+
+    // ⚠️ **One claim's edge, not the person's.** Barney draws the same edge
+    // from several claims, so clearing one of them would leave him on the list
+    // — correctly. Unlinking somebody who was written down more than once is as
+    // many edits as there are claims, and the guest above is on the list once.
 
     // The practical half, and the one actually worried about. It is not a
     // verb: "do I have enough chairs" is arithmetic over two things already

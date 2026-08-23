@@ -6980,6 +6980,119 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **A rewrite can take the edge off, and one that does not mention
+    /// edges leaves it where it is.**
+    ///
+    /// [`FactStatus`] says a disproved claim is rewritten to the negative
+    /// truth and stays active. Without a way to take the edge off, *was at the
+    /// fair* corrected to *was never at the fair* keeps an attendance edge
+    /// behind a sentence denying it, and the graph goes on answering the
+    /// question the claim no longer does.
+    ///
+    /// **Both halves in one case, and the second is the load-bearing one.** A
+    /// build where every rewrite silently dropped the edge would pass the
+    /// clearing half and be a far worse defect than the one this fixes — a
+    /// caller correcting a typo would lose the link and never be told.
+    ///
+    /// **And the walk, because that is the property a caller wants.** The
+    /// record read says the cell is empty; only the walk says the graph has
+    /// stopped answering through it.
+    pub async fn a_rewrite_can_take_the_edge_off_and_leaves_it_alone_otherwise<M: Memory>(
+        store: &M,
+    ) {
+        let fair = EntityId("event:contract-unlinked-fair".into());
+        let went = EntityId::person("person:contract-unlinked-attended");
+        let never = EntityId::person("person:contract-unlinked-absent");
+        ensure(store, &fair).await;
+
+        let attending = |who: &EntityId| NewFact {
+            edge: Some(Edge::new(EdgeShape::Attendance, fair.clone())),
+            ..NewFact::about(who.clone(), "was at the fair", date(2026, 8, 10))
+        };
+        let stays = capture(store, attending(&went)).await;
+        let wrong = capture(store, attending(&never)).await;
+
+        // **The half that must not change.** A rewrite naming neither the shape
+        // nor the object says nothing about edges, so the edge stands.
+        let reworded = edit(
+            store,
+            &stays.address(),
+            FactPatch {
+                content: Some("was at the fair, all afternoon".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(
+            reworded.edge.is_some(),
+            "a rewrite that never mentioned edges took one off: {reworded:?}",
+        );
+
+        let corrected = edit(
+            store,
+            &wrong.address(),
+            FactPatch {
+                content: Some("was never at the fair — a different weekend".into()),
+                clear_edge: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(
+            corrected.edge.is_none(),
+            "the edge is still on a claim that now denies it: {corrected:?}",
+        );
+        // The rest of the patch still landed, so the empty cell is the argument
+        // doing its work rather than the whole edit failing quietly.
+        assert!(
+            corrected.content.contains("never"),
+            "the rewrite itself did not land: {corrected:?}",
+        );
+        assert_eq!(
+            corrected.status,
+            FactStatus::Active,
+            "a disproved claim stays active — taking the edge off is not a retraction: \
+             {corrected:?}",
+        );
+        assert_eq!(
+            read_back(store, &never, &corrected.id).await.edge,
+            None,
+            "the empty cell did not survive the store",
+        );
+
+        // **The walk is the property.** The graph must stop answering through a
+        // link the claim no longer draws, while the claim that still draws one
+        // is still reached.
+        let reached = graph::walk(
+            store,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(fair.clone()),
+                    ..graph::Selection::default()
+                },
+                follow: Some(graph::Follow {
+                    along: graph::Along::Edge(EdgeShape::Attendance),
+                    direction: Some(graph::Direction::In),
+                    ..graph::Follow::hop()
+                }),
+                ..graph::GraphQuery::default()
+            },
+        )
+        .await
+        .expect("a walk from the fair")
+        .objects;
+        let guests: Vec<&EntityId> = reached[0].connected.iter().map(|o| &o.entity.id).collect();
+        assert!(
+            guests.contains(&&went),
+            "the claim that still draws the edge stopped being reached: {guests:?}",
+        );
+        assert!(
+            !guests.contains(&&never),
+            "the walk still reaches somebody whose claim no longer points at the fair: \
+             {guests:?}",
+        );
+    }
+
     /// 🚨 **A walk says when the claim behind a link was taken back — against
     /// the store, through the retract verb.**
     ///
@@ -9040,6 +9153,7 @@ pub mod contract {
         a_graph_query_selects_a_kind_and_returns_its_prose(store).await;
         a_graph_query_filters_on_a_stored_value_and_walks_an_edge(store).await;
         a_walk_marks_a_link_whose_claim_the_store_took_back(store).await;
+        a_rewrite_can_take_the_edge_off_and_leaves_it_alone_otherwise(store).await;
         a_declared_reference_key_is_walkable_against_the_store(store).await;
         a_trip_records_who_came_and_answers_from_either_end(store).await;
         the_kinds_are_rows_and_a_shipped_one_is_closed(store).await;

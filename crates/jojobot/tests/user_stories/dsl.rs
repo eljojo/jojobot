@@ -983,6 +983,19 @@ impl Session {
         .await;
     }
 
+    /// **Correct a claim into its negative and take its edge off in one edit.**
+    ///
+    /// Rewriting the sentence alone leaves the edge standing behind it, so a
+    /// claim that now denies the link goes on drawing it.
+    pub async fn correct_clearing_the_edge(&self, address: &str, content: &str) {
+        self.write(
+            &format!("correcting {address} and taking its edge off"),
+            "update_fact",
+            json!({"address": address, "content": content, "clear_edge": true}),
+        )
+        .await;
+    }
+
     pub async fn fact_about(
         &self,
         subject: &str,

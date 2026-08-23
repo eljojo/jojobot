@@ -496,8 +496,24 @@ pub struct FactPatch {
     /// settled at all — see [`check_standing`]. Reopening is free.
     pub standing: Option<Standing>,
     /// A typed edge to attach. `None` leaves any existing edge alone; this
-    /// milestone writes one edge per fact, so setting it replaces.
+    /// milestone writes one edge per fact, so setting it replaces. To take one
+    /// off, see [`FactPatch::clear_edge`].
     pub edge: Option<Edge>,
+    /// **Take the edge off**, leaving a claim that points at nothing.
+    ///
+    /// Its own flag rather than an absent [`FactPatch::edge`], for the reason
+    /// every other pair here is a pair: an absent edge is a patch that does not
+    /// mention edges, and a rewrite that does not mention them must leave the
+    /// one already there alone.
+    ///
+    /// **It is what a disproved claim needs.** [`FactStatus`] says a refutation
+    /// is a rewrite to the negative truth rather than a status, and the record
+    /// stays active — so *he was there* corrected to *he was not there* would
+    /// otherwise keep an attendance edge behind a sentence denying it, with no
+    /// way to remove it. Taking the claim back is not the exit: a retraction is
+    /// one-way and says the claim should never have been recorded, which is a
+    /// different thing from being wrong.
+    pub clear_edge: bool,
     /// **Fields to set.** Each key named is written; a key the record already
     /// carries and this does not name is left alone, so an edit reaches one
     /// field without restating the rest.
@@ -1416,6 +1432,11 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     // passing the gate that guards it. A caller meaning both says both.
     if let Some(standing) = patch.standing {
         fact.standing = standing;
+    }
+    // **Cleared before set**, the order every pair here uses: a caller naming
+    // both meant the edge it named.
+    if patch.clear_edge {
+        fact.edge = None;
     }
     if let Some(edge) = &patch.edge {
         fact.edge = Some(edge.clone());
