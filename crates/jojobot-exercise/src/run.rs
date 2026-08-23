@@ -344,9 +344,14 @@ impl Results {
         use std::fmt::Write as _;
         let mut counted: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
+        let mut elsewhere: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
         for said in &self.transcript {
             for call in crate::calls::calls_in(&said.raw) {
-                *counted.entry(call.verb).or_default() += 1;
+                match self.serves(&call.verb) {
+                    Some(verb) => *counted.entry(verb).or_default() += 1,
+                    None => *elsewhere.entry(call.verb).or_default() += 1,
+                }
             }
         }
         let mut out = String::new();
@@ -358,7 +363,7 @@ impl Results {
             let _ = writeln!(out, "  {times:>4}  {verb}");
         }
         if counted.is_empty() {
-            let _ = writeln!(out, "  this run called no verbs at all");
+            let _ = writeln!(out, "  the occupant called none of the room's verbs");
         }
         // **The room's own list, less what was called.** A verb nobody reached
         // for is the finding a reader is least likely to see on their own.
@@ -385,7 +390,47 @@ impl Results {
                 }
             }
         }
+        // **What the occupant reached for that is not the room's**, kept apart
+        // rather than left out. Counting its own tooling among the room's verbs
+        // answers a different question than this claims to, and dropping it
+        // would hide that the occupant went somewhere else to do the work.
+        if !elsewhere.is_empty() {
+            let _ = writeln!(out, "  not the room's surface:");
+            for (tool, times) in &elsewhere {
+                let _ = writeln!(out, "  {times:>4}  {tool}");
+            }
+        }
         out
+    }
+
+    /// **The room's own name for a verb the occupant called**, or nothing when
+    /// the call went somewhere else.
+    ///
+    /// 🚨 **A model reaches the room through a connector, so it calls
+    /// `mcp__<server>__capture` where the room says `capture`.** Compared as
+    /// written the two never match, and a run counts a verb twenty-one times
+    /// while reporting it as never called — an absence that never happened, in
+    /// the direction a reader acts on.
+    ///
+    /// ⛔️ **The prefix is not a literal to write down.** It carries the name
+    /// the connector was given, which is not the room's to know and differs
+    /// between callers. What is stable is that the room's own name is the tail,
+    /// after the last separator.
+    ///
+    /// **A call this does not resolve is not the room's verb.** That is a real
+    /// answer rather than a miss: the occupant has tooling of its own, and
+    /// counting it among the room's surface answers a different question than
+    /// the tally claims to.
+    fn serves(&self, invoked: &str) -> Option<String> {
+        self.served
+            .iter()
+            .find(|verb| {
+                invoked == verb.as_str()
+                    || invoked
+                        .strip_suffix(verb.as_str())
+                        .is_some_and(|before| before.ends_with("__"))
+            })
+            .cloned()
     }
 
     /// Each sitting's name paired with the stream it produced, in run order.

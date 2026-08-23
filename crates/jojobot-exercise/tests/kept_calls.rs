@@ -252,3 +252,81 @@ fn the_run_tallies_the_verbs_called_and_the_verbs_never_called() {
         "a verb that was called is listed as never called: {tally}",
     );
 }
+
+/// 🚨 **A verb called the way the model calls it is not reported as never
+/// called.**
+///
+/// The model reaches the room through a connector, so every call arrives
+/// prefixed with the server it went to — `mcp__<server>__capture`. The room's
+/// own list says `capture`. Compared as written, no verb ever matches, and the
+/// run reports every verb the room serves as never called **while counting the
+/// same verbs beside it.**
+///
+/// ⚠️ **It fails in the direction that reads as a finding.** *Sixteen verbs a
+/// year never touched* is exactly the alarming, actionable output somebody
+/// acts on, and it was fabricated.
+///
+/// **The fixture is a recording**, cut from a paid run's own stream, because
+/// the shape is the whole point: a double that uses the same name on both
+/// sides proves nothing about production and is how this shipped.
+#[test]
+fn a_verb_called_as_the_model_calls_it_is_not_reported_as_never_called() {
+    let mut reached = run(vec![said(
+        "Phase 1 — one",
+        "said something",
+        &fixture("called-the-room.jsonl"),
+    )]);
+    reached.served = vec!["start_here".into(), "capture".into()];
+    let text = reached.rendered();
+    let tally = text.split("verbs").last().expect("the run renders a tally");
+    let (called, never) = tally
+        .split_once("never called:")
+        .expect("the tally names what was never called");
+
+    assert!(
+        called.contains("start_here"),
+        "the verb the occupant reached the room with is not counted as called: {tally}",
+    );
+    assert!(
+        !never.contains("start_here"),
+        "a verb called through the connector is reported as never called, which invents an \
+         absence a reader would act on: {tally}",
+    );
+    // **The other half.** A fix that empties the list reads as everything was
+    // used, which is the same defect pointing the other way.
+    assert!(
+        never.contains("capture"),
+        "a verb the room serves and nobody called is no longer named: {tally}",
+    );
+}
+
+/// **What the occupant reached for that the room does not serve is counted
+/// apart from what it does.**
+///
+/// A run showed twenty-seven calls to a search tool that is not jojobot's at
+/// all. Counted among the room's verbs it says the surface was exercised when
+/// the work went somewhere else, and dropped it says nothing happened. **Both
+/// answer a different question than the tally claims to.**
+#[test]
+fn tooling_the_room_does_not_serve_is_counted_apart() {
+    let mut mixed = run(vec![said(
+        "Phase 1 — one",
+        "said something",
+        &fixture("made-calls.jsonl"),
+    )]);
+    mixed.served = vec!["capture".into()];
+    let text = mixed.rendered();
+    let tally = text.split("verbs").last().expect("the run renders a tally");
+    let (room, other) = tally
+        .split_once("not the room's surface:")
+        .expect("the tally keeps the occupant's own tooling apart");
+    assert!(
+        other.contains("Write") && other.contains("Read"),
+        "the occupant's own tooling is not reported at all, so a run that did its work \
+         elsewhere reads as a run that did nothing: {tally}",
+    );
+    assert!(
+        !room.contains("Write"),
+        "a tool the room does not serve is counted among the room's verbs: {tally}",
+    );
+}
