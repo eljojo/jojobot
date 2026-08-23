@@ -792,8 +792,7 @@ pub(crate) fn refuse_a_stale_server(binary: &Path, crates: &Path, mine: &str) ->
             anyhow::bail!(
                 "the jojobot binary at {} is older than {} — this crate does not depend on the \
                  `jojobot` crate, so a scoped run does not rebuild the server it drives. Run \
-                 `cargo build --workspace` first, or `make check`, or name a binary in \
-                 JOJOBOT_BIN.",
+                 `cargo build --workspace` first, or name a binary in JOJOBOT_BIN.",
                 binary.display(),
                 newer.display(),
             );
@@ -801,6 +800,18 @@ pub(crate) fn refuse_a_stale_server(binary: &Path, crates: &Path, mine: &str) ->
     }
     Ok(())
 }
+
+/// **Cargo target directories the server binary is never built from.**
+///
+/// The guard already leaves this crate's own sources out, on the ground that
+/// editing a room does not stale the server. **A test, a bench or an example in
+/// any crate is the same category**: cargo does not link them into a binary, so
+/// adding one cannot change the server and cargo has nothing to relink.
+///
+/// 🚨 **Without this the guard is a tripwire on writing tests.** The binary
+/// stays older than the new file for ever, and the bar goes red the moment
+/// anybody adds a case — in a repository whose whole method is adding cases.
+const NOT_LINKED: [&str; 3] = ["tests", "benches", "examples"];
 
 /// The first file under `at` modified after `built`, if any. **The first rather
 /// than the newest**: the answer is one name for a person to read, and finding
@@ -812,6 +823,9 @@ fn newest_change_under(at: &Path, built: std::time::SystemTime) -> Option<PathBu
         let Ok(kind) = entry.file_type() else {
             continue;
         };
+        if kind.is_dir() && NOT_LINKED.contains(&entry.file_name().to_string_lossy().as_ref()) {
+            continue;
+        }
         if kind.is_dir() {
             if let Some(found) = newest_change_under(&path, built) {
                 return Some(found);
@@ -1058,6 +1072,56 @@ mod tests {
         refuse_a_stale_server(&binary, &crates, "jojobot-exercise").expect(
             "this crate's own sources are not the server's — editing a room test must not \
              refuse the run that tests the edit",
+        );
+    }
+
+    /// 🚨 **The guard must not be a tripwire on writing tests.**
+    ///
+    /// It refuses when any file under another crate outran the binary. **A test
+    /// target is not a file the server is built from** — adding a case to
+    /// `crates/jojobot/tests/` cannot change `target/debug/jojobot`, and cargo
+    /// has nothing to relink, so the binary stays older than the new file for
+    /// ever. **The bar then goes red the moment anybody adds a test**, in a
+    /// repository whose whole method is adding tests.
+    ///
+    /// **The reasoning is already in this guard, one level up.** It leaves this
+    /// crate's own sources out because editing a room does not stale the
+    /// server. **A test target in any crate is the same category** and the
+    /// guard did not carry the reasoning across.
+    ///
+    /// ⛔️ **Both halves, because either alone passes against a build with the
+    /// other wrong.** Loosening it until it never refuses would pass the first
+    /// assertion and throw away the only thing the guard is for.
+    #[test]
+    fn a_new_test_does_not_stale_the_server_and_a_new_source_still_does() {
+        let root = a_workspace("targets");
+        let crates = root.join("crates");
+        let binary = root.join("jojobot");
+        put_newer_than(&binary, &crates.join("alpha/src/lib.rs"));
+
+        // A case added to another crate, after the binary was built. It is not
+        // linked into the server and cannot change it.
+        for target in [
+            "tests/a_new_case.rs",
+            "benches/a_bench.rs",
+            "examples/demo.rs",
+        ] {
+            put_newer_than(&crates.join("alpha").join(target), &binary);
+        }
+        refuse_a_stale_server(&binary, &crates, "jojobot-exercise").expect(
+            "adding a test to another crate refused the run, so the bar goes red the moment \
+             anybody writes a test",
+        );
+
+        // The case the guard exists for, unchanged: a source the server really
+        // is built from.
+        put_newer_than(&crates.join("alpha/src/lib.rs"), &binary);
+        let refused = refuse_a_stale_server(&binary, &crates, "jojobot-exercise")
+            .expect_err("a binary older than a server source is still a stale instrument")
+            .to_string();
+        assert!(
+            refused.contains("lib.rs"),
+            "the refusal does not name the source that outran the binary: {refused}",
         );
     }
 
