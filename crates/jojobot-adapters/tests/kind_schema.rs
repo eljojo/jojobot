@@ -1007,7 +1007,7 @@ async fn an_ordering_on_the_schedule_date_is_licensed_by_the_kind() {
         graph::Selection {
             kind: Some(EntityKind::RHYTHM),
             fields: vec![graph::FieldFilter {
-                key: "counts_from".to_string(),
+                key: Some("counts_from".to_string()),
                 value: Some("2026-06-01".to_string()),
                 compare: jojobot_domain::memory::types::Compare::After,
                 scope: graph::Scope::Thing,

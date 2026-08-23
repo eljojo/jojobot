@@ -85,7 +85,15 @@ impl Scope {
 pub struct FieldFilter {
     /// The key, exactly as it is spelled. Matching is structural, so nothing
     /// has to have declared it.
-    pub key: String,
+    ///
+    /// **`None` asks about the VALUE under any key at all** — *is this held as
+    /// a value anywhere on this thing*, as opposed to sitting in its prose.
+    /// That is what *did somebody record this so it can be asked for later*
+    /// reduces to, and it is the question a caller has when it knows what was
+    /// written and not where it went.
+    ///
+    /// A filter naming neither a key nor a value asks nothing and is refused.
+    pub key: Option<String>,
     /// The value it must hold, compared whole and trimmed. `None` matches any
     /// value.
     pub value: Option<String>,
@@ -102,8 +110,24 @@ impl FieldFilter {
     /// A filter asking only that the key is there.
     pub fn key(key: &str) -> Self {
         FieldFilter {
-            key: key.trim().to_string(),
+            key: Some(key.trim().to_string()),
             value: None,
+            compare: types::Compare::Equals,
+            scope: Scope::Thing,
+        }
+    }
+
+    /// **A filter asking that SOME key holds this value**, without naming
+    /// which.
+    ///
+    /// **It reads the fields and never the prose**, which is the whole of the
+    /// question: a string somebody wrote into a sentence is not a value
+    /// anything can be asked for later, and an answer that could not tell the
+    /// two apart would be the breadth verb rather than this one.
+    pub fn anywhere(value: &str) -> Self {
+        FieldFilter {
+            key: None,
+            value: Some(value.trim().to_string()),
             compare: types::Compare::Equals,
             scope: Scope::Thing,
         }
@@ -137,11 +161,40 @@ impl FieldFilter {
     /// Does this bag of fields satisfy the filter. It is handed the thing's
     /// folded fields or one record's, and does not know which.
     fn satisfied_by(&self, fields: &BTreeMap<String, String>) -> bool {
-        match (fields.get(&self.key), &self.value) {
-            (None, _) => false,
-            (Some(_), None) => true,
-            (Some(held), Some(wanted)) => self.compare.holds_between(held, wanted),
+        match (&self.key, &self.value) {
+            (Some(key), None) => fields.contains_key(key),
+            (Some(key), Some(wanted)) => fields
+                .get(key)
+                .is_some_and(|held| self.compare.holds_between(held, wanted)),
+            // **Any key at all.** The bag is the thing's folded fields or one
+            // record's, and never its prose — so this answers *held as a
+            // value* rather than *written down somewhere*.
+            (None, Some(wanted)) => fields
+                .values()
+                .any(|held| self.compare.holds_between(held, wanted)),
+            // Refused before it reaches here; false rather than true so a
+            // filter that asked nothing cannot select everything.
+            (None, None) => false,
         }
+    }
+}
+
+/// **A filter has to ask something.**
+///
+/// A key spelled empty is a caller mistake, and so is a filter naming neither a
+/// key nor a value: it selects everything or nothing depending on which way the
+/// predicate happens to fall, and neither is an answer anybody asked for.
+fn validate_filter(field: &FieldFilter) -> Result<(), MemoryError> {
+    match (&field.key, &field.value) {
+        (Some(key), _) if key.trim().is_empty() => Err(MemoryError::InvalidQuery(
+            "a key filter names no key".into(),
+        )),
+        (None, None) => Err(MemoryError::InvalidQuery(
+            "a key filter names neither a key nor a value, so it asks nothing. Name the key to \
+             ask what it holds, or name the value to ask whether anything holds it"
+                .into(),
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -539,18 +592,10 @@ impl GraphQuery {
             types::validate_type(declared)?;
         }
         for field in &select.fields {
-            if field.key.trim().is_empty() {
-                return Err(MemoryError::InvalidQuery(
-                    "a key filter names no key".into(),
-                ));
-            }
+            validate_filter(field)?;
         }
         for field in self.follow.iter().flat_map(|f| &f.keeping) {
-            if field.key.trim().is_empty() {
-                return Err(MemoryError::InvalidQuery(
-                    "a key filter names no key".into(),
-                ));
-            }
+            validate_filter(field)?;
         }
         if let Some(follow) = &self.follow {
             if follow.depth == 0 {
@@ -670,15 +715,26 @@ fn check_declared(
         // declared keeps equality, which is why this is refused rather than
         // quietly answered: a caller who asked for an ordering and got equality
         // would read the answer as an ordering.
+        // **An ordering needs a key to license it.** A filter asking about the
+        // value under any key at all has no declaration to read, so there is
+        // nothing that could permit a comparison other than equality.
+        let Some(key) = field.key.as_deref() else {
+            return Err(MemoryError::InvalidQuery(format!(
+                "'{}' needs a key: an ordering is licensed by what that key was declared to \
+                 hold, and a filter naming no key has no declaration to read. Name the key, or \
+                 ask for the value itself",
+                field.compare.as_token(),
+            )));
+        };
         if !declarations
             .iter()
-            .any(|d| d.field(&field.key).is_some_and(|f| f.holds == holds))
+            .any(|d| d.field(key).is_some_and(|f| f.holds == holds))
         {
             return Err(MemoryError::InvalidQuery(format!(
                 "'{}' needs a type declaring '{}' to hold a {}. Declare one, or ask for the value \
                  itself",
                 field.compare.as_token(),
-                field.key,
+                key,
                 holds.as_token(),
             )));
         }

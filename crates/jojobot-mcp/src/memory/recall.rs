@@ -18,7 +18,14 @@ use jojobot_domain::text;
 pub struct KeyFilterArgs {
     /// The key, exactly as it is spelled where it was written. Matching is
     /// structural, so nothing has to have declared it.
-    pub(crate) key: String,
+    ///
+    /// ⚠️ **Omit it to ask about the VALUE under any key at all** — *is this
+    /// held as a value anywhere*, as opposed to sitting in a claim's prose.
+    /// That is the question when you know what was recorded and not where it
+    /// went. A filter naming neither a key nor a value asks nothing and comes
+    /// back blocked.
+    #[serde(default)]
+    pub(crate) key: Option<String>,
     /// The value it must hold. **Omit it to ask only that the key is there** —
     /// a different question, and the one to ask when you want everything that
     /// records a thing rather than everything that records it one way.
@@ -391,7 +398,7 @@ fn key_filters(args: &[KeyFilterArgs]) -> Result<Vec<graph::FieldFilter>, McpErr
     args.iter()
         .map(|f| {
             Ok(graph::FieldFilter {
-                key: f.key.trim().to_string(),
+                key: f.key.as_ref().map(|k| k.trim().to_string()),
                 value: f.value.as_ref().map(|v| v.trim().to_string()),
                 compare: parse_compare(f.compare.as_deref())?,
                 scope: parse_scope(f.scope.as_deref())?,
@@ -1372,7 +1379,7 @@ mod tests {
                     // **One selection reaching both kinds**, which is what makes
                     // this the SAME answer rather than two reads compared.
                     fields: Some(vec![KeyFilterArgs {
-                        key: "promised_for".into(),
+                        key: Some("promised_for".into()),
                         value: None,
                         compare: None,
                         scope: None,
@@ -2658,7 +2665,7 @@ mod tests {
             &jojobot
                 .recall(Parameters(RecallArgs {
                     fields: Some(vec![KeyFilterArgs {
-                        key: "answer".into(),
+                        key: Some("answer".into()),
                         value: Some("yes".into()),
                         compare: None,
                         // The record that answered is what this half is about,
@@ -2892,7 +2899,7 @@ mod tests {
                         relation: Some("owner".into()),
                         direction: Some("in".into()),
                         keeping: Some(vec![KeyFilterArgs {
-                            key: "born".into(),
+                            key: Some("born".into()),
                             value: Some("2020-01-01".into()),
                             compare: Some("before".into()),
                             scope: None,
@@ -2933,7 +2940,7 @@ mod tests {
             &jojobot
                 .recall(Parameters(RecallArgs {
                     fields: Some(vec![KeyFilterArgs {
-                        key: "born".into(),
+                        key: Some("born".into()),
                         value: Some("2020-01-01".into()),
                         compare: Some("before".into()),
                         scope: None,
@@ -3003,6 +3010,105 @@ mod tests {
     }
 
     /// A `follow` naming nothing — the base the walk cases vary.
+    /// 🚨 **A value found without naming the key it is under, through the
+    /// surface a caller holds — and prose that does not match.**
+    ///
+    /// Selecting by a named key was expressible and reporting one key's values
+    /// was expressible. **Neither asked whether a string is a value at all**,
+    /// which is what *did somebody record this so it can be asked for later*
+    /// reduces to.
+    ///
+    /// **The prose half is what keeps it from being the breadth verb.** A
+    /// string written into a claim's sentence is not something a later question
+    /// can be asked of, and an answer that matched it would be `search` under
+    /// another name.
+    #[tokio::test]
+    async fn a_value_is_found_without_naming_its_key_and_prose_is_not() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        ensure(&jojobot, "person:beta").await;
+        let day = "2026-08-11";
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                fields: Some(
+                    [("serviced_on".to_string(), day.to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("person:alpha", "the service happened")
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                ..capture_args("person:beta", "the service happened on 2026-08-11")
+            },
+        )
+        .await;
+
+        let holding = |value: &str| {
+            let value = value.to_string();
+            let sid = sid.clone();
+            async {
+                json_of(
+                    &jojobot
+                        .recall(Parameters(RecallArgs {
+                            fields: Some(vec![KeyFilterArgs {
+                                key: None,
+                                value: Some(value),
+                                compare: None,
+                                scope: None,
+                            }]),
+                            sid: Some(sid),
+                            ..of_nothing()
+                        }))
+                        .await
+                        .expect("a value filter is a selection"),
+                )
+            }
+        };
+
+        let found = holding(day).await;
+        assert!(
+            found.to_string().contains("person:alpha"),
+            "a value stored under a key was not found by asking for the value: {found}",
+        );
+        assert!(
+            !found.to_string().contains("person:beta"),
+            "the same string in a claim's prose matched, so this is the breadth verb rather than \
+             a question about what is held: {found}",
+        );
+        assert_eq!(
+            holding("2011-01-01").await["count"],
+            0,
+            "a string nothing holds came back with objects",
+        );
+
+        // ⛔️ **A filter that asks nothing is refused rather than answered.**
+        // It selects everything or nothing depending which way the predicate
+        // falls, and neither is what anybody asked for.
+        let empty = blocked(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    fields: Some(vec![KeyFilterArgs {
+                        key: None,
+                        value: None,
+                        compare: None,
+                        scope: None,
+                    }]),
+                    sid: Some(sid),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("a filter asking nothing is an answer, not a protocol failure"),
+        );
+        assert_eq!(empty["wrote"], false, "{empty}");
+    }
+
     fn no_follow() -> FollowArgs {
         FollowArgs {
             shape: None,

@@ -7221,6 +7221,87 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **Is this held as a VALUE anywhere, under a key the caller cannot
+    /// name — as opposed to sitting in prose.**
+    ///
+    /// Selecting by a named key exists and reporting one key's values exists.
+    /// **Neither asks whether a string is a value at all**, and that is what
+    /// *did somebody record this so it can be asked for later* reduces to: a
+    /// caller knows what was written and not where it went.
+    ///
+    /// 🚨 **The prose half is the one that matters.** The same string written
+    /// into a sentence must NOT match — a claim's wording is not something a
+    /// later question can be asked of, and an answer that could not tell the
+    /// two apart would be the breadth verb wearing this one's name.
+    ///
+    /// **And a string held nowhere comes back empty**, so neither half passes
+    /// on a store where the selection reaches everything or nothing.
+    pub async fn a_value_is_found_without_naming_the_key_it_is_under<M: Memory>(store: &M) {
+        let filed = EntityId::person("person:contract-filed");
+        let spoken = EntityId::person("person:contract-spoken");
+        ensure(store, &filed).await;
+        ensure(store, &spoken).await;
+
+        let day = "2026-08-11";
+        capture(
+            store,
+            NewFact {
+                fields: [("serviced_on".to_string(), day.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(filed.clone(), "the service happened", date(2026, 8, 11))
+            },
+        )
+        .await;
+        // The same string, written into the sentence and held under no key.
+        capture(
+            store,
+            NewFact::about(
+                spoken.clone(),
+                format!("the service happened on {day}").as_str(),
+                date(2026, 8, 11),
+            ),
+        )
+        .await;
+
+        let holding = |value: &str| {
+            let value = value.to_string();
+            async move {
+                graph::walk(
+                    store,
+                    &graph::GraphQuery {
+                        select: graph::Selection {
+                            fields: vec![graph::FieldFilter::anywhere(&value)],
+                            ..graph::Selection::default()
+                        },
+                        ..graph::GraphQuery::default()
+                    },
+                )
+                .await
+                .expect("a value filter is a selection")
+                .objects
+                .iter()
+                .map(|o| o.entity.id.clone())
+                .collect::<Vec<_>>()
+            }
+        };
+
+        let found = holding(day).await;
+        assert!(
+            found.contains(&filed),
+            "a value stored under a key was not found by asking for the value: {found:?}",
+        );
+        assert!(
+            !found.contains(&spoken),
+            "the same string sitting in a claim's prose matched, so this answers *written down \
+             somewhere* rather than *held as a value*: {found:?}",
+        );
+        assert!(
+            holding("2011-01-01").await.is_empty(),
+            "a string nothing holds came back with objects, so the two reads above say nothing",
+        );
+    }
+
     /// 🚨 **A rewrite can take the edge off, and one that does not mention
     /// edges leaves it where it is.**
     ///
@@ -9530,6 +9611,7 @@ pub mod contract {
         a_graph_query_filters_on_a_stored_value_and_walks_an_edge(store).await;
         a_walk_marks_a_link_whose_claim_the_store_took_back(store).await;
         a_documents_id_is_not_the_handle_and_survives_a_rewrite(store).await;
+        a_value_is_found_without_naming_the_key_it_is_under(store).await;
         a_rewrite_can_take_the_edge_off_and_leaves_it_alone_otherwise(store).await;
         a_declared_reference_key_is_walkable_against_the_store(store).await;
         a_trip_records_who_came_and_answers_from_either_end(store).await;
