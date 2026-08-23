@@ -455,6 +455,16 @@ roles and never an operator.
   its own guard breaks and stays still when an independent one does. ⚠️
   **Choosing an independent neighbour is the hard part — reasoning about which
   one is independent is not enough. Run it.**
+- 🚨 **A needle that is a PHRASE is weakened by approximate matching.** Search
+  matches by stem and needs most of a query's terms, so a multi-word needle can
+  match a record that shares one word with it. **Assert on one distinctive
+  word**, and never rest an ABSENCE on a phrase — that case can go green over
+  nothing the day the matcher loosens again.
+- 🚨 **Asserting a field is present and non-empty says nothing about whether it
+  can be READ.** A wrapped string literal whose continuation collapses passes
+  every such check while serving runs of spaces mid-sentence. **For a field
+  whose whole purpose is to be read, assert its shape** — one line, no double
+  space — because that is most of what it is for.
 - 🚨 **A GREEN sabotage is not a control until you read the line under it.** A
   case can execute the mutated line and not depend on what it computes, which
   looks identical to the code being irrelevant. **So on a green verdict the
