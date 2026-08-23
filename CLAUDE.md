@@ -559,7 +559,9 @@ roles and never an operator.
   each fronted service's quirks live in its adapter, quarantined.
 - **Green bar before DONE:** `cargo test` green and `cargo clippy` clean, run
   through the flake (`nix develop -c cargo test`). That is `make check`, and it
-  is free.
+  is free. **It reports every target rather than stopping at the first failure,
+  so its count is coverage** — a red run names each suite's verdict instead of
+  leaving a reader to guess which parts ran.
 - **`make paid` is a third tier and `make check` never runs it.** It reaches the
   network, drives a real model through a playbook against an instance it spawns
   and throws away, and it costs money. **It must never run by accident**, which
