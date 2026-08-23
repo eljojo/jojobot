@@ -16,6 +16,27 @@ to.**
 
     scripts/sabotage <file> <from> <to> -- <command...>
 
+**A GREEN verdict is two different results and it used to print as one.** A
+sabotage that stays green either means the case does not depend on that site —
+so the sabotage measured nothing — or it means the site is a genuine negative
+control. **Reachability cannot tell those apart**: a line can run and still have
+nothing assert on what it computed, which is the commoner of the two.
+
+So a green verdict is followed by a PROBE: the same site, replaced with a
+`panic!`, and the same command run again. A panic is the most observable
+mutation there is, so a case that survives one is blind to that site whether
+the line ran or not — which is the question a negative control was always
+asking. **It runs only on green**, because a red verdict has already proved the
+case depends on the site.
+
+**The probe can fail to be written at all** — not every site is a place a
+`panic!` can stand — and that is reported as neither colour. ⚠️ A compile
+failure read as *blind* would tell somebody their case is worthless when
+nothing was measured.
+
+⚠️ **A probe roughly doubles a sabotage**, and the tool says so before it runs
+one.
+
 **It refuses unless the text it is replacing appears EXACTLY ONCE.** Asserting
 that a sabotage applied is not enough when a file has more than one site that
 looks like the target: a patch that lands somewhere else changes something,
@@ -106,11 +127,97 @@ def main(argv):
             f"SABOTAGE VERDICT {verdict}: {' '.join(command)} exited {ran.returncode}",
             flush=True,
         )
+        if ran.returncode == 0:
+            probe(path, before, old, command)
         return ran.returncode
     finally:
         shutil.copyfile(kept, path)
         os.unlink(kept)
         print(f"SABOTAGE RESTORED {path}", flush=True)
+
+
+# **What the probe puts at the site.** The marker is ours rather than the
+# runner's, which is what lets a probe that panicked be told from a probe that
+# would not compile: both leave a non-zero exit code, and only one of them says
+# this.
+#
+# ⚠️ **Finding the marker anywhere in the output is not enough, and reading it
+# that way got the first run of this wrong.** A compiler warning quotes the
+# source line it is about, marker and all, so a probe that compiled with a
+# warning and never fired was read as having fired. **A panic prints its
+# message as a line of its own**, where a quoted source line always carries the
+# compiler's gutter — so the test is a whole line rather than a substring.
+MARKER = "SABOTAGE-PROBE-REACHED-THIS-SITE"
+PANIC = f'panic!("{MARKER}")'
+
+
+def probe_text(old):
+    """**A `panic!` that can stand where `old` stood**, or `None`.
+
+    Two shapes, because two cover nearly every site a sabotage names and a
+    third rule would be guessing at Rust with a regular expression.
+
+    `key: value,` keeps its key and its comma: a struct field replaced whole
+    leaves the field missing and the literal broken. Anything else becomes the
+    panic alone, keeping a trailing comma or semicolon if there was one.
+
+    **Neither shape is checked for sense here.** Whether it compiles is the
+    compiler's answer, and the run below reports it as one.
+    """
+    body = old.rstrip()
+    if not body.strip():
+        return None
+    lead = body[: len(body) - len(body.lstrip())]
+    tail = body[-1] if body[-1:] in ",;" else ""
+    inner = body.strip().rstrip(",;")
+    key, colon, _ = inner.partition(":")
+    if colon and key.strip().replace("_", "").isalnum() and "\n" not in key:
+        return f"{lead}{key.strip()}: {PANIC}{tail or ','}"
+    if "\n" in body:
+        return None
+    return f"{lead}{PANIC}{tail}"
+
+
+def probe(path, before, old, command):
+    """**Which kind of green that was**, printed and never enforced."""
+    text = probe_text(old)
+    if text is None:
+        print(
+            "SABOTAGE PROBE SKIPPED: no panic can be written at this site, so which kind of "
+            "green this is was not measured",
+            flush=True,
+        )
+        return
+    print(
+        "SABOTAGE PROBING which kind of green: a panic at the same site, same command. "
+        "This roughly doubles the run.",
+        flush=True,
+    )
+    with open(path, "w", encoding="utf-8") as writing:
+        writing.write(before.replace(old, text, 1))
+    ran = subprocess.run(command, capture_output=True, text=True)
+    said = ran.stdout + ran.stderr
+    panicked = any(line.strip() == MARKER for line in said.splitlines())
+    if panicked:
+        print(
+            "SABOTAGE PROBE: DEPENDED ON — a panic here is noticed, so the green above is a "
+            "genuine negative control and says something about the code",
+            flush=True,
+        )
+    elif ran.returncode == 0:
+        print(
+            "SABOTAGE PROBE: BLIND — a panic here is not noticed, so the green above measured "
+            "NOTHING. The case does not depend on this site; sabotage the one it does.",
+            flush=True,
+        )
+    else:
+        print(said, flush=True)
+        print(
+            "SABOTAGE PROBE: NOT MEASURED — the probe did not run and did not panic, so this "
+            "says nothing either way. The output above is why; usually the panic could not be "
+            "written where the site stands.",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":
