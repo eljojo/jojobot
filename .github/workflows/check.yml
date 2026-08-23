@@ -1,0 +1,36 @@
+# The boundary bar, run without anybody remembering to run it.
+#
+# This repository is built by disposable implementer sessions that report their
+# own results. Every gate it has runs only when a session types the command and
+# reads the exit code honestly, and a session that forgets looks exactly like a
+# green build.
+#
+# One job, one command: the same `make check` the house rules name. A second
+# command here would be a second standard, and the two would drift.
+name: check
+
+# Every branch, deliberately. An implementer works on its own branch and the
+# coordinator carries it across afterwards; a gate watching only the mainline
+# reports a break at the carry, which is after the author is gone.
+on:
+  push:
+
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The flake is the toolchain. Running the bar outside it picks up
+      # whatever the runner happens to carry, and the shellHook that sets the
+      # load-bearing environment never runs.
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # The store each suite needs is a process the tests spawn themselves
+      # against a disposable database, so there are no credentials here and no
+      # service to stand up.
+      - run: nix develop -c make check
