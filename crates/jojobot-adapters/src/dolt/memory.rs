@@ -178,6 +178,67 @@ impl DoltMemory {
         Self::assemble(tx, &rows).await
     }
 
+    /// **The same claims, projected from the substrate rather than read off
+    /// the row** — the newest write of each claim on this thing.
+    ///
+    /// ⛔️ **Nothing calls this from a read yet.** It lands beside the row
+    /// reader so the two can be proven to agree before anything depends on the
+    /// projection, which is what makes the switch that follows a no-op rather
+    /// than a leap.
+    ///
+    /// ⚠️ **`cfg(test)` says that honestly rather than suppressing it.** The
+    /// lint gate refuses dead code, and code only a case reaches IS test-only
+    /// until the reads move — so it is marked as what it is, and the attribute
+    /// comes off in the commit that makes it false.
+    ///
+    /// **The newest write IS the claim.** There is no fold to do beyond that: a
+    /// key's writes are combined because a thing is described a piece at a
+    /// time, and a claim is not — each write says the whole of what the claim
+    /// is, so the last one said is what it says.
+    ///
+    /// The write table names its key `fact_id`, so it is aliased to what
+    /// [`Self::assemble`] reads. **One row shape, one assembler**, rather than
+    /// a second one that could drift from it.
+    #[cfg(test)]
+    async fn facts_projected(
+        tx: &mut Transaction<'_, MySql>,
+        entity: &EntityId,
+    ) -> Result<Vec<Fact>, MemoryError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {FACT_WRITE_COLUMNS} FROM fact_write w
+             JOIN (SELECT entity, fact_id, MAX(ordinal) AS newest FROM fact_write
+                   WHERE entity = ? GROUP BY entity, fact_id) n
+               ON n.entity = w.entity AND n.fact_id = w.fact_id AND n.newest = w.ordinal
+             ORDER BY w.fact_id"
+        ))
+        .bind(entity.as_str())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        Self::assemble(tx, &rows).await
+    }
+
+    /// One addressed claim, projected from the substrate. **Unused by any read
+    /// yet**, for the reason [`Self::facts_projected`] gives.
+    #[cfg(test)]
+    async fn fact_projected(
+        tx: &mut Transaction<'_, MySql>,
+        address: &FactAddress,
+    ) -> Result<Option<Fact>, MemoryError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {FACT_WRITE_COLUMNS} FROM fact_write w
+             WHERE w.entity = ? AND w.fact_id = ?
+               AND w.ordinal = (SELECT MAX(ordinal) FROM fact_write
+                                WHERE entity = w.entity AND fact_id = w.fact_id)"
+        ))
+        .bind(address.home.as_str())
+        .bind(address.local.as_str())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        Ok(Self::assemble(tx, &rows).await?.pop())
+    }
+
     /// One addressed fact, or nothing.
     async fn read_fact(
         tx: &mut Transaction<'_, MySql>,
@@ -585,6 +646,15 @@ fn written_keys(fact: &Fact) -> Vec<(String, Option<String>)> {
 const FACT_COLUMNS: &str = "entity, id, content, details, provenance, standing, status, date, \
                             edge_shape, edge_object, derived_from, derived_from_id, inserted_at, \
                             stale_after";
+
+/// The same columns off the write table, with its key aliased to what
+/// [`DoltMemory::assemble`] reads. **The alias is the whole difference**: a
+/// second assembler would be a second place for the row shape to drift.
+#[cfg(test)]
+const FACT_WRITE_COLUMNS: &str = "w.entity, w.fact_id AS id, w.content, w.details, w.provenance, \
+                                  w.standing, w.status, w.date, w.edge_shape, w.edge_object, \
+                                  w.derived_from, w.derived_from_id, w.inserted_at, \
+                                  w.stale_after";
 
 /// A store failure, in the domain's own words. **The server's account never
 /// crosses** — no SQL, no table names, no product (rule 53); it goes to the log
@@ -1824,4 +1894,123 @@ async fn write_entity(
             .map_err(store)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dolt::tests::{Scratch, free_port};
+    use crate::dolt::{Dolt, migrate};
+    use jiff::civil::date;
+    use jojobot_domain::memory::{FactPatch, NewEntity, NewFact};
+
+    /// 🚨 **The substrate and the claim's own row answer the same thing**, on a
+    /// claim written once and on a claim corrected twice.
+    ///
+    /// ⛔️ **This is what makes the switch that follows a no-op rather than a
+    /// leap.** The projection lands before anything reads it precisely so the
+    /// two can be held against each other first: a store where they disagree is
+    /// one where moving the reads changes answers, and nobody would know which
+    /// answers.
+    ///
+    /// **Both shapes, because they fail differently.** A claim with one write
+    /// is the case the backfill produces and the commonest thing in the store;
+    /// a claim with three is the case the projection exists for, and a
+    /// projection that took the OLDEST write would pass the first and fail the
+    /// second.
+    #[tokio::test]
+    async fn the_projection_and_the_row_agree() {
+        let scratch = Scratch::new("projection");
+        let mut store = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("projection")
+            .await
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        let memory = DoltMemory::open(pool.clone());
+        // The kinds, or no handle parses and every write is refused.
+        jojobot_domain::memory::kinds::seed(&memory)
+            .await
+            .expect("the kinds are seeded");
+
+        let subject = EntityId::person("person:projected");
+        memory
+            .add_entity(NewEntity::new(
+                subject.clone(),
+                "Projected",
+                "contract-fixture",
+            ))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("the guard waves it through");
+        let once = memory
+            .capture(NewFact::about(
+                subject.clone(),
+                "written once and left alone",
+                date(2026, 8, 10),
+            ))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("the guard waves it through");
+        let corrected = memory
+            .capture(NewFact::about(
+                subject.clone(),
+                "first thing said",
+                date(2026, 8, 10),
+            ))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("the guard waves it through");
+        for said in ["second thing said", "third thing said"] {
+            memory
+                .update_fact(
+                    &corrected.address(),
+                    FactPatch {
+                        content: Some(said.into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("update_fact ok")
+                .written()
+                .expect("the guard waves it through");
+        }
+
+        let mut tx = pool.begin().await.expect("a transaction");
+        let off_the_row = DoltMemory::facts_of(&mut tx, &subject)
+            .await
+            .expect("the rows read");
+        let projected = DoltMemory::facts_projected(&mut tx, &subject)
+            .await
+            .expect("the substrate projects");
+        assert_eq!(
+            projected, off_the_row,
+            "the substrate and the row disagree, so moving the reads would change answers",
+        );
+
+        let one = DoltMemory::fact_projected(&mut tx, &once.address())
+            .await
+            .expect("the substrate projects one");
+        assert_eq!(
+            one.as_ref().map(|f| f.content.as_str()),
+            Some("written once and left alone"),
+            "a claim with one write did not project as itself",
+        );
+        let many = DoltMemory::fact_projected(&mut tx, &corrected.address())
+            .await
+            .expect("the substrate projects one");
+        assert_eq!(
+            many.as_ref().map(|f| f.content.as_str()),
+            Some("third thing said"),
+            "the projection took a write that is not the newest",
+        );
+        tx.commit().await.expect("the read commits");
+
+        store.stop().await;
+    }
 }
