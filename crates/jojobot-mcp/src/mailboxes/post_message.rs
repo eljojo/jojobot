@@ -286,12 +286,21 @@ impl Jojobot {
                 // a piece of work — and two agents each holding an unread reply
                 // are two agents talking past each other, with nothing blocked
                 // and nothing to notice.
+                let mut collected = 0;
                 if let Some(delivered) = self
                     .delivered_with_the_post(&caller.bot, &message.mailbox)
                     .await
-                    && let Some(object) = body.as_object_mut()
                 {
-                    object.insert("your_mail".into(), delivered);
+                    collected = delivered["count"].as_u64().unwrap_or_default();
+                    if let Some(object) = body.as_object_mut() {
+                        object.insert("your_mail".into(), delivered);
+                    }
+                }
+                if self.receipts.postcondition {
+                    crate::answer::note_postcondition(
+                        &mut body,
+                        what_a_post_left_standing(&message, collected),
+                    );
                 }
                 json_result(&body)
             }
@@ -311,11 +320,95 @@ impl Jojobot {
     }
 }
 
+/// **What a caller's own post did, on both boxes it touched.**
+///
+/// The message is in the addressee's box and nothing else in that box moved.
+///
+/// ⚠️ **The second half is the one nothing else says.** Posting takes delivery
+/// of the sender's own box in the same call, so a caller that wrote one message
+/// can leave holding several it now owes work on. That obligation was arriving
+/// with the mail and being announced by nothing.
+///
+/// **Named only when something came back**, so a post that collected nothing
+/// does not claim work that does not exist.
+fn what_a_post_left_standing(message: &Message, collected: u64) -> String {
+    let took = match collected {
+        0 => String::new(),
+        n => format!(
+            " This call also took delivery of {n} of your own: they are out of new and yours to \
+             finish with mark_processed."
+        ),
+    };
+    format!(
+        "The message is in {}'s box, waiting. Nothing else in that box moved, and nobody is \
+         obliged to read it before they next open the box.{took}",
+        message.mailbox.as_str(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::harness::*;
     use crate::mailboxes::testing::*;
+
+    /// **Posting says where the message got to, and what the same call did to
+    /// the caller's own box.**
+    ///
+    /// ⚠️ **Posting is not a pure write.** It takes delivery of whatever was
+    /// waiting for the sender, in the same call — out of `new` and theirs to
+    /// finish. That is a real obligation acquired as a side effect of writing,
+    /// and the answer carried the mail without saying it had become owed work.
+    ///
+    /// **The count is what makes the line worth computing.** A post that
+    /// collected nothing must not say it collected something, and a constant
+    /// sentence says the same thing to both callers — which on the empty one is
+    /// a claim about work that does not exist.
+    #[tokio::test]
+    async fn posting_says_where_it_landed_and_what_it_collected() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "otto").await;
+        make_box(&jojobot, "epsilon").await;
+
+        // Nothing is waiting for the sender, so the line must not say anything
+        // came back.
+        let quiet = send(&jojobot, "otto", "epsilon", "the urn is descaled").await;
+        let empty_handed = quiet["postcondition"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a write states what now stands: {quiet}"))
+            .to_string();
+        assert!(
+            empty_handed.contains("otto"),
+            "the line has to say which box it landed in: {quiet}",
+        );
+
+        // Now there IS something waiting, and the same call takes it.
+        send(
+            &jojobot,
+            "epsilon",
+            "otto",
+            "before you do, check the filter",
+        )
+        .await;
+        let collected = send(&jojobot, "otto", "epsilon", "and the filter is clear").await;
+        assert!(
+            collected["your_mail"]["count"].as_u64() == Some(1),
+            "the call took delivery, which is the thing the line is about: {collected}",
+        );
+        let line = collected["postcondition"]
+            .as_str()
+            .expect("a write states what now stands")
+            .to_string();
+        assert_ne!(
+            line, empty_handed,
+            "one sentence for both, so the empty post claims work that does not exist: \
+             {collected}",
+        );
+        assert!(
+            line.contains('1'),
+            "the line has to say how much became the caller's to finish: {collected}",
+        );
+    }
 
     /// **The surface tells a caller what it has, never how jojobot satisfied
     /// itself.** How the server checks its own write is jojobot's business, and

@@ -102,6 +102,12 @@ impl Jojobot {
                             .into(),
                     );
                 }
+                if self.receipts.postcondition {
+                    crate::answer::note_postcondition(
+                        &mut body,
+                        what_a_retirement_left_standing(&processed),
+                    );
+                }
                 json_result(&body)
             }
             // Both misses here are answers, not failures: an id that names
@@ -111,6 +117,27 @@ impl Jojobot {
             Err(e) => mailbox_declined(e),
         }
     }
+}
+
+/// **What a caller's own retirement did to the message.**
+///
+/// ⚠️ **`processed` is terminal and it is an archive.** The message is not
+/// deleted — this rail has no verb that deletes anything — and it stays
+/// readable from any box, because reading history moves nothing. A caller that
+/// believes a retirement throws work away handles the next one differently.
+///
+/// The outcome record is named only when this call carries one, so the line
+/// does not claim an account that was never written.
+fn what_a_retirement_left_standing(processed: &Message) -> String {
+    let recorded = match processed.notes.as_deref() {
+        Some(_) => " Your outcome record is stored on it.",
+        None => "",
+    };
+    format!(
+        "{} is processed, which is the last state on this rail. It is archived and not deleted: \
+         it stays readable, and a read of it moves nothing.{recorded}",
+        processed.id.as_str(),
+    )
 }
 
 #[cfg(test)]
@@ -153,6 +180,73 @@ mod tests {
                 .as_str()
                 .expect("a pointer")
                 .contains("read_message")
+        );
+    }
+
+    /// **Retiring a message says it is archived and still there.**
+    ///
+    /// ⚠️ **`processed` is terminal and it is an ARCHIVE, not a deletion.**
+    /// There is no delete verb on this rail at all — a promise the surface
+    /// makes and that nothing in the answer to a retirement repeated. A caller
+    /// who believes it has thrown something away handles the next one
+    /// differently, and the message is exactly as readable afterwards as it
+    /// was before.
+    ///
+    /// **The outcome record is what makes the line worth computing**: a
+    /// retirement that recorded one says so and one that recorded none does
+    /// not claim to. A constant cannot tell the two apart.
+    ///
+    /// **The promise is checked against the rail in the same case.** A line
+    /// saying the message is still readable is worth nothing unless it is, and
+    /// a case pinning only the wording would keep passing on the day it
+    /// stopped being true.
+    #[tokio::test]
+    async fn retiring_a_message_says_it_is_archived_and_not_gone() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let posted = send(&jojobot, "inbox", "epsilon", "the shipment landed at dawn").await;
+        let id = posted["id"].as_str().expect("an id").to_string();
+
+        let retired = json_of(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_id: id.clone(),
+                    notes: Some("filed under shipments".into()),
+                    sid: None,
+                }))
+                .await
+                .expect("mark_processed ok"),
+        );
+        let line = retired["postcondition"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a write states what now stands: {retired}"))
+            .to_string();
+        assert!(
+            line.contains(&id),
+            "the line has to name the message it retired: {retired}",
+        );
+        assert!(
+            line.contains("notes") || line.contains("outcome") || line.contains("recorded"),
+            "this retirement recorded an outcome and the line does not mention one: {retired}",
+        );
+
+        // The pairing: nothing was sent, so the line does not say an outcome
+        // was recorded. A constant sentence says it either way.
+        let second = send(&jojobot, "inbox", "epsilon", "and the second crate too").await;
+        let bare = json_of(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_id: second["id"].as_str().expect("an id").to_string(),
+                    notes: None,
+                    sid: None,
+                }))
+                .await
+                .expect("mark_processed ok"),
+        );
+        assert_ne!(
+            bare["postcondition"], retired["postcondition"],
+            "one sentence for both, so it promises on the bare call what only the other did: \
+             {bare}",
         );
     }
 

@@ -202,6 +202,54 @@ mod tests {
             "the line has to name the record this took back: {body}",
         );
 
+        // ⭐ **The half a constant cannot produce.** Nothing was worked out
+        // from that claim, so the line says nothing about derived claims —
+        // while a retraction that DOES have claims resting on it names how
+        // many, because nothing here changes them and the caller has to decide
+        // what they are worth. One sentence for both would tell the first
+        // caller about work that does not exist.
+        let source = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                ..capture_args("person:alpha", "the ferry moved to the north pier")
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                derived_from: Some(address_of(&source)),
+                ..capture_args("person:alpha", "so the crossing is longer")
+            },
+        )
+        .await;
+        let rested_on = json_of(
+            &jojobot
+                .retract(Parameters(RetractArgs {
+                    address: address_of(&source),
+                    reason: Some("the ferry moved back".into()),
+                    sid: Some(sid.clone()),
+                    date: None,
+                }))
+                .await
+                .expect("the retraction lands"),
+        );
+        let with_dependants = rested_on["postcondition"]
+            .as_str()
+            .expect("a write states what now stands")
+            .to_string();
+        assert!(
+            with_dependants.contains('1'),
+            "a claim was worked out from this one and the line does not say so: {rested_on}",
+        );
+        assert_ne!(
+            line, with_dependants,
+            "one sentence for both, so the first retraction was told about derived claims that \
+             do not exist: {rested_on}",
+        );
+
         // ⭐ **What the line claims, checked against the store in the same
         // case.** The record is still there, still readable, and marked.
         let read_back = json_of(
