@@ -89,8 +89,29 @@ narrow: ## The inner loop: one crate's tests and lint, plus the format check
 	$(CARGO) test -p $(CRATE) $(FILTER)
 	$(CARGO) clippy -p $(CRATE) --all-targets -- -D warnings
 
+# 🚨 **Every target reports, and the count is what a reader takes from it.**
+#
+# `cargo test` stops after the first failing target. So a run with an early
+# failure prints a suite count that is a true statement about what RAN and a
+# false impression of what was CHECKED, and nothing on screen says which. Three
+# runs on this tree in one day reported 19, 16 and 16 suites ok out of
+# forty-one, each of them looking like a mostly-green bar.
+#
+# **A partial red bar is worse than a plain one**, because the reader believes
+# they know which parts are fine. It has already cost a hand-off: an implementer
+# was told three failures were not theirs and to carry on, when twenty-two
+# suites had not run at all.
+#
+# ⚠️ **It costs wall-clock on a red run** — the suites after the failure run
+# instead of being skipped — and this is the BOUNDARY bar, taken before a
+# report, a carry or a review. Paying for the whole answer is the trade the
+# inner loop exists to keep you from paying between edits.
+#
+# ⚠️ **A target that fails to COMPILE still stops the run.** Compilation is not
+# a test failure. That run reports no suites rather than a plausible count,
+# which is the same defect arriving in a shape a reader cannot misread.
 test: ## Every fast suite (no network)
-	$(CARGO) test --workspace
+	$(CARGO) test --workspace --no-fail-fast
 
 lint: ## Clippy, warnings fatal
 	$(CARGO) clippy --workspace --all-targets -- -D warnings

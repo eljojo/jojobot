@@ -74,3 +74,46 @@ fn the_bar_runs_on_every_branch_and_not_only_on_the_mainline() {
          which is after the author is gone:\n{yaml}",
     );
 }
+
+/// 🚨 **A red bar reports every target, not only the ones before the first
+/// failure.**
+///
+/// `cargo test` stops after the first failing target. So a run with an early
+/// failure prints a suite count that is a true statement about what RAN and a
+/// false impression of what was CHECKED — and nothing on screen says which it
+/// is. Three runs on this tree in one day reported 19, 16 and 16 suites ok out
+/// of forty-one, each of them looking like a mostly-green bar.
+///
+/// ⛔️ **A partial red bar is worse than a plain one**, because the reader
+/// believes they know which parts are fine. It has already cost a hand-off: an
+/// implementer was told three failures were not theirs and to carry on, when
+/// twenty-two suites had not run at all.
+///
+/// **The positive is in the same case.** Asserting only that the flag is there
+/// passes against a bar that stopped being the workspace bar, which is a
+/// smaller run wearing the same name.
+///
+/// ⚠️ **It does not reach a target that fails to COMPILE.** Compilation is not
+/// a test failure, so cargo still stops — and that run reports no suites at
+/// all rather than a plausible-looking count, which is the failure this case is
+/// about arriving in a shape a reader cannot misread.
+#[test]
+fn the_bar_reports_every_target_and_not_only_the_ones_before_a_failure() {
+    let makefile =
+        std::fs::read_to_string(root().join("Makefile")).expect("the bar is written down");
+    let step = makefile
+        .lines()
+        .skip_while(|l| !l.starts_with("test:"))
+        .nth(1)
+        .expect("the test target has a recipe");
+    assert!(
+        step.contains("--no-fail-fast"),
+        "the bar stops at the first failing target, so a red run reports a suite count that \
+         reads as coverage and is not: {step}",
+    );
+    assert!(
+        step.contains("--workspace"),
+        "the bar is no longer the whole workspace, which is a smaller run wearing the same \
+         name: {step}",
+    );
+}
