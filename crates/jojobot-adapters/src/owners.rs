@@ -235,6 +235,15 @@ mod tests {
             ) -> Result<Retraction, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
+            async fn merge(
+                &self,
+                _: &EntityId,
+                _: &EntityId,
+                _: Option<&str>,
+                _: jiff::civil::Date,
+            ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
+                unimplemented!("the owner index only reads the index")
+            }
             async fn set_prose(&self, _: &EntityId, _: &str) -> Result<String, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }

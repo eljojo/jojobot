@@ -480,6 +480,7 @@ async fn a_record_the_build_ships_is_in_no_table_of_the_real_store() {
                 crm: None,
                 parent: None,
                 boot: Default::default(),
+                merged_into: None,
             },
             std::collections::BTreeMap::from([("selects".to_string(), "rhythm".to_string())]),
         )]),
@@ -543,6 +544,7 @@ impl OwnerIndex for RosterOnly {
                     crm: None,
                     parent: None,
                     boot: Default::default(),
+                    merged_into: None,
                 }
             })
             .collect();

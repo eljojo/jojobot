@@ -207,6 +207,16 @@ impl jojobot_domain::memory::Memory for Blindable {
         self.inner.retract(address, reason, date).await
     }
 
+    async fn merge(
+        &self,
+        folded: &jojobot_domain::memory::EntityId,
+        survivor: &jojobot_domain::memory::EntityId,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+    ) -> Result<jojobot_domain::memory::Merge, jojobot_domain::memory::MemoryError> {
+        self.inner.merge(folded, survivor, reason, date).await
+    }
+
     async fn set_prose(
         &self,
         entity: &jojobot_domain::memory::EntityId,

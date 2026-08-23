@@ -16,9 +16,9 @@ use std::sync::Mutex;
 use jiff::civil::Date;
 
 use super::{
-    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, FactStatus,
-    FieldWrite, Guarded, MAX_KEY_CHARS, Memory, MemoryError, NewEntity, NewFact, Retraction,
-    Standing, apply_entity_patch, apply_fact_patch,
+    Entity, EntityId, EntityKind, EntityPatch, FOLDS, Fact, FactAddress, FactId, FactPatch,
+    FactStatus, FieldWrite, Guarded, MAX_KEY_CHARS, Memory, MemoryError, Merge, NewEntity, NewFact,
+    Retraction, Standing, apply_entity_patch, apply_fact_patch, fold_account,
     guard::{self, Decision},
     normalize_content, normalize_details, normalize_prose, retraction_of, screen_entity_patch,
     search, standing_of, validate_content, validate_details, validate_edge, validate_entity,
@@ -360,6 +360,7 @@ impl Memory for InMemoryMemory {
             crm: new.crm.map(|c| c.trim().to_string()),
             parent: new.parent,
             boot: new.boot,
+            merged_into: None,
         };
         // The entity this one sits under must already exist, and must not be
         // this one. Screened after the record is assembled because a
@@ -790,6 +791,164 @@ impl Memory for InMemoryMemory {
             .find(|f| f.home == home && f.id == id)
             .expect("the record was just edited in place");
         Ok(Guarded::Written(self.projected(stored)))
+    }
+
+    async fn merge(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: Date,
+    ) -> Result<Merge, MemoryError> {
+        if folded == survivor {
+            return Err(MemoryError::NothingToFold {
+                attempted: folded.to_string(),
+            });
+        }
+        let index = self.index();
+        // Both sides are checked before anything moves, so a refusal leaves the
+        // store exactly as it was.
+        for side in [folded, survivor] {
+            if !index.iter().any(|e| &e.id == side) {
+                return Err(MemoryError::UnknownEntity {
+                    attempted: side.to_string(),
+                    nearest: guard::screen(side, &[], &index),
+                });
+            }
+        }
+        // **Neither side may already be a forwarding row.** A chain stops
+        // answering in one hop, so it is refused rather than followed.
+        for side in [folded, survivor] {
+            let held = index
+                .iter()
+                .find(|e| &e.id == side)
+                .expect("checked present just above");
+            if let Some(into) = &held.merged_into {
+                return Err(MemoryError::AlreadyFolded {
+                    attempted: side.to_string(),
+                    into: into.to_string(),
+                });
+            }
+        }
+
+        let account = fold_account(folded, survivor, reason, date)?;
+        let standing = standing_of(&account);
+
+        let mut entities = self.entities.lock().expect("fake mutex poisoned");
+        let mut facts = self.facts.lock().expect("fake mutex poisoned");
+
+        // **The claims move home, and each is RENUMBERED as it goes.** A fact
+        // id is local to the doc that holds it, so both sides own an `f1` and
+        // moving a row without a fresh number collides. **The real store finds
+        // this and rows in a `Vec` cannot**, so the renumbering is mirrored
+        // here rather than left as a difference between the two.
+        //
+        // ⚠️ Moving a row therefore CHANGES ITS ADDRESS, and what points at
+        // that address moves with it.
+        let mut next = facts.iter().filter(|f| &f.home == survivor).count();
+        let mut moved: Vec<(FactId, FactId)> = Vec::new();
+        for fact in facts.iter_mut() {
+            if &fact.home == folded {
+                next += 1;
+                let now = FactId(format!("f{next}"));
+                moved.push((fact.id.clone(), now.clone()));
+                fact.home = survivor.clone();
+                fact.id = now;
+            }
+            if &fact.subject == folded {
+                fact.subject = survivor.clone();
+            }
+            // An edge drawn AT the folded thing is re-pointed too, or the graph
+            // goes on naming a handle that is no longer a thing.
+            if let Some(edge) = &mut fact.edge {
+                if &edge.object == folded {
+                    edge.object = survivor.clone();
+                }
+            }
+            for target in fact.refs.iter_mut() {
+                if target == folded {
+                    *target = survivor.clone();
+                }
+            }
+        }
+        // A lineage pointer at a moved row follows it to its new address.
+        for fact in facts.iter_mut() {
+            if let Some(source) = &mut fact.derived_from {
+                if &source.home == folded {
+                    if let Some((_, now)) = moved.iter().find(|(was, _)| was == &source.local) {
+                        source.local = now.clone();
+                    }
+                    source.home = survivor.clone();
+                }
+            }
+        }
+        // The field substrate moves with the claims that wrote it: a folded
+        // thing's history is the survivor's history now.
+        {
+            let mut writes = self.writes.lock().expect("fake mutex poisoned");
+            for write in writes.iter_mut() {
+                if &write.entity == folded {
+                    write.entity = survivor.clone();
+                    if let Some((_, now)) = moved.iter().find(|(was, _)| was == &write.fact) {
+                        write.fact = now.clone();
+                    }
+                }
+            }
+        }
+        let rehomed = moved.len();
+
+        let existing = facts.iter().filter(|f| &f.home == survivor).count();
+        let record = Fact {
+            id: FactId(format!("f{}", existing + 1)),
+            home: survivor.clone(),
+            subject: account.subject,
+            content: account.content,
+            details: account.details,
+            provenance: account.provenance,
+            standing,
+            status: account.status,
+            date: account.date,
+            edge: account.edge,
+            fields: account.fields,
+            refs: account.refs,
+            derived_from: account.derived_from,
+            inserted_at: Some(jiff::Timestamp::now()),
+            stale_after: None,
+        };
+        facts.push(Fact {
+            fields: Default::default(),
+            ..record.clone()
+        });
+
+        // **The folded row stays and starts forwarding.** It is not deleted and
+        // it is not left looking like a thing.
+        for entity in entities.iter_mut() {
+            if &entity.id == folded {
+                entity.merged_into = Some(survivor.clone());
+            }
+        }
+        let survived = entities
+            .iter()
+            .find(|e| &e.id == survivor)
+            .cloned()
+            .expect("the survivor was checked present");
+        drop(facts);
+        drop(entities);
+        self.append_writes(
+            &record.home,
+            &record.id,
+            record
+                .fields
+                .iter()
+                .map(|(key, value)| (key.clone(), Some(value.clone()))),
+        );
+
+        Ok(Merge {
+            survivor: survived,
+            folded: folded.clone(),
+            record,
+            rehomed,
+        })
     }
 
     async fn retract(
@@ -9134,6 +9293,130 @@ pub mod contract {
         assert_eq!(held.kind, EntityKind::RHYTHM);
     }
 
+    /// 🚨 **A duplicate that got past the guard is repairable, and the repair
+    /// is legible afterwards.**
+    ///
+    /// One thing split across two handles answers half of every question and
+    /// reports the half as whole — and it is invisible from every entry in it,
+    /// because each handle looks like a complete record of itself. **With a
+    /// repair the guard only has to be good; without one it has to be
+    /// perfect.**
+    ///
+    /// ⭐ **The half-answer is asserted BEFORE the fold**, so the whole answer
+    /// afterwards is the fold's doing and not the fixture's.
+    ///
+    /// ⛔️ **The store does not ask whether the two really were duplicates.**
+    /// That is the operator's judgement. What the store owes is that the act is
+    /// recorded and readable from the thing it happened to.
+    pub async fn folding_a_duplicate_makes_the_split_answer_whole<M: Memory>(store: &M) {
+        let kept = EntityId::person("person:contract-folded-kept");
+        let spare = EntityId::person("person:contract-folded-spare");
+        add(
+            store,
+            NewEntity::new(kept.clone(), "Kept", "contract-fixture"),
+        )
+        .await;
+        add(
+            store,
+            NewEntity::new(spare.clone(), "Spare", "contract-fixture"),
+        )
+        .await;
+
+        capture(
+            store,
+            NewFact::about(kept.clone(), "plays the bass", date(2026, 5, 1)),
+        )
+        .await;
+        capture(
+            store,
+            NewFact::about(spare.clone(), "reads the sleeve notes", date(2026, 5, 2)),
+        )
+        .await;
+
+        // **The fault, stated as an assertion.** Each handle answers with its
+        // own half and nothing on either says the other half exists.
+        let before = store.recall(&kept).await.expect("the kept side reads");
+        assert_eq!(
+            before.len(),
+            1,
+            "the fixture did not split the thing, so the fold below proves nothing: {before:?}",
+        );
+        assert!(
+            !before.iter().any(|f| f.content == "reads the sleeve notes"),
+            "the halves were not apart to begin with: {before:?}",
+        );
+
+        let folded = store
+            .merge(
+                &spare,
+                &kept,
+                Some("one person, filed twice"),
+                date(2026, 5, 3),
+            )
+            .await
+            .expect("the fold lands");
+
+        // **Whole from the survivor.** Both halves, in one read.
+        let after = store.recall(&kept).await.expect("the survivor reads");
+        assert!(
+            after.iter().any(|f| f.content == "plays the bass")
+                && after.iter().any(|f| f.content == "reads the sleeve notes"),
+            "the fold did not bring the other half across: {after:?}",
+        );
+        assert_eq!(folded.rehomed, 1, "the fold miscounted what it moved");
+
+        // **The account is on the survivor and names what was folded.** A merge
+        // nobody can read afterwards is the one outcome this verb must not
+        // leave behind.
+        assert_eq!(folded.record.subject, kept);
+        assert_eq!(
+            folded.record.fields.get(FOLDS).map(String::as_str),
+            Some(spare.as_str()),
+            "the account did not name the handle it folded away: {:?}",
+            folded.record,
+        );
+        assert!(
+            after.iter().any(|f| f.content == "one person, filed twice"),
+            "the reason is not readable from the thing it happened to: {after:?}",
+        );
+
+        // **The folded handle still resolves and says where it went.** It is
+        // not deleted, and it is not a live second thing either.
+        let held = store
+            .list_entities(None)
+            .await
+            .expect("the roster reads")
+            .into_iter()
+            .find(|e| e.id == spare)
+            .expect("the folded row is still there — nothing here is deleted");
+        assert_eq!(
+            held.merged_into.as_ref(),
+            Some(&kept),
+            "the folded row does not forward, so it is a husk that answers half",
+        );
+
+        // **Neither side may be folded twice.** A chain stops answering in one
+        // hop, so it is refused rather than followed.
+        let again = store
+            .merge(&spare, &kept, None, date(2026, 5, 4))
+            .await
+            .expect_err("a folded row is not a side to fold");
+        assert!(
+            matches!(again, MemoryError::AlreadyFolded { .. }),
+            "refolding a forwarding row was not refused as such: {again:?}",
+        );
+
+        // And nothing folds into itself.
+        let itself = store
+            .merge(&kept, &kept, None, date(2026, 5, 4))
+            .await
+            .expect_err("a fold has two sides");
+        assert!(
+            matches!(itself, MemoryError::NothingToFold { .. }),
+            "folding a thing into itself was not refused as such: {itself:?}",
+        );
+    }
+
     pub async fn run_all<M: Memory>(store: &M) {
         capture_reads_back(store).await;
         preserves_all_fields(store).await;
@@ -9150,6 +9433,7 @@ pub mod contract {
         every_kind_holds_facts(store).await;
 
         a_claim_carries_when_it_was_taken_in(store).await;
+        folding_a_duplicate_makes_the_split_answer_whole(store).await;
         a_claims_lineage_is_walkable_from_its_source(store).await;
         a_folded_value_says_who_backs_it(store).await;
         a_summed_key_has_no_backing_to_report(store).await;

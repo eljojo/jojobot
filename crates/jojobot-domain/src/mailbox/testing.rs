@@ -468,6 +468,7 @@ fn stand_in(owner: &EntityId) -> Result<crate::memory::Entity, MailboxError> {
         crm: None,
         parent: None,
         boot: Default::default(),
+        merged_into: None,
     })
 }
 

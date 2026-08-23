@@ -31,9 +31,9 @@ use async_trait::async_trait;
 use jiff::civil::Date;
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
-    FactPatch, FactStatus, FieldWrite, Guarded, KeyWrite, Memory, MemoryError, NewEntity, NewFact,
-    Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch, folded_fields, guard,
-    guard_fit,
+    FactPatch, FactStatus, FieldWrite, Guarded, KeyWrite, Memory, MemoryError, Merge, NewEntity,
+    NewFact, Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch, fold_account,
+    folded_fields, guard, guard_fit,
     kinds::{self, NotAKind},
     normalize_content, normalize_details, normalize_prose, referenced_by, retraction_of,
     screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
@@ -132,11 +132,12 @@ impl DoltMemory {
     /// screen over half the index is a screen that reports a free name as free
     /// when it is not.
     async fn index(tx: &mut Transaction<'_, MySql>) -> Result<Vec<Entity>, MemoryError> {
-        let rows =
-            sqlx::query("SELECT id, kind, name, source, crm, parent, boot FROM entity ORDER BY id")
-                .fetch_all(&mut **tx)
-                .await
-                .map_err(store)?;
+        let rows = sqlx::query(
+            "SELECT id, kind, name, source, crm, parent, boot, merged_into FROM entity ORDER BY id",
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
         let aliases =
             sqlx::query("SELECT entity, alias FROM entity_alias ORDER BY entity, ordinal")
                 .fetch_all(&mut **tx)
@@ -588,6 +589,10 @@ fn entity_from(row: &sqlx::mysql::MySqlRow, aliases: Vec<String>) -> Result<Enti
         boot: jojobot_domain::memory::Boot::from_token(
             &row.try_get::<String, _>("boot").map_err(store)?,
         ),
+        merged_into: row
+            .try_get::<Option<String>, _>("merged_into")
+            .map_err(store)?
+            .map(EntityId),
     })
 }
 
@@ -709,6 +714,7 @@ impl Memory for DoltMemory {
             crm: new.crm.map(|c| c.trim().to_string()),
             parent: new.parent,
             boot: new.boot,
+            merged_into: None,
         };
         // The entity this one sits under must already exist, and must not be
         // this one. Screened after the record is assembled because a
@@ -1079,6 +1085,147 @@ impl Memory for DoltMemory {
         let fields = Self::fields_of(&mut tx, &fact.home, &fact.id).await?;
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(Fact { fields, ..fact }))
+    }
+
+    async fn merge(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: Date,
+    ) -> Result<Merge, MemoryError> {
+        if folded == survivor {
+            return Err(MemoryError::NothingToFold {
+                attempted: folded.to_string(),
+            });
+        }
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let index = Self::index(&mut tx).await?;
+        // **Everything is decided before anything moves.** A fold rewrites rows
+        // across every table that holds a handle, so a refusal discovered
+        // half-way through is the one outcome this must not produce.
+        for side in [folded, survivor] {
+            let Some(held) = index.iter().find(|e| &e.id == side) else {
+                return Err(MemoryError::UnknownEntity {
+                    attempted: side.to_string(),
+                    nearest: guard::screen(side, &[], &index),
+                });
+            };
+            if let Some(into) = &held.merged_into {
+                return Err(MemoryError::AlreadyFolded {
+                    attempted: side.to_string(),
+                    into: into.to_string(),
+                });
+            }
+        }
+        let account = fold_account(folded, survivor, reason, date)?;
+        let standing = standing_of(&account);
+
+        // **Every column that holds this handle, in one transaction.** A fold
+        // that moved the claims and not the writes under them would leave a
+        // thing whose fields disagree with its records.
+        // 🚨 **A row is renumbered as it moves, never bulk-updated.** A fact id
+        // is local to the doc that holds it, so both sides own an `f1`: one
+        // `UPDATE ... SET entity = ?` collides on the primary key the moment
+        // the two have the same number of rows. **The in-memory double cannot
+        // see this** — its rows are a `Vec` with no key — so the real store is
+        // what says the addresses have to be reassigned one at a time.
+        //
+        // ⚠️ **Moving a row therefore CHANGES ITS ADDRESS**, and everything
+        // pointing at that address moves with it in the same transaction.
+        let moving: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM fact WHERE entity = ? ORDER BY CAST(SUBSTRING(id, 2) AS UNSIGNED)",
+        )
+        .bind(folded.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        let rehomed = moving.len();
+        for was in moving {
+            let now = Self::mint(&mut tx, survivor).await?;
+            for statement in [
+                "UPDATE fact SET entity = ?, id = ? WHERE entity = ? AND id = ?",
+                "UPDATE fact SET derived_from = ?, derived_from_id = ? \
+                 WHERE derived_from = ? AND derived_from_id = ?",
+                "UPDATE field_write SET entity = ?, fact_id = ? WHERE entity = ? AND fact_id = ?",
+                "UPDATE fact_event_metadata SET fact_home = ?, fact_id = ? \
+                 WHERE fact_home = ? AND fact_id = ?",
+                "UPDATE fact_event_ref SET fact_home = ?, fact_id = ? \
+                 WHERE fact_home = ? AND fact_id = ?",
+            ] {
+                sqlx::query(statement)
+                    .bind(survivor.as_str())
+                    .bind(now.as_str())
+                    .bind(folded.as_str())
+                    .bind(&was)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(store)?;
+            }
+        }
+        // What names the handle rather than a row inside it moves wholesale.
+        for statement in [
+            "UPDATE fact SET edge_object = ? WHERE edge_object = ?",
+            "UPDATE fact_event_ref SET entity = ? WHERE entity = ?",
+            "UPDATE entity SET parent = ? WHERE parent = ?",
+        ] {
+            sqlx::query(statement)
+                .bind(survivor.as_str())
+                .bind(folded.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
+        }
+
+        let home = survivor.clone();
+        let record = Fact {
+            id: Self::mint(&mut tx, &home).await?,
+            home,
+            subject: account.subject,
+            content: account.content,
+            details: account.details,
+            provenance: account.provenance,
+            standing,
+            status: account.status,
+            date: account.date,
+            edge: account.edge,
+            fields: account.fields,
+            refs: account.refs,
+            derived_from: account.derived_from,
+            inserted_at: Some(jiff::Timestamp::now()),
+            stale_after: None,
+        };
+        Self::write_fact(&mut tx, &record).await?;
+        Self::append_writes(&mut tx, &record.home, &record.id, written_keys(&record)).await?;
+
+        // **The folded row stays and starts forwarding.** Written last, so a
+        // failure anywhere above rolls back a row that still says it is a thing
+        // rather than one pointing at a fold that did not happen.
+        sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
+            .bind(survivor.as_str())
+            .bind(folded.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+
+        // **Read back rather than reconstructed.** The fold may have moved the
+        // survivor's own row — a folded parent is re-pointed above — so the
+        // answer is what the store now holds and not what this call assembled.
+        let survived = Self::index(&mut tx)
+            .await?
+            .into_iter()
+            .find(|e| &e.id == survivor)
+            .ok_or_else(|| MemoryError::UnknownEntity {
+                attempted: survivor.to_string(),
+                nearest: Vec::new(),
+            })?;
+        tx.commit().await.map_err(store)?;
+        Ok(Merge {
+            survivor: survived,
+            folded: folded.clone(),
+            record,
+            rehomed,
+        })
     }
 
     async fn retract(
@@ -1590,8 +1737,8 @@ async fn write_entity(
         None => mint_badge(tx, draw).await?,
     };
     sqlx::query(
-        "REPLACE INTO entity (id, kind, name, source, crm, parent, boot, prose, badge)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "REPLACE INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, merged_into)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(entity.id.as_str())
     .bind(entity.kind.as_token())
@@ -1602,6 +1749,7 @@ async fn write_entity(
     .bind(entity.boot.as_token())
     .bind(prose.unwrap_or_default())
     .bind(&badge)
+    .bind(entity.merged_into.as_ref().map(EntityId::as_str))
     .execute(&mut **tx)
     .await
     .map_err(store)?;

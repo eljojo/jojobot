@@ -330,6 +330,17 @@ impl Boot {
 pub struct Entity {
     /// The handle — identity, never position. Immutable in this milestone.
     pub id: EntityId,
+    /// **Set when this thing was folded into another one, and never afterwards
+    /// unset.**
+    ///
+    /// The row stays because nothing here is deleted, and it keeps resolving
+    /// because a handle somebody wrote down must not stop answering. What it
+    /// stops being is a THING: a read that lands here is sent on, so a fold
+    /// cannot leave a husk that answers half a question and calls it whole.
+    ///
+    /// `None` is the ordinary case and means this thing is its own.
+    #[serde(default)]
+    pub merged_into: Option<EntityId>,
     /// The kind, always the one its handle carries.
     pub kind: EntityKind,
     /// Display name. Free text for humans; renamed freely, nothing moves.
@@ -1243,6 +1254,13 @@ fn breaks_the_row(value: &str) -> bool {
 /// is a row, and rows are reached by address.
 pub const RETRACTS: &str = "retracts";
 
+/// The key that marks a record as the account of a fold, holding the HANDLE
+/// that was folded away.
+///
+/// A handle rather than an address, unlike [`RETRACTS`]: a fold happens to a
+/// thing, where a retraction happens to a row.
+pub const FOLDS: &str = "folds";
+
 /// **How long a field key may be**, in characters.
 ///
 /// **The domain says the number and the store holds what the domain admits.**
@@ -1273,7 +1291,11 @@ pub const MAX_KEY_CHARS: usize = 128;
 /// did not write, and what a type is gets derived from what accumulates here,
 /// so a silently moved key is a corrupted sample.
 pub fn reserved_key(key: &str) -> bool {
-    key.trim() == RETRACTS
+    // **[`FOLDS`] is reserved for the same reason**: the account of a fold is
+    // the only other record that says something about a row other than itself,
+    // and a caller able to write the key could claim somebody else's thing was
+    // folded away.
+    matches!(key.trim(), RETRACTS | FOLDS)
 }
 
 /// **Where a machine-read claim was read**, and it is required on one.
@@ -2391,6 +2413,34 @@ pub fn retraction_of(
     })
 }
 
+/// **The dated account a fold writes on the survivor.**
+///
+/// Built here rather than in each store, exactly as [`retraction_of`] is, so
+/// the two stores cannot come to disagree about what the record of a fold looks
+/// like.
+pub fn fold_account(
+    folded: &EntityId,
+    survivor: &EntityId,
+    reason: Option<&str>,
+    date: Date,
+) -> Result<NewFact, MemoryError> {
+    let reason = reason.map(str::trim).filter(|r| !r.is_empty());
+    if let Some(reason) = reason {
+        validate_content(reason)?;
+    }
+    let content = match reason {
+        Some(reason) => normalize_content(reason),
+        None => format!("folded {folded} into this thing; no reason was given"),
+    };
+    Ok(NewFact {
+        // Written by jojobot and never by a caller — see [`reserved_key`].
+        fields: [(FOLDS.to_string(), folded.to_string())]
+            .into_iter()
+            .collect(),
+        ..NewFact::about(survivor.clone(), content, date)
+    })
+}
+
 impl Fact {
     /// This fact's global address — returned with every read precisely so the
     /// caller can turn around and edit it.
@@ -2450,6 +2500,27 @@ pub struct Retraction {
     pub retracted: Fact,
     /// The retraction itself — a dated event naming what it takes back.
     pub record: Fact,
+}
+
+/// **What a merge did** — the survivor as it now stands, the handle that was
+/// folded into it, and the dated account of the act.
+///
+/// The account is a claim like any other, written on the survivor: a merge is
+/// the one act here that genuinely destroys structure, so what happened has to
+/// be readable from the thing it happened to, long after anybody remembers
+/// doing it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Merge {
+    /// The thing that survived, as it stands after the fold.
+    pub survivor: Entity,
+    /// **The handle that was folded away.** Its row is still there, marked, and
+    /// still resolves — see [`Entity::merged_into`].
+    pub folded: EntityId,
+    /// The dated account of the act, written on the survivor.
+    pub record: Fact,
+    /// How many claims moved home. **Zero is an ordinary answer** — folding an
+    /// empty duplicate is exactly the repair this verb exists for.
+    pub rehomed: usize,
 }
 
 /// The result of a write that names an entity: it either happened, or the write
@@ -2642,6 +2713,30 @@ pub enum MemoryError {
         attempted: String,
         /// What the write guard found nearby.
         nearest: Vec<guard::EntityMatch>,
+    },
+    /// **Nothing was named to fold, because the two handles are one handle.**
+    ///
+    /// A fold has to have two sides. Folding a thing into itself would write an
+    /// account of an act that did not happen and mark a row as forwarding to
+    /// itself, which is a read that never lands.
+    #[error("'{attempted}' cannot be folded into itself: name the other handle")]
+    NothingToFold {
+        /// The handle that was given as both sides.
+        attempted: String,
+    },
+    /// **The row named was already folded into something else.**
+    ///
+    /// It is a forwarding row rather than a thing, so it is neither a side to
+    /// fold nor a survivor to fold into. **Chains are refused rather than
+    /// followed**: a forwarding row that points at another forwarding row stops
+    /// answering in one hop, and every read that resolves a handle would have
+    /// to walk an unbounded path to find out where it lands.
+    #[error("'{attempted}' was already folded into '{into}': name '{into}' instead")]
+    AlreadyFolded {
+        /// The forwarding handle that was named.
+        attempted: String,
+        /// Where it forwards to — the handle to use instead.
+        into: String,
     },
     /// **The claim this one would rest on was taken back.**
     ///
@@ -3031,6 +3126,44 @@ pub trait Memory: Send + Sync {
         reason: Option<&str>,
         date: Date,
     ) -> Result<Retraction, MemoryError>;
+
+    /// **Fold one thing into another** — the repair for a duplicate that got
+    /// past the write guard.
+    ///
+    /// A duplicate splits one thing across two handles, and every walk across
+    /// the split returns half the file and reports it as whole. **A split thing
+    /// is invisible from every entry in it**, which is why the guard alone is
+    /// not enough: with a repair the guard only has to be good, and without one
+    /// it has to be perfect.
+    ///
+    /// **The claims move home and the folded row stays**, marked with
+    /// [`Entity::merged_into`], so a handle somebody wrote down goes on
+    /// answering. Taking the row away would be a delete, which is closed here;
+    /// leaving it unmarked would leave a husk that answers half a question and
+    /// calls it whole — the very fault this repairs.
+    ///
+    /// **The account is written like a retraction's**, on the survivor, and for
+    /// the same reason: this is the one act here that genuinely destroys
+    /// structure, so what happened has to be readable from the thing it
+    /// happened to long after anybody remembers doing it.
+    ///
+    /// ⛔️ **It does not ask whether the two really were duplicates.** That is
+    /// the operator's judgement and not the store's, so folding two unrelated
+    /// things is allowed and is recorded exactly as legibly — being able to
+    /// read what happened is the whole safeguard.
+    ///
+    /// Nothing may be folded into itself ([`MemoryError::NothingToFold`]), a
+    /// handle naming nothing is [`MemoryError::UnknownEntity`], and a row that
+    /// was already folded is not a survivor anything else may be folded into
+    /// ([`MemoryError::AlreadyFolded`]) — chains are how a forwarding row stops
+    /// answering in one hop.
+    async fn merge(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: Date,
+    ) -> Result<Merge, MemoryError>;
 
     /// Replace an entity's **prose** — the human half of its doc, everything
     /// that is neither jojobot's metadata nor its facts. A bot's charter is
@@ -3739,6 +3872,7 @@ mod tests {
             crm: None,
             parent: None,
             boot: Boot::OnDemand,
+            merged_into: None,
         };
 
         apply_entity_patch(
@@ -3809,6 +3943,7 @@ mod tests {
             crm: None,
             parent: None,
             boot: Boot::OnDemand,
+            merged_into: None,
         };
         assert_eq!(
             entity("Alpha", vec!["Al".into(), "Alph".into()]).labels(),

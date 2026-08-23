@@ -525,6 +525,7 @@ mod tests {
             crm: None,
             parent: None,
             boot: Default::default(),
+            merged_into: None,
         }
     }
 
@@ -863,6 +864,7 @@ mod tests {
                 crm: None,
                 parent: None,
                 boot: Default::default(),
+                merged_into: None,
             };
             let incoming = EntityId((*incoming_handle).into());
             let decision = decide(

@@ -956,6 +956,7 @@ pub fn projected(session: &Session) -> crate::memory::search::DocScan {
             // and no second copy has to be kept in step.
             parent: Some(session.bot.clone()),
             boot: Default::default(),
+            merged_into: None,
         }),
         facts: Vec::new(),
         fields: std::collections::BTreeMap::from([

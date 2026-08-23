@@ -849,6 +849,7 @@ mod tests {
             crm: None,
             parent: None,
             boot: Boot::OnDemand,
+            merged_into: None,
         };
         let row = |id: &str, subject: &str| Fact {
             id: FactId(id.into()),
@@ -929,6 +930,7 @@ mod tests {
             crm: None,
             parent: None,
             boot: Boot::OnDemand,
+            merged_into: None,
         };
         let row = |id: &str, subject: &str| Fact {
             id: FactId(id.into()),

@@ -1634,6 +1634,7 @@ mod tests {
             crm: None,
             parent: None,
             boot: Boot::OnDemand,
+            merged_into: None,
         }
     }
 

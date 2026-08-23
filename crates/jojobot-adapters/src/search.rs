@@ -41,7 +41,7 @@ use std::collections::BTreeMap;
 
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
-    FactStatus, FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction,
+    FactStatus, FieldWrite, Guarded, Memory, MemoryError, Merge, NewEntity, NewFact, Retraction,
     guard::{self, MatchReason},
     kinds,
     search::{
@@ -1938,6 +1938,23 @@ impl Memory for IndexedMemory {
         Ok(taken_back)
     }
 
+    /// **Both sides are reindexed, and the folded one matters most.** Its rows
+    /// moved to the survivor, so an index still holding them would go on
+    /// answering with a handle that is no longer a thing — the split this verb
+    /// exists to close, reopened in the half a reader actually searches.
+    async fn merge(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: Date,
+    ) -> Result<Merge, MemoryError> {
+        let done = self.inner.merge(folded, survivor, reason, date).await?;
+        self.refresh(folded).await;
+        self.refresh(survivor).await;
+        Ok(done)
+    }
+
     /// Prose is indexed material, so a charter written here is findable on the
     /// next call — the same "reindex the doc the store just wrote" step every
     /// other write takes, and for the same reason: without it, the one part of
@@ -2459,6 +2476,7 @@ mod tests {
             crm: None,
             parent: None,
             boot: Boot::OnDemand,
+            merged_into: None,
         }
     }
 
@@ -4732,6 +4750,15 @@ mod tests {
         ) -> Result<Retraction, MemoryError> {
             unimplemented!("this double only scans")
         }
+        async fn merge(
+            &self,
+            _: &EntityId,
+            _: &EntityId,
+            _: Option<&str>,
+            _: Date,
+        ) -> Result<Merge, MemoryError> {
+            unimplemented!("this double only scans")
+        }
     }
 
     /// **A store that answers the three reads itself, and nothing else.**
@@ -4838,6 +4865,15 @@ mod tests {
             _: Option<&str>,
             _: Date,
         ) -> Result<Retraction, MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
+        async fn merge(
+            &self,
+            _: &EntityId,
+            _: &EntityId,
+            _: Option<&str>,
+            _: Date,
+        ) -> Result<Merge, MemoryError> {
             unimplemented!("this double answers the three reads a store owns")
         }
         async fn set_prose(&self, _: &EntityId, _: &str) -> Result<String, MemoryError> {

@@ -331,6 +331,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0032_entity_badge.sql"),
         leaves: Leaves::Column("entity", "badge"),
     },
+    Migration {
+        version: "0033_entity_merged_into",
+        sql: include_str!("../../migrations/0033_entity_merged_into.sql"),
+        leaves: Leaves::Column("entity", "merged_into"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -730,6 +735,7 @@ mod tests {
         "0030_session_stated_day",
         "0031_journal_entry_day",
         "0032_entity_badge",
+        "0033_entity_merged_into",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

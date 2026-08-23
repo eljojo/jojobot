@@ -38,6 +38,7 @@ fn view(handle: &str, name: &str, keys: &[(&str, &str)]) -> Provision {
             crm: None,
             parent: None,
             boot: Default::default(),
+            merged_into: None,
         },
         keys.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))

@@ -1,0 +1,20 @@
+-- Where a folded thing sends its readers.
+--
+-- A duplicate that gets past the write guard splits one thing across two
+-- handles, and every walk across the split returns half the file and reports it
+-- as whole. Folding one into the other is the repair, and this column is what
+-- the folded row keeps afterwards.
+--
+-- **The row stays.** Nothing here is deleted, for the same reason a retracted
+-- fact keeps its row: a record somebody can no longer find is a record nobody
+-- can account for. What the row stops being is a THING — a read that lands on
+-- it is sent on to the survivor, so the fold cannot leave behind a husk that
+-- answers half a question and calls it whole.
+--
+-- NULL is the ordinary case and says this thing is its own.
+--
+-- Deliberately NOT a foreign key, exactly as `parent` is not: the store must be
+-- able to hold a row whose survivor was removed outside jojobot and report it,
+-- and a constraint that refused the row would turn a repairable record into an
+-- unreadable one.
+ALTER TABLE entity ADD COLUMN merged_into VARCHAR(191) NULL;

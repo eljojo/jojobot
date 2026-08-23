@@ -39,7 +39,8 @@ use jiff::civil::Date;
 use jojobot_domain::memory::owned::{Provisions, extended, guard_extension};
 use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, FieldBacking,
-    FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction, guard, search, types,
+    FieldWrite, Guarded, Memory, MemoryError, Merge, NewEntity, NewFact, Retraction, guard, search,
+    types,
 };
 
 /// A store, plus what this build supplies over it.
@@ -296,6 +297,15 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         date: Date,
     ) -> Result<Retraction, MemoryError> {
         self.inner.retract(address, reason, date).await
+    }
+    async fn merge(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: Date,
+    ) -> Result<Merge, MemoryError> {
+        self.inner.merge(folded, survivor, reason, date).await
     }
     async fn declare_type(
         &self,
@@ -579,6 +589,7 @@ mod tests {
                 crm: None,
                 parent: None,
                 boot: Default::default(),
+                merged_into: None,
             },
             BTreeMap::from([("selects".to_string(), "rhythm".to_string())]),
         )

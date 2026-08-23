@@ -1038,6 +1038,7 @@ mod tests {
                 crm: None,
                 parent: None,
                 boot: Boot::OnDemand,
+                merged_into: None,
             },
             doc_id: "doc-alpha".into(),
             edges: Vec::new(),

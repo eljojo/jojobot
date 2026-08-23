@@ -387,6 +387,15 @@ impl Memory for DownMemory {
     ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
         self.1.retract(address, reason, date).await
     }
+    async fn merge(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+    ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
+        self.1.merge(folded, survivor, reason, date).await
+    }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
         self.1.set_prose(entity, prose).await
     }

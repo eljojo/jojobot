@@ -86,6 +86,7 @@ mod tests {
             crm: None,
             parent: parent.map(|p| EntityId(p.to_string())),
             boot: Boot::default(),
+            merged_into: None,
         }
     }
 
