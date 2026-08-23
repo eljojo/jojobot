@@ -135,6 +135,54 @@ pub struct CaptureArgs {
 }
 
 /// **The keys a check-in computes**, which a caller therefore does not send.
+/// **Every value this capture declared that the record does not carry.**
+///
+/// Only what the caller SENT is compared: a value it left off was defaulted,
+/// not overruled, and the receipt already states each defaulted value on its
+/// own key. The check-in path is the one that overrules today — it writes the
+/// derivation its computed schedule makes the record into — and this is what
+/// stops that being something a caller has to notice by comparing.
+struct Declared {
+    subject: String,
+    provenance: Option<String>,
+    standing: Option<String>,
+    date: Option<String>,
+}
+
+impl Declared {
+    /// Taken before the record is assembled, because assembling it consumes
+    /// what the caller sent.
+    fn of(args: &CaptureArgs) -> Self {
+        Self {
+            subject: args.subject.clone(),
+            provenance: args.provenance.clone(),
+            standing: args.standing.clone(),
+            date: args.date.clone(),
+        }
+    }
+
+    fn not_stored(&self, fact: &Fact) -> Vec<crate::answer::Difference> {
+        use crate::answer::Difference;
+        [
+            Difference::between("subject", Some(&self.subject), fact.subject.as_str()),
+            Difference::between(
+                "provenance",
+                self.provenance.as_deref(),
+                fact.provenance.as_token(),
+            ),
+            Difference::between(
+                "standing",
+                self.standing.as_deref(),
+                fact.standing.as_token(),
+            ),
+            Difference::between("date", self.date.as_deref(), &fact.date.to_string()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+}
+
 /// Sending one alongside `check_in` is a contradiction rather than an override,
 /// so it is refused: the record would say two things about one schedule and
 /// nothing could say which was meant.
@@ -148,6 +196,53 @@ impl Jojobot {
     /// **The keys a check-in on a rhythm writes**, or the refusal that says why
     /// it cannot.
     ///
+    /// **What a caller's own capture did to the thing it named.**
+    ///
+    /// `capture` appends. It edits no record and it removes none, which is the
+    /// property an agent has been observed not to believe — one declined to
+    /// record a second account of an event because it expected the first to be
+    /// overwritten, and the account was lost with nothing on the surface
+    /// saying otherwise.
+    ///
+    /// **The keys are the half that keeps the line honest.** A record carrying
+    /// fields folds into what the thing holds, so what those keys answer has
+    /// moved even though no record was touched. Naming them is what stops
+    /// *nothing was changed* being a promise this verb cannot keep.
+    ///
+    /// The count is read for this line and left out when the store cannot
+    /// answer, because a number nobody can stand behind is worse than the
+    /// sentence without one.
+    async fn what_a_capture_left_standing(&self, fact: &Fact) -> String {
+        let standing = self
+            .memory
+            .recall(&fact.subject)
+            .await
+            .ok()
+            .map(|facts| {
+                facts
+                    .iter()
+                    .filter(|f| f.status == FactStatus::Active)
+                    .count()
+            })
+            .map_or_else(String::new, |n| {
+                format!(" {n} accounts now stand on {}.", fact.subject.as_str())
+            });
+        let keys = if fact.fields.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " This record carries {}, so what those keys answer for {} has moved to it; the \
+                 records that set them are untouched and still say what they said.",
+                fact.fields.keys().cloned().collect::<Vec<_>>().join(", "),
+                fact.subject.as_str(),
+            )
+        };
+        format!(
+            "Recorded as an additional claim.{standing} No record was edited and none was \
+             removed.{keys}"
+        )
+    }
+
     /// The arithmetic itself belongs to the domain; what is here is the reach
     /// into the store the domain cannot make. It reads the rhythm's fields —
     /// every write on it folded to one value per key — because the schedule is
@@ -307,6 +402,7 @@ impl Jojobot {
         if let Err(refused) = self.identified(args.sid.as_deref()) {
             return Ok(refused);
         }
+        let declared = Declared::of(&args);
         let subject = EntityId::person(&args.subject);
         let provenance = parse_provenance(args.provenance.as_deref())?;
         let date = parse_date(args.date.as_deref(), &self.zone_for(args.sid.as_deref()))?;
@@ -384,10 +480,20 @@ impl Jojobot {
                 // reading still stands today — and the read that follows this
                 // write answers as of today, so a receipt answering as of the
                 // claim's day contradicts it inside one session.
-                json_result(&fact_receipt_json(
+                let mut body = fact_receipt_json(
                     &fact,
                     parse_date(None, &self.zone_for(args.sid.as_deref()))?,
-                ))
+                );
+                if self.receipts.delta {
+                    crate::answer::note_delta(&mut body, declared.not_stored(&fact));
+                }
+                if self.receipts.postcondition {
+                    crate::answer::note_postcondition(
+                        &mut body,
+                        self.what_a_capture_left_standing(&fact).await,
+                    );
+                }
+                json_result(&body)
             }
             Guarded::Blocked {
                 attempted,
@@ -488,6 +594,223 @@ mod tests {
         assert_eq!(
             said["provenance"], "testimony",
             "a claim with nothing computed in it was demoted too: {said}",
+        );
+    }
+
+    /// **A value the store did not keep as it was sent is named on the
+    /// receipt.**
+    ///
+    /// A caller sends `provenance` and gets a record carrying a different one:
+    /// the check-in path writes its own, because the record it builds mixes a
+    /// caller's sentence with a schedule jojobot computed. The substitution is
+    /// correct and the silence is not — a caller that cannot see its own value
+    /// replaced has to price every other write at its worst case.
+    ///
+    /// **Paired with a capture where nothing differs**, which carries no delta
+    /// at all: a line that prints on every write is noise a reader learns to
+    /// skip, and the pair is what keeps this one meaningful.
+    #[tokio::test]
+    async fn a_stored_value_that_differs_from_the_sent_one_is_named() {
+        let jojobot = handler();
+        a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+
+        let substituted = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                provenance: Some("testimony".into()),
+                date: Some("2026-08-10".into()),
+                ..capture_args("rhythm:descale", "did it this morning")
+            },
+        )
+        .await;
+
+        let delta = &substituted["delta"];
+        assert!(
+            delta.is_array(),
+            "the receipt of a write that replaced a caller's value says so: {substituted}",
+        );
+        let replaced = delta
+            .as_array()
+            .expect("checked above")
+            .iter()
+            .find(|d| d["field"] == "provenance")
+            .unwrap_or_else(|| panic!("the replaced field is named: {substituted}"));
+        assert_eq!(replaced["sent"], "testimony", "{substituted}");
+        assert_eq!(replaced["stored"], "inference", "{substituted}");
+
+        let kept = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                ..capture_args("rhythm:descale", "he says it is due fortnightly now")
+            },
+        )
+        .await;
+        assert_eq!(
+            kept["delta"],
+            serde_json::Value::Null,
+            "a write that kept every value it was sent carries no delta: {kept}",
+        );
+    }
+
+    /// **The delta ships behind its own switch.**
+    ///
+    /// Neither computed line's value is proven, and a run with both of them on
+    /// cannot say which one changed how an agent writes. So each is turned off
+    /// on its own, and this is the shape a measuring run deploys.
+    ///
+    /// **Both halves in one case**: the same call against the default handler
+    /// carries the line, so this cannot pass against a build that never
+    /// computes one.
+    #[tokio::test]
+    async fn the_delta_is_off_when_the_switch_is_off() {
+        let quiet = handler_receipting(crate::answer::Receipts {
+            delta: false,
+            ..Default::default()
+        });
+        a_weekly_rhythm(&quiet, "descale", "2026-08-01", "check_in_date").await;
+        let silent = capture_ok(&quiet, a_late_check_in()).await;
+        assert_eq!(
+            silent["delta"],
+            serde_json::Value::Null,
+            "the switch is off and the line is still here: {silent}",
+        );
+        assert_eq!(
+            silent["delta_note"],
+            serde_json::Value::Null,
+            "…and its rendered half went with it: {silent}",
+        );
+
+        let loud = handler();
+        a_weekly_rhythm(&loud, "descale", "2026-08-01", "check_in_date").await;
+        let named = capture_ok(&loud, a_late_check_in()).await;
+        assert!(
+            named["delta"].is_array(),
+            "the same call with the switch on has to carry the line, or the case above \
+             passes against a build that never computes one: {named}",
+        );
+    }
+
+    /// A check-in that sends a provenance the check-in path overrules — the
+    /// one call on this surface known to store a value other than the one it
+    /// was sent.
+    fn a_late_check_in() -> CaptureArgs {
+        CaptureArgs {
+            check_in: Some("ran".into()),
+            provenance: Some("testimony".into()),
+            date: Some("2026-08-10".into()),
+            ..capture_args("rhythm:descale", "did it this morning")
+        }
+    }
+
+    /// **A write says what now stands and what it left alone.**
+    ///
+    /// The measured failure this answers: an agent declined to record a second
+    /// account of an event because it believed the write would overwrite the
+    /// first. It would not have. Nothing on the surface said so, and the
+    /// information was lost permanently and silently.
+    ///
+    /// ⚠️ **The line is computed, never a constant.** A capture carrying fields
+    /// moves what those keys answer for the thing, so the line names them; a
+    /// capture carrying none moves nothing and names none. **That difference is
+    /// the case**: a line that reads *nothing was changed* unconditionally is a
+    /// false promise in the one place a caller has been taught to trust, which
+    /// is worse than no line at all.
+    #[tokio::test]
+    async fn a_capture_says_what_now_stands_and_what_it_left_alone() {
+        let jojobot = handler();
+
+        let first = capture_ok(
+            &jojobot,
+            capture_args("person:alpha", "said the kiln was lit"),
+        )
+        .await;
+        let opening = postcondition_of(&first);
+        assert!(
+            opening.contains('1'),
+            "the line has to say how much now stands on this thing: {first}",
+        );
+
+        // The second account of the same thing, contradicting the first. This
+        // is the write an agent talked itself out of.
+        let second = capture_ok(
+            &jojobot,
+            capture_args("person:alpha", "said the kiln had never been lit"),
+        )
+        .await;
+        let both = postcondition_of(&second);
+        assert!(
+            both.contains('2'),
+            "two accounts now stand and the line has to say so: {second}",
+        );
+        assert!(
+            !both.contains("mood") && !both.contains("kiln"),
+            "a write that carried no keys names none: {second}",
+        );
+
+        // The same verb, this time displacing what a key answers.
+        let with_keys = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("mood".to_string(), "delighted".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("person:alpha", "was pleased about it")
+            },
+        )
+        .await;
+        let moved = postcondition_of(&with_keys);
+        assert!(
+            moved.contains("mood"),
+            "this write moved what 'mood' answers for the thing, and the line that says nothing \
+             changed is a false promise unless it names it: {with_keys}",
+        );
+    }
+
+    /// The postcondition line of a receipt, which every write carries.
+    fn postcondition_of(body: &serde_json::Value) -> String {
+        body["postcondition"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a write states what now stands: {body}"))
+            .to_string()
+    }
+
+    /// **The postcondition ships behind its own switch, independent of the
+    /// delta's.**
+    ///
+    /// The measuring run needs one line on and the other off, so the case that
+    /// matters is the mixed one: the postcondition off while the delta is still
+    /// computed. A single switch behind both would pass a case that turned them
+    /// off together and fail the run this is for.
+    #[tokio::test]
+    async fn the_postcondition_is_off_on_its_own_switch() {
+        let quiet = handler_receipting(crate::answer::Receipts {
+            postcondition: false,
+            delta: true,
+        });
+        a_weekly_rhythm(&quiet, "descale", "2026-08-01", "check_in_date").await;
+        let mixed = capture_ok(&quiet, a_late_check_in()).await;
+        assert_eq!(
+            mixed["postcondition"],
+            serde_json::Value::Null,
+            "the switch is off and the line is still here: {mixed}",
+        );
+        assert!(
+            mixed["delta"].is_array(),
+            "the other switch is on and its line went too, so the two are not independent: \
+             {mixed}",
+        );
+
+        let loud = handler();
+        a_weekly_rhythm(&loud, "descale", "2026-08-01", "check_in_date").await;
+        let both = capture_ok(&loud, a_late_check_in()).await;
+        assert!(
+            both["postcondition"].is_string(),
+            "the same call with the switch on has to carry the line, or the case above passes \
+             against a build that never computes one: {both}",
         );
     }
 

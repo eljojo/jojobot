@@ -378,6 +378,7 @@ async fn spawn_jojobot_at(
         sessions: board.sessions.clone() as Arc<dyn Sessions>,
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: Some(Arc::new(ui)),
+        receipts: jojobot_mcp::Receipts::default(),
     };
 
     let ct = CancellationToken::new();

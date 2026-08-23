@@ -116,3 +116,128 @@ impl Jojobot {
         }
     }
 }
+
+// ── what a write says about itself ──────────────────────────────────────────
+
+/// **Which of the two computed lines a receipt carries.**
+///
+/// They ship behind their own switches because they answer different questions
+/// and neither's value is proven: a run with both on cannot say which one moved
+/// an agent. Independent, so one can be off while the other is on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Receipts {
+    /// Whether a write states what now stands and what it left alone.
+    pub postcondition: bool,
+    /// Whether a write names the values the store did not keep as they were
+    /// sent.
+    pub delta: bool,
+}
+
+impl Default for Receipts {
+    /// **Both on.** A switch exists so a measurement can hold one still, not so
+    /// the behaviour is opt-in: a line nobody sees teaches nobody.
+    fn default() -> Self {
+        Self {
+            postcondition: true,
+            delta: true,
+        }
+    }
+}
+
+impl Receipts {
+    /// Neither line — the shape a run uses to measure the other one alone.
+    pub const NEITHER: Self = Self {
+        postcondition: false,
+        delta: false,
+    };
+}
+
+/// **One field the store did not keep as the caller sent it.**
+///
+/// `sent` is what the caller wrote and `stored` is what the record carries.
+/// **A value the caller never sent is not a difference** — it was defaulted,
+/// and the receipt already states every defaulted value on its own key. The
+/// distinction is the whole point: a default is jojobot filling a gap, and a
+/// difference is jojobot overruling a choice.
+pub(crate) struct Difference {
+    pub(crate) field: &'static str,
+    pub(crate) sent: String,
+    pub(crate) stored: String,
+}
+
+impl Difference {
+    /// The difference between what a caller sent for `field` and what was
+    /// stored, or `None` when the caller sent nothing or the two agree.
+    ///
+    /// **Deterministic, and a comparison over declared data**: two tokens are
+    /// equal or they are not, and nothing here judges whether the substitution
+    /// was right.
+    pub(crate) fn between(field: &'static str, sent: Option<&str>, stored: &str) -> Option<Self> {
+        let sent = sent?.trim();
+        (!sent.eq_ignore_ascii_case(stored)).then(|| Self {
+            field,
+            sent: sent.to_string(),
+            stored: stored.to_string(),
+        })
+    }
+}
+
+/// **Name the values the store did not keep as they were sent.**
+///
+/// **Silent when nothing differs**, and that is not a saving: a line printed on
+/// every write is one a reader learns to skip, and it would be gone from view
+/// on the write that needed it. The key is absent rather than empty for the
+/// same reason a reader must never infer withheld from missing — here there is
+/// nothing withheld to tell them about.
+pub(crate) fn note_delta(body: &mut serde_json::Value, differences: Vec<Difference>) {
+    if differences.is_empty() {
+        return;
+    }
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    fields.insert(
+        "delta".into(),
+        differences
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "field": d.field,
+                    "sent": d.sent,
+                    "stored": d.stored,
+                })
+            })
+            .collect::<Vec<_>>()
+            .into(),
+    );
+    fields.insert(
+        "delta_note".into(),
+        format!(
+            "stored differs from sent. {}",
+            differences
+                .iter()
+                .map(|d| format!("{}: stored {}, you sent {}", d.field, d.stored, d.sent))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+        .into(),
+    );
+}
+
+/// **State what now stands, and what this write left alone.**
+///
+/// A fact about the CALLER'S OWN EFFECT on the store, derivable from the verb's
+/// contract — never how the server went about it. *"Two accounts now stand on
+/// this thing"* is where a caller stands; *"we read it back to check"* is the
+/// server's business and does not appear here (rule 158).
+///
+/// **The line is computed per write and never a constant.** A write that
+/// displaced something says so: *"nothing was removed"* on a write that removed
+/// something is a false promise in the one place a caller has been taught to
+/// trust, which is worse than saying nothing at all.
+pub(crate) fn note_postcondition(body: &mut serde_json::Value, line: String) {
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    fields.insert("postcondition".into(), line.into());
+}

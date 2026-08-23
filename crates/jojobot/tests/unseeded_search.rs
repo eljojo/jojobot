@@ -42,6 +42,7 @@ async fn a_search_on_an_unloaded_process_is_an_answer_rather_than_a_broken_store
         sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
+        receipts: jojobot_mcp::Receipts::default(),
     };
     // Records written and indexed while the set was loaded, which is where the
     // index gets documents in the first place.

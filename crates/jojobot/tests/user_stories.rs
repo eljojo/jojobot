@@ -55,6 +55,8 @@ mod moving;
 mod party;
 #[path = "user_stories/pets.rs"]
 mod pets;
+#[path = "user_stories/receipts.rs"]
+mod receipts;
 #[path = "user_stories/rhythms.rs"]
 mod rhythms;
 /// One charter, and a session never learns which half the build supplied.

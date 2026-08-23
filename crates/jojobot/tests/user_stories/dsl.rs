@@ -319,6 +319,9 @@ impl Story {
             sessions: runs,
             registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
             ui: Some(Arc::new(ui)),
+            // The shape a story runs against is the one a fresh instance
+            // serves: an operator who set nothing gets both lines.
+            receipts: jojobot_mcp::Receipts::default(),
         };
         let ct = CancellationToken::new();
         let app = build_app(state, ct.child_token());

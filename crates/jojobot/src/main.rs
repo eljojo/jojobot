@@ -310,6 +310,7 @@ async fn main() -> anyhow::Result<()> {
         sessions,
         registry,
         ui,
+        receipts: config.receipts,
     };
 
     let ct = CancellationToken::new();

@@ -56,6 +56,10 @@ pub struct AppState {
     /// the UI is not configured, and then it is not mounted at all — there is no
     /// state in which its pages are reachable without a login.
     pub ui: Option<Arc<crate::ui::Ui>>,
+    /// **Which computed lines a write's receipt carries.** Held here because
+    /// the handler is built per connection: a decision read once at startup
+    /// has to reach every handler the factory makes after it.
+    pub receipts: jojobot_mcp::Receipts,
 }
 
 /// Build the full HTTP application: the guarded MCP transport plus the public
@@ -81,6 +85,7 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     // server serves (see `main`), which is what stops a restart from orphaning
     // every handle it ever issued.
     let registry = state.registry.clone();
+    let receipts = state.receipts;
     let mcp = StreamableHttpService::new(
         // **One handler per MCP session, and that is what makes the connection
         // binding a connection binding**: the factory runs per connect, so a
@@ -92,7 +97,8 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
                 mailboxes.clone(),
                 sessions.clone(),
                 registry.clone(),
-            ))
+            )
+            .receipting(receipts))
         },
         LocalSessionManager::default().into(),
         server_config,

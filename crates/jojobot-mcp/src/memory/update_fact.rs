@@ -157,6 +157,8 @@ impl Jojobot {
             return Ok(refused);
         }
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
+        let declared = Declared::of(&args);
+        let cleared = args.clear_fields.clone().unwrap_or_default();
         let patch = FactPatch {
             content: args.content,
             details: args.details,
@@ -204,10 +206,20 @@ impl Jojobot {
                     args.sid.as_deref(),
                 )
                 .await;
-                json_result(&fact_receipt_json(
+                let mut body = fact_receipt_json(
                     &fact,
                     parse_date(None, &self.zone_for(args.sid.as_deref()))?,
-                ))
+                );
+                if self.receipts.delta {
+                    crate::answer::note_delta(&mut body, declared.not_stored(&fact));
+                }
+                if self.receipts.postcondition {
+                    crate::answer::note_postcondition(
+                        &mut body,
+                        self.what_an_update_left_standing(&fact, &cleared).await,
+                    );
+                }
+                json_result(&body)
             }
             Guarded::Blocked {
                 attempted,
@@ -221,12 +233,196 @@ impl Jojobot {
     }
 }
 
+/// **Every value this edit declared that the record does not carry**, and the
+/// snapshot it is read from — taken before the patch is assembled, because
+/// assembling it consumes what the caller sent.
+struct Declared {
+    provenance: Option<String>,
+    standing: Option<String>,
+    status: Option<String>,
+    date: Option<String>,
+}
+
+impl Declared {
+    fn of(args: &UpdateFactArgs) -> Self {
+        Self {
+            provenance: args.provenance.clone(),
+            standing: args.standing.clone(),
+            status: args.status.clone(),
+            date: args.date.clone(),
+        }
+    }
+
+    fn not_stored(&self, fact: &Fact) -> Vec<crate::answer::Difference> {
+        use crate::answer::Difference;
+        [
+            Difference::between(
+                "provenance",
+                self.provenance.as_deref(),
+                fact.provenance.as_token(),
+            ),
+            Difference::between(
+                "standing",
+                self.standing.as_deref(),
+                fact.standing.as_token(),
+            ),
+            Difference::between("status", self.status.as_deref(), fact.status.as_token()),
+            Difference::between("date", self.date.as_deref(), &fact.date.to_string()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+}
+
+impl Jojobot {
+    /// **What a caller's own edit did to the thing the record belongs to.**
+    ///
+    /// `update_fact` rewrites one record in place and touches no other. The
+    /// record now states what it was sent and does not keep what it said
+    /// before — the store holds current truth, never a correction trail — so
+    /// this line says which record moved and how much beside it did not.
+    ///
+    /// ⚠️ **A clear removes.** The keys it took off are named, because this is
+    /// the one write on this surface that can take something away, and a line
+    /// claiming otherwise would be false exactly here.
+    ///
+    /// The count is read for this line and left out when the store cannot
+    /// answer, since a number nobody can stand behind is worse than the
+    /// sentence without one.
+    async fn what_an_update_left_standing(&self, fact: &Fact, cleared: &[String]) -> String {
+        let address = fact.address().to_string();
+        let beside = self
+            .memory
+            .recall(&fact.subject)
+            .await
+            .ok()
+            .map(|facts| {
+                facts
+                    .iter()
+                    .filter(|f| f.status == FactStatus::Active && f.address() != fact.address())
+                    .count()
+            })
+            .map_or_else(String::new, |n| {
+                format!(
+                    " The {n} other records on {} are as they were.",
+                    fact.subject.as_str()
+                )
+            });
+        let removed = if cleared.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " It no longer carries {}, so what those keys answer for {} falls back to the \
+                 records that set them.",
+                cleared.join(", "),
+                fact.subject.as_str(),
+            )
+        };
+        format!(
+            "{address} now states what this call sent, in place of what it said before, which is \
+             not kept.{beside}{removed}"
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
     use jojobot_domain::memory::types::{Field, ValueType};
+
+    /// **An edit says what it replaced and what it left alone.**
+    ///
+    /// This is the verb that makes `capture`'s line worth believing. `capture`
+    /// appends and `update_fact` rewrites in place, so a postcondition that
+    /// read *nothing was changed* on both would be a false promise on one of
+    /// them — and a false promise in the one place a caller has been taught to
+    /// trust is worse than no line at all.
+    ///
+    /// **Three shapes in one case, because the line is computed from the
+    /// patch**: a rewrite names the record it replaced and counts what it left
+    /// alone; a clear names the keys it took off; a rewrite that clears nothing
+    /// names none. A constant cannot produce all three.
+    #[tokio::test]
+    async fn an_update_says_what_it_replaced_and_what_it_left_alone() {
+        let jojobot = handler();
+        let first = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("mood".to_string(), "delighted".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("person:alpha", "said the kiln was lit")
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            capture_args("person:alpha", "said the flue was the problem"),
+        )
+        .await;
+        let address = address_of(&first);
+
+        let rewritten = update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                content: Some("said the kiln was NOT lit — confirmed".into()),
+                ..update_args(&address)
+            },
+        )
+        .await;
+        let replaced = postcondition_line(&rewritten);
+        assert!(
+            replaced.contains(&address),
+            "the line has to name the record this call rewrote: {rewritten}",
+        );
+        assert!(
+            replaced.contains('1'),
+            "…and how much on this thing it left alone: {rewritten}",
+        );
+        assert!(
+            !replaced.contains("mood"),
+            "this call took no key off, so the line names none: {rewritten}",
+        );
+
+        let cleared = update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                clear_fields: Some(vec!["mood".into()]),
+                ..update_args(&address)
+            },
+        )
+        .await;
+        assert!(
+            postcondition_line(&cleared).contains("mood"),
+            "this call DID remove something, and a line that cannot say so is the false promise \
+             the computed line exists to avoid: {cleared}",
+        );
+    }
+
+    /// The postcondition line of a receipt, which every write carries.
+    fn postcondition_line(body: &serde_json::Value) -> String {
+        body["postcondition"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a write states what now stands: {body}"))
+            .to_string()
+    }
+
+    /// Update through the handler, expecting the guard to wave it through.
+    async fn update_ok(jojobot: &Jojobot, args: UpdateFactArgs) -> serde_json::Value {
+        let body = json_of(
+            &jojobot
+                .update_fact(Parameters(args))
+                .await
+                .expect("update_fact ok"),
+        );
+        assert_ne!(body["status"], "blocked", "the guard blocked: {body}");
+        body
+    }
 
     /// **A field is set and cleared in place, and a plain recall shows it.**
     ///
