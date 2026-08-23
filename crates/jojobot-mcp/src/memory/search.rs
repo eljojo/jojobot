@@ -146,12 +146,20 @@ fn hit_json(hit: &Hit, as_of: jiff::civil::Date) -> serde_json::Value {
             fact,
             subject,
             home,
+            source,
         } => {
             let mut body = fact_json(fact, as_of);
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("hit".into(), "fact".into());
                 obj.insert("about".into(), entity_ref_json(subject));
                 obj.insert("home".into(), entity_ref_json(home));
+                // **What became of the claim under this one.** Absent — not
+                // rendered empty — for a claim derived from nothing: there is
+                // no source to report on, and a null here would read as a
+                // source nobody could place.
+                if let Some(standing) = source {
+                    obj.insert("source_standing".into(), standing.as_token().into());
+                }
             }
             body
         }
@@ -1693,9 +1701,10 @@ mod tests {
                 answers: None,
             },
             Hit::Fact {
-                fact,
+                fact: Box::new(fact),
                 subject: EntityRef::resolved(&alpha),
                 home: EntityRef::resolved(&alpha),
+                source: None,
             },
             Hit::Prose {
                 doc_id: "doc-1".into(),

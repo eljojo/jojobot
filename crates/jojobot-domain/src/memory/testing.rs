@@ -5603,7 +5603,7 @@ pub mod contract {
     fn fact_hits(hits: &[Hit]) -> Vec<&Fact> {
         hits.iter()
             .filter_map(|h| match h {
-                Hit::Fact { fact, .. } => Some(fact),
+                Hit::Fact { fact, .. } => Some(&**fact),
                 _ => None,
             })
             .collect()

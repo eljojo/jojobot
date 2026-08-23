@@ -172,5 +172,41 @@ async fn a_claim_names_where_it_came_from() {
     s.wrap("the record changed cleanly, and one claim was left behind")
         .await;
 
+    // ── session 6 · the claim under a derivation is taken back ──────────────
+    let s = story.session().await;
+
+    // A jotting that should never have been filed. Taken back rather than
+    // superseded: nothing replaces it, and that is the difference the marker
+    // turns on.
+    s.add("event:the-jotting", "The Jotting").await;
+    let jotted = s
+        .fact("event:the-jotting", "counted forty walkers on a Sunday")
+        .await;
+    s.guess_from(
+        "place:north-trail",
+        "the loop is busiest at weekends",
+        &jotted,
+    )
+    .await;
+
+    // While the count stands, the derivation says so — a reader can act on it
+    // without going to look at what it rests on.
+    s.find("busiest at weekends")
+        .await
+        .says("\"source_standing\":\"stands\"");
+
+    s.retract(&jotted, "the count was of the wrong trail").await;
+
+    // ⭐ The point of the whole story: the derivation is untouched and still
+    // findable — a marker, never a deletion — and it now says what became of
+    // the claim it was worked out from. Nobody had to remember to look.
+    s.find("busiest at weekends")
+        .await
+        .says("the loop is busiest at weekends")
+        .says("\"source_standing\":\"retracted\"");
+
+    s.wrap("a claim outlived the one under it, and says so")
+        .await;
+
     story.finish().await;
 }

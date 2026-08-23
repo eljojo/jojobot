@@ -425,6 +425,47 @@ impl EntityRef {
     }
 }
 
+/// **What became of the claim a derivation was worked out from.**
+///
+/// A derivation is a reading of another claim, and a reading stops being good
+/// when what it read is withdrawn. Nothing on a hit said so, so a gloss went on
+/// being served as an answer long after the claim under it was taken back.
+///
+/// **Three states, because "the source stands" and "jojobot cannot see the
+/// source" are different claims** and a reader acts on each of them
+/// differently. It is the distinction [`Coverage`] draws over a whole half of
+/// the corpus, drawn here over one link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceStanding {
+    /// The source is in the index and has not been taken back.
+    Stands,
+    /// **The source was taken back AFTER this claim was worked out from it.**
+    ///
+    /// It can only have got this way afterwards: a write naming a retracted
+    /// claim as its source is refused, at capture and at edit alike. So this is
+    /// never a citation that was bad when it was written — it is one that
+    /// stopped being good.
+    Retracted,
+    /// **The index does not hold the source, so nothing can be said about it.**
+    ///
+    /// ⛔️ Never collapse this into [`Stands`](Self::Stands). A reader told a
+    /// citation is good on the strength of a record nobody read is being
+    /// vouched for by silence, which is the one thing this marker exists to
+    /// stop.
+    Unreadable,
+}
+
+impl SourceStanding {
+    /// The wire token this standing is written as.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            SourceStanding::Stands => "stands",
+            SourceStanding::Retracted => "retracted",
+            SourceStanding::Unreadable => "unreadable",
+        }
+    }
+}
+
 /// One result. **Typed, and in one list with the others** — the caller is told
 /// what each hit is rather than having to guess from its shape.
 ///
@@ -460,12 +501,21 @@ pub enum Hit {
     /// address is what an edit needs.
     Fact {
         /// The fact, address and all.
-        fact: Fact,
+        ///
+        /// **Boxed** for the reason [`Hit::Entity::answers`] is: a row is by
+        /// far the biggest thing any variant carries, and unboxed it sets the
+        /// size of every hit in a result list — most of which are not rows.
+        fact: Box<Fact>,
         /// The entity the fact is about, resolved.
         subject: EntityRef,
         /// The entity whose doc holds the row, resolved. Usually the same as
         /// `subject`; when it is not, that difference is the thing worth seeing.
         home: EntityRef,
+        /// **What became of the claim this one was worked out from.**
+        ///
+        /// `None` when this claim was worked out from nothing — the ordinary
+        /// case, and an absence rather than an unknown.
+        source: Option<SourceStanding>,
     },
     /// A message matched in a mailbox — **unmistakably mail**, and carrying the
     /// whole envelope: which box, what state it is in, who sent it, and the id

@@ -41,10 +41,12 @@ use std::collections::BTreeMap;
 
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
-    FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction,
+    FactStatus, FieldWrite, Guarded, Memory, MemoryError, NewEntity, NewFact, Retraction,
     guard::{self, MatchReason},
     kinds,
-    search::{self, Behind, Coverage, DocScan, EntityRef, Hit, Search, SearchQuery},
+    search::{
+        self, Behind, Coverage, DocScan, EntityRef, Hit, Search, SearchQuery, SourceStanding,
+    },
     types::DeclaredType,
 };
 
@@ -1272,6 +1274,36 @@ fn resolve(mirror: &[DocMirror], id: &EntityId) -> EntityRef {
 /// claim belongs to its subject, and a fact about someone written on another
 /// entity's page is ordinary. Homing it elsewhere must not move where the edge
 /// appears to point from.
+/// **What became of the claim a derivation was worked out from** — read off the
+/// same mirror every other neighbourhood is assembled from, so a hit cannot
+/// disagree with the answer it arrives in.
+///
+/// `None` for a claim derived from nothing: an absence, never a verdict.
+///
+/// ⚠️ **A source the mirror does not hold is [`SourceStanding::Unreadable`] and
+/// never [`SourceStanding::Stands`]**. The store refuses a pointer at a claim
+/// nobody wrote, so a source that cannot be found here means this half of the
+/// index has not read it — and vouching for a record nobody read is the one
+/// thing this marker exists to stop.
+fn standing_of(mirror: &[DocMirror], source: Option<&FactAddress>) -> Option<SourceStanding> {
+    let source = source?;
+    Some(
+        mirror
+            .iter()
+            .flat_map(|doc| doc.scanned.facts.iter())
+            .find(|held| &held.address() == source)
+            .map_or(SourceStanding::Unreadable, |held| match held.status {
+                FactStatus::Retracted => SourceStanding::Retracted,
+                // **Superseded is NOT taken back**: a later claim replaced this
+                // one and the row is kept so references survive, which is a
+                // different event with a different meaning. Named rather than
+                // swept into a catch-all, so the next reader sees the line was
+                // drawn on purpose.
+                FactStatus::Active | FactStatus::Superseded => SourceStanding::Stands,
+            }),
+    )
+}
+
 fn edges_of(mirror: &[DocMirror], id: &EntityId) -> Vec<Edge> {
     let mut edges: Vec<Edge> = Vec::new();
     for (subject, edge) in mirror.iter().flat_map(|d| d.edges.iter()) {
@@ -1471,7 +1503,8 @@ impl Payload {
             Payload::Fact { fact } => Hit::Fact {
                 subject: resolve(mirror, &fact.subject),
                 home: resolve(mirror, &fact.home),
-                fact,
+                source: standing_of(mirror, fact.derived_from.as_ref()),
+                fact: Box::new(fact),
             },
             Payload::Prose {
                 doc_id,
@@ -2337,7 +2370,7 @@ mod tests {
     use jiff::civil::date;
     use jojobot_domain::mailbox::testing::{InMemoryMailboxes, contract as mail_contract};
     use jojobot_domain::mailbox::{MailboxName, Message, MessageId, MessageState};
-    use jojobot_domain::memory::search::{DEFAULT_LIMIT, EdgeFilter, EntityRef};
+    use jojobot_domain::memory::search::{DEFAULT_LIMIT, EdgeFilter, EntityRef, SourceStanding};
     use jojobot_domain::memory::testing::{InMemoryMemory, contract};
     use jojobot_domain::memory::{
         Boot, Edge, EdgeShape, FactStatus, KeyWrite, NewEntity, NewFact, Provenance, Standing,
@@ -4329,6 +4362,113 @@ mod tests {
             derived_now < session_now,
             "a derivation was pushed below a session, so the demotion has become a burial: \
              {with_a_run:?}",
+        );
+    }
+
+    /// 🚨 **A derivation says when the claim under it was taken back.**
+    ///
+    /// The ranking demotion is not enough on its own: a gloss that still ranks
+    /// is still served, and a reader has no way to tell one whose source
+    /// stands from one whose source was withdrawn. **The store holds the
+    /// answer and no hit carried it.**
+    ///
+    /// ⭐ **The signal is the source's own status, and it is honest because a
+    /// write may not NAME a retracted claim as its source** — refused at
+    /// capture and at edit alike. So a derivation can only reach this state by
+    /// the source being taken back afterwards, which is exactly *the source
+    /// moved and this did not*.
+    ///
+    /// ⚠️ **A stale one and a fresh one in the SAME read**, because a marker
+    /// that always fires is noise and one that never fires is not measuring.
+    /// The plain claim is the third: not derived from anything is an absence,
+    /// never a verdict.
+    #[test]
+    fn a_derivation_says_whether_the_claim_under_it_still_stands() {
+        let index = FullTextIndex::open().expect("index opens");
+        let day = "2026-08-10".parse().expect("a civil date");
+        let at = |home: &str, id: &str| {
+            jojobot_domain::memory::FactAddress::new(
+                EntityId(home.into()),
+                jojobot_domain::memory::FactId(id.into()),
+            )
+        };
+        let stands = fact("person:milhouse", "f1", "the committee meets", day);
+        let withdrawn = Fact {
+            status: FactStatus::Retracted,
+            ..fact("person:milhouse", "f2", "the committee is disbanded", day)
+        };
+        let on_solid_ground = Fact {
+            derived_from: Some(at("person:milhouse", "f1")),
+            ..fact("person:milhouse", "f3", "the committee is weekly", day)
+        };
+        let left_hanging = Fact {
+            derived_from: Some(at("person:milhouse", "f2")),
+            ..fact("person:milhouse", "f4", "the committee is over", day)
+        };
+        // **A source the index does not hold.** Not the same answer as a source
+        // that stands: nobody read it, so nobody can vouch for it.
+        let pointing_nowhere = Fact {
+            derived_from: Some(at("person:ralph", "f9")),
+            ..fact("person:milhouse", "f5", "the committee moved rooms", day)
+        };
+        let plain = fact("person:milhouse", "f6", "the committee has a chair", day);
+        index
+            .ingest_all(
+                &[DocScan {
+                    doc_id: "outline-uuid-1".into(),
+                    title: "Milhouse".into(),
+                    prose: String::new(),
+                    entity: Some(entity("person:milhouse", "Milhouse")),
+                    facts: vec![
+                        stands,
+                        withdrawn,
+                        on_solid_ground,
+                        left_hanging,
+                        pointing_nowhere,
+                        plain,
+                    ],
+                    fields: Default::default(),
+                    owner: None,
+                }],
+                index.reading_begins(),
+            )
+            .expect("memory ingested");
+
+        let found = index
+            .search(&SearchQuery {
+                text: Some("committee".into()),
+                ..SearchQuery::default()
+            })
+            .expect("search ok");
+        let standing_of = |id: &str| {
+            found
+                .iter()
+                .find_map(|h| match h {
+                    Hit::Fact { fact, source, .. } if fact.id.0 == id => Some(*source),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{id} is not in the answer: {found:?}"))
+        };
+
+        assert_eq!(
+            standing_of("f3"),
+            Some(SourceStanding::Stands),
+            "a derivation whose source stands was not said to stand",
+        );
+        assert_eq!(
+            standing_of("f4"),
+            Some(SourceStanding::Retracted),
+            "a derivation outlived the claim it was worked out from and said nothing",
+        );
+        assert_eq!(
+            standing_of("f5"),
+            Some(SourceStanding::Unreadable),
+            "a source nobody has read was vouched for by silence",
+        );
+        assert_eq!(
+            standing_of("f6"),
+            None,
+            "a claim derived from nothing was given a verdict about a source it has not got",
         );
     }
 
@@ -6522,9 +6662,10 @@ mod tests {
         )]);
         let alpha = EntityRef::resolved(&entity("person:alpha", "Alpha"));
         let expected = vec![Hit::Fact {
-            fact: linked,
+            fact: Box::new(linked),
             subject: alpha.clone(),
             home: alpha,
+            source: None,
         }];
 
         for shape in [Some(EdgeShape::Connection), None] {
@@ -6602,9 +6743,10 @@ mod tests {
         assert_eq!(
             hits,
             vec![Hit::Fact {
-                fact: edged,
+                fact: Box::new(edged),
                 subject: alpha.clone(),
                 home: alpha,
+                source: None,
             }],
             "got {hits:?}"
         );
