@@ -1244,13 +1244,32 @@ impl Memory for DoltMemory {
         let entities = Self::index(&mut tx).await?;
         let mut scanned = Vec::with_capacity(entities.len());
         for entity in entities {
-            let prose: String = sqlx::query_scalar("SELECT prose FROM entity WHERE id = ?")
-                .bind(entity.id.as_str())
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(store)?;
+            let (prose, badge): (String, Option<String>) =
+                sqlx::query_as("SELECT prose, badge FROM entity WHERE id = ?")
+                    .bind(entity.id.as_str())
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(store)?;
+            // **The document is identified by the badge and not by the
+            // handle.** The index evicts a document by this id, so while it was
+            // the handle the two were one thing and a rename would have had to
+            // move the postings with it.
+            //
+            // **No fallback to the handle for a row that has none.** A fallback
+            // that works is how a half-filled column survives: nothing breaks
+            // visibly, so nothing forces the fill. The fill runs at every boot
+            // before the index is built, so a row without a badge means that
+            // fill did not happen — which the boot has already said out loud,
+            // and this says it again rather than papering over it.
+            let Some(badge) = badge else {
+                return Err(MemoryError::Store(format!(
+                    "{} carries no badge, so its document has no id — the startup fill did not \
+                     reach it",
+                    entity.id
+                )));
+            };
             scanned.push(search::DocScan {
-                doc_id: entity.id.to_string(),
+                doc_id: badge,
                 title: entity.name.clone(),
                 prose,
                 facts: Self::facts_of(&mut tx, &entity.id).await?,

@@ -43,6 +43,14 @@ pub struct InMemoryMemory {
     /// The human half of each entity's doc, keyed by handle — replaced whole by
     /// `set_prose`, exactly as the real store replaces the region.
     prose: Mutex<std::collections::HashMap<EntityId, String>>,
+    /// **The badge each entity wears**, minted when it is created and never
+    /// changed after.
+    ///
+    /// The real store keeps this in a column and the fake has to keep it too:
+    /// a fake whose document id is the handle would pass every case about the
+    /// index evicting a document while hiding the seam the badge exists to
+    /// open. **A polite fake is how a green suite ships a collapsed seam.**
+    badges: Mutex<std::collections::HashMap<EntityId, String>>,
     /// The type declarations, one per name. A `Vec` rather than a map because
     /// the real store keeps them as rows and the order they were declared in
     /// is part of what each one says.
@@ -369,6 +377,13 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .push(entity.clone());
+        // **Minted with the entity and never changed after**, which is what the
+        // real store's column does. Drawn from the same alphabet, so a case
+        // that reasons about the shape of a document id reads the same here.
+        self.badges
+            .lock()
+            .expect("fake mutex poisoned")
+            .insert(entity.id.clone(), crate::handle::draw(6));
         Ok(Guarded::Written(entity))
     }
 
@@ -897,6 +912,7 @@ impl Memory for InMemoryMemory {
     async fn scan(&self) -> Result<Vec<search::DocScan>, MemoryError> {
         let facts = self.facts.lock().expect("fake mutex poisoned").clone();
         let prose = self.prose.lock().expect("fake mutex poisoned").clone();
+        let badges = self.badges.lock().expect("fake mutex poisoned").clone();
         let declared = self.declarations();
         // No Journal document: a wrap publishes nowhere, so the journal stays
         // dark until events land — there is no shared page for `search` to
@@ -904,7 +920,10 @@ impl Memory for InMemoryMemory {
         Ok(std::iter::empty()
             .chain(self.index().into_iter().map(|entity| {
                 search::DocScan {
-                    doc_id: entity.id.to_string(),
+                    doc_id: badges
+                        .get(&entity.id)
+                        .cloned()
+                        .unwrap_or_else(|| entity.id.to_string()),
                     title: entity.name.clone(),
                     prose: prose.get(&entity.id).cloned().unwrap_or_default(),
                     facts: facts
@@ -6980,6 +6999,68 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **A document's id is the entity's badge, not its handle — so it
+    /// survives a rewrite and is not the name anybody sends.**
+    ///
+    /// The index evicts a document by its id. While that id WAS the handle, the
+    /// two were one thing and a rename would have had to move the postings with
+    /// it. **The badge is what makes them separable**, and this is the read that
+    /// says the seam is open rather than merely present in a column.
+    ///
+    /// **Three reads.** A rewrite of the entity leaves the document's id alone;
+    /// two entities never share one; and the id is not the handle, which is the
+    /// half that fails on a store where the seam is still collapsed and the
+    /// other two pass.
+    pub async fn a_documents_id_is_not_the_handle_and_survives_a_rewrite<M: Memory>(store: &M) {
+        let held = EntityId::person("person:contract-stamped");
+        let other = EntityId::person("person:contract-inked");
+        ensure(store, &held).await;
+        ensure(store, &other).await;
+
+        let id_of = |scanned: &[crate::memory::search::DocScan], who: &EntityId| {
+            scanned
+                .iter()
+                .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == who))
+                .unwrap_or_else(|| panic!("{who:?} is not in the scan"))
+                .doc_id
+                .clone()
+        };
+
+        let before = store.scan().await.expect("the store scans");
+        let badge = id_of(&before, &held);
+        assert_ne!(
+            badge,
+            held.to_string(),
+            "the document's id is the handle, so the two cannot come apart and a rename would \
+             have to move the postings with it",
+        );
+        assert_ne!(
+            badge,
+            id_of(&before, &other),
+            "two entities share a document id, so evicting one would evict the other",
+        );
+
+        store
+            .update_entity(
+                &held,
+                EntityPatch {
+                    name: Some("Contract Badged, renamed".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("update_entity should succeed")
+            .written()
+            .expect("the guard waves it through");
+        let after = store.scan().await.expect("the store scans");
+        assert_eq!(
+            id_of(&after, &held),
+            badge,
+            "the entity was rewritten and its document became a different one, so what the index \
+             holds under the old id is now unreachable",
+        );
+    }
+
     /// 🚨 **A rewrite can take the edge off, and one that does not mention
     /// edges leaves it where it is.**
     ///
@@ -9153,6 +9234,7 @@ pub mod contract {
         a_graph_query_selects_a_kind_and_returns_its_prose(store).await;
         a_graph_query_filters_on_a_stored_value_and_walks_an_edge(store).await;
         a_walk_marks_a_link_whose_claim_the_store_took_back(store).await;
+        a_documents_id_is_not_the_handle_and_survives_a_rewrite(store).await;
         a_rewrite_can_take_the_edge_off_and_leaves_it_alone_otherwise(store).await;
         a_declared_reference_key_is_walkable_against_the_store(store).await;
         a_trip_records_who_came_and_answers_from_either_end(store).await;
