@@ -479,6 +479,31 @@ roles and never an operator.
   **Read that line: a green with no probe line under it means the tool could
   not answer, not that the case is sound.** It roughly doubles the run and it
   never gates the verdict.
+- 🚨 **A constant asserted through itself pins NOTHING.** An assertion whose
+  expected value is the same constant the code under test used proves the code
+  consistent with itself and says nothing about the VALUE — rename the constant
+  and both sides move together. **That matters where the spelling is STORED or
+  SERVED and nothing outside this process declares it**: a key in a fields bag,
+  a marker inside a stored body, a token on the wire, a phrase a record is
+  parsed back through. The store accepts the new spelling, only records written
+  before the change disagree, **and a record cannot fail a test. There, one test
+  pins the literal.** Where the far side DOES declare the spelling — a column, a
+  table, a path, a zone, a binary on the PATH — **the real-dependency suite
+  already pins it and a literal adds nothing**, because a wrong value fails the
+  first time that dependency runs. **The question that tells the two apart is
+  one question: does anything outside this process declare this spelling?**
+  ⭐ **A pin can also be a property that determines the value uniquely rather
+  than a literal.** ⛔️ **It is a rule and not a lint:** the predicate that would
+  automate it — an assertion whose expected value is an identifier from the same
+  crate — flagged 62 sites for 0 real, because whether a value is pinned lives
+  in a different file and often in a case written about something else.
+  **5 unpinned spellings across 3,697 assertions.**
+- 🚨 **Check the exit path BEFORE a run whose expected verdict is GREEN,
+  because nothing afterwards will.** Distrusting a surprising result catches a
+  broken instrument; **belief in an expected one is not a signal at all**, and a
+  sabotage you expect to come back green has no red in it to catch a verdict
+  that was never measuring. **A pipe swallowing the runner's exit code prints
+  exactly the answer you were hoping for.**
 - 🚨 **A room runs against a BUILT binary, so a sabotage of served code is
   invisible to it unless you build first.** The rooms spawn the server, and
   `cargo test -p jojobot-exercise` does not rebuild it — **so an edit to any
