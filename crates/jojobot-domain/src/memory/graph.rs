@@ -1954,6 +1954,79 @@ mod tests {
         );
     }
 
+    /// 🚨 **The two scopes disagree about WHICH OBJECTS when the fold and a
+    /// record disagree about the value.**
+    ///
+    /// The cases above ask both scopes of a store where every key was written
+    /// once, so both select the same object and the only difference on show is
+    /// which records ride along. **That leaves the load-bearing half untested:
+    /// a key written twice, where the thing no longer holds what a record of it
+    /// still says.**
+    ///
+    /// Asked of the THING, the old value selects nothing — the newest write won
+    /// the fold. Asked of a RECORD, it selects, because a record did carry it.
+    /// **A caller that reads one as the other writes a filter that goes empty
+    /// the moment anybody rewrites the key.**
+    ///
+    /// The positive is the third read: the thing IS selected by what it holds
+    /// now, so the negative above is a fact about the value rather than about a
+    /// store nothing can be found in.
+    #[test]
+    fn the_scopes_part_company_when_the_fold_and_a_record_disagree() {
+        let wrote = |id: &str, content: &str, rsvp: &str| Fact {
+            fields: [("rsvp".to_string(), rsvp.to_string())]
+                .into_iter()
+                .collect(),
+            ..fact("person:patana", id, content)
+        };
+        // Two writes of one key, and the thing holds the newer of them. The
+        // fields are stated rather than folded from the rows, because that is
+        // what the store does and a fixture that recomputed it could not put
+        // the two out of step.
+        let scanned = vec![doc_holding(
+            entity("person:patana", "Patana"),
+            "Patana's page.",
+            vec![
+                wrote("f1", "coming to the party", "yes"),
+                wrote("f2", "cannot make it after all", "no"),
+            ],
+            [("rsvp".to_string(), "no".to_string())]
+                .into_iter()
+                .collect(),
+        )];
+        let by = |filter: FieldFilter| {
+            resolved(
+                &scanned,
+                &[],
+                &GraphQuery {
+                    select: Selection {
+                        fields: vec![filter],
+                        ..Selection::default()
+                    },
+                    ..GraphQuery::default()
+                },
+            )
+            .expect("a key filter is a selection")
+        };
+
+        assert!(
+            handles(&by(FieldFilter::holding("rsvp", "yes"))).is_empty(),
+            "the thing does not hold the value it used to, so asked of the thing it is not \
+             selected",
+        );
+        assert_eq!(
+            handles(&by(FieldFilter::holding("rsvp", "yes").on_a_record())),
+            vec!["person:patana"],
+            "asked of a record, the write that happened still answers",
+        );
+        assert_eq!(
+            handles(&by(FieldFilter::holding("rsvp", "no"))),
+            vec!["person:patana"],
+            "and the thing is selected by what it holds now, so the empty answer above is about \
+             the value rather than about an unreachable store",
+        );
+    }
+
     /// **A filter and a kind combine into one set**, rather than being two
     /// questions asked in turn.
     #[test]

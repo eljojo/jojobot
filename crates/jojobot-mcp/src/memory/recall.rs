@@ -91,11 +91,13 @@ pub struct FollowArgs {
     #[serde(default)]
     pub(crate) depth: Option<u32>,
     /// **What the walk keeps of what it reaches.** The same key filters the
-    /// selection takes, applied at every hop rather than to the roots — so
-    /// "this person's pets" narrows to "this person's pets born before a date".
-    /// Omit to keep everything. An object kept this way arrives carrying the
-    /// records that answered, and one that was reached and not kept leaves the
-    /// object that points at it marked as having edges nobody followed.
+    /// selection takes, `scope` and all, applied at every hop rather than to
+    /// the roots — so "this person's pets" narrows to "this person's pets born
+    /// before a date". Omit to keep everything. An object kept by a `record`
+    /// filter arrives carrying the records that answered; one kept by a filter
+    /// asked of the thing arrives whole, because the fold answered and no
+    /// record had to. An object reached and not kept leaves the object that
+    /// points at it marked as having edges nobody followed.
     #[serde(default)]
     pub(crate) keeping: Option<Vec<KeyFilterArgs>>,
     /// **Keep only what FITS this type**, by name — the objects carrying EVERY
@@ -148,9 +150,16 @@ pub struct RecallArgs {
     /// exist.
     #[serde(default)]
     pub(crate) answers_type: Option<String>,
-    /// Objects holding a record that carries these keys, and the values named.
-    /// **Every filter must hold on ONE record**: two filters describe a single
-    /// record, not two separate questions.
+    /// **Which objects**, by a key and the value it holds. Omit a filter's
+    /// value to ask only that the key is there.
+    ///
+    /// ⚠️ **Asked of the THING unless a filter says otherwise**, which is
+    /// `scope` on the filter itself. Asked of the thing, a filter is answered
+    /// by the FOLD — the newest write of the key — so a value some record of an
+    /// object still carries, and the object no longer holds, selects nothing.
+    /// `scope: record` asks about the occasions instead, and **every `record`
+    /// filter must hold on ONE record**: those describe a single record rather
+    /// than separate questions.
     #[serde(default)]
     pub(crate) fields: Option<Vec<KeyFilterArgs>>,
     /// Whether each object's records come back — the claims its fields were
