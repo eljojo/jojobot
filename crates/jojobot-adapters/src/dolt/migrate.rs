@@ -809,7 +809,10 @@ mod tests {
             apply(&pool, MIGRATIONS)
                 .await
                 .expect("the column lands on a table that already has rows"),
-            vec!["0032_entity_badge".to_string()],
+            vec![
+                "0032_entity_badge".to_string(),
+                "0033_entity_merged_into".to_string(),
+            ],
         );
         let worn: Option<String> = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
             .bind("person:already-here")
