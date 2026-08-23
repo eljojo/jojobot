@@ -189,6 +189,8 @@ pub struct Selection {
     /// SAME record, because they describe a single record rather than a pair of
     /// separate questions.
     pub fields: Vec<FieldFilter>,
+    /// **Records around a day**, on the clock this names. See [`Nearness`].
+    pub near: Option<Nearness>,
     /// **Who is asking**, filled from the session handle by the verb and never
     /// from an argument.
     ///
@@ -203,7 +205,7 @@ impl Selection {
     /// Is there a filter here beyond the object's own properties? Kind and
     /// subject are properties of the object itself.
     fn filters_facts(&self) -> bool {
-        self.answers_type.is_some() || !self.fields.is_empty()
+        self.answers_type.is_some() || !self.fields.is_empty() || self.near.is_some()
     }
 
     /// Is there a filter here that ONE record has to answer?
@@ -215,7 +217,7 @@ impl Selection {
     /// thing, a key filter is answered by the fold and no record has to carry
     /// anything.
     fn filters_records(&self) -> bool {
-        self.fields.iter().any(|f| f.scope == Scope::Record)
+        self.fields.iter().any(|f| f.scope == Scope::Record) || self.near.is_some()
     }
 
     /// Does this fact answer every filter asked of a record. A fact carrying no
@@ -225,6 +227,79 @@ impl Selection {
             .iter()
             .filter(|f| f.scope == Scope::Record)
             .all(|f| f.satisfied_by(&fact.fields))
+            && self.near.is_none_or(|near| near.holds(fact))
+    }
+}
+
+/// **Which of a claim's clocks a neighbourhood read compares.**
+///
+/// The two answer different questions and a read that silently picked one
+/// would mislead. *What did Milhouse say back in August* asks when the claim is
+/// true OF. *What was filed that week* asks when jojobot took it in.
+///
+/// ⚠️ **The staleness date is deliberately not here.** Its own definition is a
+/// fact about our knowledge rather than about the world, and nothing fires on
+/// it, so it places no claim in time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Clock {
+    /// **The day the claim is true of** — the default, because a person naming
+    /// a date means the day the thing happened.
+    #[default]
+    TrueOf,
+    /// **The day jojobot took the record in.**
+    ///
+    /// ⚠️ **Not every record carries one.** A record written before the stamp
+    /// existed has none and keeps none, so a read on this clock cannot place
+    /// it. Those are counted and reported rather than dropped: a smaller answer
+    /// that says nothing about what it could not reach is the failure this
+    /// whole read exists to avoid.
+    TakenIn,
+}
+
+/// **What else was recorded around a day.**
+///
+/// Things near in time cue one another, and real questions arrive shaped as
+/// *when plus who*. Every claim already carries its dates; this is what lets
+/// them be asked associatively.
+///
+/// ⛔️ **Not a query language and not inference.** A window over dates the
+/// store already holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Nearness {
+    /// The day the question is asked around.
+    pub day: jiff::civil::Date,
+    /// **How far either side counts as near**, in days. Symmetric: what came
+    /// just before a day and just after it are equally what surrounded it.
+    pub within_days: u32,
+    /// Which clock is compared.
+    pub clock: Clock,
+}
+
+impl Nearness {
+    /// **Where a fact sits on the chosen clock**, or nothing when this clock
+    /// cannot place it.
+    fn placed(&self, fact: &Fact) -> Option<jiff::civil::Date> {
+        match self.clock {
+            Clock::TrueOf => Some(fact.date),
+            Clock::TakenIn => fact
+                .inserted_at
+                .map(|at| at.to_zoned(jiff::tz::TimeZone::UTC).date()),
+        }
+    }
+
+    /// Is this fact inside the window.
+    fn holds(&self, fact: &Fact) -> bool {
+        let Some(at) = self.placed(fact) else {
+            return false;
+        };
+        let span = self.day.since(at).map(|s| s.get_days().abs());
+        span.is_ok_and(|days| days <= i64::from(self.within_days) as i32)
+    }
+
+    /// **A fact this clock cannot place at all.** Counted, never silently
+    /// dropped.
+    fn unplaceable(&self, fact: &Fact) -> bool {
+        self.placed(fact).is_none()
     }
 }
 
@@ -833,6 +908,17 @@ pub struct Selected {
     /// A total, never a breakdown: how many is work status, and which identity
     /// holds them is a directory of who is busy.
     pub withheld: usize,
+    /// **How many records the chosen clock could not place.**
+    ///
+    /// A neighbourhood read on the taken-in stamp cannot place a record written
+    /// before that stamp existed. Those records are not near the day and not
+    /// far from it: **they are unreadable on this clock**, and a smaller answer
+    /// that says nothing about them is indistinguishable from a day with
+    /// nothing around it.
+    ///
+    /// **Zero is the ordinary answer** and it is a claim of its own: every
+    /// record was placed, so an empty result means nothing was near.
+    pub unplaced: usize,
 }
 
 pub fn resolve(
@@ -853,7 +939,27 @@ pub fn resolve(
             })
             .collect(),
         withheld: ctx.withheld(&query.select),
+        unplaced: ctx.unplaced(&query.select),
     })
+}
+
+impl Ctx<'_> {
+    /// **Records the neighbourhood clock could not place**, across everything
+    /// this selection could otherwise have reached.
+    ///
+    /// Counted over the same documents the read scans rather than over the
+    /// answer, because a record that could not be placed never reaches the
+    /// answer — which is the whole reason it has to be counted here.
+    fn unplaced(&self, select: &Selection) -> usize {
+        let Some(near) = select.near else {
+            return 0;
+        };
+        self.all
+            .iter()
+            .filter(|fact| fact.status == crate::memory::FactStatus::Active)
+            .filter(|fact| near.unplaceable(fact))
+            .count()
+    }
 }
 
 /// The store's documents, indexed the three ways a walk reads them.
@@ -1766,6 +1872,127 @@ mod tests {
         query: &GraphQuery,
     ) -> Result<Vec<Object>, MemoryError> {
         resolve(scanned, declarations, query).map(|answer| answer.objects)
+    }
+
+    /// **What else was recorded around this day.**
+    ///
+    /// Every claim carries the day it is true of, and nothing could be asked
+    /// about it associatively. Real questions arrive shaped as *when plus
+    /// who* — *what did he say back in August* — and the store held the answer
+    /// with no way to be asked for it.
+    ///
+    /// **Both halves in one case.** A window that kept everything would pass a
+    /// check that only looked for the near record, and a dead build that kept
+    /// nothing would pass one that only looked for the far one missing.
+    #[test]
+    fn a_selection_near_a_day_keeps_the_records_in_its_window_and_drops_the_rest() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        let dated = |id: &str, day: &str, content: &str| Fact {
+            date: day.parse().expect("a civil date"),
+            ..fact("person:milhouse", id, content)
+        };
+        let scanned = vec![doc(
+            entity("person:milhouse", "Milhouse"),
+            "His page.",
+            vec![
+                dated("f1", "2026-08-16", "said the thing about the committee"),
+                dated("f2", "2026-02-01", "said something in February"),
+            ],
+        )];
+        let query = GraphQuery {
+            select: Selection {
+                near: Some(Nearness {
+                    day: "2026-08-18".parse().expect("a civil date"),
+                    within_days: 7,
+                    clock: Clock::TrueOf,
+                }),
+                ..Selection::default()
+            },
+            include: Include {
+                facts: true,
+                ..GraphQuery::default().include
+            },
+            ..GraphQuery::default()
+        };
+        let objects = resolved(&scanned, &[], &query).expect("a read, not an error");
+        let content: Vec<&str> = objects
+            .iter()
+            .flat_map(|o| o.facts.iter())
+            .map(|f| f.content.as_str())
+            .collect();
+        assert!(
+            content.iter().any(|c| c.contains("committee")),
+            "a record two days from the day asked about is not in the answer: {content:?}",
+        );
+        assert!(
+            !content.iter().any(|c| c.contains("February")),
+            "a record six months away came back, so the window keeps everything: {content:?}",
+        );
+    }
+
+    /// 🚨 **A day with nothing around it, and a clock that could not look, must
+    /// not read alike.**
+    ///
+    /// The taken-in stamp is absent on every record written before it existed,
+    /// and it stays absent deliberately. So a read on that clock can come back
+    /// empty for two entirely different reasons: nothing was recorded near that
+    /// day, or nothing could be placed at all. **The count is what tells them
+    /// apart**, and without it the second silently reads as the first.
+    ///
+    /// **Three states in one case**, because any two of them alone pass against
+    /// a build that has the third wrong.
+    #[test]
+    fn a_clock_that_cannot_place_a_record_counts_it_rather_than_dropping_it() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        let scanned = vec![doc(
+            entity("person:milhouse", "Milhouse"),
+            "His page.",
+            vec![
+                fact("person:milhouse", "f1", "written before the stamp existed"),
+                fact("person:milhouse", "f2", "also written before it"),
+            ],
+        )];
+        let asking = |clock| GraphQuery {
+            select: Selection {
+                near: Some(Nearness {
+                    day: "2026-08-10".parse().expect("a civil date"),
+                    within_days: 7,
+                    clock,
+                }),
+                ..Selection::default()
+            },
+            include: Include {
+                facts: true,
+                ..GraphQuery::default().include
+            },
+            ..GraphQuery::default()
+        };
+
+        // The claim's own date places every record, so nothing is unreadable
+        // and the records really are near the day.
+        let by_day = resolve(&scanned, &[], &asking(Clock::TrueOf)).expect("a read");
+        assert_eq!(
+            by_day.unplaced, 0,
+            "the claim's own date is never absent, so nothing can be unplaceable on it",
+        );
+        assert_eq!(
+            by_day.objects.iter().flat_map(|o| o.facts.iter()).count(),
+            2,
+            "the records are two days from the day asked about and did not come back",
+        );
+
+        // The same store on the other clock reaches nothing — and says so.
+        let by_stamp = resolve(&scanned, &[], &asking(Clock::TakenIn)).expect("a read");
+        assert_eq!(
+            by_stamp.objects.iter().flat_map(|o| o.facts.iter()).count(),
+            0,
+            "a record with no stamp was placed on a clock that cannot place it",
+        );
+        assert_eq!(
+            by_stamp.unplaced, 2,
+            "the read came back empty and said nothing about what it could not look at, which \
+             reads exactly like a day with nothing around it",
+        );
     }
 
     /// A fact drawing one edge.
