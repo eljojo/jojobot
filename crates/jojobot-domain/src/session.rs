@@ -1114,6 +1114,43 @@ mod tests {
         }
     }
 
+    /// **Every phrase, written out as a literal.**
+    ///
+    /// 🚨 **The case above cannot hold these.** It takes the phrase from
+    /// [`BEAT_CLASSES`], renders with it and parses with it, so it compares the
+    /// table against itself and stays green under any rename. It proves render
+    /// and parse are inverses. It proves nothing about the VALUE.
+    ///
+    /// ⚠️ **And the value is stored text.** A tally is written into a chronology
+    /// entry and read back out of one by [`beats_of`] on every reconnect. Rename
+    /// a phrase and every line already written under the old one stops parsing:
+    /// the class opens a fresh tally, the count restarts at one, and the session
+    /// carries two tally lines for one class. **Nothing inside the process can
+    /// see that happen** — the store accepts the new spelling, and only records
+    /// written before the change disagree.
+    ///
+    /// So the spelling is pinned here, where a rename has to move a literal.
+    /// **A class removed or added moves it too, and that is the case working**:
+    /// the table is what the store holds, so a change to it is a decision, not
+    /// an edit.
+    #[test]
+    fn every_stored_phrase_is_pinned_by_its_own_literal() {
+        assert_eq!(
+            BEAT_CLASSES,
+            [
+                ("add_entity", "brought entities into being"),
+                ("update_entity", "edited entities"),
+                ("capture", "captured facts about"),
+                ("update_fact", "edited facts"),
+                ("set_charter", "wrote charters for"),
+                ("post_message", "posted to mailboxes"),
+                ("mark_processed", "retired messages"),
+            ],
+            "a phrase here is the spelling of text the store already holds, so a \
+             change to this table orphans every tally line written under the old one",
+        );
+    }
+
     /// A line jojobot did not write is not a tally. Somebody's own words stay
     /// theirs, and the class opens a fresh tally beside them rather than jojobot
     /// rewriting a person's entry into its own format.
