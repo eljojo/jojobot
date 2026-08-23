@@ -832,6 +832,16 @@ pub struct Board {
     pub live: Vec<Session>,
     /// The one stopped run worth bringing up, if there is one.
     pub offerable: Option<Session>,
+    /// **The newest run that was wrapped up, if there is one — the handover.**
+    ///
+    /// ⛔️ **Not a resume candidate, and it must never be offered as one.**
+    /// `wrapped` is terminal: nothing appends to it. This is here because
+    /// wrapping is the one act that requires somebody to say what happened, so
+    /// a wrapped run carries a story by construction — and a run that closed
+    /// properly used to vanish from the next boot while every run that merely
+    /// stopped stayed on the offer. Closing cleanly was how you became
+    /// invisible.
+    pub handover: Option<Session>,
     /// The ids this sweep closed.
     pub swept: Vec<String>,
     /// The stale runs the store **refused to close**, with why.
@@ -875,6 +885,12 @@ pub async fn sweep_and_find(
         .filter(|s| !s.state.is_terminal() && !s.is_stale(now, today))
         .cloned()
         .collect();
+    // **The newest run somebody closed properly**, read before the list is
+    // consumed. Newest first already, so the first wrapped one is the newest.
+    let handover = existing
+        .iter()
+        .find(|s| s.state == SessionState::Wrapped)
+        .cloned();
     // **Read AFTER the sweep, and through it.** The run this boot just marked
     // `abandoned` is the archetypal "resume last session" — it is the one that
     // stopped yesterday — so it has to be a candidate here, and the list read
@@ -892,6 +908,7 @@ pub async fn sweep_and_find(
     Ok(Board {
         live,
         offerable,
+        handover,
         swept,
         unswept,
     })

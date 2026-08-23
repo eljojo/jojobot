@@ -74,6 +74,7 @@ impl Jojobot {
         let Board {
             live,
             offerable,
+            handover,
             swept,
             unswept,
         } = match sweep_and_find(self.sessions.as_ref(), bot, swept_at, today).await {
@@ -238,8 +239,49 @@ impl Jojobot {
                     .into(),
             );
             obj.insert("swept_in".into(), Self::frame(today));
+            // **On every branch**, because the sitting that most needs a
+            // handover is the one with nothing to resume.
+            obj.insert("handover".into(), Self::handover(handover.as_ref()));
         }
         Ok(block)
+    }
+
+    /// **What the last sitting that closed properly left for this one.**
+    ///
+    /// 🚨 **Wrapping used to be how a run disappeared.** Only live and
+    /// abandoned runs are offered, so the one sitting that told its story
+    /// vanished from the next boot while every sitting that merely stopped
+    /// stayed on the list. **Closing cleanly was how you became invisible**,
+    /// and the measured behaviour followed it.
+    ///
+    /// ⛔️ **This is not a resume candidate and must never become one.**
+    /// `wrapped` is terminal: nothing appends to it. It is here to be READ.
+    /// Offering it as something to pick up would break the never-auto-wrap
+    /// rule and the resume rule at once.
+    ///
+    /// **Present with nothing in it rather than absent.** Most sittings never
+    /// wrap, so "nobody left you anything" is the ordinary answer — and a
+    /// missing key would make that read the same as a build that cannot say.
+    fn handover(wrapped: Option<&Session>) -> serde_json::Value {
+        let Some(run) = wrapped else {
+            return serde_json::json!({
+                "story": serde_json::Value::Null,
+                "note": "no run of this identity has been wrapped up, so nobody has left you a \
+                         closing story. That is an empty board rather than a story jojobot could \
+                         not read.",
+            });
+        };
+        serde_json::json!({
+            // **The last entry, because wrapping folds the still-open focus
+            // into the chronology as one final beat.** That entry IS the story.
+            "story": run.entries.last().map(|e| e.text.clone()),
+            "working_on": run.focus,
+            "session": run.id.to_string(),
+            "wrapped_at": run.last_beat().to_string(),
+            "note": "the last run of this identity that was wrapped up. It is here to READ: a \
+                     wrapped run is closed for good, nothing appends to it, and it is not \
+                     something you can resume. Read it, then start your own.",
+        })
     }
 
     /// **The frame this boot decided staleness in**, said where a caller meets
@@ -489,6 +531,103 @@ mod tests {
         assert!(
             !body.to_string().contains("\"sid\""),
             "an anonymous boot carries no handle anywhere: {body}"
+        );
+    }
+
+    /// **A wrapped run's story is what the door hands the next sitting — and
+    /// it is never a session to resume.**
+    ///
+    /// 🚨 **Wrapping a run correctly used to make it disappear.** Only live and
+    /// abandoned runs are offered, so the one sitting that closed properly —
+    /// a real closing story, told for somebody with none of its context —
+    /// vanished from the next boot, while every sitting that just stopped was
+    /// still on the list. **Closing cleanly was how you became invisible**, and
+    /// the measured behaviour followed: nobody wrapped a session again.
+    ///
+    /// ⚠️ **This is a design change and not a missed case.** `wrapped` stays
+    /// terminal: nothing appends to it and it is NOT offered as something to
+    /// resume. It is offered as a handover to READ. Conflating the two would
+    /// break the never-auto-wrap rule and the resume rule at once.
+    ///
+    /// ⭐ **The pairing is the whole case**: the story reaches the door, and
+    /// the run it came from is absent from `choices`. A build that simply added
+    /// wrapped runs to the offer would pass the first half and break both
+    /// rules.
+    #[tokio::test]
+    async fn a_wrapped_runs_story_reaches_the_door_and_is_not_offered_to_resume() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+
+        let sid = booted(&jojobot, "gamma").await;
+        jojobot
+            .journal(Parameters(crate::session::JournalArgs {
+                sid: sid.clone(),
+                entry: "found the boot spends nine seconds rebuilding the index".into(),
+                focus: Some("chasing the slow boot".into()),
+            }))
+            .await
+            .expect("journal ok");
+        let story = "the index rebuild is the whole nine seconds. Next run should cache it \
+                     rather than reading the store twice.";
+        jojobot
+            .wrap_session(Parameters(crate::session::WrapSessionArgs {
+                sid: sid.clone(),
+                story: story.into(),
+            }))
+            .await
+            .expect("wrap ok");
+
+        let body = boot(&jojobot, "gamma").await;
+        let handover = &body["session"]["handover"];
+        assert!(
+            handover["story"]
+                .as_str()
+                .is_some_and(|told| told.contains("cache it")),
+            "the closing story never reaches the next sitting: {body}",
+        );
+
+        // ⛔️ **Terminal stays terminal.** The run is readable, not resumable.
+        let offered: Vec<&str> = body["session"]["choices"]
+            .as_array()
+            .map(|cs| {
+                cs.iter()
+                    .filter_map(|c| c["sid"].as_str())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert!(
+            !offered.contains(&sid.as_str()),
+            "a wrapped run is being offered as something to resume: {body}",
+        );
+    }
+
+    /// **A sitting that left nothing says so, and does not read as silence.**
+    ///
+    /// ⭐ **On the measured evidence this is the COMMON path, not an edge**:
+    /// most sittings never wrapped and never journalled, so the door's usual
+    /// answer is that there is no handover. **A missing key would make "nobody
+    /// left you anything" and "this build cannot tell you" render identically**
+    /// — and a reader who has to infer which will eventually infer wrong.
+    #[tokio::test]
+    async fn a_door_with_no_handover_says_so_rather_than_omitting_it() {
+        let jojobot = with_sessions(Arc::new(InMemorySessions::new()));
+        make_bot(&jojobot, "gamma").await;
+
+        let body = boot(&jojobot, "gamma").await;
+        let handover = &body["session"]["handover"];
+        assert!(
+            !handover.is_null(),
+            "nothing to hand over and nothing said about it: {body}",
+        );
+        assert_eq!(
+            handover["story"],
+            serde_json::Value::Null,
+            "a story appeared where no run has been wrapped: {body}",
+        );
+        assert!(
+            handover["note"].is_string(),
+            "…and no words saying which kind of nothing this is: {body}",
         );
     }
 
