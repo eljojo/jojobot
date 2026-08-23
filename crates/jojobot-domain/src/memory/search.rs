@@ -437,8 +437,16 @@ impl EntityRef {
 /// the corpus, drawn here over one link.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceStanding {
-    /// The source is in the index and has not been taken back.
+    /// The source is in the index, and neither taken back nor replaced.
     Stands,
+    /// **A later claim replaced the source after this was worked out from it.**
+    ///
+    /// ⛔️ Not [`Stands`](Self::Stands): the source did not stand, it moved,
+    /// which is the case this marker exists for. ⛔️ And not
+    /// [`Retracted`](Self::Retracted) either — a reader wants those apart. One
+    /// says *your source was withdrawn*; this one says *your source has a
+    /// successor you have not seen*.
+    Superseded,
     /// **The source was taken back AFTER this claim was worked out from it.**
     ///
     /// It can only have got this way afterwards: a write naming a retracted
@@ -460,6 +468,7 @@ impl SourceStanding {
     pub fn as_token(self) -> &'static str {
         match self {
             SourceStanding::Stands => "stands",
+            SourceStanding::Superseded => "superseded",
             SourceStanding::Retracted => "retracted",
             SourceStanding::Unreadable => "unreadable",
         }

@@ -1294,12 +1294,13 @@ fn standing_of(mirror: &[DocMirror], source: Option<&FactAddress>) -> Option<Sou
             .find(|held| &held.address() == source)
             .map_or(SourceStanding::Unreadable, |held| match held.status {
                 FactStatus::Retracted => SourceStanding::Retracted,
-                // **Superseded is NOT taken back**: a later claim replaced this
-                // one and the row is kept so references survive, which is a
-                // different event with a different meaning. Named rather than
-                // swept into a catch-all, so the next reader sees the line was
-                // drawn on purpose.
-                FactStatus::Active | FactStatus::Superseded => SourceStanding::Stands,
+                // **Superseded is not taken back, and it is not standing
+                // either.** A later claim replaced this one and the row is kept
+                // so references survive. A reader of a derivation wants the two
+                // apart: one says the source was withdrawn, the other says it
+                // has a successor they have not seen.
+                FactStatus::Superseded => SourceStanding::Superseded,
+                FactStatus::Active => SourceStanding::Stands,
             }),
     )
 }
@@ -4429,6 +4430,16 @@ mod tests {
             derived_from: Some(at("person:ralph", "f9")),
             ..fact("person:milhouse", "f5", "the committee moved rooms", day)
         };
+        // **Replaced, not withdrawn.** A later claim took over, so the source
+        // did not stand — and it was not taken back either.
+        let replaced = Fact {
+            status: FactStatus::Superseded,
+            ..fact("person:milhouse", "f7", "the committee met monthly", day)
+        };
+        let read_off_it = Fact {
+            derived_from: Some(at("person:milhouse", "f7")),
+            ..fact("person:milhouse", "f8", "the committee is infrequent", day)
+        };
         let plain = fact("person:milhouse", "f6", "the committee has a chair", day);
         index
             .ingest_all(
@@ -4443,6 +4454,8 @@ mod tests {
                         on_solid_ground,
                         left_hanging,
                         pointing_nowhere,
+                        replaced,
+                        read_off_it,
                         plain,
                     ],
                     fields: Default::default(),
@@ -4482,6 +4495,11 @@ mod tests {
             standing_of("f5"),
             Some(SourceStanding::Unreadable),
             "a source nobody has read was vouched for by silence",
+        );
+        assert_eq!(
+            standing_of("f8"),
+            Some(SourceStanding::Superseded),
+            "a derivation whose source was replaced was reported as resting on one that stands",
         );
         assert_eq!(
             standing_of("f6"),
