@@ -4431,6 +4431,58 @@ mod tests {
         );
     }
 
+    /// 🚨 **A question whose words live in two different records finds both.**
+    ///
+    /// This is the shape a real sitting takes: somebody asks about an earlier
+    /// claim in words that claim did not use, and the terms end up spread
+    /// across records rather than gathered in one. ⛔️ **Every term being
+    /// required meant the answer was empty**, and an empty answer reads as
+    /// *nobody ever said this*.
+    ///
+    /// ⚠️ **Measured rather than inferred.** The majority rule SHOULD make this
+    /// work, and *should* is what an expensive run is for finding out is wrong.
+    #[test]
+    fn a_question_spread_across_two_records_finds_them_both() {
+        let index = FullTextIndex::open().expect("index opens");
+        let day = "2026-08-10".parse().expect("a civil date");
+        index
+            .ingest_all(
+                &[DocScan {
+                    doc_id: "outline-uuid-1".into(),
+                    title: "Milhouse".into(),
+                    prose: String::new(),
+                    entity: Some(entity("person:milhouse", "Milhouse")),
+                    facts: vec![
+                        fact("person:milhouse", "f1", "the club meets upstairs", day),
+                        fact("person:milhouse", "f2", "rehearsals are on Tuesdays", day),
+                    ],
+                    fields: Default::default(),
+                    owner: None,
+                }],
+                index.reading_begins(),
+            )
+            .expect("memory ingested");
+
+        // Neither record holds both words, and the singular is in neither.
+        let found = index
+            .search(&SearchQuery {
+                text: Some("club Tuesday".into()),
+                ..SearchQuery::default()
+            })
+            .expect("search ok");
+        let ids: Vec<&str> = found
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Fact { fact, .. } => Some(fact.id.0.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            ids.contains(&"f1") && ids.contains(&"f2"),
+            "a question spread across two records found {ids:?} instead of both",
+        );
+    }
+
     /// 🚨 **A summary never outranks the words it summarises.**
     ///
     /// Measured in a paid run, not argued: an assistant filed the operator's

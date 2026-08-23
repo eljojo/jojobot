@@ -616,6 +616,15 @@ impl Jojobot {
         let as_of = parse_date(None, &self.zone_for(args.sid.as_deref()))?;
         let body = serde_json::json!({
             "count": hits.len(),
+            // **A different question from the two coverage notes below.**
+            // Those answer *was everything searched*; this answers *did the
+            // query match what is there*, which is a property of the QUERY and
+            // is true even when the index is complete.
+            //
+            // ⛔️ Kept apart on purpose: a caller told the index is loaded and
+            // nothing else would read an empty answer as *nobody ever said
+            // this*, which is the one inference this field exists to stop.
+            "matching": matching_note(&query),
             "memory": memory_coverage(self.search.memory_coverage()),
             "mail": mail_coverage(&query, self.search.mail_coverage()),
             "results": hits
@@ -625,6 +634,34 @@ impl Jojobot {
         });
         json_result(&body)
     }
+}
+
+/// **What the matcher can and cannot promise about this query.**
+///
+/// Words are matched by stem and a query needs most of its terms rather than
+/// all of them, so a hit list is what the matcher FOUND rather than everything
+/// that is there. **An empty answer means the words did not match, never that
+/// nobody said it** — and no coverage note says that, because coverage is about
+/// what was read.
+///
+/// **A handle is exempt and says so**: it is matched whole, so an empty answer
+/// under one really does mean no such thing is held.
+fn matching_note(query: &search::SearchQuery) -> serde_json::Value {
+    let exact = query
+        .terms()
+        .is_some_and(|text| EntityId(text.trim().to_string()).kind().is_some());
+    serde_json::json!({
+        "exact": exact,
+        "note": if exact {
+            "this is a handle, matched whole — an empty answer means jojobot holds no such thing"
+        } else {
+            "words are matched loosely, by stem, and a query needs most of its terms rather \
+             than all of them. So these are the records that MATCHED, not everything that \
+             is here: an empty or thin answer can mean the wording missed rather than that \
+             nothing was ever recorded. Try fewer words, or the words the record itself \
+             would use, before concluding jojobot was never told."
+        },
+    })
 }
 
 #[cfg(test)]
@@ -924,6 +961,76 @@ mod tests {
     /// takes — without those it is an anonymous paragraph and a reader cannot
     /// tell a live task from an archived report. The body is a snippet: taking
     /// the whole message is `read_message`'s job, and that is a deliberate act.
+    /// 🚨 **An answer admits the WORDS may have missed, even when everything
+    /// was searched.**
+    ///
+    /// Matching is loose now: stems, and most of a query's terms rather than
+    /// all of them. **So a hit list is what the matcher FOUND, not everything
+    /// that is there** — and an empty answer means the wording missed, never
+    /// that nobody said it.
+    ///
+    /// ⛔️ **The coverage notes cannot carry this.** They answer *was
+    /// everything searched*, and here everything WAS: `memory.searched` is
+    /// true beside it. **A caller told the index is complete and nothing else
+    /// reads an empty answer as never-recorded**, which is the fabrication
+    /// shape this exists to stop.
+    ///
+    /// ⚠️ **Asserted on a fully-loaded index on purpose.** A case that only
+    /// checked the note on a degraded one would pass against a build that
+    /// folded this into coverage.
+    #[tokio::test]
+    async fn an_answer_says_the_wording_may_have_missed_even_when_all_was_searched() {
+        let spy = Arc::new(SpySearch::answering(Vec::new()));
+        let body = json_of(
+            &handler_with(spy)
+                .search(Parameters(SearchArgs {
+                    query: Some("committee meets".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(body["count"], 0, "the empty answer is the case");
+        assert_eq!(
+            body["memory"]["searched"], true,
+            "the point is that everything WAS searched and a miss is still possible",
+        );
+        assert_eq!(
+            body["matching"]["exact"], false,
+            "an answer over loose matching did not say it was loose",
+        );
+        let note = body["matching"]["note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the field is there and says nothing: {body}"));
+        // ⚠️ **One clean line.** A wrapped literal that loses its continuation
+        // renders runs of spaces, and this note is read by an agent — I shipped
+        // exactly that for a few minutes and only a sabotage's own output
+        // showed it.
+        assert!(
+            !note.contains('\n') && !note.contains("  "),
+            "the note is not one clean line: {note:?}",
+        );
+
+        // ⭐ **And a handle is exempt and says so.** It is matched whole, so an
+        // empty answer under one really does mean no such thing is held —
+        // without this half, a build that called every query approximate would
+        // pass.
+        let spy = Arc::new(SpySearch::answering(Vec::new()));
+        let handle = json_of(
+            &handler_with(spy)
+                .search(Parameters(SearchArgs {
+                    query: Some("person:alpha".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(
+            handle["matching"]["exact"], true,
+            "a handle was reported as loosely matched: {handle}",
+        );
+    }
+
     #[tokio::test]
     async fn a_message_hit_arrives_with_its_whole_envelope() {
         let spy = Arc::new(SpySearch::answering(vec![Hit::Message {
