@@ -70,6 +70,12 @@ def refuse(why):
 
 
 def main(argv):
+    broken = self_check()
+    if broken:
+        return refuse(broken)
+    if argv == ["--self-check"]:
+        print(f"SABOTAGE SELF-CHECK: {len(CHECKS)} classifier cases hold")
+        return 0
     if "--" not in argv:
         return refuse(USAGE)
     split = argv.index("--")
@@ -178,6 +184,104 @@ def probe_text(old):
     return f"{lead}{PANIC}{tail}"
 
 
+DEPENDED_ON = "DEPENDED ON"
+BLIND = "BLIND"
+NOT_MEASURED = "NOT MEASURED"
+
+SAYS = {
+    DEPENDED_ON: (
+        "DEPENDED ON — a panic here is noticed, so the green above is a genuine negative "
+        "control and says something about the code"
+    ),
+    BLIND: (
+        "BLIND — a panic here is not noticed, so the green above measured NOTHING. The case "
+        "does not depend on this site; sabotage the one it does."
+    ),
+    NOT_MEASURED: (
+        "NOT MEASURED — the probe did not run and did not panic, so this says nothing either "
+        "way. The output above is why; usually the panic could not be written where the site "
+        "stands."
+    ),
+}
+
+
+def classify(said, returncode):
+    """**Which kind of green, from the probe's output and its exit code.**
+
+    A pure function over strings, because it is the part that has been wrong:
+    the first version asked whether the marker appeared anywhere in the output
+    and was fooled by the compiler quoting the very line it had just been asked
+    to compile. **A panic prints its message as a line of its own**, and a
+    quoted source line always carries the compiler's gutter, so the test is a
+    whole line rather than a substring.
+
+    A run that neither panicked nor succeeded says nothing: usually the panic
+    could not be written where the site stands. **Reporting that as BLIND would
+    tell somebody their case is worthless when nothing was measured.**
+    """
+    if any(line.strip() == MARKER for line in said.splitlines()):
+        return DEPENDED_ON
+    return BLIND if returncode == 0 else NOT_MEASURED
+
+
+# **The four inputs are real output, kept as it arrived.** The first is what
+# actually fooled this classifier: the probe compiled, warned, never fired, and
+# the compiler echoed the marker back inside a quoted source line. A
+# reconstruction of that would have been written by somebody who already knew
+# the answer.
+CHECKS = (
+    (
+        "the compiler echoing the marker in a warning is not a panic",
+        'warning: unreachable expression\n'
+        '1247 | | ...                       retracted: panic!("SABOTAGE-PROBE-REACHED-THIS-SITE"),\n'
+        "warning: `jojobot-domain` (lib) generated 2 warnings\n",
+        0,
+        BLIND,
+    ),
+    (
+        "a panic prints its message as a line of its own",
+        "thread 'memory::graph::tests::the_scopes_part_company' (3901737) panicked at "
+        "crates/jojobot-domain/src/memory/graph.rs:218:9:\n"
+        "SABOTAGE-PROBE-REACHED-THIS-SITE\n"
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+        101,
+        DEPENDED_ON,
+    ),
+    (
+        "a clean pass with the marker nowhere is blind",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 189 filtered out\n",
+        0,
+        BLIND,
+    ),
+    (
+        "a probe that would not compile measured nothing",
+        "error: expected one of `,` or `}`, found `panic`\n"
+        "error: could not compile `jojobot-domain` (lib test)\n",
+        101,
+        NOT_MEASURED,
+    ),
+)
+
+
+def self_check():
+    """**The classifier answers for itself before it answers about anything.**
+
+    It runs on every sabotage rather than in the bar, because the moment it is
+    about to be relied on is the moment worth checking it — and because it is
+    four string comparisons.
+
+    ⛔️ **A broken classifier is not a silence to fall back to.** It prints
+    DEPENDED ON over a blind case, which is an active mis-certification of the
+    one thing this tool exists to catch, so a failure here refuses rather than
+    warns.
+    """
+    for why, said, code, wanted in CHECKS:
+        got = classify(said, code)
+        if got != wanted:
+            return f"the probe classifier is wrong — {why}: said {got}, and it has to say {wanted}"
+    return None
+
+
 def probe(path, before, old, command):
     """**Which kind of green that was**, printed and never enforced."""
     text = probe_text(old)
@@ -196,28 +300,10 @@ def probe(path, before, old, command):
     with open(path, "w", encoding="utf-8") as writing:
         writing.write(before.replace(old, text, 1))
     ran = subprocess.run(command, capture_output=True, text=True)
-    said = ran.stdout + ran.stderr
-    panicked = any(line.strip() == MARKER for line in said.splitlines())
-    if panicked:
-        print(
-            "SABOTAGE PROBE: DEPENDED ON — a panic here is noticed, so the green above is a "
-            "genuine negative control and says something about the code",
-            flush=True,
-        )
-    elif ran.returncode == 0:
-        print(
-            "SABOTAGE PROBE: BLIND — a panic here is not noticed, so the green above measured "
-            "NOTHING. The case does not depend on this site; sabotage the one it does.",
-            flush=True,
-        )
-    else:
-        print(said, flush=True)
-        print(
-            "SABOTAGE PROBE: NOT MEASURED — the probe did not run and did not panic, so this "
-            "says nothing either way. The output above is why; usually the panic could not be "
-            "written where the site stands.",
-            flush=True,
-        )
+    verdict = classify(ran.stdout + ran.stderr, ran.returncode)
+    if verdict == NOT_MEASURED:
+        print(ran.stdout + ran.stderr, flush=True)
+    print(f"SABOTAGE PROBE: {SAYS[verdict]}", flush=True)
 
 
 if __name__ == "__main__":
