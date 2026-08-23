@@ -39,6 +39,8 @@ mod dsl;
 mod entitlements;
 #[path = "user_stories/gigs.rs"]
 mod gigs;
+#[path = "user_stories/handover.rs"]
+mod handover;
 #[path = "user_stories/handshake.rs"]
 mod handshake;
 #[path = "user_stories/investigating.rs"]
