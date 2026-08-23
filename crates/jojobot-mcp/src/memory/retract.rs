@@ -148,6 +148,7 @@ fn what_a_retraction_left_standing(address: &FactAddress, built_on: &[Fact]) -> 
 mod tests {
     use super::*;
     use crate::harness::*;
+    use crate::memory::recall::FollowArgs;
     use crate::memory::testing::{ensure, recall_args};
 
     /// **Taking a claim back says what still stands, and the same case proves
@@ -156,15 +157,87 @@ mod tests {
     /// ⚠️ **The model an agent arrives with is that a retraction removes the
     /// claim. It does not.** The record stays in the store, comes back from a
     /// plain `recall` marked `retracted`, and an edge on it still reaches
-    /// whatever it pointed at. An agent answering from a walk alone therefore
-    /// reads a withdrawn claim as a standing one, and nothing on the surface
-    /// said so.
+    /// whatever it pointed at — now saying so, which
+    /// [`a_walk_says_the_claim_behind_a_link_was_taken_back`] is about.
     ///
     /// **The line and the behaviour are asserted together on purpose.** A
     /// postcondition is prose the caller cannot check, so a case that pinned
     /// only the wording would keep passing on the day the behaviour changed
     /// underneath it — which is the one failure that makes this line worse
     /// than none.
+    /// 🚨 **A walk says when the claim behind a link was taken back, through
+    /// the surface a caller actually holds.**
+    ///
+    /// The resolver computes the marker and the shared contract proves it
+    /// survives the store. **Neither says a caller can see it.** A walk is
+    /// where an agent meets a retracted claim without ever reading the record,
+    /// so the rendering is the half that decides whether the capability
+    /// exists — and a build that computed the marker and dropped it on the
+    /// wire would pass both of the others.
+    ///
+    /// **Marked, never filtered**, and both halves in one read: the standing
+    /// claim's link carries nothing, the withdrawn one's says so. The negative
+    /// alone would pass on a build where no link is ever marked.
+    #[tokio::test]
+    async fn a_walk_says_the_claim_behind_a_link_was_taken_back() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        ensure(&jojobot, "event:birthday-party").await;
+        ensure(&jojobot, "person:beta").await;
+        let attending = |who: &str, said: &str| CaptureArgs {
+            sid: Some(sid.clone()),
+            shape: Some("attendance".into()),
+            object: Some("event:birthday-party".into()),
+            ..capture_args(who, said)
+        };
+        capture_ok(&jojobot, attending("person:alpha", "was at the party")).await;
+        let withdrawn = capture_ok(&jojobot, attending("person:beta", "was at the party")).await;
+        jojobot
+            .retract(Parameters(RetractArgs {
+                address: address_of(&withdrawn),
+                reason: Some("was somewhere else that day".into()),
+                sid: Some(sid.clone()),
+                date: None,
+            }))
+            .await
+            .expect("the retraction lands");
+
+        let walked = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    follow: Some(FollowArgs {
+                        shape: Some("attendance".into()),
+                        relation: None,
+                        direction: Some("in".into()),
+                        depth: None,
+                        keeping: None,
+                        fits_type: None,
+                    }),
+                    sid: Some(sid.clone()),
+                    ..recall_args("event:birthday-party")
+                }))
+                .await
+                .expect("a walk from the party"),
+        );
+        let via = |handle: &str| {
+            walked["objects"][0]["connected"]
+                .as_array()
+                .unwrap_or_else(|| panic!("the walk reached its guests: {walked}"))
+                .iter()
+                .find(|o| o["id"] == handle)
+                .unwrap_or_else(|| panic!("{handle} was not reached at all: {walked}"))["via"]
+                .clone()
+        };
+        assert!(
+            via("person:alpha").get("retracted").is_none(),
+            "the claim that stands draws a link nothing marks: {walked}",
+        );
+        assert!(
+            via("person:beta").get("retracted").is_some(),
+            "the withdrawn claim is still reached, and its link says so on the wire: {walked}",
+        );
+    }
+
     #[tokio::test]
     async fn a_retraction_says_what_still_stands_and_the_store_agrees() {
         let jojobot = handler();

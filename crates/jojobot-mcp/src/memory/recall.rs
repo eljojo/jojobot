@@ -732,6 +732,20 @@ fn object_json(
         let mut link = link;
         if let Some(fields) = link.as_object_mut() {
             fields.insert("direction".into(), via.direction.as_token().into());
+            // **A link nobody stands behind is marked, never dropped.** Hiding
+            // it would make a claim somebody took back and a claim nobody ever
+            // made the same answer, which is the one thing a reader here has to
+            // be able to tell apart. Present only when it says something, for
+            // the reason `unwalked` is: a marker on every ordinary link is a
+            // key a reader learns to skip.
+            if via.retracted {
+                fields.insert(
+                    "retracted".into(),
+                    "every claim drawing this link was taken back — the link is here so it can be \
+                     told from one nobody ever drew, and it is not something to act on"
+                        .into(),
+                );
+            }
         }
         fields.insert("via".into(), link);
     }

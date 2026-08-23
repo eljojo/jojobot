@@ -19,8 +19,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::{
-    Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, MemoryError, guard, search::DocScan,
-    types, validate_subject,
+    Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactStatus, MemoryError, guard,
+    search::DocScan, types, validate_subject,
 };
 
 /// **How far a walk may go.** A bound rather than a preference: an edge may
@@ -633,6 +633,16 @@ pub struct Via {
     pub link: Link,
     /// Which way it was walked to get here.
     pub direction: Direction,
+    /// **Every claim drawing this link was taken back.**
+    ///
+    /// A retracted claim keeps its link rather than losing it, for the reason
+    /// a fact read keeps the claim: dropping it would make a claim somebody
+    /// withdrew and a claim nobody ever made the same answer, and those are
+    /// different things a reader acts on differently.
+    ///
+    /// **A live claim wins.** Two records can draw the same link between the
+    /// same pair, and the link is only taken back when none of them stands.
+    pub retracted: bool,
 }
 
 /// **One object in the answer**, and the objects it reached.
@@ -870,7 +880,7 @@ struct Ctx<'a> {
     facts: BTreeMap<&'a EntityId, Vec<&'a Fact>>,
     /// For each entity, the edges drawn AT it: the shape, and the entity whose
     /// record draws it. The reverse of the edge cell, built once.
-    inbound: BTreeMap<EntityId, Vec<(EdgeShape, EntityId)>>,
+    inbound: BTreeMap<EntityId, Vec<(EdgeShape, EntityId, bool)>>,
     /// Every fact once, whatever page it sits on — what a reverse relation
     /// reads, because it asks who points here and the answer is on their pages
     /// rather than on this one.
@@ -886,7 +896,7 @@ impl<'a> Ctx<'a> {
         let mut prose = BTreeMap::new();
         let mut fields = BTreeMap::new();
         let mut facts: BTreeMap<&EntityId, Vec<&Fact>> = BTreeMap::new();
-        let mut inbound: BTreeMap<EntityId, Vec<(EdgeShape, EntityId)>> = BTreeMap::new();
+        let mut inbound: BTreeMap<EntityId, Vec<(EdgeShape, EntityId, bool)>> = BTreeMap::new();
 
         for doc in scanned {
             if let Some(entity) = doc.entity.as_ref() {
@@ -903,10 +913,11 @@ impl<'a> Ctx<'a> {
                     facts.entry(&fact.home).or_default().push(fact);
                 }
                 if let Some(Edge { shape, object }) = fact.edge.as_ref() {
-                    inbound
-                        .entry(object.clone())
-                        .or_default()
-                        .push((*shape, fact.subject.clone()));
+                    inbound.entry(object.clone()).or_default().push((
+                        *shape,
+                        fact.subject.clone(),
+                        fact.status == FactStatus::Retracted,
+                    ));
                 }
             }
         }
@@ -1103,7 +1114,7 @@ impl<'a> Ctx<'a> {
                     depth: follow.depth - 1,
                     ..follow.clone()
                 };
-                for (link, direction, reached) in reachable {
+                for (via, reached) in reachable {
                     // An object the walk's filters do not keep is one this
                     // answer does not carry, so the object that pointed at it
                     // says an edge of its own went unfollowed — the same claim
@@ -1146,8 +1157,7 @@ impl<'a> Ctx<'a> {
                         unwalked = true;
                         continue;
                     }
-                    let via = Some(Via { link, direction });
-                    connected.push(self.expand(&reached, via, query, Some(&next), seen));
+                    connected.push(self.expand(&reached, Some(via), query, Some(&next), seen));
                 }
             }
         }
@@ -1215,13 +1225,8 @@ impl<'a> Ctx<'a> {
     /// that gets repaired. **A reference key is not guarded that way at all** —
     /// nothing checks a record's values against a declaration — so a key
     /// holding a handle nobody has created is ordinary and drops out here.
-    fn neighbours(
-        &self,
-        id: &EntityId,
-        from: &[&Fact],
-        follow: &Follow,
-    ) -> Vec<(Link, Direction, EntityId)> {
-        let mut found: Vec<(Link, Direction, EntityId)> = match &follow.along {
+    fn neighbours(&self, id: &EntityId, from: &[&Fact], follow: &Follow) -> Vec<(Via, EntityId)> {
+        let mut found: Vec<(Via, EntityId)> = match &follow.along {
             Along::Relation(name) => self.along_relation(id, from, name, follow.direction()),
             along => {
                 let shape = match along {
@@ -1232,30 +1237,51 @@ impl<'a> Ctx<'a> {
                 match direction {
                     Direction::Out => from
                         .iter()
-                        .filter_map(|f| f.edge.as_ref())
-                        .filter(|e| shape.is_none_or(|s| e.shape == s))
-                        .map(|e| (Link::Edge(e.shape), direction, e.object.clone()))
+                        .filter_map(|f| f.edge.as_ref().map(|e| (*f, e)))
+                        .filter(|(_, e)| shape.is_none_or(|s| e.shape == s))
+                        .map(|(f, e)| {
+                            (
+                                Via {
+                                    link: Link::Edge(e.shape),
+                                    direction,
+                                    retracted: f.status == FactStatus::Retracted,
+                                },
+                                e.object.clone(),
+                            )
+                        })
                         .collect(),
                     Direction::In => self
                         .inbound
                         .get(id)
                         .into_iter()
                         .flatten()
-                        .filter(|(shape_at, _)| shape.is_none_or(|s| *shape_at == s))
-                        .map(|(shape_at, drawn_by)| {
-                            (Link::Edge(*shape_at), direction, drawn_by.clone())
+                        .filter(|(shape_at, _, _)| shape.is_none_or(|s| *shape_at == s))
+                        .map(|(shape_at, drawn_by, retracted)| {
+                            (
+                                Via {
+                                    link: Link::Edge(*shape_at),
+                                    direction,
+                                    retracted: *retracted,
+                                },
+                                drawn_by.clone(),
+                            )
                         })
                         .collect(),
                 }
             }
         };
-        found.retain(|(_, _, reached)| self.entities.contains_key(reached));
+        found.retain(|(_, reached)| self.entities.contains_key(reached));
+        // **A live claim sorts ahead of a taken-back one drawing the same
+        // link**, and the dedup below keeps the first. That is what makes the
+        // marker mean *nothing stands behind this* rather than *the newest
+        // record happened to be retracted*.
         found.sort_by(|a, b| {
-            a.2.as_str()
-                .cmp(b.2.as_str())
-                .then_with(|| a.0.token().cmp(b.0.token()))
+            a.1.as_str()
+                .cmp(b.1.as_str())
+                .then_with(|| a.0.link.token().cmp(b.0.link.token()))
+                .then_with(|| a.0.retracted.cmp(&b.0.retracted))
         });
-        found.dedup();
+        found.dedup_by(|a, b| a.1 == b.1 && a.0.link == b.0.link);
         found
     }
 
@@ -1277,7 +1303,7 @@ impl<'a> Ctx<'a> {
         from: &[&Fact],
         name: &str,
         direction: Direction,
-    ) -> Vec<(Link, Direction, EntityId)> {
+    ) -> Vec<(Via, EntityId)> {
         // ⚠️ **UNREACHABLE, AND DELIBERATELY KEPT.** No test reaches this
         // branch, and the comment exists so the next reader knows the coverage
         // is absent rather than assuming it: `check_declared` refuses a
@@ -1299,12 +1325,22 @@ impl<'a> Ctx<'a> {
         match direction {
             Direction::Out => from
                 .iter()
-                .filter_map(|f| f.fields.get(key))
-                .flat_map(|cell| {
+                .filter_map(|f| f.fields.get(key).map(|cell| (*f, cell)))
+                .flat_map(|(f, cell)| {
+                    let retracted = f.status == FactStatus::Retracted;
                     field
                         .items(cell)
                         .into_iter()
-                        .map(|handle| (link(), direction, EntityId(handle.to_string())))
+                        .map(|handle| {
+                            (
+                                Via {
+                                    link: link(),
+                                    direction,
+                                    retracted,
+                                },
+                                EntityId(handle.to_string()),
+                            )
+                        })
                         .collect::<Vec<_>>()
                 })
                 .collect(),
@@ -1316,7 +1352,16 @@ impl<'a> Ctx<'a> {
                         .get(key)
                         .is_some_and(|cell| field.items(cell).contains(&id.as_str()))
                 })
-                .map(|f| (link(), direction, f.subject.clone()))
+                .map(|f| {
+                    (
+                        Via {
+                            link: link(),
+                            direction,
+                            retracted: f.status == FactStatus::Retracted,
+                        },
+                        f.subject.clone(),
+                    )
+                })
                 .collect(),
         }
     }
@@ -2272,6 +2317,185 @@ mod tests {
 
     /// **The walk goes both ways, and the answer nests.**
     ///
+    /// **A walk says when the claim behind a link was taken back.**
+    ///
+    /// A fact read can already tell a retracted claim from one that never
+    /// existed: the claim comes back carrying its status, marked rather than
+    /// hidden. A walk could not, so the retracted attendance and the live one
+    /// arrived by the same edge, indistinguishable.
+    ///
+    /// **Marked, never filtered.** Dropping the link would make a claim
+    /// somebody took back and a claim nobody ever made identical on a walk,
+    /// which is the failure this exists to remove rather than a tidier version
+    /// of it.
+    ///
+    /// **All three reads in one case.** The live link unmarked is what stops
+    /// the marker being on everything; the retracted one marked is the
+    /// capability; and the person nobody ever linked is absent from both, which
+    /// is what stops the pair passing on a store where the walk reaches
+    /// everybody.
+    #[test]
+    fn a_walk_marks_a_link_whose_claim_was_taken_back() {
+        let mut scanned = store();
+        let barney = scanned
+            .iter_mut()
+            .find(|d| d.doc_id == "person:barney-gumble")
+            .expect("the store holds Barney");
+        barney.facts[0].status = FactStatus::Retracted;
+
+        let guests = resolved(
+            &scanned,
+            &[],
+            &GraphQuery {
+                select: Selection {
+                    subject: Some(EntityId("event:birthday-party".into())),
+                    ..Selection::default()
+                },
+                follow: Some(Follow {
+                    along: Along::Edge(EdgeShape::Attendance),
+                    direction: Some(Direction::In),
+                    ..Follow::hop()
+                }),
+                ..GraphQuery::default()
+            },
+        )
+        .expect("a subject with a walk");
+        let reached = &guests[0].connected;
+
+        assert_eq!(
+            handles(reached),
+            vec!["person:barney-gumble", "person:patana"],
+            "both are still reached, because a retracted claim is marked and not hidden: \
+             {reached:?}",
+        );
+        let via = |at: usize| {
+            reached[at]
+                .via
+                .as_ref()
+                .expect("a reached object says how the walk got to it")
+        };
+        assert!(
+            via(0).retracted,
+            "Barney's attendance was taken back, so the link says so: {reached:?}",
+        );
+        assert!(
+            !via(1).retracted,
+            "Patana's still stands, so nothing marks hers — without this the marker could be on \
+             every link: {reached:?}",
+        );
+        assert_eq!(
+            via(0).link,
+            via(1).link,
+            "and both arrived by the same edge, so the marker is the only difference: {reached:?}",
+        );
+        assert!(
+            !handles(reached).contains(&"person:ned-flanders"),
+            "somebody no claim ever linked is not reached at all, so the pair above is about the \
+             claims rather than about a walk that returns everybody: {reached:?}",
+        );
+
+        // **The other end of the same edge**, because a walk outbound reads the
+        // object's own records while inbound reads a map of who points here.
+        // They are different code, so a marker on one says nothing about the
+        // other — and the caller asking *what was this person at* is walking
+        // outbound.
+        let out_from = |who: &str| {
+            resolved(
+                &scanned,
+                &[],
+                &GraphQuery {
+                    select: Selection {
+                        subject: Some(EntityId(who.into())),
+                        ..Selection::default()
+                    },
+                    follow: Some(Follow {
+                        along: Along::Edge(EdgeShape::Attendance),
+                        direction: Some(Direction::Out),
+                        ..Follow::hop()
+                    }),
+                    ..GraphQuery::default()
+                },
+            )
+            .expect("a subject with a walk")[0]
+                .connected
+                .clone()
+        };
+        let withdrawn = out_from("person:barney-gumble");
+        let stands = out_from("person:patana");
+        assert_eq!(
+            handles(&withdrawn),
+            vec!["event:birthday-party"],
+            "the party is still reached from the guest whose claim went: {withdrawn:?}",
+        );
+        assert!(
+            withdrawn[0].via.as_ref().is_some_and(|v| v.retracted),
+            "and walking out says the claim behind it was taken back: {withdrawn:?}",
+        );
+        assert!(
+            stands[0].via.as_ref().is_some_and(|v| !v.retracted),
+            "while the guest whose claim stands reaches it unmarked: {stands:?}",
+        );
+    }
+
+    /// **Two claims can draw one link, and a claim that stands keeps it.**
+    ///
+    /// The marker says *nothing stands behind this*, so it must not fire
+    /// because one of several records happened to be taken back. Barney is
+    /// recorded twice, once withdrawn and once not, and arrives ONCE by an
+    /// unmarked link — the same answer as if the withdrawn record had never
+    /// been written, which is correct: it is not what the link rests on.
+    #[test]
+    fn a_claim_that_stands_keeps_a_link_another_claim_gave_up() {
+        let mut scanned = store();
+        let barney = scanned
+            .iter_mut()
+            .find(|d| d.doc_id == "person:barney-gumble")
+            .expect("the store holds Barney");
+        barney.facts[0].status = FactStatus::Retracted;
+        barney.facts.push(Fact {
+            edge: Some(Edge {
+                shape: EdgeShape::Attendance,
+                object: EntityId("event:birthday-party".into()),
+            }),
+            ..fact("person:barney-gumble", "f2", "came after all")
+        });
+
+        let reached = resolved(
+            &scanned,
+            &[],
+            &GraphQuery {
+                select: Selection {
+                    subject: Some(EntityId("event:birthday-party".into())),
+                    ..Selection::default()
+                },
+                follow: Some(Follow {
+                    along: Along::Edge(EdgeShape::Attendance),
+                    direction: Some(Direction::In),
+                    ..Follow::hop()
+                }),
+                ..GraphQuery::default()
+            },
+        )
+        .expect("a subject with a walk")[0]
+            .connected
+            .clone();
+
+        assert_eq!(
+            handles(&reached),
+            vec!["person:barney-gumble", "person:patana"],
+            "one link each, not one per claim: {reached:?}",
+        );
+        assert!(
+            !reached[0]
+                .via
+                .as_ref()
+                .expect("a reached object says how the walk got to it")
+                .retracted,
+            "a claim that stands draws the link, so the withdrawn one does not mark it: \
+             {reached:?}",
+        );
+    }
+
     /// From the party inbound reaches its guests; from a guest outbound reaches
     /// the party. One edge, two questions, and a walk that could only go one
     /// way would answer one of them.
@@ -2316,6 +2540,7 @@ mod tests {
             Some(Via {
                 link: Link::Edge(EdgeShape::Attendance),
                 direction: Direction::In,
+                retracted: false,
             }),
             "a reached object says how the walk got to it",
         );
@@ -2447,6 +2672,7 @@ mod tests {
             Some(Via {
                 link: Link::Edge(EdgeShape::Location),
                 direction: Direction::Out,
+                retracted: false,
             }),
             "and it says which edge it came along",
         );
@@ -2950,6 +3176,7 @@ mod tests {
             Some(Via {
                 link: Link::Relation("owner".into()),
                 direction: Direction::Out,
+                retracted: false,
             }),
             "and the reached object says it came along the relation, outbound",
         );
@@ -3183,6 +3410,7 @@ mod tests {
             Some(Via {
                 link: Link::Relation("owner".into()),
                 direction: Direction::In,
+                retracted: false,
             }),
             "and it says it arrived along the key, inbound",
         );

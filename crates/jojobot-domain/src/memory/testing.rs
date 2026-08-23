@@ -6974,8 +6974,93 @@ pub mod contract {
             Some(graph::Via {
                 link: graph::Link::Edge(EdgeShape::Attendance),
                 direction: graph::Direction::In,
+                retracted: false,
             }),
-            "which says how the walk got to it",
+            "which says how the walk got to it, and that the claim behind it stands",
+        );
+    }
+
+    /// 🚨 **A walk says when the claim behind a link was taken back — against
+    /// the store, through the retract verb.**
+    ///
+    /// The resolver case proves the marker is computed. This proves it survives
+    /// the round trip: the status has to be written, stored and read back
+    /// before a walk can carry it, and a store that dropped it would answer the
+    /// resolver case identically.
+    ///
+    /// **Marked, never filtered.** A link nobody stands behind and a link
+    /// nobody ever drew are different answers, and hiding the first would make
+    /// them one.
+    ///
+    /// **Three reads, and each stops the others being vacuous:** the live link
+    /// unmarked says the marker is not on everything, the taken-back one marked
+    /// is the capability, and somebody no claim ever linked is reached by
+    /// neither.
+    pub async fn a_walk_marks_a_link_whose_claim_the_store_took_back<M: Memory>(store: &M) {
+        let gathering = EntityId("event:contract-withdrawn-gathering".into());
+        let stood = EntityId::person("person:contract-withdrawn-stood");
+        let pulled = EntityId::person("person:contract-withdrawn-pulled");
+        let apart = EntityId::person("person:contract-withdrawn-apart");
+        ensure(store, &gathering).await;
+        ensure(store, &apart).await;
+
+        let attending = |who: &EntityId, said: &str| NewFact {
+            edge: Some(Edge::new(EdgeShape::Attendance, gathering.clone())),
+            ..NewFact::about(who.clone(), said, date(2026, 8, 10))
+        };
+        capture(store, attending(&stood, "was there")).await;
+        let withdrawn = capture(store, attending(&pulled, "was there")).await;
+        store
+            .retract(
+                &withdrawn.address(),
+                Some("was never at it — a different evening"),
+                date(2026, 8, 12),
+            )
+            .await
+            .expect("a claim that stands may be taken back");
+
+        let walked = graph::walk(
+            store,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(gathering.clone()),
+                    ..graph::Selection::default()
+                },
+                follow: Some(graph::Follow {
+                    along: graph::Along::Edge(EdgeShape::Attendance),
+                    direction: Some(graph::Direction::In),
+                    ..graph::Follow::hop()
+                }),
+                ..graph::GraphQuery::default()
+            },
+        )
+        .await
+        .expect("a walk from the gathering")
+        .objects;
+        let reached = &walked[0].connected;
+        let marker = |who: &EntityId| {
+            reached
+                .iter()
+                .find(|o| &o.entity.id == who)
+                .unwrap_or_else(|| panic!("{who:?} was not reached at all: {reached:?}"))
+                .via
+                .as_ref()
+                .expect("a reached object says how the walk got to it")
+                .retracted
+        };
+
+        assert!(
+            !marker(&stood),
+            "the claim that stands draws a link nothing marks: {reached:?}",
+        );
+        assert!(
+            marker(&pulled),
+            "the claim the store took back is still reached, and the link says so: {reached:?}",
+        );
+        assert!(
+            !reached.iter().any(|o| o.entity.id == apart),
+            "somebody no claim ever linked is reached by neither, so the pair above is about the \
+             claims rather than about a walk that returns every person: {reached:?}",
         );
     }
 
@@ -8954,6 +9039,7 @@ pub mod contract {
 
         a_graph_query_selects_a_kind_and_returns_its_prose(store).await;
         a_graph_query_filters_on_a_stored_value_and_walks_an_edge(store).await;
+        a_walk_marks_a_link_whose_claim_the_store_took_back(store).await;
         a_declared_reference_key_is_walkable_against_the_store(store).await;
         a_trip_records_who_came_and_answers_from_either_end(store).await;
         the_kinds_are_rows_and_a_shipped_one_is_closed(store).await;

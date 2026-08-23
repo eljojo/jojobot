@@ -266,6 +266,44 @@ async fn throwing_a_birthday_party() {
     // anything.
     table.claim(&patana_eats).says("vegetarian");
 
+    // ── somebody drops out, and the guest list has to show it ──────────────
+    //
+    // A guest who said yes and then did not come is the ordinary case, and it
+    // is the one where a walk used to mislead: the attendance claim is taken
+    // back, and the walk still reached the guest by an edge that looked exactly
+    // like everybody else's. A session answering "who is coming" off the walk
+    // read a withdrawn yes as a standing one.
+    //
+    // The claim is not hidden — hiding it would make somebody who dropped out
+    // and somebody who was never asked the same answer — so the walk carries
+    // both, and says which is which.
+    let dropped = s
+        .fact_about(
+            "person:maude",
+            "coming to the party",
+            "attendance",
+            "event:birthday-party",
+        )
+        .await;
+    let guests = json!({
+        "subject": "event:birthday-party",
+        "follow": {"shape": "attendance", "direction": "in"},
+    });
+    s.shape("who is coming to the party", guests.clone())
+        .await
+        .says("person:maude")
+        .never_says("retracted");
+    s.retract(&dropped, "cannot make it after all — away that weekend")
+        .await;
+    let after = s.shape("who is coming to the party", guests).await;
+    after.says("person:maude").says("retracted");
+    // The guest whose yes still stands is still reached, so the retraction took
+    // one link and not the walk. **Which link carries the marker is not
+    // something a whole-answer assertion can say** — that is pinned per link in
+    // the verb's own suite; here the pair that means something is the same read
+    // before and after.
+    after.says("person:patana");
+
     // The practical half, and the one actually worried about. It is not a
     // verb: "do I have enough chairs" is arithmetic over two things already
     // recorded, and the arithmetic is the session's.
