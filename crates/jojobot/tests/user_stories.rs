@@ -15,6 +15,8 @@ mod support;
 
 // A test target's root file does not get the `foo.rs` + `foo/` convention, so
 // the folder is named explicitly.
+#[path = "user_stories/around_a_day.rs"]
+mod around_a_day;
 #[path = "user_stories/bikes.rs"]
 mod bikes;
 #[path = "user_stories/boot.rs"]

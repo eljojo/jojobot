@@ -288,6 +288,9 @@ pub struct RecallArgs {
     /// be heard from again.
     #[serde(default)]
     pub(crate) overdue: Option<OverdueArgs>,
+    /// **What else was recorded around a day.** See [`NearArgs`].
+    #[serde(default)]
+    pub(crate) near: Option<NearArgs>,
     /// Which edges to walk. Omit to walk none, and the answer is flat.
     #[serde(default)]
     pub(crate) follow: Option<FollowArgs>,
@@ -329,6 +332,57 @@ pub struct OverdueArgs {
     /// question this can be asked.
     #[serde(default)]
     pub(crate) as_of: Option<String>,
+}
+
+/// **How far either side counts as near when a caller says nothing.** A week:
+/// long enough that a day's neighbours are what a person would call the same
+/// stretch, short enough that the answer is still a neighbourhood.
+const NEAR_WINDOW: u32 = 7;
+
+/// Which clock a neighbourhood read compares.
+fn parse_clock(raw: Option<&str>) -> Result<graph::Clock, McpError> {
+    match raw.map(str::trim) {
+        None | Some("") | Some("true_of") => Ok(graph::Clock::TrueOf),
+        Some("taken_in") => Ok(graph::Clock::TakenIn),
+        Some(other) => Err(McpError::invalid_params(
+            format!("clock must be true_of or taken_in, got '{other}'"),
+            None,
+        )),
+    }
+}
+
+/// **The neighbourhood question of a `recall`** — what else was recorded
+/// around a day.
+///
+/// A sub-object rather than flat arguments, for the same reason `overdue` is
+/// one: a window and a clock mean nothing unless a day is named, and three
+/// flat arguments would admit a call that names a clock and filters nothing.
+///
+/// ⛔️ **Not a query language and not inference.** A window over dates the
+/// store already holds.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct NearArgs {
+    /// **The day to read around**, `YYYY-MM-DD`. Omit it and jojobot uses
+    /// today, and the answer says which day it used.
+    #[serde(default)]
+    pub(crate) day: Option<String>,
+    /// **How many days either side count as near.** Symmetric, because what
+    /// came just before a day and just after it are equally what surrounded
+    /// it. Omit it for a week.
+    #[serde(default)]
+    pub(crate) within_days: Option<u32>,
+    /// **Which clock to compare**: `true_of` — the day the claim is true of,
+    /// the default — or `taken_in`, the day jojobot took the record in.
+    ///
+    /// ⚠️ **They answer different questions.** *What did Milhouse say back in
+    /// August* asks the first. *What was filed that week* asks the second.
+    ///
+    /// 🚨 **A record written before the taken-in stamp existed carries none**,
+    /// so a read on that clock cannot place it. Those are counted in
+    /// `near_unplaced` rather than dropped: an answer that shrank silently
+    /// would be indistinguishable from a day with nothing around it.
+    #[serde(default)]
+    pub(crate) clock: Option<String>,
 }
 
 /// The key filters of a call, wherever they sit: a selection describes the
@@ -1009,12 +1063,23 @@ impl Jojobot {
             facts: args.facts.unwrap_or(false),
             prose: asked_prose || want_charter,
         };
+        // **The same one clock read as `overdue`, and only when asked.** The
+        // domain is handed the day and reads none itself.
+        let near = match &args.near {
+            None => None,
+            Some(asked) => Some(graph::Nearness {
+                day: parse_date(asked.day.as_deref(), &self.zone_for(args.sid.as_deref()))?,
+                within_days: asked.within_days.unwrap_or(NEAR_WINDOW),
+                clock: parse_clock(asked.clock.as_deref())?,
+            }),
+        };
         let query = graph::GraphQuery {
             select: graph::Selection {
                 subject: args.subject.as_deref().map(EntityId::person),
                 kind: args.kind.as_deref().map(parse_kind).transpose()?,
                 answers_type,
                 fields: key_filters(args.fields.as_deref().unwrap_or_default())?,
+                near,
                 asked_by,
             },
             include,
@@ -1032,6 +1097,7 @@ impl Jojobot {
         let graph::Selected {
             objects: mut found,
             withheld,
+            unplaced,
         } = match graph::walk(self.memory.as_ref(), &query).await {
             Ok(answer) => answer,
             Err(e) => return memory_declined("recall", e),
@@ -1117,6 +1183,22 @@ impl Jojobot {
             // way to learn which day that was, and an answer about an unnamed
             // day is one nobody can check.
             "overdue_as_of": as_of.map(|d| d.to_string()),
+            // **The day, the window and the clock this read used**, and null
+            // when it asked about no day. A caller that let jojobot supply
+            // today has no other way to learn which day that was.
+            "near_day": near.map(|n| n.day.to_string()),
+            "near_within_days": near.map(|n| n.within_days),
+            "near_clock": near.map(|n| match n.clock {
+                graph::Clock::TrueOf => "true_of",
+                graph::Clock::TakenIn => "taken_in",
+            }),
+            // 🚨 **How many records this clock could not place.**
+            //
+            // Empty and could-not-look are the same empty answer without this.
+            // A record written before the taken-in stamp existed carries none,
+            // so a read on that clock reaches nothing and would otherwise
+            // report a day with nothing around it.
+            "near_unplaced": near.map(|_| unplaced),
             // **What this selection matched and did not hand over, because it
             // belongs to another identity.**
             //
@@ -1198,6 +1280,7 @@ mod tests {
             charter: None,
             follow: None,
             overdue: None,
+            near: None,
             sid: None,
             history: None,
             history_most: None,
@@ -2944,6 +3027,7 @@ mod tests {
             charter: None,
             follow: None,
             overdue: None,
+            near: None,
             sid: None,
             history: None,
             history_most: None,
