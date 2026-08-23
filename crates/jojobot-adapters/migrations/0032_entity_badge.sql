@@ -1,0 +1,18 @@
+-- The name an entity keeps when its handle changes.
+--
+-- A handle is what a caller sends and what every answer names, and it is the
+-- only identity this store has. That is enough while nothing renames, and it
+-- stops being enough the moment anything does: a rename would have to find
+-- every column holding the old handle and rewrite them together, and anything
+-- holding one meanwhile would be pointing at nothing.
+--
+-- So a row gains a second name that nobody chose and nobody can change. It is
+-- drawn rather than counted, so it says nothing about how many came before it,
+-- and it is never accepted from a caller and never serialised outward — the
+-- handle stays the only public name.
+--
+-- **NULL is a row written before this column existed.** It is not a value and
+-- it is not a default: a row sharing a default with every other row would make
+-- the column look populated while saying nothing, and the uniqueness this
+-- column exists for could never be asserted over it.
+ALTER TABLE entity ADD COLUMN badge VARCHAR(16) NULL;

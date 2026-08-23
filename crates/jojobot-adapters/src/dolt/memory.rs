@@ -44,6 +44,8 @@ use jojobot_domain::memory::{
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
+use super::ids::{self, Draw};
+
 /// Memory kept in the SQL store jojobot runs.
 ///
 /// Cloning shares the one pool rather than opening a second: a pool is the
@@ -52,6 +54,10 @@ use sqlx::{MySql, MySqlPool, Row, Transaction};
 #[derive(Clone)]
 pub struct DoltMemory {
     pool: MySqlPool,
+    /// Where a badge comes from. **A value rather than a call**, so the
+    /// collision path can be watched through the verb that mints: entropy will
+    /// not produce a collision on demand.
+    draw: Draw,
 }
 
 impl DoltMemory {
@@ -66,7 +72,16 @@ impl DoltMemory {
     /// That is a difference nobody can see from a handle's refusal, which is
     /// exactly the failure the two refusals exist to name.
     pub fn open(pool: MySqlPool) -> Self {
-        DoltMemory { pool }
+        DoltMemory {
+            pool,
+            draw: ids::drawing(),
+        }
+    }
+
+    /// The same store over a supplied draw, **so the collision path can be
+    /// watched through the verb that mints**.
+    pub fn open_drawing(pool: MySqlPool, draw: Draw) -> Self {
+        DoltMemory { pool, draw }
     }
 
     /// Every entity, whole — what the write guard screens against.
@@ -666,7 +681,7 @@ impl Memory for DoltMemory {
                 candidates,
             });
         }
-        write_entity(&mut tx, &entity).await?;
+        write_entity(&mut tx, &self.draw, &entity).await?;
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(entity))
     }
@@ -704,7 +719,7 @@ impl Memory for DoltMemory {
             });
         }
         apply_entity_patch(&mut entity, &patch)?;
-        write_entity(&mut tx, &entity).await?;
+        write_entity(&mut tx, &self.draw, &entity).await?;
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(entity))
     }
@@ -1475,7 +1490,20 @@ fn gather_types(rows: &[sqlx::mysql::MySqlRow]) -> Vec<DeclaredType> {
 
 /// Write one whole entity — the row and the aliases under it — replacing
 /// whatever was there. One writer for the creation and the edit alike.
-async fn write_entity(tx: &mut Transaction<'_, MySql>, entity: &Entity) -> Result<(), MemoryError> {
+/// **A badge no entity wears**, drawn inside the caller's transaction — so the
+/// answer to "is it free" covers the row this call is about to write.
+async fn mint_badge(tx: &mut Transaction<'_, MySql>, draw: &Draw) -> Result<String, MemoryError> {
+    ids::draw_free(tx, draw, "SELECT 1 FROM entity WHERE badge = ?", None)
+        .await
+        .map_err(store)?
+        .ok_or_else(|| MemoryError::Store("no free entity badge could be drawn".into()))
+}
+
+async fn write_entity(
+    tx: &mut Transaction<'_, MySql>,
+    draw: &Draw,
+    entity: &Entity,
+) -> Result<(), MemoryError> {
     // **The prose is carried across rather than blanked.** A rewrite of an
     // entity's metadata is not a rewrite of what somebody wrote on its page,
     // and `REPLACE` deletes the row before inserting the new one.
@@ -1484,9 +1512,26 @@ async fn write_entity(tx: &mut Transaction<'_, MySql>, entity: &Entity) -> Resul
         .fetch_optional(&mut **tx)
         .await
         .map_err(store)?;
+    // **The badge is carried across for the same reason and it matters more.**
+    // Prose that came back blank would be visible to whoever wrote it; a badge
+    // that came back different is a row that quietly stopped being the thing
+    // anything else was pointing at. **Every rewrite of an entity goes through
+    // here**, so carrying it once covers both of them.
+    //
+    // A row that has none is given one now: drawn, probed inside this
+    // transaction, never accepted from a caller.
+    let held: Option<Option<String>> = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+        .bind(entity.id.as_str())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(store)?;
+    let badge = match held.flatten() {
+        Some(already) => already,
+        None => mint_badge(tx, draw).await?,
+    };
     sqlx::query(
-        "REPLACE INTO entity (id, kind, name, source, crm, parent, boot, prose)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "REPLACE INTO entity (id, kind, name, source, crm, parent, boot, prose, badge)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(entity.id.as_str())
     .bind(entity.kind.as_token())
@@ -1496,6 +1541,7 @@ async fn write_entity(tx: &mut Transaction<'_, MySql>, entity: &Entity) -> Resul
     .bind(entity.parent.as_ref().map(EntityId::as_str))
     .bind(entity.boot.as_token())
     .bind(prose.unwrap_or_default())
+    .bind(&badge)
     .execute(&mut **tx)
     .await
     .map_err(store)?;

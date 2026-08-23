@@ -27,6 +27,7 @@ use jojobot_domain::memory::EntityId;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::testing::contract as memory;
+use jojobot_domain::memory::{EntityPatch, NewEntity};
 use jojobot_domain::session::testing::contract as sessions;
 
 /// A directory of this run's own, removed when it is done.
@@ -109,6 +110,115 @@ async fn dolt_satisfies_the_session_contract() {
     };
 
     sessions::run_all(fresh).await;
+
+    store.stop().await;
+}
+
+/// 🚨 **An entity keeps its badge through every path that rewrites it, and no
+/// two entities share one.**
+///
+/// A badge is the name a row keeps when its handle changes. It is minted here
+/// rather than in the domain because it is a column, never accepted from a
+/// caller and never serialised outward — so the store is the only place that
+/// can say whether it survived.
+///
+/// **Writing an entity is a whole-row `REPLACE`**, which deletes the row before
+/// inserting the new one. So preservation is not something the schema does for
+/// us: every path that rewrites a row has to carry the badge across, and this
+/// asserts it PER PATH rather than once, because a single case passes against a
+/// build where one caller stopped going through the helper that carries it.
+///
+/// **Uniqueness is asserted over drawn badges rather than over the column**,
+/// because the column is nullable until a backfill lands: a row written before
+/// it existed carries none, and that is honestly absent rather than a value
+/// shared with every other such row.
+#[tokio::test]
+async fn an_entity_keeps_its_badge_through_every_rewrite() {
+    let scratch = Scratch::new("badge");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("badge")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let badge = |handle: &str| {
+        let pool = pool.clone();
+        let handle = handle.to_string();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>("SELECT badge FROM entity WHERE id = ?")
+                .bind(&handle)
+                .fetch_one(&pool)
+                .await
+                .expect("the row is there")
+        }
+    };
+
+    // ── the path that creates ───────────────────────────────────────────────
+    let alpha = EntityId::person("person:badge-alpha");
+    memory
+        .add_entity(NewEntity::new(
+            alpha.clone(),
+            "Badge Alpha",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+    let minted = badge("person:badge-alpha")
+        .await
+        .expect("a created entity is given a badge");
+
+    // ── the path that edits ─────────────────────────────────────────────────
+    memory
+        .update_entity(
+            &alpha,
+            EntityPatch {
+                name: Some("Badge Alpha, renamed".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update_entity ok")
+        .written()
+        .expect("the guard waves it through");
+    assert_eq!(
+        badge("person:badge-alpha").await.as_deref(),
+        Some(minted.as_str()),
+        "the row was rewritten and stopped being the thing anything else pointed at",
+    );
+
+    // ── the path that writes prose ──────────────────────────────────────────
+    memory
+        .set_prose(&alpha, "a page somebody wrote")
+        .await
+        .expect("set_prose ok");
+    assert_eq!(
+        badge("person:badge-alpha").await.as_deref(),
+        Some(minted.as_str()),
+        "writing a page took the row's badge with it",
+    );
+
+    // ── and no two share one ────────────────────────────────────────────────
+    let beta = EntityId::person("person:badge-beta");
+    memory
+        .add_entity(NewEntity::new(beta, "Badge Beta", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+    let other = badge("person:badge-beta")
+        .await
+        .expect("a created entity is given a badge");
+    assert_ne!(
+        minted, other,
+        "two entities wear one badge, so it names neither of them",
+    );
 
     store.stop().await;
 }
