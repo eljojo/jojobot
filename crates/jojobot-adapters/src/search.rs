@@ -32,7 +32,7 @@ use std::sync::{Arc, RwLock};
 use async_trait::async_trait;
 use tantivy::collector::TopDocs;
 use tantivy::query::{AllQuery, BooleanQuery, Occur, Query, TermQuery};
-use tantivy::schema::{Field, IndexRecordOption, STORED, STRING, Schema, TEXT, Value};
+use tantivy::schema::{Field, IndexRecordOption, STORED, STRING, Schema, Value};
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term, doc};
 
 use jiff::civil::Date;
@@ -163,7 +163,17 @@ impl Fields {
         let mut b = Schema::builder();
         let fields = Fields {
             class: b.add_text_field("class", STRING),
-            text: b.add_text_field("text", TEXT),
+            // **The one tokenized field, and the only one that stems.** Every
+            // other field here is `STRING` — stored and matched whole — so a
+            // handle, a kind and a status are untouched by any of this.
+            text: b.add_text_field(
+                "text",
+                tantivy::schema::TextOptions::default().set_indexing_options(
+                    tantivy::schema::TextFieldIndexing::default()
+                        .set_tokenizer(ANALYZER)
+                        .set_index_option(IndexRecordOption::WithFreqs),
+                ),
+            ),
             doc_id: b.add_text_field("doc_id", STRING),
             message_id: b.add_text_field("message_id", STRING),
             kind: b.add_text_field("kind", STRING),
@@ -365,6 +375,21 @@ impl FullTextIndex {
     pub fn open() -> Result<Self, MemoryError> {
         let (schema, fields) = Fields::build();
         let index = Index::create_in_ram(schema);
+        // **Registered before anything is written**, because a document indexed
+        // under one analyzer and queried under another matches nothing, and the
+        // two would drift apart silently.
+        index.tokenizers().register(
+            ANALYZER,
+            tantivy::tokenizer::TextAnalyzer::builder(
+                tantivy::tokenizer::SimpleTokenizer::default(),
+            )
+            .filter(tantivy::tokenizer::RemoveLongFilter::limit(40))
+            .filter(tantivy::tokenizer::LowerCaser)
+            .filter(tantivy::tokenizer::Stemmer::new(
+                tantivy::tokenizer::Language::English,
+            ))
+            .build(),
+        );
         let writer = index.writer(15_000_000).map_err(store_err)?;
         let reader = index.reader().map_err(store_err)?;
         Ok(FullTextIndex {
@@ -1006,7 +1031,7 @@ impl FullTextIndex {
     /// and the parser reads `person:` as a field name and errors. Matching term
     /// by term also means no query syntax to escape and none to be surprised by.
     fn terms_of(&self, text: &str) -> Vec<String> {
-        let Some(mut analyzer) = self.index.tokenizers().get("default") else {
+        let Some(mut analyzer) = self.index.tokenizers().get(ANALYZER) else {
             return Vec::new();
         };
         let mut tokens = Vec::new();
@@ -1017,25 +1042,52 @@ impl FullTextIndex {
         tokens
     }
 
-    /// A `MUST` clause per query term: every term has to appear. Conjunction over
-    /// disjunction on purpose — a search that quietly matches "any of these
-    /// words" is how a precise question gets a vague answer.
+    /// **Most of the query's terms, not all of them** — one clause, so the
+    /// looseness stays inside the text half and the filters beside it stay
+    /// absolute.
+    ///
+    /// Every term had to appear. That is right for a phrase somebody quotes and
+    /// wrong for the way a question is actually typed: a caller writing two
+    /// words they half-remember got nothing at all, because no one document
+    /// held both. **Nothing is worse than something ranked low** — the ranking
+    /// already puts a document matching every term above one matching half.
+    ///
+    /// **A majority, rounded up**, so one term still means that term and two
+    /// unrelated words do not pull in the whole corpus. ⚠️ **This is the other
+    /// half of what makes matching approximate**, and it is why an answer says
+    /// a miss is possible.
     fn text_clauses(&self, query: &SearchQuery) -> Vec<(Occur, Box<dyn Query>)> {
-        query
-            .terms()
-            .map(|text| {
-                self.terms_of(text)
-                    .into_iter()
-                    .map(|term| {
-                        let q: Box<dyn Query> = Box::new(TermQuery::new(
-                            Term::from_field_text(self.fields.text, &term),
-                            IndexRecordOption::WithFreqs,
-                        ));
-                        (Occur::Must, q)
-                    })
-                    .collect()
+        let Some(text) = query.terms() else {
+            return Vec::new();
+        };
+        let terms = self.terms_of(text);
+        if terms.is_empty() {
+            return Vec::new();
+        }
+        // 🚨 **A handle is an address, not a description, so it stays
+        // strict.** `kind:slug` tokenizes to two terms and the KIND half is
+        // shared by every entity of that kind — so a majority of two would let
+        // a handle nobody holds match every person in the store. Measured: it
+        // did, and the case below is what caught it.
+        let wanted = if EntityId(text.trim().to_string()).kind().is_some() {
+            terms.len()
+        } else {
+            terms.len().div_ceil(2)
+        };
+        let any_of: Vec<Box<dyn Query>> = terms
+            .into_iter()
+            .map(|term| {
+                Box::new(TermQuery::new(
+                    Term::from_field_text(self.fields.text, &term),
+                    IndexRecordOption::WithFreqs,
+                )) as Box<dyn Query>
             })
-            .unwrap_or_default()
+            .collect();
+        let q: Box<dyn Query> = Box::new(BooleanQuery::with_minimum_required_clauses(
+            any_of.into_iter().map(|q| (Occur::Should, q)).collect(),
+            wanted,
+        ));
+        vec![(Occur::Must, q)]
     }
 
     fn must_term(&self, field: Field, value: &str) -> (Occur, Box<dyn Query>) {
@@ -1618,6 +1670,16 @@ const SESSION_DEMOTION: f32 = 1_000.0;
 /// order is an answer, then a derivation, then a run — a derived claim is still
 /// about the world, where a session is about the work.
 const DERIVED_DEMOTION: f32 = 100.0;
+
+/// **The one analyzer, named once.** Indexing and querying both read it by this
+/// name: a document written under one analyzer and asked for under another
+/// matches nothing, and nothing would report the mismatch.
+///
+/// It stems, so a question in the singular finds a claim in the plural. **That
+/// makes matching approximate rather than exact, which is why an answer says a
+/// miss is possible** — an empty answer must not read as *nobody ever said
+/// this*.
+const ANALYZER: &str = "jojobot";
 
 /// How much prose rides around a match.
 const SNIPPET_RADIUS: usize = 120;
@@ -2681,10 +2743,18 @@ mod tests {
         );
     }
 
-    /// Every term has to match. A search that quietly ORs its words turns a
-    /// precise question into a vague answer.
+    /// **Matching every term outranks matching some of them.**
+    ///
+    /// Every term used to be required, and a caller who half-remembered two
+    /// words got nothing at all. ⛔️ **Requiring all of them is not what kept a
+    /// precise question precise — the RANKING is.** So a partial match comes
+    /// back, below the document that matched everything, and the precise
+    /// question still gets the precise answer first.
+    ///
+    /// ⚠️ **The order is the assertion.** A case that only checked both were
+    /// present would pass against a build that ranked them either way round.
     #[tokio::test]
-    async fn all_query_terms_must_match() {
+    async fn matching_every_term_outranks_matching_some_of_them() {
         let index = index_of(vec![scan(
             "doc-1",
             Some(entity("person:alpha", "Alpha")),
@@ -2709,7 +2779,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(contents, vec!["bakes sourdough bread"], "got {hits:?}");
+        assert_eq!(
+            contents,
+            vec!["bakes sourdough bread", "bakes almond cake"],
+            "the document matching every term did not lead: {hits:?}",
+        );
     }
 
     /// **Naming an entity outranks matching its text.** A fact that repeats the
@@ -3460,7 +3534,10 @@ mod tests {
 
         assert!(
             store
-                .search_via_port(&SearchQuery::text("old place"))
+                // **One distinctive word, not a phrase.** Matching is
+                // approximate now, so "old place" would match the NEW text on
+                // `place` alone and this would stop measuring a stale copy.
+                .search_via_port(&SearchQuery::text("old"))
                 .await
                 .expect("search ok")
                 .is_empty(),
@@ -4268,6 +4345,89 @@ mod tests {
             first_other < first_session,
             "a session is context, not an answer, and ranks below what it shares a list with: \
              {shared:?}"
+        );
+    }
+
+    /// 🚨 **A singular question finds a plural claim — and a handle still
+    /// resolves exactly.**
+    ///
+    /// Measured against a real index: `Tuesdays` returned one hit and `Tuesday`
+    /// returned none. **One letter, not a synonym and not a paraphrase.** ⛔️
+    /// **And the consequence is the fabrication class through a door nobody
+    /// watched:** an empty answer is indistinguishable from never having been
+    /// told, so an assistant says *I have nothing on that* — honest-sounding,
+    /// and wrong over a plural.
+    ///
+    /// ⚠️ **BOTH HALVES IN ONE CASE, deliberately.** Handles are `kind:slug`
+    /// and everything about matching touches them too. **A case proving only
+    /// the new recall passes against a build whose handles are broken**, which
+    /// is a far worse regression than the miss it fixes.
+    #[test]
+    fn a_singular_query_finds_a_stored_plural_and_a_handle_still_resolves() {
+        let index = FullTextIndex::open().expect("index opens");
+        let day = "2026-08-10".parse().expect("a civil date");
+        index
+            .ingest_all(
+                &[DocScan {
+                    doc_id: "outline-uuid-1".into(),
+                    title: "Milhouse".into(),
+                    prose: String::new(),
+                    entity: Some(entity("person:milhouse", "Milhouse")),
+                    facts: vec![fact(
+                        "person:milhouse",
+                        "f1",
+                        "the committee meets on Tuesdays",
+                        day,
+                    )],
+                    fields: Default::default(),
+                    owner: None,
+                }],
+                index.reading_begins(),
+            )
+            .expect("memory ingested");
+
+        let hits = |text: &str| {
+            index
+                .search(&SearchQuery {
+                    text: Some(text.into()),
+                    ..SearchQuery::default()
+                })
+                .expect("search ok")
+        };
+
+        // **The plural, asked in the singular.**
+        assert!(
+            hits("Tuesday")
+                .iter()
+                .any(|h| matches!(h, Hit::Fact { fact, .. } if fact.id.0 == "f1")),
+            "a singular question missed a plural claim: {:?}",
+            hits("Tuesday"),
+        );
+        // **And the exact form still works** — otherwise this passes against a
+        // build that matches everything to everything.
+        assert!(
+            hits("Tuesdays")
+                .iter()
+                .any(|h| matches!(h, Hit::Fact { fact, .. } if fact.id.0 == "f1")),
+            "the stored wording stopped finding itself",
+        );
+
+        // ⛔️ **The handle, exactly.** It must still name its entity.
+        assert!(
+            hits("person:milhouse").iter().any(
+                |h| matches!(h, Hit::Entity { entity, .. } if entity.id.0 == "person:milhouse")
+            ),
+            "an exact handle stopped resolving: {:?}",
+            hits("person:milhouse"),
+        );
+        // And a handle that names nothing still finds nothing under it — a
+        // relaxed matcher that answers every handle with some entity is worse
+        // than one that answers none.
+        assert!(
+            !hits("person:ralph").iter().any(
+                |h| matches!(h, Hit::Entity { entity, .. } if entity.id.0 == "person:milhouse")
+            ),
+            "a handle nobody holds resolved to somebody else's entity",
         );
     }
 
