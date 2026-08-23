@@ -18,6 +18,7 @@ pub mod capture;
 pub mod declare_type;
 pub mod declined;
 pub mod list_entities;
+pub mod merge_entities;
 pub mod parse;
 pub mod recall;
 pub mod retract;
@@ -59,6 +60,7 @@ pub(crate) fn router() -> ToolRouter<Jojobot> {
         + Jojobot::capture_router()
         + Jojobot::declare_type_router()
         + Jojobot::list_entities_router()
+        + Jojobot::merge_entities_router()
         + Jojobot::recall_router()
         + Jojobot::retract_router()
         + Jojobot::search_router()

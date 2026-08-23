@@ -1143,6 +1143,18 @@ impl Session {
         .await
     }
 
+    /// Put a duplicate away into the thing it duplicates. Returns the whole
+    /// answer, because what a caller does next turns on how many claims changed
+    /// address.
+    pub async fn merge_entities(&self, duplicate: &str, survivor: &str, reason: &str) -> Value {
+        self.write(
+            &format!("merging {duplicate} into {survivor}"),
+            "merge_entities",
+            json!({"duplicate": duplicate, "survivor": survivor, "reason": reason}),
+        )
+        .await
+    }
+
     /// Take a record back. One way: what was said stands and is marked
     /// withdrawn, where a correction rewrites a claim to the current truth.
     pub async fn retract(&self, address: &str, reason: &str) {

@@ -335,6 +335,7 @@ fn the_tool_surface_is_exactly_this_list() {
             "list_entities",
             "list_sent",
             "mark_processed",
+            "merge_entities",
             "ping",
             "post_message",
             "read_mailbox",

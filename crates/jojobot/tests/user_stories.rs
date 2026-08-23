@@ -37,6 +37,9 @@ mod curveball;
 mod degraded;
 #[path = "user_stories/dsl.rs"]
 mod dsl;
+/// One thing filed twice, put back together — and what a repair costs.
+#[path = "user_stories/duplicates.rs"]
+mod duplicates;
 #[path = "user_stories/entitlements.rs"]
 mod entitlements;
 #[path = "user_stories/gigs.rs"]
