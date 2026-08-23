@@ -80,6 +80,13 @@ say     the brief is still sitting new in the box, so nobody took delivery of it
 # The room keeps its jobs under two keys and tells the occupant neither: a job
 # written under a key of somebody's own invention is a job the operator's
 # question never reaches. So the assertion names the key as well as the value.
+#
+# ⚠️ **Every lock in this room reads the FOLD, and that is the question rather
+# than an oversight.** The room is about whether a thing ANSWERS the shape the
+# operator's question is asked in, and conformance is asked of the thing — what
+# its keys fold to — never of one record. A history read here would say a word
+# was written once, which is not what *which jobs are still owing* asks. Nothing
+# below needs re-examining for the write-order shape.
 recall {"subject": "thing:floor-pump"}
 carries "cost":"35"
 carries "settled":"paid"
@@ -98,7 +105,9 @@ say     the chain job is not on the gravel bike under the keys the older jobs us
 > start jojobot as assistant — some of the jobs on there are filled in with words I do not use, and I want those ones saying invoiced instead
 
 ```locks
-# The two jobs the cold session is here for.
+# The two jobs the cold session is here for. **The fold, for the reason phase
+# one gives**: what the thing holds now IS the question, and these two must have
+# stopped holding the word nobody agreed to.
 recall {"subject": "thing:kettle"}
 carries "settled":"invoiced"
 say     the kettle still carries the word nobody agreed to, or its job lost its word altogether

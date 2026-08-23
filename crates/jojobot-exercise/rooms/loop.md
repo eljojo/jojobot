@@ -142,9 +142,15 @@ carries "parent":"thing:the-fern"
 say     one of the two jobs the brief named does not stand as a loop under the thing it belongs to
 
 # The scheduled loop carries its frequency and the day the brief gave it. It is
-# SELECTED by the frequency, which the cold phase does not touch, and its day is
-# read off the key's own HISTORY, because the cold phase moves what it holds now.
-recall {"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "60"}], "history": "last_check_in"}
+# SELECTED by the frequency and its day is read off the key's own HISTORY,
+# because the cold phase moves what it holds now.
+#
+# ⚠️ **`scope: record` on the selection.** A `fields` filter asks what the thing
+# HOLDS unless it says otherwise, so selecting on the fold made this a lock on
+# nothing later rewriting the frequency. "The cold phase does not touch it" was
+# true and was not the point: a phase-1 lock must not report phase 1 at fault
+# for what a later phase wrote.
+recall {"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "60", "scope": "record"}], "history": "last_check_in"}
 carries "parent":"thing:kettle"
 carries "value":"2026-06-15"
 say     no loop with a sixty-day frequency hangs under the kettle carrying the day the brief gave it
@@ -152,7 +158,12 @@ say     no loop with a sixty-day frequency hangs under the kettle carrying the d
 # 🚨 The load-bearing half, and it is an absence: the loop the operator keeps NO
 # schedule for was taken anyway, with no frequency invented for it. A surface
 # that demanded one would have lost that loop entirely.
-recall {"kind": "rhythm", "fields": [{"key": "last_check_in", "value": "2026-09-20"}]}
+#
+# ⚠️ **`scope: record` on the selection**, for the reason the lock above gives.
+# On the fold, a cold phase that moved this loop would empty the selection and
+# this lock would report phase 1 never recording it — blaming the phase that did
+# its job. The lock below is what says the filter must stay where it stands.
+recall {"kind": "rhythm", "fields": [{"key": "last_check_in", "value": "2026-09-20", "scope": "record"}]}
 carries "parent":"thing:the-air-filter"
 lacks   cadence_days
 say     the loop the operator keeps no schedule for was given one, which nobody said — or it is not under the filter at all

@@ -122,8 +122,14 @@ say     January: the brief is still sitting new, so nobody took delivery of what
 # Read off the key's own HISTORY rather than what it holds now, because June
 # moves what it holds now. Every write of a key is the other question the same
 # rows answer, and it is what lets a lock about January survive June.
-recall {"kind": "rhythm", "history": "last_check_in"}
-carries "cadence_days":"90"
+#
+# ⚠️ **The frequency is a SELECTION on the record, not an assertion on the
+# fold.** A `fields` filter asks what the thing HOLDS unless it says otherwise,
+# so `carries "cadence_days":"90"` was a claim that January's write is still the
+# newest one — which is a lock on write order rather than on January. `scope:
+# record` asks whether any record ever wrote it, which is what this lock is
+# about, and no later sitting can take it away.
+recall {"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90", "scope": "record"}], "history": "last_check_in"}
 carries "value":"2025-12-20"
 say     January: no loop carries the ninety days and the day it was last done, so nothing can ever fall due
 
