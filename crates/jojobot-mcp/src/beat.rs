@@ -65,7 +65,13 @@ impl Jojobot {
             return;
         };
         let Ok(session) = self
-            .session_for(&_serialized, &caller, None, Some(phrase))
+            // **`None`, so jojobot's own vocabulary cannot name a session.**
+            // A card is minted lazily by its first write and takes its focus
+            // from what that write carried; a tally is a write, so passing the
+            // class phrase here made a sitting whose first act was a capture
+            // be called "captured facts about" for the rest of its life. That
+            // name is what the boot door offers the next sitting.
+            .session_for(&_serialized, &caller, None, None)
             .await
         else {
             return;
@@ -304,6 +310,77 @@ mod tests {
             captures[0].contains("person:alpha") && captures[0].contains("person:milhouse"),
             "…along with what it touched on both sides: {}",
             captures[0]
+        );
+    }
+
+    /// **jojobot's own vocabulary never becomes a session's name.**
+    ///
+    /// 🚨 **The stub is not bookkeeping overwriting a name. It is bookkeeping
+    /// BEING the name, from birth.** A session is minted lazily by its first
+    /// write, and the focus is derived from what that write carried when the
+    /// caller named none. jojobot's own tally is a write, so a sitting whose
+    /// first act is a `capture` was named `"captured facts about"` — a
+    /// fragment of a sentence about bookkeeping, cut before its colon — and
+    /// nothing later repaired it, because `journal` is the only thing that
+    /// sets a focus.
+    ///
+    /// **That name is what the boot door offers the next sitting**, so the one
+    /// line carrying a run across the session boundary was the software talking
+    /// to itself.
+    ///
+    /// ⭐ **Paired with a sitting that named its own focus, which must be
+    /// untouched**: without that half this passes against a build that names
+    /// nothing at all.
+    #[tokio::test]
+    async fn a_beat_never_names_the_session_it_had_to_open() {
+        let store = Arc::new(InMemorySessions::new());
+        let memory = Arc::new(InMemoryMemory::booted());
+        let jojobot = connection(memory, store.clone());
+        make_bot(&jojobot, "gamma").await;
+
+        // A sitting that gets to work without journalling first: the capture's
+        // own tally is what opens the card.
+        let sid = booted(&jojobot, "gamma").await;
+        ensure_as(&jojobot, &sid, "alpha").await;
+        capture_as(&jojobot, &sid, capture_args("alpha", "plays go")).await;
+
+        let named = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok")[0]
+            .focus
+            .clone();
+        // ⚠️ **Equality, not "does not contain the capture phrase".** The
+        // first write here is an `add_entity`, so the broken build named this
+        // run "brought entities into being" and a check against the capture
+        // phrase passed while the defect was live. **Every beat class is its
+        // own phrase, so the only assertion that covers the class is what the
+        // focus IS.**
+        assert_eq!(
+            named,
+            jojobot_domain::text::FRESH_FOCUS,
+            "a run nobody has said anything about is named after jojobot's own tally: {named:?}",
+        );
+
+        // ⭐ The half that keeps this honest: a sitting that DID say what it was
+        // working on keeps its own words.
+        let theirs = "chasing the boot that takes nine seconds";
+        jojobot
+            .journal(Parameters(crate::session::JournalArgs {
+                sid: sid.clone(),
+                entry: "started on the slow boot".into(),
+                focus: Some(theirs.into()),
+            }))
+            .await
+            .expect("journal ok");
+        assert_eq!(
+            store
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok")[0]
+                .focus,
+            theirs,
+            "a focus somebody wrote was replaced",
         );
     }
 
