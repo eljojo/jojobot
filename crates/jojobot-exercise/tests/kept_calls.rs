@@ -163,7 +163,7 @@ fn the_calls_a_sitting_made_are_rendered_in_order() {
         "said something",
         &fixture("made-calls.jsonl"),
     )]);
-    let text = made.rendered();
+    let text = made.rendered(None);
     let write = text
         .find("Write")
         .expect("the first verb it called is in the run");
@@ -190,11 +190,11 @@ fn a_sitting_that_called_nothing_reads_apart_from_one_that_did_not_run() {
         "said something",
         &fixture("called-nothing.jsonl"),
     )]);
-    let silent = quiet.rendered();
+    let silent = quiet.rendered(None);
 
     let mut broken = said("Phase 1 — one", "said something", "");
     broken.ran = false;
-    let failed = run(vec![broken]).rendered();
+    let failed = run(vec![broken]).rendered(None);
 
     assert_ne!(
         silent, failed,
@@ -227,7 +227,7 @@ fn the_run_tallies_the_verbs_called_and_the_verbs_never_called() {
     // Read off the room in a real run; named here because this case is the
     // renderer's and not the room's.
     tallied.served = vec!["Write".into(), "Read".into(), "capture".into()];
-    let text = tallied.rendered();
+    let text = tallied.rendered(None);
 
     let tally = text.split("verbs").last().expect("the run renders a tally");
     // ⚠️ **The two halves have to be read apart.** Every served verb appears
@@ -277,7 +277,7 @@ fn a_verb_called_as_the_model_calls_it_is_not_reported_as_never_called() {
         &fixture("called-the-room.jsonl"),
     )]);
     reached.served = vec!["start_here".into(), "capture".into()];
-    let text = reached.rendered();
+    let text = reached.rendered(None);
     let tally = text.split("verbs").last().expect("the run renders a tally");
     let (called, never) = tally
         .split_once("never called:")
@@ -315,7 +315,7 @@ fn tooling_the_room_does_not_serve_is_counted_apart() {
         &fixture("made-calls.jsonl"),
     )]);
     mixed.served = vec!["capture".into()];
-    let text = mixed.rendered();
+    let text = mixed.rendered(None);
     let tally = text.split("verbs").last().expect("the run renders a tally");
     let (room, other) = tally
         .split_once("not the room's surface:")

@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     let seed = jojobot_exercise::expectations::seed_for(&playbook.source)?;
 
     let results = run::go(&playbook, &agent, &seed, &expectations).await?;
-    results.print();
+    results.print(Some(&jojobot_exercise::calls::beside(&asked.transcript)));
     // **The run is kept, and where it went is said.** A paid run's most
     // valuable output is the part no expectation touches — what the model
     // reached for, what it did not find, what it concluded — and stdout is

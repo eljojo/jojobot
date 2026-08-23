@@ -245,8 +245,13 @@ impl Results {
     /// **The transcript first, then the results.** When something did not hold
     /// the next question is always what the agent reached for, so it is shown
     /// rather than kept for a rerun that costs money again.
-    pub fn print(&self) {
-        print!("{}", self.rendered());
+    /// **`kept` is where the whole stream will be**, so the person watching is
+    /// told the same thing as the person reading afterwards. They are one
+    /// rendering and `the_written_run_and_the_shown_run_are_the_same_text`
+    /// holds them to it: a notice on one and not the other would make the file
+    /// and the console disagree about what they are.
+    pub fn print(&self, kept: Option<&std::path::Path>) {
+        print!("{}", self.rendered(kept));
     }
 
     /// **Keep the run where somebody can read it after the process is gone.**
@@ -266,7 +271,7 @@ impl Results {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, self.rendered())?;
+        std::fs::write(path, self.rendered(Some(&crate::calls::beside(path))))?;
         // **The raw stream goes beside it, never instead of it.** The readable
         // file above is what the operator reads; this is what a later reading
         // is made from, and a fault in one must not cost the other.
@@ -446,11 +451,30 @@ impl Results {
     /// **One rendering, two destinations.** Read by [`print`](Self::print) for
     /// the person watching and by [`write_to`](Self::write_to) for the person
     /// reading afterwards.
-    pub fn rendered(&self) -> String {
+    pub fn rendered(&self, kept: Option<&std::path::Path>) -> String {
         use std::fmt::Write as _;
         let mut out = String::new();
         let _ = writeln!(out, "playbook: {}", self.playbook);
         let _ = writeln!(out, "model:    {}", self.model);
+        // 🚨 **Where a reader lands, because this file is not the record.**
+        //
+        // A call's answer is kept as a head, so a text search over this file
+        // answers about a fragment. That has produced two wrong readings in
+        // opposite directions on one night — a feature reported as never
+        // rendered, and a sitting reported as having invented a supersession —
+        // and neither reader was careless. The per-line ellipsis does not help:
+        // a search does not read it.
+        //
+        // **Named only when there is one to name.** A pointer at nothing is a
+        // promise this cannot keep.
+        if let Some(kept) = kept {
+            let _ = writeln!(
+                out,
+                "answers below are cut to a head. What an occupant was actually shown is in \n\
+                 {}, and a search over THIS file answers about the head alone.",
+                kept.display()
+            );
+        }
         // **What only a reader can judge, where a reader lands.**
         //
         // A second copy on purpose: these phases stay in the run's order below
@@ -1071,6 +1095,67 @@ mod tests {
         }
     }
 
+    /// **The readable file says it is not the whole record, and names what
+    /// is.**
+    ///
+    /// 🚨 **This cost two readings in one night, in opposite directions.** A
+    /// call's answer is cut to a head, so a text search over this file answers
+    /// about a fragment. One reader searched it for a receipt key, found none,
+    /// and nearly reported that a feature had not rendered at all; another
+    /// searched it for record statuses, found only `active`, and reported a
+    /// sitting had invented a supersession — the raw stream held sixteen.
+    ///
+    /// **Neither reader was careless and the ellipsis did not help**: it is per
+    /// line and a search does not read it. **The file has to say, where a
+    /// reader lands, that answers are cut and where the whole stream is** —
+    /// silence and completeness must not read alike.
+    ///
+    /// ⛔️ **Not fixed by rendering everything.** The file is already large and
+    /// a person has to read it.
+    #[test]
+    fn the_readable_run_says_its_answers_are_cut_and_names_the_kept_stream() {
+        let kept = std::path::Path::new("transcripts/whatever.jsonl");
+        let rendered = ran(&["Phase 1 — the room"]).rendered(Some(kept));
+
+        assert!(
+            rendered.contains("whatever.jsonl"),
+            "the file a reader lands in never names the one holding the whole stream: {rendered}",
+        );
+        // The claim itself, not the pointer: a reader who takes this file for
+        // the record is the failure, and a path with no warning beside it is
+        // decoration.
+        assert!(
+            rendered.contains("cut"),
+            "…and does not say its answers are cut, so a search over it reads as complete: \
+             {rendered}",
+        );
+
+        // ⭐ **The pairing.** A caller with no kept stream to point at must not
+        // print a promise it cannot keep, so the notice is absent rather than
+        // naming nothing.
+        let alone = ran(&["Phase 1 — the room"]).rendered(None);
+        assert!(
+            !alone.contains("jsonl"),
+            "a run with no kept stream still points at one: {alone}",
+        );
+
+        // ⚠️ **And it has to reach the FILE.** Asserting over `rendered` proves
+        // the sentence exists; the reader who was misled was reading a file on
+        // disk, and a notice that never travels there holds identically on a
+        // build where it does not.
+        let dir = std::env::temp_dir().join(format!("kept-notice-{}", std::process::id()));
+        let path = dir.join("run.md");
+        ran(&["Phase 1 — the room"])
+            .write_to(&path)
+            .expect("the run is kept");
+        let on_disk = std::fs::read_to_string(&path).expect("and can be read back");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            on_disk.contains("run.jsonl") && on_disk.contains("cut"),
+            "the file a person opens does not say what it is missing: {on_disk}",
+        );
+    }
+
     /// **A run says how many locks reached for Rust, and which.**
     ///
     /// An escape nobody counts is an escape everybody takes, and each one names
@@ -1084,13 +1169,13 @@ mod tests {
     fn a_run_says_which_locks_reached_for_rust_and_a_run_that_took_none_says_that() {
         let mut took = ran(&["Phase 1 — the room"]);
         took.hatches = vec!["the_cost_reads_as_a_number".into()];
-        let said = took.rendered();
+        let said = took.rendered(None);
         assert!(
             said.contains("the_cost_reads_as_a_number") && said.contains(" 1 "),
             "the run does not name the escape it took, or say how many: {said}",
         );
 
-        let none = ran(&["Phase 1 — the room"]).rendered();
+        let none = ran(&["Phase 1 — the room"]).rendered(None);
         assert!(
             none.contains("no lock"),
             "a run that took no escape says nothing, so a reader cannot tell it from a run that \
@@ -1146,7 +1231,7 @@ mod tests {
     #[test]
     fn a_run_that_produced_nothing_says_so_and_an_empty_file_means_the_capture_failed() {
         let empty = ran(&[]);
-        let rendered = empty.rendered();
+        let rendered = empty.rendered(None);
         assert!(
             rendered.contains("THE RUN PRODUCED NO TRANSCRIPT"),
             "a run with nothing to say says that in its own words: {rendered}",
@@ -1172,7 +1257,7 @@ mod tests {
             runs_offered: 2,
             board: "the runs the door offered".into(),
         }];
-        let rendered = run.rendered();
+        let rendered = run.rendered(None);
         assert!(
             rendered.contains("Phase 2 — the close")
                 && rendered.contains("what the index could see")
@@ -1188,7 +1273,7 @@ mod tests {
     fn a_run_with_no_boundaries_does_not_render_an_empty_section() {
         assert!(
             !ran(&["Phase 1 — the only one"])
-                .rendered()
+                .rendered(None)
                 .contains("what the door offered"),
             "an empty section would read as a door that offered nothing",
         );
@@ -1210,7 +1295,7 @@ mod tests {
     fn a_phase_nothing_asserts_over_is_lifted_and_also_left_in_place() {
         let mut run = ran(&["Phase 1 — the opening", "Phase 2 — what nobody recorded"]);
         run.transcript[1].read_this = true;
-        let rendered = run.rendered();
+        let rendered = run.rendered(None);
 
         let lifted = rendered.find("read these").expect("the section is there");
         let story = rendered.find("── transcript").expect("and the run itself");
@@ -1237,7 +1322,7 @@ mod tests {
     fn a_run_with_nothing_to_read_renders_no_section_for_it() {
         assert!(
             !ran(&["Phase 1 — all locked"])
-                .rendered()
+                .rendered(None)
                 .contains("read these")
         );
     }
@@ -1271,9 +1356,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("exercise-same-{}", std::process::id()));
         let path = dir.join("run.md");
         run.write_to(&path).expect("written");
+        // **The same input to both destinations**, which is what the claim is:
+        // one rendering, not one argument. `print` is handed the same kept
+        // stream in `main`, so a notice that reached the file and not the
+        // console would still be two renderings and would still fail here.
         assert_eq!(
             std::fs::read_to_string(&path).expect("read back"),
-            run.rendered(),
+            run.rendered(Some(&crate::calls::beside(&path))),
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
