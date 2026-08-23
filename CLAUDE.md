@@ -127,22 +127,23 @@ Shipped and live:
   retracted claim instead of hiding it; a link two records draw stays
   unmarked while either of them stands.
 - **The graph query** — `recall` is the precise lookup and `search` is the
-  breadth. `recall` selects objects (a handle · a kind · a declared type · a
-  key and its value · **the name of a VIEW, which fills the rest of the call in
-  from that view's own keys**), says what of each comes back (facts · prose ·
-  one key's history), and walks to a depth in either direction. **A view is a
-  record of kind `view`, so the one the operator declares and the one the build
-  supplies are the same shape and nothing branches on which.** **The build
-  supplies a charter and two views**, assembled in one place — a capability
-  ships data by adding an entry there, with no table, migration or verb. **Two kinds of link:** an **edge**, followed
-  by one of the five shapes; and a **relation**, a key some type declared to
-  hold a reference, followed by that key's own name. **A relation is
-  key-scoped** — it reaches everything using that key, so *which of those are
-  pets* is a selection (a kind plus a key filter), never a walk: traversal
-  reaches, selection chooses. **The answer nests and is always objects**, never
-  a bare fact list, so a caller does not branch on which question it asked. It
-  reads the store directly rather than the search index, which is what makes it
-  the way past an index that cannot scan.
+  breadth. `recall` selects objects (a handle · a kind · a declared type · a key
+  and its value, or **a value with no key, which asks whether ANY key holds it**
+  — a filter naming neither is refused · **the name of a VIEW, which fills the
+  rest of the call in from that view's own keys**), says what of each comes back
+  (facts · prose · one key's history), and walks to a depth in either direction.
+  **A view is a record of kind `view`, so the one the operator declares and the
+  one the build supplies are the same shape and nothing branches on which.**
+  **The build supplies a charter and two views**, assembled in one place — a
+  capability ships data by adding an entry there, with no table, migration or
+  verb. **Two kinds of link:** an **edge**, followed by one of the five shapes;
+  and a **relation**, a key some type declared to hold a reference, followed by
+  that key's own name. **A relation is key-scoped** — it reaches everything
+  using that key, so *which of those are pets* is a selection (a kind plus a key
+  filter), never a walk: traversal reaches, selection chooses. **The answer
+  nests and is always objects**, never a bare fact list, so a caller does not
+  branch on which question it asked. It reads the store directly rather than the
+  search index, which is what makes it the way past an index that cannot scan.
 - **Edit-in-place is the surface; append-only is the substrate.** A write to a
   key appends rather than overwriting, and a read projects those writes down to
   one value — by default the newest, so a caller edits a claim and reads it back
