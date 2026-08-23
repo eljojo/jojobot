@@ -448,8 +448,13 @@ roles and never an operator.
   appears exactly once**, and it reports an absence and an ambiguity apart,
   because those send you to different places. **It also refuses when its own
   classifier fails its self-check** — a third reason, so read which one you
-  got before hunting for an ambiguity that is not there. ⚠️ **A hard kill
-  cannot be caught, so it names the copy on stdout when it starts.**
+  got before hunting for an ambiguity that is not there, and a refusal is
+  said on stdout as well as stderr, so filtering one stream never makes a
+  refusal look like silence. **A green verdict is cross-checked against the
+  run's own output**, and a disagreement between the two is printed rather
+  than enforced — the exit code is still the verdict. ⚠️ **A hard kill
+  cannot be caught, so it names the copy on stdout when it starts: that name
+  is what you copy back over the file, and no git verb is involved.**
 - **A sabotage proves nothing until you know it landed where you meant.** Two
   sites that look alike, one edit, and the verdict is about code nobody
   touched. **Assert the edit reached THAT site**, and prove the case moves when
