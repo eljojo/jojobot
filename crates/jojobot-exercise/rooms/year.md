@@ -81,7 +81,7 @@ entity  place:north-trail | The North Trail
 # beyond its entry line. An indented line continues the one above it.
 message assistant | starting to keep track of things | I am going to start keeping track of things here, so take this down properly rather than as a note to yourself.
 
-    The gravel bike: its chain wants looking at every ninety days and I last did it on 2025-12-20.
+    The gravel bike: its chain wants looking at every ninety days and I last did it on 2025-12-20. If I let one slide, the next ninety days should run from when I actually did it rather than from when it was meant to happen.
 
     I ride with the North Trail Club. Milhouse is in it and he lives in Springfield. The club is running a trail survey in June and I mean to be there.
 
