@@ -453,6 +453,14 @@ roles and never an operator.
   its own guard breaks and stays still when an independent one does. ⚠️
   **Choosing an independent neighbour is the hard part — reasoning about which
   one is independent is not enough. Run it.**
+- 🚨 **A GREEN sabotage is not a control until you read the line under it.** A
+  case can execute the mutated line and not depend on what it computes, which
+  looks identical to the code being irrelevant. **So on a green verdict the
+  tool probes again with a panic at the same site and says which kind of green
+  it was** — depended on, blind, or a site no panic can be written into.
+  **Read that line: a green with no probe line under it means the tool could
+  not answer, not that the case is sound.** It roughly doubles the run and it
+  never gates the verdict.
 - 🚨 **A room runs against a BUILT binary, so a sabotage of served code is
   invisible to it unless you build first.** The rooms spawn the server, and
   `cargo test -p jojobot-exercise` does not rebuild it — **so an edit to any
