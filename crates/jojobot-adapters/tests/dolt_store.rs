@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
@@ -27,7 +28,7 @@ use jojobot_domain::memory::EntityId;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::testing::contract as memory;
-use jojobot_domain::memory::{EntityPatch, NewEntity};
+use jojobot_domain::memory::{EntityPatch, FactPatch, NewEntity, NewFact};
 use jojobot_domain::session::testing::contract as sessions;
 
 /// A directory of this run's own, removed when it is done.
@@ -293,6 +294,126 @@ async fn the_fill_badges_rows_written_before_the_column_and_repeats_nothing() {
         "the fill gave out badges a second time, so running it at every startup would not be \
          safe",
     );
+
+    store.stop().await;
+}
+
+/// 🚨 **A correction is kept: the substrate holds what the claim used to say,
+/// and a claim nobody corrected has one write and no more.**
+///
+/// A claim's row was rewritten in place, so a correction overwrote its words
+/// and nothing anywhere remembered them. A session could not tell *we never
+/// recorded this* from *we recorded it and we were wrong*.
+///
+/// **The whole claim is kept, not its content and edge.** The fold that
+/// projects a thing's fields keeps only writes whose record is ACTIVE, so a
+/// status left in a column above a versioned content is a filter reading the
+/// value it is meant to be deciding.
+///
+/// ⚠️ **The negative is what gives it meaning**: an uncorrected claim must
+/// carry ONE write. A substrate that kept a chain for everything would satisfy
+/// the positive and be useless — and it is what a reader would meet on every
+/// claim they ever looked at.
+///
+/// ⛔️ **Nothing reads this yet**, so both halves are asserted against the
+/// substrate directly. The claim's own row still answers every read, and this
+/// case says the two agree.
+#[tokio::test]
+async fn the_substrate_keeps_what_a_correction_overwrote() {
+    let scratch = Scratch::new("factwrite");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("factwrite")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let subject = EntityId::person("person:kept-alpha");
+    let untouched = EntityId::person("person:kept-beta");
+    for (who, called) in [(&subject, "Kept Alpha"), (&untouched, "Untouched Beta")] {
+        memory
+            .add_entity(NewEntity::new(who.clone(), called, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("the guard waves it through");
+    }
+
+    let claim = memory
+        .capture(NewFact::about(
+            subject.clone(),
+            "was at the fair",
+            date(2026, 8, 10),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+    memory
+        .capture(NewFact::about(
+            untouched.clone(),
+            "stayed home",
+            date(2026, 8, 10),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+
+    memory
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                content: Some("was never at the fair".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update_fact ok")
+        .written()
+        .expect("the guard waves it through");
+
+    let kept: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM fact_write WHERE entity = ? AND fact_id = ? ORDER BY ordinal",
+    )
+    .bind(subject.as_str())
+    .bind(claim.id.as_str())
+    .fetch_all(&pool)
+    .await
+    .expect("the substrate is readable");
+    assert_eq!(
+        kept,
+        vec![
+            "was at the fair".to_string(),
+            "was never at the fair".to_string(),
+        ],
+        "the correction overwrote what the claim used to say and nothing kept it",
+    );
+
+    // **The negative.** A claim nobody corrected carries one write.
+    let alone: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact_write WHERE entity = ?")
+        .bind(untouched.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the substrate is readable");
+    assert_eq!(
+        alone, 1,
+        "a claim nobody corrected carries a chain, so every claim a reader meets would",
+    );
+
+    // **And the row still answers as itself**, which is what makes this inert.
+    let read = memory
+        .recall(&subject)
+        .await
+        .expect("a plain read")
+        .into_iter()
+        .map(|f| f.content)
+        .collect::<Vec<_>>();
+    assert_eq!(read, vec!["was never at the fair".to_string()]);
 
     store.stop().await;
 }

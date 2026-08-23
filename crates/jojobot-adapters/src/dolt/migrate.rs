@@ -336,6 +336,24 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0033_entity_merged_into.sql"),
         leaves: Leaves::Column("entity", "merged_into"),
     },
+    Migration {
+        version: "0034_fact_write",
+        sql: include_str!("../../migrations/0034_fact_write.sql"),
+        leaves: Leaves::Table("fact_write"),
+    },
+    Migration {
+        version: "0035_fact_write_backfill",
+        sql: include_str!("../../migrations/0035_fact_write_backfill.sql"),
+        // **The rows, not the schema.** A backfill leaves the schema exactly as
+        // it found it, so the nearest shape answers "already reached" from the
+        // moment the table existed. This asks whether any claim is still
+        // without a write of its own.
+        leaves: Leaves::NoRows(
+            "fact",
+            "NOT EXISTS (SELECT 1 FROM fact_write w WHERE w.entity = fact.entity \
+             AND w.fact_id = fact.id)",
+        ),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -736,6 +754,8 @@ mod tests {
         "0031_journal_entry_day",
         "0032_entity_badge",
         "0033_entity_merged_into",
+        "0034_fact_write",
+        "0035_fact_write_backfill",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

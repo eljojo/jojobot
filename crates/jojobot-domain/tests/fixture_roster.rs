@@ -131,6 +131,8 @@ const ROSTER: &[&str] = &[
     "person:ghostly",
     "person:homer",
     "person:homer-simpson",
+    "person:kept-alpha",
+    "person:kept-beta",
     "person:kappa",
     "person:maude",
     "person:milhouse",

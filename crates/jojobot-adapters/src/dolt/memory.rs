@@ -427,6 +427,62 @@ impl DoltMemory {
             .await
             .map_err(store)?;
         }
+        Self::append_fact_write(tx, fact).await?;
+        Ok(())
+    }
+
+    /// **Keep this write of the claim, beside the row it just rewrote.**
+    ///
+    /// The row above is the claim as it now stands; this is the claim as it now
+    /// stands KEPT, in the order its writes happened. A correction overwrote the
+    /// row and left nothing behind, so a session could not tell a claim nobody
+    /// ever made from one somebody made and corrected.
+    ///
+    /// **The whole claim, not its content and edge.** The fold that projects a
+    /// thing's fields keeps only writes whose record is ACTIVE, so a status
+    /// sitting in a column above a versioned content would be a filter reading
+    /// the value it is meant to be deciding. Everything is versioned or nothing
+    /// is (rule 201).
+    ///
+    /// ⚠️ **Nothing reads this yet.** The claim's own row is still what every
+    /// read answers from, so this changes no answer — which is what makes an
+    /// interrupted slice here leave the store exactly as it found it.
+    async fn append_fact_write(
+        tx: &mut Transaction<'_, MySql>,
+        fact: &Fact,
+    ) -> Result<(), MemoryError> {
+        let highest: Option<i64> = sqlx::query_scalar(
+            "SELECT MAX(ordinal) FROM fact_write WHERE entity = ? AND fact_id = ?",
+        )
+        .bind(fact.home.as_str())
+        .bind(fact.id.as_str())
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(store)?;
+        sqlx::query(
+            "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
+                                     standing, status, date, edge_shape, edge_object,
+                                     derived_from, derived_from_id, inserted_at, stale_after)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(fact.home.as_str())
+        .bind(fact.id.as_str())
+        .bind(highest.unwrap_or(0) + 1)
+        .bind(&fact.content)
+        .bind(fact.details.as_deref())
+        .bind(fact.provenance.as_token())
+        .bind(fact.standing.as_token())
+        .bind(fact.status.as_token())
+        .bind(fact.date.to_string())
+        .bind(fact.edge.as_ref().map(|e| e.shape.as_token()))
+        .bind(fact.edge.as_ref().map(|e| e.object.as_str()))
+        .bind(fact.derived_from.as_ref().map(|d| d.home.as_str()))
+        .bind(fact.derived_from.as_ref().map(|d| d.local.as_str()))
+        .bind(fact.inserted_at.map(|t| t.to_string()))
+        .bind(fact.stale_after.map(|d| d.to_string()))
+        .execute(&mut **tx)
+        .await
+        .map_err(store)?;
         Ok(())
     }
 
