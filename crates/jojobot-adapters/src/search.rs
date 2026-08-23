@@ -1375,6 +1375,11 @@ impl FullTextIndex {
             .into_iter()
             .map(|(score, payload)| {
                 let boost = match (&payload, newest) {
+                    // **A derivation never speaks over its own source.** It is
+                    // still an answer and still reachable — the demotion is a
+                    // subtraction, so a gloss that is the only match still
+                    // comes back.
+                    (Payload::Fact { fact }, _) if fact.derived_from.is_some() => -DERIVED_DEMOTION,
                     (Payload::Fact { fact }, Some(newest)) => {
                         let age_days = (newest - fact.date).get_days().max(0) as f32;
                         RECENCY_WEIGHT / (1.0 + age_days / 365.25)
@@ -1566,6 +1571,19 @@ fn identity(hit: &Hit) -> (&'static str, String) {
 /// a rank so low it never surfaces would satisfy "lower priority" and defeat
 /// the point of indexing sessions at all.
 const SESSION_DEMOTION: f32 = 1_000.0;
+
+/// **How far a derivation is pushed below the words it was worked out from.**
+///
+/// A gloss of somebody's own message once came back complete while the message
+/// itself came back truncated, and the gloss went on ranking first months after
+/// it had stopped being true. **A summary never outranks what it summarises.**
+///
+/// A subtraction rather than a filter, for the same reason the session demotion
+/// is one: a derivation is a legitimate answer and a gloss that is the only
+/// match must still be reachable. **Smaller than the session demotion**, so the
+/// order is an answer, then a derivation, then a run — a derived claim is still
+/// about the world, where a session is about the work.
+const DERIVED_DEMOTION: f32 = 100.0;
 
 /// How much prose rides around a match.
 const SNIPPET_RADIUS: usize = 120;
@@ -4198,6 +4216,119 @@ mod tests {
             first_other < first_session,
             "a session is context, not an answer, and ranks below what it shares a list with: \
              {shared:?}"
+        );
+    }
+
+    /// 🚨 **A summary never outranks the words it summarises.**
+    ///
+    /// Measured in a paid run, not argued: an assistant filed the operator's
+    /// own message and wrote a gloss of it. **The gloss came back complete and
+    /// the words themselves came back truncated**, and on a later query the
+    /// gloss ranked first — five months after it had stopped being true.
+    ///
+    /// ⛔️ **Not deletion and not hiding.** A derivation is a legitimate answer
+    /// and stays reachable; it just does not get to speak over its own source.
+    ///
+    /// **The derivation is deliberately the STRONGER match here.** Without the
+    /// demotion it wins on relevance alone, so the ordering below is the
+    /// demotion's doing rather than the scorer's — the same trap the session
+    /// case had to design around.
+    #[test]
+    fn a_derivation_ranks_below_the_testimony_about_the_same_subject() {
+        let index = FullTextIndex::open().expect("index opens");
+        let day = "2026-08-10".parse().expect("a civil date");
+        let spoken = Fact {
+            provenance: Provenance::Testimony,
+            standing: Standing::Settled,
+            ..fact(
+                "person:milhouse",
+                "f1",
+                "the committee meets on Tuesdays",
+                day,
+            )
+        };
+        let gloss = Fact {
+            derived_from: Some(jojobot_domain::memory::FactAddress::new(
+                EntityId("person:milhouse".into()),
+                jojobot_domain::memory::FactId("f1".into()),
+            )),
+            ..fact(
+                "person:milhouse",
+                "f2",
+                "committee committee committee — meets weekly, Tuesdays, per the note",
+                day,
+            )
+        };
+        index
+            .ingest_all(
+                &[DocScan {
+                    doc_id: "outline-uuid-1".into(),
+                    title: "Milhouse".into(),
+                    prose: String::new(),
+                    entity: Some(entity("person:milhouse", "Milhouse")),
+                    facts: vec![spoken, gloss],
+                    fields: Default::default(),
+                    owner: None,
+                }],
+                index.reading_begins(),
+            )
+            .expect("memory ingested");
+
+        let found = index
+            .search(&SearchQuery {
+                text: Some("committee".into()),
+                ..SearchQuery::default()
+            })
+            .expect("search ok");
+
+        let at = |id: &str| {
+            found.iter().position(|h| match h {
+                Hit::Fact { fact, .. } => fact.id.0 == id,
+                _ => false,
+            })
+        };
+        let words = at("f1").expect("the testimony matched, or there is nothing to rank against");
+        let derived = at("f2").expect(
+            "the derivation must stay reachable — this is a demotion, \
+                                       never a filter",
+        );
+        assert!(
+            words < derived,
+            "a derivation outranked the testimony it was worked out from: {found:?}",
+        );
+
+        // **And it is a demotion, not a burial.** A derivation is still about
+        // the world, where a run is about the work, so it keeps its place above
+        // one. Without this, pushing the constant up until a gloss sits below
+        // everything would pass the assertion above and quietly turn a ranking
+        // rule into a filter.
+        index
+            .ingest_sessions(&[run(
+                "s-gamma",
+                "bot:gamma",
+                "the committee slice",
+                "committee committee committee committee",
+            )])
+            .expect("sessions ingested");
+        let with_a_run = index
+            .search(&SearchQuery {
+                text: Some("committee".into()),
+                asked_by: Some(EntityId("bot:gamma".into())),
+                ..SearchQuery::default()
+            })
+            .expect("search ok");
+        let derived_now = with_a_run
+            .iter()
+            .position(|h| matches!(h, Hit::Fact { fact, .. } if fact.derived_from.is_some()))
+            .expect("the derivation is still reachable");
+        let session_now = with_a_run
+            .iter()
+            .position(|h| matches!(h, Hit::Session { .. }))
+            .expect("the session matched too, or there is nothing to rank against");
+        assert!(
+            derived_now < session_now,
+            "a derivation was pushed below a session, so the demotion has become a burial: \
+             {with_a_run:?}",
         );
     }
 
