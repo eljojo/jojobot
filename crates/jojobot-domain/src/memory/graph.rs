@@ -19,8 +19,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::{
-    Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactStatus, MemoryError, guard,
-    search::DocScan, types, validate_subject,
+    Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactAddress, FactStatus, MemoryError,
+    guard, search::DocScan, types, validate_subject,
 };
 
 /// **How far a walk may go.** A bound rather than a preference: an edge may
@@ -833,6 +833,17 @@ pub struct Object {
     /// first. `None` when the query named no key, so a caller can tell "not
     /// asked for" from "nobody ever wrote it".
     pub history: Option<KeyHistory>,
+    /// **The writes behind the RECORD the query named**, oldest first — what
+    /// the claim used to say before somebody corrected it.
+    ///
+    /// **On the object the record is filed under and on no other.** A record's
+    /// address names one claim on one thing, so an answer that hung it on every
+    /// object in the walk would be repeating one thing's chain under handles
+    /// that never carried it.
+    ///
+    /// `None` when the query named no record, and `None` on the other objects
+    /// of a walk that did.
+    pub record_history: Option<ClaimHistory>,
 }
 
 /// Every write of one key on one object, capped, and how many there are.
@@ -862,6 +873,32 @@ impl KeyHistory {
     /// How many writes the window left out. Zero when the history fits, which
     /// is what a renderer branches on to keep an ordinary answer free of
     /// elision noise.
+    pub fn elided(&self) -> usize {
+        self.total.saturating_sub(self.writes.len())
+    }
+}
+
+/// **Every write of one claim, capped, and how many there are.**
+///
+/// The same shape [`KeyHistory`] has and the same reason for the total beside
+/// the writes: a chain longer than the window comes back cut, and the total is
+/// what makes the cut honest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimHistory {
+    /// The record asked for, exactly as the caller addressed it.
+    pub record: FactAddress,
+    /// The writes that came back, oldest first: **the newest ones**, when there
+    /// were more than the window.
+    ///
+    /// A claim that stands has at least one write, so this is never empty — a
+    /// record with nothing behind it is a miss rather than an answer.
+    pub writes: Vec<super::ClaimWrite>,
+    /// **How many writes exist behind the claim**, whatever came back.
+    pub total: usize,
+}
+
+impl ClaimHistory {
+    /// How many writes the window left out. Zero when the chain fits.
     pub fn elided(&self) -> usize {
         self.total.saturating_sub(self.writes.len())
     }
@@ -913,17 +950,31 @@ pub fn values_in_use(objects: &[Object], key: &str) -> Vec<ValueInUse> {
     in_use
 }
 
-/// **Which key's writes to bring back, and how many of them.**
+/// **Whose writes to bring back, and how many of them.**
 ///
-/// One value rather than two loose arguments, because a window with no key is
-/// not a question anybody can ask.
+/// One value rather than two loose arguments, because a window with nothing to
+/// window is not a question anybody can ask.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct History {
-    /// The key.
-    pub key: String,
-    /// The most writes to return. A key written more times than this comes back
-    /// cut, saying so.
+    /// What is being traced — a key, or one record.
+    pub of: Trace,
+    /// The most writes to return. Written more times than this and it comes
+    /// back cut, saying so.
     pub most: usize,
+}
+
+/// **The two things that have writes behind them.**
+///
+/// One axis rather than two questions: both ask what the ordinary read projects
+/// away, and they differ in what the writes are addressed by. A key's writes
+/// are counted across every record that touched it; a claim's belong to one
+/// claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Trace {
+    /// Every write of this key, on each object the query answered with.
+    Key(String),
+    /// Every write of this one claim, on the object it is filed under.
+    Record(FactAddress),
 }
 
 /// **How many of a key's writes come back when the caller does not say.**
@@ -938,7 +989,15 @@ impl History {
     /// This key, with the default window.
     pub fn of(key: &str) -> Self {
         History {
-            key: key.to_string(),
+            of: Trace::Key(key.to_string()),
+            most: WRITES_SHOWN,
+        }
+    }
+
+    /// This record's own writes, with the default window.
+    pub fn of_record(record: FactAddress) -> Self {
+        History {
+            of: Trace::Record(record),
             most: WRITES_SHOWN,
         }
     }
@@ -1354,6 +1413,7 @@ impl<'a> Ctx<'a> {
             // projection, and what it replaced is in the substrate. See
             // [`walk`].
             history: None,
+            record_history: None,
         }
     }
 
@@ -1633,11 +1693,17 @@ where
     Ok(found)
 }
 
-/// Attach one key's writes to an object and to everything it reached.
+/// Attach the writes the query asked for to an object and to everything it
+/// reached.
 ///
-/// **Every object in the answer, roots and reached alike.** A caller that named
-/// a key asked it of the answer, and a walked object arriving without the half
-/// its siblings carry is the silent elision this project does not do.
+/// **A key is asked of every object in the answer, roots and reached alike.** A
+/// caller that named a key asked it of the answer, and a walked object arriving
+/// without the half its siblings carry is the silent elision this project does
+/// not do.
+///
+/// **A record is asked of the one object it is filed under.** Its address names
+/// one claim on one thing; hanging that chain on every object of a walk would
+/// report one thing's writes under handles that never carried them.
 fn fill_history<'a, M>(
     store: &'a M,
     object: &'a mut Object,
@@ -1647,21 +1713,38 @@ where
     M: super::Memory + ?Sized,
 {
     Box::pin(async move {
-        let mut writes = store.history(&object.entity.id, &wanted.key).await?;
-        let total = writes.len();
-        // **The window is cut from the old end, and the answer keeps its
-        // order.** A caller reading a capped history reads the newest writes
-        // oldest-first, which is the same shape a short history has — so
-        // nothing has to be read differently because it was cut.
-        if total > wanted.most {
-            writes.drain(..total - wanted.most);
+        match &wanted.of {
+            Trace::Key(key) => {
+                let mut writes = store.history(&object.entity.id, key).await?;
+                let total = writes.len();
+                // **The window is cut from the old end, and the answer keeps
+                // its order.** A caller reading a capped history reads the
+                // newest writes oldest-first, which is the same shape a short
+                // history has — so nothing has to be read differently because
+                // it was cut.
+                if total > wanted.most {
+                    writes.drain(..total - wanted.most);
+                }
+                object.history = Some(KeyHistory {
+                    key: key.clone(),
+                    writes,
+                    total,
+                });
+            }
+            Trace::Record(address) if address.home == object.entity.id => {
+                let mut writes = store.claim_history(address).await?;
+                let total = writes.len();
+                if total > wanted.most {
+                    writes.drain(..total - wanted.most);
+                }
+                object.record_history = Some(ClaimHistory {
+                    record: address.clone(),
+                    writes,
+                    total,
+                });
+            }
+            Trace::Record(_) => {}
         }
-
-        object.history = Some(KeyHistory {
-            key: wanted.key.clone(),
-            writes,
-            total,
-        });
         for reached in &mut object.connected {
             fill_history(store, reached, wanted).await?;
         }

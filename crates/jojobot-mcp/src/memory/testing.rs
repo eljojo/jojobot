@@ -136,6 +136,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
         near: None,
         sid: None,
         history: None,
+        history_record: None,
         history_most: None,
         values: None,
         values_most: None,
@@ -365,6 +366,12 @@ impl Memory for DownMemory {
         key: &str,
     ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, MemoryError> {
         self.1.history(entity, key).await
+    }
+    async fn claim_history(
+        &self,
+        address: &jojobot_domain::memory::FactAddress,
+    ) -> Result<Vec<jojobot_domain::memory::ClaimWrite>, MemoryError> {
+        self.1.claim_history(address).await
     }
     async fn fields(
         &self,

@@ -34,7 +34,8 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     let s = story.session().await;
 
     // Settled and first hand.
-    s.fact("place:leftorium", "serves breakfast until 11am on weekdays")
+    let breakfast = s
+        .fact("place:leftorium", "serves breakfast until 11am on weekdays")
         .await;
 
     // Hedged and first hand: the operator backs it and says they are not sure.
@@ -175,16 +176,35 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         .await;
     moved.says("\"key\":\"standing\"").says("\"count\":0");
 
-    // GAP — so the claim reads as though it were always this, settled and
-    // first hand, with no trace that it was a hedge, was confirmed and was then
-    // walked back. What the substrate keeps is the writes behind a key on a
-    // thing; what it does not keep is a claim's own columns, which is where
-    // `standing`, `content` and `status` live. A claim that has moved twice and
-    // one written correctly the first time are still indistinguishable — and
-    // the derived claim below still rests on a parent that has since reversed.
-    //   s.shape("every time the hedge's standing moved",
-    //           json!({"subject": "place:moes", "history": "standing"}))
-    //    .says("open → settled → open");
+    // **The claim's OWN writes are kept, and the same read reaches them** —
+    // by the record's address rather than by a key. That is where `standing`,
+    // `content` and `status` live, so this is the trace the key history above
+    // cannot carry: the hedge as it was captured, the confirmation, and the
+    // walk-back, oldest first.
+    let rewritten = s
+        .shape(
+            "every time the hedged claim itself was written",
+            json!({"subject": "place:moes", "history_record": hedged}),
+        )
+        .await;
+    rewritten
+        .number("/objects/0/record_history/count", 3)
+        .says("\"closes early on Sundays\"")
+        .says("\"nth\":1")
+        .says("\"nth\":3");
+
+    // ⚠️ **And a claim nobody rewrote reads as one write**, which is what makes
+    // the three above mean something: without this, every claim on the page
+    // would look like one somebody had corrected.
+    s.shape(
+        "every time the settled breakfast claim was written",
+        json!({"subject": "place:leftorium", "history_record": breakfast}),
+    )
+    .await
+    .number("/objects/0/record_history/count", 1);
+
+    // GAP — the derived claim below still rests on a parent that has since
+    // reversed, and nothing on it says so.
     walked_back
         .claim(&derived)
         .says("a Sunday visit should be earlier")

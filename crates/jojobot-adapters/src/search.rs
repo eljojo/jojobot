@@ -40,8 +40,9 @@ use jojobot_domain::mailbox::{MailboxError, Mailboxes, Message};
 use std::collections::BTreeMap;
 
 use jojobot_domain::memory::{
-    Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
-    FactStatus, FieldWrite, Guarded, Memory, MemoryError, Merge, NewEntity, NewFact, Retraction,
+    ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress,
+    FactPatch, FactStatus, FieldWrite, Guarded, Memory, MemoryError, Merge, NewEntity, NewFact,
+    Retraction,
     guard::{self, MatchReason},
     kinds,
     search::{
@@ -1939,6 +1940,12 @@ impl Memory for IndexedMemory {
     /// holds nothing a history is read from.
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         self.inner.history(entity, key).await
+    }
+
+    /// **Straight through.** A claim's writes are the store's record and the
+    /// index holds no version of them.
+    async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
+        self.inner.claim_history(address).await
     }
 
     /// **Straight through, and it does not touch the index.** What a thing
@@ -4950,6 +4957,9 @@ mod tests {
         async fn history(&self, _: &EntityId, _: &str) -> Result<Vec<FieldWrite>, MemoryError> {
             unimplemented!("this double only scans")
         }
+        async fn claim_history(&self, _: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
+            unimplemented!("this double only scans")
+        }
         async fn fields(&self, _: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
             unimplemented!("this double only scans")
         }
@@ -5078,6 +5088,9 @@ mod tests {
         }
         async fn history(&self, _: &EntityId, _: &str) -> Result<Vec<FieldWrite>, MemoryError> {
             unimplemented!("a default read a key's writes, so this read was not forwarded")
+        }
+        async fn claim_history(&self, _: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
+            unimplemented!("a default read a claim's writes, so this read was not forwarded")
         }
         async fn fields(&self, _: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
             unimplemented!("a default read the folded fields, so this read was not forwarded")

@@ -219,7 +219,26 @@ pub struct RecallArgs {
     /// and nothing was recorded under that key.
     #[serde(default)]
     pub(crate) history: Option<String>,
-    /// **How many of that key's writes come back**, newest kept. Twenty when
+    /// **The writes behind one RECORD, oldest first** — name a record's address
+    /// `kind:slug#local-id`, and the object it is filed under comes back
+    /// carrying every write of that claim: what it said, what it said
+    /// underneath, who backed it and whether it stood, each time it was
+    /// written.
+    ///
+    /// The other half of the same axis. `history` names a KEY and traces a
+    /// value across every record that touched it; this names one CLAIM and
+    /// traces the claim itself, which is how you read what a record said before
+    /// somebody corrected it. Name one or the other, never both.
+    ///
+    /// ⚠️ **No write carries a moment.** Every write of a claim keeps the
+    /// moment the claim first entered the store, so a moment per write would
+    /// say every correction happened at once. What is recorded is the ORDER,
+    /// and each write carries its place in it.
+    ///
+    /// Omit it and no chain comes back, which is the normal read.
+    #[serde(default)]
+    pub(crate) history_record: Option<String>,
+    /// **How many of those writes come back**, newest kept. Twenty when
     /// you do not say.
     ///
     /// A key written a thousand times would otherwise be a thousand entries in
@@ -594,6 +613,68 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
     body
 }
 
+/// **One claim's writes on the wire, oldest first, with how many there are.**
+///
+/// Each write carries the whole of what the claim said then and its place in
+/// the order. **No moment**: every write of a claim keeps the moment the claim
+/// first entered the store, so reporting one per write would say a year of
+/// corrections happened at once. The order is what the substrate knows, and it
+/// is on every entry.
+fn record_history_json(history: &graph::ClaimHistory) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "record": history.record.to_string(),
+        "count": history.total,
+        "shown": history.writes.len(),
+        "writes": history.writes.iter().map(|write| {
+            let mut rendered = serde_json::json!({
+                "nth": write.ordinal,
+                "content": write.content,
+                "date": write.date.to_string(),
+                "status": write.status.as_token(),
+                "provenance": write.provenance.as_token(),
+                "standing": write.standing.as_token(),
+            });
+            if let Some(fields) = rendered.as_object_mut() {
+                if let Some(details) = &write.details {
+                    fields.insert("details".into(), details.as_str().into());
+                }
+                if let Some(edge) = &write.edge {
+                    fields.insert(
+                        "edge".into(),
+                        serde_json::json!({
+                            "type": edge.shape.as_name(),
+                            "object": edge.object.to_string(),
+                        }),
+                    );
+                }
+                if let Some(source) = &write.derived_from {
+                    fields.insert("derived_from".into(), source.to_string().into());
+                }
+                if let Some(day) = &write.stale_after {
+                    fields.insert("stale_after".into(), day.to_string().into());
+                }
+            }
+            rendered
+        }).collect::<Vec<_>>(),
+    });
+    // **A cut says so, and says the way past itself** — the same rule the key
+    // history keeps.
+    if let Some(fields) = body.as_object_mut()
+        && history.elided() > 0
+    {
+        fields.insert(
+            "older".into(),
+            format!(
+                "{} older writes are not here — ask again with a bigger history_most to reach \
+                 them",
+                history.elided()
+            )
+            .into(),
+        );
+    }
+    body
+}
+
 impl Jojobot {
     /// **Read a view and fill the call it was named in.**
     ///
@@ -780,6 +861,13 @@ fn object_json(
     if let Some(history) = object.history.as_ref() {
         fields.insert("history".into(), history_json(history));
     }
+    // **The writes behind the record the call named**, on the one object it is
+    // filed under. Under its own key rather than beside the key history: they
+    // are different questions and a reader should not have to look at the value
+    // to find out which was asked.
+    if let Some(history) = object.record_history.as_ref() {
+        fields.insert("record_history".into(), record_history_json(history));
+    }
     // How the walk got here. Absent on a root, which nothing reached.
     //
     // An edge names its shape and a relation names itself, under different
@@ -873,9 +961,17 @@ impl Jojobot {
                        arrived in and its date. THE COUNT OF THE WRITES IS THE ANSWER TO HOW \
                        MANY TIMES, so a key a sitting records once each time something happens \
                        is how you count occurrences. A key nobody wrote comes back as no \
-                       writes, never as a refusal. A long history comes back CUT to its newest \
+                       writes, never as a refusal. HISTORY_RECORD is the other half of that \
+                       axis: it names ONE RECORD by its address and brings back every write of \
+                       THAT CLAIM, oldest first — what it said, who backed it and whether it \
+                       stood, each time somebody wrote it. That is how you read what a claim \
+                       used to say before it was corrected, and how you tell a claim nobody ever \
+                       made from one somebody made and got wrong. No write carries a moment, \
+                       because the substrate records the ORDER and not when each correction \
+                       happened; every write carries its place in that order. Name a key or a \
+                       record, never both. A long history comes back CUT to its newest \
                        twenty, saying how many exist and how many it left out; history_most \
-                       raises the window when you really want the far end. VALUES names a key \
+                       raises the window when you really want the far end, for either half. VALUES names a key \
                        and answers with the values the selected objects already hold under it, \
                        most used first, each with how many hold it — what to write in a key \
                        like colour or status when you want the spelling everything else \
@@ -1064,6 +1160,9 @@ impl Jojobot {
         // asked for is what is SHIPPED: the charter replaces the page rather
         // than arriving beside it, because a reader who did not ask for the
         // page would otherwise be sent the same text twice.
+        let history_most = args
+            .history_most
+            .map_or(graph::WRITES_SHOWN, |most| most as usize);
         let want_charter = args.charter.unwrap_or(false);
         let asked_prose = args.prose.unwrap_or(false);
         let include = graph::Include {
@@ -1080,6 +1179,36 @@ impl Jojobot {
                 clock: parse_clock(asked.clock.as_deref())?,
             }),
         };
+        // **One axis, two things it can trace.** Naming both asks two questions
+        // of one answer, so it is refused rather than answered with whichever
+        // the code happened to check first.
+        let trace = match (args.history.as_deref(), args.history_record.as_deref()) {
+            (Some(_), Some(_)) => {
+                return memory_declined(
+                    "recall",
+                    MemoryError::InvalidQuery(
+                        "history names a KEY and history_record names a RECORD, and they are the \
+                         same axis: a call can trace one or the other. Name whichever you meant \
+                         and drop the other"
+                            .into(),
+                    ),
+                );
+            }
+            // Trimmed like every other key a caller names, so `donuts_eaten `
+            // asks the question `donuts_eaten` answers.
+            (Some(key), None) => Some(graph::History {
+                of: graph::Trace::Key(key.trim().to_string()),
+                most: history_most,
+            }),
+            (None, Some(address)) => Some(graph::History {
+                of: graph::Trace::Record(match FactAddress::parse(address) {
+                    Ok(parsed) => parsed,
+                    Err(refused) => return memory_declined("recall", refused),
+                }),
+                most: history_most,
+            }),
+            (None, None) => None,
+        };
         let query = graph::GraphQuery {
             select: graph::Selection {
                 subject: args.subject.as_deref().map(EntityId::person),
@@ -1091,14 +1220,7 @@ impl Jojobot {
             },
             include,
             follow,
-            // Trimmed like every other key a caller names, so `donuts_eaten `
-            // asks the question `donuts_eaten` answers.
-            history: args.history.as_deref().map(|key| graph::History {
-                key: key.trim().to_string(),
-                most: args
-                    .history_most
-                    .map_or(graph::WRITES_SHOWN, |most| most as usize),
-            }),
+            history: trace,
         };
 
         let graph::Selected {
@@ -1290,6 +1412,7 @@ mod tests {
             near: None,
             sid: None,
             history: None,
+            history_record: None,
             history_most: None,
             values: None,
             values_most: None,
@@ -2294,6 +2417,128 @@ mod tests {
         );
     }
 
+    /// 🚨 **A corrected claim's own writes come back on the same read**, named
+    /// by the record's address, and only when the call asks for them.
+    ///
+    /// The trace exists in the store and this is the way a caller reaches it.
+    /// Three halves, because each alone passes on a build that is useless:
+    /// a read that always carries a chain costs every caller who never asked;
+    /// a read that never carries one is a capability nothing can reach; and a
+    /// chain on a claim nobody corrected must be the ONE write that claim has,
+    /// or the answer says every record in the store was rewritten.
+    ///
+    /// **No write carries a moment.** Every write of a claim keeps the moment
+    /// the claim first entered the store, so a moment per write would report
+    /// corrections made months apart as one instant.
+    #[tokio::test]
+    async fn recall_answers_with_the_writes_behind_a_record_when_asked() {
+        let jojobot = handler();
+        capture_ok(&jojobot, capture_args("alpha", "works at the old place")).await;
+        capture_ok(&jojobot, capture_args("alpha", "rides to work")).await;
+        jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                content: Some("works at the new place".into()),
+                ..update_args("person:alpha#f1")
+            }))
+            .await
+            .expect("update ok");
+
+        let asked = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    history_record: Some("person:alpha#f1".into()),
+                    facts: Some(false),
+                    ..of("alpha")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let chain = &asked["objects"][0]["record_history"];
+        assert_eq!(chain["record"], "person:alpha#f1");
+        assert_eq!(
+            chain["count"], 2,
+            "the claim was written twice and the answer says so: {chain}"
+        );
+        assert_eq!(
+            chain["writes"]
+                .as_array()
+                .expect("the writes come back as a list")
+                .iter()
+                .map(|w| w["content"].as_str().unwrap_or_default().to_string())
+                .collect::<Vec<_>>(),
+            vec!["works at the old place", "works at the new place"],
+            "oldest first, so what the claim used to say is readable: {chain}"
+        );
+        assert_eq!(
+            chain["writes"][0]["nth"], 1,
+            "each write carries its place in the order: {chain}"
+        );
+        assert_eq!(chain["writes"][1]["nth"], 2);
+        assert!(
+            chain["writes"][0].get("inserted_at").is_none()
+                && chain["writes"][0].get("at").is_none(),
+            "a write reports a moment the substrate does not record: {chain}"
+        );
+
+        // **A claim nobody corrected has one write.** Asked of the second
+        // record, on the same object, through the same call.
+        let untouched = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    history_record: Some("person:alpha#f2".into()),
+                    facts: Some(false),
+                    ..of("alpha")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let alone = &untouched["objects"][0]["record_history"];
+        assert_eq!(
+            alone["count"], 1,
+            "a claim nobody corrected reads as one somebody rewrote: {alone}"
+        );
+        assert_eq!(alone["writes"][0]["content"], "rides to work");
+
+        let plain = json_of(
+            &jojobot
+                .recall(Parameters(of("alpha")))
+                .await
+                .expect("recall ok"),
+        );
+        assert!(
+            plain["objects"][0].get("record_history").is_none(),
+            "a call that asked for no record is not charged for one: {plain}"
+        );
+    }
+
+    /// **The two halves of the history axis are one question, so naming both is
+    /// refused** — with nothing written and the way out named.
+    ///
+    /// Answering whichever the code checked first would hand back a chain the
+    /// caller cannot tell from the one they did not get.
+    #[tokio::test]
+    async fn naming_a_key_and_a_record_to_trace_is_refused() {
+        let jojobot = handler();
+        capture_ok(&jojobot, capture_args("alpha", "works at the old place")).await;
+
+        let refused = blocked(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    history: Some("donuts_eaten".into()),
+                    history_record: Some("person:alpha#f1".into()),
+                    ..of("alpha")
+                }))
+                .await
+                .expect("a malformed query is an answer, not a protocol failure"),
+        );
+        assert!(
+            refused["how_to_proceed"]
+                .as_str()
+                .is_some_and(|way| way.contains("history_record")),
+            "the refusal names the argument to drop: {refused}"
+        );
+    }
+
     /// Every recalled fact carries its address, and that address is what
     /// `update_fact` takes — the pairing that makes editing possible.
     #[tokio::test]
@@ -3136,6 +3381,7 @@ mod tests {
             near: None,
             sid: None,
             history: None,
+            history_record: None,
             history_most: None,
             values: None,
             values_most: None,

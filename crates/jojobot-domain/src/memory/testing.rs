@@ -16,9 +16,9 @@ use std::sync::Mutex;
 use jiff::civil::Date;
 
 use super::{
-    Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch, FactStatus,
-    FieldWrite, Guarded, MAX_KEY_CHARS, MERGED_FROM, Memory, MemoryError, Merge, NewEntity,
-    NewFact, Retraction, Standing, apply_entity_patch, apply_fact_patch,
+    ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch,
+    FactStatus, FieldWrite, Guarded, MAX_KEY_CHARS, MERGED_FROM, Memory, MemoryError, Merge,
+    NewEntity, NewFact, Retraction, Standing, apply_entity_patch, apply_fact_patch,
     guard::{self, Decision},
     merge_account, normalize_content, normalize_details, normalize_prose, retraction_of,
     screen_entity_patch, search, standing_of, validate_content, validate_details, validate_edge,
@@ -41,6 +41,15 @@ pub struct InMemoryMemory {
     /// **The field substrate: every write of every key, oldest first.** Nothing
     /// is ever removed from it — a clear is a write that carries no value.
     writes: Mutex<Vec<StoredWrite>>,
+    /// **The claim substrate: every write of every claim, oldest first.**
+    /// Nothing is ever removed from it — an edit and a retraction are writes
+    /// like a capture, each carrying the whole of what the claim said then.
+    ///
+    /// The real store keeps this in a table beside the claim's own row, and the
+    /// fake has to keep it too: a fake that answered a claim's history from the
+    /// row it holds could only ever answer with one write, and every case about
+    /// a correction leaving a trace would pass against a store that keeps none.
+    claim_writes: Mutex<Vec<(EntityId, FactId, ClaimWrite)>>,
     /// The human half of each entity's doc, keyed by handle — replaced whole by
     /// `set_prose`, exactly as the real store replaces the region.
     prose: Mutex<std::collections::HashMap<EntityId, String>>,
@@ -224,6 +233,23 @@ impl InMemoryMemory {
     ///
     /// A value of `None` is a clear: the key stops being current and the writes
     /// that put it there stay where they are.
+    /// **Keep this write of the claim**, beside the row it just rewrote — the
+    /// same act the real store takes in `write_fact`, so every verb that
+    /// produces a claim leaves a write behind here too.
+    fn append_claim_write(&self, fact: &Fact) {
+        let mut writes = self.claim_writes.lock().expect("fake mutex poisoned");
+        let ordinal = writes
+            .iter()
+            .filter(|(home, id, _)| home == &fact.home && id == &fact.id)
+            .count()
+            + 1;
+        writes.push((
+            fact.home.clone(),
+            fact.id.clone(),
+            ClaimWrite::of(fact, ordinal),
+        ));
+    }
+
     fn append_writes<I>(&self, home: &EntityId, fact: &FactId, wrote: I)
     where
         I: IntoIterator<Item = (String, Option<String>)>,
@@ -576,6 +602,9 @@ impl Memory for InMemoryMemory {
             fields: Default::default(),
             ..stored.clone()
         });
+        // **A capture is the claim's first write.** Kept here as the real store
+        // keeps it, so a claim nobody has corrected answers with one write.
+        self.append_claim_write(&stored);
         self.append_writes(&stored.home, &stored.id, wrote);
         Ok(Guarded::Written(stored))
     }
@@ -616,6 +645,39 @@ impl Memory for InMemoryMemory {
             });
         }
         Ok(self.held(entity))
+    }
+
+    async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
+        let index = self.index();
+        if !index.iter().any(|e| e.id == address.home) {
+            return Err(MemoryError::UnknownEntity {
+                attempted: address.home.to_string(),
+                nearest: guard::screen(&address.home, &[], &index),
+            });
+        }
+        let facts = self.facts.lock().expect("fake mutex poisoned");
+        if !facts
+            .iter()
+            .any(|f| f.home == address.home && f.id == address.local)
+        {
+            return Err(MemoryError::UnknownFact {
+                attempted: address.to_string(),
+                nearest: facts
+                    .iter()
+                    .filter(|f| f.home == address.home)
+                    .map(|f| f.address().to_string())
+                    .collect(),
+            });
+        }
+        drop(facts);
+        let writes = self.claim_writes.lock().expect("fake mutex poisoned");
+        let mut mine: Vec<ClaimWrite> = writes
+            .iter()
+            .filter(|(home, id, _)| home == &address.home && id == &address.local)
+            .map(|(_, _, write)| write.clone())
+            .collect();
+        mine.sort_by_key(|write| write.ordinal);
+        Ok(mine)
     }
 
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
@@ -784,6 +846,9 @@ impl Memory for InMemoryMemory {
                 };
             }
         }
+        // **An edit rewrites the row and appends a write**, which is what makes
+        // what the claim used to say readable after it stops being true.
+        self.append_claim_write(&edited);
         drop(facts);
         self.append_writes(&home, &id, super::writes_of(&patch, &carried));
         let facts = self.facts.lock().expect("fake mutex poisoned");
@@ -896,6 +961,27 @@ impl Memory for InMemoryMemory {
                 }
             }
         }
+        // **And the claim substrate moves with the claim**, for the same
+        // reason: a claim whose row moved and whose writes did not is a claim
+        // the projection cannot find, which is the claim gone. An edge drawn at
+        // the folded thing is re-pointed in the writes as well as on the rows,
+        // so a chain does not go on naming a handle that is no longer a thing.
+        {
+            let mut writes = self.claim_writes.lock().expect("fake mutex poisoned");
+            for (home, id, write) in writes.iter_mut() {
+                if home == folded {
+                    *home = survivor.clone();
+                    if let Some((_, now)) = moved.iter().find(|(was, _)| was == id) {
+                        *id = now.clone();
+                    }
+                }
+                if let Some(edge) = &mut write.edge
+                    && &edge.object == folded
+                {
+                    edge.object = survivor.clone();
+                }
+            }
+        }
         let rehomed = moved.len();
 
         let existing = facts.iter().filter(|f| &f.home == survivor).count();
@@ -920,6 +1006,7 @@ impl Memory for InMemoryMemory {
             fields: Default::default(),
             ..record.clone()
         });
+        self.append_claim_write(&record);
 
         // **The folded row stays and starts forwarding.** It is not deleted and
         // it is not left looking like a thing.
@@ -1028,6 +1115,11 @@ impl Memory for InMemoryMemory {
             fields: Default::default(),
             ..record.clone()
         });
+        // **A retraction is two writes**: the one that marked the claim, and
+        // the account's first. Taking a claim back is a write of it, so the
+        // chain says when it stopped standing rather than only that it did.
+        self.append_claim_write(&retracted);
+        self.append_claim_write(&record);
         drop(facts);
         self.append_writes(
             &record.home,
@@ -4552,6 +4644,151 @@ pub mod contract {
                 .collect::<Vec<_>>(),
             vec![Some("2026-04-18"), None],
             "the write that set it and the write that took it off, in that order: {history:?}"
+        );
+    }
+
+    /// 🚨 **A correction leaves what it replaced readable, and a claim nobody
+    /// corrected has ONE write.**
+    ///
+    /// Edit-in-place is the surface: the record reads back changed, with no
+    /// second copy beside it. Underneath, every write of the claim is kept, so
+    /// a session can tell a claim nobody ever made from one somebody made and
+    /// corrected.
+    ///
+    /// ⚠️ **The negative is what gives it meaning.** A store that returned a
+    /// chain for everything would satisfy the positive and say nothing, and it
+    /// is what a reader would meet on every claim they ever looked at.
+    ///
+    /// **The whole claim is versioned, not its words.** A correction that
+    /// promotes a guess to the operator's own word is a write like any other,
+    /// so the provenance of the earlier write is asserted here too.
+    pub async fn a_correction_keeps_what_the_claim_used_to_say<M: Memory>(store: &M) {
+        let subject = EntityId::person("person:contract-corrected");
+        let corrected = capture(
+            store,
+            NewFact {
+                provenance: Provenance::Inference,
+                ..NewFact::about(subject.clone(), "was at the fair", date(2026, 4, 18))
+            },
+        )
+        .await;
+        let untouched = capture(
+            store,
+            NewFact::about(subject.clone(), "walked home afterwards", date(2026, 4, 18)),
+        )
+        .await;
+
+        store
+            .update_fact(
+                &corrected.address(),
+                FactPatch {
+                    content: Some("was never at the fair".into()),
+                    // The operator's own word, so the correction promotes the
+                    // claim — which is the second thing a write versions.
+                    provenance: Some(Provenance::Testimony),
+                    confirmed_by_user: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("update_fact should succeed")
+            .written()
+            .expect("the guard waves it through");
+
+        let chain = store
+            .claim_history(&corrected.address())
+            .await
+            .expect("claim_history should succeed");
+        assert_eq!(
+            chain
+                .iter()
+                .map(|write| write.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["was at the fair", "was never at the fair"],
+            "oldest first: the words the correction replaced are gone: {chain:?}"
+        );
+        assert_eq!(
+            chain.iter().map(|write| write.ordinal).collect::<Vec<_>>(),
+            vec![1, 2],
+            "the order is what the substrate knows in place of a moment: {chain:?}"
+        );
+        assert_eq!(
+            chain
+                .iter()
+                .map(|write| write.provenance)
+                .collect::<Vec<_>>(),
+            vec![Provenance::Inference, Provenance::Testimony],
+            "the whole claim is versioned, so a promoted guess reads as one: {chain:?}"
+        );
+
+        // **The claim itself is what its newest write says**, which is the
+        // half that keeps the surface edit-in-place.
+        let read = store
+            .recall(&subject)
+            .await
+            .expect("recall should succeed")
+            .into_iter()
+            .find(|f| f.id == corrected.id)
+            .expect("the corrected claim is still there");
+        assert_eq!(read.content, "was never at the fair");
+
+        // ⚠️ **The negative.**
+        let alone = store
+            .claim_history(&untouched.address())
+            .await
+            .expect("claim_history should succeed");
+        assert_eq!(
+            alone.len(),
+            1,
+            "a claim nobody corrected carries a chain, so every claim a reader meets would:              {alone:?}"
+        );
+        assert_eq!(alone[0].content, "walked home afterwards");
+    }
+
+    /// **A record nobody wrote is a miss, and a handle nobody created is an
+    /// entity miss** — the two nothings, and the positive they rest on.
+    ///
+    /// A claim that stands has at least one write, so there is no such thing
+    /// here as a record with an empty chain: an empty answer would be a store
+    /// whose substrate was never filled, and reporting it as "this record says
+    /// nothing" would hide that.
+    pub async fn claim_history_of_no_record_is_a_miss_and_of_no_entity_is_an_entity_miss<
+        M: Memory,
+    >(
+        store: &M,
+    ) {
+        let subject = EntityId::person("person:contract-chainless");
+        let written = capture(
+            store,
+            NewFact::about(subject.clone(), "was at the yard", date(2026, 4, 18)),
+        )
+        .await;
+        assert_eq!(
+            store
+                .claim_history(&written.address())
+                .await
+                .expect("claim_history should succeed")
+                .len(),
+            1,
+            "the record that was written comes back — the positive the absences rest on"
+        );
+
+        let no_record = store
+            .claim_history(&FactAddress::new(subject.clone(), FactId("f404".into())))
+            .await;
+        assert!(
+            matches!(no_record, Err(MemoryError::UnknownFact { .. })),
+            "a record nobody wrote is a miss, exactly as an edit of one answers: {no_record:?}"
+        );
+        let no_entity = store
+            .claim_history(&FactAddress::new(
+                EntityId::person("person:contract-no-such-chain"),
+                FactId("f1".into()),
+            ))
+            .await;
+        assert!(
+            matches!(no_entity, Err(MemoryError::UnknownEntity { .. })),
+            "a handle that names nothing is an entity miss, not a record one: {no_entity:?}"
         );
     }
 
@@ -9564,6 +9801,8 @@ pub mod contract {
         an_edit_appends_and_the_value_it_replaced_stays_in_the_history(store).await;
         clearing_a_key_leaves_its_writes_behind(store).await;
         history_of_an_unwritten_key_is_empty_and_of_no_entity_is_a_miss(store).await;
+        a_correction_keeps_what_the_claim_used_to_say(store).await;
+        claim_history_of_no_record_is_a_miss_and_of_no_entity_is_an_entity_miss(store).await;
 
         a_records_fields_survive_capture(store).await;
         a_records_ref_is_screened_by_the_guard(store).await;

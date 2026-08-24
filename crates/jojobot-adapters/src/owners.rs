@@ -214,6 +214,12 @@ mod tests {
             ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
+            async fn claim_history(
+                &self,
+                _: &jojobot_domain::memory::FactAddress,
+            ) -> Result<Vec<jojobot_domain::memory::ClaimWrite>, MemoryError> {
+                unimplemented!("the owner index only reads the index")
+            }
             async fn fields(
                 &self,
                 _: &EntityId,

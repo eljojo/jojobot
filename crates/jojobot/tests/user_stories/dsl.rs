@@ -179,6 +179,13 @@ impl jojobot_domain::memory::Memory for Blindable {
         self.inner.history(entity, key).await
     }
 
+    async fn claim_history(
+        &self,
+        address: &jojobot_domain::memory::FactAddress,
+    ) -> Result<Vec<jojobot_domain::memory::ClaimWrite>, jojobot_domain::memory::MemoryError> {
+        self.inner.claim_history(address).await
+    }
+
     async fn fields(
         &self,
         entity: &jojobot_domain::memory::EntityId,

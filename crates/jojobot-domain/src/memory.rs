@@ -2491,6 +2491,72 @@ pub struct FieldWrite {
     pub standing: Standing,
 }
 
+/// **One write of one claim — the substrate a claim read projects from.**
+///
+/// A claim's own row is a projection: every write of it is kept, and the claim
+/// is its newest write. This is one of those writes, and a chain of them is
+/// what a claim used to say before somebody corrected it.
+///
+/// **The address is the RECORD**, where a [`FieldWrite`]'s is the thing and the
+/// key. A key's writes are counted across every record that touched it; a
+/// claim's writes belong to one claim.
+///
+/// ⚠️ **A write carries no moment, because the substrate does not record one.**
+/// Every write of a claim copies the moment the claim first entered the store,
+/// so a moment reported per write would say three corrections happened at once
+/// — false, where saying nothing is true. What the substrate knows is the
+/// ORDER, and that is [`ClaimWrite::ordinal`].
+///
+/// ⚠️ **Nor does it carry the record's fields or its references.** Those are
+/// versioned by their own substrate and by nothing here, so a claim's write
+/// reporting them would report today's keys against words from a year ago.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimWrite {
+    /// **Which write this is, counting from one.** The order is what the
+    /// substrate knows in place of a moment: the first write is what the claim
+    /// first said, and the highest is what it says now.
+    pub ordinal: usize,
+    /// What the claim said, at this write.
+    pub content: String,
+    /// What it said underneath, at this write.
+    pub details: Option<String>,
+    /// Who backed it then. A claim promoted from a guess to the operator's own
+    /// word changes this, and the chain is where that shows.
+    pub provenance: Provenance,
+    /// How sure anybody was then.
+    pub standing: Standing,
+    /// Whether it stood then. A retraction is a write like any other, so the
+    /// write that took a claim back is in the chain rather than beside it.
+    pub status: FactStatus,
+    /// The day it was true of, as this write had it.
+    pub date: Date,
+    /// The edge it drew then, if it drew one.
+    pub edge: Option<Edge>,
+    /// What it was worked out from, as this write had it.
+    pub derived_from: Option<FactAddress>,
+    /// When somebody was to look at it again, as this write had it.
+    pub stale_after: Option<Date>,
+}
+
+impl ClaimWrite {
+    /// **This write, read off a claim as it stands.** The whole claim is what a
+    /// write carries, so a store appending one has nothing to choose.
+    pub fn of(fact: &Fact, ordinal: usize) -> Self {
+        ClaimWrite {
+            ordinal,
+            content: fact.content.clone(),
+            details: fact.details.clone(),
+            provenance: fact.provenance,
+            standing: fact.standing,
+            status: fact.status,
+            date: fact.date,
+            edge: fact.edge.clone(),
+            derived_from: fact.derived_from.clone(),
+            stale_after: fact.stale_after,
+        }
+    }
+}
+
 /// **What a retraction leaves behind: two rows, and both come back.**
 ///
 /// The marked record and the account of why it was marked are one answer,
@@ -3088,6 +3154,25 @@ pub trait Memory: Send + Sync {
     /// is [`MemoryError::UnknownEntity`], exactly as [`recall`](Memory::recall)
     /// answers one.
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError>;
+
+    /// **Every write of one CLAIM, oldest first** — what the ordinary read
+    /// projects away.
+    ///
+    /// A read answers with the claim as it now stands, which is its newest
+    /// write. This answers with the writes behind it, so a session can see what
+    /// a claim used to say before somebody corrected it — and can tell a claim
+    /// nobody ever made from one somebody made and corrected.
+    ///
+    /// The address is a record's ([`FactAddress`]), where
+    /// [`history`](Memory::history) is asked of a thing and a key. **A claim
+    /// that stands has at least one write**, so an empty answer is a store
+    /// whose substrate was never filled rather than an ordinary state.
+    ///
+    /// An address whose home is no entity is [`MemoryError::UnknownEntity`] and
+    /// one naming no record on a real entity is [`MemoryError::UnknownFact`],
+    /// exactly as every other addressed verb answers them: "there is no such
+    /// record" and "the record says nothing" are different answers.
+    async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError>;
 
     /// **What the thing HOLDS: one value per key, the newest write winning.**
     ///

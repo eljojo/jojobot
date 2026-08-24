@@ -30,10 +30,10 @@
 use async_trait::async_trait;
 use jiff::civil::Date;
 use jojobot_domain::memory::{
-    Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
-    FactPatch, FactStatus, FieldWrite, Guarded, KeyWrite, Memory, MemoryError, Merge, NewEntity,
-    NewFact, Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch, folded_fields,
-    guard, guard_fit,
+    ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress,
+    FactId, FactPatch, FactStatus, FieldWrite, Guarded, KeyWrite, Memory, MemoryError, Merge,
+    NewEntity, NewFact, Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch,
+    folded_fields, guard, guard_fit,
     kinds::{self, NotAKind},
     merge_account, normalize_content, normalize_details, normalize_prose, referenced_by,
     retraction_of, screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
@@ -1032,6 +1032,62 @@ impl Memory for DoltMemory {
         let held = Self::held_by(&mut tx, entity).await?;
         tx.commit().await.map_err(store)?;
         Ok(held)
+    }
+
+    async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let index = Self::index(&mut tx).await?;
+        // A miss on the HANDLE is an entity miss, exactly as every other
+        // addressed read answers one.
+        if !index.iter().any(|e| e.id == address.home) {
+            return Err(MemoryError::UnknownEntity {
+                attempted: address.home.to_string(),
+                nearest: guard::screen(&address.home, &[], &index),
+            });
+        }
+        // **The whole chain, through the same assembler every other claim read
+        // uses.** One row shape and one reader: a second would be a second
+        // place for the columns to drift.
+        let rows = sqlx::query(&format!(
+            "SELECT w.ordinal, {FACT_WRITE_COLUMNS} FROM fact_write w
+             WHERE w.entity = ? AND w.fact_id = ? ORDER BY w.ordinal"
+        ))
+        .bind(address.home.as_str())
+        .bind(address.local.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        if rows.is_empty() {
+            // **No writes is no record.** A claim that stands has at least one
+            // write, and a read of one answers from the substrate — so a claim
+            // with nothing behind it is a miss here for the same reason it is a
+            // miss everywhere else, rather than an empty chain that would read
+            // as a record saying nothing.
+            let nearest = Self::addresses_in(&mut tx, &address.home).await?;
+            return Err(MemoryError::UnknownFact {
+                attempted: address.to_string(),
+                nearest,
+            });
+        }
+        tx.commit().await.map_err(store)?;
+
+        let mut history = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let ordinal: i64 = row.try_get("ordinal").map_err(store)?;
+            // **Fields and references are left empty rather than read.** They
+            // are versioned by their own substrate and by nothing here, so
+            // reading today's keys onto a write from a year ago would report
+            // them as what that write said. `ClaimWrite` carries neither.
+            let fact = fact_from(
+                row,
+                address.home.clone(),
+                address.local.clone(),
+                Default::default(),
+                Vec::new(),
+            )?;
+            history.push(ClaimWrite::of(&fact, ordinal.max(0) as usize));
+        }
+        Ok(history)
     }
 
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
