@@ -46,7 +46,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 8] = [
+pub const CHECKS: [Hatch; 10] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -72,6 +72,12 @@ pub const CHECKS: [Hatch; 8] = [
         "the_service_landed_on_the_loop_that_already_existed",
         || checked(|seen| Box::pin(the_service_landed_on_the_loop_that_already_existed(seen))),
     ),
+    ("the_club_was_corrected_in_place_in_july", || {
+        checked(|seen| Box::pin(the_club_was_corrected_in_place_in_july(seen)))
+    }),
+    ("august_put_nobody_new_at_the_survey", || {
+        checked(|seen| Box::pin(august_put_nobody_new_at_the_survey(seen)))
+    }),
 ];
 
 /// The identity a fresh instance ships with, and the one every occupant wears.
@@ -477,6 +483,126 @@ async fn the_club_was_given_a_claim_in_march(seen: &Observed<'_>) -> Result<(), 
         false => Err(format!(
             "the club carried {had} records before {MARCH} and {has} after, so that sitting \
              recorded nothing about it and July has nothing to take back",
+        )),
+    }
+}
+
+/// The sitting that corrects the March claim, and the day it corrects it under.
+const JULY: &str = "Phase 7";
+const JULYS_DAY: &str = "\"date\":\"2026-07-05\"";
+
+/// **The key the record that took a claim back carries**, naming what it
+/// retracted.
+///
+/// 🚨 **Not the retracted claim's own status, and that is not a style
+/// choice.** A boundary reads the index, and a claim that was taken back is
+/// not in it — a search over everything returns the RETRACTION and not the
+/// thing retracted. So `status: retracted` never appears in a boundary at all,
+/// and a check watching for it can never fail. **The only trace a retraction
+/// leaves where a window can see it is the record that made it.**
+///
+/// Counted rather than looked for: what this asks is whether a retraction
+/// APPEARED in one window, and a room where one already stands is a room where
+/// its presence says nothing.
+///
+/// ⚠️ **The literal, not the domain's constant.** This is a stored spelling
+/// and nothing outside the process declares it, so asserting through the
+/// constant would move both sides together and hold on a build that changed
+/// what is written.
+const TAKEN_BACK: &str = "\"retracts\":";
+
+/// 🚨 **The correction was written IN, not taken back — asked in July's own
+/// window.**
+///
+/// A claim that was true and then changed is corrected in place. A claim that
+/// was never true is retracted. **March's claim is the first kind**, so July
+/// rewriting it under July's day is right and July retracting it is wrong, and
+/// the difference is the whole of what this sitting is for.
+///
+/// ⛔️ **Asked of the finished room, the negative half belongs to nobody.** The
+/// club gains records after July — August writes on it — and any later sitting
+/// that took a claim back would put a retraction on that subject with July's
+/// name on the failure. **A negative over a whole subject, graded at the end of
+/// the year, accuses whichever sitting the sentence happens to name.**
+///
+/// **So both halves are asked across July alone**: the club gained July's day
+/// in that window, and no retraction appeared in it. Late October retracts, and
+/// it is four sittings away.
+///
+/// ⚠️ **The positive is not decoration.** Without it a July that did nothing at
+/// all satisfies *no retraction appeared* perfectly, which is the failure this
+/// project repeats more than any other.
+async fn the_club_was_corrected_in_place_in_july(seen: &Observed<'_>) -> Result<(), String> {
+    let Some((before, after)) = seen.across(JULY) else {
+        return Err(format!(
+            "this run took no reading either side of {JULY}, so nothing here can say what that \
+             sitting recorded. A check scoped to one sitting needs the run's own boundaries.",
+        ));
+    };
+    let dated = after.world.matches(JULYS_DAY).count() > before.world.matches(JULYS_DAY).count();
+    let took_back =
+        after.world.matches(TAKEN_BACK).count() > before.world.matches(TAKEN_BACK).count();
+    match (dated, took_back) {
+        (true, false) => Ok(()),
+        (false, _) => Err(format!(
+            "nothing gained {JULYS_DAY} in {JULY}'s window, so the March claim was not corrected \
+             on the day the operator corrected it",
+        )),
+        (true, true) => Err(format!(
+            "a claim was taken back in {JULY}'s window, so the correction was retracted rather \
+             than written in — and March's claim was true in its day",
+        )),
+    }
+}
+
+/// The sitting that is asked who was there, and the link a record draws when it
+/// says somebody was.
+const AUGUST: &str = "Phase 8";
+const WAS_THERE: &str = "\"type\":\"attendee\"";
+
+/// 🚨 **August answered out of the record and added nobody to it — asked in
+/// August's own window.**
+///
+/// The sitting is asked which club members were at the survey. **The answer is
+/// two people and the store must still say two**: a sitting that cannot find
+/// them and fills the gap writes a third, and an invented attendee is the
+/// failure this room exists to catch.
+///
+/// ⛔️ **Naming the invented person cannot work.** Asked of the finished room,
+/// the negative has to name somebody, and anybody it names either does not
+/// exist yet in August — in which case nothing August does could ever trip it —
+/// or arrives later, in which case a LATER sitting's mistake is reported under
+/// August's name. **The first is a check that cannot fail. The second is a
+/// check that blames the wrong sitting.**
+///
+/// **So it counts the links instead.** Somebody was at the survey before August
+/// ran, and August added nobody. That is falsifiable by August and by nothing
+/// else: a later sitting putting a person on the CLUB draws a different link,
+/// and a later sitting taking an attendance back is four sittings away.
+///
+/// ⚠️ **The positive is the half that stops this holding on an empty room.** A
+/// year where June recorded nothing has no links to add to, and *August added
+/// none* would hold there perfectly.
+async fn august_put_nobody_new_at_the_survey(seen: &Observed<'_>) -> Result<(), String> {
+    let Some((before, after)) = seen.across(AUGUST) else {
+        return Err(format!(
+            "this run took no reading either side of {AUGUST}, so nothing here can say what that \
+             sitting recorded. A check scoped to one sitting needs the run's own boundaries.",
+        ));
+    };
+    let had = before.world.matches(WAS_THERE).count();
+    let has = after.world.matches(WAS_THERE).count();
+    if had == 0 {
+        return Err(format!(
+            "nobody was at the survey before {AUGUST} ran, so this sitting had nothing to answer \
+             out of and *it invented nobody* holds over an empty record",
+        ));
+    }
+    match has > had {
+        false => Ok(()),
+        true => Err(format!(
+            "the survey carried {had} attendance links before {AUGUST} and {has} after, so that \
+             sitting put somebody at an event instead of answering out of what was already there",
         )),
     }
 }

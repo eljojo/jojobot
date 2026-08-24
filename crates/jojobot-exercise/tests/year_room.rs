@@ -304,6 +304,43 @@ async fn july(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **A July that takes the claim back instead of writing the correction in.**
+///
+/// The wrong move for this claim and a defensible-looking one: the operator
+/// says the March claim was never so, and `retract` is the verb for a claim
+/// that was never true. **March's was true in its day** — the operator believed
+/// it and said it — so what it wants is a correction under July's own day.
+async fn july_takes_the_claim_back(room: &Surface, sid: &str) {
+    let wrong = address_of(room, "org:north-trail-club", "Tuesdays").await;
+    did(
+        room,
+        sid,
+        "retract",
+        json!({"address": wrong,
+               "reason": "the club does not meet on Tuesdays and the operator was mistaken",
+               "date": "2026-07-05"}),
+    )
+    .await;
+}
+
+/// **An August that cannot find the two and writes a third.**
+///
+/// The failure this sitting exists to catch: asked who was at the survey, a
+/// session that does not reach the record fills the gap rather than saying it
+/// does not know.
+async fn august_puts_a_third_person_there(room: &Surface, sid: &str) {
+    august(room, sid).await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "person:ralph", "content": "was at the trail survey",
+               "provenance": "inference", "date": "2026-08-16",
+               "shape": "attendance", "object": "event:trail-survey"}),
+    )
+    .await;
+}
+
 async fn august(room: &Surface, sid: &str) {
     did(
         room,
@@ -392,7 +429,7 @@ async fn late_november(room: &Surface, sid: &str) {
 
 /// The whole year, worked the way it is meant to be.
 async fn worked_the_year(room: &Surface, sid: &str) -> Vec<Boundary> {
-    work_the_year(room, sid, &room_document(), &WORKED).await
+    work_the_year(room, sid, &room_document(), &WORKED, &[]).await
 }
 
 /// **The sittings that record something**, named rather than counted: the two
@@ -416,11 +453,21 @@ async fn work_the_year(
     sid: &str,
     year: &Playbook,
     worked: &[usize],
+    guilty: &[usize],
 ) -> Vec<Boundary> {
     let named = boundary_names(year);
     let mut boundaries = vec![boundary(room, &named[0]).await];
     for (at, _phase) in year.phases.iter().enumerate() {
-        if worked.contains(&at) {
+        if guilty.contains(&at) {
+            // **The sitting does the wrong thing, in its own window.** Here
+            // rather than in a second driver: two copies of this order was how
+            // they came to disagree about which sittings write.
+            match at {
+                6 => july_takes_the_claim_back(room, sid).await,
+                7 => august_puts_a_third_person_there(room, sid).await,
+                _ => panic!("no guilty variant is written for sitting {at}"),
+            }
+        } else if worked.contains(&at) {
             match at {
                 0 => january(room, sid).await,
                 1 => february(room, sid).await,
@@ -586,7 +633,7 @@ async fn a_year_nobody_worked_in_fails_every_lock() {
     let (_room, surface, sid) = furnished().await;
     // The readings a run takes, with nothing done between them: a check scoped
     // to one sitting must see an empty window rather than no window at all.
-    let boundaries = work_the_year(&surface, &sid, &room_document(), &[]).await;
+    let boundaries = work_the_year(&surface, &sid, &room_document(), &[], &[]).await;
     let outcomes = judge_all(&surface, &boundaries).await;
     for outcome in &outcomes {
         assert!(
@@ -640,7 +687,7 @@ async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
     let (_room, surface, sid) = furnished().await;
     // June onwards, done as well as a session can do it against a store that
     // holds nothing any of it refers to.
-    let boundaries = work_the_year(&surface, &sid, &room_document(), &[5, 7, 8, 9]).await;
+    let boundaries = work_the_year(&surface, &sid, &room_document(), &[5, 7, 8, 9], &[]).await;
     let outcomes = judge_all(&surface, &boundaries).await;
     // **Nineteen of the twenty locks fail.** The one that holds is the only
     // claim in the year that rests on nothing before it — August files the
@@ -713,7 +760,7 @@ async fn the_locks_fail_on_a_year_written_entirely_in_prose() {
         )
         .await;
     }
-    let boundaries = work_the_year(&surface, &sid, &room_document(), &[]).await;
+    let boundaries = work_the_year(&surface, &sid, &room_document(), &[], &[]).await;
     let outcomes = judge_all(&surface, &boundaries).await;
     for at in JANUARY[1..].iter().chain(&FEBRUARY).chain(&JUNE) {
         assert!(
@@ -834,7 +881,7 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
 async fn the_march_window_says_whether_that_sitting_recorded_anything() {
     let without = [0, 1, 3, 4, 5, 7, 8, 9, 10];
     let (_room, surface, sid) = furnished().await;
-    let boundaries = work_the_year(&surface, &sid, &room_document(), &without).await;
+    let boundaries = work_the_year(&surface, &sid, &room_document(), &without, &[]).await;
     let missing = judge_all(&surface, &boundaries).await;
     assert!(
         !missing[MARCH[0]].held,
@@ -851,5 +898,100 @@ async fn the_march_window_says_whether_that_sitting_recorded_anything() {
         "a year where March did record failed March's lock, so the check is refusing the right \
          answer rather than measuring the sitting: {}",
         saying(&worked),
+    );
+}
+
+/// 🚨 **July's window, asked both ways in one case.**
+///
+/// July's claim has a negative in it — the correction was written IN rather
+/// than taken back — and a negative over a whole subject, graded at the end of
+/// the year, accuses whichever sitting the sentence names. **The club gains
+/// records after July**, so a later sitting taking any club claim back put
+/// July's name on a failure July had nothing to do with.
+///
+/// **Both halves here, because either alone is worthless.** A July that is
+/// guilty must still be caught, or the narrowing produced a check that cannot
+/// fail — which reads as coverage and is worse than the fault it replaced. And
+/// a later sitting doing something legitimate must no longer reach it.
+#[tokio::test]
+async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
+    // ① The accused sitting, guilty: July retracts the March claim rather than
+    //    correcting it under July's own day.
+    let (_room, surface, sid) = furnished().await;
+    let guilty = work_the_year(&surface, &sid, &room_document(), &WORKED, &[6]).await;
+    let judged = judge_all(&surface, &guilty).await;
+    assert!(
+        !judged[JULY[0]].held,
+        "a July that took the claim back held July's lock, so the check can no longer fail for \
+         the reason it exists: {}",
+        saying(&judged),
+    );
+
+    // ② The year worked honestly, and then a later sitting takes a club claim
+    //    back — the legitimate act that used to redden July.
+    let (_room, surface, sid) = furnished().await;
+    let boundaries = worked_the_year(&surface, &sid).await;
+    let committee = address_of(&surface, "org:north-trail-club", "standing for election").await;
+    did(
+        &surface,
+        &sid,
+        "retract",
+        json!({"address": committee,
+               "reason": "the operator never stood for the board and this was never so",
+               "date": "2026-12-13"}),
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[JULY[0]].held,
+        "a later sitting taking a club claim back reddened July, which had nothing to do with \
+         it: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **August's window, asked both ways in one case.**
+///
+/// August must invent nobody. **Named against the finished room, that negative
+/// cannot be made to fail by August at all** — the person it named does not
+/// exist in August — while a LATER sitting putting that person at the event
+/// reddens August's sentence.
+///
+/// So the check counts the links in August's own window, and this asks it both
+/// ways: an August that writes a third attendee is caught, and a later sitting
+/// making that same mistake no longer lands on August.
+#[tokio::test]
+async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() {
+    // ① The accused sitting, guilty: August answers with somebody who was not
+    //    there rather than out of the record.
+    let (_room, surface, sid) = furnished().await;
+    let guilty = work_the_year(&surface, &sid, &room_document(), &WORKED, &[7]).await;
+    let judged = judge_all(&surface, &guilty).await;
+    assert!(
+        !judged[AUGUST[0]].held,
+        "an August that put a third person at the survey held August's lock, so the check can no \
+         longer fail for the reason it exists: {}",
+        saying(&judged),
+    );
+
+    // ② The year worked honestly, and then a LATER sitting makes that mistake.
+    //    It is a fault, and it is not August's.
+    let (_room, surface, sid) = furnished().await;
+    let boundaries = worked_the_year(&surface, &sid).await;
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "person:bart", "content": "was at the trail survey",
+               "provenance": "inference", "date": "2026-12-13",
+               "shape": "attendance", "object": "event:trail-survey"}),
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[AUGUST[0]].held,
+        "a later sitting putting somebody at the survey reddened August, which answered honestly \
+         four months earlier: {}",
+        saying(&judged),
     );
 }

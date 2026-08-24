@@ -298,9 +298,12 @@ say     June: the chain check does not say it was done on the day this sitting c
 # Tuesdays" are both right. A needle in the occupant's own prose measures
 # whoever authored the needle, so what is locked is the day the correction
 # carries and that the record still stands.
-recall {"subject": "org:north-trail-club", "facts": true}
-carries "date":"2026-07-05"
-lacks   "status":"retracted"
+# ⚠️ **Scoped to this sitting's own window**, because the claim has a negative
+# in it. The club gains records after July — August writes on it — so *no
+# retraction stands on this subject*, asked of the finished year, is a sentence
+# that names July and reports whatever any later sitting did. Late October
+# retracts, legitimately, four sittings from here.
+check   the_club_was_corrected_in_place_in_july
 say     July: nothing on the club carries July's own day, or the correction was taken back instead of written in — either way the March claim was not corrected in place on the day it was corrected
 ```
 
@@ -319,9 +322,13 @@ say     July: nothing on the club carries July's own day, or the correction was 
 # is a judgement about method, and the store looks the same either way. What
 # is locked is that it invented nobody — the answer is two people and the store
 # must still say two.
-recall {"kind": "event", "follow": {"shape": "attendance", "direction": "in"}}
-carries person:milhouse
-lacks   person:bart
+#
+# ⚠️ **Counted in this sitting's own window rather than naming the invented
+# person.** Naming one cannot work: anybody named either does not exist yet in
+# August, so nothing this sitting does could trip it, or arrives later, so a
+# LATER sitting's mistake is reported under August's name. What is counted is
+# the links, and August must add none.
+check   august_put_nobody_new_at_the_survey
 say     August: somebody who was never at the survey is now recorded as having been there
 
 # ⚠️ **The day rather than the word.** What the operator called the committee
