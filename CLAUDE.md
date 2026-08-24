@@ -144,13 +144,17 @@ Shipped and live:
   nests and is always objects**, never a bare fact list, so a caller does not
   branch on which question it asked. It reads the store directly rather than the
   search index, which is what makes it the way past an index that cannot scan.
-- **Edit-in-place is the surface; append-only is the substrate.** A write to a
-  key appends rather than overwriting, and a read projects those writes down to
-  one value — by default the newest, so a caller edits a claim and reads it back
-  changed, exactly as before. **The same rows answer both questions:** what a
-  key holds now, and every time it was written. That is why a count of how many times something
-  happened and a list of the occasions are one body of data rather than two,
-  and it is what the next several capabilities stand on.
+- **Edit-in-place is the surface; append-only is the substrate.** A write
+  appends rather than overwriting, and a read projects those writes down to one
+  — by default the newest, so a caller edits a claim and reads it back changed,
+  exactly as before. **This holds for a claim's own words and for the keys
+  beside them:** a key's writes project to what it holds now, and a claim's
+  writes project to the claim, each write carrying the whole of it. **The same
+  rows answer both questions:** what is true now, and every time it was written.
+  That is why a count of how many times something happened and a list of the
+  occasions are one body of data rather than two — and why a claim corrected to
+  say the opposite can still be told from one that always said it, which a row
+  rewritten in place cannot.
 - **Fields, and what declaring a type buys** — **a record carries fields**: a
   flat bag of key/value pairs beside the claim, where a key the caller invents is
   kept as written and a key some type declared is held to what that type says.
