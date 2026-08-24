@@ -242,7 +242,7 @@ impl Jojobot {
                     .collect::<Vec<_>>()
                     .into(),
             );
-            obj.insert("swept_in".into(), Self::frame(today));
+            obj.insert("swept_in".into(), Self::frame(today, self.clock().stated()));
             // **On every branch**, because the sitting that most needs a
             // handover is the one with nothing to resume.
             obj.insert("handover".into(), Self::handover(handover.as_ref()));
@@ -300,10 +300,29 @@ impl Jojobot {
     ///
     /// A caller that stated a day is told which day and nothing more: it does
     /// not need to be sold an argument it already sent.
-    fn frame(today: Option<jiff::civil::Date>) -> serde_json::Value {
-        match today {
-            Some(day) => serde_json::json!({ "day": day.to_string() }),
-            None => serde_json::json!({
+    ///
+    /// ⛔️ **A server acting out a day gets a third answer, and the reason is
+    /// the advice.** Every word of the note below stays true on such a server —
+    /// no day was stated and the server's clock decided it — but the way out it
+    /// names does not apply, because the clock the sweep used is already the
+    /// day the caller is in. **Advice naming a way through that does not apply
+    /// is the shape a reader treats as a fault**, and this is the sentence a
+    /// run acting out a year meets sixteen times.
+    fn frame(
+        today: Option<jiff::civil::Date>,
+        stated: Option<jiff::civil::Date>,
+    ) -> serde_json::Value {
+        match (today, stated) {
+            (Some(day), _) => serde_json::json!({ "day": day.to_string() }),
+            (None, Some(day)) => serde_json::json!({
+                "day": day.to_string(),
+                "note": format!(
+                    "this server is acting out {day}, so that is the day your runs were judged \
+                     quiet against. Your run stated no day of its own and does not need to: \
+                     send `today` only if the day YOU are in differs from the server's."
+                ),
+            }),
+            (None, None) => serde_json::json!({
                 "day": serde_json::Value::Null,
                 "note": "no day was stated, so runs were judged quiet on this server's clock. \
                          If your run is not happening now — catching up on an earlier day, or \
@@ -1516,6 +1535,50 @@ mod tests {
         assert!(
             !told.contains("today"),
             "a caller that already sent the argument is being told to send it: {told}",
+        );
+    }
+
+    /// ⛔️ **A server acting out a day does not advise sending the day it is
+    /// already in.**
+    ///
+    /// Every word of the clock note is TRUE on such a server — the run stated
+    /// nothing and the server's clock decided the sweep — and it is still
+    /// wrong to serve, because the way out it names is a thing the caller does
+    /// not need to do. **Advice pointing at a step that does not apply reads as
+    /// a fault**, and a run acting out a year meets this sentence at every
+    /// sitting.
+    ///
+    /// **Three halves, because the third is what makes it a change rather than
+    /// a rewording**: the server's day is named, the argument is not pressed on
+    /// a caller who does not need it, and the ordinary server still gets the
+    /// advice it always did.
+    #[tokio::test]
+    async fn a_boot_on_a_server_acting_out_a_day_names_that_day_rather_than_asking_for_one() {
+        let day: jiff::civil::Date = "2026-06-01".parse().expect("a day");
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot =
+            with_sessions(store.clone()).on_clock(jojobot_domain::clock::Clock::stating(day));
+        make_bot(&jojobot, "gamma").await;
+
+        let acting = boot(&jojobot, "gamma").await;
+        let said = acting["session"]["swept_in"].to_string();
+        assert!(
+            said.contains(&day.to_string()),
+            "a boot on a server acting out a day does not say which day it swept in: {said}",
+        );
+        assert!(
+            !said.contains("send the day you are in as `today` and"),
+            "a caller on a server already in its day is being told to send that day: {said}",
+        );
+
+        // The ordinary server is unchanged, which is what says the arm above is
+        // an addition rather than the advice being dropped for everybody.
+        let ordinary = with_sessions(Arc::new(InMemorySessions::new()));
+        make_bot(&ordinary, "gamma").await;
+        let plain = boot(&ordinary, "gamma").await["session"]["swept_in"].to_string();
+        assert!(
+            plain.contains("send the day you are in as `today` and"),
+            "a boot on the real clock stopped naming the way to state a frame: {plain}",
         );
     }
 
