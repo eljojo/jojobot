@@ -512,6 +512,24 @@ is, and it must not.**
 # absence mean something. January's check-in is 2025-12-20 and June's is
 # 2026-06-14, so this day is on that loop if and only if this sitting recorded
 # a turn of it.
+# ⚠️ **What December reads, locked where it is written.** December is asked what
+# has gone quiet and nothing asserts over it, by design — but what it can NOTICE
+# depends on what the year left. A check-in stores the schedule jojobot worked
+# out beside the sentence, and a record carrying both is a derivation, so the
+# year's two turns are on file as inference rather than as the operator's word.
+#
+# ⛔️ **A sitting that sets the key by hand instead writes the same day and no
+# derivation.** Every lock that reads the day holds either way. Without this
+# one, the play could route around the check-in verb, December's answer would
+# quietly get worse, and a run would report a product regression that is a
+# fixture regression.
+#
+# **This is not a second copy of the conversion rule**, which is held where it
+# lives. It says this room's own record carries what December reads.
+recall {"subject": "rhythm:chain-check", "facts": true}
+at least 2 of "provenance":"inference"
+say     late November: the year's turns are not on file as derivations, so they were written by hand rather than checked in, and December has nothing to notice about what the loop's standing rests on
+
 check   the_service_landed_on_the_loop_that_already_existed
 say     late November: this sitting's day is not on the loop January opened — either a question asked in the operator's own words reached nothing and the turn went unrecorded, or it was filed on a second loop standing beside the first, and neither one can say when the chain was last done
 ```

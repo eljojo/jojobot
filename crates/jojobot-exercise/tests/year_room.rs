@@ -37,10 +37,10 @@ const AUGUST: [usize; 2] = [13, 14];
 const SEPTEMBER: [usize; 1] = [15];
 const OCTOBER: [usize; 1] = [16];
 const LATE_OCTOBER: [usize; 3] = [17, 18, 19];
-const LATE_NOVEMBER: [usize; 1] = [20];
+const LATE_NOVEMBER: [usize; 2] = [20, 21];
 
 /// How many locks the year carries.
-const LOCKS: usize = 21;
+const LOCKS: usize = 22;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 2] = ["Phase 12", "Phase 14"];
@@ -286,7 +286,51 @@ async fn june(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
                "provenance": "testimony", "date": "2026-06-14",
+               "check_in": "ran"}),
+    )
+    .await;
+}
+
+/// **A June that sets the loop's key instead of checking in.**
+///
+/// The play this room used to have, kept as the thing that must fail. Writing
+/// `last_check_in` by hand puts the right day on the record and routes around
+/// the verb the capability is made of: no schedule is computed, nothing is
+/// stored beside the claim, and the record is not a derivation. **Every lock
+/// that reads the day holds either way, which is why nothing noticed.**
+async fn june_writes_the_turn_by_hand(room: &Surface, sid: &str) {
+    for who in ["person:milhouse", "person:nelson"] {
+        did(
+            room,
+            sid,
+            "capture",
+            json!({"subject": who, "content": "was at the trail survey",
+                   "provenance": "testimony", "date": "2026-06-14",
+                   "shape": "attendance", "object": "event:trail-survey"}),
+        )
+        .await;
+    }
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
+               "provenance": "testimony", "date": "2026-06-14",
                "fields": {"last_check_in": "2026-06-14"}}),
+    )
+    .await;
+}
+
+/// **A late November that sets the loop's key instead of checking in**, for the
+/// reason its June counterpart gives.
+async fn late_november_writes_the_turn_by_hand(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "rhythm:chain-check", "content": "did the chain again today",
+               "provenance": "testimony", "date": "2026-11-22",
+               "fields": {"last_check_in": "2026-11-22"}}),
     )
     .await;
 }
@@ -440,7 +484,7 @@ async fn late_november(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "did the chain again today",
                "provenance": "testimony", "date": "2026-11-22",
-               "fields": {"last_check_in": "2026-11-22"}}),
+               "check_in": "ran"}),
     )
     .await;
 }
@@ -484,6 +528,8 @@ async fn work_the_year(
                 6 => july_takes_the_claim_back(room, sid).await,
                 7 => august_puts_a_third_person_there(room, sid).await,
                 10 => late_october_puts_a_third_person_there(room, sid).await,
+                5 => june_writes_the_turn_by_hand(room, sid).await,
+                12 => late_november_writes_the_turn_by_hand(room, sid).await,
                 _ => panic!("no guilty variant is written for sitting {at}"),
             }
         } else if worked.contains(&at) {
@@ -1044,6 +1090,82 @@ async fn late_octobers_window_catches_the_sitting_that_invents_an_attendee() {
         judged[LATE_OCTOBER[2]].held,
         "the honest late October failed its own lock, so the check cannot tell an attendance \
          taken away from one added: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **The year's turns are CHECKED IN rather than written by hand.**
+///
+/// The two are indistinguishable to every lock that reads the day, and that is
+/// what let the room route around the verb for as long as it did. **A check-in
+/// computes a schedule and stores it beside the claim, so the record is a
+/// derivation; setting the key by hand writes the same day and nothing else.**
+///
+/// **The guilty play is the play this room used to have.** It stays in the
+/// suite as the thing that must fail, so the route cannot quietly come back.
+#[tokio::test]
+async fn the_years_turns_are_checked_in_rather_than_set_by_hand() {
+    let (_room, surface, sid) = furnished().await;
+    let by_hand = work_the_year(&surface, &sid, &room_document(), &WORKED, &[5, 12]).await;
+    let judged = judge_all(&surface, &by_hand).await;
+    assert!(
+        !judged[LATE_NOVEMBER[0]].held,
+        "a year that set the loop's key by hand held the lock, so the room cannot tell a \
+         check-in from a write and December has nothing to notice: {}",
+        saying(&judged),
+    );
+
+    let (_room, surface, sid) = furnished().await;
+    let boundaries = worked_the_year(&surface, &sid).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[LATE_NOVEMBER[0]].held,
+        "the year checked in and the turns are not on file as derivations: {}",
+        saying(&judged),
+    );
+}
+
+/// ⚠️ **The locks that read the rhythm still DISCRIMINATE now the play changed.**
+///
+/// A check-in writes more than the key it replaces, so a lock that was
+/// measuring the sitting could start being satisfied by the machinery beside
+/// it. **Each of the two is asked of a year missing the sitting it names.**
+///
+/// **This is the half a green suite cannot stand in for.** Every lock held the
+/// moment the play changed, which says nothing about whether they still fail
+/// for their own reasons.
+#[tokio::test]
+async fn the_rhythm_locks_still_fail_when_the_sitting_they_name_does_nothing() {
+    // ⚠️ **Late October is left out as well, and not to be kind to it.** It
+    // retracts a claim June writes, so a year missing June cannot run it at
+    // all — the play fails on the missing address rather than on the lock this
+    // case is about. March's window case leaves July out for the same reason.
+    const WITHOUT_JUNE: [usize; 10] = [0, 1, 2, 3, 4, 6, 7, 8, 9, 12];
+    let (_room, surface, sid) = furnished().await;
+    let boundaries = work_the_year(&surface, &sid, &room_document(), &WITHOUT_JUNE, &[]).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[JUNE[1]].held,
+        "a year where June never touched the loop held June's chain lock, so it is satisfied by \
+         something other than that sitting: {}",
+        saying(&judged),
+    );
+
+    const WITHOUT_LATE_NOVEMBER: [usize; 11] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let (_room, surface, sid) = furnished().await;
+    let boundaries = work_the_year(
+        &surface,
+        &sid,
+        &room_document(),
+        &WITHOUT_LATE_NOVEMBER,
+        &[],
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[LATE_NOVEMBER[1]].held,
+        "a year where the late sitting recorded no turn held its lock, so it is satisfied by \
+         something other than that sitting: {}",
         saying(&judged),
     );
 }
