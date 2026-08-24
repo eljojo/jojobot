@@ -103,6 +103,7 @@ const ROSTER: &[&str] = &[
     "org:springfield-cyclery",
     "org:springfield-movers",
     "person:a",
+    "person:acting-beta",
     "person:already-here",
     "person:alpha",
     "person:alpha-2",

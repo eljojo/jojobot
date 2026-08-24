@@ -87,12 +87,11 @@ impl Jojobot {
                     // that accepted the day (rule 222).
                     match today {
                         Some(stated) => stated,
-                        None => parse_date(
-                            None,
+                        None => self.clock().today_in(
                             &timezone
                                 .and_then(|name| jiff::tz::TimeZone::get(name).ok())
                                 .unwrap_or(jiff::tz::TimeZone::UTC),
-                        )?,
+                        ),
                     },
                 )
                 .await?
@@ -294,6 +293,10 @@ impl Jojobot {
             // handle you were already carrying is worth, which is what a caller
             // that came back to a server it does not recognise is really asking.
             "carried_session": carried,
+            // **A server acting out a day says so at the door.** Absent is the
+            // ordinary answer and means the real clock; present is the
+            // exception, and a session reads it before it writes anything.
+            "clock": self.stated_clock(),
         }))
     }
 }

@@ -29,6 +29,13 @@ pub struct Story {
     addr: SocketAddr,
     ct: CancellationToken,
     bot: String,
+    /// **The world this jojobot serves**, kept so a story can serve a SECOND
+    /// jojobot over it — see [`Story::restarted_pretending_it_is`]. The three
+    /// stores, raw: the index, the decorators and the registry are what a
+    /// restart rebuilds, and rebuilding them is the point.
+    store: Arc<dyn jojobot_domain::memory::Memory>,
+    mail: Arc<InMemoryMailboxes>,
+    runs: Arc<InMemorySessions>,
 }
 
 /// The subject the operator's browser logs in as. One reader, because the
@@ -285,27 +292,96 @@ impl Story {
         Self::serve(bot, Arc::new(Self::wired(store))).await
     }
 
+    /// **Serve a jojobot that is acting out a day**, the way an operator does
+    /// by setting `JOJOBOT_TODAY` — nothing else about the instance differs,
+    /// and no story call passes a date because of it.
+    pub async fn begin_pretending_it_is(bot: &str, day: &str) -> Self {
+        let clock = jojobot_domain::clock::Clock::stating(day.parse().expect("a story's day"));
+        // **The store stamps on the same clock**, exactly as the binary wires
+        // it: `when jojobot took this in` is the store's own stamp, and a
+        // fixture that clocked only the handler could not see it move.
+        Self::serve_on_clock(
+            bot,
+            Arc::new(Self::wired(InMemoryMemory::booted().on_clock(clock))),
+            clock,
+        )
+        .await
+    }
+
+    /// **The same world, served again on another day** — a restart with a
+    /// different `JOJOBOT_TODAY`, which is what two sittings of one simulation
+    /// really are.
+    ///
+    /// The stores are the ones this story already wrote to; the index, the
+    /// handle registry and the clock are new, because a restart rebuilds them.
+    /// **The old server keeps running and its handles are not this one's**: a
+    /// session that carried one over is told it addresses nothing, exactly as
+    /// it would across a real restart.
+    pub async fn restarted_pretending_it_is(&self, day: &str) -> Self {
+        let clock = jojobot_domain::clock::Clock::stating(day.parse().expect("a story's day"));
+        Self::spawn(
+            &self.bot,
+            self.store.clone(),
+            self.mail.clone(),
+            self.runs.clone(),
+            clock,
+            true,
+        )
+        .await
+    }
+
     async fn serve(bot: &str, store: Arc<dyn jojobot_domain::memory::Memory>) -> Self {
+        Self::serve_on_clock(bot, store, jojobot_domain::clock::Clock::default()).await
+    }
+
+    async fn serve_on_clock(
+        bot: &str,
+        store: Arc<dyn jojobot_domain::memory::Memory>,
+        clock: jojobot_domain::clock::Clock,
+    ) -> Self {
         let bot = bot
             .strip_prefix("bot:")
             .expect("a bot handle carries its kind prefix");
+        // **Mail and runs are made here rather than inside the server**, so a
+        // restart can be served over the same three stores.
+        let mail = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let runs = Arc::new(InMemorySessions::new());
+        let story = Self::spawn(bot, store, mail, runs, clock, false).await;
+        story.stand_up_the_bot().await;
+        story
+    }
+
+    /// **One server over a world**, and nothing about the world's contents.
+    /// Called for a first boot and again for a restart.
+    async fn spawn(
+        bot: &str,
+        store: Arc<dyn jojobot_domain::memory::Memory>,
+        mail_store: Arc<InMemoryMailboxes>,
+        runs: Arc<InMemorySessions>,
+        clock: jojobot_domain::clock::Clock,
+        // **Whether this server INHERITS a world.** A restart scans the store
+        // it was handed, exactly as the binary's boot does; a first boot over
+        // an empty store does not, because a story about what a search says of
+        // its own coverage is about a server that has not scanned yet.
+        inherited: bool,
+    ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let store_for_restart = store.clone();
         let indexed = Arc::new(IndexedMemory::new(store).expect("index opens"));
+        if inherited {
+            let _ = indexed.rebuild().await;
+        }
         let indexed_for_seed = indexed.clone();
         // **Mail goes through the search index, exactly as the binary wires
         // it.** Both worlds sit behind one `search`, so a fixture holding the
         // raw store would serve a jojobot whose mail no story could see —
         // poorer than the deployment it stands for, and silently so.
-        let mail = Arc::new(IndexedMailboxes::new(
-            Arc::new(InMemoryMailboxes::knowing_any_owner()),
-            indexed.index(),
-        ));
+        let mail = Arc::new(IndexedMailboxes::new(mail_store.clone(), indexed.index()));
         // **The retrieval port over ALL THREE halves, exactly as the binary
         // wires it.** A port over fewer answers without ever refreshing the
         // rest, which is a poorer jojobot than the deployment this stands for —
         // and a story would report the fixture's limits as the software's.
-        let runs = Arc::new(InMemorySessions::new());
         let indexed_runs = Arc::new(IndexedSessions::new(runs.clone(), indexed.index()));
         let search = Arc::new(Retrieval::new(
             indexed.index(),
@@ -337,12 +413,13 @@ impl Story {
             memory: indexed.clone(),
             search,
             mailboxes: boxes,
-            sessions: runs,
+            sessions: runs.clone(),
             registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
             ui: Some(Arc::new(ui)),
             // The shape a story runs against is the one a fresh instance
             // serves: an operator who set nothing gets both lines.
             receipts: jojobot_mcp::Receipts::default(),
+            clock,
         };
         let ct = CancellationToken::new();
         let app = build_app(state, ct.child_token());
@@ -365,11 +442,21 @@ impl Story {
         let _ = jojobot_mcp::seed::ensure_shipped_types(&seed_memory).await;
         let _ = jojobot_mcp::seed::ensure_kinds(&seed_memory).await;
 
-        let story = Self {
+        Self {
             addr,
             ct,
             bot: bot.to_string(),
-        };
+            store: store_for_restart,
+            mail: mail_store,
+            runs,
+        }
+    }
+
+    /// **Stand the story's own bot up**, once, by the identity every jojobot
+    /// arrives holding.
+    async fn stand_up_the_bot(&self) {
+        let story = self;
+        let bot = self.bot.as_str();
         // The bot exists before anything boots as it; its box opens with it.
         //
         // **Created BY the default identity**, because a memory write carries
@@ -398,7 +485,6 @@ impl Story {
         .await;
         assert_ne!(made["status"], "blocked", "the story's bot: {made}");
         client.cancel().await.unwrap();
-        story
     }
 
     /// **The door itself**, for the one story that is about opening it.

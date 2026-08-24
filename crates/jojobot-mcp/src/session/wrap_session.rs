@@ -125,7 +125,7 @@ impl Jojobot {
                 .sessions
                 .append(
                     &session,
-                    NewEntry::manual(&story, jiff::Timestamp::now(), caller.day),
+                    NewEntry::manual(&story, self.clock().now(), caller.day),
                 )
                 .await
             {

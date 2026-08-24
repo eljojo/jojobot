@@ -48,6 +48,7 @@ async fn an_unseeded_surface_says_so_and_recites_no_kinds() {
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         receipts: jojobot_mcp::Receipts::default(),
+        clock: jojobot_domain::clock::Clock::default(),
     };
     // **A store with its records, and a process that never loaded the set.**
     // That is the state `main` tolerates and logs: the store was unreachable

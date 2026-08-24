@@ -36,7 +36,11 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<PingArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let now = jiff::Timestamp::now();
+        // **The server's own clock, which is not always the real one.** A
+        // probe that answered the wall clock here while every record this
+        // server stamps landed on a stated day would be the one door that says
+        // what time it is lying about it.
+        let now = self.clock().now();
         let body = serde_json::json!({
             // The same pair the handshake introduces this server with, so the
             // two doors cannot come to disagree about who is answering.
@@ -51,6 +55,10 @@ impl Jojobot {
             // plausible.
             "build": env!("JOJOBOT_BUILD"),
             "time": now.to_string(),
+            // **Which clock that time is on.** Absent means the real one. This
+            // is the call that says which server you are talking to, and one
+            // acting out a day is a different server from one that is not.
+            "clock": self.stated_clock(),
             // **The other half of the same question.** A session whose surface
             // stopped looking right asks which server this is; what it does
             // with the answer depends on whether the handle it is holding still
@@ -109,6 +117,48 @@ mod tests {
         // still there, so this is an addition rather than a reshuffle.
         assert_eq!(body["status"], "ok");
         assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+    }
+
+    /// **A server acting out a day says so here too, and its `time` is on that
+    /// day.**
+    ///
+    /// This is the call that says which server you are talking to, and one
+    /// running on a stated day is a different server from one that is not. A
+    /// probe that answered the wall clock while every record this server
+    /// stamped landed in June would be the one door about time lying about it.
+    ///
+    /// **Both halves**, because an announcement that is always absent satisfies
+    /// the control on its own and one that is always present satisfies the
+    /// positive.
+    #[tokio::test]
+    async fn ping_says_when_the_server_is_acting_out_a_day() {
+        let day: jiff::civil::Date = "2026-06-01".parse().expect("a day");
+        let acting = handler().on_clock(jojobot_domain::clock::Clock::stating(day));
+
+        let body = json_of(
+            &acting
+                .ping(Parameters(PingArgs { sid: None }))
+                .await
+                .expect("ping answers"),
+        );
+        assert_eq!(body["clock"]["stated_day"], day.to_string(), "{body}");
+        assert!(
+            body["time"]
+                .as_str()
+                .is_some_and(|t| t.starts_with(&day.to_string())),
+            "the probe reports the server's own clock: {body}"
+        );
+
+        let ordinary = json_of(
+            &handler()
+                .ping(Parameters(PingArgs { sid: None }))
+                .await
+                .expect("ping answers"),
+        );
+        assert!(
+            ordinary["clock"].is_null(),
+            "a server on the real clock announces no stated day: {ordinary}"
+        );
     }
 
     /// **The probe reads the handle it is handed, and reports rather than

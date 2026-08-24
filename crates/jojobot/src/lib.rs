@@ -60,6 +60,11 @@ pub struct AppState {
     /// the handler is built per connection: a decision read once at startup
     /// has to reach every handler the factory makes after it.
     pub receipts: jojobot_mcp::Receipts,
+    /// **The clock this server runs on.** Held here for the same reason the
+    /// receipt switches are: the handler is built per connection, so a day
+    /// read once at startup has to reach every handler the factory makes after
+    /// it.
+    pub clock: jojobot_domain::clock::Clock,
 }
 
 /// Build the full HTTP application: the guarded MCP transport plus the public
@@ -86,6 +91,7 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     // every handle it ever issued.
     let registry = state.registry.clone();
     let receipts = state.receipts;
+    let clock = state.clock;
     let mcp = StreamableHttpService::new(
         // **One handler per MCP session, and that is what makes the connection
         // binding a connection binding**: the factory runs per connect, so a
@@ -98,7 +104,8 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
                 sessions.clone(),
                 registry.clone(),
             )
-            .receipting(receipts))
+            .receipting(receipts)
+            .on_clock(clock))
         },
         LocalSessionManager::default().into(),
         server_config,

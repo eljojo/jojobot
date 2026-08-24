@@ -839,6 +839,87 @@ async fn an_edit_does_not_re_stamp_the_claims_own_column() {
     store.stop().await;
 }
 
+/// **A store acting out a day stamps that day**, in the two columns that say
+/// when jojobot took a record in and when a write of it happened.
+///
+/// ⚠️ **The fake cannot answer this.** Both columns are written by this
+/// adapter, in SQL, and no caller can name either — so a case over the double
+/// would only prove the double stamps what the double stamps. This is the
+/// half that says the real store moved.
+///
+/// **Read straight out of the tables**, for the same reason the case above
+/// does: what is under test is what the columns hold, not what a read projects
+/// from them.
+///
+/// **Both columns**, because they are stamped in different statements: the
+/// claim's own moment is set where the record is assembled, and the write's is
+/// bound where the substrate row is appended.
+#[tokio::test]
+async fn a_store_acting_out_a_day_stamps_that_day() {
+    const JUNE: &str = "2026-06-01";
+
+    let scratch = Scratch::new("acting");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("acting")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone()).on_clock(jojobot_domain::clock::Clock::stating(
+        JUNE.parse().expect("a day"),
+    ));
+
+    let subject = EntityId::person("person:acting-beta");
+    memory
+        .add_entity(NewEntity::new(subject.clone(), "Acting Beta", "fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+    let claim = memory
+        .capture(NewFact::about(
+            subject.clone(),
+            "ate an apple",
+            date(2026, 6, 1),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+
+    let taken_in: Option<String> =
+        sqlx::query_scalar("SELECT inserted_at FROM fact WHERE entity = ? AND id = ?")
+            .bind(subject.as_str())
+            .bind(claim.id.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("the row is readable");
+    let taken_in = taken_in.expect("the store stamps when it took the record in");
+    assert!(
+        taken_in.starts_with(JUNE),
+        "the store stamped when it took the record in on the wall clock: {taken_in}",
+    );
+
+    let written_at: Option<String> = sqlx::query_scalar(
+        "SELECT written_at FROM fact_write WHERE entity = ? AND fact_id = ? ORDER BY ordinal",
+    )
+    .bind(subject.as_str())
+    .bind(claim.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .expect("the write row is readable");
+    let written_at = written_at.expect("the store stamps when the write happened");
+    assert!(
+        written_at.starts_with(JUNE),
+        "the store stamped the write itself on the wall clock: {written_at}",
+    );
+
+    store.stop().await;
+}
+
 /// 🚨 **The backfill is what keeps a claim written before the substrate
 /// readable, and this is what goes red without it.**
 ///

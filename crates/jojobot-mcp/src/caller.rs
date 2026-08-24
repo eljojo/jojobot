@@ -175,8 +175,9 @@ impl Jojobot {
     }
 
     /// **Which day this call is about**, in the caller's own frame: the date
-    /// they named, else the day their run stated at the door, else today on
-    /// the clock in their zone.
+    /// they named, else the day their run stated at the door, else the day
+    /// this server is standing in — which is today on the clock in their zone
+    /// unless an operator stated a day for the whole run.
     ///
     /// 🚨 **The run's stated day is what makes a write land in the period the
     /// run is working in.** A session acting out March announces that day at
@@ -208,7 +209,7 @@ impl Jojobot {
         ) {
             (Some(named), _) => crate::memory::parse::parse_date(Some(named), &zone),
             (None, Some(stated)) => Ok(stated),
-            (None, None) => crate::memory::parse::parse_date(None, &zone),
+            (None, None) => Ok(self.clock().today_in(&zone)),
         }
     }
 
@@ -349,7 +350,7 @@ impl Jojobot {
                 bot: caller.bot.clone(),
                 sid: caller.sid.clone(),
                 focus,
-                started_at: jiff::Timestamp::now(),
+                started_at: self.clock().now(),
                 timezone: caller.zone.clone(),
                 started_on: caller.day,
             })

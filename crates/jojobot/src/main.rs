@@ -35,6 +35,20 @@ async fn main() -> anyhow::Result<()> {
         "starting jojobot"
     );
 
+    // **An instance acting out a day says so before it serves.** A stated day
+    // is invisible from the outside otherwise: the server looks healthy and
+    // every date it fills in is fiction. It is announced on the surface too —
+    // `start_here` and `ping` both carry it — and this is the half an operator
+    // reading the logs of a deployment sees.
+    if let Some(day) = config.clock.stated() {
+        tracing::warn!(
+            %day,
+            "ACTING OUT A DAY — JOJOBOT_TODAY is set, so this server is NOT on the real clock. \
+             Every date it fills in, every due read, every staleness sweep and every moment it \
+             stamps a record with land on this day. Unset JOJOBOT_TODAY to run on the real clock."
+        );
+    }
+
     let http = reqwest::Client::builder()
         // Bound the JWKS/discovery fetch so a hung issuer can't stall startup.
         .timeout(std::time::Duration::from_secs(10))
@@ -162,7 +176,9 @@ async fn main() -> anyhow::Result<()> {
     // pointing at a supplied record is refused as naming nothing.
     let supplied = jojobot_mcp::provisions();
     let memory: Arc<dyn Memory> = Arc::new(Provisioned::new(
-        DoltMemory::open(store.pool().clone()).knowing(supplied.clone()),
+        DoltMemory::open(store.pool().clone())
+            .knowing(supplied.clone())
+            .on_clock(config.clock),
         supplied,
     ));
 
@@ -337,6 +353,7 @@ async fn main() -> anyhow::Result<()> {
         registry,
         ui,
         receipts: config.receipts,
+        clock: config.clock,
     };
 
     let ct = CancellationToken::new();

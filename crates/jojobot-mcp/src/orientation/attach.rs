@@ -70,7 +70,11 @@ impl Jojobot {
         // The clock is read HERE and handed down: the sweep is domain policy
         // and the domain is clock-free, so the instant it decides against is
         // stamped at the edge exactly as a capture's date is.
-        let swept_at = jiff::Timestamp::now();
+        // **The SERVER's now, which is not always the real one.** A server
+        // acting out a day decides against that day, so this comparison and
+        // the moments the runs it is judging were stamped with are on one
+        // clock. The day itself arrives from the door.
+        let swept_at = self.clock().now();
         let Board {
             live,
             offerable,

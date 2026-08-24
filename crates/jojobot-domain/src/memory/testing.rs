@@ -81,6 +81,11 @@ pub struct InMemoryMemory {
     /// reason and the fake has to, or the case proving it passes here and
     /// fails there.
     supplied: Mutex<crate::memory::owned::Provisions>,
+    /// **The clock this store stamps with.** The real store holds one and the
+    /// fake has to: a story about an instance acting out a day would otherwise
+    /// read *when jojobot took this in* off the wall clock, and pass on a build
+    /// where the stated day never reaches the store at all.
+    clock: crate::clock::Clock,
 }
 
 impl InMemoryMemory {
@@ -109,6 +114,14 @@ impl InMemoryMemory {
     /// **The store, told what the build supplies over it.** Only the existence
     /// guard reads it: nothing is stored, nothing is listed, and a read still
     /// resolves supplied records in the layer above.
+    /// **The store, told which clock it stamps with** — the real store's own
+    /// builder, so a fixture wires a day the way the binary does.
+    #[must_use]
+    pub fn on_clock(mut self, clock: crate::clock::Clock) -> Self {
+        self.clock = clock;
+        self
+    }
+
     pub fn knowing(self, supplied: crate::memory::owned::Provisions) -> Self {
         *self.supplied.lock().expect("fake mutex poisoned") = supplied;
         self
@@ -284,7 +297,7 @@ impl InMemoryMemory {
             // **The moment this write happened**, which the real store stamps
             // too. A fake that left it empty would let every case about a
             // chain of corrections pass on a build that records none.
-            ClaimWrite::of(fact, ordinal, Some(jiff::Timestamp::now())),
+            ClaimWrite::of(fact, ordinal, Some(self.clock.now())),
         ));
     }
 
@@ -622,7 +635,7 @@ impl Memory for InMemoryMemory {
             // **A store stamps this, so the double does too.** A fake that left
             // it empty would let every case above it pass on a build where the
             // real store's stamp never happens.
-            inserted_at: Some(jiff::Timestamp::now()),
+            inserted_at: Some(self.clock.now()),
             stale_after: fact.stale_after,
         };
         // **A new record's keys land on the thing too** — the same guard the
@@ -1044,7 +1057,7 @@ impl Memory for InMemoryMemory {
             fields: account.fields,
             refs: account.refs,
             derived_from: account.derived_from,
-            inserted_at: Some(jiff::Timestamp::now()),
+            inserted_at: Some(self.clock.now()),
             stale_after: None,
         };
         facts.push(Fact {
@@ -1139,7 +1152,7 @@ impl Memory for InMemoryMemory {
             fields: account.fields,
             refs: account.refs,
             derived_from: account.derived_from,
-            inserted_at: Some(jiff::Timestamp::now()),
+            inserted_at: Some(self.clock.now()),
             stale_after: None,
         };
         let retracted = Fact {

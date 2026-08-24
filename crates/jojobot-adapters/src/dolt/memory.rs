@@ -29,6 +29,7 @@
 
 use async_trait::async_trait;
 use jiff::civil::Date;
+use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::{
     ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress,
@@ -66,6 +67,11 @@ pub struct DoltMemory {
     /// where a guard would otherwise see only the stored rows and refuse a
     /// claim pointing at a record every read answers for.
     supplied: Provisions,
+    /// **The clock the store stamps with.** A value rather than a call, for the
+    /// same reason the draw is one: an instance acting out a day has to stamp
+    /// *when jojobot took this in* with that day, and a store reaching for the
+    /// wall clock could never be told about it.
+    clock: Clock,
 }
 
 impl DoltMemory {
@@ -84,6 +90,7 @@ impl DoltMemory {
             pool,
             draw: ids::drawing(),
             supplied: Provisions::default(),
+            clock: Clock::default(),
         }
     }
 
@@ -100,6 +107,14 @@ impl DoltMemory {
         self
     }
 
+    /// **The store, told which clock it stamps with.** The real one unless an
+    /// operator stated a day for the whole run.
+    #[must_use]
+    pub fn on_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        self
+    }
+
     /// The same store over a supplied draw, **so the collision path can be
     /// watched through the verb that mints**.
     pub fn open_drawing(pool: MySqlPool, draw: Draw) -> Self {
@@ -107,6 +122,7 @@ impl DoltMemory {
             pool,
             draw,
             supplied: Provisions::default(),
+            clock: Clock::default(),
         }
     }
 
@@ -461,7 +477,11 @@ impl DoltMemory {
     /// **One writer for every verb that produces a fact**, so a capture, an
     /// edit and a retraction cannot come to write a record three different
     /// ways.
-    async fn write_fact(tx: &mut Transaction<'_, MySql>, fact: &Fact) -> Result<(), MemoryError> {
+    async fn write_fact(
+        tx: &mut Transaction<'_, MySql>,
+        fact: &Fact,
+        clock: &Clock,
+    ) -> Result<(), MemoryError> {
         sqlx::query(
             "REPLACE INTO fact (entity, id, content, details, provenance, standing, status,
                                 date, edge_shape, edge_object, derived_from, derived_from_id,
@@ -509,7 +529,7 @@ impl DoltMemory {
             .await
             .map_err(store)?;
         }
-        Self::append_fact_write(tx, fact).await?;
+        Self::append_fact_write(tx, fact, clock).await?;
         Ok(())
     }
 
@@ -534,6 +554,7 @@ impl DoltMemory {
     async fn append_fact_write(
         tx: &mut Transaction<'_, MySql>,
         fact: &Fact,
+        clock: &Clock,
     ) -> Result<(), MemoryError> {
         let highest: Option<i64> = sqlx::query_scalar(
             "SELECT MAX(ordinal) FROM fact_write WHERE entity = ? AND fact_id = ?",
@@ -566,8 +587,10 @@ impl DoltMemory {
         .bind(fact.inserted_at.map(|t| t.to_string()))
         .bind(fact.stale_after.map(|d| d.to_string()))
         // **Stamped here and nowhere else.** The claim's own moment is carried
-        // above, never re-stamped; this is the moment this write happened.
-        .bind(jiff::Timestamp::now().to_string())
+        // above, never re-stamped; this is the moment this write happened —
+        // on the server's own clock, which is not the wall clock on an
+        // instance acting out a day.
+        .bind(clock.now().to_string())
         .execute(&mut **tx)
         .await
         .map_err(store)?;
@@ -1022,7 +1045,7 @@ impl Memory for DoltMemory {
             // **The store stamps it, so nothing above can.** The moment a
             // record is taken in is this one, and a caller that could name it
             // could claim jojobot knew something before it did.
-            inserted_at: Some(jiff::Timestamp::now()),
+            inserted_at: Some(self.clock.now()),
             stale_after: fact.stale_after,
         };
         // **A new record's keys land on the thing too**, so the same guard the
@@ -1042,7 +1065,7 @@ impl Memory for DoltMemory {
             &stood_after_capture(&held, &stored, &declared),
             &governs,
         )?;
-        Self::write_fact(&mut tx, &stored).await?;
+        Self::write_fact(&mut tx, &stored, &self.clock).await?;
         // Every key this record carries is a write of its own, appended to the
         // history of that key on this thing.
         Self::append_writes(&mut tx, &stored.home, &stored.id, written_keys(&stored)).await?;
@@ -1294,7 +1317,7 @@ impl Memory for DoltMemory {
             &stood_after(&held, &fact, &patch, &carried, &declared),
             &governs,
         )?;
-        Self::write_fact(&mut tx, &fact).await?;
+        Self::write_fact(&mut tx, &fact, &self.clock).await?;
         // **The edit appends.** The record reads back changed — that is the
         // surface — and the value it replaced stays where it was written.
         Self::append_writes(&mut tx, &fact.home, &fact.id, writes_of(&patch, &carried)).await?;
@@ -1416,10 +1439,10 @@ impl Memory for DoltMemory {
             fields: account.fields,
             refs: account.refs,
             derived_from: account.derived_from,
-            inserted_at: Some(jiff::Timestamp::now()),
+            inserted_at: Some(self.clock.now()),
             stale_after: None,
         };
-        Self::write_fact(&mut tx, &record).await?;
+        Self::write_fact(&mut tx, &record, &self.clock).await?;
         Self::append_writes(&mut tx, &record.home, &record.id, written_keys(&record)).await?;
 
         // **The folded row stays and starts forwarding.** Written last, so a
@@ -1492,15 +1515,15 @@ impl Memory for DoltMemory {
             refs: account.refs,
             derived_from: account.derived_from,
             // A retraction is a record in its own right, taken in now.
-            inserted_at: Some(jiff::Timestamp::now()),
+            inserted_at: Some(self.clock.now()),
             stale_after: None,
         };
         let retracted = Fact {
             status: FactStatus::Retracted,
             ..target
         };
-        Self::write_fact(&mut tx, &retracted).await?;
-        Self::write_fact(&mut tx, &record).await?;
+        Self::write_fact(&mut tx, &retracted, &self.clock).await?;
+        Self::write_fact(&mut tx, &record, &self.clock).await?;
         // The account is a record like any other, and the key naming what it
         // takes back is a write of its own. The record being taken back writes
         // no key: what changed there is its status.

@@ -83,7 +83,7 @@ impl Jojobot {
             .sessions
             .append(
                 &session,
-                NewEntry::manual(args.entry, jiff::Timestamp::now(), caller.day),
+                NewEntry::manual(args.entry, self.clock().now(), caller.day),
             )
             .await
         {

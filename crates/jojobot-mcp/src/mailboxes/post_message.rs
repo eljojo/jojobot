@@ -254,7 +254,7 @@ impl Jojobot {
             // Stamped here, at the edge, for the same reason `capture` stamps a
             // date here: the domain stays clock-free, and a caller does not get
             // to backdate a message it is posting now.
-            sent_at: jiff::Timestamp::now(),
+            sent_at: self.clock().now(),
             in_reply_to: args
                 .in_reply_to
                 .as_deref()

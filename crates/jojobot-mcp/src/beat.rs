@@ -97,7 +97,7 @@ impl Jojobot {
                 }
                 let text = beat_text(phrase, &beat);
                 self.sessions
-                    .amend_beat(&session, &beat.entry, &text, jiff::Timestamp::now())
+                    .amend_beat(&session, &beat.entry, &text, self.clock().now())
                     .await
                     .map(|_| ())
             }
@@ -111,7 +111,7 @@ impl Jojobot {
                 self.sessions
                     .append(
                         &session,
-                        NewEntry::beat(class, text, jiff::Timestamp::now(), caller.day),
+                        NewEntry::beat(class, text, self.clock().now(), caller.day),
                     )
                     .await
                     .map(|_| ())

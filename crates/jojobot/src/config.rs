@@ -65,6 +65,9 @@ pub struct Config {
     pub auth: Option<AuthConfig>,
     /// `None` means the browser UI is not served at all.
     pub ui: Option<UiConfig>,
+    /// **The clock this server runs on.** The real one unless an operator
+    /// stated a day for the whole run.
+    pub clock: jojobot_domain::clock::Clock,
 }
 
 impl Config {
@@ -83,6 +86,8 @@ impl Config {
     ///   receipt stating what now stands (default on).
     /// - `JOJOBOT_RECEIPT_DELTA` — set to `0`/`false` to stop a write receipt
     ///   naming values the store did not keep as they were sent (default on).
+    /// - `JOJOBOT_TODAY` — a `YYYY-MM-DD` day for this server to act out.
+    ///   Unset is the real clock, which is what every deployment gets.
     pub fn from_env() -> anyhow::Result<Self> {
         Self::build(RawEnv::from_env())
     }
@@ -156,6 +161,26 @@ impl Config {
             );
         }
 
+        // **A day that is no day refuses the boot.** Falling back to the real
+        // clock would serve exactly the instance the operator did not ask for,
+        // and every date it filled in would be the wrong one with nothing on
+        // the surface saying so — the silently-wrong state this whole setting
+        // exists to keep out.
+        let clock = match raw
+            .today
+            .as_deref()
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+        {
+            None => jojobot_domain::clock::Clock::default(),
+            Some(day) => jojobot_domain::clock::Clock::stating(day.parse().map_err(|e| {
+                anyhow::anyhow!(
+                    "JOJOBOT_TODAY ({day:?}) is not a day: {e}. It takes YYYY-MM-DD, and unset \
+                     is the real clock."
+                )
+            })?),
+        };
+
         // Field by field rather than by reference: `auth` above has already taken
         // ownership of the fields it needed, so the struct as a whole is no
         // longer borrowable.
@@ -170,6 +195,7 @@ impl Config {
             resource,
             auth,
             ui,
+            clock,
         })
     }
 }
@@ -234,6 +260,9 @@ struct RawEnv {
     /// else leaves the line alone.
     receipt_postcondition: Option<String>,
     receipt_delta: Option<String>,
+    /// Unparsed, because a day that is no day refuses the boot rather than
+    /// being read as *not set* — see [`Config::build`].
+    today: Option<String>,
 }
 
 /// **Off is the only value with a meaning here.**
@@ -264,6 +293,7 @@ impl RawEnv {
             ui_client_secret_set: std::env::var("JOJOBOT_UI_CLIENT_SECRET")
                 .is_ok_and(|v| !v.is_empty()),
             ui_base_url: std::env::var("JOJOBOT_UI_BASE_URL").ok(),
+            today: std::env::var("JOJOBOT_TODAY").ok(),
             receipt_postcondition: std::env::var("JOJOBOT_RECEIPT_POSTCONDITION").ok(),
             receipt_delta: std::env::var("JOJOBOT_RECEIPT_DELTA").ok(),
         }
@@ -330,6 +360,7 @@ mod tests {
 
     fn raw_subjects(subjects: Option<&str>) -> RawEnv {
         RawEnv {
+            today: None,
             bind: "127.0.0.1:8080".to_string(),
             resource: None,
             issuer: Some("https://issuer.example".to_string()),
@@ -413,6 +444,7 @@ mod tests {
         // issuer is a misconfiguration that must fail loud, not silently drop —
         // even in loopback dev mode.
         let raw = RawEnv {
+            today: None,
             bind: "127.0.0.1:8080".to_string(),
             resource: None,
             issuer: None,
@@ -462,6 +494,7 @@ mod tests {
 
     fn raw(bind: &str, issuer: Option<&str>, allow_no_auth: bool) -> RawEnv {
         RawEnv {
+            today: None,
             bind: bind.to_string(),
             resource: None,
             issuer: issuer.map(str::to_string),
@@ -477,8 +510,49 @@ mod tests {
         }
     }
 
+    /// **A stated day that is no day refuses the boot.**
+    ///
+    /// Falling back to the real clock would serve exactly the instance the
+    /// operator did not ask for: every date it filled in would be wrong, and
+    /// nothing on the surface would say so. Loud beats plausible.
+    ///
+    /// **Three states**, because each of the other two is how this one could
+    /// pass while doing nothing: a day that parses is taken, and an operator
+    /// who set nothing gets the real clock.
+    #[test]
+    fn a_stated_day_that_is_no_day_refuses_to_start() {
+        let refused = Config::build(RawEnv {
+            today: Some("the first of June".to_string()),
+            ..raw("127.0.0.1:8080", None, true)
+        })
+        .expect_err("a day that is no day refuses the boot");
+        assert!(
+            format!("{refused:#}").contains("JOJOBOT_TODAY"),
+            "the refusal names the setting the operator has to fix: {refused:#}"
+        );
+
+        let acting = Config::build(RawEnv {
+            today: Some("2026-06-01".to_string()),
+            ..raw("127.0.0.1:8080", None, true)
+        })
+        .expect("a day that parses is taken");
+        assert_eq!(
+            acting.clock.stated().map(|d| d.to_string()),
+            Some("2026-06-01".to_string()),
+        );
+
+        let ordinary = Config::build(raw("127.0.0.1:8080", None, true))
+            .expect("a server with nothing set starts");
+        assert_eq!(
+            ordinary.clock.stated(),
+            None,
+            "an operator who set nothing gets the real clock",
+        );
+    }
+
     fn raw_ui(issuer: Option<&str>, client_id: Option<&str>, base_url: Option<&str>) -> RawEnv {
         RawEnv {
+            today: None,
             bind: "127.0.0.1:8080".to_string(),
             resource: None,
             issuer: issuer.map(str::to_string),

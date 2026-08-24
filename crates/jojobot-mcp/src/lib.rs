@@ -34,6 +34,7 @@ mod arguments;
 mod beat;
 mod boundary;
 mod caller;
+mod clock;
 pub mod mailboxes;
 pub mod memory;
 pub mod orientation;
@@ -156,6 +157,13 @@ pub struct Jojobot {
     /// switches: the run that measures whether either changes how an agent
     /// writes needs one of them held still.
     receipts: answer::Receipts,
+    /// **The clock this server runs on.** The real one unless an operator
+    /// stated a day for the whole run — see [`jojobot_domain::clock::Clock`].
+    ///
+    /// A field for the same reason `receipts` is one: the handler is built per
+    /// connection, so a decision read once at startup has to reach every
+    /// handler the factory makes after it.
+    clock: jojobot_domain::clock::Clock,
 }
 
 /// **The verbs still living in this file.** Every context that has moved out
@@ -222,7 +230,17 @@ impl Jojobot {
             registry,
             carriers: Arc::new(carriers),
             receipts: answer::Receipts::default(),
+            clock: jojobot_domain::clock::Clock::default(),
         }
+    }
+
+    /// The same handler, running on a stated day rather than the real clock.
+    ///
+    /// [`Jojobot::new`] is this on the real clock, which is what every instance
+    /// gets unless an operator states a day.
+    #[must_use]
+    pub fn on_clock(self, clock: jojobot_domain::clock::Clock) -> Self {
+        Self { clock, ..self }
     }
 
     /// The same handler, told which computed lines its write receipts carry.
