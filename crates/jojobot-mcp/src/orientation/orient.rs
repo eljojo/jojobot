@@ -79,14 +79,21 @@ impl Jojobot {
                     index,
                     bot,
                     resume.is_some(),
-                    // The door validated this run's zone a moment ago; a
-                    // rule's own staleness is read in it like every other day.
-                    parse_date(
-                        None,
-                        &timezone
-                            .and_then(|name| jiff::tz::TimeZone::get(name).ok())
-                            .unwrap_or(jiff::tz::TimeZone::UTC),
-                    )?,
+                    // **The day this run states, and the clock in its own zone
+                    // when it states none.** The boot is where a run declares
+                    // the day it is working in, so a rule's staleness read on
+                    // the server's clock would tell a run working through March
+                    // that its own rules expired months ago — in the very call
+                    // that accepted the day (rule 222).
+                    match today {
+                        Some(stated) => stated,
+                        None => parse_date(
+                            None,
+                            &timezone
+                                .and_then(|name| jiff::tz::TimeZone::get(name).ok())
+                                .unwrap_or(jiff::tz::TimeZone::UTC),
+                        )?,
+                    },
                 )
                 .await?
             {

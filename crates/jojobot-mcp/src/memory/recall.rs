@@ -1122,10 +1122,7 @@ impl Jojobot {
         // the same code path as *what is overdue now*.
         let as_of = match &args.overdue {
             None => None,
-            Some(overdue) => Some(parse_date(
-                overdue.as_of.as_deref(),
-                &self.zone_for(args.sid.as_deref()),
-            )?),
+            Some(overdue) => Some(self.dated(overdue.as_of.as_deref(), args.sid.as_deref())?),
         };
         // **The one clock read, taken here whether or not a question named a
         // day.** What is held is asked as of a day like everything else, so a
@@ -1141,7 +1138,7 @@ impl Jojobot {
                 Err(refused) => return Ok(*refused),
             },
         };
-        let today = parse_date(None, &self.zone_for(args.sid.as_deref()))?;
+        let today = self.dated(None, args.sid.as_deref())?;
         // Every key some declaration made a reference — what makes a value a
         // link. Read once, here, so the ranking stays a function of what it is
         // handed.
@@ -1174,7 +1171,7 @@ impl Jojobot {
         let near = match &args.near {
             None => None,
             Some(asked) => Some(graph::Nearness {
-                day: parse_date(asked.day.as_deref(), &self.zone_for(args.sid.as_deref()))?,
+                day: self.dated(asked.day.as_deref(), args.sid.as_deref())?,
                 within_days: asked.within_days.unwrap_or(NEAR_WINDOW),
                 clock: parse_clock(asked.clock.as_deref())?,
             }),
@@ -1931,6 +1928,100 @@ mod tests {
                     .to_string()
             })
             .collect()
+    }
+
+    /// 🚨 **A read answers in the day the run states, not the day the server
+    /// is having.**
+    ///
+    /// Rule 222 does not distinguish a read from a write: a read that resolves
+    /// today off the clock is the server assuming a frame. A session working
+    /// through last March asking what has gone quiet is handed a WRONG ANSWER,
+    /// and nothing later contradicts it — where a wrongly dated write at least
+    /// leaves a record somebody can find.
+    ///
+    /// The loop here fell due six days after the day the run states, so it has
+    /// gone quiet on the clock and has NOT gone quiet in March. **Both halves
+    /// against one store**: a run that stated no day still gets the clock, or
+    /// this becomes a change that breaks every caller that never stated one.
+    #[tokio::test]
+    async fn a_read_answers_in_the_day_the_run_states() {
+        let jojobot = handler();
+        make_bot(&jojobot, "otto").await;
+        a_rhythm(&jojobot, "descale", "7", "2026-03-14").await;
+
+        let acting = sid_of(&json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    bot: Some("otto".into()),
+                    today: Some("2026-03-15".into()),
+                    resume: Some("new".into()),
+                    brief: Some(true),
+                    timezone: None,
+                    skill: None,
+                    sid: None,
+                }))
+                .await
+                .expect("the boot call is ok"),
+        ))
+        .expect("a boot that states a day hands back a handle");
+
+        let in_march = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    overdue: Some(OverdueArgs { as_of: None }),
+                    sid: Some(acting.clone()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            in_march["overdue_as_of"], "2026-03-15",
+            "the read was taken as of the server's day: {in_march}"
+        );
+        assert!(
+            handles(&in_march).is_empty(),
+            "the loop falls due on the twenty-first and this run is on the fifteenth: {in_march}"
+        );
+
+        // ⚠️ **A run that stated no day still gets the clock**, and the loop
+        // that had not gone quiet in March has gone quiet by now. Without this
+        // half the case passes on a build that answers nothing to anybody.
+        let now = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    overdue: Some(OverdueArgs { as_of: None }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            handles(&now),
+            vec!["rhythm:descale".to_string()],
+            "a run that stated no day is answered on the clock: {now}"
+        );
+
+        // **And a day the call names still wins over the run's.** A run working
+        // through a period asks about other days, exactly as it writes about
+        // them.
+        let named = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    overdue: Some(OverdueArgs {
+                        as_of: Some("2026-03-30".into()),
+                    }),
+                    sid: Some(acting),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(named["overdue_as_of"], "2026-03-30");
+        assert_eq!(handles(&named), vec!["rhythm:descale".to_string()]);
     }
 
     /// **Which rhythms have gone quiet, as of a date the caller names.**

@@ -414,6 +414,65 @@ mod tests {
         assert_eq!(boxes.len(), 1, "{boxes:?}");
     }
 
+    /// 🚨 **A rule's staleness is read in the day the run states.**
+    ///
+    /// The boot is where a run states its day, and it was the one read that
+    /// went on answering on the clock — so a session working through March was
+    /// told its own operating rules had expired months ago, in the very call
+    /// that accepted the day (rule 222).
+    ///
+    /// ⚠️ **Paired against the same rule and the same store**: a boot that
+    /// states no day still reads staleness on the clock, and the rule that was
+    /// good in March is past its day now.
+    #[tokio::test]
+    async fn a_rule_is_stale_in_the_day_the_run_states() {
+        let jojobot = handler();
+        make_bot(&jojobot, "otto").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                stale_after: Some("2026-04-01".into()),
+                ..capture_args("bot:otto", "checks the board before starting")
+            },
+        )
+        .await;
+
+        let stale_in = async |today: Option<&str>| {
+            let booted = json_of(
+                &jojobot
+                    .start_here(Parameters(OrientArgs {
+                        bot: Some("otto".into()),
+                        today: today.map(str::to_string),
+                        resume: Some("new".into()),
+                        brief: Some(true),
+                        timezone: None,
+                        skill: None,
+                        sid: None,
+                    }))
+                    .await
+                    .expect("the boot call is ok"),
+            );
+            let rule = booted["identity"]["rules"]
+                .as_array()
+                .and_then(|rules| rules.first().cloned())
+                .unwrap_or_else(|| panic!("the boot carries the bot's rules: {booted}"));
+            assert_eq!(
+                rule["stale_after"], "2026-04-01",
+                "the wrong record was read: {rule}"
+            );
+            rule.get("stale").is_some()
+        };
+
+        assert!(
+            !stale_in(Some("2026-03-15")).await,
+            "a rule good until April read as expired to a run standing in March",
+        );
+        assert!(
+            stale_in(None).await,
+            "a run that stated no day is answered on the clock, where April is past",
+        );
+    }
+
     /// **jojobot heals the box it notices is missing, and says so out loud.**
     ///
     /// The operator's ruling: *"the system should auto heal next time when it

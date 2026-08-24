@@ -17,6 +17,8 @@
 //! The days here are fixed rather than worked out from today, because the
 //! whole point is a run standing somewhere the clock is not.
 
+use serde_json::json;
+
 use super::dsl::Story;
 
 #[tokio::test]
@@ -44,7 +46,27 @@ async fn a_run_working_through_a_past_week_writes_in_that_week() {
     }
 
     setup.add("person:milhouse", "Milhouse").await;
-    setup.wrap("standing the person up").await;
+    // A loop that falls due six days after the day the March run will state:
+    // it has gone quiet on the clock and has not gone quiet in March.
+    setup.add("thing:kettle", "The kettle").await;
+    setup
+        .add_under("thing:kettle", "rhythm:descale", "Descale the kettle")
+        .await;
+    setup
+        .event_with(
+            "rhythm:descale",
+            "descaled it",
+            json!({
+                "name": "Descale the kettle",
+                "last_check_in": "2026-03-14",
+                "counts_from": "2026-03-14",
+                "advances_from": "due_date",
+                "cadence_days": "7",
+            }),
+            &[],
+        )
+        .await;
+    setup.wrap("standing the person and the loop up").await;
 
     // ── a run that says it is in March ──────────────────────────────────────
     let march = story.session_on(MARCH, Some("new")).await;
@@ -83,6 +105,22 @@ async fn a_run_working_through_a_past_week_writes_in_that_week() {
         .await
         .says("\"date\":\"2026-03-08\"");
 
+    // ── and a READ answers in that day too ──────────────────────────────────
+    //
+    // 🚨 **The half that would otherwise be a trap.** A caller whose writes are
+    // honoured in its stated day will assume its reads are. A loop that falls
+    // due six days after the day this run is standing in has NOT gone quiet
+    // here, and would have on the server's clock.
+    let quiet = march
+        .shape(
+            "what has gone quiet",
+            json!({ "kind": "rhythm", "overdue": {} }),
+        )
+        .await;
+    quiet
+        .says(&format!("\"overdue_as_of\":\"{MARCH}\""))
+        .never_says("rhythm:descale");
+
     march.wrap("worked through the March week").await;
 
     // ── a run that says nothing is still answered by the clock ──────────────
@@ -105,6 +143,16 @@ async fn a_run_working_through_a_past_week_writes_in_that_week() {
             .to_string(),
         "a run that stated no day is answered on the clock, in the stated fallback zone",
     );
+
+    // ⚠️ **And the same loop HAS gone quiet for a run on the clock**, which is
+    // what says the read above answered in March rather than answering nothing
+    // to everybody.
+    now.shape(
+        "what has gone quiet",
+        json!({ "kind": "rhythm", "overdue": {} }),
+    )
+    .await
+    .says("rhythm:descale");
 
     now.wrap("recorded one thing, today").await;
 

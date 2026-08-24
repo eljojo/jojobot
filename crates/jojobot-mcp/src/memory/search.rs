@@ -613,7 +613,7 @@ impl Jojobot {
         // asked: whether a claim has passed the day it stays good is a question
         // about a day, and two runs in two zones answer it differently for one
         // stored claim.
-        let as_of = parse_date(None, &self.zone_for(args.sid.as_deref()))?;
+        let as_of = self.dated(None, args.sid.as_deref())?;
         let body = serde_json::json!({
             "count": hits.len(),
             // **A different question from the two coverage notes below.**
