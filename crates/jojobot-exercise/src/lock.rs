@@ -661,3 +661,214 @@ mod tests {
         assert_eq!(read.len(), 2, "two locks, not one run together: {read:?}");
     }
 }
+
+/// **Where one needle matched, and what that says about the lock.**
+///
+/// 🚨 **A needle is a substring of the answer as text, so it can match
+/// somewhere other than the field it names** — and a lock satisfied by the
+/// wrong match holds while measuring nothing. **Three of those shipped in one
+/// night**, one of them inside the lock written to guard the class, so this is
+/// asked of every lock rather than left to a reader.
+///
+/// ⛔️ **The question is empirical and cannot be answered from the needle's
+/// shape.** A needle naming a key can still match the wrong field — `"count":1`
+/// matched an answer's own count of the OBJECTS it returned — and a bare handle
+/// in a one-object answer is often unambiguous. **Where it actually matches, in
+/// a real answer, is what decides it.**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Matched {
+    /// One place. The lock can say which.
+    Once(String),
+    /// **More than one.** The lock is satisfied by any of them and cannot say
+    /// which — so a claim about one sitting can be met by another's record.
+    Ambiguous(Vec<String>),
+    /// **Only outside the objects.** The needle matched the answer's own
+    /// envelope rather than anything the read returned.
+    Envelope(String),
+    /// **Nowhere.** Either the lock is failing or the walk could not read the
+    /// answer. ⚠️ **Kept apart from a clean result**: a room whose locks are
+    /// all Rust hatches contributes nothing here, and that must not look like
+    /// a walker that could not read.
+    Nowhere,
+}
+
+/// One needle's verdict, with the lock it belongs to.
+#[derive(Debug, Clone)]
+pub struct NeedleVerdict {
+    pub lock: String,
+    pub needle: String,
+    pub matched: Matched,
+}
+
+impl NeedleVerdict {
+    /// **Whether this needle is a finding rather than a note.**
+    ///
+    /// ⭐ **An ambiguous needle is harmless when its own lock carries another
+    /// needle only the sitting it names could satisfy** — the ambiguous half
+    /// cannot carry the lock alone. That refinement explained both false
+    /// positives in the hand-check that produced this case, so it is applied
+    /// here rather than reported as noise.
+    pub fn is_finding(&self, partners: &[&Matched]) -> bool {
+        match self.matched {
+            Matched::Ambiguous(_) => !partners.iter().any(|m| matches!(m, Matched::Once(_))),
+            Matched::Envelope(_) => true,
+            Matched::Once(_) | Matched::Nowhere => false,
+        }
+    }
+}
+
+/// **Every distinct place a needle matches**, deduplicated.
+///
+/// ⚠️ **The dedupe is load-bearing and it is what a first version got wrong.**
+/// A match is recorded both at the key/value pair and at the string leaf
+/// underneath it, so without this every needle reads as two places and every
+/// lock reads as ambiguous. **That version printed fourteen findings where
+/// there were three.**
+fn places(value: &serde_json::Value, at: String, needle: &str, into: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                let here = format!("{at}.{key}");
+                if let Some(pair) = rendered_pair(key, child)
+                    && pair.contains(needle)
+                {
+                    into.push(here.clone());
+                }
+                places(child, here, needle, into);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (nth, child) in items.iter().enumerate() {
+                places(child, format!("{at}[{nth}]"), needle, into);
+            }
+        }
+        serde_json::Value::String(text) if text.contains(needle) => into.push(at),
+        _ => {}
+    }
+}
+
+/// A key and its value as the answer renders them, so a needle naming a key can
+/// be matched against the pair rather than against the value alone.
+fn rendered_pair(key: &str, value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) => Some(format!("\"{key}\":\"{text}\"")),
+        serde_json::Value::Number(number) => Some(format!("\"{key}\":{number}")),
+        serde_json::Value::Bool(flag) => Some(format!("\"{key}\":{flag}")),
+        _ => None,
+    }
+}
+
+/// **Ask every lock's own query and say where each needle matched.**
+///
+/// A lock that names a Rust check has no needle and contributes nothing.
+pub async fn needle_verdicts(
+    room: &crate::surface::Surface,
+    locks: &[Lock],
+) -> Vec<Vec<NeedleVerdict>> {
+    let mut all = Vec::new();
+    for lock in locks {
+        let Asks::Query { verb, args } = &lock.asks else {
+            continue;
+        };
+        let Ok(sent) = serde_json::from_str::<serde_json::Value>(args) else {
+            continue;
+        };
+        let answer = room.call(verb, sent).await;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&answer).unwrap_or(serde_json::Value::Null);
+        let mut here = Vec::new();
+        for expect in &lock.expects {
+            // **A negative is not asked.** `lacks` is satisfied by absence, so
+            // where it would have matched is not a question about it.
+            //
+            // ⛔️ **Nor is `at least`, and that is a limit rather than an
+            // oversight.** A lock asking for N matches WANTS more than one
+            // place, so *more than one place* says nothing about it — the
+            // question for those is whether the matches are in the right
+            // places, which is a different check and is not this one. **A
+            // first version folded them in and reported one as a finding for
+            // doing exactly what it was written to do.**
+            let needle = match expect {
+                Expect::Carries(needle) => needle,
+                Expect::Lacks(_) | Expect::AtLeast(..) => continue,
+            };
+            let mut found = Vec::new();
+            places(&parsed, String::new(), needle, &mut found);
+            found.sort();
+            found.dedup();
+            // ⚠️ **The envelope is *outside every collection*, not *outside
+            // `objects`*.** A first version named the key that `recall` nests
+            // under, and every answer with a different shape read as an
+            // envelope match — `list_entities` returns `entities`, and three
+            // needles matching exactly once inside a real entity were reported
+            // as findings. **What tells them apart is an index: anything the
+            // answer RETURNED sits inside an array, and the wrapper does not.**
+            let inside_a_collection = |path: &String| path.contains('[');
+            let matched = match found.as_slice() {
+                [] => Matched::Nowhere,
+                [one] if !inside_a_collection(one) => Matched::Envelope(one.clone()),
+                [one] => Matched::Once(one.clone()),
+                many => Matched::Ambiguous(many.to_vec()),
+            };
+            here.push(NeedleVerdict {
+                lock: lock.name.clone(),
+                needle: needle.clone(),
+                matched,
+            });
+        }
+        all.push(here);
+    }
+    all
+}
+
+/// **What a room's needles came to**, so a room's own case is three lines
+/// rather than a copy of this loop.
+#[derive(Debug, Default)]
+pub struct NeedleSummary {
+    /// Needles resting on a match somewhere other than what they name, with
+    /// nothing else in their lock to carry them.
+    pub findings: Vec<String>,
+    /// How many matched in more than one place, findings or not. **The number
+    /// a hand-check can be compared against**, which is what says the walk is
+    /// reading the answer the way a person did.
+    pub ambiguous: usize,
+    /// ⚠️ **Needles that matched nowhere**, kept apart from a clean result: a
+    /// room whose locks are all Rust checks contributes nothing here, and that
+    /// must not read the same as a walk that could not see.
+    pub nowhere: Vec<String>,
+}
+
+/// Ask every lock and fold the verdicts into what a room's case asserts.
+pub async fn needle_summary(room: &crate::surface::Surface, locks: &[Lock]) -> NeedleSummary {
+    let mut summary = NeedleSummary::default();
+    for one_lock in needle_verdicts(room, locks).await {
+        for verdict in &one_lock {
+            match verdict.matched {
+                Matched::Ambiguous(_) => summary.ambiguous += 1,
+                Matched::Nowhere => summary
+                    .nowhere
+                    .push(format!("{} — {}", verdict.lock, verdict.needle)),
+                _ => {}
+            }
+            let partners: Vec<&Matched> = one_lock
+                .iter()
+                .filter(|other| other.needle != verdict.needle)
+                .map(|other| &other.matched)
+                .collect();
+            if verdict.is_finding(&partners) {
+                summary
+                    .findings
+                    .push(format!("{} — {}", verdict.lock, verdict.needle));
+            }
+        }
+    }
+    summary
+}
+
+/// The locks a room document carries, read from the shipped file.
+pub fn locks_of(source: &str) -> Vec<Lock> {
+    let path = crate::expectations::room_document(source);
+    let document = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("the shipped room at {} must read: {e}", path.display()));
+    read(&document).unwrap_or_else(|e| panic!("the room's locks must parse: {e:#}"))
+}

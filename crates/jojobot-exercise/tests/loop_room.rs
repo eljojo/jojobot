@@ -377,3 +377,33 @@ async fn the_question_the_cold_phase_asks_has_exactly_one_answer() {
         "the loop with no frequency came back as quiet, so nothing can be late: {quiet}",
     );
 }
+
+/// 🚨 **No lock in this room rests on a needle that matches somewhere else.**
+///
+/// The reasoning is written where this was first built, in the year room's own
+/// case. **This room's locks read a rhythm's history**, where the same day can
+/// render under more than one key, so an ambiguous needle here is cheap to
+/// write by accident.
+#[tokio::test]
+async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
+    let (_room, surface, sid) = furnished().await;
+    worked_the_first_phase(&surface, &sid).await;
+    worked_the_cold_phase(&surface, &sid).await;
+    let summary = jojobot_exercise::lock::needle_summary(
+        &surface,
+        &jojobot_exercise::lock::locks_of(expectations::LOOP_ROOM),
+    )
+    .await;
+    assert!(
+        summary.nowhere.is_empty(),
+        "a needle matched nowhere, so either its lock is failing or the walk could not read the \
+         answer — and those are different: {:?}",
+        summary.nowhere,
+    );
+    assert!(
+        summary.findings.is_empty(),
+        "a lock rests on a needle that matches somewhere else, with nothing else in that lock \
+         only its own sitting could satisfy: {:?}",
+        summary.findings,
+    );
+}

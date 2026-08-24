@@ -1363,3 +1363,46 @@ async fn februarys_lock_cannot_be_satisfied_by_the_sitting_that_returns_the_pump
         saying(&judged),
     );
 }
+
+/// 🚨 **No lock in this room rests on a needle that matches somewhere else.**
+///
+/// A needle is a substring of the answer as text. **A lock satisfied by the
+/// wrong match holds while measuring nothing**, and a reader cannot see it:
+/// the needle matches what it names, it just also matches something else.
+/// **Two sweeps of that class read past February's, and a walk over the answer
+/// found it in one pass.**
+///
+/// ⭐ **An ambiguous needle is not a fault on its own** — it is harmless when
+/// its lock carries another needle only the sitting it names could satisfy.
+///
+/// ⚠️ **The count is asserted as well as the findings, and that is the half
+/// that calibrates the walk.** A first version read every match twice, once at
+/// the key/value pair and once at the string under it, and reported fourteen
+/// where a hand-check found three.
+#[tokio::test]
+async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
+    let (_room, surface, sid) = furnished().await;
+    let _ = worked_the_year(&surface, &sid).await;
+    let summary = jojobot_exercise::lock::needle_summary(
+        &surface,
+        &jojobot_exercise::lock::locks_of(expectations::YEAR_ROOM),
+    )
+    .await;
+    assert_eq!(
+        summary.ambiguous, 2,
+        "the walk sees a different number of ambiguous needles than the hand-check did, so it is \
+         reading the answer differently",
+    );
+    assert!(
+        summary.nowhere.is_empty(),
+        "a needle matched nowhere, so either its lock is failing or the walk could not read the \
+         answer — and those are different: {:?}",
+        summary.nowhere,
+    );
+    assert!(
+        summary.findings.is_empty(),
+        "a lock rests on a needle that matches somewhere else, with nothing else in that lock \
+         only its own sitting could satisfy: {:?}",
+        summary.findings,
+    );
+}
