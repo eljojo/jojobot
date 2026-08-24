@@ -559,6 +559,56 @@ said I would do*, beyond the pump, which came back.
 
 ⭐ **Read whether the answer stops where the record stops.**
 
+## Phase 15 — later in December, was the record ever wrong
+
+**Session: fresh.** **Day: 2026-12-20.**
+
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+>
+> start jojobot as assistant — it is 20 December 2026. The record says the club does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again.
+
+```locks
+# 🚨 **THE QUESTION A CORRECTION MAKES ANSWERABLE, AND ONLY IF IT LEFT A
+# TRACE.** March recorded that the club meets on Tuesdays; July rewrote that
+# same claim in place under July's own day. **The claim reads as current truth
+# and says nothing about having been wrong** — which is right for every other
+# read and is exactly what this sitting is asking past.
+#
+# ⚠️ **Neither lock touches what the occupant SAID.** Whether the answer was
+# useful to a person is a person's reading, like December's before it. What is
+# locked is that the record can answer at all.
+# ⚠️ **The value is only in the TRACE.** The claim as it stands says the
+# opposite, and no read of current truth carries the old wording — so a sitting
+# that answers without reaching the record's own history has nothing to write
+# here, and a sitting that guesses writes something else. **The key is named by
+# the operator**, for the reason the ledger room gives: a lock on a key the
+# occupant invents measures which word the occupant chose.
+recall {"subject": "org:north-trail-club"}
+carries "was":"meets on Tuesdays"
+say     later December: what the claim used to say is not on the record, so either the sitting never reached the correction's own history or it answered from the claim as it stands
+
+# 🚨 **THE PAIRING, AND IT CARRIES THE WEIGHT.** A lock that only asks whether
+# a trace is THERE holds identically against a read that hands back a chain for
+# everything — and a chain on a claim nobody ever touched says jojobot changed
+# its mind when it did not. **That is a worse answer than silence**, because a
+# reader acts on it.
+#
+# So the same read is asked of a claim no sitting ever corrected: one write,
+# and nothing behind it.
+# ⚠️ **`nth` rather than a count, and this is not a style choice.** The obvious
+# needle is the history's own `count`, and it is ambiguous: the answer opens
+# with a `count` of its own — how many OBJECTS came back — so `"count":1` holds
+# on every read of one object whatever the trace says. **The first draft of this
+# lock was satisfied by a claim carrying two writes.** `nth` is on the writes
+# and nowhere else.
+recall {"subject": "person:milhouse", "history_record": "person:milhouse#f2"}
+carries "nth":1
+lacks   "nth":2
+say     later December: a claim nobody ever corrected comes back carrying more than its own first write, so the trace says jojobot changed its mind about something it never did
+```
+
 ## What this room cannot measure
 
 **Whether a sitting walked or read.** August's question has one right answer

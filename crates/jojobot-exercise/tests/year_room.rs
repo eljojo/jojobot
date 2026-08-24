@@ -40,7 +40,9 @@ const LATE_OCTOBER: [usize; 3] = [17, 18, 19];
 const LATE_NOVEMBER: [usize; 2] = [20, 21];
 
 /// How many locks the year carries.
-const LOCKS: usize = 22;
+const LATE_DECEMBER: [usize; 2] = [22, 23];
+
+const LOCKS: usize = 24;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 2] = ["Phase 12", "Phase 14"];
@@ -489,6 +491,81 @@ async fn late_november(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **The sitting that reads back past a correction**, done properly: it takes
+/// the record's own history and writes down what the claim used to say.
+///
+/// **The wording is not guessable and not on any other read.** The claim as it
+/// stands says the opposite, so a sitting that answers from current truth has
+/// nothing to put here.
+async fn later_december(room: &Surface, sid: &str) {
+    let trace = room
+        .call(
+            "recall",
+            json!({"subject": "org:north-trail-club",
+                   "history_record": "org:north-trail-club#f1"}),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&trace).expect("the trace is json");
+    let was = parsed["objects"][0]["record_history"]["writes"][0]["content"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the correction left no earlier write: {trace}"))
+        .to_string();
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "org:north-trail-club", "content": "the record was corrected during the year",
+               "provenance": "inference", "date": "2026-12-20",
+               "fields": {"was": was}}),
+    )
+    .await;
+}
+
+/// **A later December that answers from the claim as it stands.**
+///
+/// The wrong route, and the plausible one: the record says the club does NOT
+/// meet on Tuesdays, so a sitting that never reaches the correction's own
+/// history writes that down. **It answers, under the key it was asked for, and
+/// it is the opposite of what the claim used to say.**
+async fn later_december_answers_from_the_claim_as_it_stands(room: &Surface, sid: &str) {
+    let read = room
+        .call(
+            "recall",
+            json!({"subject": "org:north-trail-club", "facts": true}),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&read).expect("json");
+    let now = parsed["objects"][0]["facts"][0]["content"]
+        .as_str()
+        .expect("the club's claim")
+        .to_string();
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "org:north-trail-club", "content": "the record was corrected during the year",
+               "provenance": "inference", "date": "2026-12-20",
+               "fields": {"was": now}}),
+    )
+    .await;
+}
+
+/// **A December that rewrites a claim nobody raised.**
+///
+/// What the pairing is for: it puts a second write behind a claim no sitting
+/// was ever asked about, so the claim starts carrying a history that says
+/// jojobot changed its mind about it.
+async fn december_corrects_a_claim_nobody_questioned(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": "person:milhouse#f2", "content": "rides with the club most weeks",
+               "date": "2026-12-13"}),
+    )
+    .await;
+}
+
 /// The whole year, worked the way it is meant to be.
 async fn worked_the_year(room: &Surface, sid: &str) -> Vec<Boundary> {
     work_the_year(room, sid, &room_document(), &WORKED, &[]).await
@@ -497,7 +574,7 @@ async fn worked_the_year(room: &Surface, sid: &str) -> Vec<Boundary> {
 /// **The sittings that record something**, named rather than counted: the two
 /// a person reads write nothing by design, and one of them sits between the
 /// sittings that do, so a range cannot say it.
-const WORKED: [usize; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12];
+const WORKED: [usize; 13] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14];
 
 /// **The year worked sitting by sitting, taking the readings a run takes.**
 ///
@@ -530,6 +607,8 @@ async fn work_the_year(
                 10 => late_october_puts_a_third_person_there(room, sid).await,
                 5 => june_writes_the_turn_by_hand(room, sid).await,
                 12 => late_november_writes_the_turn_by_hand(room, sid).await,
+                13 => december_corrects_a_claim_nobody_questioned(room, sid).await,
+                14 => later_december_answers_from_the_claim_as_it_stands(room, sid).await,
                 _ => panic!("no guilty variant is written for sitting {at}"),
             }
         } else if worked.contains(&at) {
@@ -546,6 +625,7 @@ async fn work_the_year(
                 9 => october(room, sid).await,
                 10 => late_october(room, sid).await,
                 12 => late_november(room, sid).await,
+                14 => later_december(room, sid).await,
                 // The two sittings a person reads ask questions and record
                 // nothing, which is what they are for.
                 _ => {}
@@ -564,11 +644,11 @@ async fn work_the_year(
 /// sitting that names no day is stamped with the day the run happened and the
 /// year is fiction only in the prose.
 #[test]
-fn the_year_is_fourteen_cold_sittings_and_every_one_claims_its_day() {
+fn the_year_is_fifteen_cold_sittings_and_every_one_claims_its_day() {
     let year = room_document();
     assert_eq!(
         year.phases.len(),
-        14,
+        15,
         "the year carries one extra sitting, in October: {:?}",
         year.phases.iter().map(|p| &p.name).collect::<Vec<_>>(),
     );
@@ -911,7 +991,7 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
         }
     }
     assert_eq!(
-        asked, 11,
+        asked, 12,
         "the year generates one assertion per dated sitting, less the two a person reads and \
          September, which writes about the day the pump came back — and this asked about \
          {asked}",
@@ -1166,6 +1246,46 @@ async fn the_rhythm_locks_still_fail_when_the_sitting_they_name_does_nothing() {
         !judged[LATE_NOVEMBER[1]].held,
         "a year where the late sitting recorded no turn held its lock, so it is satisfied by \
          something other than that sitting: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **The trace locks, asked both ways.**
+///
+/// **The first is a planted answer**: what the claim used to say is on no read
+/// of current truth, so a sitting that answers from the claim as it stands
+/// writes the opposite. **The second is the pairing that carries the weight** —
+/// a lock that only asks whether a trace is THERE holds identically against a
+/// read that hands a chain back for everything, and a chain on a claim nobody
+/// touched says jojobot changed its mind when it did not.
+#[tokio::test]
+async fn the_trace_locks_tell_a_correction_from_a_claim_nobody_touched() {
+    let (_room, surface, sid) = furnished().await;
+    let wrong_route = work_the_year(&surface, &sid, &room_document(), &WORKED, &[14]).await;
+    let judged = judge_all(&surface, &wrong_route).await;
+    assert!(
+        !judged[LATE_DECEMBER[0]].held,
+        "a sitting that answered from the claim as it stands held the lock, so the room cannot \
+         tell a read of the record's history from a read of current truth: {}",
+        saying(&judged),
+    );
+
+    let (_room, surface, sid) = furnished().await;
+    let invented = work_the_year(&surface, &sid, &room_document(), &WORKED, &[13]).await;
+    let judged = judge_all(&surface, &invented).await;
+    assert!(
+        !judged[LATE_DECEMBER[1]].held,
+        "a claim that gained a second write held the lock that says it has only its own first \
+         one, so the pairing is satisfied by anything: {}",
+        saying(&judged),
+    );
+
+    let (_room, surface, sid) = furnished().await;
+    let boundaries = worked_the_year(&surface, &sid).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[LATE_DECEMBER[0]].held && judged[LATE_DECEMBER[1]].held,
+        "the year worked properly failed one of the trace locks: {}",
         saying(&judged),
     );
 }
