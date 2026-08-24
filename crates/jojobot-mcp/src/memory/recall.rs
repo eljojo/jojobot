@@ -1299,9 +1299,27 @@ impl Jojobot {
                 }
             }
         };
+        // 🚨 **A record whose home this call did not select carries no chain,
+        // and the answer says so.** The trace hangs on the one object the
+        // record is filed under, so a caller that selected somebody else gets
+        // an answer with no `record_history` anywhere — which reads as *that
+        // claim has no trace* and is a different statement from *you did not
+        // ask about the thing it is on*.
+        let unreached = match &query.history {
+            Some(graph::History {
+                of: graph::Trace::Record(address),
+                ..
+            }) if !found.iter().any(|object| object.record_history.is_some()) => Some(format!(
+                "no writes of {address} are here: this call selected no object it is filed \
+                     under. Ask again with subject: {} to read them",
+                address.home
+            )),
+            _ => None,
+        };
         let body = serde_json::json!({
             "count": found.len(),
             "built_on": standing_on,
+            "record_history_unreached": unreached,
             // **What the selected things already hold under one key**, when the
             // call named one. It is a read of the store and never a rule: a
             // caller picks a value that is in use, or writes one that is not,
@@ -2508,6 +2526,59 @@ mod tests {
         assert!(
             plain["objects"][0].get("record_history").is_none(),
             "a call that asked for no record is not charged for one: {plain}"
+        );
+    }
+
+    /// **A record on a thing this call did not select comes back said, not
+    /// silently missing.**
+    ///
+    /// The chain hangs on the object the record is filed under, so a call that
+    /// selected somebody else gets no chain anywhere — which a reader takes as
+    /// *this claim has no trace*. Both halves: the answer says nothing when the
+    /// record WAS reached, so the marker is not noise on every ordinary call.
+    #[tokio::test]
+    async fn a_traced_record_the_call_never_selected_is_said_rather_than_missing() {
+        let jojobot = handler();
+        capture_ok(&jojobot, capture_args("alpha", "works at the old place")).await;
+        capture_ok(&jojobot, capture_args("beta", "rides to work")).await;
+
+        let elsewhere = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    history_record: Some("person:alpha#f1".into()),
+                    facts: Some(false),
+                    ..of("beta")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let said = elsewhere["record_history_unreached"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the answer says the record was not reached: {elsewhere}"));
+        assert!(
+            said.contains("person:alpha#f1"),
+            "the answer names the record and the handle to ask under: {said}"
+        );
+        // **A sentence whose whole purpose is to be read**: one line, and no
+        // run of spaces where a wrapped literal lost its continuation.
+        assert!(
+            !said.contains('\n') && !said.contains("  "),
+            "the sentence does not read as one: {said:?}"
+        );
+
+        let reached = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    history_record: Some("person:alpha#f1".into()),
+                    facts: Some(false),
+                    ..of("alpha")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert!(
+            reached["record_history_unreached"].is_null(),
+            "a chain that came back carries no marker saying it did not: {reached}"
         );
     }
 
