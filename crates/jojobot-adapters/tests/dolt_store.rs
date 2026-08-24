@@ -753,6 +753,92 @@ async fn dolt_satisfies_the_mailbox_contract() {
     store.stop().await;
 }
 
+/// 🚨 **The claim's own column keeps the moment it was taken in, and an edit
+/// does not touch it — asserted AT THE COLUMN.**
+///
+/// The contract asserts this through a read, which is the behaviour a caller
+/// sees and the right thing to pin there. **It no longer reaches this column**:
+/// a claim read projects from the write table, so the row's `inserted_at` could
+/// be re-stamped by every edit and every read would still answer correctly.
+///
+/// ⚠️ **The column is not dead**, which is why it earns a case of its own: the
+/// backfill copies from it, so a store repaired after an interrupted migration
+/// would take whatever this row holds. A re-stamp here would silently move the
+/// taken-in moment of every claim the backfill touches.
+///
+/// **Read straight out of the table** rather than through any verb, because a
+/// read that projects cannot see what this case is about.
+#[tokio::test]
+async fn an_edit_does_not_re_stamp_the_claims_own_column() {
+    let scratch = Scratch::new("restamp");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("restamp")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let subject = EntityId::person("person:kept-alpha");
+    memory
+        .add_entity(NewEntity::new(subject.clone(), "Kept Alpha", "fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+    let claim = memory
+        .capture(NewFact::about(
+            subject.clone(),
+            "was at the fair",
+            date(2026, 8, 10),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+
+    let stamped_at = |pool: sqlx::MySqlPool, id: String| async move {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT inserted_at FROM fact WHERE entity = ? AND id = ?",
+        )
+        .bind("person:kept-alpha")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .expect("the row is readable")
+    };
+    let taken_in = stamped_at(pool.clone(), claim.id.as_str().to_string()).await;
+    assert!(
+        taken_in.is_some(),
+        "the store did not stamp when it took the record in, so this case pins nothing",
+    );
+
+    memory
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                content: Some("was never at the fair".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update_fact ok")
+        .written()
+        .expect("the guard waves it through");
+
+    assert_eq!(
+        stamped_at(pool.clone(), claim.id.as_str().to_string()).await,
+        taken_in,
+        "an edit re-stamped the column that says when jojobot took the record in, which the \
+         backfill copies from",
+    );
+
+    store.stop().await;
+}
+
 /// 🚨 **The backfill is what keeps a claim written before the substrate
 /// readable, and this is what goes red without it.**
 ///
