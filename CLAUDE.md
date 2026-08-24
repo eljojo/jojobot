@@ -158,7 +158,13 @@ Shipped and live:
   That is why a count of how many times something happened and a list of the
   occasions are one body of data rather than two — and why a claim corrected to
   say the opposite can still be told from one that always said it, which a row
-  rewritten in place cannot. **The surface says so at the moment of the write**,
+  rewritten in place cannot.
+  **A claim's writes carry TWO moments and they answer different questions:**
+  when the claim first entered the record, which every write repeats unchanged,
+  and **when each write itself happened**, stamped by the store at the append.
+  ⛔️ **Conflating them gives back the wrong reading the second one exists to
+  end.** **A write appended before that column existed has no moment of its own
+  and reports as absent rather than borrowing the claim's.** **The surface says so at the moment of the write**,
   because a capability a caller does not know about does not change what the
   caller does.
 - **Fields, and what declaring a type buys** — **a record carries fields**: a
