@@ -130,7 +130,10 @@ Shipped and live:
   breadth. `recall` selects objects (a handle · a kind · a declared type · a key
   and its value, or **a value with no key, which asks whether ANY key holds it**
   — a filter naming neither is refused · **the name of a VIEW, which fills the
-  rest of the call in from that view's own keys**), says what of each comes back
+  rest of the call in from that view's own keys** · **a RECORD'S ADDRESS, which
+  selects on its own: the address names its subject, so the call fills the rest
+  in from it, and a subject naming something ELSE is refused rather than
+  reconciled**), says what of each comes back
   (facts · prose · the history of one key OR one claim), and walks to a depth in
   either direction.
   **A view is a record of kind `view`, so the one the operator declares and the
