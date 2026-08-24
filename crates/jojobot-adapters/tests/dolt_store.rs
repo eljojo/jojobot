@@ -714,3 +714,144 @@ async fn dolt_satisfies_the_mailbox_contract() {
 
     store.stop().await;
 }
+
+/// 🚨 **The backfill is what keeps a claim written before the substrate
+/// readable, and this is what goes red without it.**
+///
+/// A claim read is projected from `fact_write`. A claim's own row is still
+/// written and nothing reads it, so a claim with no write behind it is not a
+/// claim that reads partially — **it does not read at all**. Every claim in
+/// every store that predates the substrate is in exactly that state until the
+/// backfill runs, which makes the backfill load-bearing rather than tidy.
+///
+/// **The state is reached by taking the writes off a claim the store wrote
+/// itself**, so the row under test is a row this store produced rather than
+/// one this case hand-assembled. Its neighbour keeps its writes and stays
+/// readable, which says the projection went dark for THAT claim rather than
+/// for the read.
+///
+/// ⚠️ **The positive is the half that gives it meaning**: the same claim comes
+/// back WHOLE once the backfill has run — whole meaning every column, asserted
+/// against the claim as it read before its writes were taken away. A negative
+/// alone passes against a build where every read is broken.
+///
+/// **The backfill runs through the runner rather than as loose SQL.** The
+/// ledger row goes and `migrate::run` is called again, so what fills the
+/// substrate here is the migration this build ships, on the path a start takes.
+#[tokio::test]
+async fn the_backfill_is_what_makes_a_claim_older_than_the_substrate_readable() {
+    let scratch = Scratch::new("backfill");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("backfill")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let subject = EntityId::person("person:backfill-alpha");
+    memory
+        .add_entity(NewEntity::new(subject.clone(), "Backfill Alpha", "fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+
+    // **A claim carrying more than its words**, because "whole" is every column
+    // the backfill copies and a bare content would be satisfied by a fill that
+    // dropped the rest.
+    let claim = memory
+        .capture(NewFact {
+            details: Some("and stayed for the whole afternoon".into()),
+            provenance: jojobot_domain::memory::Provenance::Testimony,
+            stale_after: Some(date(2027, 1, 1)),
+            ..NewFact::about(subject.clone(), "was at the fair", date(2026, 8, 10))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+    let neighbour = memory
+        .capture(NewFact::about(
+            subject.clone(),
+            "walked home afterwards",
+            date(2026, 8, 10),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+
+    let before = memory
+        .recall(&subject)
+        .await
+        .expect("a plain read")
+        .into_iter()
+        .find(|f| f.id == claim.id)
+        .expect("the claim reads before anything is taken away");
+
+    // **The state every claim written before the substrate is in**: a row with
+    // no write behind it.
+    sqlx::query("DELETE FROM fact_write WHERE entity = ? AND fact_id = ?")
+        .bind(subject.as_str())
+        .bind(claim.id.as_str())
+        .execute(&pool)
+        .await
+        .expect("the substrate is writable");
+    let row: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact WHERE entity = ? AND id = ?")
+        .bind(subject.as_str())
+        .bind(claim.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the row is readable");
+    assert_eq!(
+        row, 1,
+        "the claim's own row went with its writes, so the case is about a deleted row rather \
+         than an empty substrate",
+    );
+
+    let dark = memory.recall(&subject).await.expect("a plain read");
+    assert!(
+        !dark.iter().any(|f| f.id == claim.id),
+        "a claim with no write behind it read back, so the reads are not projected and the \
+         backfill gates nothing: {dark:?}",
+    );
+    assert!(
+        dark.iter().any(|f| f.id == neighbour.id),
+        "the claim that kept its writes went dark too, so the read is broken rather than the \
+         substrate empty: {dark:?}",
+    );
+
+    // **The backfill, through the runner.** The ledger row is what makes a
+    // migration already-run, so taking it off is what asks for this one again.
+    for table in ["schema_migration", "schema_migration_begun"] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE version = ?"))
+            .bind("0035_fact_write_backfill")
+            .execute(&pool)
+            .await
+            .expect("the ledger is writable");
+    }
+    let applied = migrate::run(&pool).await.expect("the backfill runs again");
+    assert!(
+        applied.contains(&"0035_fact_write_backfill".to_string()),
+        "the backfill did not run, so what follows says nothing about it: {applied:?}",
+    );
+
+    let after = memory
+        .recall(&subject)
+        .await
+        .expect("a plain read")
+        .into_iter()
+        .find(|f| f.id == claim.id)
+        .expect("the backfill did not make the claim readable again");
+    assert_eq!(
+        after, before,
+        "the claim came back changed, so the backfill fills the substrate with less than the \
+         row holds",
+    );
+
+    store.stop().await;
+}
