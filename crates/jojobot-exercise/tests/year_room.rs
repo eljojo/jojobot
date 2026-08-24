@@ -1388,10 +1388,16 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
         &jojobot_exercise::lock::locks_of(expectations::YEAR_ROOM),
     )
     .await;
-    assert_eq!(
-        summary.ambiguous, 2,
-        "the walk sees a different number of ambiguous needles than the hand-check did, so it is \
-         reading the answer differently",
+    // ⚠️ **The findings come first, and the order is load-bearing.** The
+    // calibration below fires on any change to what the walk sees, so asserting
+    // it first masks the finding underneath: a planted ambiguous needle trips
+    // the count and the case never reaches the sentence that names the lock.
+    // **A red that names the wrong thing is a red nobody can act on.**
+    assert!(
+        summary.findings.is_empty(),
+        "a lock rests on a needle that matches somewhere else, with nothing else in that lock \
+         only its own sitting could satisfy: {:?}",
+        summary.findings,
     );
     assert!(
         summary.nowhere.is_empty(),
@@ -1399,10 +1405,9 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
          answer — and those are different: {:?}",
         summary.nowhere,
     );
-    assert!(
-        summary.findings.is_empty(),
-        "a lock rests on a needle that matches somewhere else, with nothing else in that lock \
-         only its own sitting could satisfy: {:?}",
-        summary.findings,
+    assert_eq!(
+        summary.ambiguous, 2,
+        "the walk sees a different number of ambiguous needles than the hand-check did, so it is \
+         reading the answer differently",
     );
 }
