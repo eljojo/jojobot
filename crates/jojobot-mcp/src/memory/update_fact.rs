@@ -163,7 +163,12 @@ impl Jojobot {
                        keys the record now carries, with the claim itself elided and said to be. \
                        The write is still verified against the store before it is called a \
                        success; what stops is shipping you the words you just sent. recall the \
-                       subject to read the record back.")]
+                       subject to read the record back. AND A REWRITE DESTROYS NOTHING: every \
+                       write of a claim is kept, so what it said before this call is still \
+                       readable — recall the subject with history_record: the address, and you \
+                       get every version of it, oldest first. So a claim you disagree with is \
+                       safe to correct: you are not deciding whether the old wording survives, \
+                       only what the claim says now.")]
     pub(crate) async fn update_fact(
         &self,
         Parameters(args): Parameters<UpdateFactArgs>,
@@ -345,11 +350,95 @@ impl Jojobot {
                 fact.subject.as_str(),
             )
         };
+        // **What this write did NOT destroy.** A session that met a
+        // conflicting claim, would not overwrite it on a guess, and wrote
+        // nothing at all had good reason while the old words were gone. They
+        // are kept now, so the receipt says so and names the call that reads
+        // them — the caution goes away because its reason does.
+        let kept = format!(
+            " What it said before is kept: recall {} with history_record: {address} to read \
+             every version of it, oldest first.",
+            fact.subject.as_str(),
+        );
+        // **The other path, named at the moment somebody is already reading.**
+        let instead = self.the_other_path(fact).await;
         format!(
-            "{address} now states what this call sent, in place of what it said before, which is \
-             not kept.{beside}{removed}"
+            "{address} now states what this call sent, in place of what it said before.{kept}\
+             {beside}{removed}{instead}"
         )
     }
+
+    /// **When a rewrite is probably the wrong verb, say which is the right one
+    /// — once, on the receipt, and never as a refusal.**
+    ///
+    /// A rewrite says the claim CHANGED; a record that was never true is what
+    /// `retract` says, with the account of why beside it. Two paid runs were
+    /// told somebody had never been at an event and reached for the edit both
+    /// times.
+    ///
+    /// ⚠️ **It names the FORK and never a diagnosis.** Nothing on the wire says
+    /// which of the two acts a caller means — a guest who was never there and
+    /// one who cancelled write the same sentence — so the line gives both and
+    /// lets the caller pick. **Asserting the first would point a cancelled
+    /// attendance at a verb that does not fit it**, which is worse than
+    /// silence.
+    ///
+    /// ⛔️ **The claim's own date does not decide it.** A record of last
+    /// month's party captured today carries today's date, so a past-only test
+    /// would miss exactly the case this was built for.
+    ///
+    /// ⛔️ **Not a gate.** Rule 58 says disproving a fact rewrites it to the
+    /// negative truth, and refusing the ordinary case would be worse than the
+    /// defect this addresses. **Empty everywhere else**, because a line on
+    /// every receipt is a line nobody reads.
+    ///
+    /// **The previous wording comes from the claim's own writes**, which is
+    /// also why the edge is read from the write BEFORE this one: a caller
+    /// following this verb's own advice clears the edge in the same call that
+    /// negates the sentence, and the record in front of us no longer says what
+    /// it was about.
+    async fn the_other_path(&self, fact: &Fact) -> String {
+        let Ok(chain) = self.memory.claim_history(&fact.address()).await else {
+            return String::new();
+        };
+        // The write before this one. A claim written once has no before, and
+        // nothing was replaced.
+        let Some(previous) = chain.iter().rev().nth(1) else {
+            return String::new();
+        };
+        let at_an_event = |edge: Option<&Edge>| {
+            edge.is_some_and(|edge| {
+                edge.shape == EdgeShape::Attendance || edge.object.kind() == Some(EntityKind::EVENT)
+            })
+        };
+        let about_an_event = fact.subject.kind() == Some(EntityKind::EVENT)
+            || at_an_event(previous.edge.as_ref())
+            || at_an_event(fact.edge.as_ref());
+        if !about_an_event || !adds_a_negation(&previous.content, &fact.content) {
+            return String::new();
+        }
+        String::from(
+            " This turns a claim about an event into its negation, and there are two different \
+             acts behind that. If the record was never true, retract says so and keeps the \
+             account of why. If it was true and has changed, this rewrite is the right verb and \
+             nothing more is needed.",
+        )
+    }
+}
+
+/// **Does the new wording say no where the old one did not?**
+///
+/// Word-wise and case-insensitive, over a small set of plain negations plus
+/// any contraction ending in `n't`. It is a heuristic and it is allowed to be:
+/// what rides on it is one advisory line, so a miss costs nothing a caller had
+/// before and a false positive costs a sentence.
+fn adds_a_negation(before: &str, after: &str) -> bool {
+    let negations = |text: &str| {
+        text.to_lowercase()
+            .split(|c: char| !c.is_alphanumeric() && c != '\'')
+            .any(|word| matches!(word, "not" | "never" | "no" | "nor") || word.ends_with("n't"))
+    };
+    negations(after) && !negations(before)
 }
 
 #[cfg(test)]
@@ -358,6 +447,146 @@ mod tests {
     use crate::harness::*;
     use crate::memory::testing::*;
     use jojobot_domain::memory::types::{Field, ValueType};
+
+    /// 🚨 **A rewrite says what it did NOT destroy**, because a caller that
+    /// does not know keeps its hands off.
+    ///
+    /// The line said the words a rewrite replaced were "not kept", and while
+    /// that was true a session met a conflicting claim, would not overwrite it
+    /// on a guess, and wrote nothing at all. A claim's writes are kept now and
+    /// a caller can read them back — and a surface that does not say so leaves
+    /// the caution in place with nothing behind it.
+    ///
+    /// The needle is the ARGUMENT that reads them, not a sentence: a phrase
+    /// breaks when the wording improves and proves nothing.
+    #[tokio::test]
+    async fn a_rewrite_says_the_words_it_replaced_are_still_readable() {
+        let jojobot = handler();
+        capture_ok(&jojobot, capture_args("alpha", "works at the old place")).await;
+
+        let edited = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    content: Some("works at the new place".into()),
+                    ..update_args("person:alpha#f1")
+                }))
+                .await
+                .expect("update ok"),
+        );
+        let said = edited["postcondition"]
+            .as_str()
+            .expect("an edit answers with a postcondition");
+        assert!(
+            said.contains("history_record"),
+            "the receipt does not say how to read what the claim used to say: {said}"
+        );
+        assert!(
+            said.contains("person:alpha#f1"),
+            "…and it names the record to ask for: {said}"
+        );
+        assert!(
+            !said.contains("not kept"),
+            "the receipt still says the old words are gone, and they are not: {said}"
+        );
+    }
+
+    /// 🚨 **Negating a claim about something that already happened names the
+    /// other path, at the moment somebody is reading a receipt.**
+    ///
+    /// A run told that somebody was never at an event rewrote the claim in
+    /// place, twice, in two paid runs. A rewrite says the claim CHANGED; a
+    /// record that was never true is what `retract` is for, and it leaves the
+    /// account of why. **The past does not change**, so a claim about a past
+    /// event turning into its own negation is the one shape where the edit is
+    /// usually the wrong verb.
+    ///
+    /// ⛔️ **It is a line, never a gate.** Rule 58 says disproving a fact
+    /// rewrites it to the negative truth, so refusing would be worse than the
+    /// defect.
+    ///
+    /// ⚠️ **The paired negative is what keeps the line worth reading**: an
+    /// ordinary rewrite, and a negation of a claim that is not about a past
+    /// event, both come back without it. A receipt that always says it is a
+    /// receipt nobody reads.
+    #[tokio::test]
+    async fn negating_a_past_event_names_retraction_and_nothing_else_does() {
+        let jojobot = handler();
+        ensure(&jojobot, "event:leaving-party").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                date: Some("2026-03-01".into()),
+                shape: Some("attendance".into()),
+                object: Some("event:leaving-party".into()),
+                ..capture_args("alpha", "was at the leaving party")
+            },
+        )
+        .await;
+        // An ordinary claim on the same thing, about no event at all.
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                date: Some("2026-03-01".into()),
+                ..capture_args("alpha", "closes the shop at six")
+            },
+        )
+        .await;
+
+        let said = async |address: &str, content: &str| {
+            json_of(
+                &jojobot
+                    .update_fact(Parameters(UpdateFactArgs {
+                        content: Some(content.into()),
+                        ..update_args(address)
+                    }))
+                    .await
+                    .expect("update ok"),
+            )["postcondition"]
+                .as_str()
+                .expect("an edit answers with a postcondition")
+                .to_string()
+        };
+
+        let negated = said("person:alpha#f1", "was NOT at the leaving party").await;
+        assert!(
+            negated.contains("retract"),
+            "a claim about a past event was negated and the other path went unnamed: {negated}"
+        );
+
+        // ⚠️ **The negative, on the same store.** A claim about no event,
+        // negated: the world changed, which is what a rewrite is for.
+        let ordinary = said("person:alpha#f2", "does NOT close the shop at six").await;
+        assert!(
+            !ordinary.contains("retract"),
+            "every negation names retraction, so the line says nothing: {ordinary}"
+        );
+
+        // A contraction says no exactly as the word does, and a caller writes
+        // one as readily. **On a claim of its own**, because f1 already says
+        // NOT: negating what is already negative adds nothing.
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                date: Some("2026-03-01".into()),
+                shape: Some("attendance".into()),
+                object: Some("event:leaving-party".into()),
+                ..capture_args("alpha", "stayed to the end of the leaving party")
+            },
+        )
+        .await;
+        let shortened = said("person:alpha#f3", "wasn't there at the end").await;
+        assert!(
+            shortened.contains("retract"),
+            "a contraction negates and went unnoticed: {shortened}"
+        );
+
+        // …and an ordinary rewrite of the event claim, which is not a negation.
+        let reworded = said("person:alpha#f1", "was at the leaving party, briefly").await;
+        assert!(
+            !reworded.contains("retract"),
+            "a rewrite that negates nothing named retraction: {reworded}"
+        );
+    }
 
     /// **An edit says what it replaced and what it left alone.**
     ///

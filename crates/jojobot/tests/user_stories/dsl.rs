@@ -1019,6 +1019,22 @@ impl Session {
         .await;
     }
 
+    /// **The receipt a correction answers with**, for a story that reads what
+    /// the write said rather than only what the store now holds.
+    pub async fn correct_reading_the_receipt(&self, address: &str, content: &str) -> Answer {
+        let body = self
+            .write(
+                &format!("correcting {address}"),
+                "update_fact",
+                json!({"address": address, "content": content}),
+            )
+            .await;
+        Answer {
+            what: format!("receipt for correcting {address}"),
+            body: body.to_string(),
+        }
+    }
+
     /// **Correct a claim into its negative and take its edge off in one edit.**
     ///
     /// Rewriting the sentence alone leaves the edge standing behind it, so a

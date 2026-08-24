@@ -297,6 +297,37 @@ async fn throwing_a_birthday_party() {
         .await;
     let after = s.shape("who is coming to the party", guests.clone()).await;
     after.says("person:maude").says("retracted");
+    // ── and the guest who was never there at all ────────────────────────────
+    //
+    // 🚨 **A different act, and the surface says so at the moment of the
+    // write.** The party is over and somebody says a guest was never at it.
+    // That is not a claim that changed — the past does not change — it is a
+    // record that was never true, which is what `retract` says and keeps the
+    // account of why. A rewrite is the ordinary verb and stays available; the
+    // receipt names the other path rather than refusing.
+    s.add("person:nelson", "Nelson").await;
+    let mistaken = s
+        .fact_about(
+            "person:nelson",
+            "was at the party",
+            "attendance",
+            "event:birthday-party",
+        )
+        .await;
+    s.correct_reading_the_receipt(&mistaken, "was NOT at the party after all")
+        .await
+        .says("retract")
+        // ⚠️ **And it says what the rewrite did not destroy**, which is the
+        // reason a session had for writing nothing at all when it met a claim
+        // it disagreed with.
+        .says("history_record");
+
+    // An ordinary correction, on the same store, carries neither line: a
+    // receipt that always says it is one nobody reads.
+    s.correct_reading_the_receipt(&patana_eats, "eats fish as well")
+        .await
+        .never_says("retract");
+
     // The guest whose yes still stands is still reached, so the retraction took
     // one link and not the walk. **Which link carries the marker is not
     // something a whole-answer assertion can say** — that is pinned per link in
