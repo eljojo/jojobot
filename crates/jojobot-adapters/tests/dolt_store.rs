@@ -578,7 +578,24 @@ async fn a_record_the_build_ships_is_in_no_table_of_the_real_store() {
 
     let shipped = EntityId("view:loops".into());
     let theirs = EntityId("view:my-people".into());
-    let bare = DoltMemory::open(pool.clone());
+    let supplied = Provisions::new(vec![jojobot_domain::memory::owned::Provision::record(
+        jojobot_domain::memory::Entity {
+            id: shipped.clone(),
+            kind: jojobot_domain::memory::EntityKind::VIEW,
+            name: "The Loops".into(),
+            aliases: Vec::new(),
+            source: "jojobot".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+        },
+        std::collections::BTreeMap::from([("selects".to_string(), "rhythm".to_string())]),
+    )]);
+    // **Both halves are told the same set**, as the binary wires it: the layer
+    // above resolves supplied records into answers, and the store below sees
+    // them when its guard asks what exists.
+    let bare = DoltMemory::open(pool.clone()).knowing(supplied.clone());
     bare.add_entity(jojobot_domain::memory::NewEntity::new(
         theirs.clone(),
         "My People",
@@ -589,23 +606,7 @@ async fn a_record_the_build_ships_is_in_no_table_of_the_real_store() {
     .written()
     .expect("an empty board blocks nothing");
 
-    let served = Provisioned::new(
-        bare,
-        Provisions::new(vec![jojobot_domain::memory::owned::Provision::record(
-            jojobot_domain::memory::Entity {
-                id: shipped.clone(),
-                kind: jojobot_domain::memory::EntityKind::VIEW,
-                name: "The Loops".into(),
-                aliases: Vec::new(),
-                source: "jojobot".into(),
-                crm: None,
-                parent: None,
-                boot: Default::default(),
-                merged_into: None,
-            },
-            std::collections::BTreeMap::from([("selects".to_string(), "rhythm".to_string())]),
-        )]),
-    );
+    let served = Provisioned::new(bare, supplied);
 
     // ① The shipped record answers, over the real store.
     assert_eq!(
@@ -629,6 +630,43 @@ async fn a_record_the_build_ships_is_in_no_table_of_the_real_store() {
     assert!(
         rows.contains(&theirs.to_string()),
         "the operator's own record is in the table: {rows:?}",
+    );
+
+    // 🚨 ④ **A claim may point at it**, over the real store. The guard reads
+    // what the store holds, and a guard that could not see what the build
+    // supplies refused a claim pointing at a record every read answers for.
+    let who = EntityId::person("person:milhouse");
+    served
+        .add_entity(jojobot_domain::memory::NewEntity::new(
+            who.clone(),
+            "Milhouse",
+            "user-named",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("an empty board blocks nothing");
+    let written = served
+        .capture(NewFact {
+            edge: Some(jojobot_domain::memory::Edge {
+                shape: jojobot_domain::memory::EdgeShape::About,
+                object: shipped.clone(),
+            }),
+            ..NewFact::about(
+                who,
+                "asked for that view twice this week",
+                date(2026, 4, 18),
+            )
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("a claim may point at a record the build ships");
+    // **The edge landed rather than being dropped on the way in.**
+    assert_eq!(
+        written.edge.map(|edge| edge.object),
+        Some(shipped),
+        "the write was allowed and the link was lost",
     );
 
     store.stop().await;

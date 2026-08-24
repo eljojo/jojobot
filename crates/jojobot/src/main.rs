@@ -156,9 +156,14 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
 
+    // **One set, read by both halves.** The layer above resolves what the
+    // build supplies into an answer; the store below has to see the same set
+    // when its guard decides whether a handle names anything, or a claim
+    // pointing at a supplied record is refused as naming nothing.
+    let supplied = jojobot_mcp::provisions();
     let memory: Arc<dyn Memory> = Arc::new(Provisioned::new(
-        DoltMemory::open(store.pool().clone()),
-        jojobot_mcp::provisions(),
+        DoltMemory::open(store.pool().clone()).knowing(supplied.clone()),
+        supplied,
     ));
 
     // **The kinds, before anything reads a handle.** Every kind this instance

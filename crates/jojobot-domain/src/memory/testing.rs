@@ -71,6 +71,16 @@ pub struct InMemoryMemory {
     /// Which declarations are a kind's. The real store carries this on the row;
     /// here it is the same fact kept beside the rows.
     kind_keys: Mutex<std::collections::BTreeSet<String>>,
+    /// **What the build supplies over this store**, for the one question a
+    /// guard asks: does this handle name something that exists?
+    ///
+    /// A read resolves supplied records above the store and the guard reads
+    /// only the rows, so the two halves disagree about what exists — and the
+    /// guard is the half that fails silently, refusing a claim that points at
+    /// something a read answers for. The real store holds this for the same
+    /// reason and the fake has to, or the case proving it passes here and
+    /// fails there.
+    supplied: Mutex<crate::memory::owned::Provisions>,
 }
 
 impl InMemoryMemory {
@@ -94,6 +104,14 @@ impl InMemoryMemory {
             .map(|token| (token.to_string(), crate::memory::types::Origin::Shipped))
             .collect();
         fake
+    }
+
+    /// **The store, told what the build supplies over it.** Only the existence
+    /// guard reads it: nothing is stored, nothing is listed, and a read still
+    /// resolves supplied records in the layer above.
+    pub fn knowing(self, supplied: crate::memory::owned::Provisions) -> Self {
+        *self.supplied.lock().expect("fake mutex poisoned") = supplied;
+        self
     }
 
     /// **A store that has been booted** — the fake, plus the step a startup
@@ -223,16 +241,33 @@ impl InMemoryMemory {
             .push(entity);
     }
 
-    /// The entity index the write guard screens against.
+    /// The entity index the creation screen reads: the rows this store holds.
     fn index(&self) -> Vec<Entity> {
         self.entities.lock().expect("fake mutex poisoned").clone()
     }
 
-    /// **Append what a write said about a record's keys**, each taking the next
-    /// ordinal for its own (thing, key) — never for the record.
+    /// **What EXISTS, as an existence gate has to see it**: the rows, plus what
+    /// the build supplies over this store.
     ///
-    /// A value of `None` is a clear: the key stops being current and the writes
-    /// that put it there stay where they are.
+    /// A read resolves a supplied record and a gate reading only the rows
+    /// refused a claim pointing at one — the two halves disagreeing about what
+    /// exists, with the gate as the half that fails silently. **A stored row
+    /// wins**, so nothing the operator wrote is shadowed.
+    ///
+    /// ⛔️ **The creation screen keeps the narrower set on purpose.** Whether a
+    /// caller may declare a name that RESEMBLES one the build ships is a
+    /// different question from whether a claim may point at one, and widening
+    /// both at once answers the second by changing the first.
+    fn known(&self) -> Vec<Entity> {
+        let mut known = self.index();
+        for (entity, _) in self.supplied.lock().expect("fake mutex poisoned").records() {
+            if !known.iter().any(|held| held.id == entity.id) {
+                known.push(entity.clone());
+            }
+        }
+        known
+    }
+
     /// **Keep this write of the claim**, beside the row it just rewrote — the
     /// same act the real store takes in `write_fact`, so every verb that
     /// produces a claim leaves a write behind here too.
@@ -253,6 +288,11 @@ impl InMemoryMemory {
         ));
     }
 
+    /// **Append what a write said about a record's keys**, each taking the next
+    /// ordinal for its own (thing, key) — never for the record.
+    ///
+    /// A value of `None` is a clear: the key stops being current and the writes
+    /// that put it there stay where they are.
     fn append_writes<I>(&self, home: &EntityId, fact: &FactId, wrote: I)
     where
         I: IntoIterator<Item = (String, Option<String>)>,
@@ -469,7 +509,9 @@ impl Memory for InMemoryMemory {
 
         // Every entity this write names must already exist — the subject first,
         // then the edge's object. Nothing here provisions.
-        let index = self.index();
+        //
+        // **What EXISTS**, which is the rows plus what the build supplies.
+        let index = self.known();
         if let Decision::Block(candidates) = guard::decide_existing(&fact.subject, &index) {
             return Ok(Guarded::Blocked {
                 attempted: fact.subject,
@@ -728,7 +770,7 @@ impl Memory for InMemoryMemory {
         // screened before anything is rewritten.
         if let Some(edge) = &patch.edge {
             validate_edge(edge)?;
-            if let Decision::Block(candidates) = guard::decide_existing(&edge.object, &self.index())
+            if let Decision::Block(candidates) = guard::decide_existing(&edge.object, &self.known())
             {
                 return Ok(Guarded::Blocked {
                     attempted: edge.object.clone(),
@@ -743,7 +785,7 @@ impl Memory for InMemoryMemory {
             &patch.fields,
             &self.types.lock().expect("fake mutex poisoned"),
         ) {
-            if let Decision::Block(candidates) = guard::decide_existing(&object, &self.index()) {
+            if let Decision::Block(candidates) = guard::decide_existing(&object, &self.known()) {
                 return Ok(Guarded::Blocked {
                     attempted: object,
                     candidates,

@@ -606,6 +606,58 @@ mod tests {
     /// list and not read. **And the store is asked directly at the end** —
     /// without that, a layer that quietly wrote the record down would pass, and
     /// the instance would be frozen on the build that wrote it.
+    /// 🚨 **A claim may point at a record the build ships.**
+    ///
+    /// A read resolves what the build supplies and the write guard read only
+    /// the stored rows, so the two halves disagreed about what exists: `recall`
+    /// answered for `view:loops` and a claim drawing an edge at it was refused
+    /// as an entity nobody knows. **And the way out the refusal offered made it
+    /// worse** — a caller doing what it said would mint a stored row for a name
+    /// the build already owns, which is the collision the guard exists to
+    /// prevent.
+    ///
+    /// ⚠️ **The pair is that the edge LANDS and resolves**, not merely that the
+    /// refusal is gone: a build that waved the write through and dropped the
+    /// edge would pass a check for the absence of a block.
+    #[tokio::test]
+    async fn a_claim_may_point_at_a_record_the_build_ships() {
+        let store = InMemoryMemory::booted();
+        let supplied = Provisions::new(vec![shipped_record("loops")]);
+        let over = Provisioned::new(store.knowing(supplied.clone()), supplied);
+        over.add_entity(jojobot_domain::memory::NewEntity::new(
+            EntityId::person("person:milhouse"),
+            "Milhouse",
+            "the operator",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("an empty board blocks nothing");
+
+        let written = over
+            .capture(NewFact {
+                edge: Some(jojobot_domain::memory::Edge {
+                    shape: jojobot_domain::memory::EdgeShape::About,
+                    object: EntityId("view:loops".into()),
+                }),
+                ..NewFact::about(
+                    EntityId::person("person:milhouse"),
+                    "asked for that view twice this week",
+                    Date::constant(2026, 4, 18),
+                )
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("a claim may point at a record the build ships");
+
+        let edge = written
+            .edge
+            .expect("the edge landed rather than being dropped on the way in");
+        assert_eq!(edge.object, EntityId("view:loops".into()));
+        assert_eq!(edge.shape, jojobot_domain::memory::EdgeShape::About);
+    }
+
     #[tokio::test]
     async fn a_record_the_build_ships_answers_like_a_stored_one_and_is_stored_nowhere() {
         let store = InMemoryMemory::booted();

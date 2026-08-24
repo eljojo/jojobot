@@ -140,6 +140,66 @@ async fn a_session_told_nothing_finds_the_view_path_and_composes_a_real_question
     story.finish().await;
 }
 
+/// 🚨 **A claim may point at a view the software ships.**
+///
+/// "Ask for the loops one again — that is the second time this week."
+///
+/// A session recording that draws a claim on the person with an edge at the
+/// view, exactly as it would at any other record. **The read answered for the
+/// view and the write guard refused it**, because the guard consulted the
+/// stored rows while the read resolved what the build supplies — the two halves
+/// disagreeing about what exists.
+///
+/// ⚠️ **And the refusal's advice made it worse**: a caller that did what it
+/// said would create a stored record for a handle the build already owns.
+///
+/// ⭐ **The pair is that the edge LANDS and comes back pointing where it was
+/// sent.** A build that waved the write through and dropped the edge would
+/// satisfy "the refusal is gone" and lose the link.
+#[tokio::test]
+async fn a_claim_can_point_at_a_view_the_software_ships() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("person:milhouse", "Milhouse").await;
+
+    // The read answers for the shipped view — the half that always worked.
+    s.recall("view:loops").await.says("view:loops");
+
+    let asked = s
+        .fact_about(
+            "person:milhouse",
+            "asked for the loops view again, second time this week",
+            "about",
+            "view:loops",
+        )
+        .await;
+
+    // **The edge landed and it points where it was sent.**
+    s.recall("person:milhouse")
+        .await
+        .claim(&asked)
+        .says("\"object\":\"view:loops\"")
+        .says("second time this week");
+
+    // ⭐ **And the link is walkable**, which is what an edge is for: what points
+    // at the shipped view comes back by asking the view.
+    s.shape(
+        "what points at the loops view",
+        json!({
+            "subject": "view:loops",
+            "follow": {"shape": "about", "direction": "in"},
+        }),
+    )
+    .await
+    .says("person:milhouse");
+
+    s.wrap("recorded that the operator keeps asking for one view")
+        .await;
+
+    story.finish().await;
+}
+
 /// The boot's skill index carries this skill by name, with no body.
 fn booted_names_the_skill(booted: &serde_json::Value) {
     let skills = booted["skills"].as_array().expect("the boot lists skills");

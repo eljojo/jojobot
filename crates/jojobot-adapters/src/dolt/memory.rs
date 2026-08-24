@@ -29,6 +29,7 @@
 
 use async_trait::async_trait;
 use jiff::civil::Date;
+use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::{
     ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress,
     FactId, FactPatch, FactStatus, FieldWrite, Guarded, KeyWrite, Memory, MemoryError, Merge,
@@ -58,6 +59,13 @@ pub struct DoltMemory {
     /// collision path can be watched through the verb that mints: entropy will
     /// not produce a collision on demand.
     draw: Draw,
+    /// **What the build supplies over this store**, for the one question the
+    /// existence guard asks: does this handle name something that exists?
+    ///
+    /// Nothing here is written and nothing is listed to a caller. It is read
+    /// where a guard would otherwise see only the stored rows and refuse a
+    /// claim pointing at a record every read answers for.
+    supplied: Provisions,
 }
 
 impl DoltMemory {
@@ -75,13 +83,31 @@ impl DoltMemory {
         DoltMemory {
             pool,
             draw: ids::drawing(),
+            supplied: Provisions::default(),
         }
+    }
+
+    /// **The store, told what the build supplies over it.** Only the existence
+    /// guard reads it: nothing is stored, nothing is listed, and a read still
+    /// resolves supplied records in the layer above.
+    ///
+    /// A guard that consults what the store holds has to see what the build
+    /// supplies as well, or the two halves disagree about what exists — a read
+    /// answers for a record and a write pointing at it is refused as naming
+    /// nothing.
+    pub fn knowing(mut self, supplied: Provisions) -> Self {
+        self.supplied = supplied;
+        self
     }
 
     /// The same store over a supplied draw, **so the collision path can be
     /// watched through the verb that mints**.
     pub fn open_drawing(pool: MySqlPool, draw: Draw) -> Self {
-        DoltMemory { pool, draw }
+        DoltMemory {
+            pool,
+            draw,
+            supplied: Provisions::default(),
+        }
     }
 
     /// **Give a badge to every row written before the column existed.**
@@ -131,6 +157,24 @@ impl DoltMemory {
     /// it**: what is near a handle cannot be decided from a subset, and a
     /// screen over half the index is a screen that reports a free name as free
     /// when it is not.
+    /// **What EXISTS, as a guard has to see it**: the rows the store holds,
+    /// plus what the build supplies over it.
+    ///
+    /// A read resolves a supplied record in the layer above, and a guard that
+    /// consulted only the rows refused a claim pointing at one — the two halves
+    /// disagreeing about what exists, with the guard as the half that fails
+    /// silently. **A stored row wins**, so nothing the operator wrote is
+    /// shadowed by what the build ships.
+    async fn known(&self, tx: &mut Transaction<'_, MySql>) -> Result<Vec<Entity>, MemoryError> {
+        let mut known = Self::index(tx).await?;
+        for (entity, _) in self.supplied.records() {
+            if !known.iter().any(|held| held.id == entity.id) {
+                known.push(entity.clone());
+            }
+        }
+        Ok(known)
+    }
+
     async fn index(tx: &mut Transaction<'_, MySql>) -> Result<Vec<Entity>, MemoryError> {
         let rows = sqlx::query(
             "SELECT id, kind, name, source, crm, parent, boot, merged_into FROM entity ORDER BY id",
@@ -891,7 +935,9 @@ impl Memory for DoltMemory {
         let standing = standing_of(&fact);
 
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = Self::index(&mut tx).await?;
+        // **What EXISTS**, which is the rows plus what the build supplies —
+        // never the narrower set the creation screen reads.
+        let index = self.known(&mut tx).await?;
         // Every entity this write names must already exist — the subject first,
         // then the edge's object, then anything the record points at. Nothing
         // here provisions.
@@ -1152,7 +1198,9 @@ impl Memory for DoltMemory {
         patch: FactPatch,
     ) -> Result<Guarded<Fact>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = Self::index(&mut tx).await?;
+        // **What EXISTS**, for the same reason `capture` reads it: an edge may
+        // point at a record the build supplies.
+        let index = self.known(&mut tx).await?;
         // An edge's object names an entity, so an edit that attaches one is an
         // entity-touching write and faces the guard — screened before anything
         // is rewritten.

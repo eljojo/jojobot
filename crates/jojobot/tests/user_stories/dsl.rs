@@ -255,7 +255,11 @@ impl Story {
 
     /// The store, plus what this build supplies over it.
     fn wired(store: InMemoryMemory) -> Provisioned<InMemoryMemory> {
-        Provisioned::new(store, jojobot_mcp::provisions())
+        // **Both halves are told the same set**, exactly as the binary wires
+        // it: the layer above resolves supplied records into answers and the
+        // store below sees them when its guard asks what exists.
+        let supplied = jojobot_mcp::provisions();
+        Provisioned::new(store.knowing(supplied.clone()), supplied)
     }
 
     /// **Serve a jojobot on an instance an older build left behind** — a store
