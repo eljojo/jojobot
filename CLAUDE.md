@@ -464,7 +464,11 @@ roles and never an operator.
   touched. **Assert the edit reached THAT site**, and prove the case moves when
   its own guard breaks and stays still when an independent one does. ⚠️
   **Choosing an independent neighbour is the hard part — reasoning about which
-  one is independent is not enough. Run it.**
+  one is independent is not enough. Run it.** ⭐ **And the same holds for which
+  of two mechanisms is producing a result you are about to build on:** a
+  plausible, documented, entirely real hazard can be the wrong explanation for
+  the case in front of you, and only printing what the code actually saw tells
+  the two apart.
 - 🚨 **A needle that is a PHRASE is weakened by approximate matching.** Search
   matches by stem and needs most of a query's terms, so a multi-word needle can
   match a record that shares one word with it. **Assert on one distinctive
