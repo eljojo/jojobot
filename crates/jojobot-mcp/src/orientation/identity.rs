@@ -414,6 +414,67 @@ mod tests {
         assert_eq!(boxes.len(), 1, "{boxes:?}");
     }
 
+    /// 🚨 **A run that says it is months later finds no session of its own
+    /// still running.**
+    ///
+    /// A sitting acting out a year finishes in real minutes, so measured on the
+    /// clock nothing an earlier sitting left is ever stale — and every sitting
+    /// after the first meets a resume-or-new choice for a run that is months
+    /// over, with no operator to answer it. **Two sittings of a paid year run
+    /// spent their whole turn at that choice and recorded nothing.**
+    ///
+    /// ⚠️ **Both halves, and the second is what stops the sweep closing
+    /// everything**: a run whose last beat is the stated YESTERDAY is still
+    /// working, and the boot that meets it is handed the choice rather than a
+    /// fresh handle. A sweep that closed that one would take a session away
+    /// from somebody who went to bed.
+    ///
+    /// **Through the door**, because the domain's own case proves the rule and
+    /// not that the day a caller states reaches it.
+    #[tokio::test]
+    async fn a_boot_months_later_sweeps_the_run_an_earlier_day_left() {
+        let jojobot = handler();
+        // **A bot with no run of its own yet**, so every session here is one
+        // this case made: the fixture's identity already carries one, and a
+        // boot meeting it would be answering a choice about somebody else's.
+        make_bot(&jojobot, "gamma").await;
+
+        // January, and it leaves a beat carrying the day it says it is.
+        let january = sid_of(&boot_on(&jojobot, "gamma", "2026-01-12").await)
+            .expect("a first boot hands back a handle");
+        journal_entry(&jojobot, &january, "set the year up").await;
+
+        // June, the same identity. The January run is months past its last
+        // beat in the frame this caller states.
+        let june = boot_on(&jojobot, "gamma", "2026-06-01").await;
+        assert!(
+            june["session"]["swept"]
+                .as_array()
+                .is_some_and(|swept| !swept.is_empty()),
+            "the run January left was not swept, so a sitting months later meets it live: {june}"
+        );
+        assert!(
+            sid_of(&june).is_some(),
+            "the boot handed back no handle, so this sitting spends its turn on a choice: {june}"
+        );
+
+        // ⚠️ **The half that stops the sweep taking everything.** A run whose
+        // newest beat is the stated yesterday is still working.
+        let yesterday = sid_of(&boot_on(&jojobot, "gamma", "2026-06-10").await)
+            .expect("a boot with nothing live hands back a handle");
+        journal_entry(&jojobot, &yesterday, "working late").await;
+        let tomorrow = boot_on(&jojobot, "gamma", "2026-06-11").await;
+        assert_eq!(
+            tomorrow["session"]["swept"].as_array().map(Vec::len),
+            Some(0),
+            "a run that went quiet overnight was closed on somebody: {tomorrow}"
+        );
+        assert!(
+            sid_of(&tomorrow).is_none(),
+            "the run from yesterday was not offered back, which is what resume is for: {tomorrow}"
+        );
+    }
+
     /// 🚨 **A rule's staleness is read in the day the run states.**
     ///
     /// The boot is where a run states its day, and it was the one read that
