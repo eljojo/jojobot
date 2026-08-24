@@ -206,8 +206,16 @@ Shipped and live:
   decide something must see what the build SUPPLIES as well.** A read that
   resolves supplied records while the guard beside it reads only stored ones is
   the two halves disagreeing about what exists — and the guard is the half that
-  fails silently, letting a caller take a name the build already uses. **This
-  holds for one guard today and nothing yet enforces the rest.** **`rhythm` is a shipped
+  fails silently, letting a caller take a name the build already uses.
+  **The EXISTENCE gate honours it, across both stores: a store is told what the
+  build supplies over it, and its gate reads the rows plus that set with a
+  stored row winning — asking the same resolver the read layer asks, so it holds
+  no inventory.** So a claim may name or point at a supplied record.
+  ⛔️ **The CREATION screen deliberately does NOT read that wider set**, because
+  whether a caller may declare a name RESEMBLING one the build ships is an
+  undecided design question rather than a defect, and widening it there refuses
+  declarations that should stand. ⚠️ **Every other such guard is still
+  unenforced, and only the doubled contract makes that mechanical.** **`rhythm` is a shipped
   KIND and it declares every key its loop uses** — a name
   and the day of the last check-in are required; the cadence in days, the day
   the next cycle counts from, which of the two dates a late check-in advances
