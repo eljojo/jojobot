@@ -35,7 +35,9 @@ const THE_TORQUE_WRENCH_IS_UNTOUCHED: usize = 6;
 const THE_FURNITURE: [usize; 2] = [THE_JUKEBOX_IS_UNTOUCHED, THE_TORQUE_WRENCH_IS_UNTOUCHED];
 
 /// How many locks the room carries.
-const LOCKS: usize = 7;
+const THE_TOTAL_OWED: usize = 7;
+
+const LOCKS: usize = 8;
 
 /// What the run would report, given the locks that held and no others.
 fn only(held: &[usize]) -> Vec<bool> {
@@ -179,14 +181,46 @@ async fn worked_the_cold_phase(room: &Surface, sid: &str) {
     }
 }
 
-/// **The room is two phases, the second cold, and each is one line.**
+/// **The settling phase, done properly.** The sitting reads every job, learns
+/// from the declaration which word means owing, adds those costs up, and puts
+/// the total where the operator asked for it.
+///
+/// **55 + 25 + 18 + 60.** The torque wrench and the gravel bike were invoiced
+/// already; the kettle and the air filter became invoiced when the cold phase
+/// put them right. The jukebox and the floor pump are paid and are not owing.
+async fn worked_the_settling_phase(room: &Surface, sid: &str) {
+    settled_with(room, sid, "158").await;
+}
+
+/// **What the settling phase records, whatever it worked out.**
+///
+/// The wrong routes go through here too, and each is a plausible one: the brief
+/// names two jobs, so a sitting reaching for the most recent word rather than
+/// the record answers 60; a sitting that finds the jobs but not the word adds
+/// them all and answers 373. **Each is a number, recorded under the key that
+/// was asked for, and wrong** — which is what a sum buys over a keyword.
+async fn settled_with(room: &Surface, sid: &str, owed: &str) {
+    as_the_occupant(
+        room,
+        sid,
+        "capture",
+        json!({
+            "subject": "org:springfield-cyclery", "content": "what is still owing across the jobs",
+            "provenance": "inference",
+            "fields": {"owed": owed},
+        }),
+    )
+    .await;
+}
+
+/// **The room is three phases, the last two cold, and each is one line.**
 #[test]
-fn the_room_is_two_phases_and_the_second_has_no_memory() {
+fn the_room_is_three_phases_and_the_last_two_have_no_memory() {
     let room = room_document();
     assert_eq!(
         room.phases.len(),
-        2,
-        "the room is a goal and its cold question: {:?}",
+        3,
+        "the room is a goal and the two cold questions that follow it: {:?}",
         room.phases.iter().map(|p| &p.name).collect::<Vec<_>>(),
     );
     for phase in &room.phases {
@@ -325,12 +359,13 @@ async fn a_room_nobody_worked_in_fails_every_lock_but_the_furniture() {
     }
 }
 
-/// **The room both phases worked properly leaves.**
+/// **The room every phase worked properly leaves.**
 #[tokio::test]
-async fn every_check_holds_once_both_phases_are_worked() {
+async fn every_check_holds_once_every_phase_is_worked() {
     let (_room, surface, sid) = furnished().await;
     worked_the_first_phase(&surface, &sid).await;
     worked_the_cold_phase(&surface, &sid).await;
+    worked_the_settling_phase(&surface, &sid).await;
 
     let outcomes = judge_all(&surface).await;
     for outcome in &outcomes {
@@ -517,4 +552,91 @@ async fn the_question_the_cold_phase_asks_can_be_answered() {
             "{thing} carries one of the operator's own words and was marked anyway: {asked}",
         );
     }
+}
+
+/// 🚨 **The lock that asks whether the sitting READ, rather than whether the
+/// record holds something.**
+///
+/// Every other lock in this repository is satisfied by the right thing being
+/// there. This one is satisfied only by a number that no route but the intended
+/// one produces — so it is the first assertion here that can tell a sitting
+/// which reached the record from one which answered from the last thing it was
+/// told.
+///
+/// **Both halves, and the wrong half is the one that matters.** A missing
+/// answer reddening proves nothing this room did not already prove; what has to
+/// redden is a sitting that answered confidently, recorded a number under the
+/// key it was asked for, and got there the wrong way.
+#[tokio::test]
+async fn the_total_owed_separates_reading_the_record_from_answering_off_the_brief() {
+    // ① EVERY wrong route, each answered confidently. **A wrong route is a
+    //    different PLAY rather than a different assertion**, so one of them
+    //    reddening says nothing about the others: a lock that happened to
+    //    reject 60 and accept 373 would separate one route and no more.
+    for (owed, route) in [
+        ("60", "the jobs the brief last named"),
+        ("373", "every job on the record, settled or not"),
+        ("215", "the jobs already settled"),
+        ("98", "the four the room was furnished with"),
+        ("4", "how many jobs are owing rather than what they come to"),
+    ] {
+        let (_room, surface, sid) = furnished().await;
+        worked_the_first_phase(&surface, &sid).await;
+        worked_the_cold_phase(&surface, &sid).await;
+        settled_with(&surface, &sid, owed).await;
+        let judged = judge_all(&surface).await;
+        assert!(
+            !judged[THE_TOTAL_OWED].held,
+            "a sitting that answered with {route} recorded {owed} and held the lock, so the \
+             number does not separate that route from reading the record: {}",
+            saying(&judged),
+        );
+    }
+
+    // ② The intended route: every job read, the operator's own word for owing
+    //    taken from the declaration, those costs added up.
+    let (_room, surface, sid) = furnished().await;
+    worked_the_first_phase(&surface, &sid).await;
+    worked_the_cold_phase(&surface, &sid).await;
+    worked_the_settling_phase(&surface, &sid).await;
+    let judged = judge_all(&surface).await;
+    assert!(
+        judged[THE_TOTAL_OWED].held,
+        "the sitting that read every job and added the owing ones up failed the lock: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **The planted answer is absent from the entry that asks for it.**
+///
+/// A number the entry states is a number the sitting can write down without
+/// reading anything, and a lock on it measures nothing. **The same holds for
+/// the word that means owing**: the operator says *still owing*, and which of
+/// their three words that is lives in the declaration the first phase left.
+///
+/// ⚠️ **The settling entry alone, and the scope is the point.** The phase
+/// before it does say `invoiced` — it is the word that phase exists to put
+/// right — and that is not a leak, because the occupant who reads it is gone
+/// before this question is asked. **Every phase here is cold.** Asking this of
+/// the whole document would fail on a line that is doing its job, which is what
+/// the first draft of this case did.
+#[test]
+fn the_settling_entry_says_neither_the_number_nor_the_word() {
+    let room = room_document();
+    let settling = room.phases.last().expect("the room has a settling phase");
+    for leaked in ["158", "invoiced", "55", "25", "18"] {
+        assert!(
+            !settling.prompt.contains(leaked),
+            "{} hands the occupant {leaked:?}, so the total is reachable without reading the \
+             record and the lock on it measures nothing: {:?}",
+            settling.name,
+            settling.prompt,
+        );
+    }
+    assert!(
+        settling.fresh_session,
+        "{} carries the phase before it on, so its occupant has already been told which word \
+         means owing",
+        settling.name,
+    );
 }

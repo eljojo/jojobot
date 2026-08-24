@@ -49,6 +49,7 @@ entity  thing:kettle | The Kettle
 entity  thing:the-air-filter | The Air Filter
 entity  thing:floor-pump | The Floor Pump
 entity  thing:gravel-bike | The Gravel Bike
+entity  org:springfield-cyclery | Springfield Cyclery
 
 record  thing:jukebox | {"cost": "180", "settled": "paid"} | new valves
 record  thing:torque-wrench | {"cost": "55", "settled": "invoiced"} | calibration
@@ -125,6 +126,39 @@ say     the jukebox's job no longer says paid, so a word that was already right 
 recall {"subject": "thing:torque-wrench"}
 carries "settled":"invoiced"
 say     the torque wrench's job no longer says invoiced, so a word that was already right was painted over
+```
+
+## Phase 3 — settling up
+
+**Session: fresh.** No memory of either phase before it.
+
+> start jojobot as assistant — the cyclery wants settling up. What am I still owing them, across all the jobs? Put the total on the shop under `owed` so I do not have to work it out again.
+
+```locks
+# 🚨 **A NUMBER ONLY THE RIGHT READ PRODUCES.** Every other lock in this
+# repository asks whether something is on the record. This one asks whether the
+# sitting REACHED it, which no store can otherwise tell: the answer to *which of
+# these did the occupant read* looks the same afterwards either way.
+#
+# **The operator says *still owing* and never says which word that is.** The
+# mapping lives in the declaration phase one left, so the number is reachable
+# only by finding the jobs, learning which word means owing, and adding the
+# costs up. **Nothing in this document says any of it.**
+#
+# ⚠️ **Every wrong route gives a different number, which is the point of a sum
+# over a keyword.** The two jobs this operator last mentioned come to 60. Every
+# job on the record comes to 373. The ones already settled come to 215. The
+# four the room was furnished with come to 98. **Only reading all six and
+# selecting on the operator's own word gives 158**, and a near miss is a
+# readable wrong answer rather than something a person has to adjudicate.
+#
+# ⚠️ **The key is named by the operator rather than left to the occupant.** A
+# lock on a key somebody invented measures whoever chose the word; naming it
+# keeps the question about the number. Asking for it under a name is in
+# character for an operator who has already said which three words they use.
+recall {"subject": "org:springfield-cyclery"}
+carries "owed":"158"
+say     the shop does not carry what is still owing, so either the sitting did not reach the jobs or it worked the total out from something other than what is on the record
 ```
 
 ## What this room cannot measure
