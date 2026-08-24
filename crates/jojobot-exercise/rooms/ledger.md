@@ -106,25 +106,40 @@ say     the chain job is not on the gravel bike under the keys the older jobs us
 > start jojobot as assistant — some of the jobs on there are filled in with words I do not use, and I want those ones saying invoiced instead
 
 ```locks
+# ⚠️ **Each of these names the COST as well as the word, and the cost is not
+# what this phase is about.** The settling phase's total is computed over these
+# six costs, and a value a check computes over has to be locked where it lives:
+# without these lines a sitting could move a cost, the settling sitting could
+# read the record correctly, and the only red would name the sitting that did
+# everything right while the job that moved sat green under its own lock.
+#
+# **The condition is about the INPUTS rather than about the phase.** This phase
+# was fully locked before these lines and every one of its locks was about the
+# word.
+#
 # The two jobs the cold session is here for. **The fold, for the reason phase
 # one gives**: what the thing holds now IS the question, and these two must have
 # stopped holding the word nobody agreed to.
 recall {"subject": "thing:kettle"}
 carries "settled":"invoiced"
+carries "cost":"25"
 say     the kettle still carries the word nobody agreed to, or its job lost its word altogether
 
 recall {"subject": "thing:the-air-filter"}
 carries "settled":"invoiced"
+carries "cost":"18"
 say     the air filter still carries the word nobody agreed to, or its job lost its word altogether
 
 # The positive the two above rest on. A session that painted every job the same
 # word leaves no word nobody agreed to and has answered nothing.
 recall {"subject": "thing:jukebox"}
 carries "settled":"paid"
+carries "cost":"180"
 say     the jukebox's job no longer says paid, so a word that was already right was painted over
 
 recall {"subject": "thing:torque-wrench"}
 carries "settled":"invoiced"
+carries "cost":"55"
 say     the torque wrench's job no longer says invoiced, so a word that was already right was painted over
 ```
 

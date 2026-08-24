@@ -640,3 +640,75 @@ fn the_settling_entry_says_neither_the_number_nor_the_word() {
         settling.name,
     );
 }
+
+/// **Move one job's cost, leaving its word alone.**
+async fn moved_the_cost(room: &Surface, sid: &str, subject: &str, to: &str) {
+    let read = room
+        .call("recall", json!({"subject": subject, "facts": true}))
+        .await;
+    let parsed: Value = serde_json::from_str(&read).expect("the read is json");
+    let address = parsed["objects"][0]["facts"]
+        .as_array()
+        .and_then(|facts| facts.iter().find(|fact| fact["fields"]["cost"].is_string()))
+        .and_then(|fact| fact["address"].as_str())
+        .unwrap_or_else(|| panic!("no job on {subject} carries a cost: {read}"))
+        .to_string();
+    as_the_occupant(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": address, "fields": {"cost": to}}),
+    )
+    .await;
+}
+
+/// 🚨 **Every value the total is computed from is locked, so a moved input
+/// reddens where it moved.**
+///
+/// **The settling lock computes over six costs and six words.** The words are
+/// all locked and two of the costs are. **The other four were locked by
+/// nothing** — so a sitting could move one, the settling sitting could read the
+/// record correctly and record the honest total for that state, and the ONLY
+/// red would name the sitting that did everything right, while the thing that
+/// moved sat green under its own lock.
+///
+/// ⚠️ **This is the condition a planted answer has to meet, and it is about the
+/// INPUTS rather than about the phase.** The phase before the settling one is
+/// fully locked and always was; its locks are about the word, and the number is
+/// computed from the cost. **A fully locked phase can leave every input of a
+/// sum unwatched.**
+///
+/// **One play per input, because an input is a different play rather than a
+/// different assertion** — a room that pinned one cost and not the others would
+/// pass a case that moved only that one.
+#[tokio::test]
+async fn a_moved_cost_reddens_the_lock_on_the_job_that_moved() {
+    for (subject, at, was, now) in [
+        ("thing:kettle", THE_KETTLE_IS_PUT_RIGHT, "25", "30"),
+        (
+            "thing:the-air-filter",
+            THE_AIR_FILTER_IS_PUT_RIGHT,
+            "18",
+            "20",
+        ),
+        ("thing:jukebox", THE_JUKEBOX_IS_UNTOUCHED, "180", "190"),
+        (
+            "thing:torque-wrench",
+            THE_TORQUE_WRENCH_IS_UNTOUCHED,
+            "55",
+            "65",
+        ),
+    ] {
+        let (_room, surface, sid) = furnished().await;
+        worked_the_first_phase(&surface, &sid).await;
+        worked_the_cold_phase(&surface, &sid).await;
+        moved_the_cost(&surface, &sid, subject, now).await;
+        let judged = judge_all(&surface).await;
+        assert!(
+            !judged[at].held,
+            "{subject}'s cost moved from {was} to {now} and its own lock held, so the total the \
+             settling phase is asked for is computed over a value nothing is watching: {}",
+            saying(&judged),
+        );
+    }
+}
