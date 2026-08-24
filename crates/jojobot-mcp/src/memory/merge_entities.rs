@@ -61,7 +61,7 @@ impl Jojobot {
         }
         let duplicate = EntityId(args.duplicate.trim().to_string());
         let survivor = EntityId(args.survivor.trim().to_string());
-        let date = parse_date(args.date.as_deref(), &self.zone_for(args.sid.as_deref()))?;
+        let date = self.dated(args.date.as_deref(), args.sid.as_deref())?;
 
         let done = match self
             .memory

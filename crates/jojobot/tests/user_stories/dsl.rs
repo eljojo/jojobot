@@ -503,6 +503,25 @@ impl Story {
         Session { client, sid }
     }
 
+    /// **A new session that says which DAY it is working in**, on its own
+    /// connection — the run that is not happening now.
+    ///
+    /// `resume` answers the choice a second boot of one bot is handed, exactly
+    /// as it does for a run in a named zone.
+    pub async fn session_on(&self, day: &str, resume: Option<&str>) -> Session {
+        let client = self.connect().await;
+        let mut args = json!({"bot": self.bot, "brief": true, "today": day});
+        if let Some(answer) = resume {
+            args["resume"] = json!(answer);
+        }
+        let booted = call(&client, "start_here", args).await;
+        let sid = booted["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("boot on {day} handed back no handle: {booted}"))
+            .to_string();
+        Session { client, sid }
+    }
+
     /// A new session's own boot, whole — the essay included. `.session()`
     /// takes `brief` on every other story, because they act after booting;
     /// this exists for a story whose whole point is what a full boot itself

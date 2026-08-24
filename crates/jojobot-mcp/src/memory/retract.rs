@@ -67,7 +67,7 @@ impl Jojobot {
             return Ok(refused);
         }
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
-        let date = parse_date(args.date.as_deref(), &self.zone_for(args.sid.as_deref()))?;
+        let date = self.dated(args.date.as_deref(), args.sid.as_deref())?;
 
         let taken_back = match self
             .memory

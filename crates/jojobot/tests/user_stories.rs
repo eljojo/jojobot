@@ -17,6 +17,9 @@ mod support;
 // the folder is named explicitly.
 #[path = "user_stories/around_a_day.rs"]
 mod around_a_day;
+/// A run that is not happening now, and the day it says it is in.
+#[path = "user_stories/backdated.rs"]
+mod backdated;
 #[path = "user_stories/bikes.rs"]
 mod bikes;
 #[path = "user_stories/boot.rs"]

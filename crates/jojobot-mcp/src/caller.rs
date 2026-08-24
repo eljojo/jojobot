@@ -174,6 +174,44 @@ impl Jojobot {
         }
     }
 
+    /// **Which day this call is about**, in the caller's own frame: the date
+    /// they named, else the day their run stated at the door, else today on
+    /// the clock in their zone.
+    ///
+    /// 🚨 **The run's stated day is what makes a write land in the period the
+    /// run is working in.** A session acting out March announces that day at
+    /// the door; its beats and its sweep already read it, and without this its
+    /// CLAIMS were stamped with the day the run actually happened. The prose
+    /// such a run writes is in period, so nothing in the store says the date is
+    /// wrong (rule 222).
+    ///
+    /// **A date the caller named still wins**, because a run acting out a
+    /// period records claims about other days and that is most of what it is
+    /// for. **A run that stated no day still gets the clock**, so the frame
+    /// stays an option rather than a requirement.
+    ///
+    /// A handle this process is not holding contributes no frame, exactly as
+    /// [`Jojobot::zone_for`] answers one: whether such a call is allowed is
+    /// decided before this, never here.
+    pub(crate) fn dated(
+        &self,
+        named: Option<&str>,
+        sid: Option<&str>,
+    ) -> Result<jiff::civil::Date, McpError> {
+        let caller = self.caller(sid).ok().flatten();
+        let zone = caller
+            .as_ref()
+            .map_or(jiff::tz::TimeZone::UTC, Caller::zone);
+        match (
+            named.map(str::trim).filter(|day| !day.is_empty()),
+            caller.and_then(|caller| caller.day),
+        ) {
+            (Some(named), _) => crate::memory::parse::parse_date(Some(named), &zone),
+            (None, Some(stated)) => Ok(stated),
+            (None, None) => crate::memory::parse::parse_date(None, &zone),
+        }
+    }
+
     /// **A handle that is present must be good, even where carrying one is
     /// optional.**
     ///

@@ -424,7 +424,7 @@ impl Jojobot {
         let checked_in = args.check_in.is_some();
         let subject = EntityId::person(&args.subject);
         let provenance = parse_provenance(args.provenance.as_deref())?;
-        let date = parse_date(args.date.as_deref(), &self.zone_for(args.sid.as_deref()))?;
+        let date = self.dated(args.date.as_deref(), args.sid.as_deref())?;
         let edge = match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
             Ok(edge) => edge,
             Err(refused) => return Ok(refused),
@@ -499,10 +499,7 @@ impl Jojobot {
                 // reading still stands today — and the read that follows this
                 // write answers as of today, so a receipt answering as of the
                 // claim's day contradicts it inside one session.
-                let mut body = fact_receipt_json(
-                    &fact,
-                    parse_date(None, &self.zone_for(args.sid.as_deref()))?,
-                );
+                let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref())?);
                 if self.receipts.delta {
                     crate::answer::note_delta(
                         &mut body,
@@ -1832,6 +1829,104 @@ mod tests {
         assert_ne!(
             behind, ahead,
             "…which are never the same day, whatever hour this runs at",
+        );
+    }
+
+    /// 🚨 **A run that stated its day writes under that day, not under the
+    /// server's.**
+    ///
+    /// The door takes the day a run is in, and the sweep and the beats already
+    /// read it. A CLAIM did not: a session acting out March made every write
+    /// under the day the run actually happened, and the prose it wrote was
+    /// perfectly in period, so nothing in the store said the date was wrong.
+    ///
+    /// ⚠️ **Three halves, and each alone passes on a build nobody wants.** A
+    /// run that stated no day must still get today, or the frame becomes a
+    /// requirement rather than an option. And a write naming its own date must
+    /// still win, or a run acting out a period can no longer record a claim
+    /// about any other day — which is most of what such a run is for.
+    #[tokio::test]
+    async fn a_run_that_stated_its_day_writes_under_it() {
+        let jojobot = handler();
+        make_bot(&jojobot, "otto").await;
+        ensure(&jojobot, "person:milhouse").await;
+        // **Answering `new`**, because the fixture handle already has a run of
+        // this bot in flight and a boot meeting one hands back a choice rather
+        // than a handle.
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    bot: Some("otto".into()),
+                    today: Some("2026-03-15".into()),
+                    resume: Some("new".into()),
+                    brief: Some(true),
+                    timezone: None,
+                    skill: None,
+                    sid: None,
+                }))
+                .await
+                .expect("the boot call is ok"),
+        );
+        let acting =
+            sid_of(&booted).unwrap_or_else(|| panic!("a boot that states a day: {booted}"));
+
+        let mut args = capture_args("milhouse", "went to the fair");
+        args.sid = Some(acting.clone());
+        args.date = None;
+        let stated = capture_ok(&jojobot, args).await;
+        assert_eq!(
+            stated["date"], "2026-03-15",
+            "the claim was stamped with the server's day, not the run's: {stated}"
+        );
+
+        // **A write naming its own date still wins.** A run acting out a period
+        // records claims about other days, and this is how.
+        let mut args = capture_args("milhouse", "had been at the fair the day before");
+        args.sid = Some(acting.clone());
+        args.date = Some("2026-03-14".into());
+        let named = capture_ok(&jojobot, args).await;
+        assert_eq!(named["date"], "2026-03-14");
+
+        // **A second run states another day, and the first one's frame does not
+        // reach it.** Two runs of one bot are legitimately in two periods, and
+        // the handle is what tells them apart.
+        let elsewhere = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    bot: Some("otto".into()),
+                    today: Some("2026-07-04".into()),
+                    resume: Some("new".into()),
+                    brief: Some(true),
+                    timezone: None,
+                    skill: None,
+                    sid: None,
+                }))
+                .await
+                .expect("the boot call is ok"),
+        );
+        let mut args = capture_args("milhouse", "was at the parade");
+        args.sid = sid_of(&elsewhere);
+        args.date = None;
+        let second = capture_ok(&jojobot, args).await;
+        assert_eq!(
+            second["date"], "2026-07-04",
+            "the second run wrote under the first one's day: {second}"
+        );
+
+        // ⚠️ **A run that stated no day still gets today**, on the clock in its
+        // own zone. Without this the frame stops being optional.
+        let now = booted_in(&jojobot, "otto", "Etc/GMT+12", Some("new")).await;
+        let mut args = capture_args("milhouse", "happening now");
+        args.sid = Some(now);
+        args.date = None;
+        let clocked = capture_ok(&jojobot, args).await;
+        assert_eq!(
+            clocked["date"],
+            jiff::Timestamp::now()
+                .to_zoned(jiff::tz::TimeZone::get("Etc/GMT+12").expect("a zone"))
+                .date()
+                .to_string(),
+            "a run that stated no day was answered with somebody else's frame: {clocked}"
         );
     }
 

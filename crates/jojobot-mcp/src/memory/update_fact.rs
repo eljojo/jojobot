@@ -224,10 +224,7 @@ impl Jojobot {
                     args.sid.as_deref(),
                 )
                 .await;
-                let mut body = fact_receipt_json(
-                    &fact,
-                    parse_date(None, &self.zone_for(args.sid.as_deref()))?,
-                );
+                let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref())?);
                 if self.receipts.delta {
                     crate::answer::note_delta(&mut body, declared.not_stored(&fact));
                 }
