@@ -155,7 +155,9 @@ Shipped and live:
   That is why a count of how many times something happened and a list of the
   occasions are one body of data rather than two — and why a claim corrected to
   say the opposite can still be told from one that always said it, which a row
-  rewritten in place cannot.
+  rewritten in place cannot. **The surface says so at the moment of the write**,
+  because a capability a caller does not know about does not change what the
+  caller does.
 - **Fields, and what declaring a type buys** — **a record carries fields**: a
   flat bag of key/value pairs beside the claim, where a key the caller invents is
   kept as written and a key some type declared is held to what that type says.
