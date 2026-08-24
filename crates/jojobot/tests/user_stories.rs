@@ -26,6 +26,9 @@ mod bikes;
 mod boot;
 #[path = "user_stories/challenge.rs"]
 mod challenge;
+/// A rule settled by reading it at its address, not by taking somebody's word.
+#[path = "user_stories/citing.rs"]
+mod citing;
 #[path = "user_stories/colleagues.rs"]
 mod colleagues;
 #[path = "user_stories/contracts.rs"]
