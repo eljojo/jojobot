@@ -200,9 +200,15 @@ async fn an_investigation_keeps_what_it_ruled_out() {
 
     // The record is taken back rather than corrected: it did not happen the
     // way it was written down, so the reading stands as something that was
-    // said and is marked withdrawn, where a rewrite would leave one claim and
-    // no trace that anybody ever read it off the wrong host. Nothing is
+    // said and is marked withdrawn, where a rewrite would leave one claim
+    // reading as current truth with the account of why nowhere. Nothing is
     // removed — the record keeps its address and reads as retracted.
+    //
+    // ⚠️ **A rewrite would keep the old wording**, in the claim's own writes,
+    // so the choice here is no longer about whether anything survives. It is
+    // about what the record SAYS: retracted marks the reading as withdrawn and
+    // carries the reason, where a corrected one would read as a measurement
+    // somebody stands behind.
     s.retract(&reading, "the status word was read off a different host")
         .await;
     s.recall("machine:sigma")

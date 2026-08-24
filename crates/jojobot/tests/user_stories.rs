@@ -35,6 +35,9 @@ mod colleagues;
 mod contracts;
 #[path = "user_stories/coordinating.rs"]
 mod coordinating;
+/// Whether a record was always right, or was wrong and got fixed.
+#[path = "user_stories/corrected.rs"]
+mod corrected;
 #[path = "user_stories/counting.rs"]
 mod counting;
 #[path = "user_stories/curveball.rs"]
