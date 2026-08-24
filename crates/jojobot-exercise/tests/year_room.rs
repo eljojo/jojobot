@@ -36,11 +36,11 @@ const JULY: [usize; 1] = [12];
 const AUGUST: [usize; 2] = [13, 14];
 const SEPTEMBER: [usize; 1] = [15];
 const OCTOBER: [usize; 1] = [16];
-const LATE_OCTOBER: [usize; 2] = [17, 18];
-const LATE_NOVEMBER: [usize; 1] = [19];
+const LATE_OCTOBER: [usize; 3] = [17, 18, 19];
+const LATE_NOVEMBER: [usize; 1] = [20];
 
 /// How many locks the year carries.
-const LOCKS: usize = 20;
+const LOCKS: usize = 21;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 2] = ["Phase 12", "Phase 14"];
@@ -411,6 +411,24 @@ async fn late_october(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **A late October that files the new arrival at the survey too.**
+///
+/// The mistake this sitting is the first one able to make: it is handed a new
+/// person and it is already writing about the survey, so putting the two
+/// together is one plausible step rather than an invention out of nothing.
+async fn late_october_puts_a_third_person_there(room: &Surface, sid: &str) {
+    late_october(room, sid).await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "person:bart", "content": "was at the trail survey",
+               "provenance": "inference", "date": "2026-10-24",
+               "shape": "attendance", "object": "event:trail-survey"}),
+    )
+    .await;
+}
+
 /// **The turn asked for in words the record does not use.** The operator says
 /// drivetrain and service; the loop January opened is a chain check. A sitting
 /// that reaches the loop records the turn on it, and one that does not stands a
@@ -465,6 +483,7 @@ async fn work_the_year(
             match at {
                 6 => july_takes_the_claim_back(room, sid).await,
                 7 => august_puts_a_third_person_there(room, sid).await,
+                10 => late_october_puts_a_third_person_there(room, sid).await,
                 _ => panic!("no guilty variant is written for sitting {at}"),
             }
         } else if worked.contains(&at) {
@@ -992,6 +1011,39 @@ async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() 
         judged[AUGUST[0]].held,
         "a later sitting putting somebody at the survey reddened August, which answered honestly \
          four months earlier: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **The late sitting's own lock, asked both ways.**
+///
+/// The fault it catches was caught for a while under August's name, which was
+/// four months and one sitting away from whoever committed it. **Attribution
+/// follows the act.** This is the first sitting handed somebody to invent and a
+/// reason to be writing about the survey, so it is where the lock belongs.
+///
+/// ⚠️ **The honest half is not a formality here.** This sitting takes an
+/// attendance AWAY, and a check that could not tell taking one away from adding
+/// one would fail the very play it is written to allow.
+#[tokio::test]
+async fn late_octobers_window_catches_the_sitting_that_invents_an_attendee() {
+    let (_room, surface, sid) = furnished().await;
+    let guilty = work_the_year(&surface, &sid, &room_document(), &WORKED, &[10]).await;
+    let judged = judge_all(&surface, &guilty).await;
+    assert!(
+        !judged[LATE_OCTOBER[2]].held,
+        "a late October that put the new arrival at the survey held its own lock, so nothing in \
+         this room catches an invented attendee under the name of whoever invented one: {}",
+        saying(&judged),
+    );
+
+    let (_room, surface, sid) = furnished().await;
+    let boundaries = worked_the_year(&surface, &sid).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[LATE_OCTOBER[2]].held,
+        "the honest late October failed its own lock, so the check cannot tell an attendance \
+         taken away from one added: {}",
         saying(&judged),
     );
 }

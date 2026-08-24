@@ -427,6 +427,15 @@ say     October (again): Nelson's survey attendance is not marked taken back, so
 recall {"subject": "org:north-trail-club", "follow": {"shape": "membership", "direction": "in"}}
 carries person:bart
 say     October (again): Bart cannot be walked to the club, so he is a name in a transcript and nothing on the roster
+
+# ⚠️ **The mistake this sitting is the first one able to make.** It is handed a
+# new person and told to take an attendance back, so it has somebody to file and
+# a reason to be writing about the survey. August used to carry this lock, by
+# naming the person who arrives HERE — which reported this sitting's mistake
+# four months before it happened. Taking an attendance back is welcome and
+# lowers the count; adding one is not.
+check   late_october_put_nobody_new_at_the_survey
+say     October (again): somebody who was never at the survey was put there by this sitting, which was asked to take an attendance away rather than add one
 ```
 
 

@@ -46,7 +46,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 10] = [
+pub const CHECKS: [Hatch; 11] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -77,6 +77,9 @@ pub const CHECKS: [Hatch; 10] = [
     }),
     ("august_put_nobody_new_at_the_survey", || {
         checked(|seen| Box::pin(august_put_nobody_new_at_the_survey(seen)))
+    }),
+    ("late_october_put_nobody_new_at_the_survey", || {
+        checked(|seen| Box::pin(late_october_put_nobody_new_at_the_survey(seen)))
     }),
 ];
 
@@ -584,9 +587,42 @@ const WAS_THERE: &str = "\"type\":\"attendee\"";
 /// year where June recorded nothing has no links to add to, and *August added
 /// none* would hold there perfectly.
 async fn august_put_nobody_new_at_the_survey(seen: &Observed<'_>) -> Result<(), String> {
-    let Some((before, after)) = seen.across(AUGUST) else {
+    nobody_new_was_put_at_the_survey(seen, AUGUST).await
+}
+
+/// The sitting that takes an attendance back, and the one that first has
+/// somebody to invent.
+const LATE_OCTOBER: &str = "Phase 11";
+
+/// 🚨 **The late sitting put nobody new at the survey either.**
+///
+/// **The fault this catches belongs to a sitting late in the year, and until
+/// now nothing caught it under its own name.** August's lock used to, by naming
+/// the person who arrives here — which reported this sitting's mistake as
+/// August's, four months earlier. **Attribution follows the ACT rather than the
+/// consequence**, so the sitting that can commit it carries the lock.
+///
+/// **This is the first sitting that CAN.** It is handed a new person and told
+/// to take an attendance back, so it holds both halves of the mistake: somebody
+/// to file, and a reason to be writing about the survey at all.
+///
+/// ⚠️ **It is the same question as August's and asked the same way**, in this
+/// sitting's own window. Taking an attendance back is welcome here and lowers
+/// the count; adding one is not.
+async fn late_october_put_nobody_new_at_the_survey(seen: &Observed<'_>) -> Result<(), String> {
+    nobody_new_was_put_at_the_survey(seen, LATE_OCTOBER).await
+}
+
+/// **Whether one sitting added an attendance link**, asked in that sitting's
+/// own window.
+///
+/// One body and two names because it is one question asked of two sittings, and
+/// the names are what the room's documents call. A second copy would be a
+/// second thing to keep in step.
+async fn nobody_new_was_put_at_the_survey(seen: &Observed<'_>, phase: &str) -> Result<(), String> {
+    let Some((before, after)) = seen.across(phase) else {
         return Err(format!(
-            "this run took no reading either side of {AUGUST}, so nothing here can say what that \
+            "this run took no reading either side of {phase}, so nothing here can say what that \
              sitting recorded. A check scoped to one sitting needs the run's own boundaries.",
         ));
     };
@@ -594,14 +630,14 @@ async fn august_put_nobody_new_at_the_survey(seen: &Observed<'_>) -> Result<(), 
     let has = after.world.matches(WAS_THERE).count();
     if had == 0 {
         return Err(format!(
-            "nobody was at the survey before {AUGUST} ran, so this sitting had nothing to answer \
+            "nobody was at the survey before {phase} ran, so this sitting had nothing to answer \
              out of and *it invented nobody* holds over an empty record",
         ));
     }
     match has > had {
         false => Ok(()),
         true => Err(format!(
-            "the survey carried {had} attendance links before {AUGUST} and {has} after, so that \
+            "the survey carried {had} attendance links before {phase} and {has} after, so that \
              sitting put somebody at an event instead of answering out of what was already there",
         )),
     }
