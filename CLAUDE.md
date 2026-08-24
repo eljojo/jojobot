@@ -131,7 +131,8 @@ Shipped and live:
   and its value, or **a value with no key, which asks whether ANY key holds it**
   — a filter naming neither is refused · **the name of a VIEW, which fills the
   rest of the call in from that view's own keys**), says what of each comes back
-  (facts · prose · one key's history), and walks to a depth in either direction.
+  (facts · prose · the history of one key OR one claim), and walks to a depth in
+  either direction.
   **A view is a record of kind `view`, so the one the operator declares and the
   one the build supplies are the same shape and nothing branches on which.**
   **The build supplies a charter and two views**, assembled in one place — a
