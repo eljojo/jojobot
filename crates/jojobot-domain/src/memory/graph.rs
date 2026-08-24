@@ -255,6 +255,18 @@ pub struct Selection {
 }
 
 impl Selection {
+    /// **Does this selection choose anything at all?**
+    ///
+    /// A selection that narrows nothing is a request for the whole store,
+    /// which is not a question — and it is also what a caller who named only a
+    /// record to trace has sent, so the two readers of this condition are the
+    /// refusal and the fill that makes the refusal unnecessary. One definition,
+    /// because a second could come to disagree about what counts as a
+    /// question.
+    pub fn narrows_nothing(&self) -> bool {
+        self.subject.is_none() && self.kind.is_none() && !self.filters_facts()
+    }
+
     /// Is there a filter here beyond the object's own properties? Kind and
     /// subject are properties of the object itself.
     fn filters_facts(&self) -> bool {
@@ -576,7 +588,7 @@ impl GraphQuery {
     /// no store would keep, a key that is no key, a walk of no hops.
     pub fn validate(&self) -> Result<(), MemoryError> {
         let select = &self.select;
-        if select.subject.is_none() && select.kind.is_none() && !select.filters_facts() {
+        if select.narrows_nothing() {
             return Err(MemoryError::InvalidQuery(
                 "name what to recall: a subject, a kind, a type, or a key".into(),
             ));

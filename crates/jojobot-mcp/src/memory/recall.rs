@@ -235,6 +235,13 @@ pub struct RecallArgs {
     /// say every correction happened at once. What is recorded is the ORDER,
     /// and each write carries its place in it.
     ///
+    /// **The address is selection enough.** Send it on its own and the read
+    /// answers about the thing the address names — you do not have to repeat
+    /// the subject beside it. Name a `subject` as well and it has to be that
+    /// same thing, or the call is refused: two arguments pointing at two
+    /// things is a mistake worth hearing about rather than one jojobot picks
+    /// between.
+    ///
     /// Omit it and no chain comes back, which is the normal read.
     #[serde(default)]
     pub(crate) history_record: Option<String>,
@@ -969,7 +976,10 @@ impl Jojobot {
                        made from one somebody made and got wrong. No write carries a moment, \
                        because the substrate records the ORDER and not when each correction \
                        happened; every write carries its place in that order. Name a key or a \
-                       record, never both. A long history comes back CUT to its newest \
+                       record, never both. AN ADDRESS IS SELECTION ENOUGH: history_record on \
+                       its own answers about the thing its address names, so you do not repeat \
+                       the subject beside it — and naming a subject that is something else is \
+                       refused rather than guessed at. A long history comes back CUT to its newest \
                        twenty, saying how many exist and how many it left out; history_most \
                        raises the window when you really want the far end, for either half. VALUES names a key \
                        and answers with the values the selected objects already hold under it, \
@@ -1219,6 +1229,41 @@ impl Jojobot {
             follow,
             history: trace,
         };
+        // 🚨 **An address is a selection.** A record's address contains its
+        // subject, and a call that named only a record to trace was refused for
+        // naming nothing to recall — which is what the first two callers of
+        // this argument both met on their first use (rule 236). The subject is
+        // filled in from the address when the call chose nothing else, and the
+        // condition is the refusal's own, so the two cannot come to disagree.
+        let mut query = query;
+        if let Some(graph::History {
+            of: graph::Trace::Record(address),
+            ..
+        }) = &query.history
+        {
+            match &query.select.subject {
+                // **The two DISAGREEING is the case worth a refusal.** A
+                // caller whose arguments point at two different things has made
+                // a mistake, and answering one of them quietly picks for them.
+                Some(named) if named != &address.home => {
+                    let named = named.clone();
+                    let address = address.clone();
+                    return memory_declined(
+                        "recall",
+                        MemoryError::InvalidQuery(format!(
+                            "this call traces {address}, which is a record on {}, and asks for \
+                             {named}. Drop the subject — the address names its own — or name the \
+                             record you meant on {named}",
+                            address.home,
+                        )),
+                    );
+                }
+                None if query.select.narrows_nothing() => {
+                    query.select.subject = Some(address.home.clone());
+                }
+                _ => {}
+            }
+        }
 
         let graph::Selected {
             objects: mut found,
@@ -2620,6 +2665,71 @@ mod tests {
         );
     }
 
+    /// 🚨 **An address is a selection: tracing a record needs no subject beside
+    /// it.**
+    ///
+    /// The address contains its subject, and the call demanded the subject
+    /// anyway — so the first two callers of the trace were both refused on
+    /// their first use, each having read the argument's own description
+    /// (rule 236).
+    ///
+    /// ⚠️ **Paired, and the negative is what gives it meaning:** a subject that
+    /// names something else is refused rather than quietly answered. The
+    /// positive alone passes against a build that ignores the subject
+    /// entirely, and a caller whose two arguments disagree has made a mistake
+    /// worth hearing about.
+    #[tokio::test]
+    async fn a_traced_record_is_selection_enough_and_a_contradicting_subject_is_refused() {
+        let jojobot = handler();
+        capture_ok(&jojobot, capture_args("alpha", "works at the old place")).await;
+        jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                content: Some("works at the new place".into()),
+                ..update_args("person:alpha#f1")
+            }))
+            .await
+            .expect("update ok");
+        ensure(&jojobot, "person:beta").await;
+
+        // **The address alone.** No subject, no kind, no filter.
+        let alone = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    history_record: Some("person:alpha#f1".into()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            alone["objects"][0]["id"], "person:alpha",
+            "the address names its own subject and the read did not use it: {alone}"
+        );
+        assert_eq!(
+            alone["objects"][0]["record_history"]["count"], 2,
+            "the chain the caller asked for is not here: {alone}"
+        );
+
+        // ⚠️ **A subject that contradicts the address.**
+        let refused = blocked(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("beta".into()),
+                    history_record: Some("person:alpha#f1".into()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("a malformed query is an answer, not a protocol failure"),
+        );
+        let way = refused["how_to_proceed"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a refusal says the way out: {refused}"));
+        assert!(
+            way.contains("person:alpha") && way.contains("person:beta"),
+            "the refusal names both things the call pointed at: {way}"
+        );
+    }
+
     /// **A record on a thing this call did not select comes back said, not
     /// silently missing.**
     ///
@@ -2631,14 +2741,20 @@ mod tests {
     async fn a_traced_record_the_call_never_selected_is_said_rather_than_missing() {
         let jojobot = handler();
         capture_ok(&jojobot, capture_args("alpha", "works at the old place")).await;
-        capture_ok(&jojobot, capture_args("beta", "rides to work")).await;
+        ensure(&jojobot, "org:guild").await;
 
+        // **A selection that does not contradict the address and does not
+        // reach it either.** A subject naming something else is a refusal —
+        // the two arguments point at different things — where a KIND is a
+        // legitimate question whose answer simply does not include the record's
+        // home.
         let elsewhere = json_of(
             &jojobot
                 .recall(Parameters(RecallArgs {
+                    kind: Some("org".into()),
                     history_record: Some("person:alpha#f1".into()),
                     facts: Some(false),
-                    ..of("beta")
+                    ..of_nothing()
                 }))
                 .await
                 .expect("recall ok"),
@@ -2662,7 +2778,7 @@ mod tests {
                 .recall(Parameters(RecallArgs {
                     history_record: Some("person:alpha#f1".into()),
                     facts: Some(false),
-                    ..of("alpha")
+                    ..of_nothing()
                 }))
                 .await
                 .expect("recall ok"),
