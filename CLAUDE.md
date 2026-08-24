@@ -520,11 +520,16 @@ roles and never an operator.
   for a pass. **Build the workspace in the same command as the run.** ⚠️ **And
   the same trap reads the other way: a REFUSAL you did not expect may be the
   old binary publishing the old schema rather than a second copy of a rule.**
-- ⚠️ **A verdict comes from the exit code of the command you ran, so do not
-  hand a pipeline to something that reports one.** A run piped through `grep`
-  reports `grep`'s exit code, and the tool faithfully repeats it — **green,
-  with the failing names printed directly above it.** The instrument is not at
-  fault and should not second-guess what it was given. **Drop the pipe.**
+- ⚠️ **An exit code belongs to the LAST command in the pipeline, so any verdict
+  you read through a filter is reporting the filter.** A run piped through
+  `grep` reports `grep`'s exit code, and a tool handed that pipeline faithfully
+  repeats it. **It lies in BOTH directions and the second one is the surprise:**
+  a `grep` for failures that finds none exits 1, so **the cleaner the run, the
+  more certain the false alarm** — and a `grep` that finds a failure exits 0,
+  which reads as green with the failing names printed directly above it. ⛔️
+  **The instrument is not at fault and must not second-guess what it was
+  given.** ⭐ **Do not pipe the verdict at all: redirect to a log and read the
+  code — the only form with nothing to get wrong.**
 - **Inserting code directly above an attribute orphans it onto what you
   inserted.** A `#[test]` or `#[cfg(test)]` line binds to the item below it, so
   a new item slipped in between takes the attribute and the old one loses it.
