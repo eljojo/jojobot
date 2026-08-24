@@ -1,0 +1,18 @@
+-- When each write of a claim happened, which is not when the claim first
+-- entered the store.
+--
+-- **Every write row copied the CLAIM's original moment.** A claim corrected
+-- three times reported three writes carrying one identical timestamp, and the
+-- chain is readable now, so a reader takes that field at face value: it reads
+-- as *these three happened at once*, which is false, where saying nothing
+-- would have been true. A wrong field is worse than an absent one.
+--
+-- **The existing column on the claim's own row is untouched and keeps its
+-- meaning**: `fact.inserted_at` is when jojobot took the record in, and a
+-- caller asking that is asking a real question. This answers the other one.
+--
+-- **Nothing is backfilled.** A row an older build appended has no moment of
+-- its own, and the only value available to fill it with is the claim's — which
+-- is exactly the wrong reading this column exists to end. It stays NULL, and a
+-- read reports it as absent.
+ALTER TABLE fact_write ADD COLUMN written_at VARCHAR(40) NULL;

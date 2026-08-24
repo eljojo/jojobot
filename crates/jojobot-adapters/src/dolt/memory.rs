@@ -482,9 +482,11 @@ impl DoltMemory {
     /// the value it is meant to be deciding. Everything is versioned or nothing
     /// is (rule 201).
     ///
-    /// ⚠️ **Nothing reads this yet.** The claim's own row is still what every
-    /// read answers from, so this changes no answer — which is what makes an
-    /// interrupted slice here leave the store exactly as it found it.
+    /// **The write is stamped with the moment IT happened**, beside the claim's
+    /// own first-recorded moment which it carries unchanged. A claim taken in
+    /// last April and corrected in September has one of the first and two of
+    /// the second, and a row copying the claim's would report both corrections
+    /// at one instant.
     async fn append_fact_write(
         tx: &mut Transaction<'_, MySql>,
         fact: &Fact,
@@ -500,8 +502,9 @@ impl DoltMemory {
         sqlx::query(
             "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
                                      standing, status, date, edge_shape, edge_object,
-                                     derived_from, derived_from_id, inserted_at, stale_after)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                     derived_from, derived_from_id, inserted_at, stale_after,
+                                     written_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
@@ -518,6 +521,9 @@ impl DoltMemory {
         .bind(fact.derived_from.as_ref().map(|d| d.local.as_str()))
         .bind(fact.inserted_at.map(|t| t.to_string()))
         .bind(fact.stale_after.map(|d| d.to_string()))
+        // **Stamped here and nowhere else.** The claim's own moment is carried
+        // above, never re-stamped; this is the moment this write happened.
+        .bind(jiff::Timestamp::now().to_string())
         .execute(&mut **tx)
         .await
         .map_err(store)?;
@@ -1049,7 +1055,7 @@ impl Memory for DoltMemory {
         // uses.** One row shape and one reader: a second would be a second
         // place for the columns to drift.
         let rows = sqlx::query(&format!(
-            "SELECT w.ordinal, {FACT_WRITE_COLUMNS} FROM fact_write w
+            "SELECT w.ordinal, w.written_at, {FACT_WRITE_COLUMNS} FROM fact_write w
              WHERE w.entity = ? AND w.fact_id = ? ORDER BY w.ordinal"
         ))
         .bind(address.home.as_str())
@@ -1074,6 +1080,12 @@ impl Memory for DoltMemory {
         let mut history = Vec::with_capacity(rows.len());
         for row in &rows {
             let ordinal: i64 = row.try_get("ordinal").map_err(store)?;
+            // **A row an older build appended carries none**, and it reads as
+            // absent rather than being filled from the claim.
+            let written_at = row
+                .try_get::<Option<String>, _>("written_at")
+                .map_err(store)?
+                .and_then(|at| at.parse::<jiff::Timestamp>().ok());
             // **Fields and references are left empty rather than read.** They
             // are versioned by their own substrate and by nothing here, so
             // reading today's keys onto a write from a year ago would report
@@ -1085,7 +1097,7 @@ impl Memory for DoltMemory {
                 Default::default(),
                 Vec::new(),
             )?;
-            history.push(ClaimWrite::of(&fact, ordinal.max(0) as usize));
+            history.push(ClaimWrite::of(&fact, ordinal.max(0) as usize, written_at));
         }
         Ok(history)
     }

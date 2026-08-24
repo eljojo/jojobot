@@ -354,6 +354,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
              AND w.fact_id = fact.id)",
         ),
     },
+    Migration {
+        version: "0036_fact_write_moment",
+        sql: include_str!("../../migrations/0036_fact_write_moment.sql"),
+        leaves: Leaves::Column("fact_write", "written_at"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -756,6 +761,7 @@ mod tests {
         "0033_entity_merged_into",
         "0034_fact_write",
         "0035_fact_write_backfill",
+        "0036_fact_write_moment",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

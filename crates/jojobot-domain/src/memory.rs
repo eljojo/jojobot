@@ -2501,21 +2501,29 @@ pub struct FieldWrite {
 /// key. A key's writes are counted across every record that touched it; a
 /// claim's writes belong to one claim.
 ///
-/// ⚠️ **A write carries no moment, because the substrate does not record one.**
-/// Every write of a claim copies the moment the claim first entered the store,
-/// so a moment reported per write would say three corrections happened at once
-/// — false, where saying nothing is true. What the substrate knows is the
-/// ORDER, and that is [`ClaimWrite::ordinal`].
+/// **A write says when it happened**, which is not when the claim first
+/// entered the store: a claim taken in last April and corrected in September
+/// has one first-recorded moment and two writes made months apart. Both
+/// questions are real and each is answered by its own field —
+/// [`Fact::inserted_at`] for the claim, [`ClaimWrite::written_at`] for the
+/// write.
 ///
 /// ⚠️ **Nor does it carry the record's fields or its references.** Those are
 /// versioned by their own substrate and by nothing here, so a claim's write
 /// reporting them would report today's keys against words from a year ago.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimWrite {
-    /// **Which write this is, counting from one.** The order is what the
-    /// substrate knows in place of a moment: the first write is what the claim
-    /// first said, and the highest is what it says now.
+    /// **Which write this is, counting from one.** The first write is what the
+    /// claim first said, and the highest is what it says now.
     pub ordinal: usize,
+    /// **When this write happened.**
+    ///
+    /// `None` for a write kept before the substrate recorded one — which is
+    /// every write an older build appended. **It is left empty rather than
+    /// filled from the claim**: a moment copied off the claim would report a
+    /// year of corrections as one instant, and a wrong field is worse than an
+    /// absent one.
+    pub written_at: Option<jiff::Timestamp>,
     /// What the claim said, at this write.
     pub content: String,
     /// What it said underneath, at this write.
@@ -2541,9 +2549,14 @@ pub struct ClaimWrite {
 impl ClaimWrite {
     /// **This write, read off a claim as it stands.** The whole claim is what a
     /// write carries, so a store appending one has nothing to choose.
-    pub fn of(fact: &Fact, ordinal: usize) -> Self {
+    ///
+    /// **The moment is handed in rather than read here**, because this stays a
+    /// function of its arguments: a store stamps the write it is appending, and
+    /// a store reading one back hands over what it kept.
+    pub fn of(fact: &Fact, ordinal: usize, written_at: Option<jiff::Timestamp>) -> Self {
         ClaimWrite {
             ordinal,
+            written_at,
             content: fact.content.clone(),
             details: fact.details.clone(),
             provenance: fact.provenance,

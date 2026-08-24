@@ -10,7 +10,8 @@
 //! the record said the opposite until September, so anything you decided off it
 //! before then was decided off the wrong thing.* Without a trace, that sentence
 //! cannot be said by anybody, and the same correct answer arrives with the one
-//! thing somebody would want to know missing from it.
+//! thing somebody would want to know missing from it. **Each write says when it
+//! happened**, so the *until September* half is readable rather than inferred.
 //!
 //! ⚠️ **The negative is what gives it meaning.** A claim nobody corrected comes
 //! back as its own single write. Without that half, a read that returned a
@@ -114,16 +115,30 @@ async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
         "does not meet on Tuesdays — it never did, we had that wrong",
     );
 
-    // ⚠️ **What the trace does NOT say, so the story does not imply it**: no
-    // write carries a moment. Every write of a claim keeps the moment the claim
-    // first entered the store, so the substrate knows the ORDER and not the day
-    // each correction happened. A session telling the operator *the record was
-    // wrong until September* is reading its own chronology, not this.
+    // ⭐ **And each write says WHEN it happened**, which is what lets the
+    // assistant add the sentence somebody actually wants: *the record said the
+    // opposite until it was corrected, and here is when that was.* The two
+    // moments differ, because the correction was not made the day the claim was
+    // written down.
+    let moment = |nth: usize| {
+        asked.json()["objects"][0]["record_history"]["writes"][nth]["written_at"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a write says when it happened: {}", asked.raw()))
+            .to_string()
+    };
+    assert!(
+        moment(0) < moment(1),
+        "both writes report one moment, so the chain reads as corrections made at once: {}",
+        asked.raw(),
+    );
+    // ⚠️ **It is not the claim's own first-recorded moment.** That one answers
+    // when jojobot took the record in and it stays on the claim, unmoved by a
+    // correction.
     assert!(
         asked.json()["objects"][0]["record_history"]["writes"][0]
             .get("inserted_at")
             .is_none(),
-        "a write reports a moment the substrate does not record: {}",
+        "the claim's own moment is repeated onto its writes: {}",
         asked.raw(),
     );
 

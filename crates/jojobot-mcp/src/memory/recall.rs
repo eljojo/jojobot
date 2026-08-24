@@ -230,10 +230,10 @@ pub struct RecallArgs {
     /// traces the claim itself, which is how you read what a record said before
     /// somebody corrected it. Name one or the other, never both.
     ///
-    /// ⚠️ **No write carries a moment.** Every write of a claim keeps the
-    /// moment the claim first entered the store, so a moment per write would
-    /// say every correction happened at once. What is recorded is the ORDER,
-    /// and each write carries its place in it.
+    /// Each write says **when it happened** and where it sits in the order.
+    /// That moment is not the claim's own first-recorded one, which answers a
+    /// different question and is on the claim. A write kept before jojobot
+    /// recorded one carries none.
     ///
     /// **The address is selection enough.** Send it on its own and the read
     /// answers about the thing the address names — you do not have to repeat
@@ -622,11 +622,14 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
 
 /// **One claim's writes on the wire, oldest first, with how many there are.**
 ///
-/// Each write carries the whole of what the claim said then and its place in
-/// the order. **No moment**: every write of a claim keeps the moment the claim
-/// first entered the store, so reporting one per write would say a year of
-/// corrections happened at once. The order is what the substrate knows, and it
-/// is on every entry.
+/// Each write carries the whole of what the claim said then, its place in the
+/// order, and **when it happened** — which is not when the claim first entered
+/// the store. A claim taken in last April and corrected in September has one
+/// first-recorded moment and two writes months apart.
+///
+/// A write kept before the substrate recorded a moment carries none, and it is
+/// absent rather than filled from the claim: a copied moment would report that
+/// year of corrections as one instant.
 fn record_history_json(history: &graph::ClaimHistory) -> serde_json::Value {
     let mut body = serde_json::json!({
         "record": history.record.to_string(),
@@ -635,6 +638,10 @@ fn record_history_json(history: &graph::ClaimHistory) -> serde_json::Value {
         "writes": history.writes.iter().map(|write| {
             let mut rendered = serde_json::json!({
                 "nth": write.ordinal,
+                // **When this write happened**, and absent for one kept before
+                // the substrate recorded it — never the claim's own moment
+                // standing in for it.
+                "written_at": write.written_at.map(|at| at.to_string()),
                 "content": write.content,
                 "date": write.date.to_string(),
                 "status": write.status.as_token(),
@@ -973,9 +980,10 @@ impl Jojobot {
                        THAT CLAIM, oldest first — what it said, who backed it and whether it \
                        stood, each time somebody wrote it. That is how you read what a claim \
                        used to say before it was corrected, and how you tell a claim nobody ever \
-                       made from one somebody made and got wrong. No write carries a moment, \
-                       because the substrate records the ORDER and not when each correction \
-                       happened; every write carries its place in that order. Name a key or a \
+                       made from one somebody made and got wrong. Each write says WHEN IT \
+                       HAPPENED and where it sits in the order — and that moment is not the \
+                       claim's own first-recorded one, which answers a different question. A \
+                       write kept before jojobot recorded one carries none. Name a key or a \
                        record, never both. AN ADDRESS IS SELECTION ENOUGH: history_record on \
                        its own answers about the thing its address names, so you do not repeat \
                        the subject beside it — and naming a subject that is something else is \
@@ -2628,10 +2636,24 @@ mod tests {
             "each write carries its place in the order: {chain}"
         );
         assert_eq!(chain["writes"][1]["nth"], 2);
+        // **Each write says when it happened**, and the two differ — a claim
+        // corrected months later did not have both writes made at once.
+        let moment = |nth: usize| {
+            chain["writes"][nth]["written_at"]
+                .as_str()
+                .unwrap_or_else(|| panic!("a write says when it happened: {chain}"))
+                .to_string()
+        };
         assert!(
-            chain["writes"][0].get("inserted_at").is_none()
-                && chain["writes"][0].get("at").is_none(),
-            "a write reports a moment the substrate does not record: {chain}"
+            moment(0) < moment(1),
+            "both writes report one moment, so the chain reads as corrections made at once: \
+             {chain}"
+        );
+        // ⚠️ **And it is not the claim's own first-recorded moment**, which
+        // answers when jojobot took the record in and is on the claim.
+        assert!(
+            chain["writes"][0].get("inserted_at").is_none(),
+            "the claim's own moment is repeated onto its writes: {chain}"
         );
 
         // **A claim nobody corrected has one write.** Asked of the second

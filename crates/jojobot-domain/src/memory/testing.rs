@@ -246,7 +246,10 @@ impl InMemoryMemory {
         writes.push((
             fact.home.clone(),
             fact.id.clone(),
-            ClaimWrite::of(fact, ordinal),
+            // **The moment this write happened**, which the real store stamps
+            // too. A fake that left it empty would let every case about a
+            // chain of corrections pass on a build that records none.
+            ClaimWrite::of(fact, ordinal, Some(jiff::Timestamp::now())),
         ));
     }
 
@@ -4743,6 +4746,74 @@ pub mod contract {
             "a claim nobody corrected carries a chain, so every claim a reader meets would:              {alone:?}"
         );
         assert_eq!(alone[0].content, "walked home afterwards");
+    }
+
+    /// 🚨 **Each write of a claim records the moment IT happened.**
+    ///
+    /// Every write row used to copy the claim's own first-recorded moment, so
+    /// a claim corrected three times reported three writes at one instant.
+    /// The history is readable now, and a reader takes a field at face value:
+    /// it read as *these happened at once*, which is false, where saying
+    /// nothing would have been true. **A wrong field is worse than an absent
+    /// one.**
+    ///
+    /// ⚠️ **The negative is load-bearing**: the claim's own first-recorded
+    /// moment is NOT disturbed by a later write. A caller asking when jojobot
+    /// took a record in is asking a real question, and this must not answer it
+    /// with the day somebody corrected the wording.
+    pub async fn each_write_of_a_claim_records_its_own_moment<M: Memory>(store: &M) {
+        let subject = EntityId::person("person:contract-stamped");
+        let claim = capture(
+            store,
+            NewFact::about(subject.clone(), "was at the fair", date(2026, 4, 18)),
+        )
+        .await;
+        let taken_in = claim
+            .inserted_at
+            .expect("a store stamps when it took the record in");
+
+        store
+            .update_fact(
+                &claim.address(),
+                FactPatch {
+                    content: Some("was never at the fair".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("update_fact should succeed")
+            .written()
+            .expect("the guard waves it through");
+
+        let chain = store
+            .claim_history(&claim.address())
+            .await
+            .expect("claim_history should succeed");
+        let moments: Vec<_> = chain.iter().map(|write| write.written_at).collect();
+        assert!(
+            moments.iter().all(Option::is_some),
+            "a write does not say when it happened: {chain:?}"
+        );
+        assert!(
+            moments[0] < moments[1],
+            "both writes report one moment, so a chain reads as corrections made at once: \
+             {chain:?}"
+        );
+
+        // ⚠️ **The claim's own moment is untouched.** It says when jojobot took
+        // the record in, and a correction is not that.
+        let read = store
+            .recall(&subject)
+            .await
+            .expect("recall should succeed")
+            .into_iter()
+            .find(|f| f.id == claim.id)
+            .expect("the claim is still there");
+        assert_eq!(
+            read.inserted_at,
+            Some(taken_in),
+            "the edit re-stamped when jojobot first took the record in",
+        );
     }
 
     /// **A record nobody wrote is a miss, and a handle nobody created is an
@@ -9803,6 +9874,7 @@ pub mod contract {
         history_of_an_unwritten_key_is_empty_and_of_no_entity_is_a_miss(store).await;
         a_correction_keeps_what_the_claim_used_to_say(store).await;
         claim_history_of_no_record_is_a_miss_and_of_no_entity_is_an_entity_miss(store).await;
+        each_write_of_a_claim_records_its_own_moment(store).await;
 
         a_records_fields_survive_capture(store).await;
         a_records_ref_is_screened_by_the_guard(store).await;
