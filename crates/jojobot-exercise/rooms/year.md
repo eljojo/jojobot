@@ -157,8 +157,13 @@ recall {"kind": "thing"}
 carries thing:floor-pump
 say     February: the pump the operator lent is not a thing jojobot knows, so September has nothing to ask about
 
-recall {"subject": "thing:floor-pump", "facts": true}
-carries person:ralph
+# ⚠️ **Scoped to this sitting's own window.** `carries person:ralph` on the
+# finished room was ambiguous rather than wrong: September draws a second link
+# at the same person on the same subject when the pump comes back, so a
+# February that recorded nothing held this lock on September's work. Reading
+# the phases missed it twice; a needle that matches, and also matches something
+# else, is invisible to a reader.
+check   the_pump_reached_its_holder_in_february
 say     February: nothing on the pump reaches Ralph, so who has it is only in the prose of a sitting that is gone
 
 # The walk August needs. A membership written as a sentence is not an edge.

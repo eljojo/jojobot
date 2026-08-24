@@ -46,7 +46,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 11] = [
+pub const CHECKS: [Hatch; 12] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -80,6 +80,9 @@ pub const CHECKS: [Hatch; 11] = [
     }),
     ("late_october_put_nobody_new_at_the_survey", || {
         checked(|seen| Box::pin(late_october_put_nobody_new_at_the_survey(seen)))
+    }),
+    ("the_pump_reached_its_holder_in_february", || {
+        checked(|seen| Box::pin(the_pump_reached_its_holder_in_february(seen)))
     }),
 ];
 
@@ -486,6 +489,44 @@ async fn the_club_was_given_a_claim_in_march(seen: &Observed<'_>) -> Result<(), 
         false => Err(format!(
             "the club carried {had} records before {MARCH} and {has} after, so that sitting \
              recorded nothing about it and July has nothing to take back",
+        )),
+    }
+}
+
+/// The sitting that records who has the thing, and the link a record draws when
+/// it says so.
+const FEBRUARY: &str = "Phase 2";
+const HOLDS_IT: &str = "\"object\":\"person:ralph\"";
+
+/// 🚨 **Who had the pump was recorded by FEBRUARY, asked in February's own
+/// window.**
+///
+/// ⛔️ **Asked of the finished room, this claim belongs to nobody.** September
+/// records that the pump came back and draws a second link at the same person,
+/// on the same subject — so *the pump reaches its holder*, graded at the end of
+/// the year, is satisfied by September's record. **A February that recorded
+/// nothing about who had the thing passes on work done seven months later.**
+///
+/// **The needle was ambiguous rather than wrong**, which is why reading the
+/// phases missed it twice: it matches, and it matches something else too.
+///
+/// **So the link is counted across February alone.** September is outside the
+/// window and cannot reach it.
+async fn the_pump_reached_its_holder_in_february(seen: &Observed<'_>) -> Result<(), String> {
+    let Some((before, after)) = seen.across(FEBRUARY) else {
+        return Err(format!(
+            "this run took no reading either side of {FEBRUARY}, so nothing here can say what \
+             that sitting recorded. A check scoped to one sitting needs the run's own \
+             boundaries.",
+        ));
+    };
+    let had = before.world.matches(HOLDS_IT).count();
+    let has = after.world.matches(HOLDS_IT).count();
+    match has > had {
+        true => Ok(()),
+        false => Err(format!(
+            "nothing came to point at the person holding the pump in {FEBRUARY}'s window, so who \
+             had it is only in the prose of a sitting that is gone",
         )),
     }
 }

@@ -228,6 +228,50 @@ async fn february(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **A February that stands the things up and never says who has the pump.**
+///
+/// The fault the lock names, played: the entities exist, the prose of the
+/// sitting says it was lent out, and nothing on the record points at the
+/// person holding it. **September still records that it came back**, which is
+/// what used to satisfy February's lock seven months early.
+async fn february_records_no_holder(room: &Surface, sid: &str) {
+    for (kind, handle, name) in [
+        ("person", "ralph", "Ralph"),
+        ("person", "nelson", "Nelson"),
+        ("thing", "floor-pump", "The Floor Pump"),
+    ] {
+        did(
+            room,
+            sid,
+            "add_entity",
+            json!({"kind": kind, "handle": handle, "name": name, "source": "the operator"}),
+        )
+        .await;
+    }
+    // **The only thing missing is the link at the person holding it.** The
+    // sitting's prose says it was lent out; nothing on the record points at
+    // who has it. Everything else February does is done, because a year
+    // missing February's other work cannot run at all and would fail on a
+    // play rather than on this lock.
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:floor-pump", "content": "lent out, wanted back before the survey",
+               "provenance": "testimony", "date": "2026-02-08"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "person:nelson", "content": "joined the club",
+               "provenance": "testimony", "date": "2026-02-08",
+               "shape": "membership", "object": "org:north-trail-club"}),
+    )
+    .await;
+}
+
 async fn march(room: &Surface, sid: &str) {
     did(
         room,
@@ -607,6 +651,7 @@ async fn work_the_year(
                 10 => late_october_puts_a_third_person_there(room, sid).await,
                 5 => june_writes_the_turn_by_hand(room, sid).await,
                 12 => late_november_writes_the_turn_by_hand(room, sid).await,
+                1 => february_records_no_holder(room, sid).await,
                 13 => december_corrects_a_claim_nobody_questioned(room, sid).await,
                 14 => later_december_answers_from_the_claim_as_it_stands(room, sid).await,
                 _ => panic!("no guilty variant is written for sitting {at}"),
@@ -1286,6 +1331,35 @@ async fn the_trace_locks_tell_a_correction_from_a_claim_nobody_touched() {
     assert!(
         judged[LATE_DECEMBER[0]].held && judged[LATE_DECEMBER[1]].held,
         "the year worked properly failed one of the trace locks: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **February's lock is satisfiable only by what February recorded.**
+///
+/// The needle it used to carry was ambiguous rather than wrong: September draws
+/// a second link at the same person on the same subject when the pump comes
+/// back. **A February that recorded nothing held the lock on September's work**,
+/// and two read-based sweeps of that class missed it because the needle matches
+/// — it just also matches something else.
+#[tokio::test]
+async fn februarys_lock_cannot_be_satisfied_by_the_sitting_that_returns_the_pump() {
+    let (_room, surface, sid) = furnished().await;
+    let silent = work_the_year(&surface, &sid, &room_document(), &WORKED, &[1]).await;
+    let judged = judge_all(&surface, &silent).await;
+    assert!(
+        !judged[FEBRUARY[1]].held,
+        "a February that recorded nothing about who had the pump held its lock, so the sitting \
+         that returns it seven months later is still answering for this one: {}",
+        saying(&judged),
+    );
+
+    let (_room, surface, sid) = furnished().await;
+    let boundaries = worked_the_year(&surface, &sid).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[FEBRUARY[1]].held,
+        "the February that recorded who had the pump failed its own lock: {}",
         saying(&judged),
     );
 }
