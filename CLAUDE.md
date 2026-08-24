@@ -356,13 +356,12 @@ Shipped and live:
   there is no moment between "I am gamma" and "gamma is working". Booting with
   a bot name hands back a `sid` immediately when there is nothing to resume,
   and otherwise hands back the resume-or-new choice and no `sid` — the `sid`
-  arriving once the caller picks. Booting sweeps that bot's sessions that have
-  gone `ABANDONED_AFTER` (24h) without a beat, **offers** any resumable one
-  back as a choice, and otherwise begins one **lazily: no row until the first
+  arriving once the caller picks. Booting sweeps that bot's sessions that have gone `ABANDONED_AFTER` without a
+  beat, **offers** any resumable one back as a choice, and otherwise begins one **lazily: no row until the first
   write**, so a boot that does nothing leaves nothing behind. A session records
   what it is working on, so the offer can tell two of them apart — and a bot
   may have several running at once, because the `sid` is what tells them apart.
-  Nothing ever auto-wraps a session: a new one never closes an old one, and
+  **A run may state the DAY it is working in, beside its zone, and everything day-grained defaults to it** — every write, every day-grained read, the staleness sweep and the offer window. A call naming its own date still wins, and a run that states no day is answered on the clock in its zone. **jojobot never derives the day and never advances it.** ⚠️ **So `ABANDONED_AFTER` is hours only for a run that states nothing: a run that states days is swept on stated days.** Nothing ever auto-wraps a session: a new one never closes an old one, and
   wrapping is initiated from inside, by the bot that owns it. `journal` records
   a beat and moves the focus, `amend_journal` fixes the newest one,
   `wrap_session` folds the still-open
@@ -470,6 +469,11 @@ roles and never an operator.
   plausible, documented, entirely real hazard can be the wrong explanation for
   the case in front of you, and only printing what the code actually saw tells
   the two apart.
+- ⚠️ **And a check that reads a merged file is only as good as the REF you read
+  it out of.** `main` is not a name, it is two refs: the local branch and the
+  remote-tracking one, which can be a hundred commits behind. **Reading the
+  wrong one gives a false green and a false alarm in the same minute** — a
+  commit read out of your own branch proves your commit contains your commit.
 - 🚨 **A needle that is a PHRASE is weakened by approximate matching.** Search
   matches by stem and needs most of a query's terms, so a multi-word needle can
   match a record that shares one word with it. **Assert on one distinctive

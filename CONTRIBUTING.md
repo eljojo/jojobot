@@ -78,10 +78,14 @@ written by somebody who already knows the answer, so it proves a capability is
 reachable and never that it was reached. A playbook is what a real model is
 driven through against a throwaway instance, and what it asserts is what the
 model left in the store rather than anything it said. The playbooks are rooms
-and they live in `crates/jojobot-exercise/rooms/`. A room gives one goal and a
-one-line entry, and leaves the agent to find the route. They run under
-`make paid PLAYBOOK=<path>`, which costs money and which `make check` never
-invokes.
+and they live in `crates/jojobot-exercise/rooms/`. A room gives one goal and a one-line entry, and leaves the agent to find the
+route. A room can also ask whether the model READ rather than guessed: plant
+an answer only the intended query yields, ask the sitting to record it, and
+assert on the record — arithmetic over the values that query returns, because
+a wrong route then gives a wrong number rather than a near-miss somebody has
+to adjudicate. Pin every value the answer is computed from, or a moved input
+reddens the sitting that read correctly. They run under `make paid
+PLAYBOOK=<path>`, which costs money and which `make check` never invokes.
 
 ## Fixtures and examples are fictional, always
 
