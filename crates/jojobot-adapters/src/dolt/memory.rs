@@ -168,28 +168,16 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
     ) -> Result<Vec<Fact>, MemoryError> {
-        let rows = sqlx::query(&format!(
-            "SELECT {FACT_COLUMNS} FROM fact WHERE entity = ? ORDER BY id"
-        ))
-        .bind(entity.as_str())
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(store)?;
-        Self::assemble(tx, &rows).await
+        Self::facts_projected(tx, entity).await
     }
 
     /// **The same claims, projected from the substrate rather than read off
     /// the row** — the newest write of each claim on this thing.
     ///
-    /// ⛔️ **Nothing calls this from a read yet.** It lands beside the row
-    /// reader so the two can be proven to agree before anything depends on the
-    /// projection, which is what makes the switch that follows a no-op rather
-    /// than a leap.
-    ///
-    /// ⚠️ **`cfg(test)` says that honestly rather than suppressing it.** The
-    /// lint gate refuses dead code, and code only a case reaches IS test-only
-    /// until the reads move — so it is marked as what it is, and the attribute
-    /// comes off in the commit that makes it false.
+    /// ⭐ **This is what a claim read answers from.** The claim's own row is
+    /// still written and still current, but nothing reads it: what a caller
+    /// gets is the newest write, which is the same value by construction and
+    /// is the one the rulings say a fact IS.
     ///
     /// **The newest write IS the claim.** There is no fold to do beyond that: a
     /// key's writes are combined because a thing is described a piece at a
@@ -199,7 +187,6 @@ impl DoltMemory {
     /// The write table names its key `fact_id`, so it is aliased to what
     /// [`Self::assemble`] reads. **One row shape, one assembler**, rather than
     /// a second one that could drift from it.
-    #[cfg(test)]
     async fn facts_projected(
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
@@ -218,9 +205,7 @@ impl DoltMemory {
         Self::assemble(tx, &rows).await
     }
 
-    /// One addressed claim, projected from the substrate. **Unused by any read
-    /// yet**, for the reason [`Self::facts_projected`] gives.
-    #[cfg(test)]
+    /// One addressed claim, projected from the substrate.
     async fn fact_projected(
         tx: &mut Transaction<'_, MySql>,
         address: &FactAddress,
@@ -244,15 +229,7 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         address: &FactAddress,
     ) -> Result<Option<Fact>, MemoryError> {
-        let rows = sqlx::query(&format!(
-            "SELECT {FACT_COLUMNS} FROM fact WHERE entity = ? AND id = ?"
-        ))
-        .bind(address.home.as_str())
-        .bind(address.local.as_str())
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(store)?;
-        Ok(Self::assemble(tx, &rows).await?.pop())
+        Self::fact_projected(tx, address).await
     }
 
     /// Rows into facts, each with its fields and references read back beside
@@ -650,7 +627,6 @@ const FACT_COLUMNS: &str = "entity, id, content, details, provenance, standing, 
 /// The same columns off the write table, with its key aliased to what
 /// [`DoltMemory::assemble`] reads. **The alias is the whole difference**: a
 /// second assembler would be a second place for the row shape to drift.
-#[cfg(test)]
 const FACT_WRITE_COLUMNS: &str = "w.entity, w.fact_id AS id, w.content, w.details, w.provenance, \
                                   w.standing, w.status, w.date, w.edge_shape, w.edge_object, \
                                   w.derived_from, w.derived_from_id, w.inserted_at, \
@@ -1274,6 +1250,11 @@ impl Memory for DoltMemory {
                 "UPDATE fact SET derived_from = ?, derived_from_id = ? \
                  WHERE derived_from = ? AND derived_from_id = ?",
                 "UPDATE field_write SET entity = ?, fact_id = ? WHERE entity = ? AND fact_id = ?",
+                // **The claim's own writes move with the claim**, for the
+                // reason its field writes do: a fold that moved the row and
+                // not the substrate under it would leave a claim the
+                // projection cannot find, which is the claim gone.
+                "UPDATE fact_write SET entity = ?, fact_id = ? WHERE entity = ? AND fact_id = ?",
                 "UPDATE fact_event_metadata SET fact_home = ?, fact_id = ? \
                  WHERE fact_home = ? AND fact_id = ?",
                 "UPDATE fact_event_ref SET fact_home = ?, fact_id = ? \
@@ -1292,6 +1273,7 @@ impl Memory for DoltMemory {
         // What names the handle rather than a row inside it moves wholesale.
         for statement in [
             "UPDATE fact SET edge_object = ? WHERE edge_object = ?",
+            "UPDATE fact_write SET edge_object = ? WHERE edge_object = ?",
             "UPDATE fact_event_ref SET entity = ? WHERE entity = ?",
             "UPDATE entity SET parent = ? WHERE parent = ?",
         ] {
