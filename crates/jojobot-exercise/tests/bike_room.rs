@@ -236,20 +236,15 @@ async fn every_check_fails_on_a_room_nobody_worked_in() {
     }
 }
 
-/// **The room a session that worked the goal leaves.**
+/// **The goal, worked the way the room means it to be.**
 ///
-/// Every write here is one the occupant makes through the surface: it takes
-/// delivery of the brief, puts the service on the bike as values, writes the
-/// year's number under the key the earlier years are under, and leaves a
-/// message for whoever comes next.
-#[tokio::test]
-async fn every_check_holds_once_the_goal_is_worked() {
-    let (_room, surface, sid) = furnished().await;
-
-    as_the_occupant(&surface, &sid, "read_mailbox", json!({})).await;
+/// Lifted out of the case that had it inline so a second case can reach it.
+/// **Nothing about it changed** — the same four calls in the same order.
+async fn worked_the_goal(room: &Surface, sid: &str) {
+    as_the_occupant(room, sid, "read_mailbox", json!({})).await;
     as_the_occupant(
-        &surface,
-        &sid,
+        room,
+        sid,
         "capture",
         json!({
             "subject": "thing:gravel-bike",
@@ -260,8 +255,8 @@ async fn every_check_holds_once_the_goal_is_worked() {
     )
     .await;
     as_the_occupant(
-        &surface,
-        &sid,
+        room,
+        sid,
         "capture",
         json!({
             "subject": "thing:gravel-bike",
@@ -272,8 +267,8 @@ async fn every_check_holds_once_the_goal_is_worked() {
     )
     .await;
     as_the_occupant(
-        &surface,
-        &sid,
+        room,
+        sid,
         "post_message",
         json!({
             "to": "assistant",
@@ -283,6 +278,19 @@ async fn every_check_holds_once_the_goal_is_worked() {
         }),
     )
     .await;
+}
+
+/// **The room a session that worked the goal leaves.**
+///
+/// Every write here is one the occupant makes through the surface: it takes
+/// delivery of the brief, puts the service on the bike as values, writes the
+/// year's number under the key the earlier years are under, and leaves a
+/// message for whoever comes next.
+#[tokio::test]
+async fn every_check_holds_once_the_goal_is_worked() {
+    let (_room, surface, sid) = furnished().await;
+
+    worked_the_goal(&surface, &sid).await;
 
     let outcomes = judge_all(&surface).await;
     for outcome in &outcomes {
@@ -449,5 +457,33 @@ async fn the_locks_that_measure_reachability_fail_on_a_room_written_in_prose() {
         "the box was opened and a handoff was left, and neither the service day nor the year's \
          distance can be reached: {}",
         saying(&outcomes),
+    );
+}
+
+/// 🚨 **No lock in this room rests on a needle that matches somewhere else.**
+///
+/// The reasoning is written where this was first built, in the year room's own
+/// case. **This room was the one left uncovered** when the case shipped, for
+/// three needles and no reusable driver.
+#[tokio::test]
+async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
+    let (_room, surface, sid) = furnished().await;
+    worked_the_goal(&surface, &sid).await;
+    let summary = jojobot_exercise::lock::needle_summary(
+        &surface,
+        &jojobot_exercise::lock::locks_of(expectations::BIKE_ROOM),
+    )
+    .await;
+    assert!(
+        summary.nowhere.is_empty(),
+        "a needle matched nowhere, so either its lock is failing or the walk could not read the \
+         answer — and those are different: {:?}",
+        summary.nowhere,
+    );
+    assert!(
+        summary.findings.is_empty(),
+        "a lock rests on a needle that matches somewhere else, with nothing else in that lock \
+         only its own sitting could satisfy: {:?}",
+        summary.findings,
     );
 }
