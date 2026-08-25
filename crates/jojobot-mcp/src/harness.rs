@@ -63,12 +63,6 @@ pub(crate) fn handler() -> Jojobot {
     )
 }
 
-/// **A handler with one or both of the computed receipt lines turned off** —
-/// how a test reaches the shape a measuring run deploys.
-pub(crate) fn handler_receipting(receipts: crate::answer::Receipts) -> Jojobot {
-    handler().receipting(receipts)
-}
-
 /// **A handler told which carriers answer for a due moment** — how a test puts
 /// a carrier the read has never seen in front of it.
 pub(crate) fn handler_carrying(

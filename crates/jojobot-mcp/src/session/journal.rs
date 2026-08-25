@@ -185,12 +185,10 @@ impl Jojobot {
             "entry": entry_receipt_json(&entry),
             "focus": moved.map(|s| s.focus),
         });
-        if self.receipts.postcondition {
-            crate::answer::note_postcondition(
-                &mut body,
-                self.what_a_beat_left_standing(&session).await,
-            );
-        }
+        crate::answer::note_postcondition(
+            &mut body,
+            self.what_a_beat_left_standing(&session).await,
+        );
         json_result(&body)
     }
 }

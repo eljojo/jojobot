@@ -86,7 +86,6 @@ use jojobot_domain::text::{self, FRESH_FOCUS, Kept};
 // **The args types keep their crate-root path.** They were `pub` here before
 // the split and something outside may name them; where a type LIVES is this
 // slice's business, where a caller finds it is not.
-pub use answer::Receipts;
 pub use mailboxes::{
     ListSentArgs, MarkProcessedArgs, PostMessageArgs, ReadMailboxArgs, ReadMessageArgs,
 };
@@ -151,18 +150,11 @@ pub struct Jojobot {
     /// hand the read a carrier is a list it was given, and a plug-in mechanism
     /// would be machinery guarding a case nobody has.
     carriers: Arc<Vec<Box<dyn jojobot_domain::attention::Carrier>>>,
-    /// **Which of the two computed lines a write's receipt carries.**
-    ///
-    /// A field rather than a constant because the two ship behind their own
-    /// switches: the run that measures whether either changes how an agent
-    /// writes needs one of them held still.
-    receipts: answer::Receipts,
     /// **The clock this server runs on.** The real one unless an operator
     /// stated a day for the whole run — see [`jojobot_domain::clock::Clock`].
     ///
-    /// A field for the same reason `receipts` is one: the handler is built per
-    /// connection, so a decision read once at startup has to reach every
-    /// handler the factory makes after it.
+    /// A field because the handler is built per connection, so a decision read
+    /// once at startup has to reach every handler the factory makes after it.
     clock: jojobot_domain::clock::Clock,
 }
 
@@ -229,7 +221,6 @@ impl Jojobot {
             sessions,
             registry,
             carriers: Arc::new(carriers),
-            receipts: answer::Receipts::default(),
             clock: jojobot_domain::clock::Clock::default(),
         }
     }
@@ -241,15 +232,6 @@ impl Jojobot {
     #[must_use]
     pub fn on_clock(self, clock: jojobot_domain::clock::Clock) -> Self {
         Self { clock, ..self }
-    }
-
-    /// The same handler, told which computed lines its write receipts carry.
-    ///
-    /// [`Jojobot::new`] is this with both of them, which is what a caller with
-    /// no opinion should get. An operator turns one off to measure the other.
-    #[must_use]
-    pub fn receipting(self, receipts: answer::Receipts) -> Self {
-        Self { receipts, ..self }
     }
 
     /// What this handler asks when it needs to know if something is owed.

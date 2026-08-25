@@ -44,7 +44,6 @@ async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_ca
         sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
-        receipts: jojobot_mcp::Receipts::default(),
         clock: jojobot_domain::clock::Clock::default(),
     };
     // The store is fine and the set is not loaded — what `main` tolerates when

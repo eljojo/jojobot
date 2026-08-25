@@ -530,18 +530,14 @@ impl Jojobot {
                 // write answers as of today, so a receipt answering as of the
                 // claim's day contradicts it inside one session.
                 let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref())?);
-                if self.receipts.delta {
-                    crate::answer::note_delta(
-                        &mut body,
-                        declared.not_stored(&fact, checked_in.then_some(WHY_A_CHECK_IN_DERIVES)),
-                    );
-                }
-                if self.receipts.postcondition {
-                    crate::answer::note_postcondition(
-                        &mut body,
-                        self.what_a_capture_left_standing(&fact).await,
-                    );
-                }
+                crate::answer::note_delta(
+                    &mut body,
+                    declared.not_stored(&fact, checked_in.then_some(WHY_A_CHECK_IN_DERIVES)),
+                );
+                crate::answer::note_postcondition(
+                    &mut body,
+                    self.what_a_capture_left_standing(&fact).await,
+                );
                 json_result(&body)
             }
             Guarded::Blocked {
@@ -703,44 +699,6 @@ mod tests {
         );
     }
 
-    /// **The delta ships behind its own switch.**
-    ///
-    /// Neither computed line's value is proven, and a run with both of them on
-    /// cannot say which one changed how an agent writes. So each is turned off
-    /// on its own, and this is the shape a measuring run deploys.
-    ///
-    /// **Both halves in one case**: the same call against the default handler
-    /// carries the line, so this cannot pass against a build that never
-    /// computes one.
-    #[tokio::test]
-    async fn the_delta_is_off_when_the_switch_is_off() {
-        let quiet = handler_receipting(crate::answer::Receipts {
-            delta: false,
-            ..Default::default()
-        });
-        a_weekly_rhythm(&quiet, "descale", "2026-08-01", "check_in_date").await;
-        let silent = capture_ok(&quiet, a_late_check_in()).await;
-        assert_eq!(
-            silent["delta"],
-            serde_json::Value::Null,
-            "the switch is off and the line is still here: {silent}",
-        );
-        assert_eq!(
-            silent["delta_note"],
-            serde_json::Value::Null,
-            "…and its rendered half went with it: {silent}",
-        );
-
-        let loud = handler();
-        a_weekly_rhythm(&loud, "descale", "2026-08-01", "check_in_date").await;
-        let named = capture_ok(&loud, a_late_check_in()).await;
-        assert!(
-            named["delta"].is_array(),
-            "the same call with the switch on has to carry the line, or the case above \
-             passes against a build that never computes one: {named}",
-        );
-    }
-
     /// A check-in that sends a provenance the check-in path overrules — the
     /// one call on this surface known to store a value other than the one it
     /// was sent.
@@ -825,42 +783,6 @@ mod tests {
             .as_str()
             .unwrap_or_else(|| panic!("a write states what now stands: {body}"))
             .to_string()
-    }
-
-    /// **The postcondition ships behind its own switch, independent of the
-    /// delta's.**
-    ///
-    /// The measuring run needs one line on and the other off, so the case that
-    /// matters is the mixed one: the postcondition off while the delta is still
-    /// computed. A single switch behind both would pass a case that turned them
-    /// off together and fail the run this is for.
-    #[tokio::test]
-    async fn the_postcondition_is_off_on_its_own_switch() {
-        let quiet = handler_receipting(crate::answer::Receipts {
-            postcondition: false,
-            delta: true,
-        });
-        a_weekly_rhythm(&quiet, "descale", "2026-08-01", "check_in_date").await;
-        let mixed = capture_ok(&quiet, a_late_check_in()).await;
-        assert_eq!(
-            mixed["postcondition"],
-            serde_json::Value::Null,
-            "the switch is off and the line is still here: {mixed}",
-        );
-        assert!(
-            mixed["delta"].is_array(),
-            "the other switch is on and its line went too, so the two are not independent: \
-             {mixed}",
-        );
-
-        let loud = handler();
-        a_weekly_rhythm(&loud, "descale", "2026-08-01", "check_in_date").await;
-        let both = capture_ok(&loud, a_late_check_in()).await;
-        assert!(
-            both["postcondition"].is_string(),
-            "the same call with the switch on has to carry the line, or the case above passes \
-             against a build that never computes one: {both}",
-        );
     }
 
     /// **A delta says why, where the verb that substituted has a reason.**

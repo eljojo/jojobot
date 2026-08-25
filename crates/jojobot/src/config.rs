@@ -57,7 +57,6 @@ pub struct Config {
     /// **Which computed lines a write's receipt carries.** Each is switched on
     /// its own so a run can hold one still and measure the other; both are on
     /// unless an operator turns one off.
-    pub receipts: jojobot_mcp::Receipts,
     /// This server's resource identifier, advertised in the RFC 9728
     /// protected-resource metadata.
     pub resource: String,
@@ -82,10 +81,6 @@ impl Config {
     /// - `JOJOBOT_UI_CLIENT_ID` — set to serve the browser UI (OAuth client id).
     /// - `JOJOBOT_UI_BASE_URL` — the origin a browser reaches this server on.
     /// - `JOJOBOT_UI_CLIENT_SECRET` — gone; setting it refuses to start.
-    /// - `JOJOBOT_RECEIPT_POSTCONDITION` — set to `0`/`false` to stop a write
-    ///   receipt stating what now stands (default on).
-    /// - `JOJOBOT_RECEIPT_DELTA` — set to `0`/`false` to stop a write receipt
-    ///   naming values the store did not keep as they were sent (default on).
     /// - `JOJOBOT_TODAY` — a `YYYY-MM-DD` day for this server to act out.
     ///   Unset is the real clock, which is what every deployment gets.
     pub fn from_env() -> anyhow::Result<Self> {
@@ -188,10 +183,6 @@ impl Config {
 
         Ok(Config {
             bind,
-            receipts: jojobot_mcp::Receipts {
-                postcondition: !turned_off(raw.receipt_postcondition.as_deref()),
-                delta: !turned_off(raw.receipt_delta.as_deref()),
-            },
             resource,
             auth,
             ui,
@@ -256,25 +247,9 @@ struct RawEnv {
     /// for one, and the only thing left to do with it is refuse to start.
     ui_client_secret_set: bool,
     ui_base_url: Option<String>,
-    /// Unparsed, because *off* is the only value with a meaning and everything
-    /// else leaves the line alone.
-    receipt_postcondition: Option<String>,
-    receipt_delta: Option<String>,
     /// Unparsed, because a day that is no day refuses the boot rather than
     /// being read as *not set* — see [`Config::build`].
     today: Option<String>,
-}
-
-/// **Off is the only value with a meaning here.**
-///
-/// A switch that refused a spelling it did not know would let a typo stop the
-/// server over a line on a receipt. Anything that is not `0` or `false` leaves
-/// the line on, which is where an operator who set nothing already is.
-fn turned_off(value: Option<&str>) -> bool {
-    value.is_some_and(|v| {
-        let v = v.trim();
-        v == "0" || v.eq_ignore_ascii_case("false")
-    })
 }
 
 impl RawEnv {
@@ -294,8 +269,6 @@ impl RawEnv {
                 .is_ok_and(|v| !v.is_empty()),
             ui_base_url: std::env::var("JOJOBOT_UI_BASE_URL").ok(),
             today: std::env::var("JOJOBOT_TODAY").ok(),
-            receipt_postcondition: std::env::var("JOJOBOT_RECEIPT_POSTCONDITION").ok(),
-            receipt_delta: std::env::var("JOJOBOT_RECEIPT_DELTA").ok(),
         }
     }
 }
@@ -371,48 +344,7 @@ mod tests {
             ui_client_id: None,
             ui_client_secret_set: false,
             ui_base_url: None,
-            receipt_postcondition: None,
-            receipt_delta: None,
         }
-    }
-
-    /// **Each computed receipt line is switched on its own, and both are on
-    /// unless an operator says otherwise.**
-    ///
-    /// The measurement they exist for is a run with one on and the other off,
-    /// so a single switch behind both would make that run impossible. On by
-    /// default because a line nobody sees teaches nobody: the switch is there
-    /// to hold one still while the other is measured, not to make the
-    /// behaviour opt-in.
-    #[test]
-    fn each_receipt_line_has_its_own_switch_and_both_default_on() {
-        let with = |postcondition: Option<&str>, delta: Option<&str>| {
-            Config::build(RawEnv {
-                receipt_postcondition: postcondition.map(str::to_string),
-                receipt_delta: delta.map(str::to_string),
-                ..raw("127.0.0.1:8080", None, true)
-            })
-            .expect("these switches never stop the server")
-            .receipts
-        };
-
-        assert_eq!(with(None, None), jojobot_mcp::Receipts::default());
-        assert!(with(None, None).postcondition && with(None, None).delta);
-
-        // The shape the measuring run deploys: one held still, one live.
-        let delta_alone = with(Some("0"), None);
-        assert!(!delta_alone.postcondition && delta_alone.delta);
-        let postcondition_alone = with(None, Some("false"));
-        assert!(postcondition_alone.postcondition && !postcondition_alone.delta);
-
-        assert_eq!(
-            with(Some("0"), Some("0")),
-            jojobot_mcp::Receipts::NEITHER,
-            "both off is the build a run compares the other three against",
-        );
-        // Anything that is not a spelling of off leaves the line on, which is
-        // the same fail-open this file uses for every other flag.
-        assert!(with(Some("1"), Some("yes")).postcondition);
     }
 
     #[test]
@@ -455,8 +387,6 @@ mod tests {
             ui_client_id: None,
             ui_client_secret_set: false,
             ui_base_url: None,
-            receipt_postcondition: None,
-            receipt_delta: None,
         };
         assert!(
             Config::build(raw).is_err(),
@@ -505,8 +435,6 @@ mod tests {
             ui_client_id: None,
             ui_client_secret_set: false,
             ui_base_url: None,
-            receipt_postcondition: None,
-            receipt_delta: None,
         }
     }
 
@@ -563,8 +491,6 @@ mod tests {
             ui_client_id: client_id.map(str::to_string),
             ui_client_secret_set: false,
             ui_base_url: base_url.map(str::to_string),
-            receipt_postcondition: None,
-            receipt_delta: None,
         }
     }
 

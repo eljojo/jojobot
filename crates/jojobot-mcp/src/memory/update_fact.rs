@@ -252,15 +252,11 @@ impl Jojobot {
                 )
                 .await;
                 let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref())?);
-                if self.receipts.delta {
-                    crate::answer::note_delta(&mut body, declared.not_stored(&fact));
-                }
-                if self.receipts.postcondition {
-                    crate::answer::note_postcondition(
-                        &mut body,
-                        self.what_an_update_left_standing(&fact, &cleared).await,
-                    );
-                }
+                crate::answer::note_delta(&mut body, declared.not_stored(&fact));
+                crate::answer::note_postcondition(
+                    &mut body,
+                    self.what_an_update_left_standing(&fact, &cleared).await,
+                );
                 json_result(&body)
             }
             Guarded::Blocked {

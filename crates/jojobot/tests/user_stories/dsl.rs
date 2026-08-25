@@ -418,7 +418,6 @@ impl Story {
             ui: Some(Arc::new(ui)),
             // The shape a story runs against is the one a fresh instance
             // serves: an operator who set nothing gets both lines.
-            receipts: jojobot_mcp::Receipts::default(),
             clock,
         };
         let ct = CancellationToken::new();

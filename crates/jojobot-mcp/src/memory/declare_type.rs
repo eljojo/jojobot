@@ -244,32 +244,30 @@ impl Jojobot {
                 })
                 .collect::<Vec<_>>(),
         });
-        if self.receipts.delta {
-            // **Named per key, because a set belongs to one.** A line saying
-            // only that a set was trimmed would leave a caller who declared
-            // several to work out which.
-            //
-            // **No reason given.** A trimmed value is what the argument means,
-            // and both sides of a closed set compare trimmed — so this states a
-            // conversion rather than warning of a consequence.
-            let trimmed: Vec<crate::answer::Difference> = declared
-                .fields
-                .iter()
-                .filter_map(|field| {
-                    let stored = field.one_of.as_ref()?.join(", ");
-                    let sent = sent_sets
-                        .iter()
-                        .find(|(key, _)| key == &field.key)
-                        .map(|(_, sent)| sent.as_str())?;
-                    crate::answer::Difference::between(
-                        format!("one_of on '{}'", field.key),
-                        Some(sent),
-                        &stored,
-                    )
-                })
-                .collect();
-            crate::answer::note_delta(&mut body, trimmed);
-        }
+        // **Named per key, because a set belongs to one.** A line saying
+        // only that a set was trimmed would leave a caller who declared
+        // several to work out which.
+        //
+        // **No reason given.** A trimmed value is what the argument means,
+        // and both sides of a closed set compare trimmed — so this states a
+        // conversion rather than warning of a consequence.
+        let trimmed: Vec<crate::answer::Difference> = declared
+            .fields
+            .iter()
+            .filter_map(|field| {
+                let stored = field.one_of.as_ref()?.join(", ");
+                let sent = sent_sets
+                    .iter()
+                    .find(|(key, _)| key == &field.key)
+                    .map(|(_, sent)| sent.as_str())?;
+                crate::answer::Difference::between(
+                    format!("one_of on '{}'", field.key),
+                    Some(sent),
+                    &stored,
+                )
+            })
+            .collect();
+        crate::answer::note_delta(&mut body, trimmed);
         json_result(&body)
     }
 }

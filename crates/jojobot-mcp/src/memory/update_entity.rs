@@ -85,22 +85,20 @@ impl Jojobot {
                 self.beat("update_entity", entity.id.as_str(), args.sid.as_deref())
                     .await;
                 let mut body = entity_json(&entity);
-                if self.receipts.delta {
-                    // **No reason given, and that is the honest answer.**
-                    // Reading a bare handle as a person is what the argument
-                    // means; a sentence restating the comparison would be a
-                    // manufactured justification.
-                    crate::answer::note_delta(
-                        &mut body,
-                        crate::answer::Difference::between(
-                            "handle",
-                            Some(&args.handle),
-                            entity.id.as_str(),
-                        )
-                        .into_iter()
-                        .collect(),
-                    );
-                }
+                // **No reason given, and that is the honest answer.**
+                // Reading a bare handle as a person is what the argument
+                // means; a sentence restating the comparison would be a
+                // manufactured justification.
+                crate::answer::note_delta(
+                    &mut body,
+                    crate::answer::Difference::between(
+                        "handle",
+                        Some(&args.handle),
+                        entity.id.as_str(),
+                    )
+                    .into_iter()
+                    .collect(),
+                );
                 json_result(&body)
             }
             Guarded::Blocked {

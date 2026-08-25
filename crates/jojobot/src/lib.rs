@@ -56,14 +56,9 @@ pub struct AppState {
     /// the UI is not configured, and then it is not mounted at all — there is no
     /// state in which its pages are reachable without a login.
     pub ui: Option<Arc<crate::ui::Ui>>,
-    /// **Which computed lines a write's receipt carries.** Held here because
-    /// the handler is built per connection: a decision read once at startup
-    /// has to reach every handler the factory makes after it.
-    pub receipts: jojobot_mcp::Receipts,
-    /// **The clock this server runs on.** Held here for the same reason the
-    /// receipt switches are: the handler is built per connection, so a day
-    /// read once at startup has to reach every handler the factory makes after
-    /// it.
+    /// **The clock this server runs on.** Held here because the handler is
+    /// built per connection, so a day read once at startup has to reach every
+    /// handler the factory makes after it.
     pub clock: jojobot_domain::clock::Clock,
 }
 
@@ -90,7 +85,6 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     // server serves (see `main`), which is what stops a restart from orphaning
     // every handle it ever issued.
     let registry = state.registry.clone();
-    let receipts = state.receipts;
     let clock = state.clock;
     let mcp = StreamableHttpService::new(
         // **One handler per MCP session, and that is what makes the connection
@@ -104,7 +98,6 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
                 sessions.clone(),
                 registry.clone(),
             )
-            .receipting(receipts)
             .on_clock(clock))
         },
         LocalSessionManager::default().into(),

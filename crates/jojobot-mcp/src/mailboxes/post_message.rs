@@ -296,12 +296,10 @@ impl Jojobot {
                         object.insert("your_mail".into(), delivered);
                     }
                 }
-                if self.receipts.postcondition {
-                    crate::answer::note_postcondition(
-                        &mut body,
-                        what_a_post_left_standing(&message, collected),
-                    );
-                }
+                crate::answer::note_postcondition(
+                    &mut body,
+                    what_a_post_left_standing(&message, collected),
+                );
                 json_result(&body)
             }
             mailbox::Guarded::Blocked {

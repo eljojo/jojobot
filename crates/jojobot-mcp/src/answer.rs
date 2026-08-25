@@ -119,39 +119,6 @@ impl Jojobot {
 
 // ── what a write says about itself ──────────────────────────────────────────
 
-/// **Which of the two computed lines a receipt carries.**
-///
-/// They ship behind their own switches because they answer different questions
-/// and neither's value is proven: a run with both on cannot say which one moved
-/// an agent. Independent, so one can be off while the other is on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Receipts {
-    /// Whether a write states what now stands and what it left alone.
-    pub postcondition: bool,
-    /// Whether a write names the values the store did not keep as they were
-    /// sent.
-    pub delta: bool,
-}
-
-impl Default for Receipts {
-    /// **Both on.** A switch exists so a measurement can hold one still, not so
-    /// the behaviour is opt-in: a line nobody sees teaches nobody.
-    fn default() -> Self {
-        Self {
-            postcondition: true,
-            delta: true,
-        }
-    }
-}
-
-impl Receipts {
-    /// Neither line — the shape a run uses to measure the other one alone.
-    pub const NEITHER: Self = Self {
-        postcondition: false,
-        delta: false,
-    };
-}
-
 /// **A count and its noun, agreeing.** A real model read "1 entries long" off
 /// a postcondition in a paid run. These lines are read by something that
 /// reasons about what they say, so prose that announces itself as generated

@@ -105,12 +105,10 @@ impl Jojobot {
                 }))
                 .collect::<Vec<_>>(),
         });
-        if self.receipts.postcondition {
-            crate::answer::note_postcondition(
-                &mut body,
-                what_a_retraction_left_standing(&address, &standing_on),
-            );
-        }
+        crate::answer::note_postcondition(
+            &mut body,
+            what_a_retraction_left_standing(&address, &standing_on),
+        );
         json_result(&body)
     }
 }

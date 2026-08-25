@@ -83,34 +83,30 @@ impl Jojobot {
                          is terminal",
                     ),
                 );
-                if self.receipts.delta {
-                    // **The cut is a substitution, announced the way every
-                    // other one is.** It had a flag of its own, so a caller who
-                    // had learnt to read `delta` for what jojobot changed had
-                    // to learn a second field for this one verb.
-                    //
-                    // **Only a record this call OFFERED can have been cut.**
-                    // Both stores carry a pre-existing note forward when the
-                    // caller supplies none, and nothing gates re-processing, so
-                    // comparing unconditionally made a second call report a cut
-                    // of a record it never sent.
-                    crate::answer::note_delta(
-                        &mut body,
-                        crate::answer::Difference::between(
-                            "notes",
-                            asked,
-                            processed.notes.as_deref().unwrap_or(""),
-                        )
-                        .into_iter()
-                        .collect(),
-                    );
-                }
-                if self.receipts.postcondition {
-                    crate::answer::note_postcondition(
-                        &mut body,
-                        what_a_retirement_left_standing(&processed),
-                    );
-                }
+                // **The cut is a substitution, announced the way every
+                // other one is.** It had a flag of its own, so a caller who
+                // had learnt to read `delta` for what jojobot changed had
+                // to learn a second field for this one verb.
+                //
+                // **Only a record this call OFFERED can have been cut.**
+                // Both stores carry a pre-existing note forward when the
+                // caller supplies none, and nothing gates re-processing, so
+                // comparing unconditionally made a second call report a cut
+                // of a record it never sent.
+                crate::answer::note_delta(
+                    &mut body,
+                    crate::answer::Difference::between(
+                        "notes",
+                        asked,
+                        processed.notes.as_deref().unwrap_or(""),
+                    )
+                    .into_iter()
+                    .collect(),
+                );
+                crate::answer::note_postcondition(
+                    &mut body,
+                    what_a_retirement_left_standing(&processed),
+                );
                 json_result(&body)
             }
             // Both misses here are answers, not failures: an id that names

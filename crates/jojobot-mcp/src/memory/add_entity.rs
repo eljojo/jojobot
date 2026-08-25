@@ -202,23 +202,21 @@ impl Jojobot {
                         obj.insert(key.into(), value);
                     }
                 }
-                if self.receipts.delta {
-                    // **The parent, not the handle.** This verb composes the
-                    // handle out of `kind` and the slug half, which is what
-                    // those arguments say they are. The parent is read as a
-                    // person when it names no kind, exactly as a capture's
-                    // subject is, and that is the substitution worth naming.
-                    crate::answer::note_delta(
-                        &mut body,
-                        crate::answer::Difference::between(
-                            "parent",
-                            args.parent.as_deref(),
-                            entity.parent.as_ref().map(EntityId::as_str).unwrap_or(""),
-                        )
-                        .into_iter()
-                        .collect(),
-                    );
-                }
+                // **The parent, not the handle.** This verb composes the
+                // handle out of `kind` and the slug half, which is what
+                // those arguments say they are. The parent is read as a
+                // person when it names no kind, exactly as a capture's
+                // subject is, and that is the substitution worth naming.
+                crate::answer::note_delta(
+                    &mut body,
+                    crate::answer::Difference::between(
+                        "parent",
+                        args.parent.as_deref(),
+                        entity.parent.as_ref().map(EntityId::as_str).unwrap_or(""),
+                    )
+                    .into_iter()
+                    .collect(),
+                );
                 json_result(&body)
             }
             // **A parent refusal is not a near miss, and saying it is offers a

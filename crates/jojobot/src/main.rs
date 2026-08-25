@@ -352,7 +352,6 @@ async fn main() -> anyhow::Result<()> {
         sessions,
         registry,
         ui,
-        receipts: config.receipts,
         clock: config.clock,
     };
 
