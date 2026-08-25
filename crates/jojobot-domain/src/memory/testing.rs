@@ -1045,6 +1045,19 @@ impl Memory for InMemoryMemory {
                 {
                     edge.object = survivor.clone();
                 }
+                // 🚨 **A lineage pointer at a moved claim follows it here too,
+                // wherever the write itself lives.** The real store serves a
+                // claim out of its newest write, so a fake that repointed the
+                // row and not the write would answer a question the real one
+                // gets wrong — and the chain is a reader of lineage either way.
+                if let Some(source) = &mut write.derived_from
+                    && &source.home == folded
+                {
+                    if let Some((_, now)) = moved.iter().find(|(was, _)| was == &source.local) {
+                        source.local = now.clone();
+                    }
+                    source.home = survivor.clone();
+                }
             }
         }
         let rehomed = moved.len();
@@ -1491,6 +1504,22 @@ pub mod contract {
             .into_iter()
             .find(|f| &f.id == id)
             .unwrap_or_else(|| panic!("recall must return the captured fact (id {id})"))
+    }
+
+    /// **The claim an address names, or nothing** — followed the ordinary way,
+    /// through a recall of the doc the address points into.
+    ///
+    /// This is what "a pointer resolves" means to a caller: it has an address
+    /// and nothing else, so it goes to the home and looks for the id. **It
+    /// re-computes no part of the answer** — a case that worked out for itself
+    /// where a claim ought to have ended up would stay green over a store that
+    /// put it somewhere else.
+    async fn claim_at<M: Memory>(store: &M, address: &FactAddress) -> Option<Fact> {
+        store
+            .recall(&address.home)
+            .await
+            .ok()
+            .and_then(|facts| facts.into_iter().find(|f| f.id == address.local))
     }
 
     /// **What the thing IS**, read the way the served answer reads it: one
@@ -10007,6 +10036,179 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **A fold moves claims, so every lineage pointer at one moves with
+    /// it — everywhere a reader can see it, not just where the fold happens to
+    /// look.**
+    ///
+    /// A claim's address is its home and its number, and a fold changes both.
+    /// Anything that said "I was worked out from THAT" is now naming an address
+    /// nobody can reach: the reader gets a pointer, follows it, and finds
+    /// nothing — a claim that has stopped being able to say where it came from,
+    /// which is worse than one that never said, because it reads as if it did.
+    ///
+    /// ⭐ **The pointer is FOLLOWED rather than compared.** The case never works
+    /// out where the claim ought to have landed; it takes the address the store
+    /// hands back and asks the store for the claim at it. A fold that renumbered
+    /// differently is still correct here, and a fix that pointed every claim at
+    /// the survivor's newest row is not.
+    ///
+    /// **The pair is in the same read**: a pointer that was already right stays
+    /// exactly where it was, and a claim that rests on nothing still rests on
+    /// nothing. Without them, rewriting every pointer to the survivor would pass.
+    pub async fn a_fold_carries_the_lineage_that_points_at_what_it_moved<M: Memory>(store: &M) {
+        let folded = EntityId::person("person:contract-quagmire");
+        let survivor = EntityId::person("person:contract-towelie");
+        let onlooker = EntityId::person("person:contract-gene");
+        for (id, name) in [
+            (&folded, "Contract Quagmire"),
+            (&survivor, "Contract Towelie"),
+            (&onlooker, "Contract Gene"),
+        ] {
+            add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+        }
+
+        // The claim the fold will move, and one on the survivor that it will
+        // not: the second is what makes the pair possible.
+        let moves = capture(
+            store,
+            NewFact::about(
+                folded.clone(),
+                "the ferry left from the north pier",
+                date(2026, 6, 1),
+            ),
+        )
+        .await;
+        let stays = capture(
+            store,
+            NewFact::about(
+                survivor.clone(),
+                "the bridge is shut on Sundays",
+                date(2026, 6, 1),
+            ),
+        )
+        .await;
+
+        // Three claims on a third thing, which the fold does not touch at all:
+        // one resting on the claim that moves, one on the claim that stays, one
+        // resting on nothing.
+        let built = capture(
+            store,
+            NewFact {
+                derived_from: Some(moves.address()),
+                ..NewFact::about(
+                    onlooker.clone(),
+                    "so the crossing got longer",
+                    date(2026, 6, 2),
+                )
+            },
+        )
+        .await;
+        let steady = capture(
+            store,
+            NewFact {
+                derived_from: Some(stays.address()),
+                ..NewFact::about(
+                    onlooker.clone(),
+                    "so Sunday is the slow day",
+                    date(2026, 6, 2),
+                )
+            },
+        )
+        .await;
+        let alone = capture(
+            store,
+            NewFact::about(
+                onlooker.clone(),
+                "the timetable is on the wall",
+                date(2026, 6, 2),
+            ),
+        )
+        .await;
+
+        // **Stated as an assertion before the fold**, so a red below is the
+        // fold's doing and not a fixture that never resolved in the first place.
+        let source_was = stays.address();
+        assert!(
+            claim_at(store, &moves.address()).await.is_some(),
+            "the lineage did not resolve before the fold, so this case is about the fixture",
+        );
+
+        store
+            .merge(
+                &folded,
+                &survivor,
+                Some("one person, filed twice"),
+                date(2026, 6, 3),
+            )
+            .await
+            .expect("the fold lands");
+
+        let after = store
+            .recall(&onlooker)
+            .await
+            .expect("the onlooker still reads");
+        let held = |id: &FactId| {
+            after
+                .iter()
+                .find(|f| &f.id == id)
+                .unwrap_or_else(|| panic!("the fold lost a claim it never touched (id {id})"))
+                .clone()
+        };
+
+        // 🚨 **The pointer at the moved claim resolves.**
+        let carried = held(&built.id)
+            .derived_from
+            .expect("the fold dropped the lineage instead of moving it");
+        let source = claim_at(store, &carried).await.unwrap_or_else(|| {
+            panic!(
+                "a claim's lineage names {carried}, where no claim is: the fold moved what it \
+                 pointed at and left the pointer behind",
+            )
+        });
+        assert_eq!(
+            source.content, moves.content,
+            "the lineage resolves, but to some other claim than the one it was built on",
+        );
+
+        // **The pair, in the same read.** A pointer that was already right is
+        // left alone, and a claim resting on nothing still rests on nothing —
+        // so a fold that aimed every pointer at the survivor fails here.
+        let untouched = held(&steady.id)
+            .derived_from
+            .expect("a lineage the fold had no business touching was dropped");
+        assert_eq!(
+            untouched, source_was,
+            "a lineage that already resolved was rewritten by a fold that did not move it",
+        );
+        assert_eq!(
+            claim_at(store, &untouched).await.map(|f| f.content),
+            Some(stays.content.clone()),
+            "…and it no longer resolves to the claim it always named",
+        );
+        assert_eq!(
+            held(&alone.id).derived_from,
+            None,
+            "a claim that rests on nothing was given a lineage by a fold",
+        );
+
+        // **And the same pointer read through the chain**, which is the other
+        // reader that can see one. A store that fixed the served claim and not
+        // its writes would answer these two differently.
+        let chain = store
+            .claim_history(&built.address())
+            .await
+            .expect("the chain reads");
+        let newest = chain.last().expect("a claim has at least one write");
+        let written = newest
+            .derived_from
+            .clone()
+            .expect("the newest write dropped the lineage the claim still carries");
+        assert!(
+            claim_at(store, &written).await.is_some(),
+            "the chain says a claim was built on {written}, where no claim is",
+        );
+    }
+
     pub async fn run_all<M: Memory>(store: &M) {
         capture_reads_back(store).await;
         preserves_all_fields(store).await;
@@ -10026,6 +10228,7 @@ pub mod contract {
 
         a_claim_carries_when_it_was_taken_in(store).await;
         folding_a_duplicate_makes_the_split_answer_whole(store).await;
+        a_fold_carries_the_lineage_that_points_at_what_it_moved(store).await;
         a_claims_lineage_is_walkable_from_its_source(store).await;
         a_folded_value_says_who_backs_it(store).await;
         a_summed_key_has_no_backing_to_report(store).await;

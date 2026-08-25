@@ -1413,6 +1413,13 @@ impl Memory for DoltMemory {
                 // not the substrate under it would leave a claim the
                 // projection cannot find, which is the claim gone.
                 "UPDATE fact_write SET entity = ?, fact_id = ? WHERE entity = ? AND fact_id = ?",
+                // 🚨 **And the lineage on the write table, not only on the
+                // claim's own row.** A claim reads back from its newest write,
+                // so the row above is the copy nobody serves: fixing the
+                // pointer there and not here leaves every reader following an
+                // address the fold has just emptied.
+                "UPDATE fact_write SET derived_from = ?, derived_from_id = ? \
+                 WHERE derived_from = ? AND derived_from_id = ?",
                 "UPDATE fact_event_metadata SET fact_home = ?, fact_id = ? \
                  WHERE fact_home = ? AND fact_id = ?",
                 "UPDATE fact_event_ref SET fact_home = ?, fact_id = ? \
