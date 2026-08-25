@@ -131,6 +131,7 @@ fn a_phase_that_skipped_its_steps_is_a_harness_failure() {
     let held_outcome = || Outcome {
         name: "a check that held".into(),
         held: true,
+        applies: true,
         saying: "it held".into(),
     };
     let skipped = run_with(

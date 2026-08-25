@@ -17,6 +17,16 @@ use crate::surface::{Seed, Surface};
 pub struct Outcome {
     pub name: String,
     pub held: bool,
+    /// **Whether this expectation had anything to say about this run.**
+    ///
+    /// ⛔️ **An assertion asked of something that did not happen is neither
+    /// held nor failed.** A sitting whose whole job is a question writes
+    /// nothing, and a check that reports *nothing it wrote carries that day*
+    /// over an empty set is a negative with no positive beside it — it cannot
+    /// tell a dropped day from a sitting that never wrote. **Those go out as
+    /// not applicable, and the run says so rather than counting them either
+    /// way.**
+    pub applies: bool,
     /// What was actually found — the sentence a reader needs when it did not
     /// hold, and a receipt when it did.
     pub saying: String,
@@ -239,7 +249,10 @@ impl Results {
             && self.lost_continuity().is_empty()
             && self.steps_unanswered().is_empty()
             && !self.outcomes.is_empty()
-            && self.outcomes.iter().all(|outcome| outcome.held)
+            && self
+                .outcomes
+                .iter()
+                .all(|outcome| outcome.held || !outcome.applies)
     }
 
     /// **The transcript first, then the results.** When something did not hold
@@ -578,7 +591,11 @@ impl Results {
             );
         }
         for outcome in &self.outcomes {
-            let mark = if outcome.held { "held" } else { "FAILED" };
+            let mark = match (outcome.applies, outcome.held) {
+                (false, _) => "n/a",
+                (true, true) => "held",
+                (true, false) => "FAILED",
+            };
             let _ = writeln!(out, "  [{mark}] {} — {}", outcome.name, outcome.saying);
         }
         for lost in self.lost_continuity() {
@@ -935,45 +952,72 @@ impl Expectation for DayClaimed {
     }
 
     async fn check(&self, seen: &Observed<'_>) -> Outcome {
-        let missed = |saying: String| Outcome {
+        let verdict = |held: bool, applies: bool, saying: String| Outcome {
             name: self.name.clone(),
-            held: false,
+            held,
+            applies,
             saying,
         };
-        let Some((_, after)) = seen.across(&self.phase) else {
+        let missed = |saying: String| verdict(false, true, saying);
+        let Some((before, after)) = seen.across(&self.phase) else {
             return missed(format!(
-                "{}: the run took no reading either side of this sitting, so nothing can say                  whether it carried {}",
+                "{}: the run took no reading either side of this sitting, so nothing can say \
+                 whether it carried {}",
                 self.phase, self.day,
             ));
         };
-        // 🚨 **The day has to arrive with the RUN.** A room furnished with a
-        // record already dated this sitting's day makes the claim below hold
-        // whatever the occupant does, and it holds silently. Refuse instead, so
-        // the author moves the seed.
-        let furnished = seen
-            .boundaries
-            .first()
-            .is_some_and(|b| stamped(b, &self.day));
-        if furnished {
-            return missed(format!(
-                "{}: the room was furnished with a record already dated {}, so this assertion                  would hold whatever the sitting did. Move the furniture off that day.",
-                self.phase, self.day,
-            ));
+
+        // 🚨 **Asked of the records this sitting WROTE, never of the world.**
+        //
+        // A containment scan over the whole snapshot holds for reasons that
+        // have nothing to do with the claim: a sitting that merely TYPES its
+        // day into prose satisfies it, and a day some earlier sitting wrote
+        // satisfies every sitting after it — and the rooms walk forward
+        // through a year, so that is the ordinary case rather than a corner.
+        let was = dated_records(before);
+        let now = dated_records(after);
+        let touched: Vec<(&String, &String)> = now
+            .iter()
+            .filter(|(address, date)| was.get(*address) != Some(date))
+            .collect();
+
+        // ⛔️ **A sitting that wrote nothing is neither pass nor fail.** Its
+        // job was a question; it read the store and answered in prose. A
+        // negative asked over an empty set cannot tell a dropped day from a
+        // sitting that never wrote, and reporting it as a failure blames a
+        // sitting for doing what it was asked.
+        if touched.is_empty() {
+            return verdict(
+                false,
+                false,
+                format!(
+                    "{}: this sitting created and changed no record, so there is nothing that \
+                     could carry {}",
+                    self.phase, self.day,
+                ),
+            );
         }
-        match stamped(after, &self.day) {
-            true => Outcome {
-                name: self.name.clone(),
-                held: true,
-                saying: format!(
+
+        match touched.iter().any(|(_, date)| *date == &self.day) {
+            true => verdict(
+                true,
+                true,
+                format!(
                     "{} wrote under the day it claimed, {}",
                     self.phase, self.day
                 ),
-            },
-            // ⚠️ **The transcript has to say WHICH sitting**, because the
-            // sentence is the finding.
+            ),
             false => missed(format!(
-                "{} was told it is {} and nothing it wrote carries that day, so its records are                  stamped with the day the run happened and the year is fiction only in the                  prose. Read this sitting.",
-                self.phase, self.day,
+                "{}: this sitting wrote {} record(s) and none of them is dated {} — the days it \
+                 did write are {}",
+                self.phase,
+                touched.len(),
+                self.day,
+                touched
+                    .iter()
+                    .map(|(_, date)| date.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
             )),
         }
     }
@@ -983,8 +1027,29 @@ impl Expectation for DayClaimed {
 ///
 /// Both halves of what a boundary reads, because a sitting may leave its mark
 /// on either.
-fn stamped(at: &Boundary, day: &str) -> bool {
-    at.world.contains(day) || at.mail.contains(day)
+/// **Every record a boundary can see, by address and by the day it is true
+/// of.**
+///
+/// ⚠️ **The world is two answers on two lines** — the inventory, then
+/// everything the index can see — and only the second carries records. A line
+/// that does not parse contributes nothing rather than failing the read: this
+/// is evidence a check reasons over, not a claim in its own right.
+fn dated_records(at: &Boundary) -> std::collections::HashMap<String, String> {
+    let mut found = std::collections::HashMap::new();
+    for line in at.world.lines() {
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(results) = parsed["results"].as_array() else {
+            continue;
+        };
+        for hit in results {
+            if let (Some(address), Some(date)) = (hit["address"].as_str(), hit["date"].as_str()) {
+                found.insert(address.to_string(), date.to_string());
+            }
+        }
+    }
+    found
 }
 
 /// **The phases nothing asserts over**, named rather than omitted.

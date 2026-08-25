@@ -48,6 +48,22 @@ fn read() -> Playbook {
     Playbook::parse("rooms/whatever.md", TWO_SITTINGS).expect("the document reads")
 }
 
+/// **A world in the shape a boundary really holds**: the inventory, then
+/// everything the index can see, on two lines.
+///
+/// ⚠️ **The fixtures here used to be a shape no boundary ever has** —
+/// `{"records":[…]}` with no address — and the check passed them because it
+/// scanned the text for the day rather than reading the records. **A check
+/// that reads structure has to be fed structure, and the old fixtures are why
+/// a containment scan survived this long.**
+fn world(records: &[(&str, &str)]) -> String {
+    let hits: Vec<String> = records
+        .iter()
+        .map(|(address, date)| format!("{{\"address\":\"{address}\",\"date\":\"{date}\"}}"))
+        .collect();
+    format!("{{\"entities\":[]}}\n{{\"results\":[{}]}}", hits.join(","))
+}
+
 /// A boundary named for the phase it was taken before, holding one world.
 fn at(before: &str, world: &str) -> Boundary {
     Boundary {
@@ -103,10 +119,10 @@ async fn a_sitting_that_did_not_carry_its_day_fails_and_names_itself() {
     let check = &made[0];
 
     let carried = vec![
-        at("Phase 1 — the spring sitting", "{\"records\":[]}"),
+        at("Phase 1 — the spring sitting", &world(&[])),
         at(
             "Phase 2 — a sitting with no day",
-            "{\"records\":[{\"date\":\"2026-03-04\"}]}",
+            &world(&[("thing:kettle#f1", "2026-03-04")]),
         ),
     ];
     let held = check
@@ -122,10 +138,10 @@ async fn a_sitting_that_did_not_carry_its_day_fails_and_names_itself() {
     );
 
     let stamped_today = vec![
-        at("Phase 1 — the spring sitting", "{\"records\":[]}"),
+        at("Phase 1 — the spring sitting", &world(&[])),
         at(
             "Phase 2 — a sitting with no day",
-            "{\"records\":[{\"date\":\"2026-08-21\"}]}",
+            &world(&[("thing:kettle#f1", "2026-08-21")]),
         ),
     ];
     let missed = check
@@ -147,21 +163,26 @@ async fn a_sitting_that_did_not_carry_its_day_fails_and_names_itself() {
 
 /// 🚨 **The day must arrive with the run, not with the furniture.**
 ///
-/// A room seeded with a record already dated a sitting's day makes that
-/// sitting's assertion hold whatever the occupant does, and it holds silently.
-/// The check refuses instead, so the author moves the seed.
+/// A room seeded with a record already dated a sitting's day would make that
+/// sitting's assertion hold whatever the occupant did.
+///
+/// ⭐ **The check no longer needs a guard against it.** It asks about the
+/// records this sitting created or changed, and furniture is neither: it sits
+/// in the reading before as well as the reading after. **A hazard the shape
+/// removes needs no rule**, and the sitting comes back as having written
+/// nothing rather than as having carried a day it never wrote.
 #[tokio::test]
-async fn a_day_the_room_was_furnished_with_refuses_rather_than_holding() {
+async fn a_day_the_room_was_furnished_with_does_not_hold_for_the_sitting() {
     let (_room, surface) = a_room().await;
     let made = days_claimed(&read());
     let furnished = vec![
         at(
             "Phase 1 — the spring sitting",
-            "{\"records\":[{\"date\":\"2026-03-04\"}]}",
+            &world(&[("thing:kettle#f1", "2026-03-04")]),
         ),
         at(
             "Phase 2 — a sitting with no day",
-            "{\"records\":[{\"date\":\"2026-03-04\"}]}",
+            &world(&[("thing:kettle#f1", "2026-03-04")]),
         ),
     ];
     let outcome = made[0]
@@ -172,35 +193,86 @@ async fn a_day_the_room_was_furnished_with_refuses_rather_than_holding() {
         .await;
     assert!(
         !outcome.held,
-        "the room was furnished with the day this sitting claims, so the assertion holds \
-         whatever the occupant does, and it said nothing",
+        "the room was furnished with the day this sitting claims and the assertion held anyway",
     );
     assert!(
-        outcome.saying.contains("furnished"),
-        "the refusal does not say the furniture is the problem: {}",
+        !outcome.applies,
+        "the sitting wrote nothing, so this is neither held nor failed and must say so: {}",
         outcome.saying,
     );
+}
 
-    // The control: the same check, over furniture that does NOT carry the day,
-    // must not reach for that refusal. Without this the case passes on a build
-    // that calls every room furnished with everything.
-    let clean = vec![
-        at("Phase 1 — the spring sitting", "{\"records\":[]}"),
+/// ⛔️ **A sitting that wrote nothing is neither pass nor fail.**
+///
+/// Its job was a question: it read the store and answered in prose. **A
+/// negative asked over an empty set cannot tell a dropped day from a sitting
+/// that never wrote**, and reporting it as a failure blames a sitting for
+/// doing what it was asked. **A paid run did exactly that.**
+#[tokio::test]
+async fn a_sitting_that_wrote_nothing_is_not_applicable_rather_than_failed() {
+    let (_room, surface) = a_room().await;
+    let made = days_claimed(&read());
+    let read_only = vec![
+        at(
+            "Phase 1 — the spring sitting",
+            &world(&[("thing:kettle#f1", "2026-01-01")]),
+        ),
         at(
             "Phase 2 — a sitting with no day",
-            "{\"records\":[{\"date\":\"2026-03-04\"}]}",
+            &world(&[("thing:kettle#f1", "2026-01-01")]),
         ),
     ];
-    let held = made[0]
+    let outcome = made[0]
         .check(&Observed {
             room: &surface,
-            boundaries: &clean,
+            boundaries: &read_only,
         })
         .await;
     assert!(
-        held.held && !held.saying.contains("furnished"),
-        "a room furnished with nothing on that day was called furnished with it: {}",
-        held.saying,
+        !outcome.applies,
+        "a sitting that created and changed nothing was graded: {}",
+        outcome.saying,
+    );
+    assert!(
+        !outcome.held,
+        "a sitting that wrote nothing was reported as having carried its day",
+    );
+}
+
+/// 🚨 **Typing the day into prose is not stamping a record with it.**
+///
+/// The failure the old scan could not see: a sitting writes *"(recorded
+/// 2026-03-04)"* inside a claim's text and stamps the record with some other
+/// day. **A containment scan over the world holds; the claim it is making is
+/// false.**
+#[tokio::test]
+async fn a_day_typed_into_prose_does_not_satisfy_the_sitting() {
+    let (_room, surface) = a_room().await;
+    let made = days_claimed(&read());
+    let typed = vec![
+        at("Phase 1 — the spring sitting", &world(&[])),
+        at(
+            "Phase 2 — a sitting with no day",
+            // The day is in the answer's text, and the record is dated
+            // something else.
+            "{\"entities\":[]}\n{\"results\":[{\"address\":\"thing:kettle#f1\",\
+             \"date\":\"2026-08-21\",\"content\":\"descaled it (recorded 2026-03-04)\"}]}",
+        ),
+    ];
+    let outcome = made[0]
+        .check(&Observed {
+            room: &surface,
+            boundaries: &typed,
+        })
+        .await;
+    assert!(
+        !outcome.held,
+        "the day appears in the sitting's prose and on no record, and the check held: {}",
+        outcome.saying,
+    );
+    assert!(
+        outcome.applies,
+        "the sitting wrote a record, so this is a real failure rather than not applicable",
     );
 }
 

@@ -312,6 +312,7 @@ impl crate::run::Expectation for Lock {
                 return crate::run::Outcome {
                     name: self.name.clone(),
                     held: false,
+                    applies: true,
                     saying: format!("this lock names a check nobody wrote: {named}"),
                 };
             };
@@ -319,11 +320,13 @@ impl crate::run::Expectation for Lock {
                 Ok(()) => crate::run::Outcome {
                     name: self.name.clone(),
                     held: true,
+                    applies: true,
                     saying: self.say.clone(),
                 },
                 Err(found) => crate::run::Outcome {
                     name: self.name.clone(),
                     held: false,
+                    applies: true,
                     saying: format!("{}: {found}", self.say),
                 },
             };
@@ -334,6 +337,7 @@ impl crate::run::Expectation for Lock {
                 return crate::run::Outcome {
                     name: self.name.clone(),
                     held: false,
+                    applies: true,
                     saying: format!("this lock's query is not json: {e}"),
                 };
             }
@@ -370,6 +374,7 @@ impl crate::run::Expectation for Lock {
                 return crate::run::Outcome {
                     name: self.name.clone(),
                     held: false,
+                    applies: true,
                     saying: format!("{}: {missed}. What came back: {}", self.say, short(&answer)),
                 };
             }
@@ -377,6 +382,7 @@ impl crate::run::Expectation for Lock {
         crate::run::Outcome {
             name: self.name.clone(),
             held: true,
+            applies: true,
             saying: self.say.clone(),
         }
     }
